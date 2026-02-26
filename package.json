@@ -1,5 +1,5 @@
 {
-  "name": "@mnott/pai",
+  "name": "@tekmidian/pai",
   "version": "0.1.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
