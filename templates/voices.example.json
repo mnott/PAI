@@ -1,0 +1,251 @@
+{
+  "comment": "PAI Voice Configuration Template. Copy to ~/.config/pai/voices.json and customize.",
+  "comment_privacy": "This file is NOT committed to any repository. Keep it out of version control.",
+
+  "voiceSystem": {
+    "comment": "Which TTS system to use: 'elevenlabs' or 'kokoro' (local, free)",
+    "primary": "kokoro",
+    "fallback": "elevenlabs",
+    "preferLocal": true
+  },
+
+  "kokoro": {
+    "comment": "Kokoro TTS is free, local, and runs entirely on your machine. No API key needed.",
+    "available_voices": [
+      "af_alloy",
+      "af_aoede",
+      "af_bella",
+      "af_heart",
+      "af_jessica",
+      "af_kore",
+      "af_nicole",
+      "af_nova",
+      "af_river",
+      "af_sarah",
+      "af_sky",
+      "am_adam",
+      "am_echo",
+      "am_eric",
+      "am_fenrir",
+      "am_liam",
+      "am_michael",
+      "am_onyx",
+      "am_puck",
+      "am_santa",
+      "bf_alice",
+      "bf_emma",
+      "bf_isabella",
+      "bf_lily",
+      "bm_daniel",
+      "bm_fable",
+      "bm_george",
+      "bm_lewis"
+    ],
+    "default": "bm_george",
+    "description": "Excellent open-source model, ~160MB download on first use, fully local"
+  },
+
+  "elevenlabs": {
+    "comment": "ElevenLabs provides high-quality voices but requires an API key and has usage limits/costs.",
+    "apiKey": "${ELEVENLABS_API_KEY}",
+    "comment_apikey": "Set via environment variable ELEVENLABS_API_KEY. Sign up at https://elevenlabs.io/",
+    "available_voices": {
+      "21m00Tcm4TlvDq8ikWAM": "Rachel (US Female)",
+      "JBFqnCBsd6RMkjVY3EHl": "Josh (US Male)",
+      "EXAVITQu4vr4xnSDxMaL": "Sam (US Male, older)",
+      "TX3LPaxmHKxrH7PY1vC3": "Alice (UK Female)",
+      "VR6AewLTigWG4xSOukaG": "Chris (UK Male)",
+      "pNInz6obpgDQGcFmaJgB": "Adam (US Male)",
+      "AZnzlk1XvdvUBZXUNXHP": "Grace (Neutral, calm)",
+      "EL13yqQnnW9UWye4EZjE": "Callum (British Male)"
+    },
+    "default": "21m00Tcm4TlvDq8ikWAM",
+    "description": "Higher quality, more natural sounding. Requires API key and has usage limits."
+  },
+
+  "default": {
+    "comment": "Default voice for all agents when no specific agent is configured",
+    "system": "kokoro",
+    "voice": "bm_george"
+  },
+
+  "agents": {
+    "comment": "Configure voice for each agent type. Helps distinguish different agent roles.",
+
+    "main": {
+      "comment": "Primary orchestrator agent - general responses and high-level direction",
+      "system": "kokoro",
+      "voice": "bm_george",
+      "description": "Calm, authoritative voice for orchestration decisions"
+    },
+
+    "intern": {
+      "comment": "Junior/entry-level agent - quick summaries, status updates, simple tasks",
+      "system": "kokoro",
+      "voice": "am_adam",
+      "description": "Younger, enthusiastic voice for routine tasks"
+    },
+
+    "engineer": {
+      "comment": "Software engineering agent - code reviews, implementations, technical details",
+      "system": "kokoro",
+      "voice": "bm_daniel",
+      "description": "Precise, technical voice for engineering discussions"
+    },
+
+    "architect": {
+      "comment": "System design agent - high-level architecture, PRDs, strategic planning",
+      "system": "kokoro",
+      "voice": "bm_lewis",
+      "description": "Confident, thoughtful voice for architectural decisions"
+    },
+
+    "researcher": {
+      "comment": "Research and analysis agent - findings, summaries, investigations",
+      "system": "kokoro",
+      "voice": "am_echo",
+      "description": "Clear, analytical voice for research findings"
+    },
+
+    "pentester": {
+      "comment": "Security testing agent - vulnerability findings, penetration test results",
+      "system": "kokoro",
+      "voice": "am_eric",
+      "description": "Alert, precise voice for security issues"
+    }
+  },
+
+  "whatsapp": {
+    "comment": "Voice configuration specifically for WhatsApp voice notes (via Whazaa)",
+    "enabled": true,
+    "default": "bm_george",
+    "agents": {
+      "main": "bm_george",
+      "intern": "am_adam",
+      "engineer": "bm_daniel",
+      "architect": "bm_lewis",
+      "researcher": "am_echo",
+      "pentester": "am_eric"
+    },
+    "description": "These voices are used when responding via WhatsApp voice notes"
+  },
+
+  "local_speakers": {
+    "comment": "Voice configuration for local speaker output (macOS, Linux) via Kokoro TTS",
+    "enabled": true,
+    "default": "bm_george",
+    "agents": {
+      "main": "bm_george",
+      "intern": "am_adam",
+      "engineer": "bm_daniel",
+      "architect": "bm_lewis",
+      "researcher": "am_echo",
+      "pentester": "am_eric"
+    },
+    "speakRate": 1.0,
+    "comment_speakrate": "Speed multiplier: 0.8 = slower, 1.0 = normal, 1.2 = faster",
+    "description": "These voices are used for local speaker announcements"
+  },
+
+  "personas": {
+    "comment": "Optional: Map memorable persona names to voice IDs. Easier to remember than IDs.",
+    "Nicole": "af_nicole",
+    "George": "bm_george",
+    "Daniel": "bm_daniel",
+    "Emma": "bf_emma",
+    "Lewis": "bm_lewis",
+    "Echo": "am_echo",
+    "Adam": "am_adam",
+    "Bella": "af_bella",
+    "Nova": "af_nova",
+    "Sarah": "af_sarah"
+  },
+
+  "profiles": {
+    "comment": "Named profiles for different use cases. Switch profiles based on context.",
+
+    "professional": {
+      "comment": "Voices for professional/business contexts",
+      "default": "bm_lewis",
+      "agents": {
+        "main": "bm_lewis",
+        "engineer": "bm_daniel",
+        "architect": "bm_lewis",
+        "researcher": "af_nova"
+      }
+    },
+
+    "casual": {
+      "comment": "Voices for casual/personal projects",
+      "default": "am_adam",
+      "agents": {
+        "main": "am_adam",
+        "engineer": "bm_george",
+        "architect": "bm_george",
+        "researcher": "af_bella"
+      }
+    },
+
+    "focus": {
+      "comment": "Minimal voices for focused work (fewer distinctions)",
+      "default": "bm_george",
+      "agents": {
+        "main": "bm_george",
+        "engineer": "bm_george",
+        "architect": "bm_george",
+        "researcher": "bm_george"
+      }
+    }
+  },
+
+  "examples": {
+    "comment": "Examples of how to configure different voice setups",
+
+    "example_all_kokoro": {
+      "description": "Use only Kokoro TTS (free, local, no API key)",
+      "voiceSystem": {"primary": "kokoro", "fallback": "kokoro", "preferLocal": true},
+      "default": {"system": "kokoro", "voice": "bm_george"},
+      "agents": {
+        "main": {"system": "kokoro", "voice": "bm_george"},
+        "engineer": {"system": "kokoro", "voice": "bm_daniel"},
+        "architect": {"system": "kokoro", "voice": "bm_lewis"}
+      }
+    },
+
+    "example_elevenlabs_premium": {
+      "description": "Use ElevenLabs for highest quality voices",
+      "voiceSystem": {"primary": "elevenlabs", "fallback": "kokoro", "preferLocal": false},
+      "default": {"system": "elevenlabs", "voice": "21m00Tcm4TlvDq8ikWAM"},
+      "agents": {
+        "main": {"system": "elevenlabs", "voice": "21m00Tcm4TlvDq8ikWAM"},
+        "engineer": {"system": "elevenlabs", "voice": "JBFqnCBsd6RMkjVY3EHl"},
+        "architect": {"system": "elevenlabs", "voice": "EXAVITQu4vr4xnSDxMaL"}
+      }
+    },
+
+    "example_mixed": {
+      "description": "Hybrid approach: Kokoro for WhatsApp, ElevenLabs for local speakers",
+      "whatsapp": {"enabled": true, "default": "bm_george"},
+      "local_speakers": {"enabled": true, "default": "21m00Tcm4TlvDq8ikWAM"}
+    }
+  },
+
+  "notes": {
+    "setup": "Copy this file to ~/.config/pai/voices.json and customize for your preferences.",
+    "kokoro_first_run": "First use downloads ~160MB model (~30 seconds). Runs entirely offline afterward.",
+    "elevenlabs_cost": "ElevenLabs has usage limits and costs. Check your account for pricing.",
+    "privacy": "This file is NOT committed to version control. Add ~/.config/pai/ to .gitignore.",
+    "reloading": "Changes take effect immediately. No daemon restart required.",
+    "fallback_behavior": "If primary system fails or voice not found, falls back to alternate system.",
+    "environment_variables": "Can also set ELEVENLABS_API_KEY and KOKORO_CACHE_DIR via environment.",
+    "testing": "Use 'pai voice test <voice_id>' to preview a voice before setting it as default."
+  },
+
+  "troubleshooting": {
+    "kokoro_slow": "First run downloads model (~30s). Subsequent runs are instant and fully local.",
+    "elevenlabs_api_error": "Check ELEVENLABS_API_KEY environment variable is set correctly.",
+    "voice_not_found": "Verify voice ID exists in available_voices list for chosen TTS system.",
+    "whatsapp_silent": "Check Whazaa connection status. WhatsApp may not be connected to phone.",
+    "no_sound_local": "Verify 'local_speakers.enabled' is true and system volume is not muted."
+  }
+}

@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+.DS_Store
+.vscode/
+.idea/
+*.log
+logs/
+# Claude Code project files — track skills, ignore notes
+.claude/*
+!.claude/skills/
+
+Notes/
+.pai/
+tasks/

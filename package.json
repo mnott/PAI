@@ -1,0 +1,38 @@
+{
+  "name": "@pai-os/cli",
+  "version": "0.1.0",
+  "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pai": "dist/cli/index.mjs",
+    "pai-mcp": "dist/mcp/index.mjs",
+    "pai-daemon": "dist/daemon/index.mjs",
+    "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "author": "PAI Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^12.6.2",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.0",
+    "@types/pg": "^8.11.11",
+    "tsdown": "^0.20.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
