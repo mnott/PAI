@@ -9,6 +9,8 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { NotificationConfig } from "../notifications/types.js";
+import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +56,9 @@ export interface PaiDaemonConfig {
 
   /** Log level */
   logLevel: "debug" | "info" | "warn" | "error";
+
+  /** Notification subsystem configuration */
+  notifications: NotificationConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +77,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   },
   embeddingModel: "Snowflake/snowflake-arctic-embed-m-v1.5",
   logLevel: "info",
+  notifications: DEFAULT_NOTIFICATION_CONFIG,
 };
 
 const CONFIG_TEMPLATE = `{

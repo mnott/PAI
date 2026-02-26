@@ -56,6 +56,12 @@ import type { PaiDaemonConfig } from "./config.js";
 import { createStorageBackend } from "../storage/factory.js";
 import type { StorageBackend } from "../storage/interface.js";
 import { configureEmbeddingModel } from "../memory/embeddings.js";
+import type { NotificationConfig, NotificationMode } from "../notifications/types.js";
+import {
+  loadNotificationConfig,
+  patchNotificationConfig,
+} from "../notifications/config.js";
+import { routeNotification } from "../notifications/router.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -92,6 +98,13 @@ let indexSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 let embedInProgress = false;
 let lastEmbedTime = 0;
 let embedSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+
+// ---------------------------------------------------------------------------
+// Notification state
+// ---------------------------------------------------------------------------
+
+/** Mutable notification config — loaded from disk at startup, patchable at runtime */
+let notificationConfig: NotificationConfig;
 
 // ---------------------------------------------------------------------------
 // Graceful shutdown flag
@@ -404,6 +417,82 @@ async function handleRequest(
     return;
   }
 
+  // Special: notification_get_config — return current notification config
+  if (method === "notification_get_config") {
+    sendResponse(socket, {
+      id,
+      ok: true,
+      result: {
+        config: notificationConfig,
+        activeChannels: Object.entries(notificationConfig.channels)
+          .filter(([ch, cfg]) => ch !== "voice" && (cfg as { enabled: boolean }).enabled)
+          .map(([ch]) => ch),
+      },
+    });
+    socket.end();
+    return;
+  }
+
+  // Special: notification_set_config — patch the notification config
+  if (method === "notification_set_config") {
+    try {
+      const p = params as {
+        mode?: NotificationMode;
+        channels?: Record<string, unknown>;
+        routing?: Record<string, unknown>;
+      };
+      notificationConfig = patchNotificationConfig({
+        mode: p.mode,
+        channels: p.channels as Parameters<typeof patchNotificationConfig>[0]["channels"],
+        routing: p.routing as Parameters<typeof patchNotificationConfig>[0]["routing"],
+      });
+      sendResponse(socket, {
+        id,
+        ok: true,
+        result: { config: notificationConfig },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  // Special: notification_send — route a notification to configured channels
+  if (method === "notification_send") {
+    const p = params as {
+      event?: string;
+      message?: string;
+      title?: string;
+    };
+
+    if (!p.message) {
+      sendResponse(socket, { id, ok: false, error: "notification_send: message is required" });
+      socket.end();
+      return;
+    }
+
+    const event = (p.event as NotificationConfig["routing"] extends Record<infer K, unknown> ? K : string) ?? "info";
+
+    routeNotification(
+      {
+        event: event as Parameters<typeof routeNotification>[0]["event"],
+        message: p.message,
+        title: p.title,
+      },
+      notificationConfig
+    ).then((result) => {
+      sendResponse(socket, { id, ok: true, result });
+      socket.end();
+    }).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+      socket.end();
+    });
+    return;
+  }
+
   // All other methods: PAI tool dispatch
   try {
     const result = await dispatchTool(method, params);
@@ -502,9 +591,15 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   daemonConfig = config;
   startTime = Date.now();
 
+  // Load notification config from disk (merged with defaults)
+  notificationConfig = loadNotificationConfig();
+
   process.stderr.write("[pai-daemon] Starting daemon...\n");
   process.stderr.write(`[pai-daemon] Socket: ${config.socketPath}\n`);
   process.stderr.write(`[pai-daemon] Storage backend: ${config.storageBackend}\n`);
+  process.stderr.write(
+    `[pai-daemon] Notification mode: ${notificationConfig.mode}\n`
+  );
 
   // Lower the daemon's scheduling priority so it yields CPU to interactive
   // Claude Code sessions and editor processes during indexing and embedding.

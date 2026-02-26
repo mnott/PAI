@@ -11,6 +11,12 @@
 
 import { connect, Socket } from "node:net";
 import { randomUUID } from "node:crypto";
+import type {
+  NotificationConfig,
+  NotificationMode,
+  NotificationEvent,
+  SendResult,
+} from "../notifications/types.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -72,6 +78,45 @@ export class PaiClient {
    */
   async triggerIndex(): Promise<void> {
     await this.send("index_now", {});
+  }
+
+  // -------------------------------------------------------------------------
+  // Notification methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get the current notification config from the daemon.
+   */
+  async getNotificationConfig(): Promise<{
+    config: NotificationConfig;
+    activeChannels: string[];
+  }> {
+    const result = await this.send("notification_get_config", {});
+    return result as { config: NotificationConfig; activeChannels: string[] };
+  }
+
+  /**
+   * Patch the notification config on the daemon (and persist to disk).
+   */
+  async setNotificationConfig(patch: {
+    mode?: NotificationMode;
+    channels?: Partial<NotificationConfig["channels"]>;
+    routing?: Partial<NotificationConfig["routing"]>;
+  }): Promise<{ config: NotificationConfig }> {
+    const result = await this.send("notification_set_config", patch as Record<string, unknown>);
+    return result as { config: NotificationConfig };
+  }
+
+  /**
+   * Send a notification via the daemon (routes to configured channels).
+   */
+  async sendNotification(payload: {
+    event: NotificationEvent;
+    message: string;
+    title?: string;
+  }): Promise<SendResult> {
+    const result = await this.send("notification_send", payload as Record<string, unknown>);
+    return result as SendResult;
   }
 
   // -------------------------------------------------------------------------

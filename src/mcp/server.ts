@@ -31,6 +31,7 @@ import {
   toolRegistrySearch,
   toolProjectDetect,
   toolProjectHealth,
+  toolNotificationConfig,
 } from "./tools.js";
 
 // ---------------------------------------------------------------------------
@@ -363,6 +364,80 @@ export async function startMcpServer(): Promise<void> {
     },
     async (args) => {
       const result = await toolProjectHealth(getRegistryDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: notification_config
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "notification_config",
+    [
+      "Query or update the PAI unified notification configuration.",
+      "",
+      "Actions:",
+      "  get  — Return the current notification mode, active channels, and routing table.",
+      "  set  — Change the notification mode or update channel/routing config.",
+      "  send — Send a notification through the configured channels.",
+      "",
+      "Notification modes:",
+      "  auto      — Use the per-event routing table (default)",
+      "  voice     — All events sent as WhatsApp voice (TTS)",
+      "  whatsapp  — All events sent as WhatsApp text",
+      "  ntfy      — All events sent to ntfy.sh",
+      "  macos     — All events sent as macOS notifications",
+      "  cli       — All events written to CLI output only",
+      "  off       — Suppress all notifications",
+      "",
+      "Event types for send: error | progress | completion | info | debug",
+      "",
+      "Examples:",
+      '  { "action": "get" }',
+      '  { "action": "set", "mode": "voice" }',
+      '  { "action": "send", "event": "completion", "message": "Done!" }',
+    ].join("\n"),
+    {
+      action: z
+        .enum(["get", "set", "send"])
+        .describe("Action: 'get' (read config), 'set' (update config), 'send' (send notification)."),
+      mode: z
+        .enum(["auto", "voice", "whatsapp", "ntfy", "macos", "cli", "off"])
+        .optional()
+        .describe("For action=set: new notification mode."),
+      channels: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          "For action=set: partial channel config overrides as a JSON object. " +
+          'E.g. { "whatsapp": { "enabled": true }, "macos": { "enabled": false } }'
+        ),
+      routing: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          "For action=set: partial routing overrides as a JSON object. " +
+          'E.g. { "error": ["whatsapp", "macos"], "progress": ["cli"] }'
+        ),
+      event: z
+        .enum(["error", "progress", "completion", "info", "debug"])
+        .optional()
+        .describe("For action=send: event type. Default: 'info'."),
+      message: z
+        .string()
+        .optional()
+        .describe("For action=send: the notification message body."),
+      title: z
+        .string()
+        .optional()
+        .describe("For action=send: optional notification title (used by macOS and ntfy)."),
+    },
+    async (args) => {
+      const result = await toolNotificationConfig(args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,

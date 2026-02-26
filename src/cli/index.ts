@@ -30,6 +30,7 @@ import { registerRestoreCommands } from "./commands/restore.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerObsidianCommands } from "./commands/obsidian.js";
 import { registerUpdateCommand } from "./commands/update.js";
+import { registerNotifyCommands } from "./commands/notify.js";
 import { err } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,16 @@ registerSetupCommand(program);
 // ---------------------------------------------------------------------------
 
 registerUpdateCommand(program);
+
+// ---------------------------------------------------------------------------
+// pai notify
+// ---------------------------------------------------------------------------
+
+const notifyCmd = program
+  .command("notify")
+  .description("Notification config: status, get, set, test, send");
+
+registerNotifyCommands(notifyCmd);
 
 // ---------------------------------------------------------------------------
 // pai obsidian
