@@ -859,6 +859,113 @@ function cmdConsolidate(
 }
 
 // ---------------------------------------------------------------------------
+// Go command — fuzzy project lookup, prints root_path to stdout
+// ---------------------------------------------------------------------------
+
+/**
+ * Simple Levenshtein distance for "did you mean?" suggestions.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Check if `needle` appears as a substring (case-insensitive) in `haystack`.
+ */
+function containsIgnoreCase(haystack: string, needle: string): boolean {
+  return haystack.toLowerCase().includes(needle.toLowerCase());
+}
+
+export function cmdGo(db: Database, query: string): void {
+  const all = db
+    .prepare("SELECT * FROM projects WHERE status = 'active' ORDER BY updated_at DESC")
+    .all() as ProjectRow[];
+
+  if (!all.length) {
+    console.error(err("No active projects registered. Run: pai project add <path>"));
+    process.exit(1);
+  }
+
+  const q = query.trim().toLowerCase();
+
+  // 1. Exact slug or alias match (re-use existing helper)
+  const exact = getProject(db, query);
+  if (exact) {
+    process.stdout.write(exact.root_path + "\n");
+    return;
+  }
+
+  // 2. Substring match against slug, display_name, or root_path basename
+  const partial = all.filter(
+    (p) =>
+      containsIgnoreCase(p.slug, q) ||
+      containsIgnoreCase(p.display_name, q) ||
+      containsIgnoreCase(basename(p.root_path), q)
+  );
+
+  if (partial.length === 1) {
+    // Unique partial match — print path and done
+    process.stdout.write(partial[0].root_path + "\n");
+    return;
+  }
+
+  if (partial.length > 1) {
+    // Multiple matches — list them so user can narrow down
+    console.error(err(`Ambiguous: "${query}" matches ${partial.length} projects:\n`));
+    partial.forEach((p, i) => {
+      console.error(
+        `  ${dim(String(i + 1).padStart(2))}  ${bold(p.slug.padEnd(30))}  ${dim(shortenPath(p.root_path, 50))}`
+      );
+    });
+    console.error();
+    console.error(dim("  Use a more specific name or the exact slug."));
+    process.exit(1);
+  }
+
+  // 3. No match — compute closest slugs by Levenshtein distance for suggestions
+  const scored = all
+    .map((p) => {
+      const distSlug = levenshtein(q, p.slug.toLowerCase());
+      const distName = levenshtein(q, p.display_name.toLowerCase());
+      return { project: p, dist: Math.min(distSlug, distName) };
+    })
+    .sort((a, b) => a.dist - b.dist);
+
+  // Suggest matches within edit-distance 4, or top 3 if none in threshold
+  const threshold = 4;
+  const suggestions =
+    scored.filter((s) => s.dist <= threshold).length > 0
+      ? scored.filter((s) => s.dist <= threshold).slice(0, 3)
+      : scored.slice(0, 3);
+
+  console.error(err(`Project not found: "${query}"\n`));
+  if (suggestions.length) {
+    console.error(warn("  Did you mean?"));
+    for (const s of suggestions) {
+      console.error(
+        `    ${bold(s.project.slug.padEnd(30))}  ${dim(shortenPath(s.project.root_path, 50))}`
+      );
+    }
+    console.error();
+    console.error(dim("  Run: pai project list  (to see all projects)"));
+  }
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
 
@@ -1021,5 +1128,17 @@ export function registerProjectCommands(
     .option("--name <name>", "Display name for the new project (derived from filename if omitted)")
     .action((opts: { fromSession: string; to: string; name?: string }) => {
       cmdPromote(getDb(), opts);
+    });
+
+  // pai project go <query>
+  projectCmd
+    .command("go <query>")
+    .description(
+      "Print the root path for a project by slug, partial name, or fuzzy match.\n" +
+      "Designed for shell integration: cd $(pai project go <query>)\n" +
+      "Or set a shell alias: alias pcd='cd $(pai project go)'"
+    )
+    .action((query: string) => {
+      cmdGo(getDb(), query);
     });
 }

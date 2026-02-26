@@ -50,6 +50,7 @@ import {
   toolRegistrySearch,
   toolProjectDetect,
   toolProjectHealth,
+  toolProjectTodo,
 } from "../mcp/tools.js";
 import type { PaiDaemonConfig } from "./config.js";
 import { createStorageBackend } from "../storage/factory.js";
@@ -326,6 +327,9 @@ async function dispatchTool(
 
     case "project_health":
       return toolProjectHealth(registryDb, p as Parameters<typeof toolProjectHealth>[1]);
+
+    case "project_todo":
+      return toolProjectTodo(registryDb, p as Parameters<typeof toolProjectTodo>[1]);
 
     default:
       throw new Error(`Unknown method: ${method}`);

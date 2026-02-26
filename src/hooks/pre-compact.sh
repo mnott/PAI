@@ -75,4 +75,15 @@ fi
 
 "$PAI_OS" obsidian sync 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# Generate handover brief before context compression
+# ---------------------------------------------------------------------------
+# Before compacting context, write a "## Continue" section to project's
+# Notes/TODO.md with key items from this session so the next session
+# can recover and pick up immediately if context is lost.
+# If the command doesn't exist yet, fail gracefully.
+#
+
+"$PAI_OS" session handover "$PROJECT_SLUG" latest 2>/dev/null || true
+
 exit 0

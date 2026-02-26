@@ -73,4 +73,15 @@ fi
 
 "$PAI_OS" session cleanup --execute 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# Generate handover brief for next session
+# ---------------------------------------------------------------------------
+# Write a "## Continue" section to project's Notes/TODO.md with key items
+# from this session so the next session can pick up immediately.
+# This command will extract insights from the session transcript and append
+# a handover section. If the command doesn't exist yet, fail gracefully.
+#
+
+"$PAI_OS" session handover "$PROJECT_SLUG" latest 2>/dev/null || true
+
 exit 0

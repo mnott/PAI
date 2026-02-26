@@ -8,8 +8,8 @@
  * database connections and embedding model singleton.
  *
  * Tool definitions are static (unlike Coogle which discovers tools dynamically).
- * The 8 PAI tools are: memory_search, memory_get, project_info, project_list,
- * session_list, registry_search, project_detect, project_health.
+ * The 9 PAI tools are: memory_search, memory_get, project_info, project_list,
+ * session_list, registry_search, project_detect, project_health, project_todo.
  *
  * If the daemon is not running, tool calls return a helpful error message
  * rather than crashing — this allows the legacy direct MCP (dist/mcp/index.mjs)
@@ -328,6 +328,9 @@ async function startShim(): Promise<void> {
       "  active  — root_path exists on disk",
       "  stale   — root_path missing, but a directory with the same name was found nearby",
       "  dead    — root_path missing, no candidate found",
+      "",
+      "Each active project entry also includes a 'todo' field indicating whether",
+      "a TODO.md was found and whether it has a ## Continue section.",
     ].join("\n"),
     {
       category: z
@@ -336,6 +339,38 @@ async function startShim(): Promise<void> {
         .describe("Filter results to a specific health category. Default: all."),
     },
     async (args) => proxyTool("project_health", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: project_todo
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "project_todo",
+    [
+      "Read a project's TODO.md without needing to know the exact file path.",
+      "",
+      "Use this at session start or when resuming work to get the project's current",
+      "task list and continuation prompt. If a '## Continue' section is present,",
+      "it will be surfaced at the top of the response for quick context recovery.",
+      "",
+      "Searches these locations in order:",
+      "  1. <project_root>/Notes/TODO.md",
+      "  2. <project_root>/.claude/Notes/TODO.md",
+      "  3. <project_root>/tasks/todo.md",
+      "  4. <project_root>/TODO.md",
+      "",
+      "If no project slug is provided, auto-detects from the current working directory.",
+    ].join("\n"),
+    {
+      project: z
+        .string()
+        .optional()
+        .describe(
+          "Project slug. Omit to auto-detect from the current working directory."
+        ),
+    },
+    async (args) => proxyTool("project_todo", args)
   );
 
   // -------------------------------------------------------------------------

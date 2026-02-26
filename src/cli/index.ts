@@ -17,7 +17,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openRegistry } from "../registry/db.js";
 import type { Database } from "better-sqlite3";
-import { registerProjectCommands } from "./commands/project.js";
+import { registerProjectCommands, cmdGo } from "./commands/project.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup.js";
 import { registerRegistryCommands } from "./commands/registry.js";
@@ -158,6 +158,22 @@ const obsidianCmd = program
   .description("Obsidian vault: sync project notes, view status, open in Obsidian");
 
 registerObsidianCommands(obsidianCmd, getDb);
+
+// ---------------------------------------------------------------------------
+// pai go <query>  — top-level shortcut for pai project go
+// ---------------------------------------------------------------------------
+
+program
+  .command("go <query>")
+  .description(
+    "Jump to a project directory by slug or partial name.\n" +
+    "Prints the root path to stdout — use with: cd $(pai go <query>)\n" +
+    "Example shell function in ~/.zshrc:\n" +
+    "  pcd() { cd \"$(pai go \"$@\")\" }"
+  )
+  .action((query: string) => {
+    cmdGo(getDb(), query);
+  });
 
 // ---------------------------------------------------------------------------
 // pai search <query>  (Phase 3 placeholder)
