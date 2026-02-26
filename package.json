@@ -1,9 +1,14 @@
 {
-  "name": "@pai-os/cli",
+  "name": "@mnott/pai",
   "version": "0.1.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mnott/PAI.git"
+  },
+  "homepage": "https://github.com/mnott/PAI",
   "bin": {
     "pai": "dist/cli/index.mjs",
     "pai-mcp": "dist/mcp/index.mjs",
@@ -16,7 +21,7 @@
     "test": "vitest",
     "lint": "tsc --noEmit"
   },
-  "author": "PAI Contributors",
+  "author": "Matthias Nott",
   "license": "MIT",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@pai-os/cli",
+      "name": "@mnott/pai",
       "dependencies": {
         "@huggingface/transformers": "^3.8.1",
         "@modelcontextprotocol/sdk": "^1.26.0",

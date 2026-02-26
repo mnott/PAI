@@ -178,7 +178,7 @@ function getDockerDir(): string {
   const candidates = [
     join(process.cwd(), "docker"),
     join(homedir(), "dev", "ai", "PAI", "docker"),
-    join("/", "usr", "local", "lib", "node_modules", "@pai-os", "cli", "docker"),
+    join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "docker"),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, "docker-compose.yml"))) return c;
@@ -191,7 +191,7 @@ function getTemplatesDir(): string {
   const candidates = [
     join(process.cwd(), "templates"),
     join(homedir(), "dev", "ai", "PAI", "templates"),
-    join("/", "usr", "local", "lib", "node_modules", "@pai-os", "cli", "templates"),
+    join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "templates"),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, "claude-md.template.md"))) return c;
