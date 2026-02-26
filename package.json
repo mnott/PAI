@@ -3,10 +3,38 @@
   "version": "0.1.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "ARCHITECTURE.md",
+    "FEATURE.md"
+  ],
+  "keywords": [
+    "ai",
+    "knowledge-os",
+    "personal-ai",
+    "mcp",
+    "claude",
+    "memory",
+    "project-management",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mnott/PAI.git"
+    "url": "git+https://github.com/mnott/PAI.git"
   },
   "homepage": "https://github.com/mnott/PAI",
   "bin": {
@@ -19,7 +47,8 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
   },
   "author": "Matthias Nott",
   "license": "MIT",
