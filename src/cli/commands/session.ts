@@ -1,12 +1,13 @@
 /**
  * pai session <sub-command>
  *
- * list   [project-slug]                          — list sessions
- * info   <project-slug> <number>                 — show session detail
- * rename <project-slug> <number> <new-slug>      — rename a session note
- * slug   <project-slug> <number|latest>          — generate/apply a slug
- * tag    <project-slug> <number> [tags...]       — set/show tags on a session
- * route  <session-slug> <target-project>         — create cross-reference link
+ * list       [project-slug]                          — list sessions
+ * info       <project-slug> <number>               — show session detail
+ * rename     <project-slug> <number> <new-slug>    — rename a session note
+ * slug       <project-slug> <number|latest>        — generate/apply a slug
+ * tag        <project-slug> <number> [tags...]     — set/show tags on a session
+ * route      <session-slug> <target-project>       — create cross-reference link
+ * auto-route [--cwd path] [--context text]         — auto-detect project for session
  */
 
 import type { Command } from "commander";
@@ -982,6 +983,63 @@ function cmdHandover(
 }
 
 // ---------------------------------------------------------------------------
+// cmd: auto-route
+// ---------------------------------------------------------------------------
+
+async function cmdAutoRoute(opts: {
+  cwd?: string;
+  context?: string;
+  json?: boolean;
+}): Promise<void> {
+  const { autoRoute, formatAutoRoute, formatAutoRouteJson } = await import(
+    "../../session/auto-route.js"
+  );
+  const { openRegistry } = await import("../../registry/db.js");
+  const { createStorageBackend } = await import("../../storage/factory.js");
+  const { loadConfig } = await import("../../daemon/config.js");
+
+  const config = loadConfig();
+  const registryDb = openRegistry();
+  const federation = await createStorageBackend(config);
+
+  const targetCwd = opts.cwd ?? process.cwd();
+  const result = await autoRoute(registryDb, federation, targetCwd, opts.context);
+
+  if (!result) {
+    console.log();
+    console.log(warn("  No project match found for: " + targetCwd));
+    console.log();
+    console.log(
+      dim("  Tried: path match, PAI.md marker walk") +
+        (opts.context ? dim(", topic detection") : "")
+    );
+    console.log();
+    console.log(dim("  Run 'pai project add .' to register this directory."));
+    console.log();
+    return;
+  }
+
+  if (opts.json) {
+    console.log(formatAutoRouteJson(result));
+    return;
+  }
+
+  console.log();
+  console.log(header("  PAI Auto-Route"));
+  console.log();
+  console.log(`  ${bold("Project:")}     ${result.display_name}`);
+  console.log(`  ${bold("Slug:")}        ${result.slug}`);
+  console.log(`  ${bold("Root path:")}   ${result.root_path}`);
+  console.log(`  ${bold("Method:")}      ${result.method}`);
+  console.log(
+    `  ${bold("Confidence:")}  ${(result.confidence * 100).toFixed(0)}%`
+  );
+  console.log();
+  console.log(ok("  Routed to: ") + bold(result.slug));
+  console.log();
+}
+
+// ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
 
@@ -1095,4 +1153,21 @@ export function registerSessionCommands(
       // Note: does NOT call getDb() — checkpoint must work without the registry
       cmdCheckpoint(message, opts);
     });
+
+  // pai session auto-route [--cwd path] [--context "text"] [--json]
+  sessionCmd
+    .command("auto-route")
+    .description(
+      "Auto-detect which project this session belongs to.\n" +
+      "Tries: (1) path match in registry, (2) Notes/PAI.md marker walk, (3) topic detection.\n" +
+      "Designed for use in CLAUDE.md session-start hooks."
+    )
+    .option("--cwd <path>", "Working directory to detect from (default: process.cwd())")
+    .option("--context <text>", "Conversation context for topic-based fallback routing")
+    .option("--json", "Output raw JSON instead of formatted display")
+    .action(
+      async (opts: { cwd?: string; context?: string; json?: boolean }) => {
+        await cmdAutoRoute(opts);
+      }
+    );
 }

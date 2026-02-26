@@ -1295,6 +1295,74 @@ export async function toolTopicDetect(
 }
 
 // ---------------------------------------------------------------------------
+// Tool: session_route
+// ---------------------------------------------------------------------------
+
+export interface SessionRouteParams {
+  /** Working directory to route from (defaults to process.cwd()) */
+  cwd?: string;
+  /** Optional conversation context for topic-based fallback routing */
+  context?: string;
+}
+
+/**
+ * Automatically suggest which project a session belongs to.
+ *
+ * Strategy (in priority order):
+ *   1. path   — exact or parent-directory match in the project registry
+ *   2. marker — walk up from cwd looking for Notes/PAI.md
+ *   3. topic  — BM25 keyword search against memory (requires context)
+ *
+ * Call this at session start (e.g., from CLAUDE.md or a session-start hook)
+ * to automatically route the session to the correct project.
+ */
+export async function toolSessionRoute(
+  registryDb: Database,
+  federation: Database | StorageBackend,
+  params: SessionRouteParams
+): Promise<ToolResult> {
+  try {
+    const { autoRoute, formatAutoRouteJson } = await import("../session/auto-route.js");
+
+    const result = await autoRoute(
+      registryDb,
+      federation,
+      params.cwd,
+      params.context
+    );
+
+    if (!result) {
+      const target = params.cwd ?? process.cwd();
+      return {
+        content: [
+          {
+            type: "text",
+            text: [
+              `No project match found for: ${target}`,
+              "",
+              "Tried: path match, PAI.md marker walk" +
+                (params.context ? ", topic detection" : ""),
+              "",
+              "Run 'pai project add .' to register this directory,",
+              "or provide conversation context for topic-based routing.",
+            ].join("\n"),
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: formatAutoRouteJson(result) }],
+    };
+  } catch (e) {
+    return {
+      content: [{ type: "text", text: `session_route error: ${String(e)}` }],
+      isError: true,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hybrid search helper (backend-agnostic)
 // ---------------------------------------------------------------------------
 

@@ -12,6 +12,7 @@
  *   registry_search — Full-text search over project slugs/names/paths
  *   project_detect  — Detect which project a path belongs to
  *   project_health  — Audit all projects for moved/deleted directories
+ *   session_route   — Auto-route session to project (path/marker/topic)
  *
  * NOTE: All tool logic lives in tools.ts (shared with the daemon).
  * This file wires MCP schema definitions to those pure functions.
@@ -33,6 +34,7 @@ import {
   toolProjectHealth,
   toolNotificationConfig,
   toolTopicDetect,
+  toolSessionRoute,
 } from "./tools.js";
 
 // ---------------------------------------------------------------------------
@@ -500,6 +502,59 @@ export async function startMcpServer(): Promise<void> {
     },
     async (args) => {
       const result = await toolTopicDetect(args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: session_route
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "session_route",
+    [
+      "Automatically detect which project this session belongs to.",
+      "",
+      "Call this at session start (e.g., from CLAUDE.md or a session-start hook)",
+      "to route the session to the correct project automatically.",
+      "",
+      "Detection strategy (in priority order):",
+      "  1. path   — exact or parent-directory match in the project registry",
+      "  2. marker — walk up from cwd looking for Notes/PAI.md marker files",
+      "  3. topic  — BM25 keyword search against memory (only if context provided)",
+      "",
+      "Returns:",
+      "  slug         — the matched project slug",
+      "  display_name — human-readable project name",
+      "  root_path    — absolute path to the project root",
+      "  method       — how it was detected: 'path', 'marker', or 'topic'",
+      "  confidence   — 1.0 for path/marker matches, BM25 fraction for topic",
+      "",
+      "If no match is found, returns a message explaining what was tried.",
+      "Run 'pai project add .' to register the current directory.",
+    ].join("\n"),
+    {
+      cwd: z
+        .string()
+        .optional()
+        .describe(
+          "Working directory to detect from. Defaults to process.cwd(). " +
+          "Pass the session's actual working directory for accurate detection."
+        ),
+      context: z
+        .string()
+        .optional()
+        .describe(
+          "Optional conversation context for topic-based fallback routing. " +
+          "A few sentences summarising what the session will work on. " +
+          "Only used if path and marker detection both fail."
+        ),
+    },
+    async (args) => {
+      const result = await toolSessionRoute(getRegistryDb(), getFederationDb(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,

@@ -18,6 +18,7 @@ import type {
   SendResult,
 } from "../notifications/types.js";
 import type { TopicCheckParams, TopicCheckResult } from "../topics/detector.js";
+import type { AutoRouteResult } from "../session/auto-route.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -131,6 +132,32 @@ export class PaiClient {
   async topicCheck(params: TopicCheckParams): Promise<TopicCheckResult> {
     const result = await this.send("topic_check", params as Record<string, unknown>);
     return result as TopicCheckResult;
+  }
+
+  // -------------------------------------------------------------------------
+  // Session routing methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Automatically detect which project a session belongs to.
+   * Tries path match, PAI.md marker walk, then topic detection (if context given).
+   */
+  async sessionAutoRoute(params: {
+    cwd?: string;
+    context?: string;
+  }): Promise<AutoRouteResult | null> {
+    // session_auto_route returns a ToolResult (content array). Extract the text
+    // and parse JSON from it.
+    const result = await this.send("session_auto_route", params as Record<string, unknown>);
+    const toolResult = result as { content?: Array<{ text: string }>; isError?: boolean };
+    if (toolResult.isError) return null;
+    const text = toolResult.content?.[0]?.text ?? "";
+    // Text is either JSON (on match) or a human-readable "no match" message
+    try {
+      return JSON.parse(text) as AutoRouteResult;
+    } catch {
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------

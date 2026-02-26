@@ -51,6 +51,7 @@ import {
   toolProjectDetect,
   toolProjectHealth,
   toolProjectTodo,
+  toolSessionRoute,
 } from "../mcp/tools.js";
 import { detectTopicShift } from "../topics/detector.js";
 import type { PaiDaemonConfig } from "./config.js";
@@ -350,6 +351,13 @@ async function dispatchTool(
         registryDb,
         storageBackend,
         p as Parameters<typeof detectTopicShift>[2]
+      );
+
+    case "session_auto_route":
+      return toolSessionRoute(
+        registryDb,
+        storageBackend,
+        p as Parameters<typeof toolSessionRoute>[2]
       );
 
     default:
