@@ -74,6 +74,12 @@ fi
 "$PAI_OS" session cleanup --execute 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Auto-checkpoint before stop (captures final state)
+# ---------------------------------------------------------------------------
+
+"$PAI_OS" session checkpoint "Session ending — auto-checkpoint" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Generate handover brief for next session
 # ---------------------------------------------------------------------------
 # Write a "## Continue" section to project's Notes/TODO.md with key items

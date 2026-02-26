@@ -779,6 +779,209 @@ function cmdCheckpoint(message: string, opts: { minGap?: string }): void {
 }
 
 // ---------------------------------------------------------------------------
+// Command: session handover
+// ---------------------------------------------------------------------------
+
+/**
+ * TODO candidate locations searched in priority order (mirrors toolProjectTodo).
+ */
+const HANDOVER_TODO_LOCATIONS = [
+  "Notes/TODO.md",
+  ".claude/Notes/TODO.md",
+  "tasks/todo.md",
+  "TODO.md",
+];
+
+/**
+ * Find the TODO.md for a given project root path.
+ * Returns { path, content } for the first location that exists, or null.
+ */
+function findProjectTodo(rootPath: string): { path: string; content: string } | null {
+  for (const rel of HANDOVER_TODO_LOCATIONS) {
+    const full = join(rootPath, rel);
+    if (existsSync(full)) {
+      try {
+        return { path: full, content: readFileSync(full, "utf8") };
+      } catch {
+        // unreadable — try next
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Strip any existing `## Continue` section (up to but not including the
+ * first `---` separator or next `##` heading that follows it).
+ * Returns the content with that section removed.
+ */
+function stripContinueSection(content: string): string {
+  const lines = content.split("\n");
+
+  const startIdx = lines.findIndex((l) => l.trim() === "## Continue");
+  if (startIdx === -1) return content;
+
+  // Find where the section ends
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "---" || (trimmed.startsWith("##") && trimmed !== "## Continue")) {
+      // Keep the separator / next heading as part of the remaining content
+      endIdx = i;
+      break;
+    }
+  }
+
+  // If the line right after the section is a `---` separator, skip it too
+  // so we don't leave a dangling separator with nothing above it.
+  let trailingEnd = endIdx;
+  if (trailingEnd < lines.length && lines[trailingEnd].trim() === "---") {
+    trailingEnd += 1;
+  }
+
+  const before = lines.slice(0, startIdx);
+  const after = lines.slice(trailingEnd);
+
+  // Collapse any leading blank lines in `after`
+  while (after.length > 0 && after[0].trim() === "") {
+    after.shift();
+  }
+
+  return [...before, ...after].join("\n");
+}
+
+/**
+ * Write (or overwrite) the `## Continue` section at the TOP of the TODO file.
+ *
+ *   pai session handover [project-slug] [session-id|"latest"]
+ *
+ * Called from hooks (session-stop, pre-compact) with project-slug + "latest".
+ * Falls back to auto-detecting the project from cwd when no slug is supplied.
+ */
+function cmdHandover(
+  db: Database,
+  projectSlug: string | undefined,
+  numberOrLatest: string | undefined
+): void {
+  // ---- 1. Resolve project ----
+  let project: ProjectRow | undefined;
+
+  if (projectSlug) {
+    project = getProject(db, projectSlug);
+    if (!project) {
+      // Graceful exit — called from hooks, must not crash
+      process.exit(0);
+    }
+  } else {
+    // Auto-detect from cwd: find a project whose root_path is a prefix of cwd
+    const cwd = process.cwd();
+    const row = db
+      .prepare(
+        `SELECT id, slug, display_name, root_path, encoded_dir
+           FROM projects
+          WHERE ? LIKE root_path || '%'
+          ORDER BY length(root_path) DESC
+          LIMIT 1`
+      )
+      .get(cwd) as ProjectRow | undefined;
+
+    if (!row) {
+      process.exit(0);
+    }
+    project = row;
+  }
+
+  // ---- 2. Resolve session ----
+  let session: SessionRow | undefined;
+  const nol = numberOrLatest ?? "latest";
+
+  if (nol === "latest") {
+    session = db
+      .prepare(
+        "SELECT * FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
+      )
+      .get(project.id) as SessionRow | undefined;
+  } else {
+    const num = parseInt(nol, 10);
+    if (!isNaN(num)) {
+      session = db
+        .prepare("SELECT * FROM sessions WHERE project_id = ? AND number = ?")
+        .get(project.id, num) as SessionRow | undefined;
+    }
+  }
+
+  // ---- 3. Find the project TODO ----
+  const todo = findProjectTodo(project.root_path);
+
+  // If no TODO file exists at all, try to create one at the canonical location
+  let todoPath: string;
+  let existingContent: string;
+
+  if (todo) {
+    todoPath = todo.path;
+    existingContent = todo.content;
+  } else {
+    // Create Notes/TODO.md as the canonical default
+    const notesDir = join(project.root_path, "Notes");
+    try {
+      if (!existsSync(notesDir)) {
+        mkdirSync(notesDir, { recursive: true });
+      }
+    } catch {
+      process.exit(0);
+    }
+    todoPath = join(notesDir, "TODO.md");
+    existingContent = "";
+  }
+
+  // ---- 4. Build the ## Continue block ----
+  const timestamp = new Date().toISOString();
+  const cwd = process.cwd();
+
+  let sessionLine: string;
+  if (session) {
+    const num = String(session.number).padStart(4, "0");
+    const titlePart = session.title || session.slug || "Session";
+    sessionLine = `${num} - ${session.date} - ${titlePart}`;
+  } else {
+    sessionLine = "Unknown session";
+  }
+
+  const continueBlock = [
+    "## Continue",
+    "",
+    `> **Last session:** ${sessionLine}`,
+    `> **Paused at:** ${timestamp}`,
+    ">",
+    `> Working directory: ${cwd}. Check the latest session note for details.`,
+    "",
+    "---",
+    "",
+  ].join("\n");
+
+  // ---- 5. Strip any old ## Continue section and prepend new one ----
+  const stripped = stripContinueSection(existingContent).trimStart();
+  const newContent = continueBlock + stripped;
+
+  // ---- 6. Write atomically ----
+  const tmpPath = `${todoPath}.handover.tmp`;
+  try {
+    writeFileSync(tmpPath, newContent, "utf8");
+    renameSync(tmpPath, todoPath);
+  } catch {
+    try {
+      if (existsSync(tmpPath)) {
+        renameSync(tmpPath, `${tmpPath}.dead`);
+      }
+    } catch { /* ignore */ }
+    process.exit(0);
+  }
+
+  // Silent success — hooks should not produce noise on stdout
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
 
@@ -861,6 +1064,19 @@ export function registerSessionCommands(
         cmdRoute(getDb(), projectSlug, number, targetProject, opts);
       }
     );
+
+  // pai session handover [project-slug] [session-id]
+  sessionCmd
+    .command("handover [project-slug] [session-id]")
+    .description(
+      "Write a ## Continue section to the project's TODO.md.\n" +
+      "Called automatically from session-stop and pre-compact hooks.\n" +
+      "Records the last session identifier, timestamp, and working directory\n" +
+      "so the next session can resume from the correct context."
+    )
+    .action((projectSlug: string | undefined, sessionId: string | undefined) => {
+      cmdHandover(getDb(), projectSlug, sessionId);
+    });
 
   // pai session checkpoint <message>
   sessionCmd

@@ -76,6 +76,12 @@ fi
 "$PAI_OS" obsidian sync 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Auto-checkpoint before context compression
+# ---------------------------------------------------------------------------
+
+"$PAI_OS" session checkpoint "Context compressing — auto-checkpoint" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Generate handover brief before context compression
 # ---------------------------------------------------------------------------
 # Before compacting context, write a "## Continue" section to project's
