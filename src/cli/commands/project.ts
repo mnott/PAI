@@ -32,6 +32,7 @@ import {
   formatDetectionJson,
 } from "./detect.js";
 import { cmdPromote } from "../../session/promote.js";
+import { ensurePaiMarker } from "../../registry/pai-marker.js";
 import chalk from "chalk";
 
 // ---------------------------------------------------------------------------
@@ -193,6 +194,13 @@ function cmdAdd(
 
   // Create directory scaffolding
   scaffoldProjectDirs(rootPath);
+
+  // Create PAI.md marker file in Notes/
+  try {
+    ensurePaiMarker(rootPath, slug, displayName);
+  } catch {
+    // Non-fatal — warn but don't fail the add command.
+  }
 
   console.log(ok(`Project added: ${bold(slug)}`));
   console.log(dim(`  Path:         ${rootPath}`));

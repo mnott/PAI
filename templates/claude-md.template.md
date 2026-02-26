@@ -76,8 +76,16 @@ and project notes. It often returns the answer without any filesystem traversal.
 **This replaces manual file searching.** PAI knows where every project lives, what state it's in,
 and what the next steps are. Use it.
 
+**Project Marker Files:**
+PAI-managed projects contain a `Notes/PAI.md` file with YAML frontmatter identifying the project.
+If you find a `Notes/PAI.md` in any directory, it's a PAI project — read the frontmatter for its slug
+and use `mcp__pai__project_info` with that slug to get full details.
+
+If a project has moved directories, PAI auto-detects this via the marker file during `pai registry scan`.
+
 **At session start (even without explicit "continue"):**
 - Call `mcp__pai__project_detect` with the current working directory
+- If no project detected but `Notes/PAI.md` exists in cwd: read its `pai.slug` and register
 - If a project is detected, mention it: "Detected project: [name] at [path]"
 - Check for open TODOs and mention the top 3
 

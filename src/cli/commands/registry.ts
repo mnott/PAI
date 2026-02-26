@@ -19,6 +19,7 @@ import {
   now,
 } from "../utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../registry/migrate.js";
+import { ensurePaiMarker, discoverPaiMarkers } from "../../registry/pai-marker.js";
 import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -236,6 +237,13 @@ function performScan(db: Database): ScanResult {
     if (isNew) result.projectsNew++;
     else result.projectsUpdated++;
 
+    // Ensure PAI.md marker exists (or is up-to-date) for this project.
+    try {
+      ensurePaiMarker(rootPath, slug);
+    } catch {
+      // Non-fatal — marker creation failure should not abort the scan.
+    }
+
     // Scan the Notes/ subdirectory inside the Claude project dir
     const claudeNotesDir = join(CLAUDE_PROJECTS_DIR, encodedDir, "Notes");
 
@@ -341,6 +349,9 @@ function performScan(db: Database): ScanResult {
           result.projectsScanned++;
           result.projectsUpdated++;
 
+          // Ensure PAI.md marker exists for already-registered project.
+          try { ensurePaiMarker(childPath, childSlug); } catch { /* non-fatal */ }
+
           // Still scan Notes/ for new sessions
           const notesDir = join(childPath, "Notes");
           if (existsSync(notesDir)) {
@@ -362,6 +373,9 @@ function performScan(db: Database): ScanResult {
         if (isNew) result.projectsNew++;
         else result.projectsUpdated++;
 
+        // Ensure PAI.md marker exists for newly-registered project.
+        try { ensurePaiMarker(childPath, childSlug); } catch { /* non-fatal */ }
+
         // Scan Notes/ in the project itself (not Claude's project dir)
         const notesDir = join(childPath, "Notes");
         if (existsSync(notesDir)) {
@@ -375,6 +389,31 @@ function performScan(db: Database): ScanResult {
             }
           }
         }
+      }
+    }
+  }
+
+  // Phase 4: Discover PAI.md markers in scan_dirs.
+  // This catches relocated projects: if a project moved but still has a
+  // Notes/PAI.md with the original slug, we can find it and auto-update.
+  if (config.scan_dirs.length) {
+    const resolvedScanDirs = config.scan_dirs.map(resolveHome).filter(existsSync);
+    const markers = discoverPaiMarkers(resolvedScanDirs);
+
+    for (const marker of markers) {
+      // Check if this slug is already registered at the correct path.
+      const registeredRow = db
+        .prepare("SELECT id, root_path, slug FROM projects WHERE slug = ?")
+        .get(marker.slug) as { id: number; root_path: string; slug: string } | undefined;
+
+      if (!registeredRow) continue; // Unknown slug — leave it for normal scan.
+
+      if (registeredRow.root_path !== marker.projectRoot) {
+        // The project moved — update the stored path.
+        const newEncoded = encodeDir(marker.projectRoot);
+        db.prepare(
+          "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+        ).run(marker.projectRoot, newEncoded, Date.now(), registeredRow.id);
       }
     }
   }
