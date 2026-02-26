@@ -36,7 +36,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { createServer, Socket, Server } from "node:net";
+import { createServer, connect, Socket, Server } from "node:net";
 import { setPriority } from "node:os";
 import { openRegistry } from "../registry/db.js";
 import type { Database } from "better-sqlite3";
@@ -416,11 +416,28 @@ async function handleRequest(
 }
 
 /**
+ * Check whether an existing socket file is actually being served by a live process.
+ * Returns true if a daemon is already accepting connections, false otherwise.
+ */
+function isSocketLive(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const client = connect(path);
+    const timer = setTimeout(() => { client.destroy(); resolve(false); }, 500);
+    client.on("connect", () => { clearTimeout(timer); client.end(); resolve(true); });
+    client.on("error", () => { clearTimeout(timer); resolve(false); });
+  });
+}
+
+/**
  * Start the Unix Domain Socket IPC server.
  */
-function startIpcServer(socketPath: string): Server {
-  // Remove stale socket file from a previous run
+async function startIpcServer(socketPath: string): Promise<Server> {
+  // Before removing the socket file, check whether another daemon is already live
   if (existsSync(socketPath)) {
+    const live = await isSocketLive(socketPath);
+    if (live) {
+      throw new Error("Another daemon is already running — socket is live. Aborting startup.");
+    }
     try {
       unlinkSync(socketPath);
       process.stderr.write("[pai-daemon] Removed stale socket file.\n");
@@ -434,26 +451,29 @@ function startIpcServer(socketPath: string): Server {
 
     socket.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
-      const nl = buffer.indexOf("\n");
-      if (nl === -1) return;
+      let nl: number;
+      // Process every complete newline-delimited frame in this chunk
+      while ((nl = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
 
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
+        if (line.trim() === "") continue; // skip blank lines between frames
 
-      let request: IpcRequest;
-      try {
-        request = JSON.parse(line) as IpcRequest;
-      } catch {
-        sendResponse(socket, { id: "?", ok: false, error: "Invalid JSON" });
-        socket.destroy();
-        return;
+        let request: IpcRequest;
+        try {
+          request = JSON.parse(line) as IpcRequest;
+        } catch {
+          sendResponse(socket, { id: "?", ok: false, error: "Invalid JSON" });
+          socket.destroy();
+          return;
+        }
+
+        handleRequest(request, socket).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          sendResponse(socket, { id: request.id, ok: false, error: msg });
+          socket.destroy();
+        });
       }
-
-      handleRequest(request, socket).catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e);
-        sendResponse(socket, { id: request.id, ok: false, error: msg });
-        socket.destroy();
-      });
     });
 
     socket.on("error", () => {
@@ -529,8 +549,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     );
   }
 
-  // Start IPC server
-  const server = startIpcServer(config.socketPath);
+  // Start IPC server (async: checks for a live daemon before unlinking socket)
+  const server = await startIpcServer(config.socketPath);
 
   const shutdown = async (signal: string): Promise<void> => {
     process.stderr.write(`\n[pai-daemon] ${signal} received. Stopping.\n`);

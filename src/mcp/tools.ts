@@ -8,7 +8,7 @@
  * on its own schedule. The search hot path is pure DB read.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import type { Database } from "better-sqlite3";
 import { populateSlugs, searchMemoryHybrid } from "../memory/search.js";
@@ -227,9 +227,9 @@ export async function toolMemorySearch(
         } else {
           // Hybrid: combine keyword + semantic
           const [kwResults, semResults] = await Promise.all([
-            federation.searchKeyword(params.query, { ...searchOpts, maxResults: 500 }),
-            federation.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 500 }),
-          ]);
+            federation.searchKeyword(params.query, { ...searchOpts, maxResults: 50 }),
+            federation.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 50 }),
+          ]); // 50 candidates is sufficient for min-max normalization
           // Reuse the existing hybrid scoring logic
           results = combineHybridResults(kwResults, semResults, searchOpts.maxResults ?? 10);
         }
@@ -380,6 +380,18 @@ export function toolMemoryGet(
           },
         ],
         isError: true,
+      };
+    }
+
+    const stat = statSync(fullPath);
+    if (stat.size > 5 * 1024 * 1024) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Maximum 5 MB.`,
+          },
+        ],
       };
     }
 

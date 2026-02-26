@@ -163,38 +163,42 @@ export function runMigrations(db: Database): void {
 
   // Migration v1 → v2: add claude_notes_dir column to projects
   if (current < 2) {
-    // Use a try/catch so re-running on a DB that already has the column is safe
-    try {
-      db.exec("ALTER TABLE projects ADD COLUMN claude_notes_dir TEXT");
-    } catch {
-      // Column may already exist (e.g. fresh DB created with v2 DDL)
-    }
-    db.prepare(
-      "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
-    ).run(2, Date.now());
+    db.transaction(() => {
+      // Use a try/catch so re-running on a DB that already has the column is safe
+      try {
+        db.exec("ALTER TABLE projects ADD COLUMN claude_notes_dir TEXT");
+      } catch {
+        // Column may already exist (e.g. fresh DB created with v2 DDL)
+      }
+      db.prepare(
+        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
+      ).run(2, Date.now());
+    })();
   }
 
   // Migration v2 → v3: add links table for cross-project session references
   if (current < 3) {
-    try {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS links (
-          id               INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id       INTEGER NOT NULL,
-          target_project_id INTEGER NOT NULL,
-          link_type        TEXT    NOT NULL DEFAULT 'related'
-                                   CHECK(link_type IN ('related','follow-up','reference')),
-          created_at       INTEGER NOT NULL,
-          UNIQUE (session_id, target_project_id),
-          FOREIGN KEY (session_id)        REFERENCES sessions(id),
-          FOREIGN KEY (target_project_id) REFERENCES projects(id)
-        )
-      `);
-    } catch {
-      // Table may already exist (fresh DB created with v3 DDL)
-    }
-    db.prepare(
-      "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
-    ).run(3, Date.now());
+    db.transaction(() => {
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS links (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id       INTEGER NOT NULL,
+            target_project_id INTEGER NOT NULL,
+            link_type        TEXT    NOT NULL DEFAULT 'related'
+                                     CHECK(link_type IN ('related','follow-up','reference')),
+            created_at       INTEGER NOT NULL,
+            UNIQUE (session_id, target_project_id),
+            FOREIGN KEY (session_id)        REFERENCES sessions(id),
+            FOREIGN KEY (target_project_id) REFERENCES projects(id)
+          )
+        `);
+      } catch {
+        // Table may already exist (fresh DB created with v3 DDL)
+      }
+      db.prepare(
+        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
+      ).run(3, Date.now());
+    })();
   }
 }

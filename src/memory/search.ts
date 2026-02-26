@@ -246,10 +246,13 @@ export function searchMemorySemantic(
 
   const where = "WHERE " + conditions.join(" AND ");
 
+  // Hard cap for SQLite semantic path — prevents OOM on large corpora.
+  // Use Postgres for production semantic search.
   const sql = `
     SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding
     FROM memory_chunks
     ${where}
+    LIMIT 5000
   `;
 
   const rows = db.prepare(sql).all(...params) as Array<{
@@ -315,16 +318,16 @@ export function searchMemoryHybrid(
   const kw = opts?.keywordWeight ?? 0.5;
   const sw = opts?.semanticWeight ?? 0.5;
 
-  // Fetch keyword results (no limit — we need all to normalize properly)
+  // Fetch keyword results — 50 candidates is sufficient for min-max normalization
   const keywordResults = searchMemory(db, query, {
     ...opts,
-    maxResults: 500,
+    maxResults: 50,
   });
 
-  // Fetch semantic results (no limit)
+  // Fetch semantic results — 50 candidates is sufficient for min-max normalization
   const semanticResults = searchMemorySemantic(db, queryEmbedding, {
     ...opts,
-    maxResults: 500,
+    maxResults: 50,
   });
 
   if (keywordResults.length === 0 && semanticResults.length === 0) return [];
