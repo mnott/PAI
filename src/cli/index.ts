@@ -8,6 +8,7 @@
  *   pai registry scan|migrate|stats|rebuild
  *   pai memory   index|search|status
  *   pai search   <query>   (placeholder — Phase 3)
+ *   pai update
  *   pai version
  */
 
@@ -28,6 +29,7 @@ import { registerBackupCommands } from "./commands/backup.js";
 import { registerRestoreCommands } from "./commands/restore.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerObsidianCommands } from "./commands/obsidian.js";
+import { registerUpdateCommand } from "./commands/update.js";
 import { err } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -148,6 +150,12 @@ registerRestoreCommands(program);
 // ---------------------------------------------------------------------------
 
 registerSetupCommand(program);
+
+// ---------------------------------------------------------------------------
+// pai update
+// ---------------------------------------------------------------------------
+
+registerUpdateCommand(program);
 
 // ---------------------------------------------------------------------------
 // pai obsidian

@@ -22,9 +22,17 @@ import {
   fmtDate,
 } from "../utils.js";
 import chalk from "chalk";
-import { existsSync, readdirSync, renameSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  renameSync,
+  readFileSync,
+  writeFileSync,
+  statSync,
+  mkdirSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   findLatestTranscript,
   readLastMessages,
@@ -587,6 +595,190 @@ function cmdRoute(
 }
 
 // ---------------------------------------------------------------------------
+// Command: session checkpoint
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the Notes directory for the current working directory by scanning
+ * ~/.claude/projects/ for a matching encoded-dir entry.
+ *
+ * Returns the Notes dir path if found, or null if the CWD has no Claude
+ * project directory yet.
+ */
+function findNotesDirForCwd(): string | null {
+  const cwd = process.cwd();
+  const claudeProjectsDir = join(homedir(), ".claude", "projects");
+
+  if (!existsSync(claudeProjectsDir)) return null;
+
+  // Encode the cwd the same way Claude Code does: every /, space, dot,
+  // and hyphen → single dash.
+  const expectedEncoded = cwd.replace(/[/\s.\-]/g, "-");
+
+  let encodedDir: string | null = null;
+
+  try {
+    const entries = readdirSync(claudeProjectsDir);
+
+    // Exact match first
+    if (entries.includes(expectedEncoded)) {
+      encodedDir = expectedEncoded;
+    } else {
+      // Fallback: look for a CLAUDE.md that contains the cwd path, or a
+      // session-registry.json that mentions it.  In practice the exact match
+      // covers the common case; keep the fallback cheap (no DB needed here
+      // since checkpoint is called from hooks where DB may not be available).
+      for (const entry of entries) {
+        const full = join(claudeProjectsDir, entry);
+        try {
+          if (!statSync(full).isDirectory()) continue;
+        } catch {
+          continue;
+        }
+        // Heuristic: the encoded dir for /a/b/c is "-a-b-c".  Compare after
+        // stripping any trailing slashes from the candidate.
+        const candidate = entry.replace(/-+$/, "");
+        const expected = expectedEncoded.replace(/-+$/, "");
+        if (candidate === expected) {
+          encodedDir = entry;
+          break;
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  if (!encodedDir) return null;
+
+  const notesDir = join(claudeProjectsDir, encodedDir, "Notes");
+  return existsSync(notesDir) ? notesDir : null;
+}
+
+/**
+ * Find the most recently modified .md file in a directory.
+ */
+function findLatestNoteFile(notesDir: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(notesDir);
+  } catch {
+    return null;
+  }
+
+  const mdFiles = entries.filter((e) => e.endsWith(".md"));
+  if (mdFiles.length === 0) return null;
+
+  let latestPath: string | null = null;
+  let latestMtime = 0;
+
+  for (const file of mdFiles) {
+    const full = join(notesDir, file);
+    try {
+      const { mtimeMs } = statSync(full);
+      if (mtimeMs > latestMtime) {
+        latestMtime = mtimeMs;
+        latestPath = full;
+      }
+    } catch {
+      // skip unreadable files
+    }
+  }
+
+  return latestPath;
+}
+
+/**
+ * Rate-limit guard: returns true if the last checkpoint was written less
+ * than `minGapSeconds` ago, using a temp file keyed to the notes directory.
+ */
+function checkpointTooRecent(notesDir: string, minGapSeconds: number): boolean {
+  // Key the temp file to the notes dir path so different projects don't
+  // share a rate-limit bucket.
+  const safeKey = notesDir.replace(/[^a-zA-Z0-9]/g, "-").slice(-80);
+  const tmpFile = join(tmpdir(), `pai-checkpoint-${safeKey}`);
+
+  if (!existsSync(tmpFile)) return false;
+
+  try {
+    const { mtimeMs } = statSync(tmpFile);
+    const ageMs = Date.now() - mtimeMs;
+    return ageMs < minGapSeconds * 1000;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Touch the rate-limit sentinel file.
+ */
+function touchCheckpointSentinel(notesDir: string): void {
+  const safeKey = notesDir.replace(/[^a-zA-Z0-9]/g, "-").slice(-80);
+  const tmpFile = join(tmpdir(), `pai-checkpoint-${safeKey}`);
+  try {
+    // Write current timestamp as content (mtime is what matters)
+    writeFileSync(tmpFile, String(Date.now()), "utf8");
+  } catch {
+    // Non-fatal — rate limiting is best-effort
+  }
+}
+
+/**
+ * Append a timestamped checkpoint block to the active session note.
+ *
+ * Designed to be called from Claude Code hooks (PostToolUse,
+ * UserPromptSubmit).  Fast, silent, exit 0 on success or skip.
+ */
+function cmdCheckpoint(message: string, opts: { minGap?: string }): void {
+  const minGapSeconds = parseInt(opts.minGap ?? "300", 10); // default: 5 min
+
+  // 1. Locate the Notes directory for the CWD
+  const notesDir = findNotesDirForCwd();
+  if (!notesDir) {
+    // No Claude project for this directory — silently exit
+    process.exit(0);
+  }
+
+  // 2. Rate-limit check
+  if (checkpointTooRecent(notesDir, minGapSeconds)) {
+    process.exit(0);
+  }
+
+  // 3. Find the most recent session note
+  const notePath = findLatestNoteFile(notesDir);
+  if (!notePath) {
+    process.exit(0);
+  }
+
+  // 4. Build the checkpoint block
+  const timestamp = new Date().toISOString();
+  const block = `\n## Checkpoint — ${timestamp}\n${message}\n`;
+
+  // 5. Append atomically: write to .tmp then rename
+  const tmpPath = `${notePath}.checkpoint.tmp`;
+  try {
+    const existing = readFileSync(notePath, "utf8");
+    writeFileSync(tmpPath, existing + block, "utf8");
+    renameSync(tmpPath, notePath);
+  } catch {
+    // Non-fatal: hooks must not crash the Claude Code session
+    try {
+      // Clean up tmp file if it exists
+      if (existsSync(tmpPath)) {
+        renameSync(tmpPath, tmpPath + ".dead");
+      }
+    } catch { /* ignore */ }
+    process.exit(0);
+  }
+
+  // 6. Update rate-limit sentinel
+  touchCheckpointSentinel(notesDir);
+
+  // Silent success — hooks should not produce noise
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
 
@@ -669,4 +861,22 @@ export function registerSessionCommands(
         cmdRoute(getDb(), projectSlug, number, targetProject, opts);
       }
     );
+
+  // pai session checkpoint <message>
+  sessionCmd
+    .command("checkpoint <message>")
+    .description(
+      "Append a timestamped checkpoint to the active session note.\n" +
+      "Designed for hooks (PostToolUse, UserPromptSubmit) — fast and silent.\n" +
+      "Rate-limited: skips silently if last checkpoint was < --min-gap seconds ago."
+    )
+    .option(
+      "--min-gap <seconds>",
+      "Minimum seconds between checkpoints (default: 300 = 5 minutes)",
+      "300"
+    )
+    .action((message: string, opts: { minGap?: string }) => {
+      // Note: does NOT call getDb() — checkpoint must work without the registry
+      cmdCheckpoint(message, opts);
+    });
 }

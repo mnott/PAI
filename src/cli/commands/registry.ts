@@ -103,15 +103,27 @@ function upsertProject(
   rootPath: string,
   encodedDir: string
 ): { id: number; isNew: boolean } {
+  const ts = now();
+
   // 1. Match by root_path
   const byPath = db
     .prepare("SELECT id FROM projects WHERE root_path = ?")
     .get(rootPath) as { id: number } | undefined;
 
   if (byPath) {
-    db.prepare(
-      "UPDATE projects SET encoded_dir = ?, updated_at = ? WHERE id = ?"
-    ).run(encodedDir, now(), byPath.id);
+    // Guard the UPDATE: only set encoded_dir if no OTHER row already owns it.
+    const encodedOwner = db
+      .prepare("SELECT id FROM projects WHERE encoded_dir = ?")
+      .get(encodedDir) as { id: number } | undefined;
+
+    if (!encodedOwner || encodedOwner.id === byPath.id) {
+      // Safe to update — nobody else owns this encoded_dir.
+      db.prepare(
+        "UPDATE projects SET encoded_dir = ?, updated_at = ? WHERE id = ?"
+      ).run(encodedDir, ts, byPath.id);
+    }
+    // If another row owns the encodedDir, leave both rows as-is; the duplicate
+    // encoded_dir situation is resolved by returning the root_path match.
     return { id: byPath.id, isNew: false };
   }
 
@@ -121,13 +133,23 @@ function upsertProject(
     .get(encodedDir) as { id: number } | undefined;
 
   if (byEncoded) {
-    db.prepare(
-      "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
-    ).run(rootPath, now(), byEncoded.id);
+    // Guard the UPDATE: only set root_path if no OTHER row already owns it.
+    const pathOwner = db
+      .prepare("SELECT id FROM projects WHERE root_path = ?")
+      .get(rootPath) as { id: number } | undefined;
+
+    if (!pathOwner || pathOwner.id === byEncoded.id) {
+      db.prepare(
+        "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
+      ).run(rootPath, ts, byEncoded.id);
+    }
     return { id: byEncoded.id, isNew: false };
   }
 
-  // 3. Insert — deduplicate slug with numeric suffix if needed
+  // 3. Insert — deduplicate slug with numeric suffix if needed.
+  //    Use INSERT OR IGNORE so that any remaining UNIQUE collision (e.g. a
+  //    race condition or an edge case in the checks above) does not throw.
+  //    We then re-query to return the winning row's id.
   let finalSlug = slug;
   let attempt = 0;
   while (true) {
@@ -139,14 +161,31 @@ function upsertProject(
     finalSlug = `${slug}-${attempt}`;
   }
 
-  const ts = now();
   const result = db
     .prepare(
-      `INSERT INTO projects
+      `INSERT OR IGNORE INTO projects
          (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'local', 'active', ?, ?)`
     )
     .run(finalSlug, finalSlug, rootPath, encodedDir, ts, ts);
+
+  // If the insert was suppressed by OR IGNORE, fall back to whichever existing
+  // row we can find and treat it as an update.
+  if (result.changes === 0) {
+    const fallback =
+      (db.prepare("SELECT id FROM projects WHERE encoded_dir = ?").get(encodedDir) as { id: number } | undefined) ??
+      (db.prepare("SELECT id FROM projects WHERE root_path = ?").get(rootPath) as { id: number } | undefined);
+
+    if (fallback) {
+      return { id: fallback.id, isNew: false };
+    }
+
+    // Should never happen, but guard against it to avoid crashing.
+    throw new Error(
+      `upsertProject: INSERT OR IGNORE was suppressed but no matching row found ` +
+      `for root_path=${rootPath} encoded_dir=${encodedDir}`
+    );
+  }
 
   return { id: result.lastInsertRowid as number, isNew: true };
 }
@@ -409,11 +448,33 @@ function performScan(db: Database): ScanResult {
       if (!registeredRow) continue; // Unknown slug — leave it for normal scan.
 
       if (registeredRow.root_path !== marker.projectRoot) {
-        // The project moved — update the stored path.
+        // The project moved — update the stored path, but guard all UNIQUE
+        // columns so we don't collide with another existing row.
         const newEncoded = encodeDir(marker.projectRoot);
-        db.prepare(
-          "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-        ).run(marker.projectRoot, newEncoded, Date.now(), registeredRow.id);
+        const now4 = Date.now();
+
+        const encodedOwner = db
+          .prepare("SELECT id FROM projects WHERE encoded_dir = ?")
+          .get(newEncoded) as { id: number } | undefined;
+        const pathOwner = db
+          .prepare("SELECT id FROM projects WHERE root_path = ?")
+          .get(marker.projectRoot) as { id: number } | undefined;
+
+        const encodedSafe = !encodedOwner || encodedOwner.id === registeredRow.id;
+        const pathSafe = !pathOwner || pathOwner.id === registeredRow.id;
+
+        if (encodedSafe && pathSafe) {
+          db.prepare(
+            "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+          ).run(marker.projectRoot, newEncoded, now4, registeredRow.id);
+        } else if (pathSafe) {
+          // encoded_dir is claimed by another row — skip that column.
+          db.prepare(
+            "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
+          ).run(marker.projectRoot, now4, registeredRow.id);
+        }
+        // If root_path is also claimed, skip the update entirely — the
+        // marker points to a path already owned by a different project row.
       }
     }
   }

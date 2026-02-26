@@ -392,6 +392,19 @@ tasks/
 
 ---
 
+## todo.md Collaboration Protocol
+
+**PAI and the user share todo.md — follow these rules to avoid conflicts:**
+
+1. **Read before write**: Always read todo.md immediately before modifying it
+2. **Append-only for new items**: Add new items at the end of the relevant section
+3. **User owns checkboxes**: Only mark items `[x]` if YOU completed them, not if the user did
+4. **PAI Notes section**: If you need to add observations or suggestions, append a `## PAI Notes` section at the bottom — never edit the user's content above
+5. **Atomic writes**: Write to `todo.md.tmp` then rename to `todo.md` to prevent partial writes
+6. **Timestamp additions**: When adding new items, include the date: `- [ ] New item (YYYY-MM-DD)`
+
+---
+
 ## Anti-Patterns to Avoid
 
 ### 1. Doing Work in Main Context

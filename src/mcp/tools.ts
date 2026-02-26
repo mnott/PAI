@@ -167,6 +167,9 @@ export interface MemorySearchParams {
   sources?: Array<"memory" | "notes">;
   limit?: number;
   mode?: "keyword" | "semantic" | "hybrid";
+  /** Maximum characters per result snippet. Default 200.
+   *  Limit context consumption — MCP results go into Claude's context window. */
+  snippetLength?: number;
 }
 
 export async function toolMemorySearch(
@@ -195,10 +198,14 @@ export async function toolMemorySearch(
     // The daemon ensures the index stays fresh; the search hot path is read-only.
 
     const mode = params.mode ?? "keyword";
+    // Limit context consumption — MCP results go into Claude's context window.
+    // Default to 5 results and 200-char snippets to keep a single search call
+    // within ~1-2K tokens rather than 5K+.
+    const snippetLength = params.snippetLength ?? 200;
     const searchOpts = {
       projectIds,
       sources: params.sources,
-      maxResults: params.limit ?? 10,
+      maxResults: params.limit ?? 5,
     };
 
     let results;
@@ -270,7 +277,12 @@ export async function toolMemorySearch(
     const formatted = withSlugs
       .map((r, i) => {
         const header = `[${i + 1}] ${r.projectSlug ?? `project:${r.projectId}`} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
-        const snippet = r.snippet.trim().slice(0, 500);
+        // Truncate snippet to snippetLength — limit context consumption.
+        // MCP results go into Claude's context window; keep each result tight.
+        const raw = r.snippet.trim();
+        const snippet = raw.length > snippetLength
+          ? raw.slice(0, snippetLength) + "..."
+          : raw;
         return `${header}\n${snippet}`;
       })
       .join("\n\n---\n\n");

@@ -165,7 +165,7 @@ export class PostgresBackend implements StorageBackend {
              (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at, fts_vector)
            VALUES
              ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-              to_tsvector('english', $9))
+              to_tsvector('simple', $9))
            ON CONFLICT (id) DO UPDATE SET
              project_id = EXCLUDED.project_id,
              source     = EXCLUDED.source,
@@ -236,7 +236,9 @@ export class PostgresBackend implements StorageBackend {
     const tsQuery = buildPgTsQuery(query);
     if (!tsQuery) return [];
 
-    const conditions: string[] = ["fts_vector @@ to_tsquery('english', $1)"];
+    // Use 'simple' dictionary: preserves tokens as-is, no language-specific
+    // stemming. Works reliably with any language (German, French, etc.).
+    const conditions: string[] = ["fts_vector @@ to_tsquery('simple', $1)"];
     const params: (string | number)[] = [tsQuery];
     let paramIdx = 2;
 
@@ -270,7 +272,7 @@ export class PostgresBackend implements StorageBackend {
         text AS snippet,
         tier,
         source,
-        ts_rank(fts_vector, to_tsquery('english', $1)) AS rank_score
+        ts_rank(fts_vector, to_tsquery('simple', $1)) AS rank_score
       FROM pai_chunks
       WHERE ${conditions.join(" AND ")}
       ORDER BY rank_score DESC

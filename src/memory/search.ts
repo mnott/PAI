@@ -105,6 +105,11 @@ export function buildFtsQuery(query: string): string {
  * Results are ordered by BM25 score (most relevant first).
  * FTS5 bm25() returns negative values; closer to 0 = more relevant.
  * We negate the score so callers get positive values where higher = better.
+ *
+ * Multilingual note: SQLite FTS5 uses the `unicode61` tokenizer by default,
+ * which handles Unicode correctly (German umlauts, French accents, etc.) without
+ * language-specific stemming. No changes needed here — it is already
+ * multilingual-safe.
  */
 export function searchMemory(
   db: Database,
