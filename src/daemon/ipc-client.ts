@@ -17,6 +17,7 @@ import type {
   NotificationEvent,
   SendResult,
 } from "../notifications/types.js";
+import type { TopicCheckParams, TopicCheckResult } from "../topics/detector.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -117,6 +118,19 @@ export class PaiClient {
   }): Promise<SendResult> {
     const result = await this.send("notification_send", payload as Record<string, unknown>);
     return result as SendResult;
+  }
+
+  // -------------------------------------------------------------------------
+  // Topic detection methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Check whether the provided context text has drifted to a different project
+   * than the session's current routing.
+   */
+  async topicCheck(params: TopicCheckParams): Promise<TopicCheckResult> {
+    const result = await this.send("topic_check", params as Record<string, unknown>);
+    return result as TopicCheckResult;
   }
 
   // -------------------------------------------------------------------------

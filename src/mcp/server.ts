@@ -32,6 +32,7 @@ import {
   toolProjectDetect,
   toolProjectHealth,
   toolNotificationConfig,
+  toolTopicDetect,
 } from "./tools.js";
 
 // ---------------------------------------------------------------------------
@@ -438,6 +439,67 @@ export async function startMcpServer(): Promise<void> {
     },
     async (args) => {
       const result = await toolNotificationConfig(args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: topic_detect
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "topic_detect",
+    [
+      "Detect whether recent conversation context has shifted to a different project.",
+      "",
+      "Call this when the conversation may have drifted away from the initially-routed project.",
+      "Provide a short summary of the recent context (last few messages or tool call results).",
+      "",
+      "Returns:",
+      "  shifted          — true if a topic shift was detected",
+      "  current_project  — the project the session is currently routed to",
+      "  suggested_project — the project that best matches the context",
+      "  confidence       — [0,1] fraction of memory mass held by suggested_project",
+      "  chunks_scored    — number of memory chunks that contributed to scoring",
+      "  top_matches      — top-3 projects with their confidence percentages",
+      "",
+      "A shift is reported when confidence >= threshold (default 0.6) and the",
+      "best-matching project differs from current_project.",
+      "",
+      "Use cases:",
+      "  - Call at session start to confirm routing is correct",
+      "  - Call periodically when working across multiple concerns",
+      "  - Integrate with pre-tool hooks for automatic drift detection",
+    ].join("\n"),
+    {
+      context: z
+        .string()
+        .describe(
+          "Recent conversation context: a few sentences summarising what the session has been discussing. " +
+          "Can include file paths, feature names, commands run, or any relevant text."
+        ),
+      current_project: z
+        .string()
+        .optional()
+        .describe(
+          "The project slug this session is currently routed to. " +
+          "If omitted, the tool still returns the best-matching project but shifted will always be false."
+        ),
+      threshold: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Minimum confidence [0,1] to declare a shift. Default: 0.6. " +
+          "Increase to reduce false positives. Decrease to catch subtle drifts."
+        ),
+    },
+    async (args) => {
+      const result = await toolTopicDetect(args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,

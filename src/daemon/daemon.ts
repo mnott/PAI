@@ -52,6 +52,7 @@ import {
   toolProjectHealth,
   toolProjectTodo,
 } from "../mcp/tools.js";
+import { detectTopicShift } from "../topics/detector.js";
 import type { PaiDaemonConfig } from "./config.js";
 import { createStorageBackend } from "../storage/factory.js";
 import type { StorageBackend } from "../storage/interface.js";
@@ -343,6 +344,13 @@ async function dispatchTool(
 
     case "project_todo":
       return toolProjectTodo(registryDb, p as Parameters<typeof toolProjectTodo>[1]);
+
+    case "topic_check":
+      return detectTopicShift(
+        registryDb,
+        storageBackend,
+        p as Parameters<typeof detectTopicShift>[2]
+      );
 
     default:
       throw new Error(`Unknown method: ${method}`);

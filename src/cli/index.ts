@@ -31,6 +31,7 @@ import { registerSetupCommand } from "./commands/setup.js";
 import { registerObsidianCommands } from "./commands/obsidian.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
+import { registerTopicCommands } from "./commands/topic.js";
 import { err } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,16 @@ const notifyCmd = program
   .description("Notification config: status, get, set, test, send");
 
 registerNotifyCommands(notifyCmd);
+
+// ---------------------------------------------------------------------------
+// pai topic
+// ---------------------------------------------------------------------------
+
+const topicCmd = program
+  .command("topic")
+  .description("Topic shift detection: check whether context has drifted to a different project");
+
+registerTopicCommands(topicCmd);
 
 // ---------------------------------------------------------------------------
 // pai obsidian
