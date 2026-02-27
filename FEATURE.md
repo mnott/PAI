@@ -19,7 +19,7 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Language** | Python | TypeScript (Bun) |
 | **Primary interface** | CLI pipe (`echo "..." \| fabric -p pattern`) | MCP server + CLI (`pai`) |
 | **Prompt templates** | Yes — 200+ community "patterns" | No (out of scope) |
-| **YouTube transcript extraction** | Yes (built-in) | No |
+| **YouTube transcript extraction** | Yes (built-in) | Yes — via [Scribe MCP](https://github.com/mnott/Scribe) |
 | **LLM pipe-through workflow** | Yes — core feature | No |
 | **Persistent session memory** | No | Yes — auto-indexed, 449K+ chunks |
 | **Session registry** | No | Yes — SQLite, tracks 77+ projects |
@@ -34,6 +34,7 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Hook system** | No | Yes — pre-compact, session-stop, auto-cleanup |
 | **Backup / restore** | No | Yes — timestamped pg_dump + registry export |
 | **Multi-session concurrency** | n/a | Yes — daemon multiplexes Claude sessions |
+| **Custom statusline** | No | Yes — model, MCPs, context meter, colors |
 | **Local / private** | Yes | Yes — no cloud, no external API for core |
 | **Docker required** | No | Only for full mode (PostgreSQL); SQLite mode needs none |
 | **macOS / Linux** | Yes | Yes |
@@ -95,7 +96,9 @@ To be clear about scope:
 - **Pipe-through LLM workflows** — Fabric's `echo "..." | fabric -p pattern` idiom is elegant
   for processing text at the command line. PAI doesn't replicate this.
 - **YouTube / web extraction** — Fabric can pull transcripts and content from URLs as input to
-  patterns. PAI doesn't.
+  patterns. PAI covers YouTube transcription via the companion
+  [Scribe MCP](https://github.com/mnott/Scribe) server, but does not replicate Fabric's
+  web-scraping pipeline.
 
 If you want prompt patterns and CLI pipe-through workflows, use Fabric. If you want Claude
 Code to remember everything across sessions, use this.
