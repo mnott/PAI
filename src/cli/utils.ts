@@ -164,12 +164,17 @@ export function smartDecodeDir(encoded: string): string | null {
 
     // Encode each candidate entry and find matches against remaining string.
     // Sort by encoded length descending so we prefer the longest (most specific) match.
+    // Use case-insensitive comparison because macOS (HFS+/APFS) is case-insensitive
+    // by default, and Claude Code may have encoded the dir with different casing
+    // than what currently exists on disk (e.g. directory was renamed TEKmidian → TEKMidian).
     const candidates: { name: string; enc: string }[] = [];
+    const remainingLower = remaining.toLowerCase();
     for (const name of entries) {
       // Encode this entry the same way Claude Code does (without the leading /)
       const enc = name.replace(/[\s.\-]/g, "-");
+      const encLower = enc.toLowerCase();
       // Must match at start of remaining, followed by `-` separator or end of string
-      if (remaining === enc || remaining.startsWith(enc + "-")) {
+      if (remainingLower === encLower || remainingLower.startsWith(encLower + "-")) {
         candidates.push({ name, enc });
       }
     }
@@ -184,7 +189,8 @@ export function smartDecodeDir(encoded: string): string | null {
     let matched = false;
     for (const { name, enc } of candidates) {
       const nextPath = join(current, name);
-      const nextRemaining = remaining === enc ? "" : remaining.slice(enc.length + 1);
+      // Use enc.length to consume the right number of chars (case-insensitive match)
+      const nextRemaining = remainingLower === enc.toLowerCase() ? "" : remaining.slice(enc.length + 1);
 
       // If nothing left, this is the final segment — accept it
       if (nextRemaining === "") {
