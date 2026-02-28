@@ -130,7 +130,7 @@ export class PaiClient {
    * than the session's current routing.
    */
   async topicCheck(params: TopicCheckParams): Promise<TopicCheckResult> {
-    const result = await this.send("topic_check", params as Record<string, unknown>);
+    const result = await this.send("topic_check", params as unknown as Record<string, unknown>);
     return result as TopicCheckResult;
   }
 

@@ -37,10 +37,17 @@ Claude Code Session
 
 **Storage** — Two databases serve different roles:
 
-- **PostgreSQL + pgvector** (`pai` database, Docker): Stores text chunks, vector embeddings (768-dim, Snowflake Arctic), and file metadata. HNSW indexes for fast approximate nearest-neighbor search. GIN indexes for full-text search.
-- **SQLite registry** (`~/.pai/registry.db`): Lightweight metadata store for projects, sessions, tags, aliases, and cross-references.
+| Layer | Backend | Location | Purpose |
+|-------|---------|----------|---------|
+| **Registry** | SQLite (always) | `~/.pai/registry.db` | Projects, sessions, tags, aliases, links. Single-writer is fine — only the CLI and daemon write. Uses `better-sqlite3`. |
+| **Memory / Embeddings** | Factory-switchable | PostgreSQL (full) or SQLite (simple) | Text chunks, vector embeddings, file metadata. Chosen at setup time via `~/.config/pai/config.json`. |
 
-**Embeddings** — Snowflake Arctic Embed produces 768-dimensional embeddings. The daemon generates embeddings asynchronously in the background after initial text indexing, so keyword search is available immediately and semantic search follows within minutes.
+- **Simple mode (SQLite)**: Zero dependencies. Keyword search (BM25 via FTS5) works immediately. No Docker needed. Best for trying PAI or smaller setups.
+- **Full mode (PostgreSQL + pgvector)**: Semantic search via HNSW vector indexes (768-dim, Snowflake Arctic). GIN indexes for full-text search. Runs in Docker (`pai-pgvector` container, `restart: unless-stopped`). Best for large knowledge bases (100K+ documents).
+
+The storage backend is selected during `pai setup` and configured in `~/.config/pai/config.json` (`storageBackend: "sqlite"` or `"postgres"`). The factory pattern (`src/storage/factory.ts`) instantiates the correct backend at runtime. Both backends implement the same `StorageInterface` (`src/storage/interface.ts`), so all higher-level code (indexer, search, MCP tools) is backend-agnostic.
+
+**Embeddings** — Snowflake Arctic Embed produces 768-dimensional embeddings (PostgreSQL mode only). The daemon generates embeddings asynchronously in the background after initial text indexing, so keyword search is available immediately and semantic search follows within minutes. The embedding process runs at reduced CPU priority (`setPriority(pid, 10)`).
 
 ---
 

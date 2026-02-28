@@ -224,7 +224,7 @@ export function registerRestoreCommands(program: Command): void {
 
           // Drop and recreate the database, then restore
           const dropCreate = `docker exec ${DOCKER_CONTAINER} psql -U ${PG_USER} -c "DROP DATABASE IF EXISTS ${PG_DATABASE}; CREATE DATABASE ${PG_DATABASE} OWNER ${PG_USER};"`;
-          execSync(dropCreate, { stdio: "pipe", shell: true });
+          execSync(dropCreate, { stdio: "pipe", shell: true as unknown as string });
 
           // Pipe the SQL dump into psql
           const sqlContent = readFileSync(join(resolvedDir, "postgres-pai.sql"), "utf8");

@@ -144,7 +144,7 @@ export function registerBackupCommands(program: Command): void {
 
           execSync(
             `docker exec ${DOCKER_CONTAINER} pg_dump -U ${PG_USER} ${PG_DATABASE} > "${sqlDest}"`,
-            { stdio: ["pipe", "pipe", "pipe"], shell: true }
+            { stdio: ["pipe", "pipe", "pipe"], shell: true as unknown as string }
           );
           results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok") });
         } catch (e) {

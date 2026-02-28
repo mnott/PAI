@@ -235,7 +235,8 @@ async function startDocker(rl: ReturnType<typeof createRl>): Promise<boolean> {
 async function testPostgresConnection(connectionString: string): Promise<boolean> {
   // Quick connection test using pg
   try {
-    const { default: pg } = await import("pg") as { default: typeof import("pg") };
+    const pgModule = await import("pg");
+    const pg = pgModule.default ?? pgModule;
     const client = new pg.Client({ connectionString });
     await client.connect();
     await client.end();
