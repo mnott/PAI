@@ -124,9 +124,90 @@ export function findExistingEncodedDir(absolutePath: string): string | null {
  */
 export function decodeDir(encodedDir: string): string {
   if (!encodedDir) return "/";
-  // Encoded dirs start with `-` (from the leading `/`).
-  // Best-effort: treat every `-` as `/`.
+  // Try filesystem-walking decode first (handles spaces, dots, hyphens correctly)
+  const smart = smartDecodeDir(encodedDir);
+  if (smart) return smart;
+  // Fallback: treat every `-` as `/` (wrong for paths with spaces/dots/hyphens)
   return encodedDir.replace(/-/g, "/");
+}
+
+/**
+ * Decode a Claude encoded-dir by walking the actual filesystem.
+ *
+ * Because the encoding is lossy (/, space, dot, and hyphen all → `-`), the
+ * only reliable way to reverse it is to check what actually exists on disk.
+ *
+ * Algorithm: starting from `/`, read directory entries at each level, encode
+ * each candidate, and greedily match the longest one against the remaining
+ * encoded string.  This correctly resolves e.g.:
+ *
+ *   "-Users-foo-09---Job-Search"  →  "/Users/foo/09 - Job Search"
+ *   "-Users-foo-87---DevonThink"  →  "/Users/foo/87 - DevonThink"
+ *   "-Users-foo-MDF-System-de"    →  "/Users/foo/MDF-System.de"
+ *
+ * Returns `null` if the path cannot be resolved against the filesystem.
+ */
+export function smartDecodeDir(encoded: string): string | null {
+  if (!encoded || !encoded.startsWith("-")) return null;
+
+  // Strip the leading `-` (encodes the leading `/`)
+  let remaining = encoded.slice(1);
+  let current = "/";
+
+  while (remaining.length > 0) {
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch {
+      return null; // Can't read directory
+    }
+
+    // Encode each candidate entry and find matches against remaining string.
+    // Sort by encoded length descending so we prefer the longest (most specific) match.
+    const candidates: { name: string; enc: string }[] = [];
+    for (const name of entries) {
+      // Encode this entry the same way Claude Code does (without the leading /)
+      const enc = name.replace(/[\s.\-]/g, "-");
+      // Must match at start of remaining, followed by `-` separator or end of string
+      if (remaining === enc || remaining.startsWith(enc + "-")) {
+        candidates.push({ name, enc });
+      }
+    }
+
+    if (candidates.length === 0) return null; // No match found
+
+    // Prefer longest encoded match (most specific)
+    candidates.sort((a, b) => b.enc.length - a.enc.length);
+
+    // Try each candidate — pick the first one that is a real directory
+    // (or the last segment which may be a file)
+    let matched = false;
+    for (const { name, enc } of candidates) {
+      const nextPath = join(current, name);
+      const nextRemaining = remaining === enc ? "" : remaining.slice(enc.length + 1);
+
+      // If nothing left, this is the final segment — accept it
+      if (nextRemaining === "") {
+        return nextPath;
+      }
+
+      // Otherwise, verify this is a directory we can descend into
+      try {
+        if (statSync(nextPath).isDirectory()) {
+          current = nextPath;
+          remaining = nextRemaining;
+          matched = true;
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (!matched) return null;
+  }
+
+  return current;
 }
 
 /**

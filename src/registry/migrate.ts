@@ -19,6 +19,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Database } from "better-sqlite3";
+import { smartDecodeDir } from "../cli/utils.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,16 +124,23 @@ export function decodeEncodedDir(
   encoded: string,
   lookupMap?: Map<string, string>
 ): string {
-  // Authoritative lookup wins
+  // Authoritative lookup wins — but only if the path actually exists on disk.
+  // session-registry.json may contain stale or incorrectly decoded paths.
+  if (lookupMap?.has(encoded)) {
+    const mapped = lookupMap.get(encoded)!;
+    if (existsSync(mapped)) return mapped;
+  }
+
+  // Filesystem-walking decode (handles spaces, dots, hyphens correctly)
+  const smart = smartDecodeDir(encoded);
+  if (smart) return smart;
+
+  // Fall back to lookup map even if path doesn't exist (for display purposes)
   if (lookupMap?.has(encoded)) {
     return lookupMap.get(encoded)!;
   }
 
-  // Best-effort heuristic: every `-` maps to `/`.
-  // This is correct for simple paths (no spaces, dots, or literal hyphens
-  // in component names) but will produce wrong results for e.g. `.ssh`
-  // (decoded as `/ssh` instead of `/.ssh`).  That's acceptable here because
-  // callers should be using the lookupMap for paths that exist in the registry.
+  // Last resort: every `-` maps to `/` (wrong for paths with spaces/dots/hyphens)
   if (encoded.startsWith("-")) {
     return encoded.replace(/-/g, "/");
   }

@@ -22,7 +22,7 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **YouTube transcript extraction** | Yes (built-in) | Yes — via [Scribe MCP](https://github.com/mnott/Scribe) |
 | **WhatsApp integration** | No | Yes — via [Whazaa MCP](https://github.com/mnott/Whazaa) |
 | **Google Workspace integration** | No | Yes — via [Coogle MCP](https://github.com/mnott/Coogle) |
-| **DEVONthink integration** | No | Yes — via [devonthink-mcp](https://github.com/mnott/devonthink-mcp) |
+| **DEVONthink integration** | No | Yes — via [devonthink-mcp](https://github.com/mnott/Devon) |
 | **Hookmark integration** | No | Yes — via [Hook MCP](https://github.com/mnott/Hook) |
 | **LLM pipe-through workflow** | Yes — core feature | No |
 | **Persistent session memory** | No | Yes — auto-indexed, 449K+ chunks |
