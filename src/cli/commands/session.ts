@@ -983,6 +983,140 @@ function cmdHandover(
 }
 
 // ---------------------------------------------------------------------------
+// cmd: active — detect currently open Claude Code sessions
+// ---------------------------------------------------------------------------
+
+function cmdActive(
+  db: Database,
+  opts: { minutes?: string; json?: boolean }
+): void {
+  const minutes = parseInt(opts.minutes ?? "60", 10);
+  const cutoff = Date.now() - minutes * 60 * 1000;
+  const claudeProjectsDir = join(homedir(), ".claude", "projects");
+
+  if (!existsSync(claudeProjectsDir)) {
+    console.log(err("Claude projects directory not found."));
+    return;
+  }
+
+  interface ActiveSession {
+    slug: string;
+    displayName: string;
+    rootPath: string;
+    encodedDir: string;
+    lastModified: Date;
+    jsonlFile: string;
+  }
+
+  const active: ActiveSession[] = [];
+  const entries = readdirSync(claudeProjectsDir);
+
+  for (const entry of entries) {
+    const projectDir = join(claudeProjectsDir, entry);
+    try {
+      if (!statSync(projectDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    // Find the most recently modified JSONL file in this project dir
+    let latestJsonl: string | null = null;
+    let latestMtime = 0;
+
+    try {
+      for (const file of readdirSync(projectDir)) {
+        if (!file.endsWith(".jsonl")) continue;
+        const filePath = join(projectDir, file);
+        try {
+          const mtime = statSync(filePath).mtimeMs;
+          if (mtime > latestMtime) {
+            latestMtime = mtime;
+            latestJsonl = filePath;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      continue;
+    }
+
+    if (!latestJsonl || latestMtime < cutoff) continue;
+
+    // Look up this project in the registry
+    const project = db
+      .prepare(
+        "SELECT slug, display_name, root_path FROM projects WHERE encoded_dir = ?"
+      )
+      .get(entry) as
+      | { slug: string; display_name: string; root_path: string }
+      | undefined;
+
+    active.push({
+      slug: project?.slug ?? entry,
+      displayName: project?.display_name ?? project?.slug ?? entry,
+      rootPath: project?.root_path ?? "",
+      encodedDir: entry,
+      lastModified: new Date(latestMtime),
+      jsonlFile: latestJsonl,
+    });
+  }
+
+  // Sort by most recently modified first
+  active.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+
+  // Deduplicate by slug (dev symlinks and cloud paths may point to same project)
+  const seen = new Set<string>();
+  const deduped = active.filter((a) => {
+    const key = a.slug.replace(/-\d+$/, ""); // strip -1, -2 suffixes
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        deduped.map((a) => ({
+          slug: a.slug,
+          display_name: a.displayName,
+          root_path: a.rootPath,
+          last_modified: a.lastModified.toISOString(),
+        })),
+        null,
+        2
+      )
+    );
+    return;
+  }
+
+  if (deduped.length === 0) {
+    console.log(dim(`No active sessions in the last ${minutes} minutes.`));
+    return;
+  }
+
+  console.log(
+    header(`Currently Active Sessions`) +
+      dim(` (modified in last ${minutes}min)`)
+  );
+  console.log();
+
+  const rows = deduped.map((a) => {
+    const time = a.lastModified.toTimeString().slice(0, 5);
+    const dirName = a.rootPath
+      ? a.rootPath.replace(homedir(), "~").split("/").pop() ?? a.slug
+      : a.slug;
+    return [
+      chalk.cyan(dirName),
+      dim(a.slug),
+      chalk.green(time),
+    ];
+  });
+
+  console.log(renderTable(["Directory", "Project", "Last Active"], rows));
+}
+
+// ---------------------------------------------------------------------------
 // cmd: auto-route
 // ---------------------------------------------------------------------------
 
@@ -1152,6 +1286,20 @@ export function registerSessionCommands(
     .action((message: string, opts: { minGap?: string }) => {
       // Note: does NOT call getDb() — checkpoint must work without the registry
       cmdCheckpoint(message, opts);
+    });
+
+  // pai session active [--minutes N] [--json]
+  sessionCmd
+    .command("active")
+    .description(
+      "Show currently active Claude Code sessions.\n" +
+      "Detects live sessions by checking which JSONL transcript files\n" +
+      "were recently modified in ~/.claude/projects/."
+    )
+    .option("--minutes <n>", "Consider sessions active if modified within N minutes (default: 60)", "60")
+    .option("--json", "Output raw JSON instead of formatted display")
+    .action((opts: { minutes?: string; json?: boolean }) => {
+      cmdActive(getDb(), opts);
     });
 
   // pai session auto-route [--cwd path] [--context "text"] [--json]
