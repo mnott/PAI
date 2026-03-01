@@ -2,23 +2,29 @@
  * pai setup — Interactive setup wizard for PAI Knowledge OS
  *
  * Guides new users through:
- *   1. Welcome and overview
- *   2. Storage backend selection (PostgreSQL/SQLite)
- *   3. Embedding model selection
- *   4. Agent configuration (CLAUDE.md generation)
- *   5. Directory scanning configuration
- *   6. Initial index (optional)
- *   7. Summary and next steps
+ *   1.  Welcome and overview
+ *   2.  Storage backend selection (PostgreSQL/SQLite)
+ *   3.  Embedding model selection
+ *   4.  Agent configuration (CLAUDE.md generation)
+ *   5.  PAI skill installation (~/.claude/skills/PAI/SKILL.md)
+ *   6.  Hook scripts (pre-compact, session-stop, statusline)
+ *   7.  Settings.json patching (env vars, hooks, statusline)
+ *   8.  Daemon install (launchd plist)
+ *   9.  MCP registration (~/.claude.json)
+ *   10. Directory scanning configuration
+ *   11. Initial index (optional)
+ *   12. Summary and next steps
  */
 
 import type { Command } from "commander";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { CONFIG_DIR, CONFIG_FILE, loadConfig } from "../../daemon/config.js";
+import { mergeSettings } from "./settings-manager.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -199,6 +205,31 @@ function getTemplatesDir(): string {
   return join(process.cwd(), "templates");
 }
 
+function getHooksDir(): string {
+  // Find the src/hooks/ directory relative to the installed package
+  const candidates = [
+    join(process.cwd(), "src", "hooks"),
+    join(homedir(), "dev", "ai", "PAI", "src", "hooks"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "src", "hooks"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(join(c, "session-stop.sh"))) return c;
+  }
+  return join(process.cwd(), "src", "hooks");
+}
+
+function getStatuslineScript(): string | null {
+  const candidates = [
+    join(process.cwd(), "statusline-command.sh"),
+    join(homedir(), "dev", "ai", "PAI", "statusline-command.sh"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "statusline-command.sh"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
 async function startDocker(rl: ReturnType<typeof createRl>): Promise<boolean> {
   const dockerDir = getDockerDir();
   const composePath = join(dockerDir, "docker-compose.yml");
@@ -278,6 +309,35 @@ function stepWelcome(): void {
  */
 async function stepStorage(rl: ReturnType<typeof createRl>): Promise<Record<string, unknown>> {
   section("Step 2: Storage Backend");
+
+  // Idempotency: check if config already exists with a storage backend
+  const existing = readConfigRaw();
+  if (existing.storageBackend) {
+    const backend = String(existing.storageBackend);
+    if (backend === "postgres") {
+      // Verify container is running
+      try {
+        const result = spawnSync("docker", ["ps", "--filter", "name=pai-pgvector", "--format", "{{.Status}}"], { stdio: "pipe" });
+        const status = result.stdout?.toString().trim();
+        if (status && status.includes("Up")) {
+          console.log(c.ok(`Storage backend: PostgreSQL (container running). Skipping.`));
+          return existing;
+        }
+        // Container exists but not running — try to start it
+        console.log(c.dim("  PostgreSQL container found but not running. Starting..."));
+        await startDocker(rl);
+        await new Promise((r) => setTimeout(r, 3000));
+        console.log(c.ok("PostgreSQL container started."));
+      } catch {
+        console.log(c.ok(`Storage backend: PostgreSQL (configured). Skipping.`));
+      }
+      return existing;
+    } else {
+      console.log(c.ok(`Storage backend: ${backend}. Skipping.`));
+      return existing;
+    }
+  }
+
   line();
   line("  Choose how PAI stores your indexed knowledge:");
   line();
@@ -411,6 +471,14 @@ async function stepStorage(rl: ReturnType<typeof createRl>): Promise<Record<stri
  */
 async function stepEmbedding(rl: ReturnType<typeof createRl>): Promise<Record<string, unknown>> {
   section("Step 3: Embedding Model");
+
+  // Idempotency: check if embedding model is already configured
+  const existing = readConfigRaw();
+  if (existing.embeddingModel) {
+    console.log(c.ok(`Embedding model: ${existing.embeddingModel}. Skipping.`));
+    return { embeddingModel: existing.embeddingModel };
+  }
+
   line();
   line(
     "  An embedding model converts your text into vectors for semantic search.",
@@ -578,10 +646,330 @@ async function stepClaudeMd(rl: ReturnType<typeof createRl>): Promise<boolean> {
 }
 
 /**
- * Step 5: Directory scanning configuration
+ * Step 5: PAI skill installation (~/.claude/skills/PAI/SKILL.md)
+ */
+async function stepPaiSkill(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 5: PAI Skill Installation");
+  line();
+  line("  PAI ships a SKILL.md that tells Claude Code how to invoke PAI commands.");
+  line();
+
+  const templatesDir = getTemplatesDir();
+  const templatePath = join(templatesDir, "pai-skill.template.md");
+
+  if (!existsSync(templatePath)) {
+    console.log(c.warn("Skill template not found: " + templatePath));
+    console.log(c.dim("  Skipping PAI skill installation."));
+    return false;
+  }
+
+  const skillDir = join(homedir(), ".claude", "skills", "PAI");
+  const skillFile = join(skillDir, "SKILL.md");
+
+  if (existsSync(skillFile)) {
+    const content = readFileSync(skillFile, "utf-8");
+    const isGenerated = content.includes("Generated by PAI Setup");
+    if (isGenerated) {
+      console.log(c.dim("  Found existing PAI-generated SKILL.md."));
+    } else {
+      console.log(c.yellow("  Found existing SKILL.md (not PAI-generated)."));
+      console.log(c.dim("  A backup will be created before overwriting."));
+    }
+    line();
+
+    const overwrite = await promptYesNo(
+      rl,
+      "Update ~/.claude/skills/PAI/SKILL.md with the latest PAI skill?",
+      isGenerated,
+    );
+
+    if (!overwrite) {
+      console.log(c.dim("  Keeping existing SKILL.md unchanged."));
+      return false;
+    }
+
+    if (!isGenerated) {
+      const backupPath = skillFile + ".backup";
+      writeFileSync(backupPath, content, "utf-8");
+      console.log(c.ok(`Backed up existing SKILL.md to ${backupPath}`));
+    }
+  } else {
+    const install = await promptYesNo(
+      rl,
+      "Install PAI skill to ~/.claude/skills/PAI/SKILL.md?",
+      true,
+    );
+
+    if (!install) {
+      console.log(c.dim("  Skipping PAI skill installation."));
+      return false;
+    }
+  }
+
+  // Read template and substitute ${HOME}
+  let template = readFileSync(templatePath, "utf-8");
+  template = template.replace(/\$\{HOME\}/g, homedir());
+
+  // Write skill file
+  if (!existsSync(skillDir)) {
+    mkdirSync(skillDir, { recursive: true });
+  }
+  writeFileSync(skillFile, template, "utf-8");
+
+  line();
+  console.log(c.ok("Installed ~/.claude/skills/PAI/SKILL.md"));
+  return true;
+}
+
+/**
+ * Step 6: Hook scripts (pre-compact, session-stop, statusline)
+ */
+async function stepHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 6: Lifecycle Hooks");
+  line();
+  line("  PAI hooks fire on session stop and context compaction to save state,");
+  line("  update notes, and display live statusline information.");
+  line();
+
+  const install = await promptYesNo(
+    rl,
+    "Install PAI lifecycle hooks (session stop, pre-compact, statusline)?",
+    true,
+  );
+
+  if (!install) {
+    console.log(c.dim("  Skipping hook installation."));
+    return false;
+  }
+
+  const hooksDir = getHooksDir();
+  const statuslineSrc = getStatuslineScript();
+
+  const claudeDir = join(homedir(), ".claude");
+  const hooksTarget = join(claudeDir, "Hooks");
+
+  if (!existsSync(hooksTarget)) {
+    mkdirSync(hooksTarget, { recursive: true });
+  }
+
+  let anyInstalled = false;
+
+  // Helper: copy a file if it differs from destination
+  function installFile(src: string, dest: string, label: string): void {
+    if (!existsSync(src)) {
+      console.log(c.warn(`  Source not found: ${src}`));
+      return;
+    }
+
+    const srcContent = readFileSync(src, "utf-8");
+
+    if (existsSync(dest)) {
+      const destContent = readFileSync(dest, "utf-8");
+      if (srcContent === destContent) {
+        console.log(c.dim(`  Unchanged: ${label}`));
+        return;
+      }
+    }
+
+    copyFileSync(src, dest);
+    chmodSync(dest, 0o755);
+    console.log(c.ok(`Installed: ${label}`));
+    anyInstalled = true;
+  }
+
+  line();
+  installFile(
+    join(hooksDir, "pre-compact.sh"),
+    join(hooksTarget, "pai-pre-compact.sh"),
+    "pai-pre-compact.sh",
+  );
+  installFile(
+    join(hooksDir, "session-stop.sh"),
+    join(hooksTarget, "pai-session-stop.sh"),
+    "pai-session-stop.sh",
+  );
+
+  if (statuslineSrc) {
+    installFile(
+      statuslineSrc,
+      join(claudeDir, "statusline-command.sh"),
+      "statusline-command.sh",
+    );
+  } else {
+    console.log(c.warn("  statusline-command.sh not found — skipping statusline."));
+  }
+
+  return anyInstalled;
+}
+
+/**
+ * Step 7: Patch ~/.claude/settings.json with PAI hooks, env vars, and statusline
+ */
+async function stepSettings(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 7: Settings Patch");
+  line();
+  line("  PAI will add env vars, hook registrations, and the statusline command");
+  line("  to ~/.claude/settings.json. Existing values are never overwritten.");
+  line();
+
+  const patch = await promptYesNo(
+    rl,
+    "Patch ~/.claude/settings.json with PAI hooks, env vars, and statusline?",
+    true,
+  );
+
+  if (!patch) {
+    console.log(c.dim("  Skipping settings patch."));
+    return false;
+  }
+
+  const paiDir = join(homedir(), ".claude");
+
+  const result = mergeSettings({
+    env: {
+      PAI_DIR: paiDir,
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
+    },
+    hooks: [
+      {
+        hookType: "PreCompact",
+        matcher: "",
+        command: "${PAI_DIR}/Hooks/pai-pre-compact.sh",
+      },
+      {
+        hookType: "Stop",
+        command: "${PAI_DIR}/Hooks/pai-session-stop.sh",
+      },
+    ],
+    statusLine: {
+      type: "command",
+      command: "bash ${PAI_DIR}/statusline-command.sh",
+    },
+  });
+
+  line();
+  for (const r of result.report) {
+    console.log(r);
+  }
+
+  if (!result.changed) {
+    console.log(c.dim("  Settings already up-to-date. No changes made."));
+  }
+
+  return result.changed;
+}
+
+/**
+ * Step 8: Daemon install (launchd plist)
+ */
+async function stepDaemon(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 8: Daemon Install");
+  line();
+  line("  The PAI daemon indexes your projects every 5 minutes in the background.");
+  line();
+
+  const plistPath = join(
+    homedir(),
+    "Library",
+    "LaunchAgents",
+    "com.pai.pai-daemon.plist",
+  );
+
+  const exists = existsSync(plistPath);
+
+  if (exists) {
+    console.log(c.dim("  PAI daemon plist already installed."));
+    line();
+
+    const reinstall = await promptYesNo(
+      rl,
+      "Reinstall the PAI daemon launchd plist?",
+      false,
+    );
+
+    if (!reinstall) {
+      console.log(c.dim("  Keeping existing daemon installation."));
+      return false;
+    }
+  } else {
+    const install = await promptYesNo(
+      rl,
+      "Install the PAI daemon to run automatically at login?",
+      true,
+    );
+
+    if (!install) {
+      console.log(c.dim("  Skipping daemon install. Run manually: pai daemon install"));
+      return false;
+    }
+  }
+
+  line();
+  const result = spawnSync("pai", ["daemon", "install"], { stdio: "inherit" });
+
+  if (result.status !== 0) {
+    console.log(c.warn("  Daemon install failed. Run manually: pai daemon install"));
+    return false;
+  }
+
+  console.log(c.ok("Daemon installed as com.pai.pai-daemon."));
+  return true;
+}
+
+/**
+ * Step 9: MCP registration in ~/.claude.json
+ */
+async function stepMcp(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 9: MCP Registration");
+  line();
+  line("  Registering the PAI MCP server lets Claude Code call PAI tools directly.");
+  line();
+
+  // Check if already registered
+  const claudeJsonPath = join(homedir(), ".claude.json");
+  if (existsSync(claudeJsonPath)) {
+    try {
+      const raw = readFileSync(claudeJsonPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const mcpServers = parsed["mcpServers"] as Record<string, unknown> | undefined;
+      if (mcpServers && Object.prototype.hasOwnProperty.call(mcpServers, "pai")) {
+        console.log(c.ok("PAI MCP server already registered in ~/.claude.json."));
+        console.log(c.dim("  Skipping MCP registration."));
+        return false;
+      }
+    } catch {
+      // If we can't parse, continue with registration attempt
+    }
+  }
+
+  const register = await promptYesNo(
+    rl,
+    "Register the PAI MCP server in ~/.claude.json?",
+    true,
+  );
+
+  if (!register) {
+    console.log(c.dim("  Skipping MCP registration. Run manually: pai mcp install"));
+    return false;
+  }
+
+  line();
+  const result = spawnSync("pai", ["mcp", "install"], { stdio: "inherit" });
+
+  if (result.status !== 0) {
+    console.log(c.warn("  MCP registration failed. Run manually: pai mcp install"));
+    return false;
+  }
+
+  console.log(c.ok("PAI MCP server registered in ~/.claude.json."));
+  return true;
+}
+
+/**
+ * Step 10: Directory scanning configuration
  */
 async function stepDirectories(rl: ReturnType<typeof createRl>): Promise<void> {
-  section("Step 5: Directories to Index");
+  section("Step 10: Directories to Index");
   line();
   line(
     "  PAI indexes files in your registered projects. You can register projects",
@@ -627,10 +1015,10 @@ async function stepDirectories(rl: ReturnType<typeof createRl>): Promise<void> {
 }
 
 /**
- * Step 6: Initial index
+ * Step 11: Initial index
  */
 async function stepInitialIndex(rl: ReturnType<typeof createRl>): Promise<void> {
-  section("Step 6: Initial Index");
+  section("Step 11: Initial Index");
   line();
   line(
     "  Indexing scans your registered projects and builds the search index.",
@@ -695,9 +1083,17 @@ async function stepInitialIndex(rl: ReturnType<typeof createRl>): Promise<void> 
 }
 
 /**
- * Step 7: Summary and next steps
+ * Step 12: Summary and next steps
  */
-function stepSummary(configUpdates: Record<string, unknown>, claudeMdGenerated: boolean): void {
+function stepSummary(
+  configUpdates: Record<string, unknown>,
+  claudeMdGenerated: boolean,
+  paiSkillInstalled: boolean,
+  hooksInstalled: boolean,
+  settingsPatched: boolean,
+  daemonInstalled: boolean,
+  mcpRegistered: boolean,
+): void {
   section("Setup Complete");
   line();
   console.log(c.ok("PAI Knowledge OS is configured!"));
@@ -715,9 +1111,39 @@ function stepSummary(configUpdates: Record<string, unknown>, claudeMdGenerated: 
     chalk.cyan(model && model !== "none" ? model : "(none — keyword search only)"),
   );
   console.log(
-    chalk.dim("  Agent config:     ") +
+    chalk.dim("  CLAUDE.md:        ") +
     chalk.cyan(claudeMdGenerated ? "~/.claude/CLAUDE.md (generated)" : "(unchanged)"),
   );
+  console.log(
+    chalk.dim("  PAI skill:        ") +
+    chalk.cyan(
+      paiSkillInstalled
+        ? "~/.claude/skills/PAI/SKILL.md (installed)"
+        : "(unchanged)",
+    ),
+  );
+  console.log(
+    chalk.dim("  Hooks:            ") +
+    chalk.cyan(
+      hooksInstalled
+        ? "pai-pre-compact.sh, pai-session-stop.sh (installed)"
+        : "(unchanged)",
+    ),
+  );
+  console.log(
+    chalk.dim("  Settings:         ") +
+    chalk.cyan(settingsPatched ? "env vars, hooks, statusline (patched)" : "(unchanged)"),
+  );
+  console.log(
+    chalk.dim("  Daemon:           ") +
+    chalk.cyan(daemonInstalled ? "com.pai.pai-daemon (installed)" : "(unchanged)"),
+  );
+  console.log(
+    chalk.dim("  MCP:              ") +
+    chalk.cyan(mcpRegistered ? "registered in ~/.claude.json" : "(unchanged)"),
+  );
+  line();
+  console.log(chalk.bold.yellow("  → RESTART Claude Code to activate all changes."));
   line();
 
   line(chalk.bold("  Next steps:"));
@@ -787,7 +1213,6 @@ async function runSetup(): Promise<void> {
     await prompt(rl, chalk.dim("  Press Enter to begin setup..."));
 
     // Step 2: Storage
-    section("Step 2: Storage Backend");
     const storageConfig = await stepStorage(rl);
 
     // Step 3: Embeddings
@@ -796,7 +1221,22 @@ async function runSetup(): Promise<void> {
     // Step 4: Agent configuration (CLAUDE.md)
     const claudeMdGenerated = await stepClaudeMd(rl);
 
-    // Step 5: Directories (informational — no config written)
+    // Step 5: PAI Skill
+    const paiSkillInstalled = await stepPaiSkill(rl);
+
+    // Step 6: Hooks
+    const hooksInstalled = await stepHooks(rl);
+
+    // Step 7: Settings.json
+    const settingsPatched = await stepSettings(rl);
+
+    // Step 8: Daemon
+    const daemonInstalled = await stepDaemon(rl);
+
+    // Step 9: MCP
+    const mcpRegistered = await stepMcp(rl);
+
+    // Step 10: Directories (informational — no config written)
     await stepDirectories(rl);
 
     // Write config after gathering all choices
@@ -806,11 +1246,19 @@ async function runSetup(): Promise<void> {
     line();
     console.log(c.ok("Configuration saved."));
 
-    // Step 6: Initial index
+    // Step 11: Initial index
     await stepInitialIndex(rl);
 
-    // Step 7: Summary
-    stepSummary(allUpdates, claudeMdGenerated);
+    // Step 12: Summary
+    stepSummary(
+      allUpdates,
+      claudeMdGenerated,
+      paiSkillInstalled,
+      hooksInstalled,
+      settingsPatched,
+      daemonInstalled,
+      mcpRegistered,
+    );
 
   } finally {
     rl.close();

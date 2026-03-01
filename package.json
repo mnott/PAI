@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -15,6 +15,7 @@
     "dist",
     "templates",
     "statusline-command.sh",
+    "src/hooks",
     "README.md",
     "LICENSE",
     "ARCHITECTURE.md",

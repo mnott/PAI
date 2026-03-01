@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 #
 # PAI Statusline - Customizable status display for Claude Code
 #
@@ -239,7 +239,6 @@ _mcp_display_name() {
         "Ref") echo "Ref" ;;
         "pai") echo "PAI" ;;
         "playwright") echo "PW" ;;
-        "workspace") echo "Coogle" ;;
         "macos_automator") echo "macOS" ;;
         "claude_ai_Gmail") echo "Gmail" ;;
         "claude_ai_Google_Calendar") echo "GCal" ;;

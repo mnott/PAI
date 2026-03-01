@@ -1,4 +1,11 @@
+---
+links: "[[Ideaverse/AI/PAI/src/hooks/hooks|hooks]]"
+---
+
 # PAI Session Lifecycle Hooks
+
+> **Note:** These hooks are now automatically installed by `pai setup` (Step 6).
+> Manual installation below is only needed if you skipped that step.
 
 Shell scripts that wire Claude Code session events into the PAI registry.
 
@@ -87,3 +94,6 @@ Both hooks are designed to be completely non-disruptive:
 - Every SQLite and CLI call is guarded with `|| true`
 - If `pai` is not installed, the hook exits immediately
 - If the current directory is not a registered project, the hook exits immediately
+
+---
+*Links:* [[Ideaverse/AI/PAI/src/hooks/hooks|hooks]]
