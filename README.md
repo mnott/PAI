@@ -51,6 +51,40 @@ Claude finds the setup skill, checks your system, runs the interactive wizard, a
 
 ---
 
+## Auto-Compact Context Window
+
+Claude Code can automatically compact your context window when it fills up, preventing session interruptions mid-task. PAI's statusline shows you at a glance whether auto-compact is active.
+
+### Why the GUI setting doesn't work
+
+Claude Code has an `autoCompactEnabled` setting in `~/.claude.json`, but it gets overwritten on every restart. Do not use it — changes don't survive.
+
+### The durable approach: environment variable
+
+Set `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in your `~/.claude/settings.json` under the `env` block. This survives restarts, `/clear`, and Claude Code updates.
+
+```json
+{
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  }
+}
+```
+
+The value is the context percentage at which compaction triggers. `80` means compact when the context window reaches 80% full. Restart Claude Code after saving.
+
+### Statusline indicator
+
+Once set, PAI's statusline shows `[auto-compact:80%]` next to the context meter on line 3, so you always know auto-compact is active and at what threshold.
+
+### Set it up with one prompt
+
+Give Claude Code this prompt and it handles everything:
+
+> Add `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` set to `80` to the `env` block in `~/.claude/settings.json`. This enables durable auto-compact that survives restarts. Do not touch `~/.claude.json` — that file gets overwritten on startup. After saving, confirm the setting is in place and tell me to restart Claude Code.
+
+---
+
 ## Storage Options
 
 PAI offers two modes, and the setup wizard asks which you prefer.

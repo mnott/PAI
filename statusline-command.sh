@@ -331,6 +331,12 @@ if [ -n "$mcp_line2" ]; then
     printf "${LINE2_PRIMARY}          ${RESET}${mcp_line2}${RESET}\n"
 fi
 
+# Auto-compact indicator: detect CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var
+autocompact_suffix=""
+if [ -n "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" ]; then
+    autocompact_suffix=" ${BRIGHT_CYAN}[auto-compact:${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%]${RESET}"
+fi
+
 # LINE 3 - Context meter (from Claude Code's JSON input)
 if [ "$context_pct" -gt 0 ] 2>/dev/null; then
     # Color based on usage: green < 50%, yellow 50-75%, red > 75%
@@ -342,7 +348,7 @@ if [ "$context_pct" -gt 0 ] 2>/dev/null; then
         ctx_color="$BRIGHT_GREEN"
     fi
 
-    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${ctx_color}${context_used_k}K${RESET}${LINE3_PRIMARY} / ${context_max_k}K${RESET}\n"
+    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${ctx_color}${context_used_k}K${RESET}${LINE3_PRIMARY} / ${context_max_k}K${autocompact_suffix}${RESET}\n"
 else
-    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${LINE3_ACCENT}...${RESET}\n"
+    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${LINE3_ACCENT}...${autocompact_suffix}${RESET}\n"
 fi
