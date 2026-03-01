@@ -101,6 +101,10 @@ let embedInProgress = false;
 let lastEmbedTime = 0;
 let embedSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 
+// Vault index scheduler state
+let vaultIndexInProgress = false;
+let lastVaultIndexTime = 0;
+
 // ---------------------------------------------------------------------------
 // Notification state
 // ---------------------------------------------------------------------------
@@ -194,6 +198,73 @@ interface SQLiteBackendWithDb {
 }
 
 /**
+ * Run a vault index pass. Guards against overlapping runs with vaultIndexInProgress.
+ * Skips if no vaultPath is configured, or if project index/embed is in progress.
+ * Called both by the scheduler (chained after runIndex) and by the vault_index_now IPC method.
+ */
+async function runVaultIndex(): Promise<void> {
+  // Skip if no vault path configured
+  if (!daemonConfig.vaultPath) return;
+
+  if (vaultIndexInProgress) {
+    process.stderr.write("[pai-daemon] Vault index already in progress, skipping.\n");
+    return;
+  }
+
+  // Don't run concurrently with project index or embed
+  if (indexInProgress || embedInProgress) {
+    process.stderr.write("[pai-daemon] Index/embed in progress, deferring vault index.\n");
+    return;
+  }
+
+  vaultIndexInProgress = true;
+  const t0 = Date.now();
+
+  try {
+    process.stderr.write("[pai-daemon] Starting vault index run...\n");
+
+    if (storageBackend.backendType === "sqlite") {
+      const { SQLiteBackend } = await import("../storage/sqlite.js");
+      if (storageBackend instanceof SQLiteBackend) {
+        const db = (storageBackend as SQLiteBackendWithDb).getRawDb();
+
+        // Auto-detect vault project ID if not configured
+        let vaultProjectId = daemonConfig.vaultProjectId;
+        if (!vaultProjectId) {
+          // Look for a project registered at the vault path
+          const row = registryDb
+            .prepare("SELECT id FROM projects WHERE root_path = ?")
+            .get(daemonConfig.vaultPath) as { id: number } | undefined;
+          vaultProjectId = row?.id ?? 0;
+        }
+
+        if (!vaultProjectId) {
+          process.stderr.write("[pai-daemon] Vault project ID not found. Register the vault as a project first.\n");
+          return;
+        }
+
+        const { indexVault } = await import("../memory/vault-indexer.js");
+        const result = await indexVault(db, vaultProjectId, daemonConfig.vaultPath);
+        const elapsed = Date.now() - t0;
+        lastVaultIndexTime = Date.now();
+        process.stderr.write(
+          `[pai-daemon] Vault index complete: ${result.filesIndexed} files, ` +
+          `${result.linksExtracted} links, ${result.deadLinksFound} dead, ` +
+          `${result.orphansFound} orphans (${elapsed}ms)\n`
+        );
+      }
+    } else {
+      process.stderr.write("[pai-daemon] Vault indexing only supported on SQLite backend.\n");
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[pai-daemon] Vault index error: ${msg}\n`);
+  } finally {
+    vaultIndexInProgress = false;
+  }
+}
+
+/**
  * Start the periodic index scheduler.
  */
 function startIndexScheduler(): void {
@@ -205,15 +276,19 @@ function startIndexScheduler(): void {
 
   // Run an initial index at startup (non-blocking — let the socket come up first)
   setTimeout(() => {
-    runIndex().catch((e) => {
-      process.stderr.write(`[pai-daemon] Startup index error: ${e}\n`);
-    });
+    runIndex()
+      .then(() => runVaultIndex())
+      .catch((e) => {
+        process.stderr.write(`[pai-daemon] Startup index error: ${e}\n`);
+      });
   }, 2_000);
 
   indexSchedulerTimer = setInterval(() => {
-    runIndex().catch((e) => {
-      process.stderr.write(`[pai-daemon] Scheduled index error: ${e}\n`);
-    });
+    runIndex()
+      .then(() => runVaultIndex())
+      .catch((e) => {
+        process.stderr.write(`[pai-daemon] Scheduled index error: ${e}\n`);
+      });
   }, intervalMs);
 
   // Don't let the interval keep the process alive if all else exits
@@ -360,6 +435,35 @@ async function dispatchTool(
         p as Parameters<typeof toolSessionRoute>[2]
       );
 
+    case "zettel_explore":
+    case "zettel_health":
+    case "zettel_surprise":
+    case "zettel_suggest":
+    case "zettel_converse":
+    case "zettel_themes": {
+      // Zettel tools need the raw federation DB
+      const { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes } = await import("../mcp/tools.js");
+
+      if (storageBackend.backendType !== "sqlite") {
+        throw new Error("Zettel tools require SQLite backend");
+      }
+      const { SQLiteBackend } = await import("../storage/sqlite.js");
+      if (!(storageBackend instanceof SQLiteBackend)) {
+        throw new Error("Zettel tools require SQLite backend");
+      }
+      const fedDb = (storageBackend as SQLiteBackendWithDb).getRawDb();
+
+      switch (method) {
+        case "zettel_explore": return toolZettelExplore(fedDb, p as Parameters<typeof toolZettelExplore>[1]);
+        case "zettel_health": return toolZettelHealth(fedDb, p as Parameters<typeof toolZettelHealth>[1]);
+        case "zettel_surprise": return toolZettelSurprise(fedDb, p as Parameters<typeof toolZettelSurprise>[1]);
+        case "zettel_suggest": return toolZettelSuggest(fedDb, p as Parameters<typeof toolZettelSuggest>[1]);
+        case "zettel_converse": return toolZettelConverse(fedDb, p as Parameters<typeof toolZettelConverse>[1]);
+        case "zettel_themes": return toolZettelThemes(fedDb, p as Parameters<typeof toolZettelThemes>[1]);
+      }
+      break;
+    }
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }
@@ -416,6 +520,9 @@ async function handleRequest(
         socketPath: daemonConfig.socketPath,
         storageBackend: storageBackend.backendType,
         db: dbStats,
+        vaultIndexInProgress,
+        lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
+        vaultPath: daemonConfig.vaultPath ?? null,
       },
     });
     socket.end();
@@ -427,6 +534,16 @@ async function handleRequest(
     // Fire and forget — don't await
     runIndex().catch((e) => {
       process.stderr.write(`[pai-daemon] index_now error: ${e}\n`);
+    });
+    sendResponse(socket, { id, ok: true, result: { triggered: true } });
+    socket.end();
+    return;
+  }
+
+  // Special: vault_index_now — trigger immediate vault index (non-blocking response)
+  if (method === "vault_index_now") {
+    runVaultIndex().catch((e) => {
+      process.stderr.write(`[pai-daemon] vault_index_now error: ${e}\n`);
     });
     sendResponse(socket, { id, ok: true, result: { triggered: true } });
     socket.end();

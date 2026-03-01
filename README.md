@@ -1,3 +1,7 @@
+---
+links: "[[Ideaverse/AI/PAI/PAI|PAI]]"
+---
+
 # PAI Knowledge OS
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. You re-explain everything, every time. PAI fixes this.
@@ -38,6 +42,15 @@ Install PAI and Claude remembers. Ask it what you were working on. Ask it to fin
 
 - "Sync my Obsidian vault" — updates your linked vault with the latest notes
 - "Open my notes in Obsidian" — launches Obsidian with your full knowledge graph
+
+### Zettelkasten Intelligence
+
+- "Explore notes linked to PAI" — follow trains of thought through wikilink chains
+- "Find surprising connections to this note" — discover semantically similar but graph-distant notes
+- "What themes are emerging in my vault?" — detect clusters of related notes forming new ideas
+- "How healthy is my vault?" — structural audit: dead links, orphans, disconnected clusters
+- "Suggest connections for this note" — proactive link suggestions using semantic + graph signals
+- "What does my vault say about knowledge management?" — use the vault as a thinking partner
 
 ---
 
@@ -114,6 +127,35 @@ For the technical deep-dive — architecture, database schema, CLI reference, an
 
 ---
 
+## Zettelkasten Intelligence
+
+PAI implements Niklas Luhmann's Zettelkasten principles as six computational operations on your Obsidian vault.
+
+### How it works
+
+PAI indexes your entire vault — following symlinks, deduplicating by inode, parsing every wikilink — and builds a graph database alongside semantic embeddings. Six tools then operate on this dual representation:
+
+| Tool | What it does |
+|------|-------------|
+| `pai zettel explore` | Follow trains of thought through link chains (Folgezettel traversal) |
+| `pai zettel surprise` | Find notes that are semantically close but far apart in the link graph |
+| `pai zettel converse` | Ask questions and let the vault "talk back" with unexpected connections |
+| `pai zettel themes` | Detect emerging clusters of related notes across folders |
+| `pai zettel health` | Structural audit — dead links, orphans, disconnected clusters, health score |
+| `pai zettel suggest` | Proactive connection suggestions combining semantic similarity, tags, and graph proximity |
+
+All tools work as CLI commands (`pai zettel <command>`) and MCP tools (`zettel_*`) accessible through the daemon.
+
+### Vault Indexing
+
+The vault indexer follows symlinks (critical for vaults built on symlinks), deduplicates files by inode to handle multiple paths to the same file, and builds a complete wikilink graph with Obsidian-compatible shortest-match resolution.
+
+- Full index: ~10 seconds for ~1,000 files
+- Incremental: ~2 seconds (hash-based change detection)
+- Runs automatically via the daemon scheduler
+
+---
+
 ## Companion Projects
 
 PAI works great alongside these tools (also by the same author):
@@ -133,3 +175,6 @@ PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiess
 ## License
 
 MIT
+
+---
+*Links:* [[Ideaverse/AI/PAI/PAI|PAI]]

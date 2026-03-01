@@ -1,8 +1,12 @@
+---
+links: "[[Ideaverse/AI/PAI/PAI|PAI]]"
+---
+
 # PAI Knowledge OS — Architecture
 
 Technical reference for PAI's architecture, database schema, CLI commands, and development setup.
 
-For user-facing documentation, see [README.md](README.md) and [MANUAL.md](MANUAL.md).
+For user-facing documentation, see [README.md](Ideaverse/AI/PAI/README.md) and [MANUAL.md](MANUAL.md).
 
 ---
 
@@ -28,7 +32,7 @@ Claude Code Session
     │
     └── CLI (pai)
             project, session, registry, memory,
-            daemon, obsidian, backup, restore, setup
+            daemon, obsidian, zettel, backup, restore, setup
 ```
 
 ### Key Components
@@ -161,6 +165,12 @@ Claude Code (stdio)
 | `session_list` | List session notes, optionally filtered by project |
 | `registry_search` | Search project metadata (names, paths, tags) |
 | `project_detect` | Identify which project a given path belongs to |
+| `zettel_explore` | BFS traversal of wikilink graph from a seed note |
+| `zettel_surprise` | Find semantically distant but graph-close notes |
+| `zettel_converse` | Hybrid search with graph expansion and cross-domain connections |
+| `zettel_themes` | Cluster vault notes into thematic groups by embedding similarity |
+| `zettel_health` | Audit vault for broken links, orphans, and isolated clusters |
+| `zettel_suggest` | Suggest link targets weighted by semantics, tags, and graph neighborhood |
 
 ### Tool Reference
 
@@ -177,6 +187,18 @@ Claude Code (stdio)
 **`registry_search(query)`** — Full-text search over project metadata — names, paths, tags.
 
 **`project_detect(path?)`** — Given a filesystem path (defaults to CWD), returns the matching project.
+
+**`zettel_explore(note, depth?, direction?)`** — BFS walk from a seed note across `vault_links`. Returns a subgraph of neighboring notes with each edge classified as `sequential` or `associative`. `direction`: `outbound` (default), `inbound`, or `both`.
+
+**`zettel_surprise(note, limit?)`** — Returns notes that are semantically dissimilar to `note` but reachable within a short graph distance. Scored as `cosine_similarity × log2(graph_distance + 1)`. Useful for lateral discovery.
+
+**`zettel_converse(query, limit?)`** — Runs a hybrid memory search, expands the result set via graph neighborhood, then surfaces cross-domain connections — notes from unrelated clusters that are semantically close to the query.
+
+**`zettel_themes(min_cluster_size?)`** — Clusters all vault embeddings using agglomerative single-linkage clustering. Returns thematic groups with representative note titles and cluster size.
+
+**`zettel_health()`** — Full structural audit of the vault. Reports broken links (target not in `vault_files`), orphaned notes (no inbound or outbound edges), notes missing embeddings, and isolated clusters detected via union-find.
+
+**`zettel_suggest(note, limit?)`** — Ranks candidate link targets for a given note. Score is a weighted sum: semantic embedding similarity (0.5), shared tags (0.2), graph neighborhood overlap with existing links (0.3).
 
 ### Installation
 
@@ -339,6 +361,26 @@ pai obsidian sync
 pai obsidian status
 ```
 
+### Zettelkasten
+
+| Subcommand | Description |
+|------------|-------------|
+| `zettel explore <note>` | BFS traversal of wikilink graph from a seed note |
+| `zettel surprise <note>` | Find semantically distant but graph-close notes |
+| `zettel converse <query>` | Hybrid search with graph expansion and cross-domain connections |
+| `zettel themes` | Cluster vault notes into thematic groups |
+| `zettel health` | Audit vault for broken links, orphans, and isolated clusters |
+| `zettel suggest <note>` | Suggest link targets weighted by semantics, tags, and graph neighborhood |
+
+```bash
+pai zettel explore "My Seed Note" --depth 3 --direction both
+pai zettel surprise "My Seed Note" --limit 10
+pai zettel converse "distributed systems tradeoffs"
+pai zettel themes --min-cluster-size 3
+pai zettel health
+pai zettel suggest "My Seed Note" --limit 5
+```
+
 ### Other Commands
 
 ```bash
@@ -419,6 +461,37 @@ PAI can expose your project memory as an Obsidian vault. The vault contains no a
 
 ---
 
+## Zettelkasten Intelligence
+
+PAI implements six Luhmann-inspired operations on the vault's dual representation: a wikilink graph stored in `vault_links` and semantic embeddings stored alongside the vault file records. Together these two layers enable graph-based navigation, serendipitous discovery, and structural health analysis.
+
+### Operations
+
+| Operation | Module | Algorithm |
+|-----------|--------|-----------|
+| Explore | `src/zettelkasten/explore.ts` | BFS on vault_links, classifies sequential vs associative edges |
+| Surprise | `src/zettelkasten/surprise.ts` | Cosine similarity × log2(graph_distance + 1) |
+| Converse | `src/zettelkasten/converse.ts` | Hybrid search → graph expansion → cross-domain connections |
+| Themes | `src/zettelkasten/themes.ts` | Agglomerative single-linkage clustering of embeddings |
+| Health | `src/zettelkasten/health.ts` | SQL-driven audit with union-find for cluster detection |
+| Suggest | `src/zettelkasten/suggest.ts` | Weighted: semantic (0.5) + tags (0.2) + graph neighborhood (0.3) |
+
+### Design Notes
+
+**Explore** performs a BFS walk from a seed note across `vault_links`. Each edge is classified as sequential (the linked note shares a common tag or is a direct sequence continuation) or associative (a lateral connection between different topics). The result is a subgraph that exposes the local neighborhood of a note.
+
+**Surprise** finds notes that are semantically distant from a seed note in embedding space but close in graph distance — the "surprising bridge" pattern Luhmann valued. The score `cosine_similarity × log2(graph_distance + 1)` rewards notes that are conceptually different yet structurally nearby.
+
+**Converse** treats the vault as a conversation partner. It runs a hybrid memory search, expands results via the graph to pull in neighboring notes, then identifies cross-domain connections — notes from unrelated topic clusters that share embedding proximity with the query.
+
+**Themes** clusters vault embeddings using agglomerative single-linkage clustering. The output is a flat list of thematic groups with representative note titles. Useful for detecting topic drift, finding redundancy, or building a high-level map of the vault.
+
+**Health** runs a SQL-driven structural audit: broken links, orphaned notes (no inbound or outbound links), notes with no embedding, and isolated clusters detected via union-find on the `vault_links` graph.
+
+**Suggest** ranks candidate link targets for a given note using a weighted sum of three signals: semantic similarity of embeddings (weight 0.5), shared tags (weight 0.2), and presence in the graph neighborhood of already-linked notes (weight 0.3).
+
+---
+
 ## Templates
 
 PAI ships three templates used during setup and customizable for your workflow.
@@ -491,6 +564,54 @@ Copy to `~/.config/pai/voices.json` and configure your preferred backend.
 
 **Indexes:** HNSW on embedding (cosine), GIN on text (tsvector), B-tree on project_id/path.
 
+### Vault Tables (v3 — PostgreSQL)
+
+These tables are populated by `src/memory/vault-indexer.ts` and queried by all six zettelkasten operations.
+
+**`vault_files`** — One row per Obsidian note:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Surrogate key |
+| `vault_path` | TEXT | Path relative to vault root |
+| `title` | TEXT | Note title (H1 or filename) |
+| `tags` | TEXT[] | Frontmatter tags |
+| `embedding` | vector(768) | Snowflake Arctic embedding |
+| `mtime` | BIGINT | Modification time |
+| `hash` | TEXT | SHA-256 of file content |
+
+**`vault_aliases`** — Obsidian alias metadata:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `file_id` | INTEGER | FK → vault_files.id |
+| `alias` | TEXT | Alias string from frontmatter |
+
+**`vault_links`** — Directed wikilink edges:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `source_id` | INTEGER | FK → vault_files.id (linking note) |
+| `target_id` | INTEGER | FK → vault_files.id (linked note) |
+| `link_text` | TEXT | Display text of the link |
+| `link_type` | TEXT | `sequential` or `associative` |
+
+**`vault_name_index`** — Reverse lookup for wikilink resolution:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `name` | TEXT | Lowercased title or alias |
+| `file_id` | INTEGER | FK → vault_files.id |
+
+**`vault_health`** — Cached audit results from the Health operation:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `file_id` | INTEGER | FK → vault_files.id |
+| `issue_type` | TEXT | `broken_link`, `orphan`, `no_embedding`, `isolated_cluster` |
+| `detail` | TEXT | Human-readable description |
+| `checked_at` | BIGINT | Timestamp of the audit run |
+
 **Content Tiers:**
 
 | Tier | Description | Example |
@@ -548,16 +669,27 @@ bun run lint     # tsc --noEmit
 ```
 src/
 ├── cli/commands/    # CLI command implementations
+│   └── zettel.ts    # `pai zettel` with 6 subcommands
 ├── daemon/          # Daemon server and index scheduler
 ├── daemon-mcp/      # MCP shim (stdio → daemon socket)
 ├── federation/      # Federation schema definitions
 ├── hooks/           # Lifecycle hooks (pre-compact, session-stop)
 ├── mcp/             # Direct MCP server (legacy)
 ├── memory/          # Indexer, chunker, embeddings, search
+│   └── vault-indexer.ts  # Obsidian vault indexing into v3 vault tables
 ├── obsidian/        # Obsidian vault bridge
+│   └── vault-fixer.ts    # Repairs broken wikilinks and orphaned entries
 ├── registry/        # Registry migrations and queries
 ├── session/         # Session slug generator
-└── storage/         # Storage backend interface (SQLite/Postgres)
+├── storage/         # Storage backend interface (SQLite/Postgres)
+└── zettelkasten/    # Luhmann-inspired graph + semantic operations
+    ├── explore.ts   # BFS traversal classifying sequential/associative edges
+    ├── surprise.ts  # Serendipitous bridge discovery via cosine × graph distance
+    ├── converse.ts  # Hybrid search → graph expansion → cross-domain connections
+    ├── themes.ts    # Agglomerative embedding clustering for thematic groups
+    ├── health.ts    # SQL-driven vault audit with union-find cluster detection
+    ├── suggest.ts   # Weighted link suggestions (semantic + tags + graph)
+    └── index.ts     # Barrel export for all zettelkasten operations
 ```
 
 ### Important Notes
@@ -572,3 +704,6 @@ src/
 ## License
 
 MIT
+
+---
+*Links:* [[Ideaverse/AI/PAI/PAI|PAI]]

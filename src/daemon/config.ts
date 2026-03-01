@@ -57,6 +57,12 @@ export interface PaiDaemonConfig {
   /** Log level */
   logLevel: "debug" | "info" | "warn" | "error";
 
+  /** Obsidian vault root path for zettelkasten indexing. If set, vault indexing runs alongside project indexing. */
+  vaultPath?: string;
+
+  /** Registry project_id to use for vault chunks in memory_chunks. Default: auto-detected. */
+  vaultProjectId?: number;
+
   /** Notification subsystem configuration */
   notifications: NotificationConfig;
 }
@@ -91,7 +97,9 @@ const CONFIG_TEMPLATE = `{
     "connectionTimeoutMs": 5000
   },
   "embeddingModel": "Snowflake/snowflake-arctic-embed-m-v1.5",
-  "logLevel": "info"
+  "logLevel": "info",
+  "vaultPath": "",
+  "vaultProjectId": 0
 }
 `;
 

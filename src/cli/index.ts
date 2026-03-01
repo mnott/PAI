@@ -29,6 +29,7 @@ import { registerBackupCommands } from "./commands/backup.js";
 import { registerRestoreCommands } from "./commands/restore.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerObsidianCommands } from "./commands/obsidian.js";
+import { registerZettelCommands } from "./commands/zettel.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
 import { registerTopicCommands } from "./commands/topic.js";
@@ -188,6 +189,16 @@ const obsidianCmd = program
   .description("Obsidian vault: sync project notes, view status, open in Obsidian");
 
 registerObsidianCommands(obsidianCmd, getDb);
+
+// ---------------------------------------------------------------------------
+// pai zettel
+// ---------------------------------------------------------------------------
+
+const zettelCmd = program
+  .command("zettel")
+  .description("Zettelkasten intelligence: explore, surprise, converse, themes, health, suggest");
+
+registerZettelCommands(zettelCmd, getDb);
 
 // ---------------------------------------------------------------------------
 // pai go <query>  — top-level shortcut for pai project go

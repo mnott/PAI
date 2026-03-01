@@ -35,6 +35,12 @@ import {
   toolNotificationConfig,
   toolTopicDetect,
   toolSessionRoute,
+  toolZettelExplore,
+  toolZettelHealth,
+  toolZettelSurprise,
+  toolZettelSuggest,
+  toolZettelConverse,
+  toolZettelThemes,
 } from "./tools.js";
 
 // ---------------------------------------------------------------------------
@@ -555,6 +561,244 @@ export async function startMcpServer(): Promise<void> {
     },
     async (args) => {
       const result = await toolSessionRoute(getRegistryDb(), getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_explore
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_explore",
+    [
+      "Explore the vault's knowledge graph using Luhmann's Folgezettel traversal.",
+      "Follow trains of thought forward, backward, or both from a starting note.",
+      "Classifies links as sequential (same-folder) or associative (cross-folder).",
+    ].join("\n"),
+    {
+      start_note: z
+        .string()
+        .describe("Path or title of the note to start traversal from."),
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .describe("How many link hops to traverse. Default: 3."),
+      direction: z
+        .enum(["forward", "backward", "both"])
+        .optional()
+        .describe("Traversal direction: 'forward' (outlinks), 'backward' (backlinks), or 'both'. Default: both."),
+      mode: z
+        .enum(["sequential", "associative", "all"])
+        .optional()
+        .describe("Link type filter: 'sequential' (same-folder), 'associative' (cross-folder), or 'all'. Default: all."),
+    },
+    async (args) => {
+      const result = await toolZettelExplore(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_health
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_health",
+    [
+      "Audit the structural health of the Obsidian vault.",
+      "Reports dead links, orphan notes, disconnected clusters, low-connectivity files, and an overall health score.",
+    ].join("\n"),
+    {
+      scope: z
+        .enum(["full", "recent", "project"])
+        .optional()
+        .describe("Audit scope: 'full' (entire vault), 'recent' (recently modified), or 'project' (specific path). Default: full."),
+      project_path: z
+        .string()
+        .optional()
+        .describe("Absolute path to the project/folder to audit when scope='project'."),
+      recent_days: z
+        .number()
+        .int()
+        .optional()
+        .describe("Number of days to look back when scope='recent'. Default: 30."),
+      include: z
+        .array(z.enum(["dead_links", "orphans", "disconnected", "low_connectivity"]))
+        .optional()
+        .describe("Specific checks to include. Omit to run all checks."),
+    },
+    async (args) => {
+      const result = await toolZettelHealth(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_surprise
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_surprise",
+    [
+      "Find surprising connections — notes that are semantically similar to a reference note but far away in the link graph.",
+      "High surprise = unexpected relevance.",
+    ].join("\n"),
+    {
+      reference_path: z
+        .string()
+        .describe("Path to the reference note to find surprising connections for."),
+      vault_project_id: z
+        .number()
+        .int()
+        .describe("Project ID of the vault to search within."),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of surprising notes to return. Default: 10."),
+      min_similarity: z
+        .number()
+        .optional()
+        .describe("Minimum semantic similarity [0,1] for a note to be considered. Default: 0.5."),
+      min_graph_distance: z
+        .number()
+        .int()
+        .optional()
+        .describe("Minimum link hops away from the reference note. Default: 3."),
+    },
+    async (args) => {
+      const result = await toolZettelSurprise(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_suggest
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_suggest",
+    [
+      "Suggest new connections for a note using semantic similarity, shared tags, and graph neighborhood (friends-of-friends).",
+    ].join("\n"),
+    {
+      note_path: z
+        .string()
+        .describe("Path to the note to generate link suggestions for."),
+      vault_project_id: z
+        .number()
+        .int()
+        .describe("Project ID of the vault to search within."),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of suggestions to return. Default: 10."),
+      exclude_linked: z
+        .boolean()
+        .optional()
+        .describe("Exclude notes already linked from this note. Default: true."),
+    },
+    async (args) => {
+      const result = await toolZettelSuggest(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_converse
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_converse",
+    [
+      "Use the vault as a Zettelkasten communication partner.",
+      "Ask a question, get relevant notes with cross-domain connections and a synthesis prompt for generating new insights.",
+    ].join("\n"),
+    {
+      question: z
+        .string()
+        .describe("The question or topic to explore in the vault."),
+      vault_project_id: z
+        .number()
+        .int()
+        .describe("Project ID of the vault to query."),
+      depth: z
+        .number()
+        .int()
+        .optional()
+        .describe("How many link hops to follow from seed notes. Default: 2."),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of relevant notes to retrieve. Default: 10."),
+    },
+    async (args) => {
+      const result = await toolZettelConverse(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: zettel_themes
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "zettel_themes",
+    [
+      "Detect emerging themes by clustering recent notes with similar embeddings.",
+      "Reveals forming idea clusters and suggests index notes for unlinked clusters.",
+    ].join("\n"),
+    {
+      vault_project_id: z
+        .number()
+        .int()
+        .describe("Project ID of the vault to analyse."),
+      lookback_days: z
+        .number()
+        .int()
+        .optional()
+        .describe("Number of days of recent notes to cluster. Default: 30."),
+      min_cluster_size: z
+        .number()
+        .int()
+        .optional()
+        .describe("Minimum notes required to form a theme cluster. Default: 3."),
+      max_themes: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of theme clusters to return. Default: 10."),
+      similarity_threshold: z
+        .number()
+        .optional()
+        .describe("Minimum cosine similarity to group notes into a cluster [0,1]. Default: 0.7."),
+    },
+    async (args) => {
+      const result = await toolZettelThemes(getFederationDb(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
