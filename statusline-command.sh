@@ -334,7 +334,7 @@ fi
 # Auto-compact indicator: detect CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var
 autocompact_suffix=""
 if [ -n "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" ]; then
-    autocompact_suffix=" ${BRIGHT_CYAN}[auto-compact:${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%%]${RESET}"
+    autocompact_suffix=" ${BRIGHT_CYAN}[auto-compact: ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%%]${RESET}"
 fi
 
 # LINE 3 - Context meter (from Claude Code's JSON input)
