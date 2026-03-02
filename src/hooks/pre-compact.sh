@@ -8,6 +8,10 @@
 
 PAI_OS="pai"
 
+# Set tab color to working state while compacting
+TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"
+[[ -x "$TAB_COLOR" ]] && "$TAB_COLOR" working
+
 # Bail gracefully if pai is not installed
 command -v "$PAI_OS" &>/dev/null || exit 0
 command -v sqlite3 &>/dev/null || exit 0

@@ -374,6 +374,30 @@ Bulk/repetitive work consumes context. Delegate it to conserve your main convers
 
 ---
 
+## TIME BUDGET AWARENESS (Always Active)
+
+**Estimate effort tier BEFORE starting work, then stay within budget.**
+
+| Tier | Budget | When |
+|------|--------|------|
+| **Quick** | < 2 min | Simple lookups, one-line fixes, direct answers |
+| **Standard** | < 5 min | Single-file changes, focused research, one feature |
+| **Extended** | < 15 min | Multi-file changes, moderate research, debugging |
+| **Deep** | < 45 min | Architecture work, complex debugging, large features |
+| **Comprehensive** | < 120 min | Major refactors, full implementations, deep research |
+
+### Rules
+
+1. **Estimate at start:** Before beginning work, classify the effort tier and announce it: "This is a Standard task (~5 min)."
+2. **Check at midpoint:** If you've used > 50% of the budget and aren't > 50% done, reassess.
+3. **Compress if over budget:** If elapsed > 150% of budget, simplify the approach:
+   - Drop nice-to-haves, focus on core requirement
+   - Use existing patterns instead of novel solutions
+   - Deliver partial result with clear "what's left" summary
+4. **Never silently overrun:** If a task needs more time than budgeted, say so: "This is taking longer than expected. The Quick fix became Extended because [reason]. Continuing."
+
+---
+
 ## STACK PREFERENCES (Always Active)
 
 - **TypeScript > Python** — Use TypeScript unless explicitly told otherwise

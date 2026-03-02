@@ -90,4 +90,8 @@ fi
 
 "$PAI_OS" session handover "$PROJECT_SLUG" latest 2>/dev/null || true
 
+# Set tab color to completed state when session ends
+TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"
+[[ -x "$TAB_COLOR" ]] && "$TAB_COLOR" completed
+
 exit 0
