@@ -8,8 +8,10 @@
  *   4.  Agent configuration (CLAUDE.md generation)
  *   5.  PAI skill installation (~/.claude/skills/PAI/SKILL.md)
  *   6.  AI steering rules installation (~/.claude/skills/PAI/AI-STEERING-RULES.md)
- *   7.  Hook scripts (pre-compact, session-stop, statusline)
- *   8.  Settings.json patching (env vars, hooks, statusline)
+ *   7.  Hook scripts (shell: pre-compact, session-stop, statusline)
+ *   7b. TypeScript hooks installation (compiled .mjs hooks to ~/.claude/Hooks/)
+ *   8.  Settings.json patching (env vars, all 17 hook registrations, permissions, flags)
+ *   8b. DA name prompt (assistant name stored in env.DA)
  *   9.  Daemon install (launchd plist)
  *   10. MCP registration (~/.claude.json)
  *   11. Directory scanning configuration
@@ -19,7 +21,7 @@
 
 import type { Command } from "commander";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
@@ -185,7 +187,7 @@ function getDockerDir(): string {
   const candidates = [
     join(process.cwd(), "docker"),
     join(homedir(), "dev", "ai", "PAI", "docker"),
-    join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "docker"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "docker"),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, "docker-compose.yml"))) return c;
@@ -198,7 +200,7 @@ function getTemplatesDir(): string {
   const candidates = [
     join(process.cwd(), "templates"),
     join(homedir(), "dev", "ai", "PAI", "templates"),
-    join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "templates"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "templates"),
   ];
   for (const c of candidates) {
     if (existsSync(join(c, "claude-md.template.md"))) return c;
@@ -217,6 +219,26 @@ function getHooksDir(): string {
     if (existsSync(join(c, "session-stop.sh"))) return c;
   }
   return join(process.cwd(), "src", "hooks");
+}
+
+function getDistHooksDir(): string {
+  // Find the dist/hooks/ directory — where compiled TypeScript hooks (.mjs) live.
+  // When running from dist/cli/index.mjs, import.meta.url points to that file.
+  // Go up two levels: dist/cli/ → dist/ → package root, then into dist/hooks/.
+  const moduleDir = new URL(".", import.meta.url).pathname;
+  // moduleDir is something like /path/to/pai/dist/cli/
+  const fromModule = join(moduleDir, "..", "hooks");
+
+  const candidates = [
+    fromModule,
+    join(process.cwd(), "dist", "hooks"),
+    join(homedir(), "dev", "ai", "PAI", "dist", "hooks"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "dist", "hooks"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "stop-hook.mjs"))) return candidate;
+  }
+  return fromModule;
 }
 
 function getStatuslineScript(): string | null {
@@ -904,18 +926,134 @@ async function stepHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
 }
 
 /**
- * Step 8: Patch ~/.claude/settings.json with PAI hooks, env vars, and statusline
+ * Step 7b: Install compiled TypeScript hooks (.mjs) to ~/.claude/Hooks/
+ *
+ * Finds all .mjs files in the package's dist/hooks/ directory and copies them
+ * to ~/.claude/Hooks/. Content is compared before copying — identical files are
+ * skipped for idempotent re-runs. Each installed file gets chmod 755.
  */
-async function stepSettings(rl: ReturnType<typeof createRl>): Promise<boolean> {
+async function stepTsHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 7b: TypeScript Hooks Installation");
+  line();
+  line("  PAI ships 14 compiled TypeScript hooks (.mjs) that fire on session events,");
+  line("  tool use, and context compaction to capture context and update notes.");
+  line();
+
+  const install = await promptYesNo(
+    rl,
+    "Install PAI TypeScript hooks to ~/.claude/Hooks/?",
+    true,
+  );
+
+  if (!install) {
+    console.log(c.dim("  Skipping TypeScript hooks installation."));
+    return false;
+  }
+
+  const distHooksDir = getDistHooksDir();
+
+  if (!existsSync(distHooksDir)) {
+    console.log(c.warn(`  dist/hooks/ directory not found at: ${distHooksDir}`));
+    console.log(c.dim("  Build the package first: bun run build"));
+    return false;
+  }
+
+  const claudeDir = join(homedir(), ".claude");
+  const hooksTarget = join(claudeDir, "Hooks");
+
+  if (!existsSync(hooksTarget)) {
+    mkdirSync(hooksTarget, { recursive: true });
+  }
+
+  // Collect all .mjs files from dist/hooks/ (exclude .map files)
+  let allFiles: string[];
+  try {
+    allFiles = readdirSync(distHooksDir).filter((f) => f.endsWith(".mjs"));
+  } catch (e) {
+    console.log(c.warn(`  Could not read dist/hooks/: ${e}`));
+    return false;
+  }
+
+  if (allFiles.length === 0) {
+    console.log(c.warn("  No .mjs files found in dist/hooks/. Build first: bun run build"));
+    return false;
+  }
+
+  line();
+  let copiedCount = 0;
+  let skippedCount = 0;
+
+  for (const filename of allFiles) {
+    const src = join(distHooksDir, filename);
+    const dest = join(hooksTarget, filename);
+
+    const srcContent = readFileSync(src, "utf-8");
+
+    if (existsSync(dest)) {
+      const destContent = readFileSync(dest, "utf-8");
+      if (srcContent === destContent) {
+        console.log(c.dim(`  Unchanged: ${filename}`));
+        skippedCount++;
+        continue;
+      }
+    }
+
+    copyFileSync(src, dest);
+    chmodSync(dest, 0o755);
+    console.log(c.ok(`Installed: ${filename}`));
+    copiedCount++;
+  }
+
+  line();
+  if (copiedCount > 0) {
+    console.log(c.ok(`${copiedCount} hook(s) installed, ${skippedCount} unchanged.`));
+  } else {
+    console.log(c.dim(`  All ${skippedCount} hook(s) already up-to-date.`));
+  }
+
+  return copiedCount > 0;
+}
+
+/**
+ * Step 8b: Prompt for the DA (Digital Assistant) name
+ *
+ * The name appears in tab titles, session notes, and hook output.
+ * Stored in env.DA via settings merge.
+ */
+async function stepDaName(rl: ReturnType<typeof createRl>): Promise<string> {
+  section("Step 8b: Assistant Name");
+  line();
+  line("  Choose a name for your AI assistant. This name appears in tab titles");
+  line("  and session notes when hooks are active.");
+  line();
+
+  const answer = await prompt(
+    rl,
+    chalk.bold("  Assistant name [PAI]: "),
+  );
+
+  const daName = answer || "PAI";
+  line();
+  console.log(c.ok(`Assistant name set to: ${daName}`));
+  return daName;
+}
+
+/**
+ * Step 8: Patch ~/.claude/settings.json with PAI hooks, env vars, permissions, and flags
+ *
+ * Registers all 17 hook entries across 8 event types, adds env vars including DA name,
+ * sets the statusline command, adds tool permissions (allow/deny), and sets flags.
+ */
+async function stepSettings(rl: ReturnType<typeof createRl>, daName: string): Promise<boolean> {
   section("Step 8: Settings Patch");
   line();
-  line("  PAI will add env vars, hook registrations, and the statusline command");
+  line("  PAI will add env vars, all hook registrations, permissions, and flags");
   line("  to ~/.claude/settings.json. Existing values are never overwritten.");
   line();
 
   const patch = await promptYesNo(
     rl,
-    "Patch ~/.claude/settings.json with PAI hooks, env vars, and statusline?",
+    "Patch ~/.claude/settings.json with PAI hooks, env vars, and settings?",
     true,
   );
 
@@ -930,21 +1068,148 @@ async function stepSettings(rl: ReturnType<typeof createRl>): Promise<boolean> {
     env: {
       PAI_DIR: paiDir,
       CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000",
+      DA: daName,
     },
     hooks: [
+      // SessionStart — 4 hooks
       {
-        hookType: "PreCompact",
-        matcher: "",
-        command: "${PAI_DIR}/Hooks/pai-pre-compact.sh",
+        hookType: "SessionStart",
+        command: "${PAI_DIR}/Hooks/load-core-context.mjs",
+      },
+      {
+        hookType: "SessionStart",
+        command: "${PAI_DIR}/Hooks/load-project-context.mjs",
+      },
+      {
+        hookType: "SessionStart",
+        command: "${PAI_DIR}/Hooks/initialize-session.mjs",
+      },
+      {
+        hookType: "SessionStart",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart",
+      },
+      // UserPromptSubmit — 3 hooks
+      {
+        hookType: "UserPromptSubmit",
+        command: "${PAI_DIR}/Hooks/cleanup-session-files.mjs",
+      },
+      {
+        hookType: "UserPromptSubmit",
+        command: "${PAI_DIR}/Hooks/update-tab-titles.mjs",
+      },
+      {
+        hookType: "UserPromptSubmit",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit",
+      },
+      // PreToolUse — 2 hooks (Bash-specific security validator + catch-all event capture)
+      {
+        hookType: "PreToolUse",
+        matcher: "Bash",
+        command: "${PAI_DIR}/Hooks/security-validator.mjs",
+      },
+      {
+        hookType: "PreToolUse",
+        matcher: "*",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse",
+      },
+      // PostToolUse — 4 hooks (TodoWrite-specific sync + catch-all event capture, tool output, tab update)
+      {
+        hookType: "PostToolUse",
+        matcher: "TodoWrite",
+        command: "${PAI_DIR}/Hooks/sync-todo-to-md.mjs",
+      },
+      {
+        hookType: "PostToolUse",
+        matcher: "*",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse",
+      },
+      {
+        hookType: "PostToolUse",
+        matcher: "*",
+        command: "${PAI_DIR}/Hooks/capture-tool-output.mjs",
+      },
+      {
+        hookType: "PostToolUse",
+        matcher: "*",
+        command: "${PAI_DIR}/Hooks/update-tab-on-action.mjs",
+      },
+      // Stop — 3 hooks (TypeScript stop hook + event capture + legacy shell hook)
+      {
+        hookType: "Stop",
+        command: "${PAI_DIR}/Hooks/stop-hook.mjs",
+      },
+      {
+        hookType: "Stop",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type Stop",
       },
       {
         hookType: "Stop",
         command: "${PAI_DIR}/Hooks/pai-session-stop.sh",
       },
+      // SubagentStop — 2 hooks
+      {
+        hookType: "SubagentStop",
+        command: "${PAI_DIR}/Hooks/subagent-stop-hook.mjs",
+      },
+      {
+        hookType: "SubagentStop",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SubagentStop",
+      },
+      // SessionEnd — 2 hooks
+      {
+        hookType: "SessionEnd",
+        command: "${PAI_DIR}/Hooks/capture-session-summary.mjs",
+      },
+      {
+        hookType: "SessionEnd",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionEnd",
+      },
+      // PreCompact — 3 hooks (TypeScript context compression + event capture + legacy shell hook)
+      {
+        hookType: "PreCompact",
+        command: "${PAI_DIR}/Hooks/context-compression-hook.mjs",
+      },
+      {
+        hookType: "PreCompact",
+        command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreCompact",
+      },
+      {
+        hookType: "PreCompact",
+        matcher: "",
+        command: "${PAI_DIR}/Hooks/pai-pre-compact.sh",
+      },
     ],
     statusLine: {
       type: "command",
       command: "bash ${PAI_DIR}/statusline-command.sh",
+    },
+    permissions: {
+      allow: [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "WebFetch",
+        "WebSearch",
+        "NotebookEdit",
+        "TodoWrite",
+        "ExitPlanMode",
+        "mcp__pai",
+      ],
+      deny: [
+        "Bash(rm -rf /)",
+        "Bash(rm -rf /*)",
+        "Bash(rm -rf ~)",
+        "Bash(rm -rf $HOME)",
+        "Bash(sudo rm -rf /)",
+        "Bash(sudo rm -rf /*)",
+      ],
+    },
+    flags: {
+      enableAllProjectMcpServers: true,
     },
   });
 
@@ -1192,7 +1457,9 @@ function stepSummary(
   paiSkillInstalled: boolean,
   aiSteeringRulesInstalled: boolean,
   hooksInstalled: boolean,
+  tsHooksInstalled: boolean,
   settingsPatched: boolean,
+  daName: string,
   daemonInstalled: boolean,
   mcpRegistered: boolean,
 ): void {
@@ -1233,7 +1500,7 @@ function stepSummary(
     ),
   );
   console.log(
-    chalk.dim("  Hooks:            ") +
+    chalk.dim("  Hooks (shell):    ") +
     chalk.cyan(
       hooksInstalled
         ? "pai-pre-compact.sh, pai-session-stop.sh (installed)"
@@ -1241,8 +1508,15 @@ function stepSummary(
     ),
   );
   console.log(
+    chalk.dim("  Hooks (TS):       ") +
+    chalk.cyan(tsHooksInstalled ? "14 .mjs hooks installed to ~/.claude/Hooks/" : "(unchanged)"),
+  );
+  console.log(
+    chalk.dim("  Assistant name:   ") + chalk.cyan(daName),
+  );
+  console.log(
     chalk.dim("  Settings:         ") +
-    chalk.cyan(settingsPatched ? "env vars, hooks, statusline (patched)" : "(unchanged)"),
+    chalk.cyan(settingsPatched ? "env vars, hooks, permissions, flags (patched)" : "(unchanged)"),
   );
   console.log(
     chalk.dim("  Daemon:           ") +
@@ -1337,11 +1611,17 @@ async function runSetup(): Promise<void> {
     // Step 6: AI Steering Rules
     const aiSteeringRulesInstalled = await stepAiSteeringRules(rl);
 
-    // Step 7: Hooks
+    // Step 7: Hooks (shell scripts)
     const hooksInstalled = await stepHooks(rl);
 
+    // Step 7b: TypeScript hooks (.mjs files)
+    const tsHooksInstalled = await stepTsHooks(rl);
+
+    // Step 8b: DA name
+    const daName = await stepDaName(rl);
+
     // Step 8: Settings.json
-    const settingsPatched = await stepSettings(rl);
+    const settingsPatched = await stepSettings(rl, daName);
 
     // Step 9: Daemon
     const daemonInstalled = await stepDaemon(rl);
@@ -1369,7 +1649,9 @@ async function runSetup(): Promise<void> {
       paiSkillInstalled,
       aiSteeringRulesInstalled,
       hooksInstalled,
+      tsHooksInstalled,
       settingsPatched,
+      daName,
       daemonInstalled,
       mcpRegistered,
     );

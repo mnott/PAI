@@ -43,6 +43,11 @@ export interface SettingsMergeOptions {
   env?: Record<string, string>;
   hooks?: HookEntry[];
   statusLine?: { type: string; command: string };
+  permissions?: {
+    allow?: string[];
+    deny?: string[];
+  };
+  flags?: Record<string, unknown>;
 }
 
 export interface MergeResult {
@@ -206,6 +211,70 @@ function mergeStatusLine(
   return true;
 }
 
+/**
+ * Merge permissions — append allow/deny entries, deduplicating.
+ */
+function mergePermissions(
+  settings: Record<string, unknown>,
+  incoming: { allow?: string[]; deny?: string[] },
+  report: string[],
+): boolean {
+  let changed = false;
+
+  const perms = (
+    typeof settings["permissions"] === "object" && settings["permissions"] !== null
+      ? settings["permissions"]
+      : {}
+  ) as Record<string, string[]>;
+
+  for (const list of ["allow", "deny"] as const) {
+    const entries = incoming[list];
+    if (!entries || entries.length === 0) continue;
+
+    const existing: string[] = Array.isArray(perms[list]) ? perms[list] : [];
+    const existingSet = new Set(existing);
+
+    for (const entry of entries) {
+      if (existingSet.has(entry)) {
+        report.push(chalk.dim(`  Skipped: permissions.${list} "${entry}" already present`));
+      } else {
+        existing.push(entry);
+        existingSet.add(entry);
+        report.push(chalk.green(`  Added permissions.${list}: ${entry}`));
+        changed = true;
+      }
+    }
+
+    perms[list] = existing;
+  }
+
+  settings["permissions"] = perms;
+  return changed;
+}
+
+/**
+ * Merge flags — set keys only if not already present, never overwrite.
+ */
+function mergeFlags(
+  settings: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  report: string[],
+): boolean {
+  let changed = false;
+
+  for (const [key, value] of Object.entries(incoming)) {
+    if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      report.push(chalk.dim(`  Skipped: ${key} already set`));
+    } else {
+      settings[key] = value;
+      report.push(chalk.green(`  Added flag: ${key}`));
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 // ---------------------------------------------------------------------------
 // Public orchestrator
 // ---------------------------------------------------------------------------
@@ -231,6 +300,14 @@ export function mergeSettings(opts: SettingsMergeOptions): MergeResult {
 
   if (opts.statusLine !== undefined) {
     if (mergeStatusLine(settings, opts.statusLine, report)) changed = true;
+  }
+
+  if (opts.permissions !== undefined) {
+    if (mergePermissions(settings, opts.permissions, report)) changed = true;
+  }
+
+  if (opts.flags !== undefined && Object.keys(opts.flags).length > 0) {
+    if (mergeFlags(settings, opts.flags, report)) changed = true;
   }
 
   if (changed) {
