@@ -1,7 +1,3 @@
----
-links: "[[Ideaverse/AI/PAI/PAI|PAI]]"
----
-
 # PAI Knowledge OS
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. You re-explain everything, every time. PAI fixes this.
@@ -127,6 +123,36 @@ For the technical deep-dive — architecture, database schema, CLI reference, an
 
 ---
 
+## Search Intelligence
+
+PAI doesn't just store your notes — it understands them. Three search modes work together, and an optional reranking step puts the best results first.
+
+### Search Modes
+
+| Mode | How it works | Best for |
+|------|-------------|----------|
+| **Keyword** | Full-text search (BM25 via SQLite FTS5) | Exact terms, function names, error messages |
+| **Semantic** | Vector similarity (Snowflake Arctic embeddings) | Finding things by meaning, even with different words |
+| **Hybrid** | Keyword + semantic combined, scores normalized and blended | General use — the default |
+
+### Cross-Encoder Reranking
+
+Add `--rerank` to any search and PAI runs a second pass: a cross-encoder model reads each (query, result) pair together and re-scores them for relevance. This catches results that keyword or vector search ranked too low.
+
+```bash
+# Standard hybrid search
+pai memory search "how does session routing work"
+
+# Same search, reranked for better ordering
+pai memory search "how does session routing work" --rerank
+```
+
+The reranker uses a small local model (~23 MB) that runs entirely on your machine. First use downloads it automatically. No API keys, no cloud calls.
+
+Works from the CLI (`--rerank`), from MCP (`rerank: true`), and from natural language — just ask Claude to "search with reranking."
+
+---
+
 ## Zettelkasten Intelligence
 
 PAI implements Niklas Luhmann's Zettelkasten principles as six computational operations on your Obsidian vault.
@@ -176,5 +202,3 @@ PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiess
 
 MIT
 
----
-*Links:* [[Ideaverse/AI/PAI/PAI|PAI]]

@@ -1,12 +1,8 @@
----
-links: "[[Ideaverse/AI/PAI/PAI|PAI]]"
----
-
 # PAI Knowledge OS — Architecture
 
 Technical reference for PAI's architecture, database schema, CLI commands, and development setup.
 
-For user-facing documentation, see [README.md](Ideaverse/AI/PAI/README.md) and [MANUAL.md](MANUAL.md).
+For user-facing documentation, see [README.md](README.md) and [MANUAL.md](MANUAL.md).
 
 ---
 
@@ -716,6 +712,3 @@ src/
 ## License
 
 MIT
-
----
-*Links:* [[Ideaverse/AI/PAI/PAI|PAI]]
