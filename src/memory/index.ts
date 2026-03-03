@@ -20,3 +20,5 @@ export {
 export type { IndexResult } from "./indexer.js";
 export { searchMemory, buildFtsQuery, populateSlugs } from "./search.js";
 export type { SearchResult, SearchOptions } from "./search.js";
+export { rerankResults, configureRerankerModel } from "./reranker.js";
+export type { RerankOptions } from "./reranker.js";

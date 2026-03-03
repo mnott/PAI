@@ -174,7 +174,7 @@ Claude Code (stdio)
 
 ### Tool Reference
 
-**`memory_search(query, mode?, project?, limit?)`** — Search the indexed knowledge base. Returns ranked chunks with file paths and line numbers. `mode`: `keyword` (default), `semantic`, or `hybrid`.
+**`memory_search(query, mode?, project?, limit?, rerank?)`** — Search the indexed knowledge base. Returns ranked chunks with file paths and line numbers. `mode`: `keyword` (default), `semantic`, or `hybrid`. Set `rerank: true` to re-score results with a cross-encoder for better relevance ordering.
 
 **`memory_get(project, path)`** — Retrieve the complete contents of a specific file from a project's memory index.
 
@@ -243,6 +243,16 @@ Runs both keyword and semantic pipelines, normalizes each result set to a 0–1 
 pai memory search --mode hybrid "rate limiting patterns"
 ```
 
+### Cross-Encoder Reranking
+
+Any mode can be combined with `--rerank` to re-score results using a cross-encoder model (`Xenova/ms-marco-MiniLM-L-6-v2`, 23 MB quantized). Cross-encoders process (query, document) pairs jointly — more accurate than BM25 or bi-encoder cosine but slower since each pair is scored independently.
+
+```bash
+pai memory search "PAI memory search implementation" --mode hybrid --rerank
+```
+
+The reranker loads lazily on first use (downloads the model once, ~23 MB). Subsequent calls reuse the cached model. The MCP tool supports `rerank: true` as a parameter.
+
 ### Mode Comparison
 
 | Mode | Speed | Requires Embeddings | Best For |
@@ -250,6 +260,7 @@ pai memory search --mode hybrid "rate limiting patterns"
 | keyword | Fast | No | Exact terms, IDs, session numbers |
 | semantic | Medium | Yes | Concepts, paraphrases, cross-language |
 | hybrid | Medium | Yes | General-purpose, best quality |
+| any + rerank | Slower | Model auto-downloads | When result ordering matters most |
 
 ---
 
@@ -675,7 +686,8 @@ src/
 ├── federation/      # Federation schema definitions
 ├── hooks/           # Lifecycle hooks (pre-compact, session-stop)
 ├── mcp/             # Direct MCP server (legacy)
-├── memory/          # Indexer, chunker, embeddings, search
+├── memory/          # Indexer, chunker, embeddings, search, reranker
+│   ├── reranker.ts  # Cross-encoder reranking (Xenova/ms-marco-MiniLM-L-6-v2)
 │   └── vault-indexer.ts  # Obsidian vault indexing into v3 vault tables
 ├── obsidian/        # Obsidian vault bridge
 │   └── vault-fixer.ts    # Repairs broken wikilinks and orphaned entries

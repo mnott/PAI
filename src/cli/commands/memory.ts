@@ -205,10 +205,14 @@ export function registerMemoryCommands(
       "Search mode: keyword (default), semantic, hybrid",
       "keyword",
     )
+    .option(
+      "--rerank",
+      "Rerank results using cross-encoder model (slower, better relevance)",
+    )
     .action(
       async (
         query: string,
-        opts: { project?: string; source?: string; limit?: string; mode?: string },
+        opts: { project?: string; source?: string; limit?: string; mode?: string; rerank?: boolean },
       ) => {
         const registryDb = getDb();
 
@@ -324,9 +328,17 @@ export function registerMemoryCommands(
           return;
         }
 
+        // Optional cross-encoder reranking
+        if (opts.rerank) {
+          const { rerankResults } = await import("../../memory/reranker.js");
+          console.log(dim("Reranking with cross-encoder..."));
+          results = await rerankResults(query, results, { topK: maxResults });
+        }
+
         // Populate project slugs for display
         const withSlugs = populateSlugs(results, registryDb);
-        const modeLabel = mode !== "keyword" ? ` [${mode}]` : "";
+        const rerankLabel = opts.rerank ? " +rerank" : "";
+        const modeLabel = mode !== "keyword" ? ` [${mode}${rerankLabel}]` : (opts.rerank ? ` [rerank]` : "");
 
         console.log(
           `\n  ${bold(`Search results for: "${query}"`)}${modeLabel}  ${dim(`(${withSlugs.length} found)`)}\n`,

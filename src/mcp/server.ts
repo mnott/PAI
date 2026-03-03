@@ -88,6 +88,9 @@ export async function startMcpServer(): Promise<void> {
       "  semantic — Cosine similarity over vector embeddings (requires prior embed run)",
       "  hybrid   — Normalized combination of BM25 + cosine (best quality)",
       "",
+      "Optional: Set rerank=true to re-score results with a cross-encoder model.",
+      "Cross-encoder reranking is slower but produces significantly better relevance ordering.",
+      "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
     ].join("\n"),
@@ -123,6 +126,12 @@ export async function startMcpServer(): Promise<void> {
         .optional()
         .describe(
           "Search mode: 'keyword' (BM25, default), 'semantic' (vector cosine), or 'hybrid' (both combined)."
+        ),
+      rerank: z
+        .boolean()
+        .optional()
+        .describe(
+          "Rerank results using a cross-encoder model for better relevance. Slower but significantly more accurate ordering. Default: false."
         ),
     },
     async (args) => {

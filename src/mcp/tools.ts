@@ -168,6 +168,8 @@ export interface MemorySearchParams {
   sources?: Array<"memory" | "notes">;
   limit?: number;
   mode?: "keyword" | "semantic" | "hybrid";
+  /** Rerank results using cross-encoder model for better relevance ordering. */
+  rerank?: boolean;
   /** Maximum characters per result snippet. Default 200.
    *  Limit context consumption — MCP results go into Claude's context window. */
   snippetLength?: number;
@@ -262,6 +264,14 @@ export async function toolMemorySearch(
       }
     }
 
+    // Optional cross-encoder reranking
+    if (params.rerank && results.length > 0) {
+      const { rerankResults } = await import("../memory/reranker.js");
+      results = await rerankResults(params.query, results, {
+        topK: searchOpts.maxResults ?? 5,
+      });
+    }
+
     const withSlugs = populateSlugs(results, registryDb);
 
     if (withSlugs.length === 0) {
@@ -275,6 +285,7 @@ export async function toolMemorySearch(
       };
     }
 
+    const rerankLabel = params.rerank ? " +rerank" : "";
     const formatted = withSlugs
       .map((r, i) => {
         const header = `[${i + 1}] ${r.projectSlug ?? `project:${r.projectId}`} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
@@ -292,7 +303,7 @@ export async function toolMemorySearch(
       content: [
         {
           type: "text",
-          text: `Found ${withSlugs.length} result(s) for "${params.query}" (mode: ${mode}):\n\n${formatted}`,
+          text: `Found ${withSlugs.length} result(s) for "${params.query}" (mode: ${mode}${rerankLabel}):\n\n${formatted}`,
         },
       ],
     };
