@@ -195,6 +195,62 @@ pai memory settings rerank false
 
 Settings live in the `search` section of `~/.config/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
 
+### Using Search from Within Claude
+
+When PAI is configured as an MCP server, Claude uses the `memory_search` tool automatically. You don't need to call it yourself — just ask Claude naturally and it searches your memory behind the scenes.
+
+**Example prompts you can give Claude:**
+
+```
+"Search your memory for authentication"
+"What do you know about the database migration?"
+"Find where we discussed the notification system"
+```
+
+Claude calls `memory_search` with the right parameters based on your config defaults. Reranking and recency boost are both active by default — you don't need to configure anything for good results.
+
+**Overriding defaults for a specific search:**
+
+You can ask Claude to adjust search behavior per-query:
+
+```
+"Search for authentication using semantic mode"
+  → Claude passes mode: "semantic"
+
+"Search for the old logging discussion without recency boost"
+  → Claude passes recency_boost: 0
+
+"Search for database schema across all projects with no reranking"
+  → Claude passes all_projects: true, rerank: false
+```
+
+**The `memory_search` MCP tool accepts these parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Free-text search query (required) |
+| `project` | string | Scope to one project by slug |
+| `all_projects` | boolean | Explicitly search all projects |
+| `sources` | array | Restrict to `"memory"` or `"notes"` |
+| `limit` | integer | Max results (1–100, default from config) |
+| `mode` | string | `"keyword"`, `"semantic"`, or `"hybrid"` |
+| `rerank` | boolean | Cross-encoder reranking (default: true from config) |
+| `recency_boost` | integer | Recency half-life in days (0 = off, default from config) |
+
+All parameters except `query` are optional. Omitted values fall back to your `~/.config/pai/config.json` defaults.
+
+**Changing defaults permanently:**
+
+Tell Claude to change your search settings:
+
+```
+"Set my default search mode to hybrid"
+"Turn off reranking by default"
+"Change the recency boost to 60 days"
+```
+
+Claude runs `pai memory settings <key> <value>` to update `~/.config/pai/config.json`. Changes take effect on the next search — no restart needed.
+
 ---
 
 ## Zettelkasten Intelligence
