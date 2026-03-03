@@ -209,10 +209,15 @@ export function registerMemoryCommands(
       "--no-rerank",
       "Skip cross-encoder reranking (reranking is on by default)",
     )
+    .option(
+      "--recency <days>",
+      "Apply recency boost: score halves every N days. 0 = off (default)",
+      "0",
+    )
     .action(
       async (
         query: string,
-        opts: { project?: string; source?: string; limit?: string; mode?: string; rerank: boolean },
+        opts: { project?: string; source?: string; limit?: string; mode?: string; rerank: boolean; recency?: string },
       ) => {
         const registryDb = getDb();
 
@@ -333,6 +338,14 @@ export function registerMemoryCommands(
           const { rerankResults } = await import("../../memory/reranker.js");
           console.log(dim("Reranking with cross-encoder..."));
           results = await rerankResults(query, results, { topK: maxResults });
+        }
+
+        // Recency boost (applied after reranking)
+        const recencyDays = parseInt(opts.recency ?? "0", 10);
+        if (recencyDays > 0) {
+          const { applyRecencyBoost } = await import("../../memory/search.js");
+          console.log(dim(`Applying recency boost (half-life: ${recencyDays} days)...`));
+          results = applyRecencyBoost(results, recencyDays);
         }
 
         // Populate project slugs for display

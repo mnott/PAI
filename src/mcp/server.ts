@@ -91,6 +91,8 @@ export async function startMcpServer(): Promise<void> {
       "Reranking is ON by default — results are re-scored with a cross-encoder model for better relevance.",
       "Set rerank=false to skip reranking (faster but less accurate ordering).",
       "",
+      "Recency boost optionally down-weights older results (recency_boost=90 means scores halve every 90 days).",
+      "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
     ].join("\n"),
@@ -133,12 +135,21 @@ export async function startMcpServer(): Promise<void> {
         .describe(
           "Rerank results using a cross-encoder model for better relevance. Default: true. Set to false to skip reranking for faster but less accurate results."
         ),
+      recency_boost: z
+        .number()
+        .int()
+        .min(0)
+        .max(365)
+        .optional()
+        .describe(
+          "Apply recency boost: score halves every N days. 0 = off (default). Recommended: 90 (3 months). Applied after reranking."
+        ),
     },
     async (args) => {
       const result = await toolMemorySearch(
         getRegistryDb(),
         getFederationDb(),
-        args
+        { ...args, recencyBoost: args.recency_boost }
       );
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),

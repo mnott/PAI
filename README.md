@@ -149,6 +149,24 @@ pai memory search "how does session routing work" --no-rerank
 
 The reranker uses a small local model (~23 MB) that runs entirely on your machine. First use downloads it automatically. No API keys, no cloud calls.
 
+### Recency Boost
+
+Optionally weight recent content higher than older content. Useful when you want what you worked on last week to rank above something from six months ago, even if both match equally well.
+
+The boost uses exponential decay with a configurable half-life. A half-life of 90 days means a 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
+
+```bash
+# Boost recent results (score halves every 90 days)
+pai memory search "notification system" --recency 90
+
+# Combine with any mode — works with keyword, semantic, hybrid, and reranking
+pai memory search "notification system" --mode hybrid --recency 90
+```
+
+Via MCP, pass `recency_boost: 90` to the `memory_search` tool. Set to 0 (default) to disable.
+
+Recency boost is applied after cross-encoder reranking, so relevance is scored first, then time-weighted. Scores are normalized before decay so the math works correctly regardless of the underlying score scale.
+
 ---
 
 ## Zettelkasten Intelligence

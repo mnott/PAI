@@ -27,6 +27,7 @@ export interface SearchResult {
   score: number;          // raw BM25 score (lower = more relevant in FTS5)
   tier: string;
   source: string;
+  updatedAt?: number;     // Unix ms from memory_chunks.updated_at
 }
 
 export interface SearchOptions {
@@ -158,6 +159,7 @@ export function searchMemory(
       c.text       AS snippet,
       c.tier,
       c.source,
+      c.updated_at,
       bm25(memory_fts) AS bm25_score
     FROM memory_fts
     JOIN memory_chunks c ON memory_fts.id = c.id
@@ -175,6 +177,7 @@ export function searchMemory(
     snippet: string;
     tier: string;
     source: string;
+    updated_at: number;
     bm25_score: number;
   }>;
 
@@ -198,6 +201,7 @@ export function searchMemory(
       score: -row.bm25_score,
       tier: row.tier,
       source: row.source,
+      updatedAt: row.updated_at,
     }))
     .filter((r) => r.score >= minScore);
 }
@@ -249,7 +253,7 @@ export function searchMemorySemantic(
   // Hard cap for SQLite semantic path — prevents OOM on large corpora.
   // Use Postgres for production semantic search.
   const sql = `
-    SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding
+    SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding, updated_at
     FROM memory_chunks
     ${where}
     LIMIT 5000
@@ -265,6 +269,7 @@ export function searchMemorySemantic(
     tier: string;
     source: string;
     embedding: Buffer;
+    updated_at: number;
   }>;
 
   if (rows.length === 0) return [];
@@ -282,6 +287,7 @@ export function searchMemorySemantic(
       score,
       tier: row.tier,
       source: row.source,
+      updatedAt: row.updated_at,
     };
   });
 
@@ -408,4 +414,58 @@ export function populateSlugs(
     ...r,
     projectSlug: slugMap.get(r.projectId),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Recency boost
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply exponential recency boost to search scores.
+ *
+ * Scores are first min-max normalized to [0,1], then multiplied by an
+ * exponential decay factor based on chunk age.  Normalization is required
+ * because the cross-encoder reranker produces negative logit scores — naive
+ * multiplication of a negative score by a decay factor (0 < d ≤ 1) would
+ * make the score *less* negative, effectively boosting old results instead
+ * of penalizing them.
+ *
+ * Formula: score_final = normalized * exp(-lambda * age_days)
+ * where lambda = ln(2) / halfLifeDays, normalized ∈ [0,1]
+ *
+ * With default halfLifeDays=90, a 3-month-old chunk retains 50% of its
+ * normalized score, a 6-month-old retains 25%, and a 1-year-old ~6%.
+ *
+ * Results without an updatedAt timestamp receive no decay penalty.
+ * Results are re-sorted by the boosted score after application.
+ *
+ * @param results      Search results with optional updatedAt timestamps.
+ * @param halfLifeDays Score halves every N days. Default 90 (~3 months).
+ * @returns New array sorted by decayed normalized score (descending).
+ */
+export function applyRecencyBoost(
+  results: SearchResult[],
+  halfLifeDays = 90,
+): SearchResult[] {
+  if (halfLifeDays <= 0 || results.length === 0) return results;
+
+  const lambda = Math.LN2 / halfLifeDays;
+  const now = Date.now();
+
+  // Min-max normalize scores to [0,1] so multiplicative decay works
+  // correctly regardless of the raw score sign/scale.
+  const scores = results.map((r) => r.score);
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+  const range = maxScore - minScore;
+
+  return results
+    .map((r) => {
+      const normalized = range === 0 ? 1 : (r.score - minScore) / range;
+      const decay = r.updatedAt
+        ? Math.exp(-lambda * Math.max(0, (now - r.updatedAt) / 86_400_000))
+        : 1; // no timestamp → no penalty
+      return { ...r, score: normalized * decay };
+    })
+    .sort((a, b) => b.score - a.score);
 }

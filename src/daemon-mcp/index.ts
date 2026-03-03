@@ -103,6 +103,11 @@ async function startShim(): Promise<void> {
       "  semantic — Cosine similarity over vector embeddings (requires prior embed run)",
       "  hybrid   — Normalized combination of BM25 + cosine (best quality)",
       "",
+      "Reranking is ON by default — results are re-scored with a cross-encoder model for better relevance.",
+      "Set rerank=false to skip reranking (faster but less accurate ordering).",
+      "",
+      "Recency boost optionally down-weights older results (recency_boost=90 means scores halve every 90 days).",
+      "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
     ].join("\n"),
@@ -138,6 +143,21 @@ async function startShim(): Promise<void> {
         .optional()
         .describe(
           "Search mode: 'keyword' (BM25, default), 'semantic' (vector cosine), or 'hybrid' (both combined)."
+        ),
+      rerank: z
+        .boolean()
+        .optional()
+        .describe(
+          "Rerank results using a cross-encoder model for better relevance. Default: true."
+        ),
+      recency_boost: z
+        .number()
+        .int()
+        .min(0)
+        .max(365)
+        .optional()
+        .describe(
+          "Apply recency boost: score halves every N days. 0 = off (default). Recommended: 90."
         ),
     },
     async (args) => proxyTool("memory_search", args)

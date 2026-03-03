@@ -170,6 +170,8 @@ export interface MemorySearchParams {
   mode?: "keyword" | "semantic" | "hybrid";
   /** Rerank results using cross-encoder model for better relevance ordering. */
   rerank?: boolean;
+  /** Apply recency boost — score decays by half every N days. 0 = off (default). */
+  recencyBoost?: number;
   /** Maximum characters per result snippet. Default 200.
    *  Limit context consumption — MCP results go into Claude's context window. */
   snippetLength?: number;
@@ -270,6 +272,12 @@ export async function toolMemorySearch(
       results = await rerankResults(params.query, results, {
         topK: searchOpts.maxResults ?? 5,
       });
+    }
+
+    // Recency boost (off by default, applied after reranking)
+    if (params.recencyBoost && params.recencyBoost > 0 && results.length > 0) {
+      const { applyRecencyBoost } = await import("../memory/search.js");
+      results = applyRecencyBoost(results, params.recencyBoost);
     }
 
     const withSlugs = populateSlugs(results, registryDb);
