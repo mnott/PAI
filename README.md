@@ -137,19 +137,17 @@ PAI doesn't just store your notes — it understands them. Three search modes wo
 
 ### Cross-Encoder Reranking
 
-Add `--rerank` to any search and PAI runs a second pass: a cross-encoder model reads each (query, result) pair together and re-scores them for relevance. This catches results that keyword or vector search ranked too low.
+Every search automatically runs a second pass: a cross-encoder model reads each (query, result) pair together and re-scores them for relevance. This catches results that keyword or vector search ranked too low.
 
 ```bash
-# Standard hybrid search
+# Search with reranking (default)
 pai memory search "how does session routing work"
 
-# Same search, reranked for better ordering
-pai memory search "how does session routing work" --rerank
+# Skip reranking for faster results
+pai memory search "how does session routing work" --no-rerank
 ```
 
 The reranker uses a small local model (~23 MB) that runs entirely on your machine. First use downloads it automatically. No API keys, no cloud calls.
-
-Works from the CLI (`--rerank`), from MCP (`rerank: true`), and from natural language — just ask Claude to "search with reranking."
 
 ---
 

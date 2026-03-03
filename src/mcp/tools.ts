@@ -264,8 +264,8 @@ export async function toolMemorySearch(
       }
     }
 
-    // Optional cross-encoder reranking
-    if (params.rerank && results.length > 0) {
+    // Cross-encoder reranking (on by default)
+    if (params.rerank !== false && results.length > 0) {
       const { rerankResults } = await import("../memory/reranker.js");
       results = await rerankResults(params.query, results, {
         topK: searchOpts.maxResults ?? 5,
@@ -285,7 +285,7 @@ export async function toolMemorySearch(
       };
     }
 
-    const rerankLabel = params.rerank ? " +rerank" : "";
+    const rerankLabel = params.rerank !== false ? " +rerank" : "";
     const formatted = withSlugs
       .map((r, i) => {
         const header = `[${i + 1}] ${r.projectSlug ?? `project:${r.projectId}`} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;

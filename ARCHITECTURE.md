@@ -170,7 +170,7 @@ Claude Code (stdio)
 
 ### Tool Reference
 
-**`memory_search(query, mode?, project?, limit?, rerank?)`** — Search the indexed knowledge base. Returns ranked chunks with file paths and line numbers. `mode`: `keyword` (default), `semantic`, or `hybrid`. Set `rerank: true` to re-score results with a cross-encoder for better relevance ordering.
+**`memory_search(query, mode?, project?, limit?, rerank?)`** — Search the indexed knowledge base. Returns ranked chunks with file paths and line numbers. `mode`: `keyword` (default), `semantic`, or `hybrid`. Cross-encoder reranking is on by default; set `rerank: false` to skip it.
 
 **`memory_get(project, path)`** — Retrieve the complete contents of a specific file from a project's memory index.
 
@@ -239,15 +239,16 @@ Runs both keyword and semantic pipelines, normalizes each result set to a 0–1 
 pai memory search --mode hybrid "rate limiting patterns"
 ```
 
-### Cross-Encoder Reranking
+### Cross-Encoder Reranking (on by default)
 
-Any mode can be combined with `--rerank` to re-score results using a cross-encoder model (`Xenova/ms-marco-MiniLM-L-6-v2`, 23 MB quantized). Cross-encoders process (query, document) pairs jointly — more accurate than BM25 or bi-encoder cosine but slower since each pair is scored independently.
+All search results are automatically re-scored using a cross-encoder model (`Xenova/ms-marco-MiniLM-L-6-v2`, 23 MB quantized). Cross-encoders process (query, document) pairs jointly — more accurate than BM25 or bi-encoder cosine but slower since each pair is scored independently. Use `--no-rerank` to skip this step.
 
 ```bash
-pai memory search "PAI memory search implementation" --mode hybrid --rerank
+pai memory search "PAI memory search implementation" --mode hybrid
+pai memory search "PAI memory search implementation" --mode hybrid --no-rerank
 ```
 
-The reranker loads lazily on first use (downloads the model once, ~23 MB). Subsequent calls reuse the cached model. The MCP tool supports `rerank: true` as a parameter.
+The reranker loads lazily on first use (downloads the model once, ~23 MB). Subsequent calls reuse the cached model. The MCP tool defaults to `rerank: true`; pass `rerank: false` to skip.
 
 ### Mode Comparison
 
@@ -256,7 +257,7 @@ The reranker loads lazily on first use (downloads the model once, ~23 MB). Subse
 | keyword | Fast | No | Exact terms, IDs, session numbers |
 | semantic | Medium | Yes | Concepts, paraphrases, cross-language |
 | hybrid | Medium | Yes | General-purpose, best quality |
-| any + rerank | Slower | Model auto-downloads | When result ordering matters most |
+| any (rerank default) | Slower | Model auto-downloads | All modes — best relevance ordering |
 
 ---
 

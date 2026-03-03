@@ -206,13 +206,13 @@ export function registerMemoryCommands(
       "keyword",
     )
     .option(
-      "--rerank",
-      "Rerank results using cross-encoder model (slower, better relevance)",
+      "--no-rerank",
+      "Skip cross-encoder reranking (reranking is on by default)",
     )
     .action(
       async (
         query: string,
-        opts: { project?: string; source?: string; limit?: string; mode?: string; rerank?: boolean },
+        opts: { project?: string; source?: string; limit?: string; mode?: string; rerank: boolean },
       ) => {
         const registryDb = getDb();
 
@@ -328,8 +328,8 @@ export function registerMemoryCommands(
           return;
         }
 
-        // Optional cross-encoder reranking
-        if (opts.rerank) {
+        // Cross-encoder reranking (on by default, skip with --no-rerank)
+        if (opts.rerank !== false) {
           const { rerankResults } = await import("../../memory/reranker.js");
           console.log(dim("Reranking with cross-encoder..."));
           results = await rerankResults(query, results, { topK: maxResults });
@@ -337,8 +337,8 @@ export function registerMemoryCommands(
 
         // Populate project slugs for display
         const withSlugs = populateSlugs(results, registryDb);
-        const rerankLabel = opts.rerank ? " +rerank" : "";
-        const modeLabel = mode !== "keyword" ? ` [${mode}${rerankLabel}]` : (opts.rerank ? ` [rerank]` : "");
+        const rerankLabel = opts.rerank !== false ? " +rerank" : "";
+        const modeLabel = mode !== "keyword" ? ` [${mode}${rerankLabel}]` : (opts.rerank !== false ? ` [rerank]` : "");
 
         console.log(
           `\n  ${bold(`Search results for: "${query}"`)}${modeLabel}  ${dim(`(${withSlugs.length} found)`)}\n`,
