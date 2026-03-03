@@ -18,7 +18,12 @@ import {
   sendNtfyNotification,
   getCurrentNotePath,
   appendCheckpoint,
-  calculateSessionTokens
+  addWorkToSessionNote,
+  findNotesDir,
+  findTodoPath,
+  addTodoCheckpoint,
+  calculateSessionTokens,
+  WorkItem,
 } from '../lib/project-utils';
 
 interface HookInput {
@@ -196,6 +201,58 @@ function extractSessionState(transcriptPath: string, cwd?: string): string | nul
 }
 
 // ---------------------------------------------------------------------------
+// Work item extraction (same pattern as stop-hook.ts)
+// ---------------------------------------------------------------------------
+
+function extractWorkFromTranscript(transcriptPath: string): WorkItem[] {
+  try {
+    const raw = readFileSync(transcriptPath, 'utf-8');
+    const lines = raw.trim().split('\n');
+    const workItems: WorkItem[] = [];
+    const seenSummaries = new Set<string>();
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let entry: any;
+      try { entry = JSON.parse(line); } catch { continue; }
+
+      if (entry.type === 'assistant' && entry.message?.content) {
+        const text = contentToText(entry.message.content);
+
+        const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?:\n|$)/i);
+        if (summaryMatch) {
+          const summary = summaryMatch[1].trim();
+          if (summary && !seenSummaries.has(summary) && summary.length > 5) {
+            seenSummaries.add(summary);
+            const details: string[] = [];
+            const actionsMatch = text.match(/ACTIONS:\s*(.+?)(?=\n[A-Z]+:|$)/is);
+            if (actionsMatch) {
+              const actionLines = actionsMatch[1].split('\n')
+                .map(l => l.replace(/^[-*•]\s*/, '').replace(/^\d+\.\s*/, '').trim())
+                .filter(l => l.length > 3 && l.length < 100);
+              details.push(...actionLines.slice(0, 3));
+            }
+            workItems.push({ title: summary, details: details.length > 0 ? details : undefined, completed: true });
+          }
+        }
+
+        const completedMatch = text.match(/COMPLETED:\s*(.+?)(?:\n|$)/i);
+        if (completedMatch && workItems.length === 0) {
+          const completed = completedMatch[1].trim().replace(/\*+/g, '');
+          if (completed && !seenSummaries.has(completed) && completed.length > 5) {
+            seenSummaries.add(completed);
+            workItems.push({ title: completed, completed: true });
+          }
+        }
+      }
+    }
+    return workItems;
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -229,19 +286,48 @@ async function main() {
       ? `${Math.round(tokenCount / 1000)}k`
       : String(tokenCount);
 
-    // Save checkpoint to session note before compression
+    // -----------------------------------------------------------------
+    // Persist session state to numbered session note (like "pause session")
+    // -----------------------------------------------------------------
+    const state = extractSessionState(hookInput.transcript_path, hookInput.cwd);
+
     try {
-      const transcriptDir = dirname(hookInput.transcript_path);
-      const notesDir = join(transcriptDir, 'Notes');
-      const currentNotePath = getCurrentNotePath(notesDir);
+      // Find notes dir — prefer local, fallback to central
+      const notesInfo = hookInput.cwd
+        ? findNotesDir(hookInput.cwd)
+        : { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
+      const currentNotePath = getCurrentNotePath(notesInfo.path);
 
       if (currentNotePath) {
-        const checkpoint = `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
-        appendCheckpoint(currentNotePath, checkpoint);
-        console.error(`Checkpoint saved before compression: ${basename(currentNotePath)}`);
+        // 1. Write rich checkpoint with full session state
+        const checkpointBody = state
+          ? `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.\n\n${state}`
+          : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
+        appendCheckpoint(currentNotePath, checkpointBody);
+
+        // 2. Write work items to "Work Done" section (same as stop-hook)
+        const workItems = extractWorkFromTranscript(hookInput.transcript_path);
+        if (workItems.length > 0) {
+          addWorkToSessionNote(currentNotePath, workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
+          console.error(`Added ${workItems.length} work item(s) to session note`);
+        }
+
+        console.error(`Rich checkpoint saved: ${basename(currentNotePath)}`);
       }
     } catch (noteError) {
       console.error(`Could not save checkpoint: ${noteError}`);
+    }
+
+    // -----------------------------------------------------------------
+    // Update TODO.md with checkpoint (like "pause session")
+    // -----------------------------------------------------------------
+    if (hookInput.cwd && state) {
+      try {
+        addTodoCheckpoint(hookInput.cwd, `Pre-compact checkpoint (~${tokenDisplay} tokens):\n${state}`);
+        console.error('TODO.md checkpoint added');
+      } catch (todoError) {
+        console.error(`Could not update TODO.md: ${todoError}`);
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -250,29 +336,24 @@ async function main() {
     // BEFORE compaction runs. This ensures the compaction summary preserves
     // awareness of current work, recent requests, and modified files.
     // -----------------------------------------------------------------------
-    try {
-      const state = extractSessionState(hookInput.transcript_path, hookInput.cwd);
-      if (state) {
-        const injection = [
-          '<system-reminder>',
-          `SessionStart:compact hook success: <system-reminder>`,
-          `SESSION STATE BEFORE COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
-          '',
-          state,
-          '',
-          'IMPORTANT: This session state was captured before context compaction.',
-          'The compaction summary MUST preserve: current task, recent user requests,',
-          'key decisions, file paths, and any in-progress work described above.',
-          'Continue the conversation from where it left off without asking the user',
-          'any further questions. Continue with the last task that you were asked to work on.',
-          '</system-reminder>',
-          '</system-reminder>',
-        ].join('\n');
-        console.log(injection);
-        console.error(`Session state injected to stdout (${state.length} chars)`);
-      }
-    } catch (stateError) {
-      console.error(`Could not extract session state: ${stateError}`);
+    if (state) {
+      const injection = [
+        '<system-reminder>',
+        `SessionStart:compact hook success: <system-reminder>`,
+        `SESSION STATE BEFORE COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
+        '',
+        state,
+        '',
+        'IMPORTANT: This session state was captured before context compaction.',
+        'The compaction summary MUST preserve: current task, recent user requests,',
+        'key decisions, file paths, and any in-progress work described above.',
+        'Continue the conversation from where it left off without asking the user',
+        'any further questions. Continue with the last task that you were asked to work on.',
+        '</system-reminder>',
+        '</system-reminder>',
+      ].join('\n');
+      console.log(injection);
+      console.error(`Session state injected to stdout (${state.length} chars)`);
     }
   }
 
