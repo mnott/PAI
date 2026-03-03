@@ -108,6 +108,8 @@ async function startShim(): Promise<void> {
       "",
       "Recency boost optionally down-weights older results (recency_boost=90 means scores halve every 90 days).",
       "",
+      "Defaults come from ~/.config/pai/config.json (search section). Per-call parameters override config defaults.",
+      "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
     ].join("\n"),
@@ -157,7 +159,7 @@ async function startShim(): Promise<void> {
         .max(365)
         .optional()
         .describe(
-          "Apply recency boost: score halves every N days. 0 = off (default). Recommended: 90."
+          "Apply recency boost: score halves every N days. 0 = off. Default from config (typically 90). Applied after reranking."
         ),
     },
     async (args) => proxyTool("memory_search", args)

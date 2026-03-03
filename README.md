@@ -125,7 +125,7 @@ For the technical deep-dive — architecture, database schema, CLI reference, an
 
 ## Search Intelligence
 
-PAI doesn't just store your notes — it understands them. Three search modes work together, and an optional reranking step puts the best results first.
+PAI doesn't just store your notes — it understands them. Three search modes work together, with reranking and recency boost on by default. All search settings are configurable.
 
 ### Search Modes
 
@@ -151,21 +151,49 @@ The reranker uses a small local model (~23 MB) that runs entirely on your machin
 
 ### Recency Boost
 
-Optionally weight recent content higher than older content. Useful when you want what you worked on last week to rank above something from six months ago, even if both match equally well.
-
-The boost uses exponential decay with a configurable half-life. A half-life of 90 days means a 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
+Recent content scores higher than older content — on by default with a 90-day half-life. A 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
 
 ```bash
-# Boost recent results (score halves every 90 days)
-pai memory search "notification system" --recency 90
+# Search uses recency boost automatically (90-day half-life from config)
+pai memory search "notification system"
 
-# Combine with any mode — works with keyword, semantic, hybrid, and reranking
-pai memory search "notification system" --mode hybrid --recency 90
+# Override the half-life for this search
+pai memory search "notification system" --recency 30
+
+# Disable recency boost for this search
+pai memory search "notification system" --recency 0
 ```
 
-Via MCP, pass `recency_boost: 90` to the `memory_search` tool. Set to 0 (default) to disable.
+Via MCP, pass `recency_boost: 90` to the `memory_search` tool, or `recency_boost: 0` to disable.
 
 Recency boost is applied after cross-encoder reranking, so relevance is scored first, then time-weighted. Scores are normalized before decay so the math works correctly regardless of the underlying score scale.
+
+### Search Settings
+
+All search defaults are configurable via `~/.config/pai/config.json` and can be viewed or changed from the command line.
+
+```bash
+# View all search settings
+pai memory settings
+
+# View a single setting
+pai memory settings recencyBoostDays
+
+# Change a setting
+pai memory settings recencyBoostDays 60
+pai memory settings mode hybrid
+pai memory settings rerank false
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `mode` | `keyword` | Default search mode: `keyword`, `semantic`, or `hybrid` |
+| `rerank` | `true` | Cross-encoder reranking on by default |
+| `recencyBoostDays` | `90` | Recency half-life in days. `0` = off |
+| `defaultLimit` | `10` | Default number of results |
+| `snippetLength` | `200` | Max characters per snippet in MCP results |
+
+Settings live in the `search` section of `~/.config/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
 
 ---
 

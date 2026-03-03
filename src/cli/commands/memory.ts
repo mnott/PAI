@@ -8,6 +8,7 @@
  *   pai memory status [project-slug]  — show index stats
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
 import type { Database } from "better-sqlite3";
 import chalk from "chalk";
@@ -16,7 +17,7 @@ import { indexProject, indexAll, embedChunks } from "../../memory/indexer.js";
 import { searchMemory, populateSlugs, type SearchResult } from "../../memory/search.js";
 import { renderTable, dim, bold, ok, warn, err, fmtDate } from "../utils.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
-import { loadConfig } from "../../daemon/config.js";
+import { loadConfig, CONFIG_FILE, ensureConfigDir } from "../../daemon/config.js";
 import { createStorageBackend } from "../../storage/factory.js";
 
 // ---------------------------------------------------------------------------
@@ -199,11 +200,10 @@ export function registerMemoryCommands(
     .description("Search indexed memory (BM25 keyword, semantic, or hybrid)")
     .option("--project <slug>", "Restrict search to a specific project")
     .option("--source <source>", "Restrict to 'memory' or 'notes'")
-    .option("--limit <n>", "Maximum results to return", "10")
+    .option("--limit <n>", "Maximum results to return")
     .option(
       "--mode <mode>",
       "Search mode: keyword (default), semantic, hybrid",
-      "keyword",
     )
     .option(
       "--no-rerank",
@@ -211,8 +211,7 @@ export function registerMemoryCommands(
     )
     .option(
       "--recency <days>",
-      "Apply recency boost: score halves every N days. 0 = off (default)",
-      "0",
+      "Apply recency boost: score halves every N days. 0 = off",
     )
     .action(
       async (
@@ -229,8 +228,11 @@ export function registerMemoryCommands(
           process.exit(1);
         }
 
-        const maxResults = parseInt(opts.limit ?? "10", 10);
-        const mode = (opts.mode ?? "keyword") as "keyword" | "semantic" | "hybrid";
+        const config = loadConfig();
+        const searchConfig = config.search;
+
+        const maxResults = parseInt(opts.limit ?? String(searchConfig.defaultLimit), 10);
+        const mode = (opts.mode ?? searchConfig.mode) as "keyword" | "semantic" | "hybrid";
 
         // Validate mode
         if (!["keyword", "semantic", "hybrid"].includes(mode)) {
@@ -341,7 +343,7 @@ export function registerMemoryCommands(
         }
 
         // Recency boost (applied after reranking)
-        const recencyDays = parseInt(opts.recency ?? "0", 10);
+        const recencyDays = parseInt(opts.recency ?? String(searchConfig.recencyBoostDays), 10);
         if (recencyDays > 0) {
           const { applyRecencyBoost } = await import("../../memory/search.js");
           console.log(dim(`Applying recency boost (half-life: ${recencyDays} days)...`));
@@ -526,6 +528,100 @@ export function registerMemoryCommands(
           console.log(dim("\n  No projects indexed yet. Run `pai memory index --all` to start."));
         }
         console.log();
+      }
+    });
+
+  // -------------------------------------------------------------------------
+  // pai memory settings [key] [value]
+  // -------------------------------------------------------------------------
+
+  memoryCmd
+    .command("settings [key] [value]")
+    .description("View or modify search settings in ~/.config/pai/config.json")
+    .action((key: string | undefined, value: string | undefined) => {
+      const config = loadConfig();
+      const search = config.search;
+
+      if (!key) {
+        // Show all settings
+        console.log(`\n  ${bold("PAI Memory — Search Settings")}\n`);
+        console.log(`  ${bold("mode:")}             ${search.mode}`);
+        console.log(`  ${bold("rerank:")}           ${search.rerank}`);
+        console.log(`  ${bold("recencyBoostDays:")} ${search.recencyBoostDays}`);
+        console.log(`  ${bold("defaultLimit:")}     ${search.defaultLimit}`);
+        console.log(`  ${bold("snippetLength:")}    ${search.snippetLength}`);
+        console.log();
+        console.log(dim(`  Config file: ${CONFIG_FILE}`));
+        console.log(dim(`  Edit directly or use: pai memory settings <key> <value>`));
+        console.log();
+        return;
+      }
+
+      if (!value) {
+        // Show single setting
+        const val = (search as unknown as Record<string, unknown>)[key];
+        if (val === undefined) {
+          console.error(err(`Unknown setting: ${key}`));
+          console.log(dim(`  Valid keys: mode, rerank, recencyBoostDays, defaultLimit, snippetLength`));
+          process.exit(1);
+        }
+        console.log(String(val));
+        return;
+      }
+
+      // Update setting
+      const validKeys = new Set(["mode", "rerank", "recencyBoostDays", "defaultLimit", "snippetLength"]);
+      if (!validKeys.has(key)) {
+        console.error(err(`Unknown setting: ${key}`));
+        console.log(dim(`  Valid keys: ${[...validKeys].join(", ")}`));
+        process.exit(1);
+      }
+
+      // Read current config file
+      let fileConfig: Record<string, unknown> = {};
+      if (existsSync(CONFIG_FILE)) {
+        try {
+          fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;
+        } catch {
+          console.error(err(`Could not parse ${CONFIG_FILE}`));
+          process.exit(1);
+        }
+      }
+
+      // Ensure search section exists
+      if (!fileConfig.search || typeof fileConfig.search !== "object") {
+        fileConfig.search = {};
+      }
+
+      // Parse and validate value
+      let parsed: string | number | boolean;
+      if (key === "mode") {
+        if (!["keyword", "semantic", "hybrid"].includes(value)) {
+          console.error(err(`Invalid mode: ${value}. Must be keyword, semantic, or hybrid.`));
+          process.exit(1);
+        }
+        parsed = value;
+      } else if (key === "rerank") {
+        parsed = value === "true" || value === "1" || value === "on";
+      } else {
+        parsed = parseInt(value, 10);
+        if (isNaN(parsed)) {
+          console.error(err(`Invalid number: ${value}`));
+          process.exit(1);
+        }
+      }
+
+      (fileConfig.search as Record<string, unknown>)[key] = parsed;
+
+      // Write back
+      try {
+        ensureConfigDir();
+        writeFileSync(CONFIG_FILE, JSON.stringify(fileConfig, null, 2) + "\n", "utf-8");
+        console.log(ok(`Set search.${key} = ${parsed}`));
+        console.log(dim(`  Restart daemon to apply: pai daemon restart`));
+      } catch (e) {
+        console.error(err(`Could not write config: ${e}`));
+        process.exit(1);
       }
     });
 }

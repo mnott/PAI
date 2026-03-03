@@ -16,6 +16,19 @@ import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface SearchConfig {
+  /** Default search mode: 'keyword', 'semantic', or 'hybrid'. Default: 'keyword'. */
+  mode: "keyword" | "semantic" | "hybrid";
+  /** Enable cross-encoder reranking by default. Default: true. */
+  rerank: boolean;
+  /** Recency boost half-life in days. 0 = off. Default: 90. */
+  recencyBoostDays: number;
+  /** Default max results. Default: 10. */
+  defaultLimit: number;
+  /** Default snippet length for MCP results. Default: 200. */
+  snippetLength: number;
+}
+
 export interface PostgresConfig {
   /** Connection string — if set, overrides individual host/port/etc. fields */
   connectionString?: string;
@@ -65,6 +78,9 @@ export interface PaiDaemonConfig {
 
   /** Notification subsystem configuration */
   notifications: NotificationConfig;
+
+  /** Search defaults — applied when MCP tool or CLI doesn't specify a value */
+  search: SearchConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +100,13 @@ export const DEFAULTS: PaiDaemonConfig = {
   embeddingModel: "Snowflake/snowflake-arctic-embed-m-v1.5",
   logLevel: "info",
   notifications: DEFAULT_NOTIFICATION_CONFIG,
+  search: {
+    mode: "keyword",
+    rerank: true,
+    recencyBoostDays: 90,
+    defaultLimit: 10,
+    snippetLength: 200,
+  },
 };
 
 const CONFIG_TEMPLATE = `{
@@ -99,7 +122,14 @@ const CONFIG_TEMPLATE = `{
   "embeddingModel": "Snowflake/snowflake-arctic-embed-m-v1.5",
   "logLevel": "info",
   "vaultPath": "",
-  "vaultProjectId": 0
+  "vaultProjectId": 0,
+  "search": {
+    "mode": "keyword",
+    "rerank": true,
+    "recencyBoostDays": 90,
+    "defaultLimit": 10,
+    "snippetLength": 200
+  }
 }
 `;
 

@@ -15,6 +15,7 @@ import { populateSlugs, searchMemoryHybrid } from "../memory/search.js";
 import { detectProject, formatDetectionJson } from "../cli/commands/detect.js";
 import type { StorageBackend } from "../storage/interface.js";
 import type { NotificationMode, NotificationEvent } from "../notifications/types.js";
+import type { SearchConfig } from "../daemon/config.js";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -180,7 +181,8 @@ export interface MemorySearchParams {
 export async function toolMemorySearch(
   registryDb: Database,
   federation: Database | StorageBackend,
-  params: MemorySearchParams
+  params: MemorySearchParams,
+  searchDefaults?: SearchConfig,
 ): Promise<ToolResult> {
   try {
     const projectIds: number[] | undefined = params.project
@@ -202,15 +204,15 @@ export async function toolMemorySearch(
     // NOTE: No indexAll() here — indexing is handled by the daemon scheduler.
     // The daemon ensures the index stays fresh; the search hot path is read-only.
 
-    const mode = params.mode ?? "keyword";
+    const mode = params.mode ?? (searchDefaults?.mode ?? "keyword");
     // Limit context consumption — MCP results go into Claude's context window.
     // Default to 5 results and 200-char snippets to keep a single search call
     // within ~1-2K tokens rather than 5K+.
-    const snippetLength = params.snippetLength ?? 200;
+    const snippetLength = params.snippetLength ?? (searchDefaults?.snippetLength ?? 200);
     const searchOpts = {
       projectIds,
       sources: params.sources,
-      maxResults: params.limit ?? 5,
+      maxResults: params.limit ?? (searchDefaults?.defaultLimit ?? 5),
     };
 
     let results;
@@ -267,7 +269,8 @@ export async function toolMemorySearch(
     }
 
     // Cross-encoder reranking (on by default)
-    if (params.rerank !== false && results.length > 0) {
+    const shouldRerank = params.rerank ?? (searchDefaults?.rerank ?? true);
+    if (shouldRerank && results.length > 0) {
       const { rerankResults } = await import("../memory/reranker.js");
       results = await rerankResults(params.query, results, {
         topK: searchOpts.maxResults ?? 5,
@@ -275,9 +278,10 @@ export async function toolMemorySearch(
     }
 
     // Recency boost (off by default, applied after reranking)
-    if (params.recencyBoost && params.recencyBoost > 0 && results.length > 0) {
+    const recencyDays = params.recencyBoost ?? (searchDefaults?.recencyBoostDays ?? 0);
+    if (recencyDays > 0 && results.length > 0) {
       const { applyRecencyBoost } = await import("../memory/search.js");
-      results = applyRecencyBoost(results, params.recencyBoost);
+      results = applyRecencyBoost(results, recencyDays);
     }
 
     const withSlugs = populateSlugs(results, registryDb);
@@ -293,7 +297,7 @@ export async function toolMemorySearch(
       };
     }
 
-    const rerankLabel = params.rerank !== false ? " +rerank" : "";
+    const rerankLabel = shouldRerank ? " +rerank" : "";
     const formatted = withSlugs
       .map((r, i) => {
         const header = `[${i + 1}] ${r.projectSlug ?? `project:${r.projectId}`} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
