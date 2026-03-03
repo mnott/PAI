@@ -159,6 +159,9 @@ export class PostgresBackend implements StorageBackend {
       await client.query("BEGIN");
 
       for (const c of chunks) {
+        // Strip null bytes — Postgres rejects \0 in text columns
+        const safeText = c.text.replace(/\0/g, "");
+
         // embedding is null at insert time; updated separately via updateEmbedding()
         await client.query(
           `INSERT INTO pai_chunks
@@ -186,12 +189,44 @@ export class PostgresBackend implements StorageBackend {
             c.startLine,
             c.endLine,
             c.hash,
-            c.text,
+            safeText,
             c.updatedAt,
           ]
         );
       }
 
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getDistinctChunkPaths(projectId: number): Promise<string[]> {
+    const result = await this.pool.query<{ path: string }>(
+      "SELECT DISTINCT path FROM pai_chunks WHERE project_id = $1",
+      [projectId]
+    );
+    return result.rows.map((r) => r.path);
+  }
+
+  async deletePaths(projectId: number, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const path of paths) {
+        await client.query(
+          "DELETE FROM pai_chunks WHERE project_id = $1 AND path = $2",
+          [projectId, path]
+        );
+        await client.query(
+          "DELETE FROM pai_files WHERE project_id = $1 AND path = $2",
+          [projectId, path]
+        );
+      }
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");

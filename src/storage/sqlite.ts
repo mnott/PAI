@@ -143,6 +143,36 @@ export class SQLiteBackend implements StorageBackend {
     })();
   }
 
+  async getDistinctChunkPaths(projectId: number): Promise<string[]> {
+    const rows = this.db
+      .prepare("SELECT DISTINCT path FROM memory_chunks WHERE project_id = ?")
+      .all(projectId) as Array<{ path: string }>;
+    return rows.map((r) => r.path);
+  }
+
+  async deletePaths(projectId: number, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    const deleteFts = this.db.prepare("DELETE FROM memory_fts WHERE id = ?");
+    const deleteChunks = this.db.prepare(
+      "DELETE FROM memory_chunks WHERE project_id = ? AND path = ?"
+    );
+    const deleteFile = this.db.prepare(
+      "DELETE FROM memory_files WHERE project_id = ? AND path = ?"
+    );
+    this.db.transaction(() => {
+      for (const path of paths) {
+        const ids = this.db
+          .prepare("SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?")
+          .all(projectId, path) as Array<{ id: string }>;
+        for (const { id } of ids) {
+          deleteFts.run(id);
+        }
+        deleteChunks.run(projectId, path);
+        deleteFile.run(projectId, path);
+      }
+    })();
+  }
+
   async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string }>> {
     const conditions = ["embedding IS NULL"];
     const params: (string | number)[] = [];

@@ -616,6 +616,56 @@ export async function indexProject(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Prune stale paths: remove DB entries for files that no longer exist on disk.
+  // This handles renames, moves, and deletions — the indexer only adds/updates,
+  // so without pruning, old paths accumulate forever.
+  // ---------------------------------------------------------------------------
+
+  const livePaths = new Set<string>();
+  for (const { absPath, rootBase } of filesToIndex) {
+    livePaths.add(relative(rootBase, absPath));
+  }
+
+  // Query all distinct paths in memory_chunks for this project
+  const dbChunkPaths = db
+    .prepare("SELECT DISTINCT path FROM memory_chunks WHERE project_id = ?")
+    .all(projectId) as Array<{ path: string }>;
+
+  const stalePaths: string[] = [];
+  for (const row of dbChunkPaths) {
+    // Synthetic title paths (ending in "::title") are live if their base file is live
+    const basePath = row.path.endsWith("::title")
+      ? row.path.slice(0, -"::title".length)
+      : row.path;
+    if (!livePaths.has(basePath)) {
+      stalePaths.push(row.path);
+    }
+  }
+
+  if (stalePaths.length > 0) {
+    const deleteChunksFts = db.prepare("DELETE FROM memory_fts WHERE id = ?");
+    const deleteChunks = db.prepare(
+      "DELETE FROM memory_chunks WHERE project_id = ? AND path = ?",
+    );
+    const deleteFile = db.prepare(
+      "DELETE FROM memory_files WHERE project_id = ? AND path = ?",
+    );
+
+    db.transaction(() => {
+      for (const stalePath of stalePaths) {
+        const chunkIds = db
+          .prepare("SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?")
+          .all(projectId, stalePath) as Array<{ id: string }>;
+        for (const { id } of chunkIds) {
+          deleteChunksFts.run(id);
+        }
+        deleteChunks.run(projectId, stalePath);
+        deleteFile.run(projectId, stalePath);
+      }
+    })();
+  }
+
   return result;
 }
 

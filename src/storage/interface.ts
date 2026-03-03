@@ -110,6 +110,18 @@ export interface StorageBackend {
   insertChunks(chunks: ChunkRow[]): Promise<void>;
 
   /**
+   * Return all distinct paths stored in memory_chunks for a given project.
+   * Used by the indexer to detect stale paths after renames/moves/deletions.
+   */
+  getDistinctChunkPaths(projectId: number): Promise<string[]>;
+
+  /**
+   * Delete all chunks, FTS entries, and file records for the given paths.
+   * Used by the stale-path pruner to clean up entries for renamed/moved/deleted files.
+   */
+  deletePaths(projectId: number, paths: string[]): Promise<void>;
+
+  /**
    * Return all chunk IDs that have no embedding stored yet.
    * Used by embedChunks() to find work to do.
    */

@@ -279,7 +279,11 @@ export async function indexProjectWithBackend(
         path: syntheticPath, startLine: 0, endLine: 0,
         hash, text, updatedAt, embedding: null,
       };
-      await backend.insertChunks([titleChunk]);
+      try {
+        await backend.insertChunks([titleChunk]);
+      } catch {
+        // Skip title chunks that cause backend errors
+      }
     }
   }
 
@@ -310,7 +314,11 @@ export async function indexProjectWithBackend(
           path: syntheticPath, startLine: 0, endLine: 0,
           hash, text, updatedAt, embedding: null,
         };
-        await backend.insertChunks([titleChunk]);
+        try {
+          await backend.insertChunks([titleChunk]);
+        } catch {
+          // Skip title chunks that cause backend errors
+        }
       }
     }
 
@@ -341,16 +349,46 @@ export async function indexProjectWithBackend(
     filesSinceYield++;
 
     const relPath = relative(rootBase, absPath);
-    const changed = await indexFileWithBackend(backend, projectId, rootBase, relPath, source, tier);
+    try {
+      const changed = await indexFileWithBackend(backend, projectId, rootBase, relPath, source, tier);
 
-    if (changed) {
-      // Count chunks — we know we just inserted them, count from the chunk IDs
-      const ids = await backend.getChunkIds(projectId, relPath);
-      result.filesProcessed++;
-      result.chunksCreated += ids.length;
-    } else {
+      if (changed) {
+        // Count chunks — we know we just inserted them, count from the chunk IDs
+        const ids = await backend.getChunkIds(projectId, relPath);
+        result.filesProcessed++;
+        result.chunksCreated += ids.length;
+      } else {
+        result.filesSkipped++;
+      }
+    } catch {
+      // Skip files that cause backend errors (e.g. null bytes in Postgres)
       result.filesSkipped++;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Prune stale paths: remove DB entries for files that no longer exist on disk.
+  // This handles renames, moves, and deletions — the indexer only adds/updates,
+  // so without pruning, old paths accumulate forever.
+  // ---------------------------------------------------------------------------
+
+  const livePaths = new Set<string>();
+  for (const { absPath, rootBase } of filesToIndex) {
+    livePaths.add(relative(rootBase, absPath));
+  }
+
+  const dbChunkPaths = await backend.getDistinctChunkPaths(projectId);
+
+  const stalePaths: string[] = [];
+  for (const p of dbChunkPaths) {
+    const basePath = p.endsWith("::title") ? p.slice(0, -"::title".length) : p;
+    if (!livePaths.has(basePath)) {
+      stalePaths.push(p);
+    }
+  }
+
+  if (stalePaths.length > 0) {
+    await backend.deletePaths(projectId, stalePaths);
   }
 
   return result;
