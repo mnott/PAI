@@ -437,8 +437,24 @@ export function createSessionNote(notesDir: string, description: string): string
  */
 export function appendCheckpoint(notePath: string, checkpoint: string): void {
   if (!existsSync(notePath)) {
-    console.error(`Note file not found: ${notePath}`);
-    return;
+    // Note vanished (cloud sync, cleanup, etc.) — recreate it
+    console.error(`Note file not found, recreating: ${notePath}`);
+    try {
+      const parentDir = join(notePath, '..');
+      if (!existsSync(parentDir)) {
+        mkdirSync(parentDir, { recursive: true });
+      }
+      const noteFilename = basename(notePath);
+      const numberMatch = noteFilename.match(/^(\d+)/);
+      const noteNumber = numberMatch ? numberMatch[1] : '0000';
+      const date = new Date().toISOString().split('T')[0];
+      const content = `# Session ${noteNumber}: Recovered\n\n**Date:** ${date}\n**Status:** In Progress\n\n---\n\n## Work Done\n\n<!-- PAI will add completed work here during session -->\n\n---\n\n## Next Steps\n\n<!-- To be filled at session end -->\n\n---\n\n**Tags:** #Session\n`;
+      writeFileSync(notePath, content);
+      console.error(`Recreated session note: ${noteFilename}`);
+    } catch (err) {
+      console.error(`Failed to recreate note: ${err}`);
+      return;
+    }
   }
 
   const content = readFileSync(notePath, 'utf-8');
@@ -891,6 +907,7 @@ ${sessionSummary ? `**Session Summary:** ${sessionSummary}\n\n` : ''}${backlogSe
 /**
  * Add a checkpoint entry to TODO.md (without replacing tasks)
  * Ensures only ONE timestamp line at the end
+ * Works regardless of TODO.md structure — appends if no known section found
  */
 export function addTodoCheckpoint(cwd: string, checkpoint: string): void {
   const todoPath = ensureTodoMd(cwd);
@@ -899,11 +916,28 @@ export function addTodoCheckpoint(cwd: string, checkpoint: string): void {
   // Remove ALL existing timestamp lines and trailing separators
   content = content.replace(/(\n---\s*)*(\n\*Last updated:.*\*\s*)+$/g, '');
 
-  // Add checkpoint before Backlog section
+  const checkpointText = `\n**Checkpoint (${new Date().toISOString()}):** ${checkpoint}\n\n`;
+
+  // Try to insert before Backlog section
   const backlogIndex = content.indexOf('## Backlog');
   if (backlogIndex !== -1) {
-    const checkpointText = `\n**Checkpoint (${new Date().toISOString()}):** ${checkpoint}\n\n`;
     content = content.substring(0, backlogIndex) + checkpointText + content.substring(backlogIndex);
+  } else {
+    // No Backlog section — try before Continue section, or just append
+    const continueIndex = content.indexOf('## Continue');
+    if (continueIndex !== -1) {
+      // Insert after the Continue section (find the next ## or ---)
+      const afterContinue = content.indexOf('\n---', continueIndex);
+      if (afterContinue !== -1) {
+        const insertAt = afterContinue + 4; // after \n---
+        content = content.substring(0, insertAt) + '\n' + checkpointText + content.substring(insertAt);
+      } else {
+        content = content.trimEnd() + '\n' + checkpointText;
+      }
+    } else {
+      // No known section — just append before the end
+      content = content.trimEnd() + '\n' + checkpointText;
+    }
   }
 
   // Add exactly ONE timestamp at the end

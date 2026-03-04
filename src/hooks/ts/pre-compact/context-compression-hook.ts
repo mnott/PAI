@@ -18,6 +18,7 @@ import { tmpdir } from 'os';
 import {
   sendNtfyNotification,
   getCurrentNotePath,
+  createSessionNote,
   appendCheckpoint,
   addWorkToSessionNote,
   findNotesDir,
@@ -297,24 +298,37 @@ async function main() {
       const notesInfo = hookInput.cwd
         ? findNotesDir(hookInput.cwd)
         : { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
-      const currentNotePath = getCurrentNotePath(notesInfo.path);
+      let notePath = getCurrentNotePath(notesInfo.path);
 
-      if (currentNotePath) {
-        // 1. Write rich checkpoint with full session state
-        const checkpointBody = state
-          ? `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.\n\n${state}`
-          : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
-        appendCheckpoint(currentNotePath, checkpointBody);
-
-        // 2. Write work items to "Work Done" section (same as stop-hook)
-        const workItems = extractWorkFromTranscript(hookInput.transcript_path);
-        if (workItems.length > 0) {
-          addWorkToSessionNote(currentNotePath, workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
-          console.error(`Added ${workItems.length} work item(s) to session note`);
-        }
-
-        console.error(`Rich checkpoint saved: ${basename(currentNotePath)}`);
+      // If no note found, or the latest note is completed, create a new one
+      if (!notePath) {
+        console.error('No session note found — creating one for checkpoint');
+        notePath = createSessionNote(notesInfo.path, 'Recovered Session');
+      } else {
+        // Check if the found note is already completed — don't write to completed notes
+        try {
+          const noteContent = readFileSync(notePath, 'utf-8');
+          if (noteContent.includes('**Status:** Completed') || noteContent.includes('**Completed:**')) {
+            console.error(`Latest note is completed (${basename(notePath)}) — creating new one`);
+            notePath = createSessionNote(notesInfo.path, 'Continued Session');
+          }
+        } catch { /* proceed with existing note */ }
       }
+
+      // 1. Write rich checkpoint with full session state
+      const checkpointBody = state
+        ? `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.\n\n${state}`
+        : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
+      appendCheckpoint(notePath, checkpointBody);
+
+      // 2. Write work items to "Work Done" section (same as stop-hook)
+      const workItems = extractWorkFromTranscript(hookInput.transcript_path);
+      if (workItems.length > 0) {
+        addWorkToSessionNote(notePath, workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
+        console.error(`Added ${workItems.length} work item(s) to session note`);
+      }
+
+      console.error(`Rich checkpoint saved: ${basename(notePath)}`);
     } catch (noteError) {
       console.error(`Could not save checkpoint: ${noteError}`);
     }
