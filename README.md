@@ -60,6 +60,44 @@ Claude finds the setup skill, checks your system, runs the interactive wizard, a
 
 ---
 
+## Context Preservation
+
+When Claude's context window fills up, it compresses the conversation. Without PAI, everything from before that point is lost — Claude forgets what it was working on, what files it changed, and what you asked for.
+
+PAI intercepts this compression with a two-stage relay:
+
+1. **Before compression** — PAI extracts session state from the conversation transcript: your recent requests, work summaries, files modified, and current task context. This gets saved to a checkpoint.
+
+2. **After compression** — PAI reads that checkpoint and injects it back into Claude's fresh context. Claude picks up exactly where it left off.
+
+This happens automatically. You don't need to do anything — just keep working, and PAI handles the continuity.
+
+### What Gets Preserved
+
+- Your last 3 requests (so Claude knows what you were asking)
+- Work summaries and captured context
+- Files modified during the session
+- Current working directory and task state
+- Session note checkpoints (persistent — survive even full restarts)
+
+### Session Lifecycle Hooks
+
+PAI runs hooks at every stage of a Claude Code session:
+
+| Event | What PAI Does |
+|-------|--------------|
+| **Session Start** | Loads project context, detects which project you're in, creates a session note |
+| **User Prompt** | Cleans up temp files, updates terminal tab titles |
+| **Pre-Compact** | Saves session state checkpoint, sends notification |
+| **Post-Compact** | Injects preserved state back into Claude's context |
+| **Tool Use** | Captures tool outputs for observability |
+| **Session End** | Summarizes work done, finalizes session note |
+| **Stop** | Writes work items to session note, sends notification |
+
+All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes, communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation).
+
+---
+
 ## Auto-Compact Context Window
 
 Claude Code can automatically compact your context window when it fills up, preventing session interruptions mid-task. PAI's statusline shows you at a glance whether auto-compact is active.

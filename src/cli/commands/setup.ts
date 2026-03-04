@@ -1109,6 +1109,12 @@ async function stepSettings(rl: ReturnType<typeof createRl>, daName: string): Pr
         hookType: "SessionStart",
         command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart",
       },
+      // SessionStart(compact) — post-compaction state injection
+      {
+        hookType: "SessionStart",
+        matcher: "compact",
+        command: "${PAI_DIR}/Hooks/post-compact-inject.mjs",
+      },
       // UserPromptSubmit — 3 hooks
       {
         hookType: "UserPromptSubmit",

@@ -12,8 +12,9 @@
  * critical context: current task, recent requests, file paths, decisions.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
+import { tmpdir } from 'os';
 import {
   sendNtfyNotification,
   getCurrentNotePath,
@@ -331,29 +332,34 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
-    // CRITICAL: Inject session state into the conversation via stdout.
-    // Claude Code captures hook stdout and injects it as a <system-reminder>
-    // BEFORE compaction runs. This ensures the compaction summary preserves
-    // awareness of current work, recent requests, and modified files.
+    // Save session state to temp file for post-compact injection.
+    //
+    // PreCompact hooks have NO stdout support (Claude Code ignores it).
+    // Instead, we write the injection payload to a temp file keyed by
+    // session_id. The SessionStart(compact) hook reads it and outputs
+    // to stdout, which IS injected into the post-compaction context.
     // -----------------------------------------------------------------------
-    if (state) {
+    if (state && hookInput.session_id) {
       const injection = [
         '<system-reminder>',
-        `SessionStart:compact hook success: <system-reminder>`,
-        `SESSION STATE BEFORE COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
+        `SESSION STATE RECOVERED AFTER COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
         '',
         state,
         '',
         'IMPORTANT: This session state was captured before context compaction.',
-        'The compaction summary MUST preserve: current task, recent user requests,',
-        'key decisions, file paths, and any in-progress work described above.',
-        'Continue the conversation from where it left off without asking the user',
-        'any further questions. Continue with the last task that you were asked to work on.',
-        '</system-reminder>',
+        'Use it to maintain continuity. Continue the conversation from where',
+        'it left off without asking the user to repeat themselves.',
+        'Continue with the last task that you were asked to work on.',
         '</system-reminder>',
       ].join('\n');
-      console.log(injection);
-      console.error(`Session state injected to stdout (${state.length} chars)`);
+
+      try {
+        const stateFile = join(tmpdir(), `pai-compact-state-${hookInput.session_id}.txt`);
+        writeFileSync(stateFile, injection, 'utf-8');
+        console.error(`Session state saved to ${stateFile} (${injection.length} chars)`);
+      } catch (err) {
+        console.error(`Failed to save state file: ${err}`);
+      }
     }
   }
 

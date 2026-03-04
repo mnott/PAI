@@ -500,6 +500,90 @@ PAI implements six Luhmann-inspired operations on the vault's dual representatio
 
 ---
 
+## Hook System
+
+PAI ships a comprehensive set of lifecycle hooks that integrate with Claude Code's hook events. Hooks are TypeScript source files (`src/hooks/ts/`) compiled to `.mjs` modules and deployed to `~/.claude/Hooks/`.
+
+### Hook Architecture
+
+```
+Claude Code Event
+    │
+    ├── stdin: JSON { session_id, transcript_path, cwd, hook_event_name }
+    │
+    ├── Hook Process (.mjs)
+    │       ├── Reads stdin for context
+    │       ├── Performs side effects (file writes, notifications)
+    │       └── Writes stdout (injected as <system-reminder> into conversation)
+    │
+    └── stderr: diagnostic logs (visible in Claude Code's hook output)
+```
+
+**Key constraint:** Not all hook events support stdout injection. `SessionStart` does. `PreCompact` does not. This matters for context preservation.
+
+### Hook Inventory
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `load-core-context.mjs` | SessionStart | Loads PAI skill system and core configuration |
+| `load-project-context.mjs` | SessionStart | Detects project, loads notes dir, TODO, session note |
+| `initialize-session.mjs` | SessionStart | Creates numbered session note, registers in PAI registry |
+| `post-compact-inject.mjs` | SessionStart (compact) | Reads saved state and injects into post-compaction context |
+| `security-validator.mjs` | PreToolUse (Bash) | Validates shell commands against security rules |
+| `capture-all-events.mjs` | All events | Observability — logs every hook event to session timeline |
+| `context-compression-hook.mjs` | PreCompact | Extracts session state, saves checkpoint, writes temp file for relay |
+| `capture-tool-output.mjs` | PostToolUse | Records tool inputs/outputs for observability dashboard |
+| `update-tab-on-action.mjs` | PostToolUse | Updates terminal tab title based on current activity |
+| `sync-todo-to-md.mjs` | PostToolUse (TodoWrite) | Syncs Claude's internal TODO list to `Notes/TODO.md` |
+| `cleanup-session-files.mjs` | UserPromptSubmit | Cleans up stale temp files between prompts |
+| `update-tab-titles.mjs` | UserPromptSubmit | Sets terminal tab title from session context |
+| `stop-hook.mjs` | Stop | Writes work items to session note, sends notification |
+| `capture-session-summary.mjs` | SessionEnd | Final session summary written to session note |
+| `subagent-stop-hook.mjs` | SubagentStop | Captures sub-agent completion for observability |
+
+### Context Preservation Relay
+
+The most critical hook interaction is the PreCompact → SessionStart relay that preserves context across compaction:
+
+```
+PreCompact fires (context-compression-hook.mjs)
+    │
+    ├── Reads transcript JSONL from stdin { transcript_path }
+    ├── Extracts: recent user messages, work summaries, files modified, captures
+    ├── Writes checkpoint to session note (persistent)
+    ├── Writes injection payload to /tmp/pai-compact-state-{session_id}.txt
+    └── Sends notification (WhatsApp or ntfy.sh)
+
+    ⬇ Claude Code runs compaction (conversation is summarized)
+
+SessionStart(compact) fires (post-compact-inject.mjs)
+    │
+    ├── Reads /tmp/pai-compact-state-{session_id}.txt
+    ├── Outputs content to stdout → injected into post-compaction context
+    └── Deletes temp file (one-shot relay)
+```
+
+**Why the relay?** PreCompact hooks cannot inject into the conversation (stdout is ignored by Claude Code for this event). SessionStart hooks can. The temp file bridges the gap.
+
+### Building Hooks
+
+```bash
+bun run build              # Builds everything including hooks
+node scripts/build-hooks.mjs   # Build hooks only
+```
+
+The build script compiles each `.ts` hook to a self-contained `.mjs` module using `tsx` bundling, then copies them to the configured hooks directory (`~/.claude/Hooks/` by default).
+
+### Adding a New Hook
+
+1. Create the TypeScript source in the appropriate `src/hooks/ts/<event>/` directory
+2. Read stdin for `HookInput` JSON (session_id, transcript_path, cwd, hook_event_name)
+3. Use stderr for diagnostics, stdout only if the event supports injection
+4. Register the hook in `~/.claude/settings.json` under the appropriate event with the correct matcher
+5. Run `bun run build` to compile and deploy
+
+---
+
 ## Templates
 
 PAI ships three templates used during setup and customizable for your workflow.
