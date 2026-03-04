@@ -21,7 +21,7 @@
 
 import type { Command } from "commander";
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
@@ -982,6 +982,7 @@ async function stepTsHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
   line();
   let copiedCount = 0;
   let skippedCount = 0;
+  let cleanedCount = 0;
 
   for (const filename of allFiles) {
     const src = join(distHooksDir, filename);
@@ -994,6 +995,13 @@ async function stepTsHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
       if (srcContent === destContent) {
         console.log(c.dim(`  Unchanged: ${filename}`));
         skippedCount++;
+        // Still clean up stale .ts even if .mjs is unchanged
+        const staleTsPath = join(hooksTarget, filename.replace(/\.mjs$/, ".ts"));
+        if (existsSync(staleTsPath)) {
+          unlinkSync(staleTsPath);
+          console.log(c.ok(`Cleaned up stale: ${filename.replace(/\.mjs$/, ".ts")}`));
+          cleanedCount++;
+        }
         continue;
       }
     }
@@ -1002,16 +1010,28 @@ async function stepTsHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
     chmodSync(dest, 0o755);
     console.log(c.ok(`Installed: ${filename}`));
     copiedCount++;
+
+    // Clean up stale .ts file if a .mjs replacement was just installed
+    const staleTsPath = join(hooksTarget, filename.replace(/\.mjs$/, ".ts"));
+    if (existsSync(staleTsPath)) {
+      unlinkSync(staleTsPath);
+      console.log(c.ok(`Cleaned up stale: ${filename.replace(/\.mjs$/, ".ts")}`));
+      cleanedCount++;
+    }
   }
 
   line();
-  if (copiedCount > 0) {
-    console.log(c.ok(`${copiedCount} hook(s) installed, ${skippedCount} unchanged.`));
+  if (copiedCount > 0 || cleanedCount > 0) {
+    const parts = [];
+    if (copiedCount > 0) parts.push(`${copiedCount} hook(s) installed`);
+    if (skippedCount > 0) parts.push(`${skippedCount} unchanged`);
+    if (cleanedCount > 0) parts.push(`${cleanedCount} stale .ts file(s) cleaned up`);
+    console.log(c.ok(parts.join(", ") + "."));
   } else {
     console.log(c.dim(`  All ${skippedCount} hook(s) already up-to-date.`));
   }
 
-  return copiedCount > 0;
+  return copiedCount > 0 || cleanedCount > 0;
 }
 
 /**

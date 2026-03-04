@@ -126,9 +126,20 @@ function mergeEnv(
 }
 
 /**
+ * Strip file extension from a command basename for extension-agnostic dedup.
+ * This ensures that e.g. "context-compression-hook.ts" and
+ * "context-compression-hook.mjs" are treated as the same hook.
+ */
+function commandStem(cmd: string): string {
+  const base = cmd.split("/").pop() ?? cmd;
+  return base.replace(/\.(mjs|ts|js|sh)$/, "");
+}
+
+/**
  * Collect every command string already registered for a given hookType.
- * Stores both the full command and the basename for flexible matching
- * (handles ${PAI_DIR}/Hooks/foo.sh vs /Users/.../Hooks/foo.sh).
+ * Stores full command, basename, AND extension-stripped stem for flexible
+ * matching (handles ${PAI_DIR}/Hooks/foo.sh vs /Users/.../Hooks/foo.sh,
+ * and .ts → .mjs migrations).
  */
 function existingCommandsForHookType(rules: HookRule[]): Set<string> {
   const cmds = new Set<string>();
@@ -138,13 +149,46 @@ function existingCommandsForHookType(rules: HookRule[]): Set<string> {
       // Also add the basename so expanded paths match template paths
       const base = entry.command.split("/").pop();
       if (base) cmds.add(base);
+      // Also add extension-stripped stem for cross-extension dedup
+      cmds.add(commandStem(entry.command));
     }
   }
   return cmds;
 }
 
 /**
+ * Find and remove an existing rule whose command has the same stem
+ * (extension-agnostic) as the incoming command. Returns true if a
+ * replacement was made. This handles .ts → .mjs migrations cleanly.
+ */
+function replaceStaleHook(
+  existingRules: HookRule[],
+  incomingStem: string,
+  incomingCommand: string,
+  incomingMatcher: string | undefined,
+): boolean {
+  for (let i = 0; i < existingRules.length; i++) {
+    const rule = existingRules[i];
+    for (let j = 0; j < rule.hooks.length; j++) {
+      const existingStem = commandStem(rule.hooks[j].command);
+      if (existingStem === incomingStem && rule.hooks[j].command !== incomingCommand) {
+        // Replace the old command with the new one
+        rule.hooks[j].command = incomingCommand;
+        // Update matcher if provided
+        if (incomingMatcher !== undefined) {
+          rule.matcher = incomingMatcher;
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Merge hooks — append entries, deduplicating by command string.
+ * Extension-agnostic: a .mjs hook replaces an existing .ts hook with the
+ * same stem, ensuring clean .ts → .mjs migrations without duplicates.
  */
 function mergeHooks(
   settings: Record<string, unknown>,
@@ -166,15 +210,27 @@ function mergeHooks(
       ? (hooksSection[hookType] as HookRule[])
       : [];
 
-    const existingCmds = existingCommandsForHookType(existingRules);
-
     const basename = command.split("/").pop() ?? command;
+    const stem = commandStem(command);
+
+    // Exact match — already registered, skip
+    const existingCmds = existingCommandsForHookType(existingRules);
     if (existingCmds.has(command) || existingCmds.has(basename)) {
       report.push(chalk.dim(`  Skipped: hook ${hookType} → ${basename} already registered`));
       continue;
     }
 
-    // Append a new rule with this command
+    // Stem match with different extension — replace old entry (.ts → .mjs migration)
+    if (existingCmds.has(stem)) {
+      if (replaceStaleHook(existingRules, stem, command, matcher)) {
+        hooksSection[hookType] = existingRules;
+        report.push(chalk.yellow(`  Upgraded: hook ${hookType} → ${basename} (replaced stale extension)`));
+        changed = true;
+        continue;
+      }
+    }
+
+    // No match at all — append new rule
     const newRule: HookRule = {
       hooks: [{ type: "command", command }],
     };
