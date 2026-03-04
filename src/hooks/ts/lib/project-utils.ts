@@ -946,3 +946,55 @@ export function addTodoCheckpoint(cwd: string, checkpoint: string): void {
   writeFileSync(todoPath, content);
   console.error(`Checkpoint added to TODO.md`);
 }
+
+/**
+ * Update the ## Continue section at the top of TODO.md.
+ * This mirrors "pause session" behavior — gives the next session a starting point.
+ * Replaces any existing ## Continue section.
+ */
+export function updateTodoContinue(
+  cwd: string,
+  noteFilename: string,
+  state: string | null,
+  tokenDisplay: string
+): void {
+  const todoPath = ensureTodoMd(cwd);
+  let content = readFileSync(todoPath, 'utf-8');
+
+  // Remove existing ## Continue section (from ## Continue to the first standalone --- line)
+  content = content.replace(/## Continue\n[\s\S]*?\n---\n+/, '');
+
+  const now = new Date().toISOString();
+  const stateLines = state
+    ? state.split('\n').filter(l => l.trim()).slice(0, 10).map(l => `> ${l}`).join('\n')
+    : `> Check the latest session note for details.`;
+
+  const continueSection = `## Continue
+
+> **Last session:** ${noteFilename.replace('.md', '')}
+> **Paused at:** ${now}
+>
+${stateLines}
+
+---
+
+`;
+
+  // Remove leading whitespace from content
+  content = content.replace(/^\s+/, '');
+
+  // If content starts with # title, insert after it
+  const titleMatch = content.match(/^(# [^\n]+\n+)/);
+  if (titleMatch) {
+    content = titleMatch[1] + continueSection + content.substring(titleMatch[0].length);
+  } else {
+    content = continueSection + content;
+  }
+
+  // Clean up trailing timestamps and add fresh one
+  content = content.replace(/(\n---\s*)*(\n\*Last updated:.*\*\s*)+$/g, '');
+  content = content.trimEnd() + `\n\n---\n\n*Last updated: ${now}*\n`;
+
+  writeFileSync(todoPath, content);
+  console.error('TODO.md ## Continue section updated');
+}

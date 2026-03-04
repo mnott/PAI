@@ -2,14 +2,13 @@
 /**
  * PreCompact Hook - Triggered before context compression
  *
- * Two critical jobs:
- * 1. Save checkpoint to session note + send notification (existing)
- * 2. OUTPUT session state to stdout so it gets injected into the conversation
- *    as a <system-reminder> BEFORE compaction. This ensures the compaction
- *    summary retains awareness of what was being worked on.
+ * Three critical jobs:
+ * 1. Save rich checkpoint to session note — work items, state, meaningful rename
+ * 2. Update TODO.md with a proper ## Continue section for the next session
+ * 3. Save session state to temp file for post-compact injection via SessionStart(compact)
  *
- * Without (2), compaction produces a generic summary and the session loses
- * critical context: current task, recent requests, file paths, decisions.
+ * This hook now mirrors "pause session" behavior: the session note gets a
+ * descriptive name, rich content, and TODO.md gets a continuation prompt.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -22,8 +21,8 @@ import {
   appendCheckpoint,
   addWorkToSessionNote,
   findNotesDir,
-  findTodoPath,
-  addTodoCheckpoint,
+  renameSessionNote,
+  updateTodoContinue,
   calculateSessionTokens,
   WorkItem,
 } from '../lib/project-utils';
@@ -35,6 +34,16 @@ interface HookInput {
   hook_event_name: string;
   compact_type?: string;
   trigger?: string;
+}
+
+/** Structured data extracted from a transcript in a single pass. */
+interface TranscriptData {
+  userMessages: string[];
+  summaries: string[];
+  captures: string[];
+  lastCompleted: string;
+  filesModified: string[];
+  workItems: WorkItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -80,24 +89,23 @@ function getTranscriptStats(transcriptPath: string): { messageCount: number; isL
 }
 
 // ---------------------------------------------------------------------------
-// Session state extraction
+// Unified transcript parser — single pass extracts everything
 // ---------------------------------------------------------------------------
 
-/**
- * Extract structured session state from the transcript JSONL.
- * Returns a human-readable summary (<2000 chars) suitable for injection
- * into the conversation before compaction.
- */
-function extractSessionState(transcriptPath: string, cwd?: string): string | null {
+function parseTranscript(transcriptPath: string): TranscriptData {
+  const data: TranscriptData = {
+    userMessages: [],
+    summaries: [],
+    captures: [],
+    lastCompleted: '',
+    filesModified: [],
+    workItems: [],
+  };
+
   try {
     const raw = readFileSync(transcriptPath, 'utf-8');
     const lines = raw.trim().split('\n');
-
-    const userMessages: string[] = [];
-    const summaries: string[] = [];
-    const captures: string[] = [];
-    let lastCompleted = '';
-    const filesModified = new Set<string>();
+    const seenSummaries = new Set<string>();
 
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -107,151 +115,165 @@ function extractSessionState(transcriptPath: string, cwd?: string): string | nul
       // --- User messages ---
       if (entry.type === 'user' && entry.message?.content) {
         const text = contentToText(entry.message.content).slice(0, 300);
-        if (text) userMessages.push(text);
+        if (text) data.userMessages.push(text);
       }
 
-      // --- Assistant structured sections ---
+      // --- Assistant content ---
       if (entry.type === 'assistant' && entry.message?.content) {
         const text = contentToText(entry.message.content);
 
+        // Summaries → also create work items
         const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?:\n|$)/i);
         if (summaryMatch) {
           const s = summaryMatch[1].trim();
-          if (s.length > 5 && !summaries.includes(s)) summaries.push(s);
+          if (s.length > 5 && !data.summaries.includes(s)) {
+            data.summaries.push(s);
+            if (!seenSummaries.has(s)) {
+              seenSummaries.add(s);
+              const details: string[] = [];
+              const actionsMatch = text.match(/ACTIONS:\s*(.+?)(?=\n[A-Z]+:|$)/is);
+              if (actionsMatch) {
+                const actionLines = actionsMatch[1].split('\n')
+                  .map(l => l.replace(/^[-*•]\s*/, '').replace(/^\d+\.\s*/, '').trim())
+                  .filter(l => l.length > 3 && l.length < 100);
+                details.push(...actionLines.slice(0, 3));
+              }
+              data.workItems.push({ title: s, details: details.length > 0 ? details : undefined, completed: true });
+            }
+          }
         }
 
+        // Captures
         const captureMatch = text.match(/CAPTURE:\s*(.+?)(?:\n|$)/i);
         if (captureMatch) {
           const c = captureMatch[1].trim();
-          if (c.length > 5 && !captures.includes(c)) captures.push(c);
+          if (c.length > 5 && !data.captures.includes(c)) data.captures.push(c);
         }
 
+        // Completed
         const completedMatch = text.match(/COMPLETED:\s*(.+?)(?:\n|$)/i);
         if (completedMatch) {
-          lastCompleted = completedMatch[1].trim().replace(/\*+/g, '');
+          data.lastCompleted = completedMatch[1].trim().replace(/\*+/g, '');
+          if (data.workItems.length === 0 && !seenSummaries.has(data.lastCompleted) && data.lastCompleted.length > 5) {
+            seenSummaries.add(data.lastCompleted);
+            data.workItems.push({ title: data.lastCompleted, completed: true });
+          }
         }
-      }
 
-      // --- Tool use: file modifications ---
-      if (entry.type === 'assistant' && entry.message?.content && Array.isArray(entry.message.content)) {
-        for (const block of entry.message.content) {
-          if (block.type === 'tool_use') {
-            const tool = block.name;
-            if ((tool === 'Edit' || tool === 'Write') && block.input?.file_path) {
-              filesModified.add(block.input.file_path);
+        // File modifications (from tool_use blocks)
+        if (Array.isArray(entry.message.content)) {
+          for (const block of entry.message.content) {
+            if (block.type === 'tool_use') {
+              const tool = block.name;
+              if ((tool === 'Edit' || tool === 'Write') && block.input?.file_path) {
+                if (!data.filesModified.includes(block.input.file_path)) {
+                  data.filesModified.push(block.input.file_path);
+                }
+              }
             }
           }
         }
       }
     }
-
-    // Build the output — keep it concise
-    const parts: string[] = [];
-
-    if (cwd) {
-      parts.push(`Working directory: ${cwd}`);
-    }
-
-    // Last 3 user messages
-    const recentUser = userMessages.slice(-3);
-    if (recentUser.length > 0) {
-      parts.push('\nRecent user requests:');
-      for (const msg of recentUser) {
-        // Trim to first line or 200 chars
-        const firstLine = msg.split('\n')[0].slice(0, 200);
-        parts.push(`- ${firstLine}`);
-      }
-    }
-
-    // Summaries (last 3)
-    const recentSummaries = summaries.slice(-3);
-    if (recentSummaries.length > 0) {
-      parts.push('\nWork summaries:');
-      for (const s of recentSummaries) {
-        parts.push(`- ${s.slice(0, 150)}`);
-      }
-    }
-
-    // Captures (last 5)
-    const recentCaptures = captures.slice(-5);
-    if (recentCaptures.length > 0) {
-      parts.push('\nCaptured context:');
-      for (const c of recentCaptures) {
-        parts.push(`- ${c.slice(0, 150)}`);
-      }
-    }
-
-    // Files modified (last 10)
-    const files = Array.from(filesModified).slice(-10);
-    if (files.length > 0) {
-      parts.push('\nFiles modified this session:');
-      for (const f of files) {
-        parts.push(`- ${f}`);
-      }
-    }
-
-    if (lastCompleted) {
-      parts.push(`\nLast completed: ${lastCompleted.slice(0, 150)}`);
-    }
-
-    const result = parts.join('\n');
-    return result.length > 50 ? result : null;
   } catch (err) {
-    console.error(`extractSessionState error: ${err}`);
-    return null;
+    console.error(`parseTranscript error: ${err}`);
   }
+
+  return data;
 }
 
 // ---------------------------------------------------------------------------
-// Work item extraction (same pattern as stop-hook.ts)
+// Format session state as human-readable string
 // ---------------------------------------------------------------------------
 
-function extractWorkFromTranscript(transcriptPath: string): WorkItem[] {
-  try {
-    const raw = readFileSync(transcriptPath, 'utf-8');
-    const lines = raw.trim().split('\n');
-    const workItems: WorkItem[] = [];
-    const seenSummaries = new Set<string>();
+function formatSessionState(data: TranscriptData, cwd?: string): string | null {
+  const parts: string[] = [];
 
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let entry: any;
-      try { entry = JSON.parse(line); } catch { continue; }
+  if (cwd) parts.push(`Working directory: ${cwd}`);
 
-      if (entry.type === 'assistant' && entry.message?.content) {
-        const text = contentToText(entry.message.content);
+  const recentUser = data.userMessages.slice(-3);
+  if (recentUser.length > 0) {
+    parts.push('\nRecent user requests:');
+    for (const msg of recentUser) {
+      parts.push(`- ${msg.split('\n')[0].slice(0, 200)}`);
+    }
+  }
 
-        const summaryMatch = text.match(/SUMMARY:\s*(.+?)(?:\n|$)/i);
-        if (summaryMatch) {
-          const summary = summaryMatch[1].trim();
-          if (summary && !seenSummaries.has(summary) && summary.length > 5) {
-            seenSummaries.add(summary);
-            const details: string[] = [];
-            const actionsMatch = text.match(/ACTIONS:\s*(.+?)(?=\n[A-Z]+:|$)/is);
-            if (actionsMatch) {
-              const actionLines = actionsMatch[1].split('\n')
-                .map(l => l.replace(/^[-*•]\s*/, '').replace(/^\d+\.\s*/, '').trim())
-                .filter(l => l.length > 3 && l.length < 100);
-              details.push(...actionLines.slice(0, 3));
-            }
-            workItems.push({ title: summary, details: details.length > 0 ? details : undefined, completed: true });
-          }
-        }
+  const recentSummaries = data.summaries.slice(-3);
+  if (recentSummaries.length > 0) {
+    parts.push('\nWork summaries:');
+    for (const s of recentSummaries) parts.push(`- ${s.slice(0, 150)}`);
+  }
 
-        const completedMatch = text.match(/COMPLETED:\s*(.+?)(?:\n|$)/i);
-        if (completedMatch && workItems.length === 0) {
-          const completed = completedMatch[1].trim().replace(/\*+/g, '');
-          if (completed && !seenSummaries.has(completed) && completed.length > 5) {
-            seenSummaries.add(completed);
-            workItems.push({ title: completed, completed: true });
-          }
-        }
+  const recentCaptures = data.captures.slice(-5);
+  if (recentCaptures.length > 0) {
+    parts.push('\nCaptured context:');
+    for (const c of recentCaptures) parts.push(`- ${c.slice(0, 150)}`);
+  }
+
+  const files = data.filesModified.slice(-10);
+  if (files.length > 0) {
+    parts.push('\nFiles modified this session:');
+    for (const f of files) parts.push(`- ${f}`);
+  }
+
+  if (data.lastCompleted) {
+    parts.push(`\nLast completed: ${data.lastCompleted.slice(0, 150)}`);
+  }
+
+  const result = parts.join('\n');
+  return result.length > 50 ? result : null;
+}
+
+// ---------------------------------------------------------------------------
+// Derive a meaningful title for the session note
+// ---------------------------------------------------------------------------
+
+function deriveTitle(data: TranscriptData): string {
+  let title = '';
+
+  // 1. Last work item title (most descriptive of what was accomplished)
+  if (data.workItems.length > 0) {
+    title = data.workItems[data.workItems.length - 1].title;
+  }
+  // 2. Last summary
+  else if (data.summaries.length > 0) {
+    title = data.summaries[data.summaries.length - 1];
+  }
+  // 3. Last completed marker
+  else if (data.lastCompleted && data.lastCompleted.length > 5) {
+    title = data.lastCompleted;
+  }
+  // 4. Last substantive user message
+  else if (data.userMessages.length > 0) {
+    for (let i = data.userMessages.length - 1; i >= 0; i--) {
+      const msg = data.userMessages[i].split('\n')[0].trim();
+      if (msg.length > 10 && msg.length < 80 &&
+          !msg.toLowerCase().startsWith('yes') &&
+          !msg.toLowerCase().startsWith('ok')) {
+        title = msg;
+        break;
       }
     }
-    return workItems;
-  } catch {
-    return [];
   }
+  // 5. Derive from files modified
+  if (!title && data.filesModified.length > 0) {
+    const basenames = data.filesModified.slice(-5).map(f => {
+      const b = basename(f);
+      return b.replace(/\.[^.]+$/, '');
+    });
+    const unique = [...new Set(basenames)];
+    title = unique.length <= 3
+      ? `Updated ${unique.join(', ')}`
+      : `Modified ${data.filesModified.length} files`;
+  }
+
+  // Clean up for filename use
+  return title
+    .replace(/[^\w\s-]/g, ' ')   // Remove special chars
+    .replace(/\s+/g, ' ')        // Normalize whitespace
+    .trim()
+    .substring(0, 60);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,23 +311,27 @@ async function main() {
       : String(tokenCount);
 
     // -----------------------------------------------------------------
+    // Single-pass transcript parsing
+    // -----------------------------------------------------------------
+    const data = parseTranscript(hookInput.transcript_path);
+    const state = formatSessionState(data, hookInput.cwd);
+
+    // -----------------------------------------------------------------
     // Persist session state to numbered session note (like "pause session")
     // -----------------------------------------------------------------
-    const state = extractSessionState(hookInput.transcript_path, hookInput.cwd);
+    let notePath: string | null = null;
 
     try {
-      // Find notes dir — prefer local, fallback to central
       const notesInfo = hookInput.cwd
         ? findNotesDir(hookInput.cwd)
         : { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
-      let notePath = getCurrentNotePath(notesInfo.path);
+      notePath = getCurrentNotePath(notesInfo.path);
 
       // If no note found, or the latest note is completed, create a new one
       if (!notePath) {
         console.error('No session note found — creating one for checkpoint');
         notePath = createSessionNote(notesInfo.path, 'Recovered Session');
       } else {
-        // Check if the found note is already completed — don't write to completed notes
         try {
           const noteContent = readFileSync(notePath, 'utf-8');
           if (noteContent.includes('**Status:** Completed') || noteContent.includes('**Completed:**')) {
@@ -321,11 +347,29 @@ async function main() {
         : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
       appendCheckpoint(notePath, checkpointBody);
 
-      // 2. Write work items to "Work Done" section (same as stop-hook)
-      const workItems = extractWorkFromTranscript(hookInput.transcript_path);
-      if (workItems.length > 0) {
-        addWorkToSessionNote(notePath, workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
-        console.error(`Added ${workItems.length} work item(s) to session note`);
+      // 2. Write work items to "Work Done" section
+      if (data.workItems.length > 0) {
+        addWorkToSessionNote(notePath, data.workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
+        console.error(`Added ${data.workItems.length} work item(s) to session note`);
+      }
+
+      // 3. Rename session note with a meaningful title (instead of "New Session")
+      const title = deriveTitle(data);
+      if (title) {
+        const newPath = renameSessionNote(notePath, title);
+        if (newPath !== notePath) {
+          // Update H1 title inside the note to match
+          try {
+            let noteContent = readFileSync(newPath, 'utf-8');
+            noteContent = noteContent.replace(
+              /^(# Session \d+:)\s*.*$/m,
+              `$1 ${title}`
+            );
+            writeFileSync(newPath, noteContent);
+            console.error(`Updated note H1 to match rename`);
+          } catch { /* ignore */ }
+          notePath = newPath;
+        }
       }
 
       console.error(`Rich checkpoint saved: ${basename(notePath)}`);
@@ -334,12 +378,13 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
-    // Update TODO.md with checkpoint (like "pause session")
+    // Update TODO.md with proper ## Continue section (like "pause session")
     // -----------------------------------------------------------------
-    if (hookInput.cwd && state) {
+    if (hookInput.cwd && notePath) {
       try {
-        addTodoCheckpoint(hookInput.cwd, `Pre-compact checkpoint (~${tokenDisplay} tokens):\n${state}`);
-        console.error('TODO.md checkpoint added');
+        const noteFilename = basename(notePath);
+        updateTodoContinue(hookInput.cwd, noteFilename, state, tokenDisplay);
+        console.error('TODO.md ## Continue section updated');
       } catch (todoError) {
         console.error(`Could not update TODO.md: ${todoError}`);
       }
