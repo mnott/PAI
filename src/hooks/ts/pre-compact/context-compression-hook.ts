@@ -7,11 +7,13 @@
  * 2. Update TODO.md with a proper ## Continue section for the next session
  * 3. Save session state to temp file for post-compact injection via SessionStart(compact)
  *
- * This hook now mirrors "pause session" behavior: the session note gets a
- * descriptive name, rich content, and TODO.md gets a continuation prompt.
+ * Uses a CUMULATIVE state file (.compact-state.json) that persists across
+ * compactions. This ensures that even after multiple compactions (where the
+ * transcript becomes thin), we still have rich data for titles, summaries,
+ * and work items from earlier in the session.
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -277,6 +279,65 @@ function deriveTitle(data: TranscriptData): string {
 }
 
 // ---------------------------------------------------------------------------
+// Cumulative state — persists across compactions in .compact-state.json
+// ---------------------------------------------------------------------------
+
+const CUMULATIVE_STATE_FILE = '.compact-state.json';
+
+function loadCumulativeState(notesDir: string): TranscriptData | null {
+  try {
+    const filePath = join(notesDir, CUMULATIVE_STATE_FILE);
+    if (!existsSync(filePath)) return null;
+    const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+    return {
+      userMessages: raw.userMessages || [],
+      summaries: raw.summaries || [],
+      captures: raw.captures || [],
+      lastCompleted: raw.lastCompleted || '',
+      filesModified: raw.filesModified || [],
+      workItems: raw.workItems || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeTranscriptData(accumulated: TranscriptData | null, current: TranscriptData): TranscriptData {
+  if (!accumulated) return current;
+
+  const mergeArrays = (a: string[], b: string[]): string[] => {
+    const seen = new Set(a);
+    return [...a, ...b.filter(x => !seen.has(x))];
+  };
+
+  const seenTitles = new Set(accumulated.workItems.map(w => w.title));
+  const newWorkItems = current.workItems.filter(w => !seenTitles.has(w.title));
+
+  return {
+    userMessages: mergeArrays(accumulated.userMessages, current.userMessages).slice(-20),
+    summaries: mergeArrays(accumulated.summaries, current.summaries),
+    captures: mergeArrays(accumulated.captures, current.captures),
+    lastCompleted: current.lastCompleted || accumulated.lastCompleted,
+    filesModified: mergeArrays(accumulated.filesModified, current.filesModified),
+    workItems: [...accumulated.workItems, ...newWorkItems],
+  };
+}
+
+function saveCumulativeState(notesDir: string, data: TranscriptData, notePath: string | null): void {
+  try {
+    const filePath = join(notesDir, CUMULATIVE_STATE_FILE);
+    writeFileSync(filePath, JSON.stringify({
+      ...data,
+      notePath,
+      lastUpdated: new Date().toISOString(),
+    }, null, 2));
+    console.error(`Cumulative state saved (${data.workItems.length} work items, ${data.filesModified.length} files)`);
+  } catch (err) {
+    console.error(`Failed to save cumulative state: ${err}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -311,10 +372,28 @@ async function main() {
       : String(tokenCount);
 
     // -----------------------------------------------------------------
-    // Single-pass transcript parsing
+    // Single-pass transcript parsing + cumulative state merge
     // -----------------------------------------------------------------
     const data = parseTranscript(hookInput.transcript_path);
-    const state = formatSessionState(data, hookInput.cwd);
+
+    // Find notes directory early — needed for cumulative state
+    let notesInfo: { path: string; isLocal: boolean };
+    try {
+      notesInfo = hookInput.cwd
+        ? findNotesDir(hookInput.cwd)
+        : { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
+    } catch {
+      notesInfo = { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
+    }
+
+    // Load accumulated state from previous compactions and merge
+    const accumulated = loadCumulativeState(notesInfo.path);
+    const merged = mergeTranscriptData(accumulated, data);
+    const state = formatSessionState(merged, hookInput.cwd);
+
+    if (accumulated) {
+      console.error(`Loaded cumulative state: ${accumulated.workItems.length} work items, ${accumulated.filesModified.length} files from previous compaction(s)`);
+    }
 
     // -----------------------------------------------------------------
     // Persist session state to numbered session note (like "pause session")
@@ -322,9 +401,6 @@ async function main() {
     let notePath: string | null = null;
 
     try {
-      const notesInfo = hookInput.cwd
-        ? findNotesDir(hookInput.cwd)
-        : { path: join(dirname(hookInput.transcript_path), 'Notes'), isLocal: false };
       notePath = getCurrentNotePath(notesInfo.path);
 
       // If no note found, or the latest note is completed, create a new one
@@ -347,14 +423,14 @@ async function main() {
         : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
       appendCheckpoint(notePath, checkpointBody);
 
-      // 2. Write work items to "Work Done" section
-      if (data.workItems.length > 0) {
-        addWorkToSessionNote(notePath, data.workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
-        console.error(`Added ${data.workItems.length} work item(s) to session note`);
+      // 2. Write work items to "Work Done" section (uses merged cumulative data)
+      if (merged.workItems.length > 0) {
+        addWorkToSessionNote(notePath, merged.workItems, `Pre-Compact (~${tokenDisplay} tokens)`);
+        console.error(`Added ${merged.workItems.length} work item(s) to session note`);
       }
 
-      // 3. Rename session note with a meaningful title (instead of "New Session")
-      const title = deriveTitle(data);
+      // 3. Rename session note with a meaningful title (uses merged data for richer titles)
+      const title = deriveTitle(merged);
       if (title) {
         const newPath = renameSessionNote(notePath, title);
         if (newPath !== notePath) {
@@ -377,6 +453,9 @@ async function main() {
       console.error(`Could not save checkpoint: ${noteError}`);
     }
 
+    // Save cumulative state for next compaction
+    saveCumulativeState(notesInfo.path, merged, notePath);
+
     // -----------------------------------------------------------------
     // Update TODO.md with proper ## Continue section (like "pause session")
     // -----------------------------------------------------------------
@@ -397,13 +476,22 @@ async function main() {
     // Instead, we write the injection payload to a temp file keyed by
     // session_id. The SessionStart(compact) hook reads it and outputs
     // to stdout, which IS injected into the post-compaction context.
+    //
+    // Always fires (even with thin state) — includes note path so the AI
+    // can enrich the session note post-compaction using its own context.
     // -----------------------------------------------------------------------
-    if (state && hookInput.session_id) {
+    if (hookInput.session_id) {
+      const stateText = state || `Working directory: ${hookInput.cwd || 'unknown'}`;
+      const noteInfo = notePath
+        ? `\nSESSION NOTE: ${notePath}\nIf this note still has a generic title (e.g. "New Session", "Context Compression"),\nrename it based on actual work done and add a rich summary.`
+        : '';
+
       const injection = [
         '<system-reminder>',
         `SESSION STATE RECOVERED AFTER COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
         '',
-        state,
+        stateText,
+        noteInfo,
         '',
         'IMPORTANT: This session state was captured before context compaction.',
         'Use it to maintain continuity. Continue the conversation from where',
