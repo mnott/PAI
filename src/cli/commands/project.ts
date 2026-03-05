@@ -177,13 +177,33 @@ function cmdAdd(
     process.exit(1);
   }
 
-  // Check for duplicate slug
+  // Check for duplicate slug or path
   const existing = db
     .prepare("SELECT id FROM projects WHERE slug = ? OR root_path = ?")
     .get(slug, rootPath);
   if (existing) {
     console.error(err(`Project already registered (slug: ${slug} or path: ${rootPath})`));
     process.exit(1);
+  }
+
+  // Warn about similar projects (same basename, different path)
+  const dirName = basename(rootPath).toLowerCase();
+  const similar = db.prepare(
+    `SELECT slug, root_path FROM projects
+     WHERE status = 'active' AND slug != ?`
+  ).all(slug) as { slug: string; root_path: string }[];
+  const matches = similar.filter(s =>
+    basename(s.root_path).toLowerCase() === dirName ||
+    s.slug.replace(/-\d+$/, '') === slug.replace(/-\d+$/, '')
+  );
+  if (matches.length > 0) {
+    console.log(warn(`Similar project(s) already registered:`));
+    for (const m of matches) {
+      console.log(dim(`  ${bold(m.slug)}  ${shortenPath(m.root_path, 50)}`));
+    }
+    console.log(dim(`  Consider: pai project alias ${matches[0].slug} <name> (to link them)`));
+    console.log(dim(`  Or: pai project archive ${slug} (if this is a duplicate)`));
+    console.log();
   }
 
   const ts = now();
