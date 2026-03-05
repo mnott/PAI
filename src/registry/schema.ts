@@ -14,7 +14,7 @@
 
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const CREATE_TABLES_SQL = `
 PRAGMA journal_mode = WAL;
@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS projects (
   parent_id       INTEGER,
   obsidian_link   TEXT,
   claude_notes_dir TEXT,
+  session_config  TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
   archived_at     INTEGER,
@@ -199,6 +200,20 @@ export function runMigrations(db: Database): void {
       db.prepare(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
       ).run(3, Date.now());
+    })();
+  }
+
+  // Migration v3 → v4: add session_config column to projects
+  if (current < 4) {
+    db.transaction(() => {
+      try {
+        db.exec("ALTER TABLE projects ADD COLUMN session_config TEXT");
+      } catch {
+        // Column may already exist
+      }
+      db.prepare(
+        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)"
+      ).run(4, Date.now());
     })();
   }
 }
