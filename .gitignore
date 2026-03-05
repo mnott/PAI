@@ -17,6 +17,14 @@ logs/
 Notes/
 .pai/
 tasks/
+History/
+scratchpad/
+
+# Obsidian vault metadata files
+PAI.md
+_index.md
+src/hooks/hooks.md
+templates/templates.md
 
 # User skills — local customizations that survive git pull
 templates/skills/user/*
