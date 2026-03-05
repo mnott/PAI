@@ -28,6 +28,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { PAI_DIR, SKILLS_DIR } from '../lib/pai-paths';
+import { isProbeSession } from '../lib/project-utils';
 
 async function main() {
   try {
@@ -39,6 +40,12 @@ async function main() {
     if (isSubagent) {
       // Subagent sessions don't need CORE context loading
       console.error('Subagent session - skipping CORE context loading');
+      process.exit(0);
+    }
+
+    // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+    if (isProbeSession()) {
+      console.error('Probe session detected - skipping CORE context loading');
       process.exit(0);
     }
 

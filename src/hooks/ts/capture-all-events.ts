@@ -10,6 +10,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, writeFileSync } fr
 import { join } from 'path';
 import { PAI_DIR, HISTORY_DIR } from './lib/pai-paths';
 import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction';
+import { isProbeSession } from './lib/project-utils';
 
 interface HookEvent {
   source_app: string;
@@ -90,6 +91,11 @@ function setAgentForSession(sessionId: string, agentName: string): void {
 }
 
 async function main() {
+  // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+  if (isProbeSession()) {
+    process.exit(0);
+  }
+
   try {
     // Get event type from command line args
     const args = process.argv.slice(2);

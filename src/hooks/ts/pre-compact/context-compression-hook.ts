@@ -26,6 +26,7 @@ import {
   renameSessionNote,
   updateTodoContinue,
   calculateSessionTokens,
+  isProbeSession,
   WorkItem,
 } from '../lib/project-utils';
 
@@ -342,6 +343,11 @@ function saveCumulativeState(notesDir: string, data: TranscriptData, notePath: s
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+  if (isProbeSession()) {
+    process.exit(0);
+  }
+
   let hookInput: HookInput | null = null;
 
   try {

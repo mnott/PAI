@@ -9,6 +9,8 @@ import {
   moveSessionFilesToSessionsDir,
   addWorkToSessionNote,
   findNotesDir,
+  isProbeSession,
+  updateTodoContinue,
   WorkItem
 } from '../lib/project-utils';
 
@@ -207,6 +209,11 @@ function contentToText(content: any): string {
 }
 
 async function main() {
+  // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+  if (isProbeSession()) {
+    process.exit(0);
+  }
+
   const timestamp = new Date().toISOString();
   console.error(`\nSTOP-HOOK TRIGGERED AT ${timestamp}`);
 
@@ -385,6 +392,27 @@ async function main() {
       const summary = message || 'Session completed.';
       finalizeSessionNote(currentNotePath, summary);
       console.error(`Session note finalized: ${basename(currentNotePath)}`);
+
+      // Update TODO.md ## Continue section so next session has context
+      try {
+        const stateLines: string[] = [];
+        stateLines.push(`Working directory: ${cwd}`);
+        if (workItems.length > 0) {
+          stateLines.push('');
+          stateLines.push('Work completed:');
+          for (const item of workItems.slice(0, 5)) {
+            stateLines.push(`- ${item.title}`);
+          }
+        }
+        if (message) {
+          stateLines.push('');
+          stateLines.push(`Last completed: ${message}`);
+        }
+        const state = stateLines.join('\n');
+        updateTodoContinue(cwd, basename(currentNotePath), state, 'session-end');
+      } catch (todoError) {
+        console.error(`Could not update TODO.md: ${todoError}`);
+      }
     }
   } catch (noteError) {
     console.error(`Could not finalize session note: ${noteError}`);

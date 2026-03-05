@@ -10,9 +10,28 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { join, basename } from 'path';
+import { homedir } from 'os';
 
 // Import from pai-paths which handles .env loading and path resolution
 import { PAI_DIR } from './pai-paths.js';
+
+/**
+ * Directories known to be automated health-check / probe sessions.
+ * Hooks should exit early for these to avoid registry clutter and wasted work.
+ */
+const PROBE_CWD_PATTERNS = [
+  '/CodexBar/ClaudeProbe',
+  '/ClaudeProbe',
+];
+
+/**
+ * Check if the current working directory belongs to a probe/health-check session.
+ * Returns true if hooks should skip this session entirely.
+ */
+export function isProbeSession(cwd?: string): boolean {
+  const dir = cwd || process.cwd();
+  return PROBE_CWD_PATTERNS.some(pattern => dir.includes(pattern));
+}
 
 // Re-export PAI_DIR for consumers
 export { PAI_DIR };
@@ -103,7 +122,6 @@ export function getSessionsDirFromProjectDir(projectDir: string): string {
  */
 export function isWhatsAppEnabled(): boolean {
   try {
-    const { homedir } = require('os');
     const settingsPath = join(homedir(), '.claude', 'settings.json');
     if (!existsSync(settingsPath)) return false;
 
@@ -967,7 +985,7 @@ export function updateTodoContinue(
   const now = new Date().toISOString();
   const stateLines = state
     ? state.split('\n').filter(l => l.trim()).slice(0, 10).map(l => `> ${l}`).join('\n')
-    : `> Check the latest session note for details.`;
+    : `> Working directory: ${cwd}. Check the latest session note for details.`;
 
   const continueSection = `## Continue
 

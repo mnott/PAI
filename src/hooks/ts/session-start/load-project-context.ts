@@ -27,7 +27,8 @@ import {
   createSessionNote,
   findTodoPath,
   findAllClaudeMdPaths,
-  sendNtfyNotification
+  sendNtfyNotification,
+  isProbeSession
 } from '../lib/project-utils';
 
 /**
@@ -79,6 +80,12 @@ interface HookInput {
 
 async function main() {
   console.error('\nload-project-context.ts starting...');
+
+  // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+  if (isProbeSession()) {
+    console.error('Probe session detected - skipping project context loading');
+    process.exit(0);
+  }
 
   // Read hook input from stdin
   let hookInput: HookInput | null = null;

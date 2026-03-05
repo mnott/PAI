@@ -24,7 +24,7 @@ import { existsSync, statSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PAI_DIR } from '../lib/pai-paths';
-import { sendNtfyNotification, isWhatsAppEnabled } from '../lib/project-utils';
+import { sendNtfyNotification, isWhatsAppEnabled, isProbeSession } from '../lib/project-utils';
 
 // Debounce duration in milliseconds (prevents duplicate SessionStart events)
 const DEBOUNCE_MS = 2000;
@@ -108,6 +108,12 @@ async function main() {
     if (isSubagent) {
       // This is a subagent session - exit silently without notification
       console.error('Subagent session detected - skipping session initialization');
+      process.exit(0);
+    }
+
+    // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
+    if (isProbeSession()) {
+      console.error('Probe session detected - skipping session initialization');
       process.exit(0);
     }
 
