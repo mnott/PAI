@@ -8,6 +8,7 @@
  *   4.  Agent configuration (CLAUDE.md generation)
  *   5.  PAI skill installation (~/.claude/skills/PAI/SKILL.md)
  *   6.  AI steering rules installation (~/.claude/skills/PAI/AI-STEERING-RULES.md)
+ *   6b. CORE skill installation (~/.claude/Skills/CORE/)
  *   7.  Hook scripts (shell: pre-compact, session-stop, statusline)
  *   7b. TypeScript hooks installation (compiled .mjs hooks to ~/.claude/Hooks/)
  *   8.  Settings.json patching (env vars, all 17 hook registrations, permissions, flags)
@@ -834,6 +835,91 @@ async function stepAiSteeringRules(rl: ReturnType<typeof createRl>): Promise<boo
 }
 
 /**
+ * Step 6b: CORE skill installation (~/.claude/Skills/CORE/)
+ *
+ * Installs the CORE skill template and supporting docs from templates/skills/CORE/
+ * to ~/.claude/Skills/CORE/. Also creates the user skills directory at
+ * ~/.claude/Skills/user/ if it doesn't exist.
+ */
+async function stepCoreSkill(rl: ReturnType<typeof createRl>): Promise<boolean> {
+  section("Step 6b: CORE Skill Installation");
+  line();
+  line("  The CORE skill defines PAI's identity, response format, session commands,");
+  line("  compaction resilience, and operating principles. It auto-loads at session start.");
+  line();
+
+  const templatesDir = getTemplatesDir();
+  const coreSrcDir = join(templatesDir, "skills", "CORE");
+
+  if (!existsSync(coreSrcDir)) {
+    console.log(c.warn("CORE skill template not found: " + coreSrcDir));
+    console.log(c.dim("  Skipping CORE skill installation."));
+    return false;
+  }
+
+  const skillsDir = join(homedir(), ".claude", "Skills");
+  const coreDestDir = join(skillsDir, "CORE");
+  const userSkillsDir = join(skillsDir, "user");
+
+  // Check if CORE already exists
+  const coreSkillDest = join(coreDestDir, "SKILL.md");
+  if (existsSync(coreSkillDest)) {
+    console.log(c.dim("  Found existing CORE skill at ~/.claude/Skills/CORE/"));
+    line();
+
+    const overwrite = await promptYesNo(
+      rl,
+      "Update ~/.claude/Skills/CORE/ with the latest CORE skill templates?",
+      true,
+    );
+
+    if (!overwrite) {
+      console.log(c.dim("  Keeping existing CORE skill unchanged."));
+      // Still create user dir if missing
+      if (!existsSync(userSkillsDir)) {
+        mkdirSync(userSkillsDir, { recursive: true });
+        console.log(c.ok("Created ~/.claude/Skills/user/ for custom skills"));
+      }
+      return false;
+    }
+  } else {
+    const install = await promptYesNo(
+      rl,
+      "Install CORE skill to ~/.claude/Skills/CORE/?",
+      true,
+    );
+
+    if (!install) {
+      console.log(c.dim("  Skipping CORE skill installation."));
+      return false;
+    }
+  }
+
+  // Ensure directories exist
+  if (!existsSync(coreDestDir)) {
+    mkdirSync(coreDestDir, { recursive: true });
+  }
+  if (!existsSync(userSkillsDir)) {
+    mkdirSync(userSkillsDir, { recursive: true });
+  }
+
+  // Copy all files from templates/skills/CORE/ to ~/.claude/Skills/CORE/
+  const files = readdirSync(coreSrcDir).filter(f => f.endsWith(".md"));
+  let copied = 0;
+  for (const file of files) {
+    const src = join(coreSrcDir, file);
+    const dest = join(coreDestDir, file);
+    copyFileSync(src, dest);
+    copied++;
+  }
+
+  line();
+  console.log(c.ok(`Installed ${copied} CORE skill files to ~/.claude/Skills/CORE/`));
+  console.log(c.ok("Created ~/.claude/Skills/user/ for custom skills"));
+  return true;
+}
+
+/**
  * Step 7: Hook scripts (pre-compact, session-stop, statusline)
  */
 async function stepHooks(rl: ReturnType<typeof createRl>): Promise<boolean> {
@@ -1482,6 +1568,7 @@ function stepSummary(
   claudeMdGenerated: boolean,
   paiSkillInstalled: boolean,
   aiSteeringRulesInstalled: boolean,
+  coreSkillInstalled: boolean,
   hooksInstalled: boolean,
   tsHooksInstalled: boolean,
   settingsPatched: boolean,
@@ -1522,6 +1609,14 @@ function stepSummary(
     chalk.cyan(
       aiSteeringRulesInstalled
         ? "~/.claude/skills/PAI/AI-STEERING-RULES.md (installed)"
+        : "(unchanged)",
+    ),
+  );
+  console.log(
+    chalk.dim("  CORE skill:       ") +
+    chalk.cyan(
+      coreSkillInstalled
+        ? "~/.claude/Skills/CORE/ (installed)"
         : "(unchanged)",
     ),
   );
@@ -1637,6 +1732,9 @@ async function runSetup(): Promise<void> {
     // Step 6: AI Steering Rules
     const aiSteeringRulesInstalled = await stepAiSteeringRules(rl);
 
+    // Step 6b: CORE Skill
+    const coreSkillInstalled = await stepCoreSkill(rl);
+
     // Step 7: Hooks (shell scripts)
     const hooksInstalled = await stepHooks(rl);
 
@@ -1674,6 +1772,7 @@ async function runSetup(): Promise<void> {
       claudeMdGenerated,
       paiSkillInstalled,
       aiSteeringRulesInstalled,
+      coreSkillInstalled,
       hooksInstalled,
       tsHooksInstalled,
       settingsPatched,
