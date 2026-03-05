@@ -635,82 +635,13 @@ IMPORTANT:
 
 ---
 
-## MANDATORY: End Session Command
+## Session Lifecycle
 
-**When user says "end session", execute this COMPLETE procedure automatically.**
+**Session commands (pause, end, continue, go, cpp) are defined in the CORE skill.**
 
-### The End Session Checklist
+The CORE skill auto-loads at session start and contains the full session lifecycle: pause checkpoints, end session with commit/push, continuation protocol, and session note naming rules.
 
-```bash
-# 1. Update session notes with summary of work done
-# 2. Update TODO.md (mark completed, add discovered tasks)
-# 3. Rename session note if it has placeholder name
-# 4. Commit and push in Obsidian/Notes project
-# 5. Commit and push in related code folder (if any)
-```
-
-### Automatic Execution
-
-When user says "end session" (or "end", "done", "finish session"):
-
-**Step 1: Summarize and Update Session Note**
-- Write summary of what was accomplished
-- List any blockers or open questions
-- Ensure session note has meaningful name (NOT "New Session" or project name)
-
-**Step 2: Update TODO.md**
-- Mark completed tasks with `[x]`
-- Keep in-progress tasks with `[ ]`
-- Add any newly discovered tasks
-
-**Step 3: Commit and Push Obsidian Project**
-```bash
-cd [OBSIDIAN_PROJECT_DIR]
-git add .
-git status  # Check what's being committed
-git commit -m "docs: Session NNNN complete - [brief description]"
-git push
-```
-
-**Step 4: Commit and Push Code Repository (if applicable)**
-```bash
-cd [CODE_PROJECT_DIR]
-git add .
-git status
-git commit -m "feat/fix/refactor: [description of changes]"
-git push
-```
-
-**Step 5: Confirm Completion**
-Report back:
-- Session note filename (should be descriptive)
-- Commits made (both repos if applicable)
-- Any uncommitted changes that were skipped
-- Next session starting point
-
-### Project-Code Directory Mapping
-
-Add your project mappings to `~/.config/pai/project-mappings.json`:
-
-```json
-{
-  "mappings": [
-    { "obsidian": "My Project", "code_dir": "~/path/to/code" }
-  ]
-}
-```
-
-PAI reads this file during `end session` to know which code repositories to commit alongside their Obsidian project notes. Run `pai setup` to configure your mappings interactively.
-
-For personal preferences (notification channels, voice settings, agent defaults), see `~/.config/pai/agent-prefs.md`.
-
-### Important Rules
-
-- **NEVER skip the code repo commit** if code changes were made
-- **ALWAYS rename placeholder session notes** before committing
-- **ALWAYS use clean commit messages** (no AI signatures)
-- **CHECK for uncommitted changes** in both locations
-- **REPORT what was pushed** so user knows the state
+**Key commands:** "pause session", "end session", "go"/"continue", "cpp" (commit-push-publish).
 
 ---
 
@@ -722,12 +653,14 @@ For personal preferences (notification channels, voice settings, agent defaults)
 4. **Always spotcheck** - verification is mandatory
 5. **Never search home** - use specific subdirectories
 6. **Autonomous swarm mode** - spawn orchestrator, let agents do the work, no questions
-7. **End session = full cleanup** - notes, TODO, commit, push everywhere
+7. **Session lifecycle in CORE skill** - pause, end, continue, cpp commands
 8. **Plan mode for 3+ steps** - write specs, evaluate approaches, execute with verification
 9. **Verify before done** - prove it works, don't just claim it
 10. **Learn from corrections** - update tasks/lessons.md after every user correction
 11. **Demand elegance** - pause on non-trivial changes, find the better way
 12. **Fix bugs autonomously** - investigate, resolve, verify without hand-holding
 13. **Task management** - plan to tasks/todo.md first, track progress, document results
+
+**CLAUDE.md + CORE skill = complete PAI configuration.** CLAUDE.md covers agent architecture and engineering standards. CORE skill covers identity, session lifecycle, notifications, and compaction resilience.
 
 This is constitutional. Violations waste time, money, and context.

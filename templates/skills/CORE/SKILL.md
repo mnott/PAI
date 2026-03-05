@@ -441,93 +441,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
-## Delegation & Parallelization (Always Active)
+## Delegation & Parallelization
 
-**WHENEVER A TASK CAN BE PARALLELIZED, USE MULTIPLE AGENTS!**
+**See CLAUDE.md for full agent architecture:** model escalation (haiku → sonnet → opus), parallel execution patterns, spotcheck protocol, swarm mode, agent type reference, and example workflows.
 
-### Model Selection for Agents (CRITICAL FOR SPEED)
-
-**The Task tool has a `model` parameter - USE IT.**
-
-| Task Type | Model | Why |
-|-----------|-------|-----|
-| Deep reasoning, complex architecture | `opus` | Maximum intelligence needed |
-| Standard implementation, most coding | `sonnet` | Good balance of speed + capability |
-| Simple lookups, quick checks, grunt work | `haiku` | 10-20x faster, sufficient intelligence |
-
-**Examples:**
-```typescript
-// WRONG - defaults to Opus, takes minutes
-Task({ prompt: "Check if element exists", subagent_type: "intern" })
-
-// RIGHT - Haiku for simple check
-Task({ prompt: "Check if element exists", subagent_type: "intern", model: "haiku" })
-```
-
-**Rule of Thumb:**
-- Grunt work or verification → `haiku`
-- Implementation or research → `sonnet`
-- Deep strategic thinking → `opus`
-
-### Agent Types
-
-The intern agent is your high-agency genius generalist - perfect for parallel execution.
-
-**How to launch:**
-- Use a SINGLE message with MULTIPLE Task tool calls
-- Each intern gets FULL CONTEXT and DETAILED INSTRUCTIONS
-- **ALWAYS launch a spotcheck intern after parallel work completes**
-
-**CRITICAL: Interns vs Engineers:**
-- **INTERNS:** Research, analysis, investigation, file reading, testing
-- **ENGINEERS:** Writing ANY code, building features, implementing changes
-
-### Context Conservation (Always Active)
-
-**CRITICAL: Bulk/repetitive work consumes context. Delegate it to conserve your main conversation space for planning and decisions.**
-
-**When to Delegate Bulk Work:**
-- Updating many files across the codebase (batch refactoring, naming standardization)
-- Extracting/analyzing multiple items (pulling hooks from components, finding patterns)
-- Repetitive transformations (converting format A to format B across many files)
-- Large-scale testing (running tests on dozens of files, generating reports)
-- Batch file operations (renaming, restructuring, bulk edits)
-
-**Why This Matters:**
-- Context is precious - main conversation should focus on architecture and decisions
-- Engineers can handle grunt work efficiently without context overhead
-- Parallel agents complete bulk tasks 10-50x faster than sequential execution
-- Main conversation remains crisp and focused on high-level strategy
-
-**Implementation Pattern:**
-```
-1. Plan the work in main conversation (describe what needs to change)
-2. Delegate to engineer agent(s) with detailed instructions
-3. Engineer executes bulk changes efficiently
-4. Review results and iterate if needed
-5. Main conversation remains lean and focused
-```
-
-**Model Selection for Bulk Work:**
-- **haiku** - File scanning, simple matches, counting, basic transformations
-- **sonnet** - Multi-file refactoring, code transformations, complex replacements
-- **opus** - Only if the logic is deeply complex (rare)
-
-**Example Workflow:**
-```
-User: "Update all TypeScript files to use const instead of let"
-→ Main conversation: Plan which files and the transformation rules
-→ Delegate to engineer: "Refactor 47 TS files from let→const with these rules..."
-→ Engineer completes in parallel
-→ Main conversation: Review results, commit, document
-```
-
-**Best Practices:**
-- Give engineers FULL CONTEXT: paste the transformation rules, examples, edge cases
-- Use SINGLE MESSAGE with MULTIPLE parallel Task calls for independent work
-- Set realistic `model` parameter to avoid wasting tokens on simple tasks
-- Run spotcheck after bulk work completes to verify quality
-- Never ask main conversation to do work that could be delegated
+**Quick reminder:** Always use the cheapest sufficient model. Parallelize everything. Spotcheck after consolidation.
 
 ---
 
