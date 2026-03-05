@@ -17,3 +17,7 @@ logs/
 Notes/
 .pai/
 tasks/
+
+# User skills — local customizations that survive git pull
+templates/skills/user/*
+!templates/skills/user/.gitkeep
