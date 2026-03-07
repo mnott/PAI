@@ -35,6 +35,21 @@ Install PAI and Claude remembers. Ask it what you were working on. Ask it to fin
 - "What did I do today?" — daily review across all projects
 - "Journal this thought" — capture freeform reflections with timestamps
 - "Plan my week" — forward-looking priorities based on open TODOs and recent activity
+- "What themes are emerging in my work?" — spot patterns across sessions and projects
+- "Search for that authentication discussion" — semantic search finds it even with different phrasing
+
+### Tracking Your Activity
+
+- "What changes did I make to the daemon today?" — automatic observation capture tracks every tool call
+- "Show me all decisions from the last session" — observations are classified: decision, bugfix, feature, refactor, discovery, change
+- "What files did I modify in the PAI project this week?" — searchable timeline of every edit, commit, and search
+- "Show observation stats" — totals, breakdowns by type and project, with visual bar charts
+
+### Continuing Where You Left Off
+
+- "Go" — reads your TODO.md continuation prompt and picks up exactly where the last session stopped
+- "What was I working on?" — progressive context injection loads recent observations at session start
+- "Continue the daemon refactor" — session summaries give Claude full context without re-explaining
 
 ### Keeping Things Safe
 
@@ -403,7 +418,9 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 
 PAI works great alongside these tools (also by the same author):
 
+- **[AIBroker](https://github.com/mnott/AIBroker)** — Unified message bridge for Claude Code (WhatsApp, Telegram, PAILot — text and voice routing)
 - **[Whazaa](https://github.com/mnott/Whazaa)** — WhatsApp bridge for Claude Code (voice notes, screenshots, session routing)
+- **[Telex](https://github.com/mnott/Telex)** — Telegram bridge for Claude Code (text and voice messaging)
 - **[Coogle](https://github.com/mnott/Coogle)** — Google Workspace MCP daemon (Gmail, Calendar, Drive multiplexing)
 - **[DEVONthink MCP](https://github.com/mnott/devonthink-mcp)** — DEVONthink integration for document search and archival
 

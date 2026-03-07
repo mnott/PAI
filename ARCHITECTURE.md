@@ -21,6 +21,8 @@ Claude Code Session
     │               ↓
     │       PostgreSQL + pgvector
     │       (chunks, embeddings, files, FTS)
+    │       ├── Observation Store (PostgreSQL)
+    │       │       classify → store → query → inject
     │
     ├── Registry (SQLite)
     │       ~/.pai/registry.db
@@ -28,7 +30,8 @@ Claude Code Session
     │
     └── CLI (pai)
             project, session, registry, memory,
-            daemon, obsidian, zettel, backup, restore, setup
+            daemon, obsidian, zettel, observation,
+            backup, restore, setup
 ```
 
 ### Key Components
@@ -161,6 +164,8 @@ Claude Code (stdio)
 | `session_list` | List session notes, optionally filtered by project |
 | `registry_search` | Search project metadata (names, paths, tags) |
 | `project_detect` | Identify which project a given path belongs to |
+| `observation_search` | Search classified observations by project, type, or session |
+| `observation_timeline` | Recent observation timeline with progressive context layers |
 | `zettel_explore` | BFS traversal of wikilink graph from a seed note |
 | `zettel_surprise` | Find semantically distant but graph-close notes |
 | `zettel_converse` | Hybrid search with graph expansion and cross-domain connections |
@@ -183,6 +188,10 @@ Claude Code (stdio)
 **`registry_search(query)`** — Full-text search over project metadata — names, paths, tags.
 
 **`project_detect(path?)`** — Given a filesystem path (defaults to CWD), returns the matching project.
+
+**`observation_search(project?, type?, session_id?, limit?)`** — Search the observation store. Filter by project slug, observation type (`decision`, `bugfix`, `feature`, `refactor`, `discovery`, `change`), or session ID. Returns observations ordered by creation time descending.
+
+**`observation_timeline(project?, limit?)`** — Returns a layered timeline: compact index (~100 tokens with type counts and active projects), recent timeline (~500 tokens with timestamped observations), and on-demand detail access via `observation_search`.
 
 **`zettel_explore(note, depth?, direction?)`** — BFS walk from a seed note across `vault_links`. Returns a subgraph of neighboring notes with each edge classified as `sequential` or `associative`. `direction`: `outbound` (default), `inbound`, or `both`.
 
@@ -389,6 +398,21 @@ pai zettel health
 pai zettel suggest "My Seed Note" --limit 5
 ```
 
+### Observation Management
+
+| Subcommand | Description |
+|------------|-------------|
+| `observation list` | List recent observations with optional filters |
+| `observation search <query>` | Search observations by title or narrative text |
+| `observation stats` | Show totals, breakdowns by type and project |
+
+```bash
+pai observation list --type decision --limit 10
+pai observation list --project my-app
+pai observation search "database migration"
+pai observation stats
+```
+
 ### Other Commands
 
 ```bash
@@ -531,6 +555,8 @@ Claude Code Event
 | `post-compact-inject.mjs` | SessionStart (compact) | Reads saved state and injects into post-compaction context |
 | `security-validator.mjs` | PreToolUse (Bash) | Validates shell commands against security rules |
 | `capture-all-events.mjs` | All events | Observability — logs every hook event to session timeline |
+| `observe.mjs` | PostToolUse | Classifies tool calls into typed observations (decision/bugfix/feature/refactor/discovery/change) |
+| `inject-observations.mjs` | SessionStart | Injects recent observation context (compact index + timeline) |
 | `context-compression-hook.mjs` | PreCompact | Extracts session state, saves checkpoint, writes temp file for relay |
 | `capture-tool-output.mjs` | PostToolUse | Records tool inputs/outputs for observability dashboard |
 | `update-tab-on-action.mjs` | PostToolUse | Updates terminal tab title based on current activity |
@@ -704,6 +730,47 @@ These tables are populated by `src/memory/vault-indexer.ts` and queried by all s
 | `detail` | TEXT | Human-readable description |
 | `checked_at` | BIGINT | Timestamp of the audit run |
 
+### Observation Tables (PostgreSQL)
+
+These tables are populated by the PostToolUse hook classifier and queried by the CLI and MCP tools.
+
+**`pai_observations`** — Classified tool call events:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Primary key |
+| `session_id` | TEXT | Claude Code session identifier |
+| `project_id` | INTEGER | Owning project (nullable) |
+| `project_slug` | TEXT | Project slug for display |
+| `type` | TEXT | Classification: decision, bugfix, feature, refactor, discovery, change |
+| `title` | TEXT | Human-readable observation title |
+| `narrative` | TEXT | Extended description (nullable) |
+| `tool_name` | TEXT | Claude Code tool that triggered the observation |
+| `tool_input_summary` | TEXT | Abbreviated tool input |
+| `files_read` | JSONB | Array of file paths read |
+| `files_modified` | JSONB | Array of file paths modified |
+| `concepts` | JSONB | Extracted concept tags |
+| `content_hash` | TEXT | SHA-256 hash for 30-second deduplication window |
+| `created_at` | TIMESTAMPTZ | Observation timestamp |
+
+**`pai_session_summaries`** — Structured end-of-session summaries:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Primary key |
+| `session_id` | TEXT | Claude Code session identifier (unique) |
+| `project_id` | INTEGER | Owning project (nullable) |
+| `project_slug` | TEXT | Project slug for display |
+| `request` | TEXT | What was requested |
+| `investigated` | TEXT | What was investigated |
+| `learned` | TEXT | What was learned |
+| `completed` | TEXT | What was completed |
+| `next_steps` | TEXT | Recommended next steps |
+| `observation_count` | INTEGER | Number of observations in the session |
+| `created_at` | TIMESTAMPTZ | Summary timestamp |
+
+**Indexes:** B-tree on project_id, session_id, type, created_at DESC, content_hash.
+
 **Content Tiers:**
 
 | Tier | Description | Example |
@@ -770,6 +837,10 @@ src/
 ├── memory/          # Indexer, chunker, embeddings, search, reranker
 │   ├── reranker.ts  # Cross-encoder reranking (Xenova/ms-marco-MiniLM-L-6-v2)
 │   └── vault-indexer.ts  # Obsidian vault indexing into v3 vault tables
+├── observations/   # Automatic observation capture
+│   ├── classifier.ts   # Rule-based tool call classifier (decision/bugfix/feature/refactor/discovery/change)
+│   ├── store.ts        # PostgreSQL persistence with content-hash deduplication
+│   └── schema.sql      # Observation + session summary table DDL
 ├── obsidian/        # Obsidian vault bridge
 │   └── vault-fixer.ts    # Repairs broken wikilinks and orphaned entries
 ├── registry/        # Registry migrations and queries
