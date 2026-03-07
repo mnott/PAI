@@ -71,6 +71,9 @@ const ALWAYS_SKIP_DIRS = new Set([
   // General caches
   ".cache",
   ".bun",
+  // Backup snapshots (Carbon Copy Cloner, Time Machine, etc.)
+  "snaps",
+  ".Trashes",
 ]);
 
 const ROOT_SCAN_SKIP_DIRS = new Set([
@@ -151,8 +154,16 @@ function walkContentFiles(rootPath: string): string[] {
   return results;
 }
 
+/** Paths that must never be indexed — system/temp dirs that can contain backup snapshots. */
+const BLOCKED_ROOTS = new Set(["/tmp", "/private/tmp", "/var", "/private/var"]);
+
 function isPathTooBroadForContentScan(rootPath: string): boolean {
   const normalized = normalize(rootPath);
+  // Block system/temp directories outright (CCC snapshots live here)
+  if (BLOCKED_ROOTS.has(normalized)) return true;
+  for (const blocked of BLOCKED_ROOTS) {
+    if (normalized.startsWith(blocked + "/")) return true;
+  }
   const home = homedir();
   if (home.startsWith(normalized) || normalized === "/") return true;
   if (normalized.startsWith(home)) {
@@ -416,6 +427,7 @@ const EMBED_YIELD_EVERY = 10;
 export async function embedChunksWithBackend(
   backend: StorageBackend,
   shouldStop?: () => boolean,
+  projectNames?: Map<number, string>,
 ): Promise<number> {
   const { generateEmbedding, serializeEmbedding } = await import("./embeddings.js");
 
@@ -424,6 +436,28 @@ export async function embedChunksWithBackend(
 
   const total = rows.length;
   let embedded = 0;
+
+  // Build a summary of what needs embedding: count chunks per project_id
+  const projectChunkCounts = new Map<number, { count: number; samplePath: string }>();
+  for (const row of rows) {
+    const entry = projectChunkCounts.get(row.project_id);
+    if (entry) {
+      entry.count++;
+    } else {
+      projectChunkCounts.set(row.project_id, { count: 1, samplePath: row.path });
+    }
+  }
+  const pName = (pid: number) => projectNames?.get(pid) ?? `project ${pid}`;
+  const projectSummary = Array.from(projectChunkCounts.entries())
+    .map(([pid, { count, samplePath }]) => `  ${pName(pid)}: ${count} chunks (e.g. ${samplePath})`)
+    .join("\n");
+  process.stderr.write(
+    `[pai-daemon] Embed pass: ${total} unembedded chunks across ${projectChunkCounts.size} project(s)\n${projectSummary}\n`
+  );
+
+  // Track current project for transition logging
+  let currentProjectId = -1;
+  let projectEmbedded = 0;
 
   for (let i = 0; i < rows.length; i += EMBED_BATCH_SIZE) {
     // Check cancellation between every batch before touching the pool again
@@ -437,7 +471,22 @@ export async function embedChunksWithBackend(
     const batch = rows.slice(i, i + EMBED_BATCH_SIZE);
 
     for (let j = 0; j < batch.length; j++) {
-      const { id, text } = batch[j];
+      const { id, text, project_id, path } = batch[j];
+
+      // Log when switching to a new project
+      if (project_id !== currentProjectId) {
+        if (currentProjectId !== -1) {
+          process.stderr.write(
+            `[pai-daemon] Finished ${pName(currentProjectId)}: ${projectEmbedded} chunks embedded\n`
+          );
+        }
+        const info = projectChunkCounts.get(project_id);
+        process.stderr.write(
+          `[pai-daemon] Embedding ${pName(project_id)} (${info?.count ?? "?"} chunks, starting at ${path})\n`
+        );
+        currentProjectId = project_id;
+        projectEmbedded = 0;
+      }
 
       // Yield to the event loop periodically to keep IPC responsive
       if ((embedded + j) % EMBED_YIELD_EVERY === 0) {
@@ -447,11 +496,22 @@ export async function embedChunksWithBackend(
       const vec = await generateEmbedding(text);
       const blob = serializeEmbedding(vec);
       await backend.updateEmbedding(id, blob);
+      projectEmbedded++;
     }
 
     embedded += batch.length;
+
+    // Log progress with current file path for context
+    const lastChunk = batch[batch.length - 1];
     process.stderr.write(
-      `[pai-daemon] Embedded ${embedded}/${total} chunks\n`
+      `[pai-daemon] Embedded ${embedded}/${total} chunks (${pName(lastChunk.project_id)}: ${lastChunk.path})\n`
+    );
+  }
+
+  // Log final project completion
+  if (currentProjectId !== -1) {
+    process.stderr.write(
+      `[pai-daemon] Finished ${pName(currentProjectId)}: ${projectEmbedded} chunks embedded\n`
     );
   }
 

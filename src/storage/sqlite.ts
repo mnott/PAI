@@ -173,7 +173,7 @@ export class SQLiteBackend implements StorageBackend {
     })();
   }
 
-  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string }>> {
+  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
     const conditions = ["embedding IS NULL"];
     const params: (string | number)[] = [];
 
@@ -184,8 +184,8 @@ export class SQLiteBackend implements StorageBackend {
 
     const where = "WHERE " + conditions.join(" AND ");
     const rows = this.db
-      .prepare(`SELECT id, text FROM memory_chunks ${where} ORDER BY id`)
-      .all(...params) as Array<{ id: string; text: string }>;
+      .prepare(`SELECT id, text, project_id, path FROM memory_chunks ${where} ORDER BY id`)
+      .all(...params) as Array<{ id: string; text: string; project_id: number; path: string }>;
     return rows;
   }
 

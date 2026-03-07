@@ -125,7 +125,7 @@ export interface StorageBackend {
    * Return all chunk IDs that have no embedding stored yet.
    * Used by embedChunks() to find work to do.
    */
-  getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string }>>;
+  getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
 
   /**
    * Store an embedding for a single chunk.

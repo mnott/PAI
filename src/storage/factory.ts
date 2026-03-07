@@ -31,6 +31,10 @@ async function tryPostgres(config: PaiDaemonConfig): Promise<StorageBackend> {
   try {
     const { PostgresBackend } = await import("./postgres.js");
     const pgConfig = config.postgres ?? {};
+
+    // Ensure the per-user database exists and has the schema applied
+    await PostgresBackend.ensureDatabase(pgConfig);
+
     const backend = new PostgresBackend(pgConfig);
 
     const err = await backend.testConnection();

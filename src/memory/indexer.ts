@@ -310,6 +310,9 @@ const ALWAYS_SKIP_DIRS = new Set([
   // General caches
   ".cache",
   ".bun",
+  // Backup snapshots (Carbon Copy Cloner, Time Machine, etc.)
+  "snaps",
+  ".Trashes",
 ]);
 
 /**
@@ -423,8 +426,18 @@ const INDEX_YIELD_EVERY = 10;
  *
  * The memory/, Notes/, and claude_notes_dir scans always run regardless.
  */
+/** Paths that must never be indexed — system/temp dirs that can contain backup snapshots. */
+const BLOCKED_ROOTS = new Set(["/tmp", "/private/tmp", "/var", "/private/var"]);
+
 function isPathTooBroadForContentScan(rootPath: string): boolean {
   const normalized = normalize(rootPath);
+
+  // Block system/temp directories outright (CCC snapshots live here)
+  if (BLOCKED_ROOTS.has(normalized)) return true;
+  for (const blocked of BLOCKED_ROOTS) {
+    if (normalized.startsWith(blocked + "/")) return true;
+  }
+
   const home = homedir();
 
   // Skip the home directory itself or any ancestor of home

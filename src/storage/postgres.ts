@@ -5,12 +5,15 @@
  * Full-text search:  PostgreSQL tsvector/tsquery (replaces SQLite FTS5)
  * Connection pooling: node-postgres Pool
  *
- * Schema is initialized via docker/init.sql.
- * This module only handles runtime queries — schema creation is external.
+ * Schema is auto-initialized on first connection if tables don't exist.
+ * Per-user database isolation: each macOS user gets their own database (pai_<username>).
  */
 
 import pg from "pg";
 import type { Pool, PoolClient } from "pg";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { StorageBackend, ChunkRow, FileRow, FederationStats } from "./interface.js";
 import type { SearchResult, SearchOptions } from "../memory/search.js";
 import { buildFtsQuery } from "../memory/search.js";
@@ -42,6 +45,80 @@ export class PostgresBackend implements StorageBackend {
   readonly backendType = "postgres" as const;
 
   private pool: Pool;
+
+  /**
+   * Ensure the per-user database exists and has the required schema.
+   * Connects to the default 'postgres' database to CREATE DATABASE if needed,
+   * then connects to the target database to apply init.sql schema.
+   * Safe to call multiple times (fully idempotent).
+   */
+  static async ensureDatabase(config: PostgresConfig): Promise<void> {
+    // Parse target database name from connection string or config
+    const connStr =
+      config.connectionString ??
+      `postgresql://${config.user ?? "pai"}:${config.password ?? "pai"}@${config.host ?? "localhost"}:${config.port ?? 5432}/${config.database ?? "pai"}`;
+    const url = new URL(connStr);
+    const targetDb = url.pathname.slice(1); // strip leading /
+
+    // Connect to default 'postgres' database to check/create the target
+    const adminUrl = new URL(connStr);
+    adminUrl.pathname = "/postgres";
+    const adminPool = new PgPool({
+      connectionString: adminUrl.toString(),
+      max: 1,
+      connectionTimeoutMillis: 5000,
+    });
+
+    try {
+      const check = await adminPool.query(
+        "SELECT 1 FROM pg_database WHERE datname = $1",
+        [targetDb]
+      );
+      if (check.rowCount === 0) {
+        // CREATE DATABASE doesn't support parameterized queries;
+        // the DB name is derived from config, not user input
+        await adminPool.query(`CREATE DATABASE "${targetDb}"`);
+        process.stderr.write(
+          `[pai-postgres] Created database: ${targetDb}\n`
+        );
+      }
+    } finally {
+      await adminPool.end();
+    }
+
+    // Now connect to the target database and apply schema
+    const targetPool = new PgPool({
+      connectionString: connStr,
+      max: 1,
+      connectionTimeoutMillis: 5000,
+    });
+
+    try {
+      // Check if schema is already applied (pai_chunks table exists)
+      const tableCheck = await targetPool.query(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = 'pai_chunks'"
+      );
+      if (tableCheck.rowCount === 0) {
+        // Read init.sql from the docker/ directory
+        const __dirname = dirname(fileURLToPath(import.meta.url));
+        const initSqlPath = join(__dirname, "../../docker/init.sql");
+        let initSql: string;
+        try {
+          initSql = readFileSync(initSqlPath, "utf-8");
+        } catch {
+          // Fallback: try relative to dist/ (built code)
+          const altPath = join(__dirname, "../docker/init.sql");
+          initSql = readFileSync(altPath, "utf-8");
+        }
+        await targetPool.query(initSql);
+        process.stderr.write(
+          `[pai-postgres] Applied schema to database: ${targetDb}\n`
+        );
+      }
+    } finally {
+      await targetPool.end();
+    }
+  }
 
   constructor(config: PostgresConfig) {
     const connStr =
@@ -236,16 +313,16 @@ export class PostgresBackend implements StorageBackend {
     }
   }
 
-  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string }>> {
+  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
     if (projectId !== undefined) {
-      const result = await this.pool.query<{ id: string; text: string }>(
-        "SELECT id, text FROM pai_chunks WHERE embedding IS NULL AND project_id = $1 ORDER BY id",
+      const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(
+        "SELECT id, text, project_id, path FROM pai_chunks WHERE embedding IS NULL AND project_id = $1 ORDER BY id",
         [projectId]
       );
       return result.rows;
     }
-    const result = await this.pool.query<{ id: string; text: string }>(
-      "SELECT id, text FROM pai_chunks WHERE embedding IS NULL ORDER BY id"
+    const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(
+      "SELECT id, text, project_id, path FROM pai_chunks WHERE embedding IS NULL ORDER BY id"
     );
     return result.rows;
   }

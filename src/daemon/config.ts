@@ -7,7 +7,7 @@
  */
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
@@ -84,6 +84,24 @@ export interface PaiDaemonConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Per-user Postgres isolation
+// ---------------------------------------------------------------------------
+
+/** Derive a per-user Postgres database name: pai_<username> */
+function perUserDbName(): string {
+  const username = userInfo().username;
+  // Sanitize: only allow alphanumeric and underscore for Postgres identifiers
+  const safe = username.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+  return `pai_${safe}`;
+}
+
+/** Derive the per-user connection string */
+function perUserConnectionString(): string {
+  const db = perUserDbName();
+  return `postgresql://pai:pai@localhost:5432/${db}`;
+}
+
+// ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
 
@@ -93,7 +111,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   embedIntervalSecs: 600,
   storageBackend: "sqlite",
   postgres: {
-    connectionString: "postgresql://pai:pai@localhost:5432/pai",
+    connectionString: perUserConnectionString(),
     maxConnections: 5,
     connectionTimeoutMs: 5000,
   },
@@ -109,13 +127,15 @@ export const DEFAULTS: PaiDaemonConfig = {
   },
 };
 
-const CONFIG_TEMPLATE = `{
+/** Config template — generated at runtime so the DB name is per-user */
+function configTemplate(): string {
+  return `{
   "socketPath": "/tmp/pai.sock",
   "indexIntervalSecs": 300,
   "embedIntervalSecs": 600,
   "storageBackend": "sqlite",
   "postgres": {
-    "connectionString": "postgresql://pai:pai@localhost:5432/pai",
+    "connectionString": "${perUserConnectionString()}",
     "maxConnections": 5,
     "connectionTimeoutMs": 5000
   },
@@ -132,6 +152,7 @@ const CONFIG_TEMPLATE = `{
   }
 }
 `;
+}
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -229,7 +250,7 @@ export function ensureConfigDir(): void {
 
   if (!existsSync(CONFIG_FILE)) {
     try {
-      writeFileSync(CONFIG_FILE, CONFIG_TEMPLATE, "utf-8");
+      writeFileSync(CONFIG_FILE, configTemplate(), "utf-8");
       process.stderr.write(
         `[pai-daemon] Wrote default config to: ${CONFIG_FILE}\n`
       );

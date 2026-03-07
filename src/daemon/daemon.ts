@@ -330,8 +330,17 @@ async function runEmbed(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled embed pass...\n");
 
+    // Build project name map for readable logs
+    const projectNames = new Map<number, string>();
+    try {
+      const rows = registryDb
+        .prepare("SELECT id, slug FROM projects WHERE status = 'active'")
+        .all() as Array<{ id: number; slug: string }>;
+      for (const r of rows) projectNames.set(r.id, r.slug);
+    } catch { /* registry unavailable — IDs will be used instead */ }
+
     const { embedChunksWithBackend } = await import("../memory/indexer-backend.js");
-    const count = await embedChunksWithBackend(storageBackend, () => shutdownRequested);
+    const count = await embedChunksWithBackend(storageBackend, () => shutdownRequested, projectNames);
 
     const elapsed = Date.now() - t0;
     lastEmbedTime = Date.now();
