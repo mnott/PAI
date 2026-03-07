@@ -64,6 +64,12 @@ import {
   patchNotificationConfig,
 } from "../notifications/config.js";
 import { routeNotification } from "../notifications/router.js";
+import {
+  storeObservation,
+  queryObservations,
+  queryRecentObservations,
+  storeSessionSummary,
+} from "../observations/store.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -195,6 +201,15 @@ async function runIndex(): Promise<void> {
  */
 interface SQLiteBackendWithDb {
   getRawDb(): Database;
+}
+
+/**
+ * Internal interface for accessing the pg.Pool from PostgresBackend.
+ * Mirrors SQLiteBackendWithDb — avoids a circular dep while keeping type safety.
+ */
+interface PostgresBackendWithPool {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getPool?(): any;
 }
 
 /**
@@ -632,6 +647,178 @@ async function handleRequest(
       sendResponse(socket, { id, ok: false, error: msg });
       socket.end();
     });
+    return;
+  }
+
+  // ---- Observation methods (Postgres only) --------------------------------
+
+  if (method === "observation_store") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as {
+        session_id: string;
+        type: string;
+        title: string;
+        narrative?: string;
+        tool_name: string;
+        tool_input_summary?: string;
+        files_read?: string[];
+        files_modified?: string[];
+        concepts?: string[];
+        content_hash?: string;
+        cwd?: string;
+      };
+
+      // Resolve project_id and project_slug from cwd via registry
+      let project_id: number | null = null;
+      let project_slug: string | null = null;
+      if (p.cwd) {
+        const row = registryDb.prepare(
+          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
+        ).get(p.cwd) as { id: number; slug: string } | undefined;
+        if (row) {
+          project_id = row.id;
+          project_slug = row.slug;
+        }
+      }
+
+      const insertedId = await storeObservation(pool, {
+        session_id: p.session_id,
+        project_id,
+        project_slug,
+        type: p.type as "decision" | "bugfix" | "feature" | "refactor" | "discovery" | "change",
+        title: p.title,
+        narrative: p.narrative ?? null,
+        tool_name: p.tool_name,
+        tool_input_summary: p.tool_input_summary ?? null,
+        files_read: p.files_read ?? [],
+        files_modified: p.files_modified ?? [],
+        concepts: p.concepts ?? [],
+      });
+
+      sendResponse(socket, { id, ok: true, result: { ok: true, id: insertedId } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  if (method === "observation_query") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as {
+        project_id?: number;
+        session_id?: string;
+        type?: string;
+        limit?: number;
+        offset?: number;
+      };
+
+      const rows = await queryObservations(pool, {
+        projectId: p.project_id,
+        sessionId: p.session_id,
+        type: p.type,
+        limit: p.limit,
+        offset: p.offset,
+      });
+      sendResponse(socket, { id, ok: true, result: rows });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  if (method === "observation_recent") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as { project_id?: number; cwd?: string; limit?: number };
+      const limit = p.limit ?? 20;
+
+      // Resolve project_id from cwd if not provided directly (same pattern as observation_store)
+      let resolvedProjectId = p.project_id;
+      let resolvedProjectSlug: string | undefined;
+      if (resolvedProjectId === undefined && p.cwd) {
+        const row = registryDb.prepare(
+          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
+        ).get(p.cwd) as { id: number; slug: string } | undefined;
+        if (row) {
+          resolvedProjectId = row.id;
+          resolvedProjectSlug = row.slug;
+        }
+      }
+
+      let rows;
+      if (resolvedProjectId !== undefined) {
+        rows = await queryRecentObservations(pool, resolvedProjectId, limit);
+      } else {
+        rows = await queryObservations(pool, { limit });
+      }
+      sendResponse(socket, { id, ok: true, result: { rows, project_slug: resolvedProjectSlug } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  if (method === "session_summary_store") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Session summaries require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as {
+        session_id: string;
+        project_id?: number;
+        project_slug?: string;
+        request?: string;
+        investigated?: string;
+        learned?: string;
+        completed?: string;
+        next_steps?: string;
+        observation_count?: number;
+      };
+
+      await storeSessionSummary(pool, {
+        session_id: p.session_id,
+        project_id: p.project_id ?? null,
+        project_slug: p.project_slug ?? null,
+        request: p.request ?? null,
+        investigated: p.investigated ?? null,
+        learned: p.learned ?? null,
+        completed: p.completed ?? null,
+        next_steps: p.next_steps ?? null,
+        observation_count: p.observation_count ?? 0,
+      });
+
+      sendResponse(socket, { id, ok: true, result: { ok: true } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
     return;
   }
 

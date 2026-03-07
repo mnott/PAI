@@ -146,6 +146,15 @@ export class PostgresBackend implements StorageBackend {
     await this.pool.end();
   }
 
+  /**
+   * Expose the underlying pg.Pool for callers that need direct query access
+   * (e.g. the daemon's observation IPC methods).
+   * Mirrors SQLiteBackend.getRawDb().
+   */
+  getPool(): Pool {
+    return this.pool;
+  }
+
   async getStats(): Promise<FederationStats> {
     const client = await this.pool.connect();
     try {
