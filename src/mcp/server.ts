@@ -42,7 +42,10 @@ import {
   toolZettelSuggest,
   toolZettelConverse,
   toolZettelThemes,
+  toolObservationSearch,
+  toolObservationTimeline,
 } from "./tools.js";
+import { Pool } from "pg";
 
 // ---------------------------------------------------------------------------
 // Database singletons (opened lazily, once per MCP server process)
@@ -50,6 +53,7 @@ import {
 
 let _registryDb: ReturnType<typeof openRegistry> | null = null;
 let _federationDb: ReturnType<typeof openFederation> | null = null;
+let _pgPool: Pool | null = null;
 
 function getRegistryDb() {
   if (!_registryDb) _registryDb = openRegistry();
@@ -59,6 +63,17 @@ function getRegistryDb() {
 function getFederationDb() {
   if (!_federationDb) _federationDb = openFederation();
   return _federationDb;
+}
+
+function getPgPool(): Pool | null {
+  if (_pgPool) return _pgPool;
+  try {
+    const user = process.env.USER ?? process.env.LOGNAME ?? "unknown";
+    _pgPool = new Pool({ database: `pai_${user}` });
+    return _pgPool;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -824,6 +839,63 @@ export async function startMcpServer(): Promise<void> {
     },
     async (args) => {
       const result = await toolZettelThemes(getFederationDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: observation_search
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "observation_search",
+    "Search PAI observations — classified records of tool calls capturing decisions, discoveries, changes, and more. Use this to find what happened during past sessions.",
+    {
+      query: z.string().optional().describe("Search text matched against observation titles and narratives."),
+      project: z.string().optional().describe("Filter by project slug."),
+      type: z.enum(["decision", "bugfix", "feature", "refactor", "discovery", "change"]).optional().describe("Filter by observation type."),
+      limit: z.number().int().min(1).max(100).optional().describe("Max results. Default: 20."),
+    },
+    async (args) => {
+      const pool = getPgPool();
+      if (!pool) {
+        return {
+          content: [{ type: "text" as const, text: "Observation tools require PostgreSQL backend." }],
+          isError: true,
+        };
+      }
+      const result = await toolObservationSearch(pool, getRegistryDb(), args);
+      return {
+        content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
+        isError: result.isError,
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: observation_timeline
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "observation_timeline",
+    "Get a chronological timeline of observations for a project or session. Shows what happened and when.",
+    {
+      project: z.string().optional().describe("Filter by project slug."),
+      session_id: z.string().optional().describe("Filter to a specific session."),
+      limit: z.number().int().min(1).max(200).optional().describe("Max observations to include. Default: 50."),
+    },
+    async (args) => {
+      const pool = getPgPool();
+      if (!pool) {
+        return {
+          content: [{ type: "text" as const, text: "Observation tools require PostgreSQL backend." }],
+          isError: true,
+        };
+      }
+      const result = await toolObservationTimeline(pool, getRegistryDb(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,

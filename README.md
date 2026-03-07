@@ -97,11 +97,72 @@ PAI runs hooks at every stage of a Claude Code session:
 | **User Prompt** | Cleans up temp files, updates terminal tab titles |
 | **Pre-Compact** | Saves session state checkpoint, sends notification |
 | **Post-Compact** | Injects preserved state back into Claude's context |
-| **Tool Use** | Captures tool outputs for observability |
+| **Tool Use** | Classifies tool calls into structured observations (decision/bugfix/feature/refactor/discovery/change) |
 | **Session End** | Summarizes work done, finalizes session note |
 | **Stop** | Writes work items to session note, sends notification |
 
 All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes, communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation).
+
+---
+
+## Automatic Observation Capture
+
+PAI automatically classifies and stores every significant tool call during your sessions. When you edit a file, run a command, or make a decision, PAI captures it as a structured observation — building a searchable timeline of everything you've done across all projects.
+
+### How it works
+
+A PostToolUse hook fires after every Claude Code tool call. A rule-based classifier (no AI needed, under 50ms) categorizes each action:
+
+| Type | What triggers it | Examples |
+|------|-----------------|----------|
+| **decision** | Git commits, config changes | `git commit`, writing to config files |
+| **bugfix** | Test runs, error investigation | `npm test`, debugging commands |
+| **feature** | New file creation, feature work | Creating components, adding endpoints |
+| **refactor** | Code restructuring | Renaming, moving files, reorganizing |
+| **discovery** | File reads, searches | Reading code, grep searches, glob patterns |
+| **change** | File edits | Editing source files, updating configs |
+
+Observations are stored in PostgreSQL with content-hash deduplication (30-second window) to prevent duplicates from rapid tool calls.
+
+### Progressive context injection
+
+At session start, PAI injects recent observations as layered context:
+
+1. **Compact index** (~100 tokens) — observation type counts and active projects
+2. **Timeline** (~500 tokens) — recent observations with timestamps
+3. **On-demand** — full details available via MCP tools
+
+This means Claude starts every session already knowing what you were working on, without you re-explaining anything.
+
+### Searching observations
+
+Ask Claude naturally:
+
+```
+"What changes did I make to the daemon today?"
+"Show me all decisions from the last session"
+"What files did I modify in the PAI project this week?"
+```
+
+Or use the CLI:
+
+```bash
+# List recent observations
+pai observation list
+
+# Filter by type
+pai observation list --type decision
+
+# Filter by project
+pai observation list --project pai
+
+# Show stats
+pai observation stats
+```
+
+### Session summaries
+
+When a session ends, PAI generates a structured summary capturing what was requested, investigated, learned, completed, and what the next steps are. These summaries feed into the progressive context system, giving future sessions a concise picture of past work.
 
 ---
 
@@ -351,6 +412,8 @@ PAI works great alongside these tools (also by the same author):
 ## Acknowledgments
 
 PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiessler)'s concept of Personal AI Infrastructure and his [Fabric](https://github.com/danielmiessler/fabric) project — a Python CLI for augmenting human capabilities with reusable AI prompt patterns. Fabric is excellent and solves a different problem; PAI takes the same philosophy in a different direction: persistent memory, session continuity, and deep Claude Code integration. See [FEATURE.md](FEATURE.md) for a detailed comparison.
+
+The automatic observation capture system — classifying tool calls into structured observations with progressive context injection — is inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by [thedotmack](https://github.com/thedotmack). claude-mem demonstrated that automatic memory capture during Claude Code sessions dramatically improves continuity. PAI adapts this concept with a rule-based classifier, PostgreSQL storage, and three-layer progressive disclosure.
 
 ---
 

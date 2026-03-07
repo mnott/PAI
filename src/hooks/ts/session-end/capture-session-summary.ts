@@ -58,6 +58,9 @@ async function main() {
     // Write session file
     writeFileSync(join(sessionDir, filename), sessionDoc);
 
+    // Also store structured summary via daemon IPC for the observations system
+    await storeStructuredSummary(data.conversation_id, sessionInfo);
+
     // Exit successfully
     process.exit(0);
   } catch (error) {
@@ -180,6 +183,44 @@ For detailed tool outputs, see: \`\${PAI_DIR}/History/raw-outputs/${timestamp.su
 **Session Outcome:** Completed
 **Generated:** ${new Date().toISOString()}
 `;
+}
+
+async function storeStructuredSummary(
+  sessionId: string,
+  info: { focus: string; filesChanged: string[]; commandsExecuted: string[]; toolsUsed: string[]; duration: number }
+): Promise<void> {
+  try {
+    const cwd = process.cwd();
+    const net = await import('net');
+
+    await new Promise<void>((resolve, _reject) => {
+      const client = net.createConnection('/tmp/pai.sock', () => {
+        const msg = JSON.stringify({
+          id: 1,
+          method: 'session_summary_store',
+          params: {
+            session_id: sessionId,
+            cwd,
+            request: null,      // We don't have the original request
+            investigated: null,
+            learned: null,
+            completed: info.filesChanged.length > 0
+              ? `Modified ${info.filesChanged.length} file(s): ${info.filesChanged.slice(0, 5).join(', ')}`
+              : null,
+            next_steps: null,
+            observation_count: 0,   // Will be filled by daemon from actual count
+          }
+        }) + '\n';
+        client.write(msg);
+      });
+
+      client.on('data', () => { client.end(); resolve(); });
+      client.on('error', () => resolve());  // Silent failure
+      setTimeout(() => { client.destroy(); resolve(); }, 3000);
+    });
+  } catch {
+    // Silent failure — don't disrupt session end
+  }
 }
 
 main();

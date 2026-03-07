@@ -65,6 +65,7 @@ import {
 } from "../notifications/config.js";
 import { routeNotification } from "../notifications/router.js";
 import {
+  ensureObservationTables,
   storeObservation,
   queryObservations,
   queryRecentObservations,
@@ -781,6 +782,88 @@ async function handleRequest(
     return;
   }
 
+  // observation_list — alias for observation_query with project slug resolution
+  if (method === "observation_list") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as {
+        project_slug?: string;
+        session_id?: string;
+        type?: string;
+        limit?: number;
+        offset?: number;
+      };
+
+      let projectId: number | undefined;
+      if (p.project_slug) {
+        const row = registryDb.prepare(
+          "SELECT id FROM projects WHERE slug = ?"
+        ).get(p.project_slug) as { id: number } | undefined;
+        projectId = row?.id;
+      }
+
+      const rows = await queryObservations(pool, {
+        projectId,
+        sessionId: p.session_id,
+        type: p.type,
+        limit: p.limit ?? 20,
+        offset: p.offset ?? 0,
+      });
+      sendResponse(socket, { id, ok: true, result: rows });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  // observation_stats — aggregate statistics
+  if (method === "observation_stats") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      await ensureObservationTables(pool);
+      const [totalRes, byTypeRes, byProjectRes, recentRes] = await Promise.all([
+        pool.query<{ count: string }>("SELECT COUNT(*) as count FROM pai_observations"),
+        pool.query<{ type: string; count: string }>(
+          "SELECT type, COUNT(*) as count FROM pai_observations GROUP BY type ORDER BY count DESC"
+        ),
+        pool.query<{ project_slug: string | null; count: string }>(
+          "SELECT project_slug, COUNT(*) as count FROM pai_observations GROUP BY project_slug ORDER BY count DESC LIMIT 15"
+        ),
+        pool.query<{ created_at: string }>(
+          "SELECT created_at FROM pai_observations ORDER BY created_at DESC LIMIT 1"
+        ),
+      ]);
+
+      sendResponse(socket, {
+        id,
+        ok: true,
+        result: {
+          total: parseInt(totalRes.rows[0]?.count ?? "0", 10),
+          by_type: byTypeRes.rows.map(r => ({ type: r.type, count: parseInt(r.count, 10) })),
+          by_project: byProjectRes.rows.map(r => ({ project_slug: r.project_slug, count: parseInt(r.count, 10) })),
+          most_recent: recentRes.rows[0]?.created_at ?? null,
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
   if (method === "session_summary_store") {
     const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
     if (!pool) {
@@ -793,6 +876,7 @@ async function handleRequest(
         session_id: string;
         project_id?: number;
         project_slug?: string;
+        cwd?: string;
         request?: string;
         investigated?: string;
         learned?: string;
@@ -801,10 +885,23 @@ async function handleRequest(
         observation_count?: number;
       };
 
+      // Resolve project_id and project_slug from cwd if not provided directly
+      let resolvedProjectId = p.project_id ?? null;
+      let resolvedProjectSlug = p.project_slug ?? null;
+      if (resolvedProjectId === null && p.cwd) {
+        const row = registryDb.prepare(
+          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
+        ).get(p.cwd) as { id: number; slug: string } | undefined;
+        if (row) {
+          resolvedProjectId = row.id;
+          resolvedProjectSlug = row.slug;
+        }
+      }
+
       await storeSessionSummary(pool, {
         session_id: p.session_id,
-        project_id: p.project_id ?? null,
-        project_slug: p.project_slug ?? null,
+        project_id: resolvedProjectId,
+        project_slug: resolvedProjectSlug,
         request: p.request ?? null,
         investigated: p.investigated ?? null,
         learned: p.learned ?? null,
