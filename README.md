@@ -29,6 +29,13 @@ Install PAI and Claude remembers. Ask it what you were working on. Ask it to fin
 - "What were we working on last week?" — Claude knows, without you re-explaining
 - "Clean up my session notes" — auto-names unnamed sessions and organizes by date
 
+### Reviewing Your Work
+
+- "Review my week" — synthesizes session notes, git commits, and completed tasks into a themed narrative
+- "What did I do today?" — daily review across all projects
+- "Journal this thought" — capture freeform reflections with timestamps
+- "Plan my week" — forward-looking priorities based on open TODOs and recent activity
+
 ### Keeping Things Safe
 
 - "Back up everything" — creates a timestamped backup of all your data
@@ -297,7 +304,7 @@ PAI implements Niklas Luhmann's Zettelkasten principles as six computational ope
 
 ### How it works
 
-PAI indexes your entire vault — following symlinks, deduplicating by inode, parsing every wikilink — and builds a graph database alongside semantic embeddings. Six tools then operate on this dual representation:
+PAI indexes your entire vault — following symlinks, deduplicating by inode, parsing every link — and builds a graph database alongside semantic embeddings. Six tools then operate on this dual representation:
 
 | Tool | What it does |
 |------|-------------|
@@ -312,7 +319,18 @@ All tools work as CLI commands (`pai zettel <command>`) and MCP tools (`zettel_*
 
 ### Vault Indexing
 
-The vault indexer follows symlinks (critical for vaults built on symlinks), deduplicates files by inode to handle multiple paths to the same file, and builds a complete wikilink graph with Obsidian-compatible shortest-match resolution.
+The vault indexer follows symlinks (critical for vaults built on symlinks), deduplicates files by inode to handle multiple paths to the same file, and builds a complete link graph with Obsidian-compatible shortest-match resolution.
+
+All link types are parsed and resolved:
+
+| Syntax | Type | Example |
+|--------|------|---------|
+| `[[Note]]` | Wikilink | `[[Daily Note]]`, `[[Note\|alias]]`, `[[Note#heading]]` |
+| `![[file]]` | Embed | `![[diagram.png]]`, `![[template]]` |
+| `[text](path.md)` | Markdown link | `[see here](notes/idea.md)`, `[ref](note.md#section)` |
+| `![alt](file)` | Markdown embed | `![photo](assets/img.jpg)` |
+
+External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths are treated as vault connections. URL-encoded paths (e.g. `my%20note.md`) are decoded automatically.
 
 - Full index: ~10 seconds for ~1,000 files
 - Incremental: ~2 seconds (hash-based change detection)

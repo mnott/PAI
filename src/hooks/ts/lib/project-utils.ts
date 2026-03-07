@@ -115,10 +115,11 @@ export function getSessionsDirFromProjectDir(projectDir: string): string {
 }
 
 /**
- * Check if WhatsApp (Whazaa) is configured as an enabled MCP server.
+ * Check if a messaging MCP server (AIBroker, Whazaa, or Telex) is configured.
  *
  * Uses standard Claude Code config at ~/.claude/settings.json.
- * No PAI dependency — works for any Claude Code user with whazaa installed.
+ * When any messaging server is active, the AI handles notifications via MCP
+ * and ntfy is skipped to avoid duplicates.
  */
 export function isWhatsAppEnabled(): boolean {
   try {
@@ -127,7 +128,7 @@ export function isWhatsAppEnabled(): boolean {
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     const enabled: string[] = settings.enabledMcpjsonServers || [];
-    return enabled.includes('whazaa');
+    return enabled.includes('aibroker') || enabled.includes('whazaa') || enabled.includes('telex');
   } catch {
     return false;
   }

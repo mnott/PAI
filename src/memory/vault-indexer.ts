@@ -40,6 +40,8 @@ export interface ParsedLink {
   alias: string | null;
   lineNumber: number;
   isEmbed: boolean;
+  /** True when parsed from markdown `[text](path)` syntax (vs `[[wikilink]]`). */
+  isMdLink?: boolean;
 }
 
 export interface VaultIndexResult {
@@ -271,11 +273,11 @@ export function deduplicateByInode(files: VaultFile[]): InodeGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Wikilink parser
+// Link parser (wikilinks + markdown links)
 // ---------------------------------------------------------------------------
 
 /**
- * Parse all [[wikilinks]] and ![[embeds]] from markdown content.
+ * Parse all links from markdown content.
  *
  * Handles:
  *  - Standard wikilinks: [[Target Note]]
@@ -283,11 +285,16 @@ export function deduplicateByInode(files: VaultFile[]): InodeGroup[] {
  *  - Heading anchors: [[Target Note#Heading]] (stripped for resolution)
  *  - Embeds: ![[Target Note]]
  *  - Frontmatter wikilinks (YAML between --- delimiters)
+ *  - Markdown links: [text](path/to/note.md)
+ *  - Markdown embeds: ![alt](image.png)
+ *
+ * External URLs (http://, https://, mailto:, etc.) are excluded — only
+ * relative paths are treated as vault links.
  *
  * @param content  Raw markdown file content.
  * @returns        Array of parsed links in document order.
  */
-export function parseWikilinks(content: string): ParsedLink[] {
+export function parseLinks(content: string): ParsedLink[] {
   const links: ParsedLink[] = [];
   const lines = content.split("\n");
 
@@ -303,10 +310,17 @@ export function parseWikilinks(content: string): ParsedLink[] {
   // Regex for [[wikilinks]] and ![[embeds]]
   const wikilinkRe = /(!?)\[\[([^\]]+?)\]\]/g;
 
+  // Regex for markdown links [text](target) and embeds ![alt](target)
+  // Negative lookbehind avoids matching wikilinks already captured above.
+  // The target group excludes closing paren and whitespace-after-URL.
+  const mdLinkRe = /(!)?\[([^\]]*)\]\(([^)]+)\)/g;
+
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx]!;
     const lineNumber = lineIdx + 1; // 1-indexed
+    const isFrontmatter = lineIdx < frontmatterEnd;
 
+    // --- Wikilinks ---
     wikilinkRe.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = wikilinkRe.exec(line)) !== null) {
@@ -324,19 +338,62 @@ export function parseWikilinks(content: string): ParsedLink[] {
 
       if (!raw) continue; // Skip links with empty targets (e.g. [[#Heading]])
 
-      // For frontmatter lines, mark as non-embed regardless of !
-      const isFrontmatter = lineIdx < frontmatterEnd;
       links.push({
         raw,
         alias: alias?.trim() ?? null,
         lineNumber,
         isEmbed: isEmbed && !isFrontmatter,
+        isMdLink: false,
       });
+    }
+
+    // --- Markdown links --- (skip inside frontmatter)
+    if (!isFrontmatter) {
+      mdLinkRe.lastIndex = 0;
+      while ((match = mdLinkRe.exec(line)) !== null) {
+        const isEmbed = match[1] === "!";
+        const displayText = match[2]!;
+        let target = match[3]!.trim();
+
+        // Skip external URLs
+        if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+
+        // Skip pure anchor links (#heading)
+        if (target.startsWith("#")) continue;
+
+        // Strip heading anchor from target
+        const hashIdx = target.indexOf("#");
+        if (hashIdx !== -1) target = target.slice(0, hashIdx);
+
+        // URL-decode (Obsidian encodes spaces as %20 in md links)
+        try {
+          target = decodeURIComponent(target);
+        } catch {
+          // Malformed encoding — use as-is
+        }
+
+        // Strip .md extension for resolution (resolveWikilink adds it back)
+        const raw = target.replace(/\.md$/i, "").trim();
+        if (!raw) continue;
+
+        // Skip if this exact position was already captured as a wikilink
+        // (e.g. [[link]] inside a markdown link won't happen, but be safe)
+        links.push({
+          raw,
+          alias: displayText || null,
+          lineNumber,
+          isEmbed,
+          isMdLink: true,
+        });
+      }
     }
   }
 
   return links;
 }
+
+/** @deprecated Use {@link parseLinks} instead. */
+export const parseWikilinks = parseLinks;
 
 // ---------------------------------------------------------------------------
 // Name index builder
@@ -780,14 +837,20 @@ export async function indexVault(
       continue;
     }
 
-    const parsedLinks = parseWikilinks(content);
+    const parsedLinks = parseLinks(content);
     for (const link of parsedLinks) {
       const target = resolveWikilink(link.raw, nameIndex, canonical.vaultRelPath);
+      let linkType: string;
+      if (link.isMdLink) {
+        linkType = link.isEmbed ? "md-embed" : "md-link";
+      } else {
+        linkType = link.isEmbed ? "embed" : "wikilink";
+      }
       linkRows.push({
         source: canonical.vaultRelPath,
         raw: link.raw,
         target,
-        linkType: link.isEmbed ? "embed" : "wikilink",
+        linkType,
         lineNumber: link.lineNumber,
       });
     }
