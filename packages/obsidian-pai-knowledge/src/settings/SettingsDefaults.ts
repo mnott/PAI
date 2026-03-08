@@ -40,5 +40,5 @@ export const DEFAULT_SETTINGS: PaiPluginSettings = {
   maxClusters: 20,
   lookbackDays: 90,
   similarityThreshold: 0.6,
-  projectId: 0,
+  projectId: 999,
 };

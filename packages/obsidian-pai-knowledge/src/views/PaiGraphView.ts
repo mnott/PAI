@@ -120,6 +120,7 @@ export class PaiGraphView extends ItemView {
       result = await this.plugin.client.call<GraphClustersResult>(
         "graph_clusters",
         {
+          project_id: this.plugin.settings.projectId,
           min_size: this.plugin.settings.minClusterSize,
           max_clusters: this.plugin.settings.maxClusters,
           lookback_days: this.plugin.settings.lookbackDays,
@@ -356,6 +357,7 @@ export class PaiGraphView extends ItemView {
       const result = await this.plugin.client.call<GraphClustersResult>(
         "graph_clusters",
         {
+          project_id: this.plugin.settings.projectId,
           min_size: this.plugin.settings.minClusterSize,
           max_clusters: this.plugin.settings.maxClusters,
           lookback_days: this.plugin.settings.lookbackDays,

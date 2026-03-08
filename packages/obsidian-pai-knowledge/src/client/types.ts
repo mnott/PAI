@@ -22,12 +22,10 @@ export interface RpcRequest {
 
 export interface RpcResponse<T = unknown> {
   id: string;
+  ok?: boolean;
   result?: T;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
+  /** Daemon sends error as a plain string; keep union for flexibility */
+  error?: string | { code: number; message: string; data?: unknown };
 }
 
 // ---------------------------------------------------------------------------

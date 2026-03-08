@@ -31,7 +31,7 @@ export default class PaiKnowledgePlugin extends Plugin {
     await this.loadSettings();
 
     // 2. Create the daemon client (connection is deferred until a view opens)
-    this.client = new PaiDaemonClient(this.settings.socketPath);
+    this.client = new PaiDaemonClient(this.settings.socketPath, 60_000);
 
     // 3. Register the custom view type
     this.registerView(
@@ -121,7 +121,7 @@ export default class PaiKnowledgePlugin extends Plugin {
     // If the socket path changed, recreate the client with the new path
     if (this.client) {
       await this.client.disconnect().catch(() => {});
-      this.client = new PaiDaemonClient(this.settings.socketPath);
+      this.client = new PaiDaemonClient(this.settings.socketPath, 60_000);
     }
   }
 
