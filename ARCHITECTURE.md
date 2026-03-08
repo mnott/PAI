@@ -103,14 +103,15 @@ The interactive wizard walks through 14 steps:
 4. CLAUDE.md template installation
 5. PAI skill installation
 6. Steering rules installation
-7. Hook system deployment
-8. TypeScript hook compilation
-9. Claude Code settings configuration
-10. Daemon installation
-11. MCP server registration
-12. Directory creation
-13. Initial indexing
-14. Verification
+7. MCP skill stub symlinks
+8. Hook system deployment
+9. TypeScript hook compilation
+10. Claude Code settings configuration
+11. Daemon installation
+12. MCP server registration
+13. Directory creation
+14. Initial indexing
+15. Verification
 
 ### 4. Install the Daemon
 
@@ -642,6 +643,68 @@ The build script compiles each `.ts` hook to a self-contained `.mjs` module usin
 
 ---
 
+## Skill Stub System
+
+PAI's 18 MCP prompts are exposed to Claude Code as discoverable skills via auto-generated SKILL.md files. This bridges the gap between MCP prompts (protocol-level, invoked via `prompts/get`) and Claude Code's skill scanner (filesystem-based, scans `~/.claude/skills/`).
+
+### How It Works
+
+```
+Source (TypeScript)              Build                    Claude Code
+─────────────────               ─────                    ──────────
+src/daemon-mcp/prompts/*.ts  → dist/skills/<Name>/    → ~/.claude/skills/<Name>/
+src/daemon-mcp/prompts/        SKILL.md                  (symlink)
+  custom/*.ts (gitignored)
+```
+
+1. **Source of truth**: TypeScript files in `src/daemon-mcp/prompts/`. Each exports `{ description, content }`.
+2. **Build**: `node scripts/build-skill-stubs.mjs --sync` extracts content and generates `dist/skills/<TitleCase>/SKILL.md` with YAML frontmatter.
+3. **Sync**: The `--sync` flag creates/updates symlinks in `~/.claude/skills/`. Runs automatically on every `bun run build`.
+4. **Discovery**: Claude Code scans `~/.claude/skills/<Name>/SKILL.md` at session start, loads descriptions, and auto-invokes matching skills.
+
+**Important**: Skills MUST be at `~/.claude/skills/<Name>/SKILL.md` (one level deep). Subdirectories like `~/.claude/skills/user/<Name>/` are NOT discovered by Claude Code's scanner.
+
+### Adding a New Skill
+
+**Built-in (shipped with PAI):**
+
+1. Create `src/daemon-mcp/prompts/my-skill.ts`:
+   ```typescript
+   export const mySkill = {
+     description: "What the skill does",
+     content: `## My Skill
+
+   USE WHEN user says 'trigger phrase', 'another trigger', ...
+
+   ### Instructions
+   ...your skill content here...`,
+   };
+   ```
+2. Add export to `src/daemon-mcp/prompts/index.ts`:
+   ```typescript
+   export { mySkill } from "./my-skill.js";
+   ```
+3. Run `bun run build` — generates the stub AND syncs the symlink.
+
+**Custom (user-created, survives `git pull`):**
+
+1. Create `src/daemon-mcp/prompts/custom/my-local-skill.ts` (same format as above).
+2. Run `bun run build` — custom prompts are picked up automatically.
+
+The `custom/` directory is gitignored (only `.gitkeep` is tracked), so your local skills survive PAI updates.
+
+### Updating After Changes
+
+Symlinks point to `dist/skills/`, so any `bun run build` automatically updates what Claude Code sees. No manual steps needed.
+
+If you reorganize prompts (rename, delete, add), the build script regenerates all stubs and the `--sync` flag updates symlinks accordingly. Stale symlinks pointing to removed stubs are cleaned up automatically.
+
+### Setup Integration
+
+`pai setup` (Step 7) runs the same symlink logic interactively, asking before creating symlinks. It also cleans up legacy symlinks from the old `~/.claude/skills/user/` location.
+
+---
+
 ## Templates
 
 PAI ships three templates used during setup and customizable for your workflow.
@@ -854,6 +917,7 @@ bun run lint     # tsc --noEmit
 | `dist/daemon/index.mjs` | Daemon server |
 | `dist/daemon-mcp/index.mjs` | MCP shim (stdio → daemon socket) |
 | `dist/hooks/*.mjs` | Compiled lifecycle hooks |
+| `dist/skills/<Name>/SKILL.md` | Generated skill stubs (symlinked to ~/.claude/skills/) |
 
 ### Source Structure
 
@@ -885,6 +949,7 @@ src/
 ├── daemon-mcp/
 │   ├── instructions.ts     # MCP server instructions (~1.5KB routing table)
 │   ├── prompts/            # 18 on-demand skill prompts
+│   │   └── custom/         # User-created prompts (gitignored)
 │   ├── resources/          # 11 reference resources (pai:// URIs)
 │   └── index.ts            # MCP shim entry point (stdio → socket)
 ├── hooks/

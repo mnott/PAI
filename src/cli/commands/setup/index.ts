@@ -15,6 +15,7 @@ import {
   stepClaudeMd,
   stepPaiSkill,
   stepAiSteeringRules,
+  stepSkillStubs,
   stepHooks,
   stepTsHooks,
   stepDaName,
@@ -70,7 +71,10 @@ async function runSetup(): Promise<void> {
     // Step 6: AI Steering Rules
     const aiSteeringRulesInstalled = await stepAiSteeringRules(rl);
 
-    // Step 7: Hooks (shell scripts)
+    // Step 7: Skill Stubs
+    const skillStubsInstalled = await stepSkillStubs(rl);
+
+    // Step 8: Hooks (shell scripts)
     const hooksInstalled = await stepHooks(rl);
 
     // Step 7b: TypeScript hooks (.mjs files)
@@ -107,6 +111,7 @@ async function runSetup(): Promise<void> {
       claudeMdGenerated,
       paiSkillInstalled,
       aiSteeringRulesInstalled,
+      skillStubsInstalled,
       hooksInstalled,
       tsHooksInstalled,
       settingsPatched,

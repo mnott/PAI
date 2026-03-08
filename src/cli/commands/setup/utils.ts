@@ -226,6 +226,22 @@ export function getDistHooksDir(): string {
   return fromModule;
 }
 
+export function getDistDir(): string {
+  const moduleDir = new URL(".", import.meta.url).pathname;
+  const fromModule = join(moduleDir, "..", "..", "..");
+
+  const candidates = [
+    fromModule,
+    join(process.cwd(), "dist"),
+    join(homedir(), "dev", "ai", "PAI", "dist"),
+    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "dist"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "skills"))) return candidate;
+  }
+  return fromModule;
+}
+
 export function getStatuslineScript(): string | null {
   const candidates = [
     join(process.cwd(), "statusline-command.sh"),

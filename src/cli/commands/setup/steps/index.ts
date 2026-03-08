@@ -6,6 +6,7 @@ export { stepEmbedding } from "./03-embedding.js";
 export { stepClaudeMd } from "./04-claude-md.js";
 export { stepPaiSkill } from "./05-pai-skill.js";
 export { stepAiSteeringRules } from "./06-steering-rules.js";
+export { stepSkillStubs } from "./07-skill-stubs.js";
 export { stepHooks } from "./08-hooks.js";
 export { stepTsHooks } from "./09-ts-hooks.js";
 export { stepDaName, stepSettings } from "./10-settings.js";
