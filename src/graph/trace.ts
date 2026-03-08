@@ -3,66 +3,40 @@
  *
  * Given a topic/keyword query, searches vault notes for appearances of that topic
  * and returns a chronological timeline showing how the idea evolved over time.
- *
- * Algorithm:
- *   1. Search vault_name_index for title/alias matches.
- *   2. Fall back to memory_chunks FTS/LIKE search for content matches.
- *   3. Fetch vault_files metadata for all matched paths.
- *   4. Sort chronologically by indexed_at.
- *   5. Extract a context snippet showing the query keyword.
- *   6. Build temporal edges (consecutive entries) + wikilink edges.
- *   7. Cap at max_results and return.
  */
 
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
 // ---------------------------------------------------------------------------
 
 export interface GraphTraceParams {
-  /** Topic/keyword to trace through time */
   query: string;
-  /** Numeric PAI project ID */
   project_id: number;
-  /** Cap on timeline entries (default: 30) */
   max_results?: number;
-  /** How far back to search in days (default: 365) */
   lookback_days?: number;
 }
 
 export interface TraceEntry {
-  /** Vault-relative path, e.g. "Projects/PAI/idea-2024.md" */
   vault_path: string;
-  /** Note title from frontmatter or H1 */
   title: string;
-  /** Parent folder path derived from vault_path */
   folder: string;
-  /** Unix timestamp (seconds) when this note was indexed — used for timeline ordering */
   indexed_at: number;
-  /** Text excerpt showing the topic in context (100-200 chars) */
   snippet: string;
-  /** Most common observation type for this note */
   dominant_type: string;
 }
 
 export interface TraceConnection {
-  /** Earlier note's vault path */
   from_path: string;
-  /** Later note's vault path */
   to_path: string;
-  /** "temporal" = time-sequence connection, "wikilink" = explicit vault link exists */
   type: "temporal" | "wikilink";
 }
 
 export interface GraphTraceResult {
-  /** The query that was traced */
   query: string;
-  /** Timeline entries sorted oldest-first */
   entries: TraceEntry[];
-  /** Edges connecting entries: temporal sequence + any wikilinks */
   connections: TraceConnection[];
-  /** Unix timestamp range covered by the results */
   time_span: { from: number; to: number };
 }
 
@@ -75,20 +49,15 @@ function folderFromPath(vaultPath: string): string {
   return lastSlash === -1 ? "" : vaultPath.slice(0, lastSlash);
 }
 
-/**
- * Extract a snippet of text showing the query keyword in context.
- * Returns up to ~160 chars centered around the first occurrence.
- */
 function extractSnippet(text: string, query: string): string {
   const lowerText = text.toLowerCase();
   const lowerQuery = query.toLowerCase();
   const idx = lowerText.indexOf(lowerQuery);
   if (idx === -1) {
-    // Query not found in text — return the opening of the note
     return text.slice(0, 160).trimEnd() + (text.length > 160 ? "…" : "");
   }
 
-  const CONTEXT = 70; // chars before/after the match
+  const CONTEXT = 70;
   const start = Math.max(0, idx - CONTEXT);
   const end = Math.min(text.length, idx + query.length + CONTEXT);
 
@@ -104,7 +73,7 @@ function extractSnippet(text: string, query: string): string {
 // ---------------------------------------------------------------------------
 
 export async function handleGraphTrace(
-  db: Database,
+  backend: StorageBackend,
   params: GraphTraceParams
 ): Promise<GraphTraceResult> {
   const query = (params.query ?? "").trim();
@@ -123,105 +92,50 @@ export async function handleGraphTrace(
   const matchedPaths = new Map<string, string>(); // path → best snippet text
 
   // Strategy A: title / alias match in vault_name_index
-  type NameIndexRow = { vault_path: string };
   try {
-    const nameRows = db
-      .prepare(
-        `SELECT DISTINCT vault_path
-         FROM vault_name_index
-         WHERE lower(name) LIKE lower('%' || ? || '%')
-         LIMIT 100`
-      )
-      .all(query) as NameIndexRow[];
-
-    for (const row of nameRows) {
-      if (!matchedPaths.has(row.vault_path)) {
-        matchedPaths.set(row.vault_path, "");
+    const namePaths = await backend.searchVaultNameIndex(query, 100);
+    for (const vaultPath of namePaths) {
+      if (!matchedPaths.has(vaultPath)) {
+        matchedPaths.set(vaultPath, "");
       }
     }
   } catch {
-    // vault_name_index may not exist in all schema versions — silently skip
+    // vault_name_index may not exist in all schema versions
   }
 
-  // Strategy B: content search in memory_chunks using LIKE
-  type ChunkRow = { path: string; text: string };
+  // Strategy B: content search in memory_chunks
   try {
-    const chunkRows = db
-      .prepare(
-        `SELECT DISTINCT mc.path, mc.text
-         FROM memory_chunks mc
-         WHERE mc.project_id = ?
-           AND lower(mc.text) LIKE lower('%' || ? || '%')
-         LIMIT 200`
-      )
-      .all(params.project_id, query) as ChunkRow[];
-
+    const chunkRows = await backend.searchChunksByText(params.project_id, query, 200);
     for (const row of chunkRows) {
       if (!matchedPaths.has(row.path)) {
-        // Store snippet text for this path; prefer chunk that actually contains the keyword
         matchedPaths.set(row.path, row.text);
       } else if (!matchedPaths.get(row.path)) {
         matchedPaths.set(row.path, row.text);
       }
     }
   } catch {
-    // memory_chunks may not have project_id — try without it
-    try {
-      const chunkRows = db
-        .prepare(
-          `SELECT DISTINCT mc.path, mc.text
-           FROM memory_chunks mc
-           WHERE lower(mc.text) LIKE lower('%' || ? || '%')
-           LIMIT 200`
-        )
-        .all(query) as ChunkRow[];
-
-      for (const row of chunkRows) {
-        if (!matchedPaths.has(row.path)) {
-          matchedPaths.set(row.path, row.text);
-        }
-      }
-    } catch {
-      // Best-effort — continue with what we have
-    }
+    // Best-effort — continue with what we have
   }
 
   if (matchedPaths.size === 0) {
-    return {
-      query,
-      entries: [],
-      connections: [],
-      time_span: { from: 0, to: 0 },
-    };
+    return { query, entries: [], connections: [], time_span: { from: 0, to: 0 } };
   }
 
   // ---------------------------------------------------------------------------
-  // Step 2: Fetch vault_files metadata for all matched paths
+  // Step 2: Fetch vault_files metadata for all matched paths, filtered by cutoff
   // ---------------------------------------------------------------------------
 
   const allPaths = Array.from(matchedPaths.keys());
-
-  type VaultFileRow = {
-    vault_path: string;
-    title: string | null;
-    indexed_at: number;
-  };
-
-  // SQLite IN clause with parameterised placeholders
-  const placeholders = allPaths.map(() => "?").join(", ");
-  let fileRows: VaultFileRow[] = [];
+  let fileRows: Array<{ vaultPath: string; title: string | null; indexedAt: number }> = [];
   try {
-    fileRows = db
-      .prepare(
-        `SELECT vault_path, title, indexed_at
-         FROM vault_files
-         WHERE vault_path IN (${placeholders})
-           AND indexed_at >= ?
-         ORDER BY indexed_at ASC`
-      )
-      .all(...allPaths, cutoffTimestamp) as VaultFileRow[];
+    fileRows = await backend.getVaultFilesByPathsAfter(allPaths, cutoffTimestamp * 1000);
+    // Sort chronologically
+    fileRows.sort((a, b) => a.indexedAt - b.indexedAt);
   } catch {
-    // vault_files may not exist — return empty
+    return { query, entries: [], connections: [], time_span: { from: 0, to: 0 } };
+  }
+
+  if (fileRows.length === 0) {
     return { query, entries: [], connections: [], time_span: { from: 0, to: 0 } };
   }
 
@@ -230,18 +144,18 @@ export async function handleGraphTrace(
   // ---------------------------------------------------------------------------
 
   const entries: TraceEntry[] = fileRows.slice(0, maxResults).map((row) => {
-    const fileName = row.vault_path.split("/").pop() ?? row.vault_path;
+    const fileName = row.vaultPath.split("/").pop() ?? row.vaultPath;
     const title = row.title ?? fileName.replace(/\.md$/i, "");
-    const chunkText = matchedPaths.get(row.vault_path) ?? "";
+    const chunkText = matchedPaths.get(row.vaultPath) ?? "";
     const snippet = extractSnippet(chunkText, query);
 
     return {
-      vault_path: row.vault_path,
+      vault_path: row.vaultPath,
       title,
-      folder: folderFromPath(row.vault_path),
-      indexed_at: row.indexed_at,
+      folder: folderFromPath(row.vaultPath),
+      indexed_at: row.indexedAt,
       snippet,
-      dominant_type: "unknown", // observation type enrichment not available in SQLite schema
+      dominant_type: "unknown",
     };
   });
 
@@ -265,32 +179,23 @@ export async function handleGraphTrace(
     });
   }
 
-  // Wikilink edges: any explicit vault_links between entries in the result set
-  type LinkRow = { source_path: string; target_path: string | null };
+  // Wikilink edges
   try {
-    const linkRows = db
-      .prepare(
-        `SELECT source_path, target_path
-         FROM vault_links
-         WHERE source_path IN (${placeholders})
-           AND target_path IS NOT NULL`
-      )
-      .all(...entries.map((e) => e.vault_path)) as LinkRow[];
+    const entryPaths = entries.map(e => e.vault_path);
+    const linkRows = await backend.getVaultLinksFromPaths(entryPaths);
 
     const wikiEdgeKeys = new Set<string>();
     for (const row of linkRows) {
-      if (!row.target_path) continue;
-      if (!entryPathSet.has(row.target_path)) continue;
+      if (!row.targetPath) continue;
+      if (!entryPathSet.has(row.targetPath)) continue;
 
-      // Avoid adding the same wikilink twice
-      const key = `${row.source_path}|||${row.target_path}`;
+      const key = `${row.sourcePath}|||${row.targetPath}`;
       if (wikiEdgeKeys.has(key)) continue;
       wikiEdgeKeys.add(key);
 
-      // Only add if it's not already covered by a temporal edge in the same direction
       connections.push({
-        from_path: row.source_path,
-        to_path: row.target_path,
+        from_path: row.sourcePath,
+        to_path: row.targetPath,
         type: "wikilink",
       });
     }

@@ -183,8 +183,26 @@ export class SQLiteBackend implements StorageBackend {
     }
 
     const where = "WHERE " + conditions.join(" AND ");
+    // Prioritize real knowledge notes over PAI session/job-search noise.
+    // CASE expression assigns lower priority numbers to knowledge paths.
     const rows = this.db
-      .prepare(`SELECT id, text, project_id, path FROM memory_chunks ${where} ORDER BY id`)
+      .prepare(`SELECT id, text, project_id, path FROM memory_chunks ${where}
+        ORDER BY CASE
+          WHEN path LIKE '🧠 Ideaverse/%' THEN 0
+          WHEN path LIKE 'Z - Zettelkasten/%' THEN 0
+          WHEN path LIKE '💼 Business/%' THEN 0
+          WHEN path LIKE '📆 Meetings/%' THEN 1
+          WHEN path LIKE '💡 Insights/%' THEN 1
+          WHEN path LIKE '👨‍💻 People/%' THEN 1
+          WHEN path LIKE 'University/%' THEN 1
+          WHEN path LIKE 'Copilot/%' THEN 1
+          WHEN path LIKE '🗓️ Daily Notes/%' THEN 2
+          WHEN path LIKE 'PAI/%' THEN 3
+          WHEN path LIKE '09-job-search/%' THEN 4
+          WHEN path LIKE 'seriousletter/%' THEN 4
+          WHEN path LIKE 'Attachments/%' THEN 5
+          ELSE 2
+        END, id`)
       .all(...params) as Array<{ id: string; text: string; project_id: number; path: string }>;
     return rows;
   }
@@ -206,4 +224,59 @@ export class SQLiteBackend implements StorageBackend {
   async searchSemantic(queryEmbedding: Float32Array, opts?: SearchOptions): Promise<SearchResult[]> {
     return searchMemorySemantic(this.db, queryEmbedding, opts);
   }
+
+  // -------------------------------------------------------------------------
+  // Vault operations — not supported on SQLite backend (use Postgres)
+  // -------------------------------------------------------------------------
+
+  private vaultNotSupported(): never {
+    throw new Error("Vault operations require the Postgres backend");
+  }
+
+  async upsertVaultFile(): Promise<void> { this.vaultNotSupported(); }
+  async deleteVaultFile(): Promise<void> { this.vaultNotSupported(); }
+  async getVaultFile(): Promise<null> { this.vaultNotSupported(); }
+  async getVaultFileByInode(): Promise<null> { this.vaultNotSupported(); }
+  async getAllVaultFiles(): Promise<never[]> { this.vaultNotSupported(); }
+  async getRecentVaultFiles(): Promise<never[]> { this.vaultNotSupported(); }
+  async countVaultFiles(): Promise<number> { this.vaultNotSupported(); }
+  async upsertVaultAliases(): Promise<void> { this.vaultNotSupported(); }
+  async deleteVaultAliases(): Promise<void> { this.vaultNotSupported(); }
+  async replaceLinksForSources(): Promise<void> { this.vaultNotSupported(); }
+  async getLinksFromSource(): Promise<never[]> { this.vaultNotSupported(); }
+  async getLinksToTarget(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultLinkGraph(): Promise<never[]> { this.vaultNotSupported(); }
+  async upsertVaultHealth(): Promise<void> { this.vaultNotSupported(); }
+  async getVaultHealth(): Promise<null> { this.vaultNotSupported(); }
+  async getOrphans(): Promise<never[]> { this.vaultNotSupported(); }
+  async getDeadLinks(): Promise<never[]> { this.vaultNotSupported(); }
+  async upsertNameIndex(): Promise<void> { this.vaultNotSupported(); }
+  async replaceNameIndex(): Promise<void> { this.vaultNotSupported(); }
+  async resolveVaultName(): Promise<never[]> { this.vaultNotSupported(); }
+  async searchVaultNameIndex(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultFilesByPaths(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultFilesByPathsAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultLinksFromPaths(): Promise<never[]> { this.vaultNotSupported(); }
+  async getChunksWithEmbeddings(): Promise<never[]> { this.vaultNotSupported(); }
+  async getChunksForPath(): Promise<never[]> { this.vaultNotSupported(); }
+  async searchChunksByText(): Promise<never[]> { this.vaultNotSupported(); }
+  async countVaultFilesWithPrefix(): Promise<number> { this.vaultNotSupported(); }
+  async countVaultFilesAfter(): Promise<number> { this.vaultNotSupported(); }
+  async countVaultLinksWithPrefix(): Promise<number> { this.vaultNotSupported(); }
+  async countVaultLinksAfter(): Promise<number> { this.vaultNotSupported(); }
+  async getDeadLinksWithLineNumbers(): Promise<never[]> { this.vaultNotSupported(); }
+  async getDeadLinksWithPrefix(): Promise<never[]> { this.vaultNotSupported(); }
+  async getDeadLinksAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getOrphansWithPrefix(): Promise<never[]> { this.vaultNotSupported(); }
+  async getOrphansAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getLowConnectivity(): Promise<never[]> { this.vaultNotSupported(); }
+  async getLowConnectivityWithPrefix(): Promise<never[]> { this.vaultNotSupported(); }
+  async getLowConnectivityAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getAllVaultFilePaths(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultFilePathsWithPrefix(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultFilePathsAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultLinkEdges(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultLinkEdgesWithPrefix(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultLinkEdgesAfter(): Promise<never[]> { this.vaultNotSupported(); }
+  async getVaultAlias(): Promise<null> { this.vaultNotSupported(); }
 }

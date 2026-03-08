@@ -1397,12 +1397,12 @@ export interface ZettelExploreParams {
 }
 
 export async function toolZettelExplore(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelExploreParams
 ): Promise<ToolResult> {
   try {
     const { zettelExplore } = await import("../zettelkasten/index.js");
-    const result = zettelExplore(federationDb, {
+    const result = await zettelExplore(backend, {
       startNote: params.start_note,
       depth: params.depth,
       direction: params.direction as "forward" | "backward" | "both" | undefined,
@@ -1431,12 +1431,12 @@ export interface ZettelHealthParams {
 }
 
 export async function toolZettelHealth(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelHealthParams
 ): Promise<ToolResult> {
   try {
     const { zettelHealth } = await import("../zettelkasten/index.js");
-    const result = zettelHealth(federationDb, {
+    const result = await zettelHealth(backend, {
       scope: params.scope as "full" | "recent" | "project" | undefined,
       projectPath: params.project_path,
       recentDays: params.recent_days,
@@ -1466,12 +1466,12 @@ export interface ZettelSurpriseParams {
 }
 
 export async function toolZettelSurprise(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelSurpriseParams
 ): Promise<ToolResult> {
   try {
     const { zettelSurprise } = await import("../zettelkasten/index.js");
-    const results = await zettelSurprise(federationDb, {
+    const results = await zettelSurprise(backend, {
       referencePath: params.reference_path,
       vaultProjectId: params.vault_project_id,
       limit: params.limit,
@@ -1501,12 +1501,12 @@ export interface ZettelSuggestParams {
 }
 
 export async function toolZettelSuggest(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelSuggestParams
 ): Promise<ToolResult> {
   try {
     const { zettelSuggest } = await import("../zettelkasten/index.js");
-    const results = await zettelSuggest(federationDb, {
+    const results = await zettelSuggest(backend, {
       notePath: params.note_path,
       vaultProjectId: params.vault_project_id,
       limit: params.limit,
@@ -1535,12 +1535,12 @@ export interface ZettelConverseParams {
 }
 
 export async function toolZettelConverse(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelConverseParams
 ): Promise<ToolResult> {
   try {
     const { zettelConverse } = await import("../zettelkasten/index.js");
-    const result = await zettelConverse(federationDb, {
+    const result = await zettelConverse(backend, {
       question: params.question,
       vaultProjectId: params.vault_project_id,
       depth: params.depth,
@@ -1570,12 +1570,12 @@ export interface ZettelThemesParams {
 }
 
 export async function toolZettelThemes(
-  federationDb: Database,
+  backend: StorageBackend,
   params: ZettelThemesParams
 ): Promise<ToolResult> {
   try {
     const { zettelThemes } = await import("../zettelkasten/index.js");
-    const result = await zettelThemes(federationDb, {
+    const result = await zettelThemes(backend, {
       vaultProjectId: params.vault_project_id,
       lookbackDays: params.lookback_days,
       minClusterSize: params.min_cluster_size,

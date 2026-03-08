@@ -3,16 +3,9 @@
  *
  * Given a single vault note path, returns ALL notes linked to or from it
  * across the entire vault (1-hop neighbourhood), plus the edges.
- *
- * This is the Level 3 backend: it crosses cluster boundaries so users can
- * discover connections to notes in completely different topic areas.
- *
- * Backend compatibility:
- *   - SQLite: full support (vault_files + vault_links).
- *   - Postgres: observation type enrichment only; graph data requires SQLite.
  */
 
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import type { Pool } from "pg";
 
 // ---------------------------------------------------------------------------
@@ -20,57 +13,34 @@ import type { Pool } from "pg";
 // ---------------------------------------------------------------------------
 
 export interface GraphNoteContextParams {
-  /** Vault-relative path of the focal note, e.g. "Projects/PAI/idea-2024.md" */
   vault_path: string;
-  /** Numeric PAI project ID (used for observation type enrichment) */
   project_id: number;
-  /** Maximum number of neighbor notes to return (default: 50) */
   max_neighbors?: number;
-  /** Include notes that link TO the focal note (default: true) */
   include_backlinks?: boolean;
-  /** Include notes that the focal note links TO (default: true) */
   include_outlinks?: boolean;
 }
 
 export interface NoteNode {
-  /** Vault-relative path, e.g. "Projects/PAI/idea-2024.md" */
   vault_path: string;
-  /** Note title from frontmatter or H1; falls back to filename */
   title: string;
-  /** Parent folder path derived from vault_path */
   folder: string;
-  /** Per-type observation count breakdown */
   observation_types: Record<string, number>;
-  /** The most common observation type, or "unknown" */
   dominant_type: string;
-  /** Unix timestamp (seconds) of last indexing */
   updated_at: number;
-  /** Word count (0 when not stored in schema) */
   word_count: number;
 }
 
 export interface NoteEdge {
-  /** Source vault_path */
   source: string;
-  /** Target vault_path */
   target: string;
-  /** "wikilink" for explicit Obsidian links, "semantic" for embedding similarity */
   type: "wikilink" | "semantic";
-  /** 1.0 for wikilinks; cosine similarity score for semantic edges */
   weight: number;
 }
 
 export interface GraphNoteContextResult {
-  /** The selected note — center of the graph */
   focal: NoteNode;
-  /** All connected notes (1-hop neighbourhood across entire vault) */
   neighbors: NoteNode[];
-  /** Wikilink edges connecting focal ↔ neighbors */
   edges: NoteEdge[];
-  /**
-   * vault_path → cluster_id mapping for each neighbor.
-   * Empty object in Phase 3; populated in Phase 5 when cluster data is joined here.
-   */
   cluster_membership: Record<string, number>;
 }
 
@@ -96,7 +66,7 @@ function dominantType(counts: Record<string, number>): string {
 }
 
 // ---------------------------------------------------------------------------
-// Observation type enrichment (same pattern as neighborhood.ts)
+// Observation type enrichment
 // ---------------------------------------------------------------------------
 
 async function fetchObservationTypes(
@@ -129,41 +99,9 @@ async function fetchObservationTypes(
   }
 }
 
-// ---------------------------------------------------------------------------
-// SQLite vault_files metadata fetch
-// ---------------------------------------------------------------------------
-
-type VaultFileRow = {
-  vault_path: string;
-  title: string | null;
-  indexed_at: number;
-};
-
-function fetchVaultFiles(
-  db: Database,
-  paths: string[]
-): Map<string, VaultFileRow> {
-  if (paths.length === 0) return new Map();
-
-  const placeholders = paths.map(() => "?").join(", ");
-  const rows = db
-    .prepare(
-      `SELECT vault_path, title, indexed_at
-       FROM vault_files
-       WHERE vault_path IN (${placeholders})`
-    )
-    .all(...paths) as VaultFileRow[];
-
-  const index = new Map<string, VaultFileRow>();
-  for (const row of rows) {
-    index.set(row.vault_path, row);
-  }
-  return index;
-}
-
 function buildNoteNode(
   vaultPath: string,
-  fileIndex: Map<string, VaultFileRow>,
+  fileIndex: Map<string, { title: string | null; indexedAt: number }>,
   obsByPath: Map<string, Record<string, number>>
 ): NoteNode {
   const fileRow = fileIndex.get(vaultPath);
@@ -177,7 +115,7 @@ function buildNoteNode(
     folder: folderFromPath(vaultPath),
     observation_types: obsCounts,
     dominant_type: dominantType(obsCounts),
-    updated_at: fileRow?.indexed_at ?? 0,
+    updated_at: fileRow?.indexedAt ?? 0,
     word_count: 0,
   };
 }
@@ -188,27 +126,17 @@ function buildNoteNode(
 
 export async function handleGraphNoteContext(
   pool: Pool | null,
-  db: Database | null,
+  backend: StorageBackend,
   params: GraphNoteContextParams
 ): Promise<GraphNoteContextResult> {
-  if (!db) {
-    throw new Error("graph_note_context requires SQLite backend (federation.db)");
-  }
-
   const focalPath = params.vault_path;
   if (!focalPath) {
     throw new Error("graph_note_context: vault_path is required");
   }
 
   const maxNeighbors = params.max_neighbors ?? 50;
-  const includeBacklinks = params.include_backlinks !== false; // default true
-  const includeOutlinks = params.include_outlinks !== false; // default true
-
-  type LinkRow = {
-    source_path: string;
-    target_path: string | null;
-    link_type: string;
-  };
+  const includeBacklinks = params.include_backlinks !== false;
+  const includeOutlinks = params.include_outlinks !== false;
 
   // -------------------------------------------------------------------------
   // 1. Collect 1-hop neighbor paths via vault_links
@@ -217,44 +145,26 @@ export async function handleGraphNoteContext(
   const neighborPaths = new Set<string>();
   const rawEdges: Array<{ source: string; target: string }> = [];
 
-  // Outgoing links: focal → other notes
   if (includeOutlinks) {
-    const outRows = db
-      .prepare(
-        `SELECT source_path, target_path, link_type
-         FROM vault_links
-         WHERE source_path = ?
-           AND target_path IS NOT NULL`
-      )
-      .all(focalPath) as LinkRow[];
-
-    for (const row of outRows) {
-      if (!row.target_path) continue;
-      neighborPaths.add(row.target_path);
-      rawEdges.push({ source: focalPath, target: row.target_path });
+    const outLinks = await backend.getLinksFromSource(focalPath);
+    for (const link of outLinks) {
+      if (!link.targetPath) continue;
+      neighborPaths.add(link.targetPath);
+      rawEdges.push({ source: focalPath, target: link.targetPath });
     }
   }
 
-  // Incoming links: other notes → focal (backlinks)
   if (includeBacklinks) {
-    const inRows = db
-      .prepare(
-        `SELECT source_path, target_path, link_type
-         FROM vault_links
-         WHERE target_path = ?`
-      )
-      .all(focalPath) as LinkRow[];
-
-    for (const row of inRows) {
-      neighborPaths.add(row.source_path);
-      rawEdges.push({ source: row.source_path, target: focalPath });
+    const inLinks = await backend.getLinksToTarget(focalPath);
+    for (const link of inLinks) {
+      neighborPaths.add(link.sourcePath);
+      rawEdges.push({ source: link.sourcePath, target: focalPath });
     }
   }
 
   // Cap neighbors at max_neighbors, keeping the most-linked ones
   let neighborPathList = Array.from(neighborPaths);
   if (neighborPathList.length > maxNeighbors) {
-    // Count link frequency per neighbor to keep the most connected ones
     const linkCount = new Map<string, number>();
     for (const e of rawEdges) {
       const neighbor = e.source === focalPath ? e.target : e.source;
@@ -265,7 +175,6 @@ export async function handleGraphNoteContext(
       .slice(0, maxNeighbors);
   }
 
-  // Keep only edges where the neighbor is in the retained set
   const retainedSet = new Set(neighborPathList);
   const retainedEdges = rawEdges.filter((e) => {
     const neighbor = e.source === focalPath ? e.target : e.source;
@@ -277,7 +186,10 @@ export async function handleGraphNoteContext(
   // -------------------------------------------------------------------------
 
   const allPaths = [focalPath, ...neighborPathList];
-  const fileIndex = fetchVaultFiles(db, allPaths);
+  const fileRows = await backend.getVaultFilesByPaths(allPaths);
+  const fileIndex = new Map<string, { title: string | null; indexedAt: number }>(
+    fileRows.map(f => [f.vaultPath, { title: f.title, indexedAt: f.indexedAt }])
+  );
 
   // -------------------------------------------------------------------------
   // 3. Observation type enrichment (Postgres if available)
@@ -303,7 +215,7 @@ export async function handleGraphNoteContext(
   );
 
   // -------------------------------------------------------------------------
-  // 6. Deduplicate edges (a note may appear as both outlink and backlink)
+  // 6. Deduplicate edges
   // -------------------------------------------------------------------------
 
   const edgeKeys = new Set<string>();

@@ -1,4 +1,4 @@
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import { deserializeEmbedding, cosineSimilarity } from "../memory/embeddings.js";
 
 export interface ThemeOptions {
@@ -63,21 +63,16 @@ function generateLabel(titles: Array<string | null>): string {
     .join(" / ");
 }
 
-function computeLinkedRatio(db: Database, paths: string[]): number {
+async function computeLinkedRatio(backend: StorageBackend, paths: string[]): Promise<number> {
   if (paths.length < 2) return 0;
   const totalPairs = (paths.length * (paths.length - 1)) / 2;
   const pathSet = new Set(paths);
   let linkedPairs = 0;
 
   for (const path of paths) {
-    const rows = db
-      .prepare(
-        `SELECT target_path FROM vault_links
-         WHERE source_path = ? AND target_path IS NOT NULL`,
-      )
-      .all(path) as Array<{ target_path: string }>;
-    for (const { target_path } of rows) {
-      if (pathSet.has(target_path)) {
+    const links = await backend.getLinksFromSource(path);
+    for (const link of links) {
+      if (link.targetPath && pathSet.has(link.targetPath)) {
         linkedPairs++;
       }
     }
@@ -116,7 +111,7 @@ function averageEmbeddings(embeddings: Float32Array[]): Float32Array {
  * clustering of note-level embeddings.
  */
 export async function zettelThemes(
-  db: Database,
+  backend: StorageBackend,
   opts: ThemeOptions,
 ): Promise<ThemeResult> {
   const lookbackDays = opts.lookbackDays ?? 30;
@@ -128,21 +123,11 @@ export async function zettelThemes(
   const from = now - lookbackDays * 86400000;
 
   // Step 1: get recent notes
-  const recentNotes = db
-    .prepare(
-      `SELECT vault_path, title, indexed_at FROM vault_files WHERE indexed_at > ?`,
-    )
-    .all(from) as Array<{ vault_path: string; title: string | null; indexed_at: number }>;
+  const recentFiles = await backend.getRecentVaultFiles(from);
+  const recentNotes = recentFiles.map(f => ({ vault_path: f.vaultPath, title: f.title, indexed_at: f.indexedAt }));
 
   // Step 2: get file-level embeddings from memory_chunks
-  const chunkRows = db
-    .prepare(
-      `SELECT path, embedding FROM memory_chunks
-       WHERE project_id = ? AND embedding IS NOT NULL
-       ORDER BY path, start_line
-       LIMIT ?`,
-    )
-    .all(opts.vaultProjectId, MAX_CHUNKS) as Array<{ path: string; embedding: Buffer }>;
+  const chunkRows = await backend.getChunksWithEmbeddings(opts.vaultProjectId, MAX_CHUNKS);
 
   const embeddingsByPath = new Map<string, Float32Array[]>();
   for (const row of chunkRows) {
@@ -177,7 +162,6 @@ export async function zettelThemes(
 
   // Step 4: agglomerative single-linkage clustering
   // Stop when no two clusters have similarity >= threshold
-  // Using centroid similarity as a proxy for single-linkage max similarity
   let merged = true;
   while (merged && clusters.length > 1) {
     merged = false;
@@ -237,7 +221,7 @@ export async function zettelThemes(
     const uniqueFolders = new Set(cluster.paths.map(getTopFolder));
     const folderDiversity = uniqueFolders.size / cluster.paths.length;
 
-    const linkedRatio = computeLinkedRatio(db, cluster.paths);
+    const linkedRatio = await computeLinkedRatio(backend, cluster.paths);
     const suggestIndexNote = linkedRatio < 0.3 && cluster.paths.length >= 5;
 
     themes.push({

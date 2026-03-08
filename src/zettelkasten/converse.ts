@@ -1,5 +1,5 @@
-import type { Database } from "better-sqlite3";
-import { searchMemoryHybrid } from "../memory/search.js";
+import type { StorageBackend } from "../storage/interface.js";
+import type { SearchResult } from "../memory/search.js";
 import { generateEmbedding } from "../memory/embeddings.js";
 
 export interface ConverseOptions {
@@ -54,50 +54,85 @@ function extractDomain(vaultPath: string): string {
  * Expand one level of graph neighbors for a set of paths.
  * Returns all outbound and inbound neighbor paths (excluding already-visited).
  */
-function expandNeighbors(db: Database, paths: Set<string>): string[] {
+async function expandNeighbors(backend: StorageBackend, paths: Set<string>): Promise<string[]> {
   if (paths.size === 0) return [];
-
-  const placeholders = Array.from(paths).map(() => "?").join(", ");
   const pathList = Array.from(paths);
 
-  const forward = db
-    .prepare(
-      `SELECT DISTINCT target_path FROM vault_links WHERE source_path IN (${placeholders}) AND target_path IS NOT NULL`,
-    )
-    .all(...pathList) as Array<{ target_path: string }>;
-
-  const backward = db
-    .prepare(
-      `SELECT DISTINCT source_path FROM vault_links WHERE target_path IN (${placeholders})`,
-    )
-    .all(...pathList) as Array<{ source_path: string }>;
+  const [forwardLinks, backwardLinks] = await Promise.all([
+    backend.getVaultLinksFromPaths(pathList),
+    Promise.all(pathList.map(p => backend.getLinksToTarget(p))),
+  ]);
 
   const neighbors: string[] = [];
-  for (const r of forward) neighbors.push(r.target_path);
-  for (const r of backward) neighbors.push(r.source_path);
+  for (const link of forwardLinks) {
+    if (link.targetPath) neighbors.push(link.targetPath);
+  }
+  for (const linkList of backwardLinks) {
+    for (const link of linkList) {
+      neighbors.push(link.sourcePath);
+    }
+  }
   return neighbors;
 }
 
 /**
- * Look up the title for a single vault path.
- * Returns null when the path is not found in vault_files.
+ * Hybrid search combining keyword + semantic results using the StorageBackend.
  */
-function getTitle(db: Database, path: string): string | null {
-  const row = db
-    .prepare("SELECT title FROM vault_files WHERE vault_path = ?")
-    .get(path) as { title: string | null } | undefined;
-  return row?.title ?? null;
-}
+async function hybridSearch(
+  backend: StorageBackend,
+  query: string,
+  queryEmbedding: Float32Array,
+  opts: { projectIds?: number[]; maxResults?: number },
+): Promise<SearchResult[]> {
+  const maxResults = opts.maxResults ?? 10;
+  const kw = 0.5;
+  const sw = 0.5;
 
-/**
- * Count inbound links for a path from vault_health.
- * Used as a tiebreaker when trimming neighbor-only notes.
- */
-function getInboundCount(db: Database, path: string): number {
-  const row = db
-    .prepare("SELECT inbound_count FROM vault_health WHERE vault_path = ?")
-    .get(path) as { inbound_count: number } | undefined;
-  return row?.inbound_count ?? 0;
+  const [keywordResults, semanticResults] = await Promise.all([
+    backend.searchKeyword(query, { ...opts, maxResults: 50 }),
+    backend.searchSemantic(queryEmbedding, { ...opts, maxResults: 50 }),
+  ]);
+
+  if (keywordResults.length === 0 && semanticResults.length === 0) return [];
+
+  const keyFor = (r: SearchResult) =>
+    `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
+
+  function minMaxNormalize(scores: number[]): number[] {
+    const min = Math.min(...scores);
+    const max = Math.max(...scores);
+    const range = max - min;
+    if (range === 0) return scores.map(() => 1.0);
+    return scores.map(s => (s - min) / range);
+  }
+
+  const kwNorm = minMaxNormalize(keywordResults.map(r => r.score));
+  const semNorm = minMaxNormalize(semanticResults.map(r => r.score));
+
+  const combined = new Map<string, SearchResult & { combinedScore: number }>();
+
+  for (let i = 0; i < keywordResults.length; i++) {
+    const r = keywordResults[i];
+    const k = keyFor(r);
+    combined.set(k, { ...r, combinedScore: kw * kwNorm[i] });
+  }
+
+  for (let i = 0; i < semanticResults.length; i++) {
+    const r = semanticResults[i];
+    const k = keyFor(r);
+    const existing = combined.get(k);
+    if (existing) {
+      existing.combinedScore += sw * semNorm[i];
+    } else {
+      combined.set(k, { ...r, combinedScore: sw * semNorm[i] });
+    }
+  }
+
+  const sorted = Array.from(combined.values())
+    .sort((a, b) => b.combinedScore - a.combinedScore)
+    .slice(0, maxResults);
+
+  return sorted.map(r => ({ ...r, score: r.combinedScore }));
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +145,7 @@ function getInboundCount(db: Database, path: string): number {
  * structured result including a synthesis prompt for an AI to generate insights.
  */
 export async function zettelConverse(
-  db: Database,
+  backend: StorageBackend,
   opts: ConverseOptions,
 ): Promise<ConverseResult> {
   const depth = Math.max(opts.depth ?? 2, 0);
@@ -122,8 +157,8 @@ export async function zettelConverse(
   // ------------------------------------------------------------------
   const queryEmbedding = await generateEmbedding(opts.question, true);
 
-  const searchResults = searchMemoryHybrid(
-    db,
+  const searchResults = await hybridSearch(
+    backend,
     opts.question,
     queryEmbedding,
     {
@@ -148,7 +183,7 @@ export async function zettelConverse(
   let frontier = new Set<string>(searchHits.keys());
 
   for (let d = 0; d < depth; d++) {
-    const neighbors = expandNeighbors(db, frontier);
+    const neighbors = await expandNeighbors(backend, frontier);
     const newFrontier = new Set<string>();
     for (const n of neighbors) {
       if (!allPaths.has(n)) {
@@ -162,7 +197,6 @@ export async function zettelConverse(
 
   // ------------------------------------------------------------------
   // 3. Deduplicate + trim to limit
-  //    Search results first (ranked by score), then neighbors by inbound count
   // ------------------------------------------------------------------
   const searchRanked = Array.from(searchHits.entries())
     .sort((a, b) => b[1].score - a[1].score)
@@ -170,19 +204,20 @@ export async function zettelConverse(
 
   const neighborPaths = Array.from(allPaths).filter((p) => !searchHits.has(p));
 
-  // Sort neighbors by link popularity (inbound count) so that well-connected
-  // notes are preferred when we have budget for them.
+  // Fetch health data for neighbor ranking
+  const neighborHealthRows = await Promise.all(
+    neighborPaths.map(p => backend.getVaultHealth(p))
+  );
   const neighborRanked = neighborPaths
-    .map((path) => ({
+    .map((path, idx) => ({
       path,
       score: 0,
       snippet: "",
-      inbound: getInboundCount(db, path),
+      inbound: neighborHealthRows[idx]?.inboundCount ?? 0,
       isSearchResult: false,
     }))
     .sort((a, b) => b.inbound - a.inbound);
 
-  // Combine: search results fill the budget first, then neighbors
   const budgetForNeighbors = Math.max(limit - searchRanked.length, 0);
   const selectedNeighbors = neighborRanked.slice(0, budgetForNeighbors);
 
@@ -195,13 +230,19 @@ export async function zettelConverse(
   // ------------------------------------------------------------------
   // 4. Build relevantNotes with titles + domains
   // ------------------------------------------------------------------
+
+  // Fetch titles in bulk
+  const allSelectedPaths = Array.from(selectedPaths);
+  const fileRows = await backend.getVaultFilesByPaths(allSelectedPaths);
+  const titleMap = new Map<string, string | null>(fileRows.map(f => [f.vaultPath, f.title]));
+
   const relevantNotes: ConverseResult["relevantNotes"] = [];
 
   for (const r of selectedSearchPaths) {
     if (!selectedPaths.has(r.path)) continue;
     relevantNotes.push({
       path: r.path,
-      title: getTitle(db, r.path),
+      title: titleMap.get(r.path) ?? null,
       snippet: r.snippet,
       score: r.score,
       domain: extractDomain(r.path),
@@ -211,7 +252,7 @@ export async function zettelConverse(
   for (const r of selectedNeighbors) {
     relevantNotes.push({
       path: r.path,
-      title: getTitle(db, r.path),
+      title: titleMap.get(r.path) ?? null,
       snippet: r.snippet,
       score: 0,
       domain: extractDomain(r.path),
@@ -225,29 +266,28 @@ export async function zettelConverse(
 
   if (selectedPaths.size > 0) {
     const pathList = Array.from(selectedPaths);
-    const placeholders = pathList.map(() => "?").join(", ");
+    const pathSet = new Set(pathList);
 
-    const edgeRows = db
-      .prepare(
-        `SELECT source_path, target_path, COUNT(*) AS cnt
-         FROM vault_links
-         WHERE source_path IN (${placeholders})
-           AND target_path IN (${placeholders})
-         GROUP BY source_path, target_path`,
-      )
-      .all(...pathList, ...pathList) as Array<{
-        source_path: string;
-        target_path: string;
-        cnt: number;
-      }>;
+    // Get all outbound links from the selected paths
+    const linkRows = await backend.getVaultLinksFromPaths(pathList);
 
-    for (const row of edgeRows) {
+    // Count links between selected paths
+    const edgeCounts = new Map<string, number>();
+    for (const link of linkRows) {
+      if (link.targetPath && pathSet.has(link.targetPath)) {
+        const key = `${link.sourcePath}|||${link.targetPath}`;
+        edgeCounts.set(key, (edgeCounts.get(key) ?? 0) + 1);
+      }
+    }
+
+    for (const [key, cnt] of edgeCounts) {
+      const [sourcePath, targetPath] = key.split("|||");
       connections.push({
-        fromPath: row.source_path,
-        toPath: row.target_path,
-        fromDomain: extractDomain(row.source_path),
-        toDomain: extractDomain(row.target_path),
-        strength: row.cnt,
+        fromPath: sourcePath,
+        toPath: targetPath,
+        fromDomain: extractDomain(sourcePath),
+        toDomain: extractDomain(targetPath),
+        strength: cnt,
       });
     }
   }

@@ -1,4 +1,4 @@
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import {
   deserializeEmbedding,
   generateEmbedding,
@@ -22,30 +22,16 @@ export interface SurpriseResult {
   sharedSnippet: string;
 }
 
-const CHUNK_BATCH_SIZE = 500;
 const MAX_CHUNKS = 5000;
 const BFS_HOP_CAP = 20;
 
-function getFileEmbeddings(
-  db: Database,
+async function getFileEmbeddings(
+  backend: StorageBackend,
   projectId: number,
-): Map<string, { embedding: Float32Array; text: string }> {
-  const rows = db
-    .prepare(
-      `SELECT path, embedding, text FROM memory_chunks
-       WHERE project_id = ? AND embedding IS NOT NULL
-       ORDER BY path, start_line
-       LIMIT ?`,
-    )
-    .all(projectId, MAX_CHUNKS) as Array<{
-    path: string;
-    embedding: Buffer;
-    text: string;
-  }>;
+): Promise<Map<string, { embedding: Float32Array; text: string }>> {
+  const rows = await backend.getChunksWithEmbeddings(projectId, MAX_CHUNKS);
 
-  // Group chunks by path and accumulate embeddings for averaging
   const byPath = new Map<string, { sum: Float32Array; count: number; text: string }>();
-
   for (const row of rows) {
     const vec = deserializeEmbedding(row.embedding);
     const entry = byPath.get(row.path);
@@ -70,25 +56,25 @@ function getFileEmbeddings(
   return result;
 }
 
-function getReferenceEmbedding(
-  db: Database,
+async function getReferenceEmbedding(
+  backend: StorageBackend,
   projectId: number,
   path: string,
-): { embedding: Float32Array; found: boolean } {
-  const rows = db
-    .prepare(
-      `SELECT embedding FROM memory_chunks
-       WHERE project_id = ? AND path = ? AND embedding IS NOT NULL`,
-    )
-    .all(projectId, path) as Array<{ embedding: Buffer }>;
+): Promise<{ embedding: Float32Array; found: boolean }> {
+  const rows = await backend.getChunksForPath(projectId, path);
 
   if (rows.length === 0) {
     return { embedding: new Float32Array(0), found: false };
   }
 
-  const dim = deserializeEmbedding(rows[0].embedding).length;
+  const embRows = rows.filter(r => r.embedding !== null) as Array<{ text: string; embedding: Buffer }>;
+  if (embRows.length === 0) {
+    return { embedding: new Float32Array(0), found: false };
+  }
+
+  const dim = deserializeEmbedding(embRows[0].embedding).length;
   const sum = new Float32Array(dim);
-  for (const row of rows) {
+  for (const row of embRows) {
     const vec = deserializeEmbedding(row.embedding);
     for (let i = 0; i < dim; i++) {
       sum[i] += vec[i];
@@ -96,12 +82,12 @@ function getReferenceEmbedding(
   }
   const avg = new Float32Array(dim);
   for (let i = 0; i < dim; i++) {
-    avg[i] = sum[i] / rows.length;
+    avg[i] = sum[i] / embRows.length;
   }
   return { embedding: avg, found: true };
 }
 
-function bfsGraphDistance(db: Database, source: string, target: string): number {
+async function bfsGraphDistance(backend: StorageBackend, source: string, target: string): Promise<number> {
   if (source === target) return 0;
 
   const visited = new Set<string>([source]);
@@ -111,17 +97,17 @@ function bfsGraphDistance(db: Database, source: string, target: string): number 
     const { path, hops } = queue.shift()!;
     if (hops >= BFS_HOP_CAP) continue;
 
-    const neighbors = db
-      .prepare(
-        `SELECT target_path AS neighbor FROM vault_links
-         WHERE source_path = ? AND target_path IS NOT NULL
-         UNION
-         SELECT source_path AS neighbor FROM vault_links
-         WHERE target_path = ?`,
-      )
-      .all(path, path) as Array<{ neighbor: string }>;
+    const [forwardLinks, backwardLinks] = await Promise.all([
+      backend.getLinksFromSource(path),
+      backend.getLinksToTarget(path),
+    ]);
 
-    for (const { neighbor } of neighbors) {
+    const neighbors: string[] = [
+      ...forwardLinks.filter(l => l.targetPath !== null).map(l => l.targetPath as string),
+      ...backwardLinks.map(l => l.sourcePath),
+    ];
+
+    for (const neighbor of neighbors) {
       if (neighbor === target) return hops + 1;
       if (!visited.has(neighbor)) {
         visited.add(neighbor);
@@ -134,19 +120,10 @@ function bfsGraphDistance(db: Database, source: string, target: string): number 
 }
 
 function getBestChunkText(
-  db: Database,
-  projectId: number,
-  path: string,
+  chunkRows: Array<{ text: string; embedding: Buffer | null }>,
   refEmbedding: Float32Array,
 ): string {
-  const rows = db
-    .prepare(
-      `SELECT text, embedding FROM memory_chunks
-       WHERE project_id = ? AND path = ? AND embedding IS NOT NULL
-       LIMIT 20`,
-    )
-    .all(projectId, path) as Array<{ text: string; embedding: Buffer }>;
-
+  const rows = chunkRows.filter(r => r.embedding !== null) as Array<{ text: string; embedding: Buffer }>;
   if (rows.length === 0) return "";
 
   let bestText = rows[0].text;
@@ -169,29 +146,27 @@ function getBestChunkText(
  * revealing surprising conceptual connections across unrelated areas of the Zettelkasten.
  */
 export async function zettelSurprise(
-  db: Database,
+  backend: StorageBackend,
   opts: SurpriseOptions,
 ): Promise<SurpriseResult[]> {
   const limit = opts.limit ?? 10;
   const minSimilarity = opts.minSimilarity ?? 0.3;
   const minGraphDistance = opts.minGraphDistance ?? 3;
 
-  let { embedding: refEmbedding, found } = getReferenceEmbedding(
-    db,
+  let { embedding: refEmbedding, found } = await getReferenceEmbedding(
+    backend,
     opts.vaultProjectId,
     opts.referencePath,
   );
 
   // Fall back to generating an embedding from the file title if no chunks exist
   if (!found) {
-    const file = db
-      .prepare("SELECT title FROM vault_files WHERE vault_path = ?")
-      .get(opts.referencePath) as { title: string | null } | undefined;
-    const text = file?.title ?? opts.referencePath;
+    const files = await backend.getVaultFilesByPaths([opts.referencePath]);
+    const text = files[0]?.title ?? opts.referencePath;
     refEmbedding = await generateEmbedding(text, true);
   }
 
-  const allFileEmbeddings = getFileEmbeddings(db, opts.vaultProjectId);
+  const allFileEmbeddings = await getFileEmbeddings(backend, opts.vaultProjectId);
 
   // Remove the reference note itself from candidates
   allFileEmbeddings.delete(opts.referencePath);
@@ -209,21 +184,20 @@ export async function zettelSurprise(
   const results: SurpriseResult[] = [];
 
   for (const { path, sim } of semanticCandidates) {
-    const graphDistance = bfsGraphDistance(db, opts.referencePath, path);
+    const graphDistance = await bfsGraphDistance(backend, opts.referencePath, path);
 
     const effectiveDistance = isFinite(graphDistance) ? graphDistance : BFS_HOP_CAP;
     if (effectiveDistance < minGraphDistance) continue;
 
-    const file = db
-      .prepare("SELECT title FROM vault_files WHERE vault_path = ?")
-      .get(path) as { title: string | null } | undefined;
+    const files = await backend.getVaultFilesByPaths([path]);
+    const chunkRows = await backend.getChunksForPath(opts.vaultProjectId, path, 20);
 
     const surpriseScore = sim * Math.log2(effectiveDistance + 1);
-    const sharedSnippet = getBestChunkText(db, opts.vaultProjectId, path, refEmbedding);
+    const sharedSnippet = getBestChunkText(chunkRows, refEmbedding);
 
     results.push({
       path,
-      title: file?.title ?? null,
+      title: files[0]?.title ?? null,
       cosineSimilarity: sim,
       graphDistance: isFinite(graphDistance) ? graphDistance : Infinity,
       surpriseScore,

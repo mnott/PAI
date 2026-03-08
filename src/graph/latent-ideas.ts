@@ -11,9 +11,9 @@
  * and returns its content so the plugin can open it immediately.
  */
 
-import type { Database } from "better-sqlite3";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { StorageBackend } from "../storage/interface.js";
 import { zettelThemes } from "../zettelkasten/themes.js";
 
 // ---------------------------------------------------------------------------
@@ -123,31 +123,25 @@ function labelMatchesTitle(label: string, title: string): boolean {
 
 /**
  * Check whether any note indexed in the vault has a title matching the label.
- * Queries vault_files.title directly for efficiency.
+ * Fetches all vault file rows via StorageBackend for efficiency.
  */
-function clusterHasMatchingNote(
-  db: Database,
+async function clusterHasMatchingNote(
+  backend: StorageBackend,
   label: string,
   notePaths: string[]
-): boolean {
+): Promise<boolean> {
   // First check the notes already in the cluster themselves — if any cluster
   // member's title matches the label it IS the index note → materialized.
   const pathSet = new Set(notePaths);
 
-  // Fetch all titles from vault_files (bounded — vault rarely > 50k notes)
-  // We do a targeted check: get titles for the cluster paths first, then
-  // do a broader scan for notes NOT in the cluster.
-  const rows = db
-    .prepare(
-      `SELECT vault_path, title FROM vault_files WHERE title IS NOT NULL LIMIT 20000`
-    )
-    .all() as Array<{ vault_path: string; title: string }>;
+  // Fetch all vault files (bounded — vault rarely > 50k notes)
+  const rows = await backend.getAllVaultFiles();
 
   for (const row of rows) {
     if (!row.title) continue;
     // Skip notes already counted inside the cluster — they don't count as
     // "dedicated notes"; we only skip a cluster if a SEPARATE note exists.
-    if (pathSet.has(row.vault_path)) continue;
+    if (pathSet.has(row.vaultPath)) continue;
     if (labelMatchesTitle(label, row.title)) return true;
   }
   return false;
@@ -255,7 +249,7 @@ function calcConfidence(
 // ---------------------------------------------------------------------------
 
 export async function handleGraphLatentIdeas(
-  db: Database,
+  backend: StorageBackend,
   params: GraphLatentIdeasParams
 ): Promise<GraphLatentIdeasResult> {
   const minClusterSize = params.min_cluster_size ?? 3;
@@ -271,7 +265,7 @@ export async function handleGraphLatentIdeas(
   }
 
   // Run the same clustering algorithm used by graph_clusters
-  const themeResult = await zettelThemes(db, {
+  const themeResult = await zettelThemes(backend, {
     vaultProjectId,
     lookbackDays,
     minClusterSize,
@@ -286,7 +280,7 @@ export async function handleGraphLatentIdeas(
     const notePaths = theme.notes.map((n) => n.path);
 
     // Check if a dedicated note already exists for this theme
-    if (clusterHasMatchingNote(db, theme.label, notePaths)) {
+    if (await clusterHasMatchingNote(backend, theme.label, notePaths)) {
       materializedCount++;
       continue;
     }

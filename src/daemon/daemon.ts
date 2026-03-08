@@ -37,8 +37,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer, connect, Socket, Server } from "node:net";
-import { setPriority, homedir } from "node:os";
-import { join } from "node:path";
+import { setPriority } from "node:os";
 import { openRegistry } from "../registry/db.js";
 import type { Database } from "better-sqlite3";
 import { indexAll } from "../memory/indexer.js";
@@ -98,17 +97,6 @@ let registryDb: ReturnType<typeof openRegistry>;
 let storageBackend: StorageBackend;
 let daemonConfig: PaiDaemonConfig;
 let startTime = Date.now();
-
-/**
- * Always-available SQLite handle to federation.db for vault and graph tools.
- * When the primary backend is SQLite, this is the same DB handle as storageBackend.
- * When the primary backend is Postgres, this is a separate read-only SQLite connection.
- * Null only if federation.db could not be opened (non-fatal — tools will error gracefully).
- */
-let vaultDb: Database | null = null;
-
-/** True when vaultDb was opened separately (Postgres primary) and must be closed at shutdown. */
-let vaultDbOwnedSeparately = false;
 
 // Index scheduler state
 let indexInProgress = false;
@@ -230,6 +218,9 @@ interface PostgresBackendWithPool {
  * Skips if no vaultPath is configured, or if project index/embed is in progress.
  * Called both by the scheduler (chained after runIndex) and by the vault_index_now IPC method.
  */
+/** Minimum interval between vault index runs (30 minutes). */
+const VAULT_INDEX_MIN_INTERVAL_MS = 30 * 60 * 1000;
+
 async function runVaultIndex(): Promise<void> {
   // Skip if no vault path configured
   if (!daemonConfig.vaultPath) return;
@@ -245,61 +236,40 @@ async function runVaultIndex(): Promise<void> {
     return;
   }
 
+  // Skip if vault was recently indexed (< 30 min ago) — vaults don't change often
+  if (lastVaultIndexTime > 0 && Date.now() - lastVaultIndexTime < VAULT_INDEX_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  // Auto-detect vault project ID if not configured.
+  // Fall back to synthetic project ID 999 if vault is not in the registry
+  // (vault chunks are indexed under project_id=999 by convention).
+  let vaultProjectId = daemonConfig.vaultProjectId;
+  if (!vaultProjectId) {
+    const row = registryDb
+      .prepare("SELECT id FROM projects WHERE root_path = ?")
+      .get(daemonConfig.vaultPath) as { id: number } | undefined;
+    vaultProjectId = row?.id ?? 999;
+    if (!row) {
+      process.stderr.write("[pai-daemon] Vault not in project registry — using synthetic project ID 999.\n");
+    }
+  }
+
   vaultIndexInProgress = true;
   const t0 = Date.now();
 
+  process.stderr.write("[pai-daemon] Starting vault index run...\n");
+
   try {
-    process.stderr.write("[pai-daemon] Starting vault index run...\n");
-
-    // Use vaultDb which is always the SQLite federation.db handle regardless
-    // of which primary backend (SQLite or Postgres) is active.
-    if (!vaultDb) {
-      process.stderr.write("[pai-daemon] Vault indexing skipped: vault database (federation.db) is not available.\n");
-      return;
-    }
-
-    // vaultDb is read-only when primary backend is Postgres — vault indexer writes,
-    // so we need write access. When the primary backend is Postgres and vaultDb was
-    // opened read-only, we open a separate writable connection for the indexer.
-    let indexDb: Database = vaultDb;
-    let indexDbOwned = false;
-    if (vaultDbOwnedSeparately) {
-      // Re-open writable for indexing
-      const { openFederation } = await import("../memory/db.js");
-      indexDb = openFederation();
-      indexDbOwned = true;
-    }
-
-    try {
-      // Auto-detect vault project ID if not configured.
-      // Fall back to synthetic project ID 999 if vault is not in the registry
-      // (vault chunks are indexed under project_id=999 by convention).
-      let vaultProjectId = daemonConfig.vaultProjectId;
-      if (!vaultProjectId) {
-        // Look for a project registered at the vault path
-        const row = registryDb
-          .prepare("SELECT id FROM projects WHERE root_path = ?")
-          .get(daemonConfig.vaultPath) as { id: number } | undefined;
-        vaultProjectId = row?.id ?? 999;
-        if (!row) {
-          process.stderr.write("[pai-daemon] Vault not in project registry — using synthetic project ID 999.\n");
-        }
-      }
-
-      const { indexVault } = await import("../memory/vault-indexer.js");
-      const result = await indexVault(indexDb, vaultProjectId, daemonConfig.vaultPath!);
-      const elapsed = Date.now() - t0;
-      lastVaultIndexTime = Date.now();
-      process.stderr.write(
-        `[pai-daemon] Vault index complete: ${result.filesIndexed} files, ` +
-        `${result.linksExtracted} links, ${result.deadLinksFound} dead, ` +
-        `${result.orphansFound} orphans (${elapsed}ms)\n`
-      );
-    } finally {
-      if (indexDbOwned) {
-        try { indexDb.close(); } catch { /* ignore */ }
-      }
-    }
+    const { indexVault } = await import("../memory/vault-indexer.js");
+    const r = await indexVault(storageBackend, vaultProjectId, daemonConfig.vaultPath!);
+    const elapsed = Date.now() - t0;
+    lastVaultIndexTime = Date.now();
+    process.stderr.write(
+      `[pai-daemon] Vault index complete: ${r.filesIndexed} files, ` +
+      `${r.linksExtracted} links, ${r.deadLinksFound} dead, ` +
+      `${r.orphansFound} orphans (${elapsed}ms)\n`
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Vault index error: ${msg}\n`);
@@ -531,108 +501,66 @@ async function dispatchTool(
     case "zettel_suggest":
     case "zettel_converse":
     case "zettel_themes": {
-      // Zettel tools need the raw federation DB (vaultDb is always available regardless of primary backend)
       const { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes } = await import("../mcp/tools.js");
 
-      if (!vaultDb) {
-        throw new Error("Zettel tools require vault database (federation.db) — could not be opened at startup");
-      }
-
       switch (method) {
-        case "zettel_explore": return toolZettelExplore(vaultDb, p as Parameters<typeof toolZettelExplore>[1]);
-        case "zettel_health": return toolZettelHealth(vaultDb, p as Parameters<typeof toolZettelHealth>[1]);
-        case "zettel_surprise": return toolZettelSurprise(vaultDb, p as Parameters<typeof toolZettelSurprise>[1]);
-        case "zettel_suggest": return toolZettelSuggest(vaultDb, p as Parameters<typeof toolZettelSuggest>[1]);
-        case "zettel_converse": return toolZettelConverse(vaultDb, p as Parameters<typeof toolZettelConverse>[1]);
-        case "zettel_themes": return toolZettelThemes(vaultDb, p as Parameters<typeof toolZettelThemes>[1]);
+        case "zettel_explore": return toolZettelExplore(storageBackend, p as Parameters<typeof toolZettelExplore>[1]);
+        case "zettel_health": return toolZettelHealth(storageBackend, p as Parameters<typeof toolZettelHealth>[1]);
+        case "zettel_surprise": return toolZettelSurprise(storageBackend, p as Parameters<typeof toolZettelSurprise>[1]);
+        case "zettel_suggest": return toolZettelSuggest(storageBackend, p as Parameters<typeof toolZettelSuggest>[1]);
+        case "zettel_converse": return toolZettelConverse(storageBackend, p as Parameters<typeof toolZettelConverse>[1]);
+        case "zettel_themes": return toolZettelThemes(storageBackend, p as Parameters<typeof toolZettelThemes>[1]);
       }
       break;
     }
 
     case "graph_clusters": {
-      // graph_clusters uses the SQLite federation DB for clustering and,
-      // optionally, the Postgres pool for observation-type enrichment.
-      // vaultDb is always the SQLite handle regardless of primary backend.
       const { handleGraphClusters } = await import("../graph/clusters.js");
-
-      if (!vaultDb) {
-        throw new Error("graph_clusters requires vault database (federation.db) — could not be opened at startup");
-      }
-      // When primary backend is Postgres, also pass the pool for observation enrichment.
       const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
 
       return handleGraphClusters(
         pgPool,
-        vaultDb,
+        storageBackend,
         p as Parameters<typeof handleGraphClusters>[2]
       );
     }
 
     case "graph_neighborhood": {
-      // graph_neighborhood returns per-note nodes and wikilink edges for a
-      // given set of vault paths (typically the notes inside a cluster).
-      // vaultDb is always the SQLite handle regardless of primary backend.
       const { handleGraphNeighborhood } = await import("../graph/neighborhood.js");
-
-      if (!vaultDb) {
-        throw new Error("graph_neighborhood requires vault database (federation.db) — could not be opened at startup");
-      }
-      // When primary backend is Postgres, also pass the pool for observation enrichment.
       const pgPool2 = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
 
       return handleGraphNeighborhood(
         pgPool2,
-        vaultDb,
+        storageBackend,
         p as Parameters<typeof handleGraphNeighborhood>[2]
       );
     }
 
     case "graph_note_context": {
-      // graph_note_context returns the full 1-hop vault neighbourhood for a
-      // single focal note (Level 3 drill-down). Crosses cluster boundaries so
-      // users can discover connections to notes in other topic areas.
-      // vaultDb is always the SQLite handle regardless of primary backend.
       const { handleGraphNoteContext } = await import("../graph/note-context.js");
-
-      if (!vaultDb) {
-        throw new Error("graph_note_context requires vault database (federation.db) — could not be opened at startup");
-      }
-      // When primary backend is Postgres, also pass the pool for observation enrichment.
       const pgPool3 = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
 
       return handleGraphNoteContext(
         pgPool3,
-        vaultDb,
+        storageBackend,
         p as Parameters<typeof handleGraphNoteContext>[2]
       );
     }
 
     case "graph_trace": {
-      // graph_trace returns a chronological timeline of notes matching a topic/keyword.
-      // Uses vault_files + memory_chunks + vault_links — all in vaultDb (SQLite).
       const { handleGraphTrace } = await import("../graph/trace.js");
 
-      if (!vaultDb) {
-        throw new Error("graph_trace requires vault database (federation.db) — could not be opened at startup");
-      }
-
       return handleGraphTrace(
-        vaultDb,
+        storageBackend,
         p as Parameters<typeof handleGraphTrace>[1]
       );
     }
 
     case "graph_latent_ideas": {
-      // graph_latent_ideas surfaces recurring themes that have no dedicated note yet.
-      // Reuses zettelThemes clustering then filters out clusters with matching titles.
       const { handleGraphLatentIdeas } = await import("../graph/latent-ideas.js");
 
-      if (!vaultDb) {
-        throw new Error("graph_latent_ideas requires vault database (federation.db) — could not be opened at startup");
-      }
-
       return handleGraphLatentIdeas(
-        vaultDb,
+        storageBackend,
         p as Parameters<typeof handleGraphLatentIdeas>[1]
       );
     }
@@ -1221,31 +1149,6 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     process.exit(1);
   }
 
-  // Always open a SQLite handle to federation.db for vault and graph tools.
-  // When the primary backend is SQLite, reuse its existing DB handle.
-  // When the primary backend is Postgres, open a separate read-only SQLite connection
-  // so vault tools work even when observations live in Postgres.
-  if (storageBackend.backendType === "sqlite") {
-    const { SQLiteBackend } = await import("../storage/sqlite.js");
-    if (storageBackend instanceof SQLiteBackend) {
-      vaultDb = (storageBackend as SQLiteBackendWithDb).getRawDb();
-      vaultDbOwnedSeparately = false;
-      process.stderr.write("[pai-daemon] Vault DB: using primary SQLite handle.\n");
-    }
-  } else {
-    // Postgres primary — open federation.db read-only for vault tools
-    const federationDbPath = join(homedir(), ".pai", "federation.db");
-    try {
-      const BetterSqlite3 = (await import("better-sqlite3")).default;
-      vaultDb = new BetterSqlite3(federationDbPath, { readonly: true });
-      vaultDbOwnedSeparately = true;
-      process.stderr.write(`[pai-daemon] Vault DB: opened ${federationDbPath} read-only for vault tools.\n`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[pai-daemon] Warning: Could not open federation.db for vault tools (${msg}). Vault/graph tools will be unavailable.\n`);
-    }
-  }
-
   // Start index scheduler
   startIndexScheduler();
 
@@ -1309,15 +1212,6 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
       await storageBackend.close();
     } catch {
       // ignore
-    }
-
-    // Close vault DB if it was separately opened (Postgres primary path)
-    if (vaultDbOwnedSeparately && vaultDb) {
-      try {
-        vaultDb.close();
-      } catch {
-        // ignore
-      }
     }
 
     try {

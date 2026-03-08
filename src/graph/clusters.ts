@@ -4,15 +4,10 @@
  * Reuses the zettelThemes() agglomerative clustering algorithm and enriches
  * each cluster with observation-type statistics, avg_recency from member
  * timestamps, and helper flags for the Obsidian knowledge plugin.
- *
- * Backend compatibility:
- *   - SQLite: full support (vault files + zettel themes).
- *   - Postgres: observation type enrichment only; clustering requires SQLite.
  */
 
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import type { Pool } from "pg";
-import { zettelThemes } from "../zettelkasten/themes.js";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
@@ -64,7 +59,6 @@ async function fetchObservationTypes(
   if (filePaths.length === 0) return new Map();
 
   try {
-    // Build unnest-based query to avoid a large IN clause
     const params: (string | number)[] = [...filePaths];
     let projectFilter = "";
     if (projectId !== undefined) {
@@ -72,8 +66,6 @@ async function fetchObservationTypes(
       projectFilter = `AND project_id = $${params.length}`;
     }
 
-    // pai_observations.files_modified and files_read are text[] columns
-    // We look for any observation that references any of the cluster's paths.
     const result = await pool.query<{ path: string; type: string; cnt: string }>(
       `SELECT unnested_path AS path, type, COUNT(*) AS cnt
        FROM pai_observations,
@@ -92,7 +84,6 @@ async function fetchObservationTypes(
     }
     return byPath;
   } catch {
-    // Observations table may not exist yet — degrade gracefully
     return new Map();
   }
 }
@@ -127,25 +118,171 @@ function aggregateObservationTypes(
 }
 
 // ---------------------------------------------------------------------------
+// Link-based fallback clustering (wikilink connected components)
+// ---------------------------------------------------------------------------
+
+const SKIP_PREFIXES = [
+  "Attachments/", "🗓️ Daily Notes/", "Copilot/copilot-conversations/",
+  "Z - Zettelkasten/Tweets/",
+];
+
+/**
+ * Cluster vault notes by wikilink connectivity when embeddings aren't available.
+ * Uses BFS to find connected components in the link graph, then picks the
+ * largest components as clusters. Labels are derived from the most common
+ * title words in each component.
+ */
+async function clusterByLinks(
+  backend: StorageBackend,
+  lookbackDays: number,
+  minSize: number,
+  maxClusters: number,
+): Promise<{ themes: Array<{ id: number; label: string; notes: Array<{ path: string; title: string | null }>; size: number; folderDiversity: number; avgRecency: number; linkedRatio: number; suggestIndexNote: boolean }>; totalNotesAnalyzed: number; timeWindow: { from: number; to: number } }> {
+  const now = Date.now();
+  const from = now - lookbackDays * 86400000;
+
+  // Get recent notes
+  const recentFiles = await backend.getRecentVaultFiles(from);
+  const recentNotes = recentFiles.filter(f => f.vaultPath.endsWith(".md"));
+
+  const noteMap = new Map<string, { title: string | null; indexed_at: number }>();
+  for (const n of recentNotes) {
+    noteMap.set(n.vaultPath, { title: n.title, indexed_at: n.indexedAt });
+  }
+
+  // Build adjacency list from vault_links (only for recent notes)
+  const adj = new Map<string, Set<string>>();
+  for (const path of noteMap.keys()) {
+    if (!adj.has(path)) adj.set(path, new Set());
+  }
+
+  const linkGraph = await backend.getVaultLinkGraph();
+
+  for (const { source_path, target_path } of linkGraph) {
+    if (noteMap.has(source_path) && noteMap.has(target_path)) {
+      adj.get(source_path)!.add(target_path);
+      adj.get(target_path)!.add(source_path);
+    }
+  }
+
+  // Remove hub nodes before BFS
+  const degrees = [...adj.entries()].map(([p, s]) => ({ path: p, degree: s.size }));
+  degrees.sort((a, b) => b.degree - a.degree);
+  const hubThreshold = Math.max(10, degrees[Math.floor(degrees.length * 0.05)]?.degree ?? 10);
+  const hubNodes = new Set<string>();
+  for (const { path, degree } of degrees) {
+    if (degree >= hubThreshold) hubNodes.add(path);
+    else break;
+  }
+
+  for (const hub of hubNodes) {
+    adj.delete(hub);
+  }
+  for (const [, neighbors] of adj) {
+    for (const hub of hubNodes) {
+      neighbors.delete(hub);
+    }
+  }
+
+  // BFS connected components
+  const visited = new Set<string>();
+  const components: string[][] = [];
+
+  for (const path of noteMap.keys()) {
+    if (visited.has(path) || hubNodes.has(path)) continue;
+    if (SKIP_PREFIXES.some(p => path.startsWith(p))) { visited.add(path); continue; }
+    const component: string[] = [];
+    const queue = [path];
+    visited.add(path);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      component.push(current);
+      const neighbors = adj.get(current);
+      if (!neighbors) continue;
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor) && !SKIP_PREFIXES.some(p => neighbor.startsWith(p))) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    if (component.length >= minSize) {
+      components.push(component);
+    }
+  }
+
+  components.sort((a, b) => b.length - a.length);
+  const topComponents = components.slice(0, maxClusters);
+
+  const STOP_WORDS = new Set([
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
+    "has", "had", "have", "not", "this", "that", "i", "my", "we", "our",
+    "new", "note", "untitled", "page", "file", "doc", "session", "notes",
+    "moc", "template", "content", "attachment",
+    "les", "des", "une", "est", "que", "qui", "dans", "pour", "sur",
+    "par", "pas", "son", "ses", "aux", "avec", "tout", "mais",
+    "und", "der", "die", "das", "ein", "eine", "ist", "den", "dem",
+    "von", "mit", "auf", "nicht", "sich", "auch", "noch", "wie",
+  ]);
+
+  function generateLinkLabel(paths: string[]): string {
+    const wordCounts = new Map<string, number>();
+    for (const p of paths) {
+      const title = noteMap.get(p)?.title;
+      if (!title) continue;
+      const words = title.toLowerCase().replace(/[^a-z0-9äöüàéèêëçñß\s]/g, " ").split(/\s+/)
+        .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+      for (const word of words) {
+        wordCounts.set(word, (wordCounts.get(word) ?? 0) + 1);
+      }
+    }
+    const sorted = [...wordCounts.entries()].sort((a, b) => b[1] - a[1]);
+    return sorted.slice(0, 3).map(([w]) => w).join(" / ") || "Linked Notes";
+  }
+
+  const themes = topComponents.map((component, idx) => {
+    const notes = component.map(p => ({
+      path: p,
+      title: noteMap.get(p)?.title ?? null,
+    }));
+    const avgRecency = component.reduce((sum, p) => sum + (noteMap.get(p)?.indexed_at ?? 0), 0) / component.length;
+    const uniqueFolders = new Set(component.map(p => p.split("/")[0]));
+
+    return {
+      id: idx,
+      label: generateLinkLabel(component),
+      notes,
+      size: component.length,
+      folderDiversity: uniqueFolders.size / component.length,
+      avgRecency,
+      linkedRatio: 1.0,
+      suggestIndexNote: component.length >= 10,
+    };
+  });
+
+  return {
+    themes,
+    totalNotesAnalyzed: recentNotes.length,
+    timeWindow: { from, to: now },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
 export async function handleGraphClusters(
   pool: Pool | null,
-  db: Database | null,
+  backend: StorageBackend,
   params: GraphClustersParams
 ): Promise<GraphClustersResult> {
-  if (!db) {
-    throw new Error("graph_clusters requires SQLite backend");
-  }
-
   const minSize = params.min_size ?? 3;
   const maxClusters = params.max_clusters ?? 20;
   const lookbackDays = params.lookback_days ?? 90;
-  const similarityThreshold = params.similarity_threshold ?? 0.65;
 
-  // Resolve vault project ID: use the provided project_id, or fall back to
-  // searching for a project with a vaultPath-style root (best effort).
   const vaultProjectId = params.project_id ?? 0;
 
   if (!vaultProjectId) {
@@ -154,47 +291,30 @@ export async function handleGraphClusters(
     );
   }
 
-  // Run the zettelThemes clustering algorithm
-  const themeResult = await zettelThemes(db, {
-    vaultProjectId,
-    lookbackDays,
-    minClusterSize: minSize,
-    maxThemes: maxClusters,
-    similarityThreshold,
-  });
+  const themeResult = await clusterByLinks(backend, lookbackDays, minSize, maxClusters);
 
-  // Collect all unique note paths for observation enrichment
   const allPaths = themeResult.themes.flatMap((t) => t.notes.map((n) => n.path));
 
-  // Fetch observation type data from Postgres (if available)
   const observationsByPath =
     pool !== null
       ? await fetchObservationTypes(pool, allPaths, params.project_id)
       : new Map<string, Record<string, number>>();
 
-  // Enrich each ThemeCluster into a ClusterNode
+  // Fetch indexed_at timestamps for all notes in bulk
+  const fileRows = await backend.getVaultFilesByPaths(allPaths);
+  const indexedAtMap = new Map<string, number>(fileRows.map(f => [f.vaultPath, f.indexedAt]));
+
   const clusters: ClusterNode[] = themeResult.themes.map((theme) => {
     const notePaths = theme.notes.map((n) => n.path);
 
-    // Fetch indexed_at timestamps for each note
-    const notesWithTimestamps = theme.notes.map((n) => {
-      const row = db
-        .prepare(
-          `SELECT indexed_at FROM vault_files WHERE vault_path = ? LIMIT 1`
-        )
-        .get(n.path) as { indexed_at: number } | undefined;
+    const notesWithTimestamps = theme.notes.map((n) => ({
+      vault_path: n.path,
+      title: n.title ?? n.path.split("/").pop() ?? n.path,
+      indexed_at: indexedAtMap.get(n.path) ?? 0,
+    }));
 
-      return {
-        vault_path: n.path,
-        title: n.title ?? n.path.split("/").pop() ?? n.path,
-        indexed_at: row?.indexed_at ?? 0,
-      };
-    });
-
-    // avg_recency from member timestamps (theme.avgRecency is already the mean)
     const avgRecency = theme.avgRecency;
 
-    // Observation type enrichment
     const { dominant, counts } = aggregateObservationTypes(
       notePaths,
       observationsByPath
@@ -210,14 +330,11 @@ export async function handleGraphClusters(
       dominant_observation_type: dominant,
       observation_type_counts: counts,
       suggest_index_note: theme.suggestIndexNote,
-      has_idea_note: false, // Phase 4 feature
+      has_idea_note: false,
       notes: notesWithTimestamps,
     };
   });
 
-  // Already sorted by zettelThemes (size * folderDiversity * recency_ratio),
-  // then trimmed to maxClusters. Re-sort by size descending as the primary
-  // criterion for the graph plugin consumer.
   clusters.sort((a, b) => b.size - a.size);
 
   return {

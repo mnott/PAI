@@ -1,4 +1,4 @@
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 
 export interface HealthOptions {
   scope?: "full" | "recent" | "project";
@@ -22,33 +22,6 @@ export interface HealthResult {
   lowConnectivity: string[];
   healthScore: number;
   computedAt: number;
-}
-
-function buildScopeFilter(
-  opts: HealthOptions,
-  tableAlias: string,
-  pathColumn: string,
-): { clause: string; params: unknown[] } {
-  const scope = opts.scope ?? "full";
-
-  if (scope === "project") {
-    const prefix = opts.projectPath ?? "";
-    return {
-      clause: `WHERE ${tableAlias}.${pathColumn} LIKE ? || '%'`,
-      params: [prefix],
-    };
-  }
-
-  if (scope === "recent") {
-    const days = opts.recentDays ?? 30;
-    const cutoff = Date.now() - days * 86400000;
-    return {
-      clause: `WHERE ${tableAlias}.indexed_at > ?`,
-      params: [cutoff],
-    };
-  }
-
-  return { clause: "", params: [] };
 }
 
 function countComponents(nodes: string[], edges: Array<{ source: string; target: string }>): number {
@@ -107,9 +80,8 @@ function countComponents(nodes: string[], edges: Array<{ source: string; target:
 
 /**
  * Audit the structural health of the Zettelkasten vault using graph metrics.
- * Designed to complete in under 60ms for a full vault.
  */
-export function zettelHealth(db: Database, opts?: HealthOptions): HealthResult {
+export async function zettelHealth(backend: StorageBackend, opts?: HealthOptions): Promise<HealthResult> {
   const options = opts ?? {};
   const scope = options.scope ?? "full";
   const include = options.include ?? ["dead_links", "orphans", "disconnected", "low_connectivity"];
@@ -119,93 +91,43 @@ export function zettelHealth(db: Database, opts?: HealthOptions): HealthResult {
   // --- totalFiles ---
   let totalFiles = 0;
   if (scope === "full") {
-    totalFiles = (
-      db.prepare("SELECT COUNT(*) AS n FROM vault_files").get() as { n: number }
-    ).n;
+    totalFiles = await backend.countVaultFiles();
   } else if (scope === "project") {
     const prefix = options.projectPath ?? "";
-    totalFiles = (
-      db
-        .prepare("SELECT COUNT(*) AS n FROM vault_files WHERE vault_path LIKE ? || '%'")
-        .get(prefix) as { n: number }
-    ).n;
+    totalFiles = await backend.countVaultFilesWithPrefix(prefix);
   } else {
     const days = options.recentDays ?? 30;
     const cutoff = computedAt - days * 86400000;
-    totalFiles = (
-      db
-        .prepare("SELECT COUNT(*) AS n FROM vault_files WHERE indexed_at > ?")
-        .get(cutoff) as { n: number }
-    ).n;
+    totalFiles = await backend.countVaultFilesAfter(cutoff);
   }
 
   // --- totalLinks ---
   let totalLinks = 0;
   if (scope === "full") {
-    totalLinks = (
-      db.prepare("SELECT COUNT(*) AS n FROM vault_links").get() as { n: number }
-    ).n;
+    // Count total links via link graph length
+    const graph = await backend.getVaultLinkGraph();
+    totalLinks = graph.length;
   } else if (scope === "project") {
     const prefix = options.projectPath ?? "";
-    totalLinks = (
-      db
-        .prepare("SELECT COUNT(*) AS n FROM vault_links WHERE source_path LIKE ? || '%'")
-        .get(prefix) as { n: number }
-    ).n;
+    totalLinks = await backend.countVaultLinksWithPrefix(prefix);
   } else {
     const days = options.recentDays ?? 30;
     const cutoff = computedAt - days * 86400000;
-    totalLinks = (
-      db
-        .prepare(
-          "SELECT COUNT(*) AS n FROM vault_links WHERE source_path IN (SELECT vault_path FROM vault_files WHERE indexed_at > ?)",
-        )
-        .get(cutoff) as { n: number }
-    ).n;
+    totalLinks = await backend.countVaultLinksAfter(cutoff);
   }
 
   // --- deadLinks ---
   let deadLinks: DeadLink[] = [];
   if (include.includes("dead_links")) {
     if (scope === "full") {
-      deadLinks = (
-        db
-          .prepare(
-            "SELECT source_path, target_raw, line_number FROM vault_links WHERE target_path IS NULL",
-          )
-          .all() as Array<{ source_path: string; target_raw: string; line_number: number }>
-      ).map((r) => ({
-        sourcePath: r.source_path,
-        targetRaw: r.target_raw,
-        lineNumber: r.line_number,
-      }));
+      deadLinks = await backend.getDeadLinksWithLineNumbers();
     } else if (scope === "project") {
       const prefix = options.projectPath ?? "";
-      deadLinks = (
-        db
-          .prepare(
-            "SELECT source_path, target_raw, line_number FROM vault_links WHERE target_path IS NULL AND source_path LIKE ? || '%'",
-          )
-          .all(prefix) as Array<{ source_path: string; target_raw: string; line_number: number }>
-      ).map((r) => ({
-        sourcePath: r.source_path,
-        targetRaw: r.target_raw,
-        lineNumber: r.line_number,
-      }));
+      deadLinks = await backend.getDeadLinksWithPrefix(prefix);
     } else {
       const days = options.recentDays ?? 30;
       const cutoff = computedAt - days * 86400000;
-      deadLinks = (
-        db
-          .prepare(
-            "SELECT source_path, target_raw, line_number FROM vault_links WHERE target_path IS NULL AND source_path IN (SELECT vault_path FROM vault_files WHERE indexed_at > ?)",
-          )
-          .all(cutoff) as Array<{ source_path: string; target_raw: string; line_number: number }>
-      ).map((r) => ({
-        sourcePath: r.source_path,
-        targetRaw: r.target_raw,
-        lineNumber: r.line_number,
-      }));
+      deadLinks = await backend.getDeadLinksAfter(cutoff);
     }
   }
 
@@ -213,30 +135,15 @@ export function zettelHealth(db: Database, opts?: HealthOptions): HealthResult {
   let orphans: string[] = [];
   if (include.includes("orphans")) {
     if (scope === "full") {
-      orphans = (
-        db
-          .prepare("SELECT vault_path FROM vault_health WHERE is_orphan = 1")
-          .all() as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      const orphanRows = await backend.getOrphans();
+      orphans = orphanRows.map(r => r.vaultPath);
     } else if (scope === "project") {
       const prefix = options.projectPath ?? "";
-      orphans = (
-        db
-          .prepare(
-            "SELECT vault_path FROM vault_health WHERE is_orphan = 1 AND vault_path LIKE ? || '%'",
-          )
-          .all(prefix) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      orphans = await backend.getOrphansWithPrefix(prefix);
     } else {
       const days = options.recentDays ?? 30;
       const cutoff = computedAt - days * 86400000;
-      orphans = (
-        db
-          .prepare(
-            "SELECT vh.vault_path FROM vault_health vh JOIN vault_files vf ON vh.vault_path = vf.vault_path WHERE vh.is_orphan = 1 AND vf.indexed_at > ?",
-          )
-          .all(cutoff) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      orphans = await backend.getOrphansAfter(cutoff);
     }
   }
 
@@ -247,48 +154,23 @@ export function zettelHealth(db: Database, opts?: HealthOptions): HealthResult {
     let allEdges: Array<{ source: string; target: string }>;
 
     if (scope === "full") {
-      allNodes = (
-        db.prepare("SELECT vault_path FROM vault_files").all() as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
-
-      allEdges = (
-        db
-          .prepare(
-            "SELECT DISTINCT source_path AS source, target_path AS target FROM vault_links WHERE target_path IS NOT NULL",
-          )
-          .all() as Array<{ source: string; target: string }>
-      );
+      [allNodes, allEdges] = await Promise.all([
+        backend.getAllVaultFilePaths(),
+        backend.getVaultLinkEdges(),
+      ]);
     } else if (scope === "project") {
       const prefix = options.projectPath ?? "";
-      allNodes = (
-        db
-          .prepare("SELECT vault_path FROM vault_files WHERE vault_path LIKE ? || '%'")
-          .all(prefix) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
-
-      allEdges = (
-        db
-          .prepare(
-            "SELECT DISTINCT source_path AS source, target_path AS target FROM vault_links WHERE target_path IS NOT NULL AND source_path LIKE ? || '%'",
-          )
-          .all(prefix) as Array<{ source: string; target: string }>
-      );
+      [allNodes, allEdges] = await Promise.all([
+        backend.getVaultFilePathsWithPrefix(prefix),
+        backend.getVaultLinkEdgesWithPrefix(prefix),
+      ]);
     } else {
       const days = options.recentDays ?? 30;
       const cutoff = computedAt - days * 86400000;
-      allNodes = (
-        db
-          .prepare("SELECT vault_path FROM vault_files WHERE indexed_at > ?")
-          .all(cutoff) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
-
-      allEdges = (
-        db
-          .prepare(
-            "SELECT DISTINCT source_path AS source, target_path AS target FROM vault_links WHERE target_path IS NOT NULL AND source_path IN (SELECT vault_path FROM vault_files WHERE indexed_at > ?)",
-          )
-          .all(cutoff) as Array<{ source: string; target: string }>
-      );
+      [allNodes, allEdges] = await Promise.all([
+        backend.getVaultFilePathsAfter(cutoff),
+        backend.getVaultLinkEdgesAfter(cutoff),
+      ]);
     }
 
     disconnectedClusters = countComponents(allNodes, allEdges);
@@ -298,32 +180,14 @@ export function zettelHealth(db: Database, opts?: HealthOptions): HealthResult {
   let lowConnectivity: string[] = [];
   if (include.includes("low_connectivity")) {
     if (scope === "full") {
-      lowConnectivity = (
-        db
-          .prepare(
-            "SELECT vault_path FROM vault_health WHERE inbound_count + outbound_count <= 1",
-          )
-          .all() as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      lowConnectivity = await backend.getLowConnectivity();
     } else if (scope === "project") {
       const prefix = options.projectPath ?? "";
-      lowConnectivity = (
-        db
-          .prepare(
-            "SELECT vault_path FROM vault_health WHERE inbound_count + outbound_count <= 1 AND vault_path LIKE ? || '%'",
-          )
-          .all(prefix) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      lowConnectivity = await backend.getLowConnectivityWithPrefix(prefix);
     } else {
       const days = options.recentDays ?? 30;
       const cutoff = computedAt - days * 86400000;
-      lowConnectivity = (
-        db
-          .prepare(
-            "SELECT vh.vault_path FROM vault_health vh JOIN vault_files vf ON vh.vault_path = vf.vault_path WHERE vh.inbound_count + vh.outbound_count <= 1 AND vf.indexed_at > ?",
-          )
-          .all(cutoff) as Array<{ vault_path: string }>
-      ).map((r) => r.vault_path);
+      lowConnectivity = await backend.getLowConnectivityAfter(cutoff);
     }
   }
 

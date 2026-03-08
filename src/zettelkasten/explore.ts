@@ -1,4 +1,4 @@
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import { dirname } from "node:path";
 
 export interface ExploreOptions {
@@ -29,59 +29,42 @@ function classifyEdge(source: string, target: string): "sequential" | "associati
   return dirname(source) === dirname(target) ? "sequential" : "associative";
 }
 
-function resolveStart(db: Database, startNote: string): string | null {
-  const inFiles = db
-    .prepare("SELECT vault_path FROM vault_files WHERE vault_path = ?")
-    .get(startNote) as { vault_path: string } | undefined;
-  if (inFiles) return inFiles.vault_path;
+async function resolveStart(backend: StorageBackend, startNote: string): Promise<string | null> {
+  // Try direct lookup first
+  const files = await backend.getVaultFilesByPaths([startNote]);
+  if (files.length > 0) return files[0].vaultPath;
 
-  const alias = db
-    .prepare("SELECT canonical_path FROM vault_aliases WHERE vault_path = ?")
-    .get(startNote) as { canonical_path: string } | undefined;
+  // Try alias lookup
+  const alias = await backend.getVaultAlias(startNote);
   if (!alias) return null;
 
-  const canonical = db
-    .prepare("SELECT vault_path FROM vault_files WHERE vault_path = ?")
-    .get(alias.canonical_path) as { vault_path: string } | undefined;
-  return canonical ? canonical.vault_path : null;
+  const canonical = await backend.getVaultFilesByPaths([alias.canonicalPath]);
+  return canonical.length > 0 ? canonical[0].vaultPath : null;
 }
 
-function getForwardNeighbors(db: Database, path: string): string[] {
-  return (
-    db
-      .prepare(
-        "SELECT target_path FROM vault_links WHERE source_path = ? AND target_path IS NOT NULL",
-      )
-      .all(path) as Array<{ target_path: string }>
-  ).map((r) => r.target_path);
+async function getForwardNeighbors(backend: StorageBackend, path: string): Promise<string[]> {
+  const links = await backend.getLinksFromSource(path);
+  return links.filter(l => l.targetPath !== null).map(l => l.targetPath as string);
 }
 
-function getBackwardNeighbors(db: Database, path: string): string[] {
-  return (
-    db
-      .prepare(
-        "SELECT source_path FROM vault_links WHERE target_path = ?",
-      )
-      .all(path) as Array<{ source_path: string }>
-  ).map((r) => r.source_path);
+async function getBackwardNeighbors(backend: StorageBackend, path: string): Promise<string[]> {
+  const links = await backend.getLinksToTarget(path);
+  return links.map(l => l.sourcePath);
 }
 
-function getFileInfo(
-  db: Database,
+async function getFileInfo(
+  backend: StorageBackend,
   path: string,
-): { title: string | null; inbound: number; outbound: number } {
-  const file = db
-    .prepare("SELECT title FROM vault_files WHERE vault_path = ?")
-    .get(path) as { title: string | null } | undefined;
-
-  const health = db
-    .prepare("SELECT inbound_count, outbound_count FROM vault_health WHERE vault_path = ?")
-    .get(path) as { inbound_count: number; outbound_count: number } | undefined;
+): Promise<{ title: string | null; inbound: number; outbound: number }> {
+  const [files, health] = await Promise.all([
+    backend.getVaultFilesByPaths([path]),
+    backend.getVaultHealth(path),
+  ]);
 
   return {
-    title: file?.title ?? null,
-    inbound: health?.inbound_count ?? 0,
-    outbound: health?.outbound_count ?? 0,
+    title: files[0]?.title ?? null,
+    inbound: health?.inboundCount ?? 0,
+    outbound: health?.outboundCount ?? 0,
   };
 }
 
@@ -89,12 +72,12 @@ function getFileInfo(
  * Traverse the Zettelkasten link graph using BFS, following chains of thought
  * from a starting note up to a configurable depth.
  */
-export function zettelExplore(db: Database, opts: ExploreOptions): ExploreResult {
+export async function zettelExplore(backend: StorageBackend, opts: ExploreOptions): Promise<ExploreResult> {
   const depth = Math.min(Math.max(opts.depth ?? 3, 1), 10);
   const direction = opts.direction ?? "both";
   const mode = opts.mode ?? "all";
 
-  const root = resolveStart(db, opts.startNote);
+  const root = await resolveStart(backend, opts.startNote);
   if (!root) {
     return {
       root: opts.startNote,
@@ -123,13 +106,13 @@ export function zettelExplore(db: Database, opts: ExploreOptions): ExploreResult
     const neighbors: Array<{ neighbor: string; from: string; to: string }> = [];
 
     if (direction === "forward" || direction === "both") {
-      for (const n of getForwardNeighbors(db, current.path)) {
+      for (const n of await getForwardNeighbors(backend, current.path)) {
         neighbors.push({ neighbor: n, from: current.path, to: n });
       }
     }
 
     if (direction === "backward" || direction === "both") {
-      for (const n of getBackwardNeighbors(db, current.path)) {
+      for (const n of await getBackwardNeighbors(backend, current.path)) {
         neighbors.push({ neighbor: n, from: n, to: current.path });
       }
     }
@@ -141,7 +124,6 @@ export function zettelExplore(db: Database, opts: ExploreOptions): ExploreResult
         continue;
       }
 
-      const edgeKey = `${from}|${to}`;
       const alreadyHasEdge = edges.some((e) => e.from === from && e.to === to);
       if (!alreadyHasEdge) {
         edges.push({ from, to, type: edgeType });
@@ -150,7 +132,7 @@ export function zettelExplore(db: Database, opts: ExploreOptions): ExploreResult
       if (!visited.has(neighbor)) {
         visited.add(neighbor);
 
-        const info = getFileInfo(db, neighbor);
+        const info = await getFileInfo(backend, neighbor);
         nodes.push({
           path: neighbor,
           title: info.title,
@@ -169,7 +151,7 @@ export function zettelExplore(db: Database, opts: ExploreOptions): ExploreResult
     .filter((n) => n.outbound > 2)
     .map((n) => n.path);
 
-  const rootInfo = getFileInfo(db, root);
+  const rootInfo = await getFileInfo(backend, root);
   if (rootInfo.outbound > 2) {
     branchingPoints.unshift(root);
   }

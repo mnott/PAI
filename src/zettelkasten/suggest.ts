@@ -1,4 +1,4 @@
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import { deserializeEmbedding, cosineSimilarity } from "../memory/embeddings.js";
 import { basename } from "node:path";
 
@@ -51,85 +51,6 @@ function extractTagsFromChunkTexts(texts: string[]): Set<string> {
   return tags;
 }
 
-function getFileAvgEmbedding(
-  db: Database,
-  projectId: number,
-  path: string,
-): Float32Array | null {
-  const rows = db
-    .prepare(
-      `SELECT embedding FROM memory_chunks
-       WHERE project_id = ? AND path = ? AND embedding IS NOT NULL`,
-    )
-    .all(projectId, path) as Array<{ embedding: Buffer }>;
-
-  if (rows.length === 0) return null;
-
-  const first = deserializeEmbedding(rows[0].embedding);
-  const sum = new Float32Array(first.length);
-  for (const row of rows) {
-    const vec = deserializeEmbedding(row.embedding);
-    for (let i = 0; i < vec.length; i++) {
-      sum[i] += vec[i];
-    }
-  }
-  const avg = new Float32Array(sum.length);
-  for (let i = 0; i < sum.length; i++) {
-    avg[i] = sum[i] / rows.length;
-  }
-  return avg;
-}
-
-function getAllFileEmbeddings(
-  db: Database,
-  projectId: number,
-): Map<string, Float32Array> {
-  const rows = db
-    .prepare(
-      `SELECT path, embedding FROM memory_chunks
-       WHERE project_id = ? AND embedding IS NOT NULL
-       ORDER BY path, start_line
-       LIMIT ?`,
-    )
-    .all(projectId, MAX_CHUNKS) as Array<{ path: string; embedding: Buffer }>;
-
-  const byPath = new Map<string, { sum: Float32Array; count: number }>();
-  for (const row of rows) {
-    const vec = deserializeEmbedding(row.embedding);
-    const entry = byPath.get(row.path);
-    if (!entry) {
-      byPath.set(row.path, { sum: new Float32Array(vec), count: 1 });
-    } else {
-      for (let i = 0; i < vec.length; i++) {
-        entry.sum[i] += vec[i];
-      }
-      entry.count++;
-    }
-  }
-
-  const result = new Map<string, Float32Array>();
-  for (const [path, { sum, count }] of byPath) {
-    const avg = new Float32Array(sum.length);
-    for (let i = 0; i < sum.length; i++) {
-      avg[i] = sum[i] / count;
-    }
-    result.set(path, avg);
-  }
-  return result;
-}
-
-function getFileTags(db: Database, projectId: number, path: string): Set<string> {
-  const rows = db
-    .prepare(
-      `SELECT text FROM memory_chunks
-       WHERE project_id = ? AND path = ?
-       ORDER BY start_line
-       LIMIT 5`,
-    )
-    .all(projectId, path) as Array<{ text: string }>;
-  return extractTagsFromChunkTexts(rows.map((r) => r.text));
-}
-
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 0;
   let intersection = 0;
@@ -166,58 +87,74 @@ function suggestedWikilink(vaultPath: string): string {
  * shared tags, and graph-neighborhood signals into a ranked list of suggestions.
  */
 export async function zettelSuggest(
-  db: Database,
+  backend: StorageBackend,
   opts: SuggestOptions,
 ): Promise<Suggestion[]> {
   const limit = opts.limit ?? 5;
   const excludeLinked = opts.excludeLinked ?? true;
 
   // Step 1: get current outbound links
-  const outboundRows = db
-    .prepare(
-      `SELECT target_path FROM vault_links
-       WHERE source_path = ? AND target_path IS NOT NULL`,
-    )
-    .all(opts.notePath) as Array<{ target_path: string }>;
-  const linkedPaths = new Set(outboundRows.map((r) => r.target_path));
+  const outboundLinks = await backend.getLinksFromSource(opts.notePath);
+  const linkedPaths = new Set(outboundLinks.filter(l => l.targetPath !== null).map(l => l.targetPath as string));
 
-  // Step 2: get source embedding
-  const sourceEmbedding = getFileAvgEmbedding(db, opts.vaultProjectId, opts.notePath);
+  // Step 2a: get all file-level embeddings for semantic scoring
+  const chunkRows = await backend.getChunksWithEmbeddings(opts.vaultProjectId, MAX_CHUNKS);
 
-  // Step 3a: get all file-level embeddings for semantic scoring
-  const allEmbeddings = getAllFileEmbeddings(db, opts.vaultProjectId);
+  const byPath = new Map<string, { sum: Float32Array; count: number }>();
+  for (const row of chunkRows) {
+    const vec = deserializeEmbedding(row.embedding);
+    const entry = byPath.get(row.path);
+    if (!entry) {
+      byPath.set(row.path, { sum: new Float32Array(vec), count: 1 });
+    } else {
+      for (let i = 0; i < vec.length; i++) {
+        entry.sum[i] += vec[i];
+      }
+      entry.count++;
+    }
+  }
+
+  const allEmbeddings = new Map<string, Float32Array>();
+  for (const [path, { sum, count }] of byPath) {
+    const avg = new Float32Array(sum.length);
+    for (let i = 0; i < sum.length; i++) {
+      avg[i] = sum[i] / count;
+    }
+    allEmbeddings.set(path, avg);
+  }
   allEmbeddings.delete(opts.notePath);
 
-  // Step 3b: get source tags
-  const sourceTags = getFileTags(db, opts.vaultProjectId, opts.notePath);
+  // Step 2b: get source embedding
+  const sourceEmbedding = allEmbeddings.get(opts.notePath) ?? null;
 
-  // Step 3c: compute graph neighborhood (friends-of-friends)
-  const friendTargetRows = db
-    .prepare(
-      `SELECT DISTINCT target_path AS path FROM vault_links
-       WHERE source_path IN (
-         SELECT target_path FROM vault_links
-         WHERE source_path = ? AND target_path IS NOT NULL
-       ) AND target_path IS NOT NULL`,
-    )
-    .all(opts.notePath) as Array<{ path: string }>;
+  // Step 2c: get source tags
+  const sourceChunkTexts = await backend.getChunksForPath(opts.vaultProjectId, opts.notePath, 5);
+  const sourceTags = extractTagsFromChunkTexts(sourceChunkTexts.map(r => r.text));
 
-  // For each friend-of-friend, count how many of source's direct friends link to them
+  // Step 2d: compute graph neighborhood (friends-of-friends)
+  const directLinks = await backend.getLinksFromSource(opts.notePath);
+  const directTargets = directLinks.filter(l => l.targetPath !== null).map(l => l.targetPath as string);
+
   const friendLinkCounts = new Map<string, number>();
-  for (const { path } of friendTargetRows) {
-    if (path === opts.notePath) continue;
-    friendLinkCounts.set(path, (friendLinkCounts.get(path) ?? 0) + 1);
+  for (const target of directTargets) {
+    const friendLinks = await backend.getLinksFromSource(target);
+    for (const link of friendLinks) {
+      if (link.targetPath && link.targetPath !== opts.notePath) {
+        friendLinkCounts.set(link.targetPath, (friendLinkCounts.get(link.targetPath) ?? 0) + 1);
+      }
+    }
   }
   const maxFriendLinks = Math.max(1, ...friendLinkCounts.values());
 
   // Get all vault files to enumerate candidates
-  const allFiles = db
-    .prepare("SELECT vault_path, title FROM vault_files")
-    .all() as Array<{ vault_path: string; title: string | null }>;
+  const allFiles = await backend.getAllVaultFiles();
 
   const suggestions: Suggestion[] = [];
 
-  for (const { vault_path, title } of allFiles) {
+  for (const fileRow of allFiles) {
+    const vault_path = fileRow.vaultPath;
+    const title = fileRow.title;
+
     if (vault_path === opts.notePath) continue;
     if (excludeLinked && linkedPaths.has(vault_path)) continue;
 
@@ -233,7 +170,8 @@ export async function zettelSuggest(
     // Tag score (only compute if candidate might have chunks)
     let tagScore = 0;
     if (allEmbeddings.has(vault_path)) {
-      const candidateTags = getFileTags(db, opts.vaultProjectId, vault_path);
+      const candidateChunkTexts = await backend.getChunksForPath(opts.vaultProjectId, vault_path, 5);
+      const candidateTags = extractTagsFromChunkTexts(candidateChunkTexts.map(r => r.text));
       tagScore = jaccardSimilarity(sourceTags, candidateTags);
     }
 

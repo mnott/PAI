@@ -5,15 +5,12 @@
  * returns the individual note nodes and the wikilink edges between them.
  *
  * Optionally enriches with semantic edges computed from cosine similarity
- * between chunk embeddings stored in the SQLite federation database.
- *
- * Backend compatibility:
- *   - SQLite: full support (vault_files + vault_links + chunk embeddings).
- *   - Postgres: observation type enrichment only; graph data requires SQLite.
+ * between chunk embeddings stored in the federation database.
  */
 
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 import type { Pool } from "pg";
+import { deserializeEmbedding } from "../memory/embeddings.js";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
@@ -31,30 +28,19 @@ export interface GraphNeighborhoodParams {
 }
 
 export interface NoteNode {
-  /** Vault-relative path, e.g. "Projects/PAI/idea-2024.md" */
   vault_path: string;
-  /** Note title from frontmatter or H1; falls back to filename */
   title: string;
-  /** Parent folder path derived from vault_path */
   folder: string;
-  /** Per-type observation count breakdown */
   observation_types: Record<string, number>;
-  /** The most common observation type, or "unknown" */
   dominant_type: string;
-  /** Unix timestamp (seconds) of last indexing */
   updated_at: number;
-  /** Word count (0 when not stored in schema) */
   word_count: number;
 }
 
 export interface NoteEdge {
-  /** Source vault_path */
   source: string;
-  /** Target vault_path */
   target: string;
-  /** "wikilink" for explicit Obsidian links, "semantic" for embedding similarity */
   type: "wikilink" | "semantic";
-  /** 1.0 for wikilinks; cosine similarity score for semantic edges */
   weight: number;
 }
 
@@ -67,20 +53,11 @@ export interface GraphNeighborhoodResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Derive the folder portion of a vault path.
- * "Projects/PAI/ideas.md" → "Projects/PAI"
- * "top-level.md" → ""
- */
 function folderFromPath(vaultPath: string): string {
   const lastSlash = vaultPath.lastIndexOf("/");
   return lastSlash === -1 ? "" : vaultPath.slice(0, lastSlash);
 }
 
-/**
- * Compute cosine similarity between two Float32/Float64 arrays.
- * Returns 0 when either vector is all-zeros.
- */
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0;
@@ -93,6 +70,18 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   if (normA === 0 || normB === 0) return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function dominantType(counts: Record<string, number>): string {
+  let dominant = "unknown";
+  let maxCount = 0;
+  for (const [type, n] of Object.entries(counts)) {
+    if (n > maxCount) {
+      maxCount = n;
+      dominant = type;
+    }
+  }
+  return dominant;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,85 +120,15 @@ async function fetchObservationTypes(
   }
 }
 
-function dominantType(counts: Record<string, number>): string {
-  let dominant = "unknown";
-  let maxCount = 0;
-  for (const [type, n] of Object.entries(counts)) {
-    if (n > maxCount) {
-      maxCount = n;
-      dominant = type;
-    }
-  }
-  return dominant;
-}
-
-// ---------------------------------------------------------------------------
-// Semantic edge computation (optional)
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch the mean embedding vector for a vault path by averaging all chunk
- * embeddings stored in the `memory_chunks` table for that file.
- *
- * Returns null when no chunks are found.
- */
-function fetchMeanEmbedding(db: Database, vaultPath: string): number[] | null {
-  type ChunkRow = { embedding: Buffer | null };
-
-  // memory_chunks has a direct `path` column (vault-relative path); no join needed
-  const rows = db
-    .prepare(
-      `SELECT embedding
-       FROM memory_chunks
-       WHERE path = ?
-         AND embedding IS NOT NULL`
-    )
-    .all(vaultPath) as ChunkRow[];
-
-  if (rows.length === 0) return null;
-
-  // Deserialise Float32 binary buffers and accumulate
-  let vecLen = 0;
-  const vectors: Float32Array[] = [];
-
-  for (const row of rows) {
-    if (!row.embedding) continue;
-    const arr = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
-    if (vecLen === 0) vecLen = arr.length;
-    if (arr.length === vecLen) {
-      vectors.push(arr);
-    }
-  }
-
-  if (vectors.length === 0 || vecLen === 0) return null;
-
-  // Mean of all chunk embeddings
-  const mean = new Array<number>(vecLen).fill(0);
-  for (const vec of vectors) {
-    for (let i = 0; i < vecLen; i++) {
-      mean[i] += vec[i];
-    }
-  }
-  for (let i = 0; i < vecLen; i++) {
-    mean[i] /= vectors.length;
-  }
-
-  return mean;
-}
-
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
 export async function handleGraphNeighborhood(
   pool: Pool | null,
-  db: Database | null,
+  backend: StorageBackend,
   params: GraphNeighborhoodParams
 ): Promise<GraphNeighborhoodResult> {
-  if (!db) {
-    throw new Error("graph_neighborhood requires SQLite backend");
-  }
-
   const vaultPaths = params.vault_paths ?? [];
   if (vaultPaths.length === 0) {
     return { nodes: [], edges: [] };
@@ -222,26 +141,11 @@ export async function handleGraphNeighborhood(
   // 1. Fetch node metadata from vault_files
   // -------------------------------------------------------------------------
 
-  type VaultFileRow = {
-    vault_path: string;
-    title: string | null;
-    indexed_at: number;
-  };
+  const fileRows = await backend.getVaultFilesByPaths(vaultPaths);
 
-  // Build a placeholder list for SQLite IN clause
-  const placeholders = vaultPaths.map(() => "?").join(", ");
-  const fileRows = db
-    .prepare(
-      `SELECT vault_path, title, indexed_at
-       FROM vault_files
-       WHERE vault_path IN (${placeholders})`
-    )
-    .all(...vaultPaths) as VaultFileRow[];
-
-  // Index by vault_path for quick lookup
-  const fileIndex = new Map<string, VaultFileRow>();
+  const fileIndex = new Map<string, { vaultPath: string; title: string | null; indexedAt: number }>();
   for (const row of fileRows) {
-    fileIndex.set(row.vault_path, row);
+    fileIndex.set(row.vaultPath, row);
   }
 
   // -------------------------------------------------------------------------
@@ -270,8 +174,8 @@ export async function handleGraphNeighborhood(
       folder: folderFromPath(vp),
       observation_types: obsCounts,
       dominant_type: dominantType(obsCounts),
-      updated_at: fileRow?.indexed_at ?? 0,
-      word_count: 0, // not stored in current schema
+      updated_at: fileRow?.indexedAt ?? 0,
+      word_count: 0,
     };
   });
 
@@ -279,33 +183,17 @@ export async function handleGraphNeighborhood(
   // 4. Fetch wikilink edges between the provided paths
   // -------------------------------------------------------------------------
 
-  // Build a Set for O(1) membership checks
   const pathSet = new Set(vaultPaths);
-
-  type LinkRow = {
-    source_path: string;
-    target_path: string | null;
-    link_type: string;
-  };
-
-  const linkRows = db
-    .prepare(
-      `SELECT source_path, target_path, link_type
-       FROM vault_links
-       WHERE source_path IN (${placeholders})
-         AND target_path IS NOT NULL`
-    )
-    .all(...vaultPaths) as LinkRow[];
+  const linkRows = await backend.getVaultLinksFromPaths(vaultPaths);
 
   const edges: NoteEdge[] = [];
 
   for (const row of linkRows) {
-    // Only include edges where both endpoints are in the cluster
-    if (!row.target_path || !pathSet.has(row.target_path)) continue;
+    if (!row.targetPath || !pathSet.has(row.targetPath)) continue;
 
     edges.push({
-      source: row.source_path,
-      target: row.target_path,
+      source: row.sourcePath,
+      target: row.targetPath,
       type: "wikilink",
       weight: 1.0,
     });
@@ -319,16 +207,37 @@ export async function handleGraphNeighborhood(
     // Fetch mean embeddings for all paths
     const embeddings = new Map<string, number[]>();
     for (const vp of vaultPaths) {
-      const vec = fetchMeanEmbedding(db, vp);
-      if (vec) embeddings.set(vp, vec);
+      const chunkRows = await backend.getChunksForPath(params.project_id, vp);
+      const embRows = chunkRows.filter(r => r.embedding !== null) as Array<{ text: string; embedding: Buffer }>;
+      if (embRows.length === 0) continue;
+
+      let vecLen = 0;
+      const vectors: Float32Array[] = [];
+
+      for (const row of embRows) {
+        const arr = deserializeEmbedding(row.embedding);
+        if (vecLen === 0) vecLen = arr.length;
+        if (arr.length === vecLen) vectors.push(arr);
+      }
+
+      if (vectors.length === 0 || vecLen === 0) continue;
+
+      const mean = new Array<number>(vecLen).fill(0);
+      for (const vec of vectors) {
+        for (let i = 0; i < vecLen; i++) {
+          mean[i] += vec[i];
+        }
+      }
+      for (let i = 0; i < vecLen; i++) {
+        mean[i] /= vectors.length;
+      }
+      embeddings.set(vp, mean);
     }
 
-    // Build a deduplicated edge key set to avoid duplicates
     const existingEdgeKeys = new Set<string>(
       edges.map((e) => `${e.source}|||${e.target}`)
     );
 
-    // Compare all pairs
     const pathsWithEmbeddings = Array.from(embeddings.keys());
     for (let i = 0; i < pathsWithEmbeddings.length; i++) {
       for (let j = i + 1; j < pathsWithEmbeddings.length; j++) {
@@ -341,7 +250,6 @@ export async function handleGraphNeighborhood(
         const sim = cosineSimilarity(vecA, vecB);
         if (sim < semanticThreshold) continue;
 
-        // Skip if a wikilink edge already exists in either direction
         const keyAB = `${pathA}|||${pathB}`;
         const keyBA = `${pathB}|||${pathA}`;
         if (existingEdgeKeys.has(keyAB) || existingEdgeKeys.has(keyBA)) continue;

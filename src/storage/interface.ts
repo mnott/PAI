@@ -44,6 +44,48 @@ export interface FileRow {
 }
 
 // ---------------------------------------------------------------------------
+// Vault types (Obsidian vault file inventory + wikilink graph)
+// ---------------------------------------------------------------------------
+
+export interface VaultFileRow {
+  vaultPath: string;
+  inode: number;
+  device: number;
+  hash: string;
+  title: string | null;
+  indexedAt: number;
+}
+
+export interface VaultAliasRow {
+  vaultPath: string;
+  canonicalPath: string;
+  inode: number;
+  device: number;
+}
+
+export interface VaultLinkRow {
+  sourcePath: string;
+  targetRaw: string;
+  targetPath: string | null;
+  linkType: string;
+  lineNumber: number;
+}
+
+export interface VaultHealthRow {
+  vaultPath: string;
+  inboundCount: number;
+  outboundCount: number;
+  deadLinkCount: number;
+  isOrphan: boolean;
+  computedAt: number;
+}
+
+export interface VaultNameEntry {
+  name: string;
+  vaultPath: string;
+}
+
+// ---------------------------------------------------------------------------
 // Database statistics
 // ---------------------------------------------------------------------------
 
@@ -146,4 +188,127 @@ export interface StorageBackend {
    * Only chunks with stored embeddings are considered.
    */
   searchSemantic(queryEmbedding: Float32Array, opts?: SearchOptions): Promise<SearchResult[]>;
+
+  // -------------------------------------------------------------------------
+  // Vault operations (Obsidian vault file inventory + wikilink graph)
+  // -------------------------------------------------------------------------
+
+  /** Upsert a vault file record. */
+  upsertVaultFile(file: VaultFileRow): Promise<void>;
+  /** Delete a vault file and its associated links/health. */
+  deleteVaultFile(vaultPath: string): Promise<void>;
+  /** Get a vault file by path. */
+  getVaultFile(vaultPath: string): Promise<VaultFileRow | null>;
+  /** Get a vault file by inode+device (dedup). */
+  getVaultFileByInode(inode: number, device: number): Promise<VaultFileRow | null>;
+  /** Get all vault files. */
+  getAllVaultFiles(): Promise<VaultFileRow[]>;
+  /** Get vault files indexed after a timestamp. */
+  getRecentVaultFiles(sinceMs: number): Promise<VaultFileRow[]>;
+  /** Count vault files. */
+  countVaultFiles(): Promise<number>;
+
+  /** Upsert vault aliases (bulk). */
+  upsertVaultAliases(aliases: VaultAliasRow[]): Promise<void>;
+  /** Delete aliases for a canonical path. */
+  deleteVaultAliases(canonicalPath: string): Promise<void>;
+
+  /** Insert links in bulk (replaces all links for given sources). */
+  replaceLinksForSources(sourcePaths: string[], links: VaultLinkRow[]): Promise<void>;
+  /** Get outgoing links from a source path. */
+  getLinksFromSource(sourcePath: string): Promise<VaultLinkRow[]>;
+  /** Get incoming links to a target path. */
+  getLinksToTarget(targetPath: string): Promise<VaultLinkRow[]>;
+  /** Get full link graph (for BFS clustering). Returns source→targets adjacency. */
+  getVaultLinkGraph(): Promise<Array<{ source_path: string; target_path: string }>>;
+
+  /** Upsert vault health records (bulk). */
+  upsertVaultHealth(rows: VaultHealthRow[]): Promise<void>;
+  /** Get health for a single file. */
+  getVaultHealth(vaultPath: string): Promise<VaultHealthRow | null>;
+  /** Get all orphan files. */
+  getOrphans(): Promise<VaultHealthRow[]>;
+  /** Get dead links. */
+  getDeadLinks(): Promise<Array<{ sourcePath: string; targetRaw: string }>>;
+
+  /** Upsert name index entries (bulk). */
+  upsertNameIndex(entries: VaultNameEntry[]): Promise<void>;
+  /** Clear and rebuild name index. */
+  replaceNameIndex(entries: VaultNameEntry[]): Promise<void>;
+  /** Resolve a wikilink name to vault paths. */
+  resolveVaultName(name: string): Promise<string[]>;
+  /** Search vault_name_index by partial name match. */
+  searchVaultNameIndex(query: string, limit?: number): Promise<string[]>;
+
+  /** Get vault files for a specific set of paths. */
+  getVaultFilesByPaths(paths: string[]): Promise<VaultFileRow[]>;
+
+  /** Get vault files for a specific set of paths filtered by minimum indexed_at. */
+  getVaultFilesByPathsAfter(paths: string[], sinceMs: number): Promise<VaultFileRow[]>;
+
+  /** Get all vault links where source_path is in the given list. */
+  getVaultLinksFromPaths(sourcePaths: string[]): Promise<VaultLinkRow[]>;
+
+  // -------------------------------------------------------------------------
+  // Memory chunk reading (for zettelkasten embedding-based tools)
+  // -------------------------------------------------------------------------
+
+  /** Get raw chunk rows (id, path, text, embedding) for a project, with embeddings only. */
+  getChunksWithEmbeddings(projectId: number, limit: number): Promise<Array<{ path: string; text: string; embedding: Buffer }>>;
+
+  /** Get chunk rows for a specific path in a project. */
+  getChunksForPath(projectId: number, path: string, limit?: number): Promise<Array<{ text: string; embedding: Buffer | null }>>;
+
+  /** Search memory_chunks text content by keyword (LIKE match). */
+  searchChunksByText(projectId: number, query: string, limit: number): Promise<Array<{ path: string; text: string }>>;
+
+  // -------------------------------------------------------------------------
+  // Vault health scoped queries (for zettelHealth() with scope filters)
+  // -------------------------------------------------------------------------
+
+  /** Count vault files matching a path prefix (project scope). */
+  countVaultFilesWithPrefix(prefix: string): Promise<number>;
+  /** Count vault files indexed after a timestamp (recent scope). */
+  countVaultFilesAfter(sinceMs: number): Promise<number>;
+
+  /** Count vault links where source_path matches a prefix. */
+  countVaultLinksWithPrefix(prefix: string): Promise<number>;
+  /** Count vault links where source_path is in the recent vault files. */
+  countVaultLinksAfter(sinceMs: number): Promise<number>;
+
+  /** Get dead links scoped to a path prefix. */
+  getDeadLinksWithPrefix(prefix: string): Promise<Array<{ sourcePath: string; targetRaw: string; lineNumber: number }>>;
+  /** Get dead links for vault files indexed after a timestamp. */
+  getDeadLinksAfter(sinceMs: number): Promise<Array<{ sourcePath: string; targetRaw: string; lineNumber: number }>>;
+  /** Get all dead links with line number. */
+  getDeadLinksWithLineNumbers(): Promise<Array<{ sourcePath: string; targetRaw: string; lineNumber: number }>>;
+
+  /** Get orphan vault_paths scoped to a prefix. */
+  getOrphansWithPrefix(prefix: string): Promise<string[]>;
+  /** Get orphan vault_paths for recently indexed files. */
+  getOrphansAfter(sinceMs: number): Promise<string[]>;
+
+  /** Get vault_paths with low connectivity (inbound + outbound <= 1). */
+  getLowConnectivity(): Promise<string[]>;
+  /** Get vault_paths with low connectivity scoped to a prefix. */
+  getLowConnectivityWithPrefix(prefix: string): Promise<string[]>;
+  /** Get vault_paths with low connectivity for recently indexed files. */
+  getLowConnectivityAfter(sinceMs: number): Promise<string[]>;
+
+  /** Get all vault file paths (for disconnected component analysis). */
+  getAllVaultFilePaths(): Promise<string[]>;
+  /** Get vault file paths with a prefix. */
+  getVaultFilePathsWithPrefix(prefix: string): Promise<string[]>;
+  /** Get vault file paths indexed after a timestamp. */
+  getVaultFilePathsAfter(sinceMs: number): Promise<string[]>;
+
+  /** Get distinct source/target pairs for connected component analysis. */
+  getVaultLinkEdges(): Promise<Array<{ source: string; target: string }>>;
+  /** Get vault link edges where source_path matches prefix. */
+  getVaultLinkEdgesWithPrefix(prefix: string): Promise<Array<{ source: string; target: string }>>;
+  /** Get vault link edges for recently indexed sources. */
+  getVaultLinkEdgesAfter(sinceMs: number): Promise<Array<{ source: string; target: string }>>;
+
+  /** Alias resolution: look up canonical path for a vault alias path. */
+  getVaultAlias(vaultPath: string): Promise<{ canonicalPath: string } | null>;
 }

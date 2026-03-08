@@ -23,7 +23,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { openRegistry } from "../registry/db.js";
 import { openFederation } from "../memory/db.js";
+import { SQLiteBackend } from "../storage/sqlite.js";
 import { loadConfig } from "../daemon/config.js";
+import type { StorageBackend } from "../storage/interface.js";
 import {
   toolMemorySearch,
   toolMemoryGet,
@@ -53,6 +55,7 @@ import { Pool } from "pg";
 
 let _registryDb: ReturnType<typeof openRegistry> | null = null;
 let _federationDb: ReturnType<typeof openFederation> | null = null;
+let _storageBackend: StorageBackend | null = null;
 let _pgPool: Pool | null = null;
 
 function getRegistryDb() {
@@ -63,6 +66,13 @@ function getRegistryDb() {
 function getFederationDb() {
   if (!_federationDb) _federationDb = openFederation();
   return _federationDb;
+}
+
+function getStorageBackend(): StorageBackend {
+  if (!_storageBackend) {
+    _storageBackend = new SQLiteBackend(getFederationDb());
+  }
+  return _storageBackend;
 }
 
 function getPgPool(): Pool | null {
@@ -640,7 +650,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Link type filter: 'sequential' (same-folder), 'associative' (cross-folder), or 'all'. Default: all."),
     },
     async (args) => {
-      const result = await toolZettelExplore(getFederationDb(), args);
+      const result = await toolZettelExplore(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
@@ -678,7 +688,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Specific checks to include. Omit to run all checks."),
     },
     async (args) => {
-      const result = await toolZettelHealth(getFederationDb(), args);
+      const result = await toolZettelHealth(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
@@ -720,7 +730,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Minimum link hops away from the reference note. Default: 3."),
     },
     async (args) => {
-      const result = await toolZettelSurprise(getFederationDb(), args);
+      const result = await toolZettelSurprise(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
@@ -756,7 +766,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Exclude notes already linked from this note. Default: true."),
     },
     async (args) => {
-      const result = await toolZettelSuggest(getFederationDb(), args);
+      const result = await toolZettelSuggest(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
@@ -794,7 +804,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Maximum number of relevant notes to retrieve. Default: 10."),
     },
     async (args) => {
-      const result = await toolZettelConverse(getFederationDb(), args);
+      const result = await toolZettelConverse(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
@@ -838,7 +848,7 @@ export async function startMcpServer(): Promise<void> {
         .describe("Minimum cosine similarity to group notes into a cluster [0,1]. Default: 0.7."),
     },
     async (args) => {
-      const result = await toolZettelThemes(getFederationDb(), args);
+      const result = await toolZettelThemes(getStorageBackend(), args);
       return {
         content: result.content.map((c) => ({ type: c.type as "text", text: c.text })),
         isError: result.isError,
