@@ -149,22 +149,20 @@ function dominantType(counts: Record<string, number>): string {
 
 /**
  * Fetch the mean embedding vector for a vault path by averaging all chunk
- * embeddings stored in the `chunks` table for that file.
+ * embeddings stored in the `memory_chunks` table for that file.
  *
  * Returns null when no chunks are found.
  */
 function fetchMeanEmbedding(db: Database, vaultPath: string): number[] | null {
   type ChunkRow = { embedding: Buffer | null };
 
-  // chunks table links to files via file_id; vault_files uses vault_path as PK
-  // The memory indexer stores vault chunks with file_path = vault_path
+  // memory_chunks has a direct `path` column (vault-relative path); no join needed
   const rows = db
     .prepare(
-      `SELECT c.embedding
-       FROM chunks c
-       JOIN files f ON c.file_id = f.id
-       WHERE f.file_path = ?
-         AND c.embedding IS NOT NULL`
+      `SELECT embedding
+       FROM memory_chunks
+       WHERE path = ?
+         AND embedding IS NOT NULL`
     )
     .all(vaultPath) as ChunkRow[];
 

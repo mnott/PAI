@@ -233,6 +233,15 @@ export function loadConfig(): PaiDaemonConfig {
     return { ...DEFAULTS };
   }
 
+  // Compat: config.json may use "obsidianVaultPath" (legacy key) instead of "vaultPath".
+  // Map it across so the daemon picks it up correctly.
+  if (parsed.obsidianVaultPath && !parsed.vaultPath) {
+    parsed.vaultPath = parsed.obsidianVaultPath;
+    process.stderr.write(
+      `[pai-daemon] Config: mapped obsidianVaultPath → vaultPath (${parsed.vaultPath})\n`
+    );
+  }
+
   return deepMerge(DEFAULTS, parsed);
 }
 
