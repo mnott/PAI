@@ -310,8 +310,8 @@ fi
 
 # Output the statusline
 # LINE 1 - Greeting (adaptive: drop CC version when narrow, shorten further if very narrow)
-line1_full="${EMOJI_WAVE} ${DA_DISPLAY_COLOR}\"${DA_NAME} here, ready to go...\"${RESET} ${MODEL_PURPLE}Running CC ${cc_version}${RESET}${LINE1_PRIMARY} with ${MODEL_PURPLE}${EMOJI_BRAIN} ${model_name}${RESET}${LINE1_PRIMARY} in ${DIR_COLOR}${EMOJI_FOLDER} ${dir_name}${BRIGHT_CYAN}${session_suffix}${RESET}"
-line1_medium="${EMOJI_WAVE} ${DA_DISPLAY_COLOR}\"${DA_NAME}\"${RESET}${LINE1_PRIMARY} ${MODEL_PURPLE}${EMOJI_BRAIN} ${model_name}${RESET}${LINE1_PRIMARY} in ${DIR_COLOR}${EMOJI_FOLDER} ${dir_name}${BRIGHT_CYAN}${session_suffix}${RESET}"
+line1_full="${EMOJI_WAVE} ${DA_DISPLAY_COLOR}${DA_NAME}${RESET} ${MODEL_PURPLE}CC ${cc_version}${RESET}${LINE1_PRIMARY} ${MODEL_PURPLE}${EMOJI_BRAIN} ${model_name}${RESET}${LINE1_PRIMARY} in ${DIR_COLOR}${EMOJI_FOLDER} ${dir_name}${BRIGHT_CYAN}${session_suffix}${RESET}"
+line1_medium="${EMOJI_WAVE} ${DA_DISPLAY_COLOR}${DA_NAME}${RESET} ${MODEL_PURPLE}${EMOJI_BRAIN} ${model_name}${RESET}${LINE1_PRIMARY} in ${DIR_COLOR}${EMOJI_FOLDER} ${dir_name}${BRIGHT_CYAN}${session_suffix}${RESET}"
 line1_short="${EMOJI_WAVE} ${MODEL_PURPLE}${EMOJI_BRAIN} ${model_name}${RESET}${LINE1_PRIMARY} ${DIR_COLOR}${EMOJI_FOLDER} ${dir_name}${BRIGHT_CYAN}${session_suffix}${RESET}"
 
 # Pick line 1 format based on width (plain-text lengths: full~85, medium~45, short~25)
@@ -330,13 +330,125 @@ if [ -n "$mcp_line2" ]; then
     printf "${LINE2_PRIMARY}          ${RESET}${mcp_line2}${RESET}\n"
 fi
 
-# Auto-compact indicator: detect CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var
-autocompact_suffix=""
-if [ -n "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" ]; then
-    autocompact_suffix=" ${BRIGHT_CYAN}[auto-compact: ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%%]${RESET}"
+
+# Fetch OAuth usage (5-hour current + 7-day weekly) with caching
+usage_cache="/tmp/claude/statusline-usage-cache.json"
+usage_cache_ttl=60  # seconds
+usage_suffix=""
+
+_fetch_usage() {
+    # Try to get OAuth token from macOS Keychain
+    local token=""
+    token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    [ -z "$token" ] && return
+
+    mkdir -p /tmp/claude
+    local response
+    response=$(curl -sf --max-time 3 \
+        -H "Authorization: Bearer $token" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+    [ -n "$response" ] && echo "$response" > "$usage_cache"
+}
+
+# Use cache if fresh, otherwise fetch in background
+if [ -f "$usage_cache" ]; then
+    cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
+    if [ "$cache_age" -gt "$usage_cache_ttl" ]; then
+        _fetch_usage &
+    fi
+else
+    _fetch_usage &
 fi
 
-# LINE 3 - Context meter (from Claude Code's JSON input)
+# Read cached usage data
+if [ -f "$usage_cache" ]; then
+    five_hour=$(jq -r '.five_hour.utilization // 0' "$usage_cache" 2>/dev/null)
+    seven_day=$(jq -r '.seven_day.utilization // 0' "$usage_cache" 2>/dev/null)
+    five_reset=$(jq -r '.five_hour.resets_at // empty' "$usage_cache" 2>/dev/null)
+    seven_reset=$(jq -r '.seven_day.resets_at // empty' "$usage_cache" 2>/dev/null)
+
+    # Round to integers
+    five_hour_int=$(printf "%.0f" "$five_hour" 2>/dev/null || echo 0)
+    seven_day_int=$(printf "%.0f" "$seven_day" 2>/dev/null || echo 0)
+
+    # Format reset times as HH:MM (local time)
+    five_reset_fmt=""
+    seven_reset_fmt=""
+    seven_reset_epoch=0
+    if [ -n "$five_reset" ]; then
+        five_reset_fmt=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$five_reset" | cut -c1-19)" "+%H:%M" 2>/dev/null || date -d "$five_reset" "+%H:%M" 2>/dev/null || echo "")
+    fi
+    if [ -n "$seven_reset" ]; then
+        seven_reset_fmt=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%a %H:%M" 2>/dev/null || date -d "$seven_reset" "+%a %H:%M" 2>/dev/null || echo "")
+        seven_reset_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$seven_reset" "+%s" 2>/dev/null || echo 0)
+    fi
+
+    # Color based on utilization: green < 50%, yellow 50-75%, red > 75%
+    _usage_color() {
+        local pct=$1
+        if [ "$pct" -gt 75 ] 2>/dev/null; then echo "$BRIGHT_RED"
+        elif [ "$pct" -gt 50 ] 2>/dev/null; then echo "$BRIGHT_YELLOW"
+        else echo "$BRIGHT_GREEN"; fi
+    }
+
+    five_color=$(_usage_color "$five_hour_int")
+    seven_color=$(_usage_color "$seven_day_int")
+
+    # Budget pace indicator for 7-day window
+    # Compare actual usage vs linear expected usage based on elapsed time
+    pace_dot=""
+    if [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null; then
+        now_epoch=$(date +%s)
+        window_secs=$((7 * 86400))
+        remaining_secs=$((seven_reset_epoch - now_epoch))
+        [ "$remaining_secs" -lt 0 ] && remaining_secs=0
+        elapsed_secs=$((window_secs - remaining_secs))
+        # Expected usage if spending linearly: elapsed/total * 100
+        expected_pct=$(( elapsed_secs * 100 / window_secs ))
+        # Daily pace: actual spend per day vs budget (100/7 ≈ 14%/day)
+        elapsed_days_x10=$((elapsed_secs * 10 / 86400))
+        [ "$elapsed_days_x10" -lt 1 ] && elapsed_days_x10=1
+        spend_per_day=$((seven_day_int * 10 / elapsed_days_x10))
+        budget_per_day=14  # 100/7 ≈ 14%
+        # Color: green = under budget, orange = near budget, red = over budget
+        overspend=$((spend_per_day - budget_per_day))
+        if [ "$overspend" -le -3 ] 2>/dev/null; then
+            pace_color="$BRIGHT_GREEN"           # well under budget
+        elif [ "$overspend" -le 2 ] 2>/dev/null; then
+            pace_color="$BRIGHT_ORANGE"          # near budget
+        else
+            pace_color="$BRIGHT_RED"             # over budget
+        fi
+        pace_dot="${pace_color}${spend_per_day}%% / ${budget_per_day}%%${RESET}"
+    fi
+
+    # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: 29% → Fr. 08:00
+    five_label="5h: ${five_hour_int}%%"
+    [ -n "$five_reset_fmt" ] && five_label="${five_label} → ${five_reset_fmt}"
+    seven_label="7d: ${seven_day_int}%%"
+    [ -n "$seven_reset_fmt" ] && seven_label="${seven_label} → ${seven_reset_fmt}"
+
+    usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${five_color}${five_label}${RESET}"
+    [ -n "$pace_dot" ] && usage_suffix="${usage_suffix} ${SEPARATOR_COLOR}│${RESET} ${LINE3_PRIMARY}1d:${RESET} ${pace_dot}"
+    usage_suffix="${usage_suffix} ${SEPARATOR_COLOR}│${RESET} ${seven_color}${seven_label}${RESET}"
+fi
+
+# LINE 3 - Context meter + usage limits
+# Auto-compact remaining: how much context left until compaction triggers
+ac_threshold="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-80}"
+ac_remaining=$((ac_threshold - context_pct))
+[ "$ac_remaining" -lt 0 ] && ac_remaining=0
+# Color the remaining %: red ≤5, yellow ≤15, green otherwise
+if [ "$ac_remaining" -le 5 ] 2>/dev/null; then
+    ac_color="$BRIGHT_RED"
+elif [ "$ac_remaining" -le 15 ] 2>/dev/null; then
+    ac_color="$BRIGHT_YELLOW"
+else
+    ac_color="$BRIGHT_GREEN"
+fi
+ac_suffix=" ${ac_color}(${ac_remaining}%%)${RESET}"
+
 if [ "$context_pct" -gt 0 ] 2>/dev/null; then
     # Color based on usage: green < 50%, yellow 50-75%, red > 75%
     if [ $context_pct -gt 75 ]; then
@@ -347,7 +459,7 @@ if [ "$context_pct" -gt 0 ] 2>/dev/null; then
         ctx_color="$BRIGHT_GREEN"
     fi
 
-    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${ctx_color}${context_used_k}K${RESET}${LINE3_PRIMARY} / ${context_max_k}K${autocompact_suffix}${RESET}\n"
+    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${ctx_color}${context_used_k}K${RESET}${LINE3_PRIMARY} / ${context_max_k}K${ac_suffix}${usage_suffix}${RESET}\n"
 else
-    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${LINE3_ACCENT}...${autocompact_suffix}${RESET}\n"
+    printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${LINE3_ACCENT}...${ac_suffix}${usage_suffix}${RESET}\n"
 fi
