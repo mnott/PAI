@@ -73,6 +73,25 @@ export default class PaiKnowledgePlugin extends Plugin {
       },
     });
 
+    // 5c. Discover latent ideas
+    this.addCommand({
+      id: "latent-ideas",
+      name: "Discover latent ideas",
+      callback: async () => {
+        // Activate the view first, then enter latent ideas mode
+        await this.activateView();
+        setTimeout(() => {
+          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_PAI_GRAPH);
+          if (leaves.length > 0) {
+            const view = leaves[0].view;
+            if (view instanceof PaiGraphView) {
+              view.enterLatentIdeasMode();
+            }
+          }
+        }, 300);
+      },
+    });
+
     // 6. Register settings tab
     this.addSettingTab(new PaiSettingsTab(this.app, this));
 

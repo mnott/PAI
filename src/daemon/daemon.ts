@@ -622,6 +622,36 @@ async function dispatchTool(
       );
     }
 
+    case "graph_latent_ideas": {
+      // graph_latent_ideas surfaces recurring themes that have no dedicated note yet.
+      // Reuses zettelThemes clustering then filters out clusters with matching titles.
+      const { handleGraphLatentIdeas } = await import("../graph/latent-ideas.js");
+
+      if (!vaultDb) {
+        throw new Error("graph_latent_ideas requires vault database (federation.db) — could not be opened at startup");
+      }
+
+      return handleGraphLatentIdeas(
+        vaultDb,
+        p as Parameters<typeof handleGraphLatentIdeas>[1]
+      );
+    }
+
+    case "idea_materialize": {
+      // idea_materialize writes a new Markdown note to the vault filesystem.
+      // Requires daemonConfig.vaultPath to locate the vault root.
+      const { handleIdeaMaterialize } = await import("../graph/latent-ideas.js");
+
+      if (!daemonConfig.vaultPath) {
+        throw new Error("idea_materialize requires vaultPath to be configured in the daemon config");
+      }
+
+      return handleIdeaMaterialize(
+        p as Parameters<typeof handleIdeaMaterialize>[0],
+        daemonConfig.vaultPath
+      );
+    }
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }

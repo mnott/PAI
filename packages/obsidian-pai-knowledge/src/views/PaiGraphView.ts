@@ -28,6 +28,9 @@ import type {
   GraphNeighborhoodResult,
   GraphNoteContextResult,
   GraphTraceResult,
+  GraphLatentIdeasResult,
+  IdeaMaterializeResult,
+  LatentIdea,
   NoteNode,
   TraceEntry,
 } from "../client/types";
@@ -44,6 +47,11 @@ export class PaiGraphView extends ItemView {
   private traceMode = false;
   /** The current trace query, set when entering trace mode */
   private traceQuery = "";
+
+  /** When true, the view is showing the latent ideas list panel */
+  private latentIdeasMode = false;
+  /** Cached latent ideas panel element */
+  private latentIdeasPanelEl: HTMLElement | null = null;
 
   // DOM refs
   private toolbarEl: HTMLElement | null = null;
@@ -196,7 +204,21 @@ export class PaiGraphView extends ItemView {
       }
     });
 
-    if (this.traceMode) {
+    if (this.latentIdeasMode) {
+      // In latent ideas mode: show "Back to Graph" and a label
+      const backToGraphBtn = this.toolbarEl.createEl("button", {
+        cls: "pai-back-btn",
+        text: "← Graph",
+      });
+      backToGraphBtn.addEventListener("click", () => {
+        this.exitLatentIdeasMode();
+      });
+
+      this.toolbarEl.createSpan({
+        cls: "pai-ideas-label",
+        text: "Latent Ideas",
+      });
+    } else if (this.traceMode) {
       // In trace mode: show "Back to Graph" and the query label
       const backToGraphBtn = this.toolbarEl.createEl("button", {
         cls: "pai-back-btn",
@@ -225,6 +247,16 @@ export class PaiGraphView extends ItemView {
       traceBtn.setAttribute("title", "Trace an idea through time");
       traceBtn.addEventListener("click", () => {
         this.promptAndEnterTraceMode();
+      });
+
+      // Latent Ideas button — always visible in graph mode
+      const ideasBtn = this.toolbarEl.createEl("button", {
+        cls: "pai-ideas-btn",
+        text: "Ideas",
+      });
+      ideasBtn.setAttribute("title", "Discover latent ideas not yet written as notes");
+      ideasBtn.addEventListener("click", () => {
+        this.enterLatentIdeasMode();
       });
     }
   }
@@ -434,6 +466,218 @@ export class PaiGraphView extends ItemView {
     btn.addEventListener("click", () => {
       this.app.workspace.openLinkText(vaultPath, "", false);
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 5: Latent Ideas mode
+  // ---------------------------------------------------------------------------
+
+  /** Enter latent ideas mode: fetch and display ideas list. */
+  async enterLatentIdeasMode(): Promise<void> {
+    this.latentIdeasMode = true;
+    this.renderToolbar();
+    await this.loadAndRenderLatentIdeas();
+  }
+
+  /** Exit latent ideas mode and return to the current navigation level. */
+  private exitLatentIdeasMode(): void {
+    this.latentIdeasMode = false;
+    this.removeLatentIdeasPanel();
+    this.renderToolbar();
+    // Re-render the graph at the current navigation level
+    this.onNavigationChange();
+  }
+
+  /** Fetch graph_latent_ideas and render the ideas panel. */
+  private async loadAndRenderLatentIdeas(): Promise<void> {
+    this.showLoading("Discovering latent ideas…");
+
+    let result: GraphLatentIdeasResult;
+    try {
+      result = await this.plugin.client.call<GraphLatentIdeasResult>(
+        "graph_latent_ideas",
+        {
+          project_id: this.plugin.settings.projectId ?? 0,
+          min_cluster_size: this.plugin.settings.minClusterSize,
+          lookback_days: this.plugin.settings.lookbackDays ?? 180,
+          similarity_threshold: this.plugin.settings.similarityThreshold,
+          max_ideas: 15,
+        }
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.showError("Failed to load latent ideas", message, "pai daemon start");
+      return;
+    }
+
+    this.hideOverlay();
+
+    if (result.ideas.length === 0) {
+      this.showError(
+        "No latent ideas found",
+        `All ${result.total_clusters_analyzed} clusters already have dedicated notes.`,
+        "Try extending the lookback window or lowering the minimum cluster size."
+      );
+      return;
+    }
+
+    this.renderLatentIdeasPanel(result);
+  }
+
+  /** Render the latent ideas list panel (replaces graph canvas content). */
+  private renderLatentIdeasPanel(result: GraphLatentIdeasResult): void {
+    this.removeLatentIdeasPanel();
+    if (!this.canvasEl) return;
+
+    const panel = this.canvasEl.createDiv({ cls: "pai-ideas-panel" });
+    this.latentIdeasPanelEl = panel;
+
+    // Header
+    const header = panel.createDiv({ cls: "pai-ideas-header" });
+    header.createEl("h3", { text: "Latent Ideas" });
+    header.createEl("p", {
+      cls: "pai-ideas-subtitle",
+      text: `${result.ideas.length} recurring themes with no dedicated note yet (${result.materialized_count} already materialized)`,
+    });
+
+    // List
+    const list = panel.createDiv({ cls: "pai-ideas-list" });
+
+    for (const idea of result.ideas) {
+      const card = list.createDiv({ cls: "pai-idea-card" });
+
+      // Card header row
+      const cardHeader = card.createDiv({ cls: "pai-idea-card-header" });
+      cardHeader.createEl("span", {
+        cls: "pai-idea-label",
+        text: idea.suggested_title,
+      });
+
+      // Confidence bar
+      const confBar = cardHeader.createDiv({ cls: "pai-idea-confidence" });
+      const confFill = confBar.createDiv({ cls: "pai-idea-confidence-fill" });
+      confFill.style.width = `${Math.round(idea.confidence * 100)}%`;
+      confBar.setAttribute("title", `Confidence: ${Math.round(idea.confidence * 100)}%`);
+
+      // Meta row
+      const meta = card.createDiv({ cls: "pai-idea-meta" });
+      meta.createEl("span", {
+        cls: "pai-idea-meta-item",
+        text: `${idea.size} notes`,
+      });
+      meta.createEl("span", {
+        cls: "pai-idea-meta-item",
+        text: `${idea.sessions_count} session${idea.sessions_count !== 1 ? "s" : ""}`,
+      });
+      if (idea.suggested_folder) {
+        meta.createEl("span", {
+          cls: "pai-idea-meta-item pai-idea-folder",
+          text: idea.suggested_folder,
+        });
+      }
+
+      // Source notes preview (first 3)
+      const preview = card.createDiv({ cls: "pai-idea-sources" });
+      const shown = idea.source_notes.slice(0, 3);
+      for (const note of shown) {
+        preview.createEl("span", {
+          cls: "pai-idea-source-note",
+          text: note.title,
+        });
+      }
+      if (idea.source_notes.length > 3) {
+        preview.createEl("span", {
+          cls: "pai-idea-source-more",
+          text: `+${idea.source_notes.length - 3} more`,
+        });
+      }
+
+      // Action row
+      const actions = card.createDiv({ cls: "pai-idea-actions" });
+
+      // "Show in graph" button — switches to Level 2 with cluster notes
+      const showBtn = actions.createEl("button", {
+        cls: "pai-idea-show-btn",
+        text: "Show in graph",
+      });
+      showBtn.addEventListener("click", () => {
+        this.exitLatentIdeasMode();
+        // Synthesize a ClusterNode from the idea and navigate to Level 2
+        const syntheticCluster: ClusterNode = {
+          id: idea.id,
+          label: idea.label,
+          size: idea.size,
+          folder_diversity: 0,
+          avg_recency: 0,
+          linked_ratio: 0,
+          dominant_observation_type: "unknown",
+          observation_type_counts: {},
+          suggest_index_note: true,
+          has_idea_note: false,
+          notes: idea.source_notes.map((n) => ({
+            vault_path: n.vault_path,
+            title: n.title,
+            indexed_at: 0,
+          })),
+        };
+        this.state.pushCluster(syntheticCluster);
+        this.onNavigationChange();
+      });
+
+      // "Materialize" button — prompts for title and creates the note
+      const materializeBtn = actions.createEl("button", {
+        cls: "pai-idea-materialize-btn",
+        text: "Materialize",
+      });
+      materializeBtn.addEventListener("click", () => {
+        this.promptAndMaterializeIdea(idea);
+      });
+    }
+  }
+
+  /** Prompt the user for a title and create a note for the given idea. */
+  async promptAndMaterializeIdea(idea: LatentIdea): Promise<void> {
+    const title = window.prompt(
+      `Create a note for "${idea.label}"\n\nEnter a title for the new note:`,
+      idea.suggested_title
+    );
+    if (!title || !title.trim()) return;
+
+    const folder = window.prompt(
+      "Choose a folder (vault-relative, leave blank for vault root):",
+      idea.suggested_folder
+    );
+    if (folder === null) return; // User cancelled
+
+    try {
+      const result = await this.plugin.client.call<IdeaMaterializeResult>(
+        "idea_materialize",
+        {
+          idea_label: idea.label,
+          title: title.trim(),
+          folder: folder.trim(),
+          source_paths: idea.source_notes.map((n) => n.vault_path),
+          project_id: this.plugin.settings.projectId ?? 0,
+        }
+      );
+
+      // Open the newly created note in Obsidian
+      await this.app.workspace.openLinkText(result.vault_path, "", true);
+
+      // Exit ideas mode and show success
+      this.exitLatentIdeasMode();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      window.alert(`Failed to create note: ${message}`);
+    }
+  }
+
+  /** Remove the latent ideas panel from the DOM. */
+  private removeLatentIdeasPanel(): void {
+    if (this.latentIdeasPanelEl) {
+      this.latentIdeasPanelEl.remove();
+      this.latentIdeasPanelEl = null;
+    }
   }
 
   // ---------------------------------------------------------------------------

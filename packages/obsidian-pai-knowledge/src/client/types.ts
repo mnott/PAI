@@ -235,6 +235,83 @@ export interface GraphTraceResult {
 }
 
 // ---------------------------------------------------------------------------
+// graph_latent_ideas (Phase 5)
+// ---------------------------------------------------------------------------
+
+export interface GraphLatentIdeasParams {
+  /** Numeric PAI project ID */
+  project_id: number;
+  /** Minimum notes in a cluster (default: 3) */
+  min_cluster_size?: number;
+  /** Cap on returned ideas (default: 15) */
+  max_ideas?: number;
+  /** How far back to look in days (default: 180) */
+  lookback_days?: number;
+  /** Cosine similarity clustering threshold (default: 0.65) */
+  similarity_threshold?: number;
+}
+
+/** A source note contributing to a latent idea */
+export interface LatentIdeaSourceNote {
+  vault_path: string;
+  title: string;
+  /** How strongly this note relates to the theme (0-1) */
+  relevance: number;
+}
+
+/** A latent idea: a recurring theme with no dedicated note yet */
+export interface LatentIdea {
+  id: number;
+  /** Auto-generated cluster label */
+  label: string;
+  /** Number of notes touching this theme */
+  size: number;
+  /** 0-1, how likely this is a real coherent idea */
+  confidence: number;
+  /** Notes that contribute to this theme */
+  source_notes: LatentIdeaSourceNote[];
+  /** Cleaned-up version of label for a potential note title */
+  suggested_title: string;
+  /** Most common folder among source notes */
+  suggested_folder: string;
+  /** Number of distinct session date-folders touching this theme */
+  sessions_count: number;
+}
+
+/** Full response from graph_latent_ideas */
+export interface GraphLatentIdeasResult {
+  ideas: LatentIdea[];
+  total_clusters_analyzed: number;
+  /** How many clusters already have a matching note (excluded from results) */
+  materialized_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// idea_materialize (Phase 5)
+// ---------------------------------------------------------------------------
+
+export interface IdeaMaterializeParams {
+  idea_label: string;
+  /** User-chosen title for the new note */
+  title: string;
+  /** Vault-relative folder path where the note should be created */
+  folder: string;
+  /** Vault-relative paths of source notes to link from the new note */
+  source_paths: string[];
+  project_id: number;
+}
+
+/** Result from idea_materialize */
+export interface IdeaMaterializeResult {
+  /** Vault-relative path of the created note */
+  vault_path: string;
+  /** Generated markdown content */
+  content: string;
+  /** Number of wikilinks inserted */
+  links_created: number;
+}
+
+// ---------------------------------------------------------------------------
 // Convenience union of all supported method → param/result pairs.
 // Extend this as more daemon methods are implemented.
 // ---------------------------------------------------------------------------
@@ -255,6 +332,14 @@ export type DaemonMethodMap = {
   graph_trace: {
     params: GraphTraceParams;
     result: GraphTraceResult;
+  };
+  graph_latent_ideas: {
+    params: GraphLatentIdeasParams;
+    result: GraphLatentIdeasResult;
+  };
+  idea_materialize: {
+    params: IdeaMaterializeParams;
+    result: IdeaMaterializeResult;
   };
 };
 
