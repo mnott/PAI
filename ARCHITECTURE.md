@@ -95,15 +95,22 @@ docker run -d \
 pai setup
 ```
 
-The interactive wizard walks through seven steps:
+The interactive wizard walks through 14 steps:
 
-1. PostgreSQL connection (host, port, credentials)
-2. Embedding model selection (Snowflake Arctic recommended)
-3. Indexing interval (default: 5 minutes)
+1. Welcome and version check
+2. Storage backend selection (SQLite or PostgreSQL)
+3. Embedding model configuration
 4. CLAUDE.md template installation
-5. Projects root directory
-6. Obsidian vault location (optional)
-7. MCP server registration with Claude Code
+5. PAI skill installation
+6. Steering rules installation
+7. Hook system deployment
+8. TypeScript hook compilation
+9. Claude Code settings configuration
+10. Daemon installation
+11. MCP server registration
+12. Directory creation
+13. Initial indexing
+14. Verification
 
 ### 4. Install the Daemon
 
@@ -143,7 +150,7 @@ If both commands return healthy output, PAI is running. Open a new Claude Code s
 
 ## MCP Server
 
-PAI exposes 7 tools to Claude Code via a daemon-backed MCP shim. The shim speaks stdio (what Claude Code expects) and proxies each request to the background daemon over NDJSON on a Unix socket.
+PAI exposes 9 tools, 18 on-demand prompts (skills), and 11 reference resources to Claude Code via a daemon-backed MCP shim. The shim speaks stdio (what Claude Code expects) and proxies each request to the background daemon over NDJSON on a Unix socket.
 
 ```
 Claude Code (stdio)
@@ -164,14 +171,8 @@ Claude Code (stdio)
 | `session_list` | List session notes, optionally filtered by project |
 | `registry_search` | Search project metadata (names, paths, tags) |
 | `project_detect` | Identify which project a given path belongs to |
-| `observation_search` | Search classified observations by project, type, or session |
-| `observation_timeline` | Recent observation timeline with progressive context layers |
-| `zettel_explore` | BFS traversal of wikilink graph from a seed note |
-| `zettel_surprise` | Find semantically distant but graph-close notes |
-| `zettel_converse` | Hybrid search with graph expansion and cross-domain connections |
-| `zettel_themes` | Cluster vault notes into thematic groups by embedding similarity |
-| `zettel_health` | Audit vault for broken links, orphans, and isolated clusters |
-| `zettel_suggest` | Suggest link targets weighted by semantics, tags, and graph neighborhood |
+| `project_health` | Audit all registered paths for moved or deleted directories |
+| `project_todo` | Read a project's TODO.md and continuation prompt |
 
 ### Tool Reference
 
@@ -189,21 +190,52 @@ Claude Code (stdio)
 
 **`project_detect(path?)`** — Given a filesystem path (defaults to CWD), returns the matching project.
 
-**`observation_search(project?, type?, session_id?, limit?)`** — Search the observation store. Filter by project slug, observation type (`decision`, `bugfix`, `feature`, `refactor`, `discovery`, `change`), or session ID. Returns observations ordered by creation time descending.
+**`project_health(category?)`** — Audits all registered projects to find moved or deleted directories. Categorizes each as `active` (path exists), `stale` (path missing but candidate found nearby), or `dead` (path missing, no candidate). Also reports TODO.md presence and continuation prompts.
 
-**`observation_timeline(project?, limit?)`** — Returns a layered timeline: compact index (~100 tokens with type counts and active projects), recent timeline (~500 tokens with timestamped observations), and on-demand detail access via `observation_search`.
+**`project_todo(project?)`** — Reads a project's TODO.md without needing the exact file path. Searches Notes/TODO.md, .claude/Notes/TODO.md, tasks/todo.md, and project-root TODO.md in order. Surfaces any `## Continue` section at the top for quick context recovery.
 
-**`zettel_explore(note, depth?, direction?)`** — BFS walk from a seed note across `vault_links`. Returns a subgraph of neighboring notes with each edge classified as `sequential` or `associative`. `direction`: `outbound` (default), `inbound`, or `both`.
+### On-Demand Prompts (Skills)
 
-**`zettel_surprise(note, limit?)`** — Returns notes that are semantically dissimilar to `note` but reachable within a short graph distance. Scored as `cosine_similarity × log2(graph_distance + 1)`. Useful for lateral discovery.
+The MCP server registers 18 prompts that Claude can invoke as on-demand skills. Each prompt provides a focused workflow with instructions, examples, and constraints — loaded only when needed to conserve context.
 
-**`zettel_converse(query, limit?)`** — Runs a hybrid memory search, expands the result set via graph neighborhood, then surfaces cross-domain connections — notes from unrelated clusters that are semantically close to the query.
+| Prompt | Purpose |
+|--------|---------|
+| `art` | Visual art direction and creative guidance |
+| `createskill` | Scaffold new PAI skills |
+| `journal` | Structured journaling workflow |
+| `name` | Session and project naming conventions |
+| `observability` | Observation system usage and querying |
+| `plan` | Forward-looking planning from TODOs and recent activity |
+| `research` | Structured research methodology |
+| `review` | Retrospective review of work over a time period |
+| `route` | Session note routing across projects |
+| `search-history` | Search history analysis and patterns |
+| `sessions` | Session lifecycle management |
+| `share` | Generate social media posts from recent work |
+| `story-explanation` | Narrative explanations of technical concepts |
+| `vault-connect` | Suggest and create vault connections |
+| `vault-context` | Use vault as conversational context |
+| `vault-emerge` | Detect emerging themes in the vault |
+| `vault-orphans` | Find and fix orphaned vault notes |
+| `vault-trace` | Trace idea lineage through vault links |
 
-**`zettel_themes(min_cluster_size?)`** — Clusters all vault embeddings using agglomerative single-linkage clustering. Returns thematic groups with representative note titles and cluster size.
+### Reference Resources
 
-**`zettel_health()`** — Full structural audit of the vault. Reports broken links (target not in `vault_files`), orphaned notes (no inbound or outbound edges), notes missing embeddings, and isolated clusters detected via union-find.
+11 resources available via `pai://` URIs. Claude reads these on demand for reference documentation.
 
-**`zettel_suggest(note, limit?)`** — Ranks candidate link targets for a given note. Score is a weighted sum: semantic embedding similarity (0.5), shared tags (0.2), graph neighborhood overlap with existing links (0.3).
+| URI | Content |
+|-----|---------|
+| `pai://aesthetic` | Visual and output style guidelines |
+| `pai://constitution` | Core philosophy and principles |
+| `pai://history-system` | Search history tracking system |
+| `pai://hook-system` | Hook architecture and development guide |
+| `pai://mcp-dev-guide` | MCP server development patterns |
+| `pai://prompting` | Prompt engineering best practices |
+| `pai://prosody-agent-template` | Voice agent template |
+| `pai://prosody-guide` | Voice and prosody guidelines |
+| `pai://skill-system` | Skill authoring reference |
+| `pai://terminal-tabs` | Terminal tab management |
+| `pai://voice` | Voice configuration reference |
 
 ### Installation
 
@@ -418,7 +450,7 @@ pai observation stats
 ```bash
 pai backup                    # Backup registry, config, and Postgres
 pai restore <path>            # Restore from backup (--no-postgres to skip DB)
-pai setup                     # Interactive 7-step setup wizard
+pai setup                     # Interactive 14-step setup wizard
 pai search "query"            # Quick full-text search shortcut
 ```
 
@@ -819,41 +851,89 @@ bun run lint     # tsc --noEmit
 | Output | Purpose |
 |--------|---------|
 | `dist/cli/index.mjs` | `pai` CLI |
-| `dist/mcp/index.mjs` | Direct MCP server (legacy) |
 | `dist/daemon/index.mjs` | Daemon server |
 | `dist/daemon-mcp/index.mjs` | MCP shim (stdio → daemon socket) |
+| `dist/hooks/*.mjs` | Compiled lifecycle hooks |
 
 ### Source Structure
 
 ```
 src/
-├── cli/commands/    # CLI command implementations
-│   └── zettel.ts    # `pai zettel` with 6 subcommands
-├── daemon/          # Daemon server and index scheduler
-├── daemon-mcp/      # MCP shim (stdio → daemon socket)
-├── federation/      # Federation schema definitions
-├── hooks/           # Lifecycle hooks (pre-compact, session-stop)
-├── mcp/             # Direct MCP server (legacy)
-├── memory/          # Indexer, chunker, embeddings, search, reranker
-│   ├── reranker.ts  # Cross-encoder reranking (Xenova/ms-marco-MiniLM-L-6-v2)
-│   └── vault-indexer.ts  # Obsidian vault indexing into v3 vault tables
-├── observations/   # Automatic observation capture
-│   ├── classifier.ts   # Rule-based tool call classifier (decision/bugfix/feature/refactor/discovery/change)
-│   ├── store.ts        # PostgreSQL persistence with content-hash deduplication
-│   └── schema.sql      # Observation + session summary table DDL
-├── obsidian/        # Obsidian vault bridge
-│   └── vault-fixer.ts    # Repairs broken wikilinks and orphaned entries
-├── registry/        # Registry migrations and queries
-├── session/         # Session slug generator
-├── storage/         # Storage backend interface (SQLite/Postgres)
-└── zettelkasten/    # Luhmann-inspired graph + semantic operations
-    ├── explore.ts   # BFS traversal classifying sequential/associative edges
-    ├── surprise.ts  # Serendipitous bridge discovery via cosine × graph distance
-    ├── converse.ts  # Hybrid search → graph expansion → cross-domain connections
-    ├── themes.ts    # Agglomerative embedding clustering for thematic groups
-    ├── health.ts    # SQL-driven vault audit with union-find cluster detection
-    ├── suggest.ts   # Weighted link suggestions (semantic + tags + graph)
-    └── index.ts     # Barrel export for all zettelkasten operations
+├── cli/
+│   ├── commands/           # CLI command modules
+│   │   ├── backup.ts
+│   │   ├── daemon.ts
+│   │   ├── memory.ts
+│   │   ├── observation.ts
+│   │   ├── obsidian.ts
+│   │   ├── project.ts
+│   │   ├── registry.ts
+│   │   ├── session.ts
+│   │   ├── setup/          # 14-step interactive wizard
+│   │   │   ├── steps/      # 01-welcome through 15-verify
+│   │   │   └── index.ts
+│   │   └── zettel.ts
+│   └── index.ts            # CLI entry point
+├── daemon/
+│   ├── daemon/             # Daemon server internals
+│   │   ├── dispatcher.ts   # Tool dispatch (zettel, observation, memory)
+│   │   ├── handler.ts      # NDJSON request handler
+│   │   └── server.ts       # Socket server
+│   ├── indexer/            # Background index scheduler
+│   ├── config.ts           # Runtime configuration
+│   └── index.ts            # Daemon entry point
+├── daemon-mcp/
+│   ├── instructions.ts     # MCP server instructions (~1.5KB routing table)
+│   ├── prompts/            # 18 on-demand skill prompts
+│   ├── resources/          # 11 reference resources (pai:// URIs)
+│   └── index.ts            # MCP shim entry point (stdio → socket)
+├── hooks/
+│   └── ts/                 # TypeScript hook sources by event
+│       ├── PreCompact/
+│       ├── PreToolUse/
+│       ├── PostToolUse/
+│       ├── SessionStart/
+│       ├── Stop/
+│       └── UserPromptSubmit/
+├── mcp/
+│   └── tools/              # Shared tool implementations
+│       ├── memory.ts
+│       ├── observations.ts
+│       ├── projects.ts
+│       ├── registry.ts
+│       ├── sessions.ts
+│       └── zettel.ts
+├── memory/
+│   ├── chunker/            # Text chunking strategies
+│   ├── embeddings.ts       # Snowflake Arctic embedding generation
+│   ├── indexer.ts          # File indexer with change detection
+│   ├── reranker.ts         # Cross-encoder reranking (ms-marco-MiniLM)
+│   ├── search.ts           # Multi-mode search (keyword/semantic/hybrid)
+│   └── vault-indexer.ts    # Obsidian vault indexing
+├── observations/           # Automatic observation capture
+│   ├── classifier.ts       # Rule-based tool call classifier
+│   ├── store.ts            # PostgreSQL persistence with deduplication
+│   └── schema.sql          # DDL for observation tables
+├── obsidian/               # Obsidian vault bridge
+│   └── vault-fixer.ts      # Repairs broken wikilinks and orphans
+├── registry/               # SQLite registry queries and migrations
+├── session/                # Session slug generator
+├── storage/                # Pluggable storage backend
+│   ├── factory.ts          # Backend selection (SQLite/PostgreSQL)
+│   ├── interface.ts        # StorageInterface contract
+│   ├── postgres.ts         # PostgreSQL + pgvector backend
+│   └── sqlite.ts           # SQLite backend
+├── utils/                  # Shared utilities
+│   ├── hash.ts             # SHA-256 hashing
+│   └── stop-words.ts       # Stop word lists for search
+├── zettelkasten/           # Luhmann-inspired operations
+│   ├── explore.ts          # BFS traversal
+│   ├── surprise.ts         # Serendipitous bridge discovery
+│   ├── converse.ts         # Hybrid search + graph expansion
+│   ├── themes.ts           # Embedding clustering
+│   ├── health.ts           # Vault structural audit
+│   └── suggest.ts          # Weighted link suggestions
+└── index.ts                # Package entry point
 ```
 
 ### Important Notes
