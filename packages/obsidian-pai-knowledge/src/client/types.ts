@@ -7,6 +7,7 @@
  *
  * Phase 1: graph_clusters
  * Phase 2: graph_neighborhood
+ * Phase 3: graph_note_context
  */
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,91 @@ export interface GraphNeighborhoodResult {
 }
 
 // ---------------------------------------------------------------------------
+// graph_note_context
+// ---------------------------------------------------------------------------
+
+export interface GraphNoteContextParams {
+  /** Vault-relative path of the focal note, e.g. "Projects/PAI/idea-2024.md" */
+  vault_path: string;
+  /** Numeric PAI project ID (used for observation type enrichment) */
+  project_id: number;
+  /** Maximum number of neighbor notes to return (default: 50) */
+  max_neighbors?: number;
+  /** Include notes that link TO the focal note (default: true) */
+  include_backlinks?: boolean;
+  /** Include notes that the focal note links TO (default: true) */
+  include_outlinks?: boolean;
+}
+
+/** Full response from graph_note_context */
+export interface GraphNoteContextResult {
+  /** The selected note — center of the graph */
+  focal: NoteNode;
+  /** All connected notes (1-hop neighbourhood across entire vault) */
+  neighbors: NoteNode[];
+  /** Wikilink edges connecting focal ↔ neighbors */
+  edges: NoteEdge[];
+  /**
+   * vault_path → cluster_id mapping for each neighbor.
+   * Empty in Phase 3; populated in Phase 5.
+   */
+  cluster_membership: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// graph_trace (Phase 4 — temporal navigation)
+// ---------------------------------------------------------------------------
+
+export interface GraphTraceParams {
+  /** Topic/keyword to trace through time */
+  query: string;
+  /** Numeric PAI project ID */
+  project_id: number;
+  /** Cap on timeline entries (default: 30) */
+  max_results?: number;
+  /** How far back to search in days (default: 365) */
+  lookback_days?: number;
+}
+
+/** A single note appearance on the idea timeline */
+export interface TraceEntry {
+  /** Vault-relative path, e.g. "Projects/PAI/idea-2024.md" */
+  vault_path: string;
+  /** Note title from frontmatter or H1 */
+  title: string;
+  /** Parent folder path derived from vault_path */
+  folder: string;
+  /** Unix timestamp (seconds) when this note was indexed — used for ordering */
+  indexed_at: number;
+  /** Text excerpt showing the topic in context (100-200 chars) */
+  snippet: string;
+  /** Most common observation type for this note */
+  dominant_type: string;
+}
+
+/** An edge on the trace timeline */
+export interface TraceConnection {
+  /** Earlier note's vault path */
+  from_path: string;
+  /** Later note's vault path */
+  to_path: string;
+  /** "temporal" = time-sequence, "wikilink" = explicit vault link exists */
+  type: "temporal" | "wikilink";
+}
+
+/** Full response from graph_trace */
+export interface GraphTraceResult {
+  /** The query that was traced */
+  query: string;
+  /** Timeline entries sorted oldest-first */
+  entries: TraceEntry[];
+  /** Edges connecting entries */
+  connections: TraceConnection[];
+  /** Unix timestamp range covered by the results */
+  time_span: { from: number; to: number };
+}
+
+// ---------------------------------------------------------------------------
 // Convenience union of all supported method → param/result pairs.
 // Extend this as more daemon methods are implemented.
 // ---------------------------------------------------------------------------
@@ -161,6 +247,14 @@ export type DaemonMethodMap = {
   graph_neighborhood: {
     params: GraphNeighborhoodParams;
     result: GraphNeighborhoodResult;
+  };
+  graph_note_context: {
+    params: GraphNoteContextParams;
+    result: GraphNoteContextResult;
+  };
+  graph_trace: {
+    params: GraphTraceParams;
+    result: GraphTraceResult;
   };
 };
 

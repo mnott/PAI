@@ -26,7 +26,10 @@ import type {
   ClusterNode,
   GraphClustersResult,
   GraphNeighborhoodResult,
+  GraphNoteContextResult,
+  GraphTraceResult,
   NoteNode,
+  TraceEntry,
 } from "../client/types";
 
 export const VIEW_TYPE_PAI_GRAPH = "pai-graph-view";
@@ -36,6 +39,11 @@ export class PaiGraphView extends ItemView {
   private renderer: GraphRenderer | null = null;
   private state: GraphStateManager;
   private resizeObserver: ResizeObserver | null = null;
+
+  /** When true, the view is showing a trace timeline instead of the level graph */
+  private traceMode = false;
+  /** The current trace query, set when entering trace mode */
+  private traceQuery = "";
 
   // DOM refs
   private toolbarEl: HTMLElement | null = null;
@@ -188,11 +196,37 @@ export class PaiGraphView extends ItemView {
       }
     });
 
-    // Level indicator
-    this.toolbarEl.createSpan({
-      cls: "pai-level-indicator",
-      text: `Level ${snap.level}`,
-    });
+    if (this.traceMode) {
+      // In trace mode: show "Back to Graph" and the query label
+      const backToGraphBtn = this.toolbarEl.createEl("button", {
+        cls: "pai-back-btn",
+        text: "← Graph",
+      });
+      backToGraphBtn.addEventListener("click", () => {
+        this.exitTraceMode();
+      });
+
+      this.toolbarEl.createSpan({
+        cls: "pai-trace-label",
+        text: `Timeline: "${this.traceQuery}"`,
+      });
+    } else {
+      // Level indicator
+      this.toolbarEl.createSpan({
+        cls: "pai-level-indicator",
+        text: `Level ${snap.level}`,
+      });
+
+      // Trace button — always visible when not in trace mode
+      const traceBtn = this.toolbarEl.createEl("button", {
+        cls: "pai-trace-btn",
+        text: "Trace",
+      });
+      traceBtn.setAttribute("title", "Trace an idea through time");
+      traceBtn.addEventListener("click", () => {
+        this.promptAndEnterTraceMode();
+      });
+    }
   }
 
   /** Initialise the Cytoscape renderer inside canvasEl */
@@ -204,11 +238,45 @@ export class PaiGraphView extends ItemView {
         this.onNavigationChange();
       },
       onNoteClick: (note: NoteNode) => {
-        // Level 3 is Phase 3 — log for now
-        console.log("[PAI] Note clicked:", note.vault_path);
+        // Level 2 note clicked — drill into Level 3 note context
+        const snap = this.state.snapshot();
+        if (snap.level === 2 && snap.context.level === 2) {
+          // Synthesize a ClusterNoteRef from the NoteNode
+          this.state.pushNote(snap.context.cluster, {
+            vault_path: note.vault_path,
+            title: note.title,
+            indexed_at: note.updated_at,
+          });
+          this.onNavigationChange();
+        }
+      },
+      onNeighborClick: (note: NoteNode) => {
+        // Level 3 neighbor clicked — replace focal note with this one
+        const snap = this.state.snapshot();
+        if (snap.level === 3 && snap.context.level === 3) {
+          // Pop back to Level 2 context, then push the new note
+          this.state.pop();
+          const snap2 = this.state.snapshot();
+          if (snap2.level === 2 && snap2.context.level === 2) {
+            this.state.pushNote(snap2.context.cluster, {
+              vault_path: note.vault_path,
+              title: note.title,
+              indexed_at: note.updated_at,
+            });
+            this.onNavigationChange();
+          }
+        }
+      },
+      onFocalDoubleClick: (note: NoteNode) => {
+        // Open the focal note in Obsidian
+        this.app.workspace.openLinkText(note.vault_path, "", false);
       },
       onBackgroundClick: () => {
         // Could deselect or show info panel
+      },
+      onTraceNodeClick: (entry: TraceEntry) => {
+        // Open the traced note in Obsidian
+        this.app.workspace.openLinkText(entry.vault_path, "", false);
       },
     });
     this.renderer.init();
@@ -240,8 +308,13 @@ export class PaiGraphView extends ItemView {
       if (ctx.level === 2) {
         this.loadAndRenderNeighborhood(ctx.cluster);
       }
+    } else if (snap.level === 3) {
+      // Show the full vault neighbourhood for the selected note
+      const ctx = snap.context;
+      if (ctx.level === 3) {
+        this.loadAndRenderNoteContext(ctx.note.vault_path);
+      }
     }
-    // Level 3 will be added in Phase 3
   }
 
   /** Reload cluster data from the daemon and re-render */
@@ -303,6 +376,133 @@ export class PaiGraphView extends ItemView {
     }
 
     this.renderer.renderNotes(result);
+  }
+
+  /**
+   * Fetch the full vault neighbourhood for a single note and render Level 3.
+   * Crosses cluster boundaries — shows ALL notes linked to/from this note.
+   */
+  private async loadAndRenderNoteContext(vaultPath: string): Promise<void> {
+    const displayName = vaultPath.split("/").pop()?.replace(/\.md$/i, "") ?? vaultPath;
+    this.showLoading(`Loading connections for "${displayName}"…`);
+
+    let result: GraphNoteContextResult;
+    try {
+      result = await this.plugin.client.call<GraphNoteContextResult>(
+        "graph_note_context",
+        {
+          vault_path: vaultPath,
+          project_id: this.plugin.settings.projectId ?? 0,
+          max_neighbors: 50,
+        }
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.showError("Failed to load note context", message, "pai daemon start");
+      return;
+    }
+
+    this.hideOverlay();
+
+    if (!this.renderer) return;
+
+    if (result.neighbors.length === 0) {
+      this.showError(
+        "No connections found",
+        `"${displayName}" has no wikilinks to or from other notes.`,
+        "Add [[wikilinks]] in the note to connect it to the vault."
+      );
+      return;
+    }
+
+    this.renderer.renderNoteContext(result);
+
+    // Add "Open in Obsidian" button to the toolbar after rendering
+    this.addOpenInObsidianButton(vaultPath);
+  }
+
+  /**
+   * Adds an "Open in Obsidian" button to the toolbar for Level 3 context.
+   * Appended after the breadcrumb — removed automatically on the next renderToolbar() call.
+   */
+  private addOpenInObsidianButton(vaultPath: string): void {
+    if (!this.toolbarEl) return;
+    const btn = this.toolbarEl.createEl("button", {
+      cls: "pai-open-btn",
+      text: "Open Note",
+    });
+    btn.addEventListener("click", () => {
+      this.app.workspace.openLinkText(vaultPath, "", false);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 4: Trace mode
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Prompt the user for a search query, then enter trace mode.
+   * Uses a simple browser prompt() as Obsidian's SuggestModal requires subclassing
+   * which is acceptable for a one-shot input here.
+   */
+  promptAndEnterTraceMode(): void {
+    const query = window.prompt("Trace an idea: enter a keyword or topic to follow through time");
+    if (!query || !query.trim()) return;
+    this.enterTraceMode(query.trim());
+  }
+
+  /** Enter trace mode for the given query. */
+  async enterTraceMode(query: string): Promise<void> {
+    this.traceMode = true;
+    this.traceQuery = query;
+    this.renderToolbar();
+    await this.loadAndRenderTrace(query);
+  }
+
+  /** Exit trace mode and return to the current navigation level. */
+  private exitTraceMode(): void {
+    this.traceMode = false;
+    this.traceQuery = "";
+    this.renderToolbar();
+    // Re-render the graph at the current navigation level
+    this.onNavigationChange();
+  }
+
+  /** Fetch graph_trace data and render the horizontal timeline. */
+  private async loadAndRenderTrace(query: string): Promise<void> {
+    this.showLoading(`Tracing "${query}" through time…`);
+
+    let result: GraphTraceResult;
+    try {
+      result = await this.plugin.client.call<GraphTraceResult>(
+        "graph_trace",
+        {
+          query,
+          project_id: this.plugin.settings.projectId ?? 0,
+          max_results: 30,
+          lookback_days: this.plugin.settings.lookbackDays ?? 365,
+        }
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.showError("Trace failed", message, "pai daemon start");
+      return;
+    }
+
+    this.hideOverlay();
+
+    if (!this.renderer) return;
+
+    if (result.entries.length === 0) {
+      this.showError(
+        "Nothing found",
+        `No notes mention "${query}" in the last ${this.plugin.settings.lookbackDays ?? 365} days.`,
+        "Try a different keyword or extend the lookback window in settings."
+      );
+      return;
+    }
+
+    this.renderer.renderTrace(result);
   }
 
   // ---------------------------------------------------------------------------

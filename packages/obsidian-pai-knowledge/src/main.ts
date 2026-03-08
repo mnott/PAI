@@ -53,6 +53,26 @@ export default class PaiKnowledgePlugin extends Plugin {
       },
     });
 
+    // 5b. Trace an idea through time
+    this.addCommand({
+      id: "trace-idea",
+      name: "Trace an idea through time",
+      callback: async () => {
+        // Activate the view first, then enter trace mode
+        await this.activateView();
+        // Give the view a tick to finish rendering, then prompt for a query
+        setTimeout(() => {
+          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_PAI_GRAPH);
+          if (leaves.length > 0) {
+            const view = leaves[0].view;
+            if (view instanceof PaiGraphView) {
+              view.promptAndEnterTraceMode();
+            }
+          }
+        }, 300);
+      },
+    });
+
     // 6. Register settings tab
     this.addSettingTab(new PaiSettingsTab(this.app, this));
 

@@ -587,6 +587,41 @@ async function dispatchTool(
       );
     }
 
+    case "graph_note_context": {
+      // graph_note_context returns the full 1-hop vault neighbourhood for a
+      // single focal note (Level 3 drill-down). Crosses cluster boundaries so
+      // users can discover connections to notes in other topic areas.
+      // vaultDb is always the SQLite handle regardless of primary backend.
+      const { handleGraphNoteContext } = await import("../graph/note-context.js");
+
+      if (!vaultDb) {
+        throw new Error("graph_note_context requires vault database (federation.db) — could not be opened at startup");
+      }
+      // When primary backend is Postgres, also pass the pool for observation enrichment.
+      const pgPool3 = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
+
+      return handleGraphNoteContext(
+        pgPool3,
+        vaultDb,
+        p as Parameters<typeof handleGraphNoteContext>[2]
+      );
+    }
+
+    case "graph_trace": {
+      // graph_trace returns a chronological timeline of notes matching a topic/keyword.
+      // Uses vault_files + memory_chunks + vault_links — all in vaultDb (SQLite).
+      const { handleGraphTrace } = await import("../graph/trace.js");
+
+      if (!vaultDb) {
+        throw new Error("graph_trace requires vault database (federation.db) — could not be opened at startup");
+      }
+
+      return handleGraphTrace(
+        vaultDb,
+        p as Parameters<typeof handleGraphTrace>[1]
+      );
+    }
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }

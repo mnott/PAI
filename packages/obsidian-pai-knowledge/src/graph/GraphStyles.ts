@@ -116,6 +116,70 @@ export function clusterStylesheet(): StylesheetStyle[] {
 }
 
 /**
+ * Trace-mode stylesheet (Phase 4 — horizontal timeline view).
+ * Nodes are ellipses; temporal edges are thin grey arrows; wikilink edges are coloured curves.
+ */
+export function traceStylesheet(): StylesheetStyle[] {
+  return [
+    {
+      selector: "node",
+      style: {
+        shape: "ellipse",
+        "background-color": "data(color)",
+        label: "data(label)",
+        "text-valign": "bottom",
+        "text-halign": "center",
+        "text-margin-y": 6,
+        color: "#e2e8f0",
+        "font-size": 9,
+        "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "text-wrap": "wrap",
+        "text-max-width": "90px",
+        width: 30,
+        height: 30,
+      },
+    },
+    {
+      selector: 'edge[edgeKind = "temporal"]',
+      style: {
+        width: 1.5,
+        "line-color": "#4b5563",
+        "curve-style": "taxi",
+        "taxi-direction": "rightward",
+        opacity: 0.5,
+        "target-arrow-shape": "triangle",
+        "target-arrow-color": "#4b5563",
+        "arrow-scale": 0.7,
+      },
+    },
+    {
+      selector: 'edge[edgeKind = "wikilink"]',
+      style: {
+        width: 1.5,
+        "line-color": "#06b6d4",
+        "curve-style": "unbundled-bezier",
+        "control-point-distances": "-60",
+        "control-point-weights": "0.5",
+        opacity: 0.7,
+        "target-arrow-shape": "triangle",
+        "target-arrow-color": "#06b6d4",
+        "arrow-scale": 0.8,
+        "line-style": "dashed",
+      },
+    },
+    {
+      selector: "node:selected",
+      style: {
+        "border-width": 2,
+        "border-color": "#ffffff",
+        width: 38,
+        height: 38,
+      },
+    },
+  ];
+}
+
+/**
  * Note-level stylesheet (Level 2 — notes inside a cluster).
  * Nodes are smaller, edges represent vault wikilinks.
  */
