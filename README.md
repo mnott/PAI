@@ -36,7 +36,13 @@ Install PAI and Claude remembers. Ask it what you were working on. Ask it to fin
 - "Journal this thought" — capture freeform reflections with timestamps
 - "Plan my week" — forward-looking priorities based on open TODOs and recent activity
 - "What themes are emerging in my work?" — spot patterns across sessions and projects
-- "Search for that authentication discussion" — semantic search finds it even with different phrasing
+
+### Sharing Your Work
+
+- "Share on LinkedIn today" — generates a professional post about what you shipped, with real numbers and technical substance
+- "Tweet about the vault migration" — punchy X/Twitter post or thread, with option to post directly
+- "Share on Bluesky this week" — conversational technical post for the Bluesky audience
+- Platform-aware formatting: LinkedIn gets hashtags and narrative, X gets threads and hooks, Bluesky gets conversational tone
 
 ### Tracking Your Activity
 
