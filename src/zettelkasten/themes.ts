@@ -1,5 +1,6 @@
 import type { StorageBackend } from "../storage/interface.js";
 import { deserializeEmbedding, cosineSimilarity } from "../memory/embeddings.js";
+import { STOP_WORDS } from "../utils/stop-words.js";
 
 export interface ThemeOptions {
   vaultProjectId: number;
@@ -31,12 +32,7 @@ export interface ThemeResult {
 
 const MAX_CHUNKS = 5000;
 
-const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
-  "has", "had", "have", "not", "this", "that", "i", "my", "we", "our",
-  "new", "note", "untitled", "page", "file", "doc",
-]);
+// STOP_WORDS imported from utils/stop-words.ts
 
 function getTopFolder(vaultPath: string): string {
   const parts = vaultPath.split("/");

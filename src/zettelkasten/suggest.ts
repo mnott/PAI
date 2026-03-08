@@ -1,6 +1,7 @@
 import type { StorageBackend } from "../storage/interface.js";
 import { deserializeEmbedding, cosineSimilarity } from "../memory/embeddings.js";
 import { basename } from "node:path";
+import { STOP_WORDS } from "../utils/stop-words.js";
 
 export interface SuggestOptions {
   notePath: string;
@@ -25,12 +26,7 @@ const SEMANTIC_WEIGHT = 0.5;
 const TAG_WEIGHT = 0.2;
 const NEIGHBOR_WEIGHT = 0.3;
 
-// Stop words to ignore when generating tag/label strings
-const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
-  "has", "had", "have", "not", "this", "that", "i", "my", "we", "our",
-]);
+// STOP_WORDS imported from utils/stop-words.ts
 
 function extractTagsFromChunkTexts(texts: string[]): Set<string> {
   const tags = new Set<string>();

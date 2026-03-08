@@ -6,7 +6,7 @@
  * back to paragraph and sentence splitting when sections are large.
  */
 
-import { createHash } from "node:crypto";
+import { sha256 } from "../utils/hash.js";
 
 export interface Chunk {
   text: string;
@@ -34,12 +34,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(wordCount * 1.3);
 }
 
-/**
- * Compute SHA-256 hash of a string, returning a hex string.
- */
-function sha256(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
+// sha256 imported from utils/hash.ts
 
 // ---------------------------------------------------------------------------
 // Internal section / paragraph / sentence splitters

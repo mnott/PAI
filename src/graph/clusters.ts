@@ -8,6 +8,7 @@
 
 import type { StorageBackend } from "../storage/interface.js";
 import type { Pool } from "pg";
+import { STOP_WORDS } from "../utils/stop-words.js";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
@@ -216,17 +217,7 @@ async function clusterByLinks(
   components.sort((a, b) => b.length - a.length);
   const topComponents = components.slice(0, maxClusters);
 
-  const STOP_WORDS = new Set([
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
-    "has", "had", "have", "not", "this", "that", "i", "my", "we", "our",
-    "new", "note", "untitled", "page", "file", "doc", "session", "notes",
-    "moc", "template", "content", "attachment",
-    "les", "des", "une", "est", "que", "qui", "dans", "pour", "sur",
-    "par", "pas", "son", "ses", "aux", "avec", "tout", "mais",
-    "und", "der", "die", "das", "ein", "eine", "ist", "den", "dem",
-    "von", "mit", "auf", "nicht", "sich", "auch", "noch", "wie",
-  ]);
+  // STOP_WORDS imported from utils/stop-words.ts (module-level import)
 
   function generateLinkLabel(paths: string[]): string {
     const wordCounts = new Map<string, number>();

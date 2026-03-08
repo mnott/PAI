@@ -13,6 +13,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { TITLE_STOP_WORDS } from "../utils/stop-words.js";
 import type { StorageBackend } from "../storage/interface.js";
 import { zettelThemes } from "../zettelkasten/themes.js";
 
@@ -101,12 +102,7 @@ export interface IdeaMaterializeResult {
  *   2. Remove stop words from the label words.
  *   3. If ≥ 60% of the significant label words appear in a note title → match.
  */
-const TITLE_STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
-  "has", "had", "have", "not", "this", "that", "my", "we", "our",
-  "new", "note", "untitled", "page", "file", "doc",
-]);
+// TITLE_STOP_WORDS imported from utils/stop-words.ts
 
 function labelMatchesTitle(label: string, title: string): boolean {
   const labelWords = label

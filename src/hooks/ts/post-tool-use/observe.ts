@@ -8,7 +8,7 @@
  */
 
 import { connect } from 'net';
-import { createHash } from 'crypto';
+import { sha256 } from '../../../utils/hash.js';
 import { basename } from 'path';
 import { isProbeSession } from '../lib/project-utils.js';
 
@@ -300,10 +300,7 @@ async function main() {
     if (!obs) process.exit(0);
 
     // Content-hash dedup key
-    const hash = createHash('sha256')
-      .update(hookData.session_id + hookData.tool_name + obs.title)
-      .digest('hex')
-      .slice(0, 16);
+    const hash = sha256(hookData.session_id + hookData.tool_name + obs.title).slice(0, 16);
 
     // Fire-and-forget to daemon
     await sendToDaemon('observation_store', {

@@ -9,7 +9,7 @@
  * duplicate entries from rapid repeated tool calls.
  */
 
-import { createHash } from 'node:crypto';
+import { sha256 } from '../utils/hash.js';
 import type { Pool } from 'pg';
 import type { ClassifiedObservation } from './classifier.js';
 
@@ -151,10 +151,7 @@ export async function ensureObservationTables(pool: Pool): Promise<void> {
  * Hash = SHA256(session_id + tool_name + title).slice(0, 16)
  */
 function computeContentHash(sessionId: string, toolName: string, title: string): string {
-  return createHash('sha256')
-    .update(sessionId + '\x00' + toolName + '\x00' + title)
-    .digest('hex')
-    .slice(0, 16);
+  return sha256(sessionId + '\x00' + toolName + '\x00' + title).slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------

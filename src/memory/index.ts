@@ -16,8 +16,8 @@ export {
   indexProject,
   indexAll,
   detectTier,
-} from "./indexer.js";
-export type { IndexResult } from "./indexer.js";
+} from "./indexer/sync.js";
+export type { IndexResult } from "./indexer/types.js";
 export { searchMemory, buildFtsQuery, populateSlugs } from "./search.js";
 export type { SearchResult, SearchOptions } from "./search.js";
 export { rerankResults, configureRerankerModel } from "./reranker.js";

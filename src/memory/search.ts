@@ -12,6 +12,7 @@
 
 import type { Database } from "better-sqlite3";
 import { deserializeEmbedding, cosineSimilarity } from "./embeddings.js";
+import { STOP_WORDS } from "../utils/stop-words.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,18 +44,7 @@ export interface SearchOptions {
   minScore?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Stop words
-// ---------------------------------------------------------------------------
-
-const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by",
-  "do", "for", "from", "has", "have", "he", "her", "him", "his",
-  "how", "i", "if", "in", "is", "it", "its", "me", "my", "not",
-  "of", "on", "or", "our", "out", "she", "so", "that", "the",
-  "their", "them", "they", "this", "to", "up", "us", "was", "we",
-  "were", "what", "when", "who", "will", "with", "you", "your",
-]);
+// STOP_WORDS imported from utils/stop-words.ts
 
 // ---------------------------------------------------------------------------
 // Query builder

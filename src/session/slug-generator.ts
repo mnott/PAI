@@ -12,6 +12,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { STOP_WORDS } from "../utils/stop-words.js";
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -24,46 +25,7 @@ export interface SlugOptions {
   maxLength?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Stop words
-// ---------------------------------------------------------------------------
-
-const STOP_WORDS = new Set([
-  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-  "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "can", "shall", "this", "that", "these",
-  "those", "it", "its", "i", "you", "we", "they", "he", "she", "my",
-  "your", "our", "their", "what", "which", "who", "whom", "how", "when",
-  "where", "why", "not", "no", "yes", "just", "also", "very", "really",
-  "about", "after", "before", "from", "into", "with", "without", "for",
-  "and", "or", "but", "if", "then", "else", "so", "because", "as", "at",
-  "by", "in", "on", "of", "to", "up", "out", "off", "over", "under",
-  "more", "most", "some", "any", "all", "each", "every", "both", "few",
-  "many", "much", "other", "another", "such", "only", "own", "same",
-  "than", "too", "let", "me", "us", "ok", "okay", "sure",
-  "please", "thanks", "thank", "here", "there", "now", "well", "like",
-  "want", "need", "know", "think", "see", "look", "make", "get", "go",
-  "come", "take", "use", "find", "give", "tell", "say", "said", "try",
-  "keep", "run", "set", "put", "add", "show", "check", "new", "file",
-  "code", "going", "done", "got", "https", "http", "www", "com", "org",
-  "net", "io", "null", "undefined", "true", "false",
-  "ll", "ve", "re", "don", "thats", "its", "heres", "theres",
-  "youre", "theyre", "didnt", "dont", "doesnt", "havent", "hasnt",
-  "wont", "cant", "shouldnt", "wouldnt", "couldnt", "isnt", "arent",
-  "wasnt", "werent", "never", "ever", "still", "already", "yet", "back",
-  "away", "down", "right", "left", "next", "last", "first", "second",
-  "third", "one", "two", "three", "four", "five", "six", "seven",
-  "eight", "nine", "ten", "time", "way", "thing", "something",
-  "anything", "nothing", "everything", "someone", "anyone", "everyone",
-  "then", "again", "once", "twice", "since", "while", "though",
-  "although", "however", "therefore", "thus", "hence", "meanwhile",
-  "moreover", "furthermore", "otherwise", "instead", "anyway",
-  "actually", "basically", "literally", "simply", "exactly", "probably",
-  "possibly", "maybe", "perhaps", "certainly", "definitely", "absolutely",
-  "completely", "totally", "quite", "rather", "fairly", "nearly",
-  "almost", "barely", "hardly", "quickly", "slowly", "easily", "likely",
-  "unlikely", "via", "per", "etc", "ie", "eg", "vs",
-]);
+// STOP_WORDS imported from utils/stop-words.ts
 
 // ---------------------------------------------------------------------------
 // Internal helpers

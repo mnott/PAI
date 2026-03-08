@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -43,7 +43,6 @@
   "homepage": "https://github.com/mnott/PAI",
   "bin": {
     "pai": "dist/cli/index.mjs",
-    "pai-mcp": "dist/mcp/index.mjs",
     "pai-daemon": "dist/daemon/index.mjs",
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
