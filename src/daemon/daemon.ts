@@ -447,12 +447,12 @@ function startEmbedScheduler(): void {
     `[pai-daemon] Embed scheduler: every ${daemonConfig.embedIntervalSecs}s\n`
   );
 
-  // Initial embed run 30 seconds after startup (lets the first index run finish)
+  // Initial embed run 60 seconds after startup (lets index + vault index finish)
   setTimeout(() => {
     runEmbed().catch((e) => {
       process.stderr.write(`[pai-daemon] Startup embed error: ${e}\n`);
     });
-  }, 30_000);
+  }, 60_000);
 
   embedSchedulerTimer = setInterval(() => {
     runEmbed().catch((e) => {
