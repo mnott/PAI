@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-pai-knowledge",
+  "name": "PAI Knowledge Graph",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Interactive knowledge exploration powered by PAI Knowledge OS — semantic clusters, idea tracing, and latent idea detection.",
+  "author": "Matthias Nott",
+  "authorUrl": "https://github.com/mnott",
+  "isDesktopOnly": true
+}

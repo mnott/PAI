@@ -489,6 +489,28 @@ async function dispatchTool(
       break;
     }
 
+    case "graph_clusters": {
+      // graph_clusters uses the SQLite federation DB for clustering and,
+      // optionally, the Postgres pool for observation-type enrichment.
+      const { handleGraphClusters } = await import("../graph/clusters.js");
+
+      if (storageBackend.backendType !== "sqlite") {
+        throw new Error("graph_clusters requires SQLite backend");
+      }
+      const { SQLiteBackend } = await import("../storage/sqlite.js");
+      if (!(storageBackend instanceof SQLiteBackend)) {
+        throw new Error("graph_clusters requires SQLite backend");
+      }
+      const fedDb = (storageBackend as SQLiteBackendWithDb).getRawDb();
+      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
+
+      return handleGraphClusters(
+        pgPool,
+        fedDb,
+        p as Parameters<typeof handleGraphClusters>[2]
+      );
+    }
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }

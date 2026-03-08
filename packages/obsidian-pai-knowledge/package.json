@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-pai-knowledge",
+  "version": "0.1.0",
+  "description": "Interactive knowledge exploration powered by PAI Knowledge OS",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "keywords": [],
+  "author": "Matthias Nott",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "latest",
+    "tslib": "^2.6.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "cytoscape": "^3.30.0",
+    "@types/cytoscape": "^3.19.0"
+  }
+}

@@ -1,0 +1,243 @@
+/* PAI Knowledge Graph Plugin Styles */
+/* Uses Obsidian CSS variables for theme compatibility */
+
+.pai-graph-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background-color: var(--background-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Toolbar / breadcrumb bar */
+.pai-graph-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  gap: 8px;
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  min-height: 36px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pai-graph-toolbar .pai-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pai-graph-toolbar .pai-breadcrumb-item {
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+.pai-graph-toolbar .pai-breadcrumb-item:hover {
+  text-decoration: underline;
+}
+
+.pai-graph-toolbar .pai-breadcrumb-separator {
+  color: var(--text-faint);
+}
+
+.pai-graph-toolbar .pai-back-btn {
+  background: none;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--text-normal);
+  font-size: 12px;
+}
+
+.pai-graph-toolbar .pai-back-btn:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.pai-graph-toolbar .pai-level-indicator {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cytoscape canvas wrapper */
+.pai-cytoscape-canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  position: relative;
+}
+
+/* Error state overlay */
+.pai-error-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background-color: var(--background-primary);
+  color: var(--text-muted);
+  z-index: 10;
+}
+
+.pai-error-state .pai-error-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.pai-error-state .pai-error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.pai-error-state .pai-error-message {
+  font-size: 13px;
+  text-align: center;
+  max-width: 300px;
+  line-height: 1.5;
+}
+
+.pai-error-state .pai-error-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  background-color: var(--background-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.pai-error-state .pai-retry-btn {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pai-error-state .pai-retry-btn:hover {
+  background-color: var(--interactive-accent-hover);
+}
+
+/* Loading state */
+.pai-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background-color: var(--background-primary);
+  color: var(--text-muted);
+  z-index: 10;
+}
+
+.pai-loading .pai-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: pai-spin 0.8s linear infinite;
+}
+
+.pai-loading .pai-loading-message {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+@keyframes pai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Node tooltip */
+.pai-tooltip {
+  position: fixed;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-normal);
+  pointer-events: none;
+  z-index: 100;
+  max-width: 240px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.pai-tooltip .pai-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-accent);
+}
+
+.pai-tooltip .pai-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.pai-tooltip .pai-tooltip-row span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+}
+
+/* Settings tab */
+.pai-settings-section {
+  margin-bottom: 24px;
+}
+
+.pai-settings-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pai-connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.pai-connection-status.connected {
+  background-color: rgba(var(--color-green-rgb), 0.15);
+  color: var(--color-green);
+}
+
+.pai-connection-status.disconnected {
+  background-color: rgba(var(--color-red-rgb), 0.15);
+  color: var(--color-red);
+}
+
+.pai-connection-status.testing {
+  background-color: rgba(var(--color-yellow-rgb), 0.15);
+  color: var(--color-yellow);
+}
+
+.pai-connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  flex-shrink: 0;
+}
