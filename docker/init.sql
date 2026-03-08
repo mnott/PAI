@@ -90,6 +90,64 @@ CREATE TRIGGER trg_pai_chunks_fts
   EXECUTE FUNCTION pai_chunks_fts_update();
 
 -- ---------------------------------------------------------------------------
+-- Vault tables — Obsidian vault file inventory and wikilink graph
+-- Previously in SQLite (federation.db), now unified in Postgres.
+-- ---------------------------------------------------------------------------
+
+-- Vault file inventory with inode-based dedup
+CREATE TABLE IF NOT EXISTS vault_files (
+  vault_path  TEXT PRIMARY KEY,
+  inode       BIGINT NOT NULL,
+  device      BIGINT NOT NULL,
+  hash        TEXT NOT NULL,
+  title       TEXT,
+  indexed_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vf_inode ON vault_files(inode, device);
+
+-- Alternate paths to same inode (symlink dedup)
+CREATE TABLE IF NOT EXISTS vault_aliases (
+  vault_path     TEXT PRIMARY KEY,
+  canonical_path TEXT NOT NULL,
+  inode          BIGINT NOT NULL,
+  device         BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_va_canonical ON vault_aliases(canonical_path);
+
+-- Wikilink graph: directed edges
+CREATE TABLE IF NOT EXISTS vault_links (
+  id          SERIAL PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  target_raw  TEXT NOT NULL,
+  target_path TEXT,
+  link_type   TEXT NOT NULL DEFAULT 'wikilink',
+  line_number INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(source_path, target_raw, line_number)
+);
+CREATE INDEX IF NOT EXISTS idx_vl_source ON vault_links(source_path);
+CREATE INDEX IF NOT EXISTS idx_vl_target ON vault_links(target_path);
+CREATE INDEX IF NOT EXISTS idx_vl_dead ON vault_links(target_path) WHERE target_path IS NULL;
+
+-- Obsidian shortest-match resolution lookup
+CREATE TABLE IF NOT EXISTS vault_name_index (
+  name       TEXT NOT NULL,
+  vault_path TEXT NOT NULL,
+  PRIMARY KEY (name, vault_path)
+);
+CREATE INDEX IF NOT EXISTS idx_vni_name ON vault_name_index(name);
+
+-- Per-file health metrics
+CREATE TABLE IF NOT EXISTS vault_health (
+  vault_path      TEXT PRIMARY KEY,
+  inbound_count   INTEGER NOT NULL DEFAULT 0,
+  outbound_count  INTEGER NOT NULL DEFAULT 0,
+  dead_link_count INTEGER NOT NULL DEFAULT 0,
+  is_orphan       SMALLINT NOT NULL DEFAULT 0,
+  computed_at     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vh_orphan ON vault_health(is_orphan) WHERE is_orphan = 1;
+
+-- ---------------------------------------------------------------------------
 -- Summary view (handy for debugging)
 -- ---------------------------------------------------------------------------
 

@@ -176,7 +176,11 @@ function isPathTooBroadForContentScan(rootPath: string): boolean {
 }
 
 function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  // 10ms pause gives the event loop enough time to accept and process
+  // incoming IPC connections (socket data, new connections, etc.)
+  // Without this, synchronous ONNX inference blocks IPC for the full
+  // duration of each embedding (~50-100ms per chunk).
+  return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +414,7 @@ export async function indexProjectWithBackend(
 // ---------------------------------------------------------------------------
 
 const EMBED_BATCH_SIZE = 50;
-const EMBED_YIELD_EVERY = 10;
+const EMBED_YIELD_EVERY = 1;
 
 /**
  * Generate and store embeddings for all unembedded chunks via the StorageBackend.

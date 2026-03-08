@@ -16,7 +16,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync, readdirSync, existsSync } from "node:fs";
 import { join, relative, basename, dirname, normalize } from "node:path";
-import type { Database } from "better-sqlite3";
+import type { StorageBackend, VaultFileRow, VaultAliasRow, VaultLinkRow, VaultHealthRow, VaultNameEntry } from "../storage/interface.js";
+import type { ChunkRow } from "../storage/interface.js";
 import { chunkMarkdown } from "./chunker.js";
 
 // ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ const VAULT_MAX_FILES = 10_000;
 const VAULT_MAX_DEPTH = 10;
 
 /** Number of files to process before yielding to the event loop. */
-const VAULT_YIELD_EVERY = 10;
+const VAULT_YIELD_EVERY = 1;
 
 /**
  * Directories to always skip, at any depth, during vault walks.
@@ -118,7 +119,8 @@ function chunkId(
 }
 
 function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  // 10ms pause gives the event loop time to accept incoming IPC connections
+  return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
 // ---------------------------------------------------------------------------
@@ -537,8 +539,8 @@ function commonPrefixLength(a: string, b: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Index an entire Obsidian vault (or markdown knowledge base) into the
- * federation database.
+ * Index an entire Obsidian vault (or markdown knowledge base) using the
+ * async StorageBackend interface.
  *
  * Steps:
  *  1. Walk vault root, following symlinks.
@@ -547,7 +549,7 @@ function commonPrefixLength(a: string, b: string): number {
  *  4. For each canonical file:
  *     a. SHA-256 hash for change detection — skip unchanged files.
  *     b. Read content, chunk with chunkMarkdown().
- *     c. Insert chunks into memory_chunks and memory_fts.
+ *     c. Insert chunks into backend (memory_chunks and memory_fts).
  *     d. Upsert vault_files row.
  *  5. Record aliases in vault_aliases.
  *  6. Rebuild vault_name_index table.
@@ -558,12 +560,12 @@ function commonPrefixLength(a: string, b: string): number {
  *  8. Compute and upsert health metrics (vault_health).
  *  9. Return statistics.
  *
- * @param db              Open federation database.
+ * @param backend         StorageBackend to write to.
  * @param vaultProjectId  Registry project ID for the vault "project".
  * @param vaultRoot       Absolute path to the vault root directory.
  */
 export async function indexVault(
-  db: Database,
+  backend: StorageBackend,
   vaultProjectId: number,
   vaultRoot: string,
 ): Promise<VaultIndexResult> {
@@ -599,46 +601,7 @@ export async function indexVault(
   const nameIndex = buildNameIndex(allFiles);
 
   // ---------------------------------------------------------------------------
-  // Step 4: Prepare SQL statements
-  // ---------------------------------------------------------------------------
-
-  const selectFileHash = db.prepare(
-    "SELECT hash FROM vault_files WHERE vault_path = ?",
-  );
-
-  const deleteOldChunkIds = db.prepare(
-    "SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?",
-  );
-
-  const deleteFts = db.prepare("DELETE FROM memory_fts WHERE id = ?");
-
-  const deleteChunks = db.prepare(
-    "DELETE FROM memory_chunks WHERE project_id = ? AND path = ?",
-  );
-
-  const insertChunk = db.prepare(`
-    INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertFts = db.prepare(`
-    INSERT INTO memory_fts (text, id, project_id, path, source, tier, start_line, end_line)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const upsertVaultFile = db.prepare(`
-    INSERT INTO vault_files (vault_path, inode, device, hash, title, indexed_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(vault_path) DO UPDATE SET
-      inode      = excluded.inode,
-      device     = excluded.device,
-      hash       = excluded.hash,
-      title      = excluded.title,
-      indexed_at = excluded.indexed_at
-  `);
-
-  // ---------------------------------------------------------------------------
-  // Step 4 (cont.): Index each canonical file
+  // Step 4: Index each canonical file
   // ---------------------------------------------------------------------------
 
   await yieldToEventLoop();
@@ -666,27 +629,14 @@ export async function indexVault(
     const hash = sha256File(content);
 
     // Change detection: skip if hash is unchanged
-    const existing = selectFileHash.get(canonical.vaultRelPath) as
-      | { hash: string }
-      | undefined;
-
+    const existing = await backend.getVaultFile(canonical.vaultRelPath);
     if (existing?.hash === hash) {
       result.filesSkipped++;
       continue;
     }
 
     // Delete old chunks for this vault path
-    const oldChunkIds = deleteOldChunkIds.all(
-      vaultProjectId,
-      canonical.vaultRelPath,
-    ) as Array<{ id: string }>;
-
-    db.transaction(() => {
-      for (const row of oldChunkIds) {
-        deleteFts.run(row.id);
-      }
-      deleteChunks.run(vaultProjectId, canonical.vaultRelPath);
-    })();
+    await backend.deleteChunksForFile(vaultProjectId, canonical.vaultRelPath);
 
     // Chunk the content
     const chunks = chunkMarkdown(content);
@@ -698,48 +648,46 @@ export async function indexVault(
       ? titleMatch[1]!.trim()
       : basename(canonical.vaultRelPath, ".md");
 
-    db.transaction(() => {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!;
-        const id = chunkId(
-          vaultProjectId,
-          canonical.vaultRelPath,
-          i,
-          chunk.startLine,
-          chunk.endLine,
-        );
-        insertChunk.run(
-          id,
-          vaultProjectId,
-          "vault",
-          "topic",
-          canonical.vaultRelPath,
-          chunk.startLine,
-          chunk.endLine,
-          chunk.hash,
-          chunk.text,
-          updatedAt,
-        );
-        insertFts.run(
-          chunk.text,
-          id,
-          vaultProjectId,
-          canonical.vaultRelPath,
-          "vault",
-          "topic",
-          chunk.startLine,
-          chunk.endLine,
-        );
-      }
-      upsertVaultFile.run(
+    // Build chunk rows
+    const chunkRows: ChunkRow[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      const id = chunkId(
+        vaultProjectId,
         canonical.vaultRelPath,
-        canonical.inode,
-        canonical.device,
-        hash,
-        title,
-        updatedAt,
+        i,
+        chunk.startLine,
+        chunk.endLine,
       );
-    })();
+      chunkRows.push({
+        id,
+        projectId: vaultProjectId,
+        source: "vault",
+        tier: "topic",
+        path: canonical.vaultRelPath,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        hash: chunk.hash,
+        text: chunk.text,
+        updatedAt,
+      });
+    }
+
+    // Insert chunks (backend handles FTS insertion too)
+    if (chunkRows.length > 0) {
+      await backend.insertChunks(chunkRows);
+    }
+
+    // Upsert vault file record
+    const vaultFileRow: VaultFileRow = {
+      vaultPath: canonical.vaultRelPath,
+      inode: canonical.inode,
+      device: canonical.device,
+      hash,
+      title,
+      indexedAt: updatedAt,
+    };
+    await backend.upsertVaultFile(vaultFileRow);
 
     result.filesIndexed++;
     result.chunksCreated += chunks.length;
@@ -751,30 +699,29 @@ export async function indexVault(
 
   await yieldToEventLoop();
 
-  // Clear old aliases for this vault before rebuilding
-  // (We identify vault aliases by checking which canonical paths belong to
-  //  the canonical files we just indexed — simpler to clear + rebuild all.)
-  db.exec("DELETE FROM vault_aliases");
-
-  const insertAlias = db.prepare(`
-    INSERT OR REPLACE INTO vault_aliases (vault_path, canonical_path, inode, device)
-    VALUES (?, ?, ?, ?)
-  `);
-
-  const insertAliasesTx = db.transaction((groups: InodeGroup[]) => {
-    for (const group of groups) {
-      for (const alias of group.aliases) {
-        insertAlias.run(
-          alias.vaultRelPath,
-          group.canonical.vaultRelPath,
-          alias.inode,
-          alias.device,
-        );
-        result.aliasesRecorded++;
-      }
+  // Collect all aliases across all groups
+  const allAliases: VaultAliasRow[] = [];
+  for (const group of inodeGroups) {
+    for (const alias of group.aliases) {
+      allAliases.push({
+        vaultPath: alias.vaultRelPath,
+        canonicalPath: group.canonical.vaultRelPath,
+        inode: alias.inode,
+        device: alias.device,
+      });
+      result.aliasesRecorded++;
     }
-  });
-  insertAliasesTx(inodeGroups);
+  }
+
+  // Clear and rebuild aliases for all canonical paths we touched
+  // Collect unique canonical paths
+  const canonicalPaths = new Set(inodeGroups.map((g) => g.canonical.vaultRelPath));
+  for (const canonPath of canonicalPaths) {
+    await backend.deleteVaultAliases(canonPath);
+  }
+  if (allAliases.length > 0) {
+    await backend.upsertVaultAliases(allAliases);
+  }
 
   // ---------------------------------------------------------------------------
   // Step 6: Rebuild vault_name_index
@@ -782,27 +729,13 @@ export async function indexVault(
 
   await yieldToEventLoop();
 
-  db.exec("DELETE FROM vault_name_index");
-
-  const insertNameIndex = db.prepare(`
-    INSERT OR REPLACE INTO vault_name_index (name, vault_path) VALUES (?, ?)
-  `);
-
-  const insertNameIndexTx = db.transaction(
-    (entries: Array<[string, string]>) => {
-      for (const [name, path] of entries) {
-        insertNameIndex.run(name, path);
-      }
-    },
-  );
-
-  const nameEntries: Array<[string, string]> = [];
+  const nameEntries: VaultNameEntry[] = [];
   for (const [name, paths] of nameIndex) {
     for (const path of paths) {
-      nameEntries.push([name, path]);
+      nameEntries.push({ name, vaultPath: path });
     }
   }
-  insertNameIndexTx(nameEntries);
+  await backend.replaceNameIndex(nameEntries);
 
   // ---------------------------------------------------------------------------
   // Step 7: Rebuild vault_links
@@ -810,25 +743,18 @@ export async function indexVault(
 
   await yieldToEventLoop();
 
-  db.exec("DELETE FROM vault_links");
+  // Parse and resolve wikilinks in bulk
+  const linkRows: VaultLinkRow[] = [];
+  const allSourcePaths: string[] = [];
 
-  const insertLink = db.prepare(`
-    INSERT OR IGNORE INTO vault_links
-      (source_path, target_raw, target_path, link_type, line_number)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-
-  // Parse and resolve wikilinks in bulk transaction
-  const linkRows: Array<{
-    source: string;
-    raw: string;
-    target: string | null;
-    linkType: string;
-    lineNumber: number;
-  }> = [];
-
+  let linkParseYield = 0;
   for (const group of inodeGroups) {
+    if (linkParseYield++ % VAULT_YIELD_EVERY === 0) {
+      await yieldToEventLoop();
+    }
+
     const { canonical } = group;
+    allSourcePaths.push(canonical.vaultRelPath);
 
     let content: string;
     try {
@@ -847,34 +773,28 @@ export async function indexVault(
         linkType = link.isEmbed ? "embed" : "wikilink";
       }
       linkRows.push({
-        source: canonical.vaultRelPath,
-        raw: link.raw,
-        target,
+        sourcePath: canonical.vaultRelPath,
+        targetRaw: link.raw,
+        targetPath: target,
         linkType,
         lineNumber: link.lineNumber,
       });
     }
   }
 
-  const insertLinksTx = db.transaction(
-    (
-      rows: Array<{
-        source: string;
-        raw: string;
-        target: string | null;
-        linkType: string;
-        lineNumber: number;
-      }>,
-    ) => {
-      for (const row of rows) {
-        insertLink.run(row.source, row.raw, row.target, row.linkType, row.lineNumber);
-      }
-    },
-  );
-  insertLinksTx(linkRows);
+  // Replace all links for all sources in batches of 500
+  // (backend.replaceLinksForSources batches internally, but we batch the source
+  //  list here too to avoid sending huge arrays in one call)
+  const LINK_BATCH_SIZE = 500;
+  for (let i = 0; i < allSourcePaths.length; i += LINK_BATCH_SIZE) {
+    const batchSources = allSourcePaths.slice(i, i + LINK_BATCH_SIZE);
+    const batchLinks = linkRows.filter((r) => batchSources.includes(r.sourcePath));
+    await backend.replaceLinksForSources(batchSources, batchLinks);
+    await yieldToEventLoop();
+  }
 
   result.linksExtracted = linkRows.length;
-  result.deadLinksFound = linkRows.filter((r) => r.target === null).length;
+  result.deadLinksFound = linkRows.filter((r) => r.targetPath === null).length;
 
   // ---------------------------------------------------------------------------
   // Step 8: Compute and upsert vault_health metrics
@@ -882,67 +802,49 @@ export async function indexVault(
 
   await yieldToEventLoop();
 
-  // Count outbound links per source
-  const outboundCounts = db
-    .prepare(
-      `SELECT source_path, COUNT(*) AS cnt FROM vault_links GROUP BY source_path`,
-    )
-    .all() as Array<{ source_path: string; cnt: number }>;
+  // Build in-memory aggregates from the link rows we already have
+  // outbound: number of links going out from each source
+  const outboundMap = new Map<string, number>();
+  // dead: number of dead (unresolved) links per source
+  const deadMap = new Map<string, number>();
+  // inbound: number of links coming into each target
+  const inboundMap = new Map<string, number>();
 
-  // Count dead links per source
-  const deadLinkCounts = db
-    .prepare(
-      `SELECT source_path, COUNT(*) AS cnt FROM vault_links
-       WHERE target_path IS NULL GROUP BY source_path`,
-    )
-    .all() as Array<{ source_path: string; cnt: number }>;
-
-  // Count inbound links per target
-  const inboundCounts = db
-    .prepare(
-      `SELECT target_path, COUNT(*) AS cnt FROM vault_links
-       WHERE target_path IS NOT NULL GROUP BY target_path`,
-    )
-    .all() as Array<{ target_path: string; cnt: number }>;
-
-  // Build maps for O(1) lookup
-  const outboundMap = new Map<string, number>(
-    outboundCounts.map((r) => [r.source_path, r.cnt]),
-  );
-  const deadMap = new Map<string, number>(
-    deadLinkCounts.map((r) => [r.source_path, r.cnt]),
-  );
-  const inboundMap = new Map<string, number>(
-    inboundCounts.map((r) => [r.target_path, r.cnt]),
-  );
-
-  const upsertHealth = db.prepare(`
-    INSERT INTO vault_health
-      (vault_path, inbound_count, outbound_count, dead_link_count, is_orphan, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(vault_path) DO UPDATE SET
-      inbound_count   = excluded.inbound_count,
-      outbound_count  = excluded.outbound_count,
-      dead_link_count = excluded.dead_link_count,
-      is_orphan       = excluded.is_orphan,
-      computed_at     = excluded.computed_at
-  `);
+  for (const row of linkRows) {
+    outboundMap.set(row.sourcePath, (outboundMap.get(row.sourcePath) ?? 0) + 1);
+    if (row.targetPath === null) {
+      deadMap.set(row.sourcePath, (deadMap.get(row.sourcePath) ?? 0) + 1);
+    } else {
+      inboundMap.set(row.targetPath, (inboundMap.get(row.targetPath) ?? 0) + 1);
+    }
+  }
 
   const computedAt = Date.now();
   let orphanCount = 0;
 
-  const upsertHealthTx = db.transaction((groups: InodeGroup[]) => {
-    for (const group of groups) {
+  // Build health rows for all canonical files and upsert in batches of 500
+  const HEALTH_BATCH_SIZE = 500;
+  for (let i = 0; i < inodeGroups.length; i += HEALTH_BATCH_SIZE) {
+    const batch = inodeGroups.slice(i, i + HEALTH_BATCH_SIZE);
+    const healthRows: VaultHealthRow[] = batch.map((group) => {
       const path = group.canonical.vaultRelPath;
       const inbound = inboundMap.get(path) ?? 0;
       const outbound = outboundMap.get(path) ?? 0;
       const dead = deadMap.get(path) ?? 0;
-      const isOrphan = inbound === 0 ? 1 : 0;
+      const isOrphan = inbound === 0;
       if (isOrphan) orphanCount++;
-      upsertHealth.run(path, inbound, outbound, dead, isOrphan, computedAt);
-    }
-  });
-  upsertHealthTx(inodeGroups);
+      return {
+        vaultPath: path,
+        inboundCount: inbound,
+        outboundCount: outbound,
+        deadLinkCount: dead,
+        isOrphan,
+        computedAt,
+      };
+    });
+    await backend.upsertVaultHealth(healthRows);
+    await yieldToEventLoop();
+  }
 
   result.orphansFound = orphanCount;
   result.elapsed = Date.now() - startTime;
