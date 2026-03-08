@@ -22,7 +22,12 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import type PaiKnowledgePlugin from "../main";
 import { GraphRenderer } from "../graph/GraphRenderer";
 import { GraphStateManager } from "../state/GraphStateManager";
-import type { ClusterNode, GraphClustersResult } from "../client/types";
+import type {
+  ClusterNode,
+  GraphClustersResult,
+  GraphNeighborhoodResult,
+  NoteNode,
+} from "../client/types";
 
 export const VIEW_TYPE_PAI_GRAPH = "pai-graph-view";
 
@@ -195,9 +200,12 @@ export class PaiGraphView extends ItemView {
     if (!this.canvasEl) return;
     this.renderer = new GraphRenderer(this.canvasEl, {
       onClusterClick: (cluster: ClusterNode) => {
-        // For Phase 1 just push to Level 2 in state (renderer doesn't yet drill down)
         this.state.pushCluster(cluster);
-        // Future: render Level 2 inside the same view
+        this.onNavigationChange();
+      },
+      onNoteClick: (note: NoteNode) => {
+        // Level 3 is Phase 3 — log for now
+        console.log("[PAI] Note clicked:", note.vault_path);
       },
       onBackgroundClick: () => {
         // Could deselect or show info panel
@@ -226,8 +234,14 @@ export class PaiGraphView extends ItemView {
     if (snap.level === 1) {
       // Reload clusters when navigating back to the overview
       this.reloadClusters();
+    } else if (snap.level === 2) {
+      // Drill down into the selected cluster
+      const ctx = snap.context;
+      if (ctx.level === 2) {
+        this.loadAndRenderNeighborhood(ctx.cluster);
+      }
     }
-    // Level 2 and Level 3 rendering will be added in Phase 2
+    // Level 3 will be added in Phase 3
   }
 
   /** Reload cluster data from the daemon and re-render */
@@ -249,6 +263,46 @@ export class PaiGraphView extends ItemView {
       const message = err instanceof Error ? err.message : String(err);
       this.showError("Refresh failed", message, "pai daemon start");
     }
+  }
+
+  /**
+   * Fetch neighbourhood data for the given cluster and render Level 2.
+   * Extracts vault_paths from the cluster's notes array.
+   */
+  private async loadAndRenderNeighborhood(cluster: ClusterNode): Promise<void> {
+    this.showLoading(`Loading notes for "${cluster.label}"…`);
+
+    const vaultPaths = cluster.notes.map((n) => n.vault_path);
+
+    let result: GraphNeighborhoodResult;
+    try {
+      result = await this.plugin.client.call<GraphNeighborhoodResult>(
+        "graph_neighborhood",
+        {
+          vault_paths: vaultPaths,
+          project_id: this.plugin.settings.projectId ?? 0,
+        }
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.showError("Failed to load cluster notes", message, "pai daemon start");
+      return;
+    }
+
+    this.hideOverlay();
+
+    if (!this.renderer) return;
+
+    if (result.nodes.length === 0) {
+      this.showError(
+        "No notes found",
+        `The cluster "${cluster.label}" has no indexed notes.`,
+        "Try re-indexing with: pai index"
+      );
+      return;
+    }
+
+    this.renderer.renderNotes(result);
   }
 
   // ---------------------------------------------------------------------------

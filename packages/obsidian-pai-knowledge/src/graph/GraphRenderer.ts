@@ -19,8 +19,8 @@ import cytoscape, {
   ElementsDefinition,
   NodeSingular,
 } from "cytoscape";
-import type { ClusterNode } from "../client/types";
-import { clusterStylesheet, colorForType } from "./GraphStyles";
+import type { ClusterNode, NoteNode, GraphNeighborhoodResult } from "../client/types";
+import { clusterStylesheet, noteStylesheet, colorForType } from "./GraphStyles";
 
 // ---------------------------------------------------------------------------
 // Public event callbacks
@@ -29,6 +29,8 @@ import { clusterStylesheet, colorForType } from "./GraphStyles";
 export interface GraphRendererCallbacks {
   /** Fired when the user single-clicks a cluster node */
   onClusterClick?: (cluster: ClusterNode) => void;
+  /** Fired when the user single-clicks a note node (Level 2) */
+  onNoteClick?: (note: NoteNode) => void;
   /** Fired when the user taps the background (deselect) */
   onBackgroundClick?: () => void;
 }
@@ -52,6 +54,8 @@ export class GraphRenderer {
   private callbacks: GraphRendererCallbacks;
   /** Map from cytoscape node id → original ClusterNode for click events */
   private clusterById = new Map<string, ClusterNode>();
+  /** Map from cytoscape node id → original NoteNode for Level 2 click events */
+  private noteById = new Map<string, NoteNode>();
 
   constructor(container: HTMLElement, callbacks: GraphRendererCallbacks = {}) {
     this.container = container;
@@ -106,6 +110,10 @@ export class GraphRenderer {
     }
 
     this.clusterById.clear();
+    this.noteById.clear();
+
+    // Reset to cluster-level stylesheet when returning from Level 2
+    this.cy.style(clusterStylesheet());
 
     const elements: ElementsDefinition = {
       nodes: clusters.map((cluster) => {
@@ -169,6 +177,111 @@ export class GraphRenderer {
       .run();
 
     // Fit after layout finishes
+    this.cy.one("layoutstop", () => {
+      this.cy?.fit(undefined, 40);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Level 2: Note detail view
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Render individual notes inside a cluster and the wikilink / semantic edges
+   * between them. Replaces any existing graph content and switches to the
+   * note-level stylesheet.
+   *
+   * @param result  GraphNeighborhoodResult from the daemon
+   */
+  renderNotes(result: GraphNeighborhoodResult): void {
+    if (!this.cy) {
+      throw new Error("GraphRenderer.init() must be called before renderNotes()");
+    }
+
+    this.clusterById.clear();
+    this.noteById.clear();
+
+    // Switch to note-level stylesheet
+    this.cy.style(noteStylesheet());
+
+    const elements: ElementsDefinition = {
+      nodes: result.nodes.map((note) => {
+        const nodeId = `note-${note.vault_path}`;
+        this.noteById.set(nodeId, note);
+
+        // Short filename label for display; truncated to keep nodes compact
+        const shortLabel = note.title.length > 20
+          ? note.title.slice(0, 18) + "…"
+          : note.title;
+
+        return {
+          data: {
+            id: nodeId,
+            label: shortLabel,
+            color: colorForType(note.dominant_type),
+            vault_path: note.vault_path,
+          },
+        };
+      }),
+
+      edges: result.edges.map((edge, idx) => ({
+        data: {
+          id: `edge-${idx}`,
+          source: `note-${edge.source}`,
+          target: `note-${edge.target}`,
+          edgeType: edge.type,
+          weight: edge.weight,
+          // Semantic edges are drawn thinner and dashed
+          lineStyle: edge.type === "semantic" ? "dashed" : "solid",
+          lineWidth: edge.type === "semantic" ? 0.8 : 1.5,
+          opacity: edge.type === "semantic" ? 0.45 : 0.7,
+        },
+      })),
+    };
+
+    this.cy.elements().remove();
+    this.cy.add(elements);
+
+    // Apply per-edge data-driven styles via element-level data
+    // (noteStylesheet handles base styles; override for semantic edges)
+    this.cy.edges('[edgeType = "semantic"]').style({
+      "line-style": "dashed",
+      width: 0.8,
+      opacity: 0.45,
+    });
+    this.cy.edges('[edgeType = "wikilink"]').style({
+      "line-style": "solid",
+      width: 1.5,
+      opacity: 0.7,
+    });
+
+    // Bind click handlers on note nodes
+    this.cy.nodes().on("tap", (evt) => {
+      const node = evt.target as NodeSingular;
+      const note = this.noteById.get(node.id());
+      if (note) {
+        this.callbacks.onNoteClick?.(note);
+      }
+    });
+
+    // Run force-directed layout
+    this.cy
+      .layout({
+        name: "cose",
+        animate: true,
+        animationDuration: 500,
+        animationEasing: "ease-out",
+        nodeRepulsion: () => 4500,
+        nodeOverlap: 10,
+        idealEdgeLength: () => 80,
+        gravity: 0.3,
+        numIter: 800,
+        randomize: false,
+        componentSpacing: 60,
+      })
+      .run();
+
+    // Fit after layout
     this.cy.one("layoutstop", () => {
       this.cy?.fit(undefined, 40);
     });

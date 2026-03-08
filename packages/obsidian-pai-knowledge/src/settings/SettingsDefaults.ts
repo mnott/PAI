@@ -26,6 +26,12 @@ export interface PaiPluginSettings {
    * Lower = more/larger clusters, higher = fewer/tighter clusters.
    */
   similarityThreshold: number;
+  /**
+   * The numeric PAI project ID for the vault being visualised.
+   * Required for graph_neighborhood and observation-type enrichment.
+   * 0 means "not configured".
+   */
+  projectId: number;
 }
 
 export const DEFAULT_SETTINGS: PaiPluginSettings = {
@@ -34,4 +40,5 @@ export const DEFAULT_SETTINGS: PaiPluginSettings = {
   maxClusters: 20,
   lookbackDays: 90,
   similarityThreshold: 0.6,
+  projectId: 0,
 };

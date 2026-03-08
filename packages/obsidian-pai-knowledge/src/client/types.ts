@@ -5,8 +5,8 @@
  *   Request:  { id: string, method: string, params: object }  (one JSON line)
  *   Response: { id: string, result: T } | { id: string, error: { code: number, message: string } }
  *
- * For Phase 1, only graph_clusters is implemented.
- * Future methods: memory_search, vault_explore, session_list, etc.
+ * Phase 1: graph_clusters
+ * Phase 2: graph_neighborhood
  */
 
 // ---------------------------------------------------------------------------
@@ -98,6 +98,57 @@ export interface GraphClustersResult {
 }
 
 // ---------------------------------------------------------------------------
+// graph_neighborhood
+// ---------------------------------------------------------------------------
+
+export interface GraphNeighborhoodParams {
+  /** Vault-relative paths of notes in the cluster to expand */
+  vault_paths: string[];
+  /** Numeric PAI project ID */
+  project_id: number;
+  /** Whether to compute semantic similarity edges (default: false) */
+  include_semantic_edges?: boolean;
+  /** Cosine similarity threshold for semantic edges (0–1, default: 0.7) */
+  semantic_threshold?: number;
+}
+
+/** A single note node inside the neighbourhood */
+export interface NoteNode {
+  /** Vault-relative path, e.g. "Projects/PAI/idea-2024.md" */
+  vault_path: string;
+  /** Note title from frontmatter or H1; falls back to filename */
+  title: string;
+  /** Parent folder path derived from vault_path */
+  folder: string;
+  /** Per-type observation count breakdown: { "decision": 2, "feature": 5, ... } */
+  observation_types: Record<string, number>;
+  /** The most common observation type, or "unknown" */
+  dominant_type: string;
+  /** Unix timestamp (seconds) when the note was last indexed */
+  updated_at: number;
+  /** Word count (0 when not stored) */
+  word_count: number;
+}
+
+/** A directed edge between two notes */
+export interface NoteEdge {
+  /** Source vault_path */
+  source: string;
+  /** Target vault_path */
+  target: string;
+  /** "wikilink" for explicit Obsidian links, "semantic" for embedding similarity */
+  type: "wikilink" | "semantic";
+  /** 1.0 for wikilinks; cosine similarity score for semantic edges */
+  weight: number;
+}
+
+/** Full response from graph_neighborhood */
+export interface GraphNeighborhoodResult {
+  nodes: NoteNode[];
+  edges: NoteEdge[];
+}
+
+// ---------------------------------------------------------------------------
 // Convenience union of all supported method → param/result pairs.
 // Extend this as more daemon methods are implemented.
 // ---------------------------------------------------------------------------
@@ -106,6 +157,10 @@ export type DaemonMethodMap = {
   graph_clusters: {
     params: GraphClustersParams;
     result: GraphClustersResult;
+  };
+  graph_neighborhood: {
+    params: GraphNeighborhoodParams;
+    result: GraphNeighborhoodResult;
   };
 };
 
