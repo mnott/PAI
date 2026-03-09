@@ -34,7 +34,6 @@ export function getNextNoteNumber(notesDir: string): string {
 
   const files = readdirSync(monthDir)
     .filter(f => f.match(/^\d{3,4}[\s_-]/))
-    .filter(f => f.endsWith('.md'))
     .sort();
 
   if (files.length === 0) return '0001';
