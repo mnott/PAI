@@ -1,15 +1,25 @@
 /** Step 7b: TypeScript (.mjs) hooks installation to ~/.claude/Hooks/. */
 
-import { existsSync, readFileSync, readdirSync, copyFileSync, chmodSync, unlinkSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import {
+  existsSync, readdirSync, lstatSync, readlinkSync,
+  symlinkSync, unlinkSync, copyFileSync, chmodSync, mkdirSync,
+} from "node:fs";
+import { homedir, platform } from "node:os";
+import { join, resolve } from "node:path";
 import { c, line, section, type Rl, promptYesNo, getDistHooksDir } from "../utils.js";
+
+const useSymlinks = platform() !== "win32";
 
 export async function stepTsHooks(rl: Rl): Promise<boolean> {
   section("Step 7b: TypeScript Hooks Installation");
   line();
-  line("  PAI ships 14 compiled TypeScript hooks (.mjs) that fire on session events,");
+  line("  PAI ships compiled TypeScript hooks (.mjs) that fire on session events,");
   line("  tool use, and context compaction to capture context and update notes.");
+  if (useSymlinks) {
+    line("  Files are symlinked so they auto-update when PAI is rebuilt.");
+  } else {
+    line("  Files are copied (Windows — re-run setup after PAI updates).");
+  }
   line();
 
   const install = await promptYesNo(rl, "Install PAI TypeScript hooks to ~/.claude/Hooks/?", true);
@@ -47,35 +57,48 @@ export async function stepTsHooks(rl: Rl): Promise<boolean> {
   }
 
   line();
-  let copiedCount = 0;
+  let linkedCount = 0;
   let skippedCount = 0;
   let cleanedCount = 0;
 
   for (const filename of allFiles) {
-    const src = join(distHooksDir, filename);
+    const src = resolve(join(distHooksDir, filename));
     const dest = join(hooksTarget, filename);
-    const srcContent = readFileSync(src, "utf-8");
 
-    if (existsSync(dest)) {
-      const destContent = readFileSync(dest, "utf-8");
-      if (srcContent === destContent) {
-        console.log(c.dim(`  Unchanged: ${filename}`));
-        skippedCount++;
-        const staleTsPath = join(hooksTarget, filename.replace(/\.mjs$/, ".ts"));
-        if (existsSync(staleTsPath)) {
-          unlinkSync(staleTsPath);
-          console.log(c.ok(`Cleaned up stale: ${filename.replace(/\.mjs$/, ".ts")}`));
-          cleanedCount++;
+    // Check existing target
+    let needsLink = true;
+    if (existsSync(dest) || lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink?.()) {
+      try {
+        const stat = lstatSync(dest);
+        if (stat.isSymbolicLink()) {
+          if (resolve(readlinkSync(dest)) === src) {
+            console.log(c.dim(`  Current: ${filename}`));
+            skippedCount++;
+            needsLink = false;
+          } else {
+            unlinkSync(dest); // Stale symlink
+          }
+        } else if (stat.isFile()) {
+          unlinkSync(dest); // Old copy — replace with symlink
         }
-        continue;
+      } catch {
+        // lstatSync failed — target doesn't exist
       }
     }
 
-    copyFileSync(src, dest);
-    chmodSync(dest, 0o755);
-    console.log(c.ok(`Installed: ${filename}`));
-    copiedCount++;
+    if (needsLink) {
+      if (useSymlinks) {
+        symlinkSync(src, dest);
+      } else {
+        copyFileSync(src, dest);
+        chmodSync(dest, 0o755);
+      }
+      const verb = useSymlinks ? "Linked" : "Installed";
+      console.log(c.ok(`${verb}: ${filename}`));
+      linkedCount++;
+    }
 
+    // Clean up stale .ts files from pre-build era
     const staleTsPath = join(hooksTarget, filename.replace(/\.mjs$/, ".ts"));
     if (existsSync(staleTsPath)) {
       unlinkSync(staleTsPath);
@@ -85,15 +108,16 @@ export async function stepTsHooks(rl: Rl): Promise<boolean> {
   }
 
   line();
-  if (copiedCount > 0 || cleanedCount > 0) {
+  if (linkedCount > 0 || cleanedCount > 0) {
     const parts = [];
-    if (copiedCount > 0) parts.push(`${copiedCount} hook(s) installed`);
-    if (skippedCount > 0) parts.push(`${skippedCount} unchanged`);
+    const verb = useSymlinks ? "linked" : "installed";
+    if (linkedCount > 0) parts.push(`${linkedCount} hook(s) ${verb}`);
+    if (skippedCount > 0) parts.push(`${skippedCount} current`);
     if (cleanedCount > 0) parts.push(`${cleanedCount} stale .ts file(s) cleaned up`);
     console.log(c.ok(parts.join(", ") + "."));
   } else {
-    console.log(c.dim(`  All ${skippedCount} hook(s) already up-to-date.`));
+    console.log(c.dim(`  All ${skippedCount} hook(s) already current.`));
   }
 
-  return copiedCount > 0 || cleanedCount > 0;
+  return linkedCount > 0 || cleanedCount > 0;
 }

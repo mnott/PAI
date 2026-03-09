@@ -406,11 +406,15 @@ if [ -f "$usage_cache" ]; then
         elapsed_secs=$((window_secs - remaining_secs))
         # Expected usage if spending linearly: elapsed/total * 100
         expected_pct=$(( elapsed_secs * 100 / window_secs ))
-        # Daily pace: actual spend per day vs budget (100/7 ≈ 14%/day)
+        # Daily pace: actual spend/day vs dynamic budget
+        # Budget = remaining capacity / remaining days (not static 100/7)
         elapsed_days_x10=$((elapsed_secs * 10 / 86400))
         [ "$elapsed_days_x10" -lt 1 ] && elapsed_days_x10=1
         spend_per_day=$((seven_day_int * 10 / elapsed_days_x10))
-        budget_per_day=14  # 100/7 ≈ 14%
+        remaining_days_x10=$((remaining_secs * 10 / 86400))
+        [ "$remaining_days_x10" -lt 1 ] && remaining_days_x10=1
+        remaining_budget=$((100 - seven_day_int))
+        budget_per_day=$((remaining_budget * 10 / remaining_days_x10))
         # Color: green = under budget, orange = near budget, red = over budget
         overspend=$((spend_per_day - budget_per_day))
         if [ "$overspend" -le -3 ] 2>/dev/null; then
