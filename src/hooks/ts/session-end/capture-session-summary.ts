@@ -19,7 +19,8 @@ interface SessionData {
 
 async function main() {
   try {
-    // Read input from stdin
+    // Read input from stdin FIRST — this must complete before CC's abort signal fires.
+    // Then fork the heavy work into a detached child so CC can't kill it.
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(chunk);
@@ -29,7 +30,21 @@ async function main() {
       process.exit(0);
     }
 
-    const data: SessionData = JSON.parse(input);
+    // Fork: re-exec ourselves with --background flag and pipe the stdin data via env.
+    // This detaches the heavy work (JSONL scan, IPC) from CC's abort signal.
+    if (!process.env.__PAI_HOOK_BG) {
+      const { spawn } = await import('child_process');
+      const child = spawn(process.execPath, [process.argv[1], '--background'], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, __PAI_HOOK_BG: '1', __PAI_HOOK_INPUT: input },
+      });
+      child.unref();
+      process.exit(0); // Return immediately — CC sees success, abort signal is harmless
+    }
+
+    // Background mode: we're detached, safe from abort signals
+    const data: SessionData = JSON.parse(process.env.__PAI_HOOK_INPUT || input);
 
     // Generate timestamp for filename
     const now = new Date();
@@ -80,7 +95,12 @@ async function analyzeSession(conversationId: string, yearMonth: string): Promis
 
   try {
     if (existsSync(rawOutputsDir)) {
-      const files = readdirSync(rawOutputsDir).filter(f => f.endsWith('.jsonl'));
+      // Only scan today's file — not the entire month (which can be 400MB+).
+      // JSONL filenames are prefixed with YYYY-MM-DD.
+      const todayPrefix = new Date().toISOString().substring(0, 10);
+      const files = readdirSync(rawOutputsDir).filter(
+        f => f.endsWith('.jsonl') && f.startsWith(todayPrefix)
+      );
 
       for (const file of files) {
         const filePath = join(rawOutputsDir, file);
