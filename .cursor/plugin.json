@@ -1,0 +1,60 @@
+{
+  "name": "@tekmidian/pai",
+  "displayName": "PAI Knowledge OS",
+  "description": "Personal AI Infrastructure — persistent memory and session continuity",
+  "version": "0.7.0",
+  "author": "Matthias Nott",
+  "license": "MIT",
+  "homepage": "https://github.com/mnott/PAI",
+  "capabilities": {
+    "mcp": true,
+    "hooks": false,
+    "skills": false,
+    "resources": false
+  },
+  "mcp": {
+    "name": "pai",
+    "description": "PAI Knowledge OS — federated memory search, project registry, session management",
+    "command": "node",
+    "args": ["dist/daemon-mcp/index.mjs"],
+    "tools": [
+      {
+        "name": "memory_search",
+        "description": "Search indexed memory across projects (keyword, semantic, or hybrid mode)"
+      },
+      {
+        "name": "memory_get",
+        "description": "Retrieve full content of a specific file from project memory"
+      },
+      {
+        "name": "project_info",
+        "description": "Look up a project by slug, alias, or number"
+      },
+      {
+        "name": "project_list",
+        "description": "List all registered projects"
+      },
+      {
+        "name": "session_list",
+        "description": "List session notes, optionally filtered by project"
+      },
+      {
+        "name": "registry_search",
+        "description": "Search project metadata (names, paths, tags)"
+      },
+      {
+        "name": "project_detect",
+        "description": "Identify which project a given path belongs to"
+      },
+      {
+        "name": "project_health",
+        "description": "Audit all registered paths for moved or deleted directories"
+      },
+      {
+        "name": "project_todo",
+        "description": "Read a project's TODO.md and continuation prompt"
+      }
+    ]
+  },
+  "notes": "Cursor supports MCP servers but not Claude Code hooks or skills. PAI memory search, project registry, and all 9 MCP tools work. Hooks (session lifecycle, observability) and skills (slash commands) require Claude Code."
+}

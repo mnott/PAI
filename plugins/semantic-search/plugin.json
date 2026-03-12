@@ -1,0 +1,21 @@
+{
+  "name": "pai-semantic-search",
+  "displayName": "PAI Semantic Search",
+  "description": "Vector search with pgvector, cross-encoder reranking, hybrid mode, recency boost",
+  "version": "0.7.0",
+  "tier": "pro",
+  "required": false,
+  "depends": ["core"],
+  "features": [
+    "semantic_search_mode",
+    "hybrid_search_mode",
+    "cross_encoder_reranking",
+    "recency_boost",
+    "pgvector_storage"
+  ],
+  "requirements": {
+    "docker": true,
+    "postgresql": ">=15",
+    "pgvector": ">=0.5.0"
+  }
+}

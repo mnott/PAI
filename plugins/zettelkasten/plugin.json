@@ -1,0 +1,19 @@
+{
+  "name": "pai-zettelkasten",
+  "displayName": "PAI Zettelkasten Intelligence",
+  "description": "Luhmann-inspired vault intelligence with graph operations and Obsidian integration",
+  "version": "0.7.0",
+  "tier": "enterprise",
+  "required": false,
+  "depends": ["core", "semantic-search"],
+  "skills": ["VaultConnect", "VaultContext", "VaultEmerge", "VaultOrphans", "VaultTrace"],
+  "features": [
+    "vault_indexer",
+    "zettel_explore",
+    "zettel_surprise",
+    "zettel_converse",
+    "zettel_themes",
+    "zettel_health",
+    "zettel_suggest"
+  ]
+}

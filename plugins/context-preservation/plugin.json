@@ -1,0 +1,10 @@
+{
+  "name": "pai-context-preservation",
+  "displayName": "PAI Context Preservation",
+  "description": "Context compression and relay across compaction cycles",
+  "version": "0.7.0",
+  "tier": "free",
+  "required": false,
+  "depends": ["core"],
+  "hooks": "hooks/hooks.json"
+}

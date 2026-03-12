@@ -1,0 +1,26 @@
+{
+  "name": "@tekmidian/pai",
+  "displayName": "PAI Knowledge OS",
+  "description": "Personal AI Infrastructure — persistent memory and session continuity for AI coding assistants",
+  "version": "0.7.0",
+  "author": "Matthias Nott",
+  "license": "MIT",
+  "homepage": "https://github.com/mnott/PAI",
+  "mcpServers": {
+    "pai": {
+      "command": "node",
+      "args": ["dist/daemon-mcp/index.mjs"],
+      "description": "PAI Knowledge OS — federated memory search, project registry, session management. Provides 9 tools: memory_search, memory_get, project_info, project_list, session_list, registry_search, project_detect, project_health, project_todo."
+    }
+  },
+  "capabilities": {
+    "mcp": true,
+    "hooks": false,
+    "skills": false
+  },
+  "setup": {
+    "prerequisite": "Run 'pai setup' to configure storage backend, indexing, and daemon.",
+    "daemon": "Run 'pai daemon install' to start the background indexing service."
+  },
+  "notes": "Gemini CLI supports MCP servers. PAI's 9 MCP tools work fully. Hooks and skills are Claude Code-specific features that require Claude Code."
+}

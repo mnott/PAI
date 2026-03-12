@@ -34,3 +34,9 @@ templates/skills/user/*
 # User-created MCP prompts — local customizations that survive git pull
 src/daemon-mcp/prompts/custom/*
 !src/daemon-mcp/prompts/custom/.gitkeep
+
+# User extensions — custom hooks and skills that survive git pull
+user-extensions/hooks/*
+!user-extensions/hooks/.gitkeep
+user-extensions/skills/*
+!user-extensions/skills/.gitkeep

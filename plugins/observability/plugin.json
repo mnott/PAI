@@ -1,0 +1,11 @@
+{
+  "name": "pai-observability",
+  "displayName": "PAI Observability Suite",
+  "description": "Automatic observation capture, classification, session summaries, and search history",
+  "version": "0.7.0",
+  "tier": "pro",
+  "required": false,
+  "depends": ["core"],
+  "hooks": "hooks/hooks.json",
+  "skills": ["Observability", "SearchHistory"]
+}

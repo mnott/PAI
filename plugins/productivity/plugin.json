@@ -1,0 +1,11 @@
+{
+  "name": "pai-productivity",
+  "displayName": "PAI Productivity",
+  "description": "Planning, journaling, reviewing, research, and sharing workflows",
+  "version": "0.7.0",
+  "tier": "free",
+  "required": false,
+  "depends": ["core"],
+  "hooks": "hooks/hooks.json",
+  "skills": ["Plan", "Review", "Journal", "Research", "Share", "Createskill"]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "pai-ui",
+  "displayName": "PAI UI Customization",
+  "description": "Terminal tab titles, statusline, tab coloring, and visual customization",
+  "version": "0.7.0",
+  "tier": "free",
+  "required": false,
+  "depends": ["core"],
+  "hooks": "hooks/hooks.json",
+  "scripts": ["statusline-command.sh", "tab-color-command.sh"]
+}

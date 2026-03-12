@@ -1,0 +1,10 @@
+{
+  "name": "pai-creative",
+  "displayName": "PAI Creative Studio",
+  "description": "Art direction, story explanation, voice/prosody configuration",
+  "version": "0.7.0",
+  "tier": "enterprise",
+  "required": false,
+  "depends": ["core"],
+  "skills": ["Art", "StoryExplanation"]
+}

@@ -1,0 +1,37 @@
+{
+  "module": "core",
+  "description": "Essential lifecycle hooks for session management, context loading, and security",
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "${PAI_DIR}/Hooks/load-core-context.mjs",
+      "description": "Load PAI skill system and core configuration into session context"
+    },
+    {
+      "event": "SessionStart",
+      "command": "${PAI_DIR}/Hooks/load-project-context.mjs",
+      "description": "Detect project from CWD, load notes directory, TODO.md, and session note"
+    },
+    {
+      "event": "SessionStart",
+      "command": "${PAI_DIR}/Hooks/initialize-session.mjs",
+      "description": "Create numbered session note and register in PAI registry"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "${PAI_DIR}/Hooks/security-validator.mjs",
+      "description": "Validate shell commands against security rules before execution"
+    },
+    {
+      "event": "Stop",
+      "command": "${PAI_DIR}/Hooks/stop-hook.mjs",
+      "description": "Write work items and summary to session note, send notification"
+    },
+    {
+      "event": "Stop",
+      "command": "${PAI_DIR}/Hooks/pai-session-stop.sh",
+      "description": "Shell-level session cleanup on stop"
+    }
+  ]
+}

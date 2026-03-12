@@ -1,0 +1,212 @@
+{
+  "$schema": "https://pai.dev/schemas/plugin-manifest-v1.json",
+  "name": "@tekmidian/pai",
+  "displayName": "PAI Knowledge OS",
+  "description": "Personal AI Infrastructure — persistent memory, session continuity, and knowledge graph",
+  "version": "0.7.0",
+  "author": "Matthias Nott",
+  "license": "MIT",
+  "homepage": "https://github.com/mnott/PAI",
+  "repository": "https://github.com/mnott/PAI",
+
+  "modules": {
+    "core": {
+      "description": "Core memory engine, session management, project registry",
+      "tier": "free",
+      "required": true,
+      "hooks": "plugins/core/hooks/hooks.json",
+      "skills": ["Sessions", "Route", "Name"],
+      "mcp": {
+        "server": "dist/daemon-mcp/index.mjs",
+        "daemon": "dist/daemon/index.mjs",
+        "tools": [
+          "memory_search",
+          "memory_get",
+          "project_info",
+          "project_list",
+          "session_list",
+          "registry_search",
+          "project_detect",
+          "project_health",
+          "project_todo"
+        ],
+        "resources": [
+          "pai://constitution",
+          "pai://skill-system",
+          "pai://hook-system",
+          "pai://mcp-dev-guide",
+          "pai://terminal-tabs"
+        ]
+      },
+      "templates": [
+        "templates/claude-md.template.md",
+        "templates/pai-skill.template.md",
+        "templates/pai-project.template.md"
+      ]
+    },
+
+    "productivity": {
+      "description": "Planning, journaling, reviewing, research, and sharing workflows",
+      "tier": "free",
+      "required": false,
+      "depends": ["core"],
+      "hooks": "plugins/productivity/hooks/hooks.json",
+      "skills": ["Plan", "Review", "Journal", "Research", "Share", "Createskill"],
+      "templates": [
+        "templates/agent-prefs.example.md"
+      ]
+    },
+
+    "ui": {
+      "description": "Terminal tab titles, statusline, tab coloring, and visual customization",
+      "tier": "free",
+      "required": false,
+      "depends": ["core"],
+      "hooks": "plugins/ui/hooks/hooks.json",
+      "scripts": [
+        "statusline-command.sh",
+        "tab-color-command.sh"
+      ],
+      "templates": [
+        "templates/ai-steering-rules.template.md"
+      ]
+    },
+
+    "context-preservation": {
+      "description": "Context compression and relay across compaction cycles",
+      "tier": "free",
+      "required": false,
+      "depends": ["core"],
+      "hooks": "plugins/context-preservation/hooks/hooks.json"
+    },
+
+    "semantic-search": {
+      "description": "Vector search with pgvector, cross-encoder reranking, hybrid mode, recency boost",
+      "tier": "pro",
+      "required": false,
+      "depends": ["core"],
+      "features": [
+        "semantic_search_mode",
+        "hybrid_search_mode",
+        "cross_encoder_reranking",
+        "recency_boost",
+        "pgvector_storage"
+      ],
+      "requirements": {
+        "docker": true,
+        "postgresql": ">=15",
+        "pgvector": ">=0.5.0"
+      }
+    },
+
+    "observability": {
+      "description": "Automatic observation capture, classification, session summaries, and search history",
+      "tier": "pro",
+      "required": false,
+      "depends": ["core"],
+      "hooks": "plugins/observability/hooks/hooks.json",
+      "skills": ["Observability", "SearchHistory"],
+      "mcp": {
+        "resources": [
+          "pai://history-system"
+        ]
+      }
+    },
+
+    "zettelkasten": {
+      "description": "Luhmann-inspired vault intelligence — explore, surprise, converse, themes, health, suggest",
+      "tier": "enterprise",
+      "required": false,
+      "depends": ["core", "semantic-search"],
+      "skills": ["VaultConnect", "VaultContext", "VaultEmerge", "VaultOrphans", "VaultTrace"],
+      "features": [
+        "vault_indexer",
+        "zettel_explore",
+        "zettel_surprise",
+        "zettel_converse",
+        "zettel_themes",
+        "zettel_health",
+        "zettel_suggest"
+      ],
+      "requirements": {
+        "obsidian": true
+      }
+    },
+
+    "creative": {
+      "description": "Art direction, story explanation, voice/prosody configuration",
+      "tier": "enterprise",
+      "required": false,
+      "depends": ["core"],
+      "skills": ["Art", "StoryExplanation"],
+      "mcp": {
+        "resources": [
+          "pai://aesthetic",
+          "pai://prosody-guide",
+          "pai://prosody-agent-template",
+          "pai://voice",
+          "pai://prompting"
+        ]
+      },
+      "templates": [
+        "templates/voices.example.json"
+      ]
+    }
+  },
+
+  "tiers": {
+    "free": {
+      "description": "Core memory engine with keyword search, essential hooks, and productivity skills",
+      "price": 0,
+      "modules": ["core", "productivity", "ui", "context-preservation"]
+    },
+    "pro": {
+      "description": "Semantic search, observability suite, and advanced memory features",
+      "price": {
+        "monthly": 9,
+        "yearly": 79
+      },
+      "modules": ["core", "productivity", "ui", "context-preservation", "semantic-search", "observability"]
+    },
+    "enterprise": {
+      "description": "Full PAI — zettelkasten intelligence, creative studio, and all features",
+      "price": {
+        "monthly": 29,
+        "yearly": 249
+      },
+      "modules": ["core", "productivity", "ui", "context-preservation", "semantic-search", "observability", "zettelkasten", "creative"]
+    }
+  },
+
+  "userExtensions": {
+    "hooks": "user-extensions/hooks/",
+    "skills": "user-extensions/skills/",
+    "prompts": "src/daemon-mcp/prompts/custom/"
+  },
+
+  "platforms": {
+    "claude-code": {
+      "manifest": ".claude-plugin/plugin.json",
+      "hooks": true,
+      "skills": true,
+      "mcp": true,
+      "resources": true
+    },
+    "cursor": {
+      "manifest": ".cursor/plugin.json",
+      "hooks": false,
+      "skills": false,
+      "mcp": true,
+      "resources": false,
+      "notes": "Cursor supports MCP but not Claude Code hooks/skills"
+    },
+    "gemini-cli": {
+      "manifest": "gemini-extension.json",
+      "hooks": false,
+      "skills": false,
+      "mcp": true,
+      "resources": false,
+      "notes": "Gemini CLI supports MCP servers via extensions"
+    }
+  }
+}

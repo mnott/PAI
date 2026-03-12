@@ -1,0 +1,17 @@
+{
+  "module": "ui",
+  "description": "Terminal tab titles, statusline updates, and visual feedback hooks",
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "${PAI_DIR}/Hooks/update-tab-titles.mjs",
+      "description": "Set terminal tab title from session context"
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "*",
+      "command": "${PAI_DIR}/Hooks/update-tab-on-action.mjs",
+      "description": "Update terminal tab title based on current tool activity"
+    }
+  ]
+}

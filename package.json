@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -14,6 +14,11 @@
   "files": [
     "dist",
     "templates",
+    "plugins",
+    "user-extensions",
+    ".claude-plugin",
+    "pai-plugin.json",
+    "gemini-extension.json",
     "statusline-command.sh",
     "tab-color-command.sh",
     "scripts/build-hooks.mjs",
@@ -22,7 +27,8 @@
     "README.md",
     "LICENSE",
     "ARCHITECTURE.md",
-    "FEATURE.md"
+    "FEATURE.md",
+    "PLUGIN-ARCHITECTURE.md"
   ],
   "keywords": [
     "ai",

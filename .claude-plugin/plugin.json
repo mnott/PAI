@@ -1,0 +1,50 @@
+{
+  "name": "@tekmidian/pai",
+  "displayName": "PAI Knowledge OS",
+  "description": "Personal AI Infrastructure — persistent memory, session continuity, and knowledge graph for Claude Code",
+  "version": "0.7.0",
+  "author": "Matthias Nott",
+  "license": "MIT",
+  "homepage": "https://github.com/mnott/PAI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mnott/PAI"
+  },
+  "keywords": [
+    "memory",
+    "knowledge-os",
+    "session-continuity",
+    "mcp",
+    "personal-ai",
+    "hooks",
+    "skills",
+    "zettelkasten"
+  ],
+  "engines": {
+    "claude-code": ">=1.0.0",
+    "node": ">=20.0.0"
+  },
+  "setup": "pai setup",
+  "mcp": {
+    "server": "dist/daemon-mcp/index.mjs",
+    "daemon": "dist/daemon/index.mjs"
+  },
+  "hooks": "plugins/core/hooks/hooks.json",
+  "skills": [
+    "plugins/core/skills/",
+    "plugins/productivity/skills/",
+    "plugins/observability/skills/",
+    "plugins/zettelkasten/skills/",
+    "plugins/creative/skills/"
+  ],
+  "templates": [
+    "templates/claude-md.template.md",
+    "templates/pai-skill.template.md",
+    "templates/agent-prefs.example.md"
+  ],
+  "userExtensions": {
+    "hooks": "user-extensions/hooks/",
+    "skills": "user-extensions/skills/",
+    "prompts": "src/daemon-mcp/prompts/custom/"
+  }
+}

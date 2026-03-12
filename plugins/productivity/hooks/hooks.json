@@ -1,0 +1,17 @@
+{
+  "module": "productivity",
+  "description": "Hooks for TODO sync, session cleanup, and productivity workflows",
+  "hooks": [
+    {
+      "event": "PostToolUse",
+      "matcher": "TodoWrite",
+      "command": "${PAI_DIR}/Hooks/sync-todo-to-md.mjs",
+      "description": "Sync Claude's internal TODO list to Notes/TODO.md on every TodoWrite"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "${PAI_DIR}/Hooks/cleanup-session-files.mjs",
+      "description": "Clean up stale temp files between user prompts"
+    }
+  ]
+}
