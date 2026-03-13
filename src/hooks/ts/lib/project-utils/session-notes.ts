@@ -216,6 +216,21 @@ export function sanitizeForFilename(str: string): string {
 }
 
 /**
+ * Return true if the candidate string should be rejected as a meaningful name.
+ * Rejects file paths, shebangs, timestamps, and "[object Object]" artifacts.
+ */
+function isMeaninglessCandidate(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (t.startsWith('/')) return true;                          // file path
+  if (t.startsWith('#!')) return true;                         // shebang
+  if (t.includes('[object Object]')) return true;              // serialization artifact
+  if (/^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/.test(t)) return true; // ISO timestamp
+  if (/^\d{1,2}:\d{2}(:\d{2})?(\s*(AM|PM))?$/i.test(t)) return true; // time-only
+  return false;
+}
+
+/**
  * Extract a meaningful name from session note content and summary.
  * Looks at Work Done section headers, bold text, and summary.
  */
@@ -228,7 +243,7 @@ export function extractMeaningfulName(noteContent: string, summary: string): str
     const subheadings = workDoneSection.match(/### ([^\n]+)/g);
     if (subheadings && subheadings.length > 0) {
       const firstHeading = subheadings[0].replace('### ', '').trim();
-      if (firstHeading.length > 5 && firstHeading.length < 60) {
+      if (!isMeaninglessCandidate(firstHeading) && firstHeading.length > 5 && firstHeading.length < 60) {
         return sanitizeForFilename(firstHeading);
       }
     }
@@ -236,23 +251,27 @@ export function extractMeaningfulName(noteContent: string, summary: string): str
     const boldMatches = workDoneSection.match(/\*\*([^*]+)\*\*/g);
     if (boldMatches && boldMatches.length > 0) {
       const firstBold = boldMatches[0].replace(/\*\*/g, '').trim();
-      if (firstBold.length > 3 && firstBold.length < 50) {
+      if (!isMeaninglessCandidate(firstBold) && firstBold.length > 3 && firstBold.length < 50) {
         return sanitizeForFilename(firstBold);
       }
     }
 
     const numberedItems = workDoneSection.match(/^\d+\.\s+\*\*([^*]+)\*\*/m);
-    if (numberedItems) return sanitizeForFilename(numberedItems[1]);
+    if (numberedItems && !isMeaninglessCandidate(numberedItems[1])) {
+      return sanitizeForFilename(numberedItems[1]);
+    }
   }
 
-  if (summary && summary.length > 5 && summary !== 'Session completed.') {
+  if (summary && summary.length > 5 && summary !== 'Session completed.' && !isMeaninglessCandidate(summary)) {
     const cleanSummary = summary
       .replace(/[^\w\s-]/g, ' ')
       .trim()
       .split(/\s+/)
       .slice(0, 5)
       .join(' ');
-    if (cleanSummary.length > 3) return sanitizeForFilename(cleanSummary);
+    if (cleanSummary.length > 3 && !isMeaninglessCandidate(cleanSummary)) {
+      return sanitizeForFilename(cleanSummary);
+    }
   }
 
   return '';

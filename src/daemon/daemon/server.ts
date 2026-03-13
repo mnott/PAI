@@ -27,6 +27,8 @@ import {
 } from "./state.js";
 import { startIndexScheduler, startEmbedScheduler } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
+import { loadQueue } from "../../daemon/work-queue.js";
+import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 
 // ---------------------------------------------------------------------------
 // IPC helpers
@@ -162,6 +164,10 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     );
   }
 
+  // Work queue — load persisted items and start worker loop
+  loadQueue();
+  startWorker();
+
   const server = await startIpcServer(config.socketPath);
 
   const shutdown = async (signal: string): Promise<void> => {
@@ -171,6 +177,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
     if (indexSchedulerTimer) clearInterval(indexSchedulerTimer);
     if (embedSchedulerTimer) clearInterval(embedSchedulerTimer);
+
+    stopWorker();
 
     server.close();
 

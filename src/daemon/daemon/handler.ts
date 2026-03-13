@@ -32,6 +32,8 @@ import {
 } from "./state.js";
 import { runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
+import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
+import { notifyNewWork } from "../../daemon/work-queue-worker.js";
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -91,6 +93,7 @@ export async function handleRequest(
         vaultIndexInProgress,
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
         vaultPath: daemonConfig.vaultPath ?? null,
+        workQueue: getQueueStats(),
       },
     });
     socket.end();
@@ -448,6 +451,47 @@ export async function handleRequest(
       const msg = e instanceof Error ? e.message : String(e);
       sendResponse(socket, { id, ok: false, error: msg });
     }
+    socket.end();
+    return;
+  }
+
+  // work_queue_enqueue — hooks push work items here instead of doing heavy work inline
+  if (method === "work_queue_enqueue") {
+    try {
+      const p = params as {
+        type?: string;
+        priority?: number;
+        payload?: Record<string, unknown>;
+        maxAttempts?: number;
+      };
+
+      if (!p.type) {
+        sendResponse(socket, { id, ok: false, error: "work_queue_enqueue: type is required" });
+        socket.end();
+        return;
+      }
+
+      const item = enqueue({
+        type: p.type as import("../../daemon/work-queue.js").WorkItemType,
+        priority: p.priority,
+        payload: p.payload ?? {},
+        maxAttempts: p.maxAttempts,
+      });
+
+      notifyNewWork();
+
+      sendResponse(socket, { id, ok: true, result: { id: item.id, status: item.status } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  // work_queue_stats — return current queue statistics
+  if (method === "work_queue_stats") {
+    sendResponse(socket, { id, ok: true, result: getQueueStats() });
     socket.end();
     return;
   }

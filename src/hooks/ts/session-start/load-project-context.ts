@@ -239,36 +239,20 @@ async function main() {
   if (notesDir) {  // notesDir is always set now (local or central)
     const currentNotePath = getCurrentNotePath(notesDir);
 
-    // Determine if we need a new note
-    let needsNewNote = false;
+    // Only create a new note if there is truly no note at all.
+    // A completed note is still used — it will be updated or continued.
+    // This prevents duplicate notes at month boundaries and on every compaction.
     if (!currentNotePath) {
-      needsNewNote = true;
+      // Defensive: ensure projectName is a usable string
+      const safeProjectName = (typeof projectName === 'string' && projectName.trim().length > 0)
+        ? projectName.trim()
+        : 'Untitled Session';
       console.error('\nNo previous session notes found - creating new one');
-    } else {
-      // Check if the existing note is completed
-      try {
-        const content = readFileSync(currentNotePath, 'utf-8');
-        if (content.includes('**Status:** Completed') || content.includes('**Completed:**')) {
-          needsNewNote = true;
-          console.error(`\nPrevious note completed - creating new one`);
-          const summaryMatch = content.match(/## Next Steps\n\n([^\n]+)/);
-          if (summaryMatch) {
-            console.error(`   Previous: ${summaryMatch[1].substring(0, 60)}...`);
-          }
-        } else {
-          console.error(`\nContinuing session note: ${basename(currentNotePath)}`);
-        }
-      } catch {
-        needsNewNote = true;
-      }
-    }
-
-    // Create new note if needed
-    if (needsNewNote) {
-      activeNotePath = createSessionNote(notesDir, projectName);
+      activeNotePath = createSessionNote(notesDir, String(safeProjectName));
       console.error(`Created: ${basename(activeNotePath)}`);
     } else {
       activeNotePath = currentNotePath!;
+      console.error(`\nUsing existing session note: ${basename(activeNotePath)}`);
       // Show preview of current note
       try {
         const content = readFileSync(activeNotePath, 'utf-8');
