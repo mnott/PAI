@@ -204,6 +204,14 @@ export function addWorkToSessionNote(notePath: string, workItems: WorkItem[], se
   console.error(`Added ${workItems.length} work item(s) to: ${basename(notePath)}`);
 }
 
+/**
+ * Check if a candidate title is meaningless / garbage.
+ * Public wrapper around the internal filter for use by other hooks.
+ */
+export function isMeaningfulTitle(text: string): boolean {
+  return !isMeaninglessCandidate(text);
+}
+
 /** Sanitize a string for use in a filename. */
 export function sanitizeForFilename(str: string): string {
   return str
@@ -217,16 +225,30 @@ export function sanitizeForFilename(str: string): string {
 
 /**
  * Return true if the candidate string should be rejected as a meaningful name.
- * Rejects file paths, shebangs, timestamps, and "[object Object]" artifacts.
+ * Rejects file paths, shebangs, timestamps, system noise, XML tags, hashes, etc.
  */
 function isMeaninglessCandidate(text: string): boolean {
   const t = text.trim();
   if (!t) return true;
-  if (t.startsWith('/')) return true;                          // file path
+  if (t.length < 5) return true;                              // too short to be meaningful
+  if (t.startsWith('/') || t.startsWith('~')) return true;    // file path
   if (t.startsWith('#!')) return true;                         // shebang
   if (t.includes('[object Object]')) return true;              // serialization artifact
   if (/^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/.test(t)) return true; // ISO timestamp
   if (/^\d{1,2}:\d{2}(:\d{2})?(\s*(AM|PM))?$/i.test(t)) return true; // time-only
+  if (/^<[a-z-]+[\s/>]/i.test(t)) return true;               // XML/HTML tags (<task-notification>, etc.)
+  if (/^[0-9a-f]{10,}$/i.test(t)) return true;               // hex hash strings
+  if (/^Exit code \d+/i.test(t)) return true;                 // exit code messages
+  if (/^Error:/i.test(t)) return true;                        // error messages
+  if (/^This session is being continued/i.test(t)) return true; // continuation boilerplate
+  if (/^\(Bash completed/i.test(t)) return true;              // bash output noise
+  if (/^Task Notification$/i.test(t)) return true;            // literal "Task Notification"
+  if (/^New Session$/i.test(t)) return true;                  // placeholder title
+  if (/^Recovered Session$/i.test(t)) return true;            // placeholder title
+  if (/^Continued Session$/i.test(t)) return true;            // placeholder title
+  if (/^Untitled Session$/i.test(t)) return true;             // placeholder title
+  if (/^Context Compression$/i.test(t)) return true;          // compression artifact
+  if (/^[A-Fa-f0-9]{8,}\s+Output$/i.test(t)) return true;   // hash + "Output" pattern
   return false;
 }
 

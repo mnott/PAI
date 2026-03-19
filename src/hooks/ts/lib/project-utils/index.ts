@@ -31,6 +31,7 @@ export {
   createSessionNote,
   appendCheckpoint,
   addWorkToSessionNote,
+  isMeaningfulTitle,
   sanitizeForFilename,
   extractMeaningfulName,
   renameSessionNote,

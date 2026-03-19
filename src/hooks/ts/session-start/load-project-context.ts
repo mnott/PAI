@@ -17,7 +17,8 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
-import { join, basename, dirname } from 'path';
+import { join, basename, dirname, resolve } from 'path';
+import { homedir } from 'os';
 import { execSync } from 'child_process';
 import {
   PAI_DIR,
@@ -70,6 +71,64 @@ function getRoutedNotesPath(): string | null {
     // Ignore parse errors
   }
   return null;
+}
+
+/**
+ * Project signals that indicate a directory is a real project root.
+ */
+const PROJECT_SIGNALS = [
+  '.git',
+  'package.json',
+  'pubspec.yaml',
+  'Cargo.toml',
+  'go.mod',
+  'pyproject.toml',
+  'setup.py',
+  'build.gradle',
+  'pom.xml',
+  'composer.json',
+  'Gemfile',
+  'Makefile',
+  'CMakeLists.txt',
+  'tsconfig.json',
+  'CLAUDE.md',
+  join('Notes', 'PAI.md'),
+];
+
+/**
+ * Returns true if the given directory looks like a project root.
+ * Checks for the presence of well-known project signal files/dirs.
+ */
+function hasProjectSignals(dir: string): boolean {
+  for (const signal of PROJECT_SIGNALS) {
+    if (existsSync(join(dir, signal))) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns true if the directory should NOT be auto-registered.
+ * Guards: home directory, shallow paths, temp directories.
+ */
+function isGuardedPath(dir: string): boolean {
+  const home = homedir();
+  const resolved = resolve(dir);
+
+  // Never register the home directory itself
+  if (resolved === home) return true;
+
+  // Depth guard: require at least 3 path segments beyond root
+  // e.g. /Users/i052341/foo is depth 3 on macOS — reject it
+  const parts = resolved.split('/').filter(Boolean);
+  if (parts.length < 3) return true;
+
+  // Temp/system directories
+  const forbidden = ['/tmp', '/var', '/private/tmp', '/private/var/folders'];
+  for (const prefix of forbidden) {
+    if (resolved === prefix || resolved.startsWith(prefix + '/')) return true;
+  }
+
+  return false;
 }
 
 interface HookInput {
@@ -311,9 +370,48 @@ async function main() {
       };
 
       if (detected.error === 'no_match') {
-        paiProjectBlock = `PAI Project Registry: No registered project matches this directory.
+        // Attempt auto-registration if the directory looks like a real project
+        let autoRegistered = false;
+
+        if (!isGuardedPath(cwd) && hasProjectSignals(cwd)) {
+          try {
+            execFileSync(paiBin, ['project', 'add', cwd], {
+              encoding: 'utf-8',
+              env: process.env,
+            });
+            console.error(`PAI auto-registered project at: ${cwd}`);
+
+            // Re-run detect to get the proper detection result
+            try {
+              const raw2 = execFileSync(paiBin, ['project', 'detect', '--json', cwd], {
+                encoding: 'utf-8',
+                env: process.env,
+              }).trim();
+
+              if (raw2) {
+                const detected2 = JSON.parse(raw2) as typeof detected;
+                if (detected2.slug) {
+                  const name2 = detected2.display_name || detected2.slug;
+                  console.error(`PAI auto-registered: "${detected2.slug}" (${detected2.match_type})`);
+                  paiProjectBlock = `PAI Project Registry: ${name2} (slug: ${detected2.slug}) [AUTO-REGISTERED]
+Match: ${detected2.match_type ?? 'exact'} | Sessions: 0`;
+                  autoRegistered = true;
+                }
+              }
+            } catch (detectErr) {
+              console.error('PAI auto-registration: project added but re-detect failed:', detectErr);
+              autoRegistered = true; // project IS registered, just can't load context
+            }
+          } catch (addErr) {
+            console.error('PAI auto-registration failed (project add):', addErr);
+          }
+        }
+
+        if (!autoRegistered) {
+          paiProjectBlock = `PAI Project Registry: No registered project matches this directory.
 Run "pai project add ." to register this project, or use /route to tag the session.`;
-        console.error('PAI detect: no match for', cwd);
+          console.error('PAI detect: no match for', cwd);
+        }
       } else if (detected.slug) {
         const name = detected.display_name || detected.slug;
         const nameSlug = ` (slug: ${detected.slug})`;

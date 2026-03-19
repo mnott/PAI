@@ -22,6 +22,7 @@ import {
   createSessionNote,
   appendCheckpoint,
   addWorkToSessionNote,
+  isMeaningfulTitle,
   findNotesDir,
   renameSessionNote,
   updateTodoContinue,
@@ -233,50 +234,63 @@ function formatSessionState(data: TranscriptData, cwd?: string): string | null {
 // ---------------------------------------------------------------------------
 
 function deriveTitle(data: TranscriptData): string {
-  let title = '';
+  // Collect candidates in priority order, then pick the first meaningful one.
+  const candidates: string[] = [];
 
-  // 1. Last work item title (most descriptive of what was accomplished)
-  if (data.workItems.length > 0) {
-    title = data.workItems[data.workItems.length - 1].title;
+  // 1. Work item titles (most descriptive of what was accomplished)
+  for (let i = data.workItems.length - 1; i >= 0; i--) {
+    candidates.push(data.workItems[i].title);
   }
-  // 2. Last summary
-  else if (data.summaries.length > 0) {
-    title = data.summaries[data.summaries.length - 1];
+
+  // 2. Summaries
+  for (let i = data.summaries.length - 1; i >= 0; i--) {
+    candidates.push(data.summaries[i]);
   }
+
   // 3. Last completed marker
-  else if (data.lastCompleted && data.lastCompleted.length > 5) {
-    title = data.lastCompleted;
+  if (data.lastCompleted && data.lastCompleted.length > 5) {
+    candidates.push(data.lastCompleted);
   }
-  // 4. Last substantive user message
-  else if (data.userMessages.length > 0) {
-    for (let i = data.userMessages.length - 1; i >= 0; i--) {
-      const msg = data.userMessages[i].split('\n')[0].trim();
-      if (msg.length > 10 && msg.length < 80 &&
-          !msg.toLowerCase().startsWith('yes') &&
-          !msg.toLowerCase().startsWith('ok')) {
-        title = msg;
-        break;
-      }
+
+  // 4. User messages (FIRST meaningful one, not last — first is more likely
+  //    to describe the session's purpose; last is often system noise)
+  for (const msg of data.userMessages) {
+    const line = msg.split('\n')[0].trim();
+    if (line.length > 10 && line.length < 80 &&
+        !line.toLowerCase().startsWith('yes') &&
+        !line.toLowerCase().startsWith('ok')) {
+      candidates.push(line);
     }
   }
-  // 5. Derive from files modified
-  if (!title && data.filesModified.length > 0) {
+
+  // 5. Derive from files modified (fallback)
+  if (data.filesModified.length > 0) {
     const basenames = data.filesModified.slice(-5).map(f => {
       const b = basename(f);
       return b.replace(/\.[^.]+$/, '');
     });
     const unique = [...new Set(basenames)];
-    title = unique.length <= 3
-      ? `Updated ${unique.join(', ')}`
-      : `Modified ${data.filesModified.length} files`;
+    candidates.push(
+      unique.length <= 3
+        ? `Updated ${unique.join(', ')}`
+        : `Modified ${data.filesModified.length} files`
+    );
   }
 
-  // Clean up for filename use
-  return title
-    .replace(/[^\w\s-]/g, ' ')   // Remove special chars
-    .replace(/\s+/g, ' ')        // Normalize whitespace
-    .trim()
-    .substring(0, 60);
+  // Pick the first candidate that passes the meaningfulness filter
+  for (const raw of candidates) {
+    const cleaned = raw
+      .replace(/[^\w\s-]/g, ' ')   // Remove special chars
+      .replace(/\s+/g, ' ')        // Normalize whitespace
+      .trim()
+      .substring(0, 60);
+    if (cleaned.length >= 5 && isMeaningfulTitle(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  // All candidates were garbage — return empty (caller will not rename)
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -402,23 +416,32 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
-    // Persist session state to numbered session note (like "pause session")
+    // Persist session state to numbered session note.
+    // RULE: ONE note per session. NEVER create a new note during compaction.
+    // If the latest note is completed, reopen it (remove completed status)
+    // rather than creating a duplicate.
     // -----------------------------------------------------------------
     let notePath: string | null = null;
 
     try {
       notePath = getCurrentNotePath(notesInfo.path);
 
-      // If no note found, or the latest note is completed, create a new one
       if (!notePath) {
+        // Truly no note exists at all — create one (first compaction of a session
+        // that started before PAI was installed, or corrupted notes dir)
         console.error('No session note found — creating one for checkpoint');
-        notePath = createSessionNote(notesInfo.path, 'Recovered Session');
+        notePath = createSessionNote(notesInfo.path, 'Untitled Session');
       } else {
+        // If the latest note is completed, reopen it for this session's checkpoints
+        // instead of creating a duplicate. This handles the case where session-stop
+        // finalized a note but the session continued (e.g., user said "end session"
+        // but kept working).
         try {
-          const noteContent = readFileSync(notePath, 'utf-8');
-          if (noteContent.includes('**Status:** Completed') || noteContent.includes('**Completed:**')) {
-            console.error(`Latest note is completed (${basename(notePath)}) — creating new one`);
-            notePath = createSessionNote(notesInfo.path, 'Continued Session');
+          let noteContent = readFileSync(notePath, 'utf-8');
+          if (noteContent.includes('**Status:** Completed')) {
+            noteContent = noteContent.replace('**Status:** Completed', '**Status:** In Progress');
+            writeFileSync(notePath, noteContent);
+            console.error(`Reopened completed note for continued session: ${basename(notePath)}`);
           }
         } catch { /* proceed with existing note */ }
       }

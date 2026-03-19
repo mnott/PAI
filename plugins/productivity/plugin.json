@@ -7,5 +7,5 @@
   "required": false,
   "depends": ["core"],
   "hooks": "hooks/hooks.json",
-  "skills": ["Plan", "Review", "Journal", "Research", "Share", "Createskill"]
+  "skills": ["Plan", "Review", "Journal", "Research", "Share", "Createskill", "Reconstruct"]
 }
