@@ -146,6 +146,67 @@ function enqueueWithDaemon(payload: {
   });
 }
 
+/**
+ * Enqueue a session-summary work item with the daemon for AI-powered note generation.
+ * Non-blocking — if daemon is unavailable, silently skips (the mechanical note is sufficient).
+ *
+ * Note: we intentionally omit transcriptPath here to let the worker call findLatestJsonl()
+ * itself. At session-end, Claude Code may still be moving the JSONL to sessions/, so a
+ * stale path passed from the hook could point to a file that no longer exists.
+ */
+function enqueueSessionSummaryWithDaemon(payload: {
+  cwd: string;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    let buffer = '';
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(ok: boolean): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve(ok);
+    }
+
+    const client = connect(DAEMON_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'session-summary',
+          priority: 4,
+          payload: {
+            cwd: payload.cwd,
+            force: true,
+          },
+        },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl === -1) return;
+      const line = buffer.slice(0, nl);
+      try {
+        const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
+        if (response.ok) {
+          console.error(`STOP-HOOK: Session summary enqueued (id=${response.result?.id}).`);
+        }
+      } catch { /* ignore */ }
+      finish(true);
+    });
+
+    client.on('error', () => finish(false));
+    client.on('end', () => { if (!done) finish(false); });
+
+    timer = setTimeout(() => finish(false), DAEMON_TIMEOUT_MS);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Direct execution — fallback path (original stop-hook logic)
 // ---------------------------------------------------------------------------
@@ -488,6 +549,11 @@ async function main() {
     console.error('STOP-HOOK: Using direct execution fallback.');
     await executeDirectly(lines, transcriptPath, cwd, message, lastUserQuery);
   }
+
+  // Also enqueue a session-summary for AI-powered note generation.
+  // We omit transcriptPath so the worker resolves it via findLatestJsonl(),
+  // avoiding a race where the session-end hook moves the JSONL before the worker reads it.
+  await enqueueSessionSummaryWithDaemon({ cwd });
 
   console.error(`STOP-HOOK COMPLETED SUCCESSFULLY at ${new Date().toISOString()}\n`);
 }

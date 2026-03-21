@@ -4,8 +4,9 @@
  * Runs every 5 seconds to drain the queue.
  * Handles 'session-end' work items by reading the transcript, extracting
  * work summaries, updating the session note, and updating TODO.md.
+ * Handles 'session-summary' items by spawning Haiku for AI-powered note generation.
  *
- * Other item types (session-summary, note-update, todo-update, topic-detect)
+ * Other item types (note-update, todo-update, topic-detect)
  * are stubs — they log and complete immediately, ready for future expansion.
  */
 
@@ -20,6 +21,11 @@ import {
   getStats,
   type WorkItem,
 } from "./work-queue.js";
+
+import {
+  handleSessionSummary,
+  type SessionSummaryPayload,
+} from "./session-summary-worker.js";
 
 // Hooks lib imports — resolving through the compiled JS path.
 // These are the same utilities used by stop-hook.ts.
@@ -116,6 +122,9 @@ async function processNextItem(): Promise<void> {
         break;
 
       case "session-summary":
+        await handleSessionSummary(item.payload as SessionSummaryPayload);
+        break;
+
       case "note-update":
       case "todo-update":
       case "topic-detect":

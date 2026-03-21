@@ -16,6 +16,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
+import { connect } from 'net';
+import { randomUUID } from 'crypto';
 import {
   sendNtfyNotification,
   getCurrentNotePath,
@@ -39,6 +41,9 @@ interface HookInput {
   compact_type?: string;
   trigger?: string;
 }
+
+const DAEMON_SOCKET = process.env.PAI_SOCKET ?? '/tmp/pai.sock';
+const DAEMON_TIMEOUT_MS = 3_000;
 
 /** Structured data extracted from a transcript in a single pass. */
 interface TranscriptData {
@@ -353,6 +358,85 @@ function saveCumulativeState(notesDir: string, data: TranscriptData, notePath: s
 }
 
 // ---------------------------------------------------------------------------
+// Daemon IPC — enqueue session-summary work item
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a session-summary work item to the daemon via IPC.
+ * Returns true on success, false if the daemon is unreachable.
+ * Times out after DAEMON_TIMEOUT_MS to avoid blocking the hook.
+ */
+function enqueueSessionSummary(payload: {
+  cwd: string;
+  sessionId?: string;
+  transcriptPath?: string;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    let buffer = '';
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(ok: boolean): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve(ok);
+    }
+
+    const client = connect(DAEMON_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'session-summary',
+          priority: 4, // lower priority than session-end (2)
+          payload: {
+            cwd: payload.cwd,
+            sessionId: payload.sessionId,
+            transcriptPath: payload.transcriptPath,
+          },
+        },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl === -1) return;
+      const line = buffer.slice(0, nl);
+      try {
+        const response = JSON.parse(line) as { ok: boolean; error?: string; result?: { id: string } };
+        if (response.ok) {
+          console.error(`PRE-COMPACT: Session summary enqueued with daemon (id=${response.result?.id}).`);
+          finish(true);
+        } else {
+          console.error(`PRE-COMPACT: Daemon rejected session-summary: ${response.error}`);
+          finish(false);
+        }
+      } catch {
+        finish(false);
+      }
+    });
+
+    client.on('error', (e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT' || e.code === 'ECONNREFUSED') {
+        console.error('PRE-COMPACT: Daemon not running — skipping session summary.');
+      } else {
+        console.error(`PRE-COMPACT: Daemon socket error: ${e.message}`);
+      }
+      finish(false);
+    });
+
+    timer = setTimeout(() => {
+      console.error('PRE-COMPACT: Daemon IPC timed out — skipping session summary.');
+      finish(false);
+    }, DAEMON_TIMEOUT_MS);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -536,6 +620,21 @@ async function main() {
       } catch (err) {
         console.error(`Failed to save state file: ${err}`);
       }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Enqueue session-summary work item with daemon for AI-powered note generation
+  // -----------------------------------------------------------------------
+  if (hookInput?.cwd) {
+    try {
+      await enqueueSessionSummary({
+        cwd: hookInput.cwd,
+        sessionId: hookInput.session_id,
+        transcriptPath: hookInput.transcript_path,
+      });
+    } catch (err) {
+      console.error(`Could not enqueue session-summary: ${err}`);
     }
   }
 
