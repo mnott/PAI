@@ -5,7 +5,7 @@
  *   1. Finding the current session's JSONL transcript
  *   2. Extracting user messages and assistant context
  *   3. Gathering git commits from the session period
- *   4. Spawning Haiku via `claude` CLI to generate a structured summary
+ *   4. Spawning Claude (sonnet for compaction, opus for session end) to generate a structured summary
  *   5. Writing the summary to the project's session note
  *
  * Designed to run inside the daemon's work queue worker. All errors are
@@ -39,14 +39,23 @@ import { buildSessionSummaryPrompt } from "./templates/session-summary-prompt.js
 /** Minimum interval between summaries for the same project (ms). */
 const SUMMARY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
-/** Maximum JSONL content to feed to Haiku (characters). */
-const MAX_JSONL_CHARS = 50_000;
+/** Maximum JSONL content to feed to the summarizer (characters). */
+/** Max JSONL chars per model. Opus/Sonnet can handle much more than Haiku. */
+const MAX_JSONL_CHARS: Record<string, number> = {
+  haiku: 50_000,
+  sonnet: 200_000,
+  opus: 500_000,
+};
 
 /** Maximum user messages to include in the prompt. */
 const MAX_USER_MESSAGES = 30;
 
 /** Timeout for the claude CLI process (ms). */
-const CLAUDE_TIMEOUT_MS = 60_000; // 60 seconds
+const CLAUDE_TIMEOUT_MS: Record<string, number> = {
+  haiku: 60_000,    // 60 seconds
+  sonnet: 120_000,  // 2 minutes
+  opus: 300_000,    // 5 minutes — opus is thorough
+};
 
 /** File tracking last summary timestamps per project. */
 const COOLDOWN_FILE = join(homedir(), ".config", "pai", "summary-cooldowns.json");
@@ -65,6 +74,11 @@ export interface SessionSummaryPayload {
   transcriptPath?: string;
   /** If true, bypass the cooldown check (e.g. triggered by stop-hook at session end). */
   force?: boolean;
+  /** Model to use for summarization. Defaults based on trigger:
+   *  - "stop" trigger (session end): "opus" for best quality final summary
+   *  - "compact" trigger (auto-compaction): "sonnet" for incremental checkpoints
+   *  - Manual/reconstruct: "sonnet" for batch processing */
+  model?: "haiku" | "sonnet" | "opus";
 }
 
 // ---------------------------------------------------------------------------
@@ -188,9 +202,9 @@ interface ExtractedContent {
 
 /**
  * Parse a JSONL transcript and extract relevant content.
- * Filters noise, truncates to MAX_JSONL_CHARS from the end of the file.
+ * Filters noise, truncates to model-appropriate size from the end of the file.
  */
-function extractFromJsonl(jsonlPath: string): ExtractedContent {
+function extractFromJsonl(jsonlPath: string, model: string = "sonnet"): ExtractedContent {
   const result: ExtractedContent = {
     userMessages: [],
     filesModified: [],
@@ -205,8 +219,9 @@ function extractFromJsonl(jsonlPath: string): ExtractedContent {
   }
 
   // Truncate from the start if too large (keep the most recent content)
-  if (raw.length > MAX_JSONL_CHARS) {
-    const truncPoint = raw.indexOf("\n", raw.length - MAX_JSONL_CHARS);
+  const maxChars = MAX_JSONL_CHARS[model] ?? 200_000;
+  if (raw.length > maxChars) {
+    const truncPoint = raw.indexOf("\n", raw.length - maxChars);
     raw = truncPoint >= 0 ? raw.slice(truncPoint + 1) : raw.slice(-MAX_JSONL_CHARS);
   }
 
@@ -368,11 +383,14 @@ function findClaudeBinary(): string | null {
 }
 
 /**
- * Spawn Haiku via the claude CLI to generate a session summary.
- * Pipes the prompt via stdin to `claude --model haiku --print --no-input`.
+ * Spawn a Claude model via the CLI to generate a session summary.
+ * Pipes the prompt via stdin. Model selection:
+ *   - opus: session end (best quality for final summary, runs once)
+ *   - sonnet: auto-compaction (good quality for incremental checkpoints, runs often)
+ *   - haiku: fallback / budget mode
  * Returns the generated text, or null if spawning fails.
  */
-async function spawnHaikuSummarizer(prompt: string): Promise<string | null> {
+async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
     process.stderr.write(
@@ -386,7 +404,7 @@ async function spawnHaikuSummarizer(prompt: string): Promise<string | null> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const child = spawn(claudeBin, ["--model", "haiku", "-p", "--no-session-persistence"], {
+    const child = spawn(claudeBin, ["--model", model, "-p", "--no-session-persistence"], {
       env: { ...process.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -404,7 +422,7 @@ async function spawnHaikuSummarizer(prompt: string): Promise<string | null> {
 
     child.on("error", (err: Error) => {
       if (timer) { clearTimeout(timer); timer = null; }
-      process.stderr.write(`[session-summary] Haiku spawn error: ${err.message}\n`);
+      process.stderr.write(`[session-summary] ${model} spawn error: ${err.message}\n`);
       resolve(null);
     });
 
@@ -412,7 +430,7 @@ async function spawnHaikuSummarizer(prompt: string): Promise<string | null> {
       if (timer) { clearTimeout(timer); timer = null; }
       if (code !== 0) {
         process.stderr.write(
-          `[session-summary] Haiku exited with code ${code}: ${stderr.slice(0, 300)}\n`
+          `[session-summary] ${model} exited with code ${code}: ${stderr.slice(0, 300)}\n`
         );
         resolve(null);
       } else {
@@ -422,10 +440,10 @@ async function spawnHaikuSummarizer(prompt: string): Promise<string | null> {
 
     // Timeout protection
     timer = setTimeout(() => {
-      process.stderr.write("[session-summary] Haiku timed out — killing process.\n");
+      process.stderr.write(`[session-summary] ${model} timed out — killing process.\n`);
       child.kill("SIGTERM");
       resolve(null);
-    }, CLAUDE_TIMEOUT_MS);
+    }, CLAUDE_TIMEOUT_MS[model] ?? 120_000);
 
     // Write prompt to stdin and close
     child.stdin.write(prompt);
@@ -671,7 +689,9 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // -------------------------------------------------------------------------
   // Step 2: Extract content from the JSONL
   // -------------------------------------------------------------------------
-  const extracted = extractFromJsonl(jsonlPath);
+  // Model selection: opus for session end (force=true), sonnet for auto-compact
+  const selectedModel = payload.model ?? (force ? "opus" : "sonnet");
+  const extracted = extractFromJsonl(jsonlPath, selectedModel);
 
   if (extracted.userMessages.length === 0) {
     process.stderr.write(
@@ -697,7 +717,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   }
 
   // -------------------------------------------------------------------------
-  // Step 4: Build and send prompt to Haiku
+  // Step 4: Build and send prompt to summarizer
   // -------------------------------------------------------------------------
   const today = new Date().toISOString().split("T")[0];
 
@@ -726,14 +746,14 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   });
 
   process.stderr.write(
-    `[session-summary] Sending ${prompt.length} char prompt to Haiku...\n`
+    `[session-summary] Sending ${prompt.length} char prompt to ${selectedModel}...\n`
   );
 
-  const summaryText = await spawnHaikuSummarizer(prompt);
+  const summaryText = await spawnSummarizer(prompt, selectedModel);
 
   if (!summaryText) {
     process.stderr.write(
-      "[session-summary] Haiku did not produce output — falling back to mechanical checkpoint.\n"
+      `[session-summary] ${selectedModel} did not produce output — falling back to mechanical checkpoint.\n`
     );
     // Don't throw — this is a soft failure. The existing PreCompact checkpoint
     // is sufficient. Just mark the cooldown so we don't retry too soon.
@@ -742,7 +762,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   }
 
   process.stderr.write(
-    `[session-summary] Haiku produced ${summaryText.length} char summary.\n`
+    `[session-summary] ${selectedModel} produced ${summaryText.length} char summary.\n`
   );
 
   // -------------------------------------------------------------------------
