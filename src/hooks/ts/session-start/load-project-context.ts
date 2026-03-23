@@ -369,48 +369,82 @@ async function main() {
         cwd?: string;
       };
 
-      if (detected.error === 'no_match') {
-        // Attempt auto-registration if the directory looks like a real project
-        let autoRegistered = false;
+      /**
+       * Attempt to auto-register the CWD as a new PAI project.
+       * Calls `pai project add <cwd>`, then re-detects to confirm registration.
+       * Returns true if registration succeeded (or was attempted and project add ran),
+       * and sets paiProjectBlock as a side effect on success.
+       */
+      const tryAutoRegister = async (): Promise<boolean> => {
+        if (isGuardedPath(cwd) || !hasProjectSignals(cwd)) return false;
 
-        if (!isGuardedPath(cwd) && hasProjectSignals(cwd)) {
+        try {
+          execFileSync(paiBin, ['project', 'add', cwd], {
+            encoding: 'utf-8',
+            env: process.env,
+          });
+          console.error(`PAI auto-registered project at: ${cwd}`);
+
+          // Re-run detect to confirm registration
           try {
-            execFileSync(paiBin, ['project', 'add', cwd], {
+            const raw2 = execFileSync(paiBin, ['project', 'detect', '--json', cwd], {
               encoding: 'utf-8',
               env: process.env,
-            });
-            console.error(`PAI auto-registered project at: ${cwd}`);
+            }).trim();
 
-            // Re-run detect to get the proper detection result
-            try {
-              const raw2 = execFileSync(paiBin, ['project', 'detect', '--json', cwd], {
-                encoding: 'utf-8',
-                env: process.env,
-              }).trim();
-
-              if (raw2) {
-                const detected2 = JSON.parse(raw2) as typeof detected;
-                if (detected2.slug) {
-                  const name2 = detected2.display_name || detected2.slug;
-                  console.error(`PAI auto-registered: "${detected2.slug}" (${detected2.match_type})`);
-                  paiProjectBlock = `PAI Project Registry: ${name2} (slug: ${detected2.slug}) [AUTO-REGISTERED]
+            if (raw2) {
+              const detected2 = JSON.parse(raw2) as typeof detected;
+              if (detected2.slug) {
+                const name2 = detected2.display_name || detected2.slug;
+                console.error(`PAI auto-registered: "${detected2.slug}" (${detected2.match_type})`);
+                paiProjectBlock = `PAI Project Registry: ${name2} (slug: ${detected2.slug}) [AUTO-REGISTERED]
 Match: ${detected2.match_type ?? 'exact'} | Sessions: 0`;
-                  autoRegistered = true;
-                }
+                return true;
               }
-            } catch (detectErr) {
-              console.error('PAI auto-registration: project added but re-detect failed:', detectErr);
-              autoRegistered = true; // project IS registered, just can't load context
             }
-          } catch (addErr) {
-            console.error('PAI auto-registration failed (project add):', addErr);
+          } catch (detectErr) {
+            console.error('PAI auto-registration: project added but re-detect failed:', detectErr);
+            return true; // project IS registered, just can't load context
           }
+        } catch (addErr) {
+          console.error('PAI auto-registration failed (project add):', addErr);
         }
+        return false;
+      };
+
+      if (detected.error === 'no_match') {
+        // Attempt auto-registration if the directory looks like a real project
+        const autoRegistered = await tryAutoRegister();
 
         if (!autoRegistered) {
           paiProjectBlock = `PAI Project Registry: No registered project matches this directory.
 Run "pai project add ." to register this project, or use /route to tag the session.`;
           console.error('PAI detect: no match for', cwd);
+        }
+      } else if (
+        detected.match_type === 'parent' &&
+        detected.relative_path &&
+        !isGuardedPath(cwd) &&
+        hasProjectSignals(cwd)
+      ) {
+        // The CWD is inside a broader registered parent (e.g. "i052341" or "apps"),
+        // but it has its own project signals — register it as a distinct project.
+        console.error(
+          `PAI detect: parent match to "${detected.slug}" via relative path "${detected.relative_path}" — CWD looks like its own project, attempting auto-registration`
+        );
+        const autoRegistered = await tryAutoRegister();
+
+        if (!autoRegistered) {
+          // Fall through: show the parent match as normal
+          const name = detected.display_name || detected.slug;
+          const nameSlug = ` (slug: ${detected.slug})`;
+          const matchDesc = `parent (+${detected.relative_path ?? ''})`;
+          const statusFlag = detected.status && detected.status !== 'active'
+            ? ` [${detected.status.toUpperCase()}]`
+            : '';
+          paiProjectBlock = `PAI Project Registry: ${name}${statusFlag}${nameSlug}
+Match: ${matchDesc} | Sessions: ${detected.session_count ?? 0}${detected.status && detected.status !== 'active' ? `\nWARNING: Project status is "${detected.status}". Run: pai project health --fix` : ''}`;
+          console.error(`PAI detect: kept parent match "${detected.slug}" (auto-register not applicable)`);
         }
       } else if (detected.slug) {
         const name = detected.display_name || detected.slug;
