@@ -1,4 +1,4 @@
-# PAI Knowledge OS
+# PAI Knowledge OS — v0.8.0
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. You re-explain everything, every time. PAI fixes this.
 
@@ -56,6 +56,7 @@ Install PAI and Claude remembers. Ask it what you were working on. Ask it to fin
 - "Go" — reads your TODO.md continuation prompt and picks up exactly where the last session stopped
 - "What was I working on?" — progressive context injection loads recent observations at session start
 - "Continue the daemon refactor" — session summaries give Claude full context without re-explaining
+- "/reconstruct" — retroactively creates session notes from JSONL transcripts and git history when automatic capture missed a session
 
 ### Keeping Things Safe
 
@@ -114,15 +115,59 @@ PAI runs hooks at every stage of a Claude Code session:
 
 | Event | What PAI Does |
 |-------|--------------|
-| **Session Start** | Loads project context, detects which project you're in, creates a session note |
-| **User Prompt** | Cleans up temp files, updates terminal tab titles |
-| **Pre-Compact** | Saves session state checkpoint, sends notification |
+| **Session Start** | Loads project context, detects which project you're in, auto-registers new projects, creates a session note |
+| **User Prompt** | Cleans up temp files, updates terminal tab titles, injects whisper rules on every prompt |
+| **Pre-Compact** | Saves session state checkpoint, pushes `session-summary` work item to daemon, sends notification |
 | **Post-Compact** | Injects preserved state back into Claude's context |
 | **Tool Use** | Classifies tool calls into structured observations (decision/bugfix/feature/refactor/discovery/change) |
-| **Session End** | Summarizes work done, finalizes session note |
-| **Stop** | Writes work items to session note, sends notification |
+| **Session End** | Pushes `session-summary` work item to daemon for AI-powered note generation |
+| **Stop** | Pushes `session-summary` work item to daemon, sends notification |
 
-All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes, communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation).
+All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes and communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation). Hooks are thin relays — they capture minimal data and immediately push work items to the daemon queue, which handles all heavy processing asynchronously.
+
+---
+
+## Automatic Session Notes
+
+PAI automatically writes structured session notes after every session ends — no manual journaling required. The daemon spawns a headless Claude CLI process (using your Max plan, not the API) to summarize the JSONL conversation transcript combined with recent git history.
+
+### What Gets Generated
+
+Each session note contains:
+
+- **Work Done** — concrete description of what was accomplished
+- **Key Decisions** — choices made and their rationale
+- **Known Issues** — bugs found, blockers, or open questions
+- **Next Steps** — where to pick up in the next session
+
+The summarizer uses tiered model selection based on the trigger:
+
+| Trigger | Model | Timeout | JSONL Limit |
+|---------|-------|---------|-------------|
+| Session end (Stop hook) | Opus | 5 minutes | 500K bytes |
+| Auto-compaction (PreCompact hook) | Sonnet | 2 minutes | 200K bytes |
+
+### Topic-Based Note Splitting
+
+When a session covers multiple distinct topics, PAI creates separate notes rather than one long note for the whole session. The summarizer outputs a `TOPIC:` line describing the subject of the current work. PAI compares this against the existing note title using Jaccard word similarity — when similarity falls below 30%, a new note is created automatically.
+
+Notes within the same day are numbered sequentially: `0042_2026-03-24_session-name.md`, `0043_2026-03-24_different-topic.md`, and so on.
+
+### One Note Per Session
+
+Each compaction within a session updates the existing note rather than creating a new one. The 30-minute cooldown between summaries prevents redundant updates. Stop hook triggers bypass the cooldown with a force flag to ensure the final state is always captured.
+
+### Garbage Title Filter
+
+Session note titles are validated before creation. Over 20 patterns are rejected, including: task notification strings, `[object Object]`, hex hashes, bare numbers, and other non-descriptive artifacts that can appear in session transcripts. Titles must describe actual work done and are capped at 60 characters.
+
+### Finding the Claude Binary
+
+The daemon runs under launchd with a minimal PATH that does not include `~/.local/bin/`. PAI resolves the Claude CLI binary by checking `~/.local/bin/claude` first, then falling back to PATH lookup, before spawning headless summarization processes.
+
+### Stripping the API Key
+
+When spawning headless Claude CLI processes for summarization, the daemon strips `ANTHROPIC_API_KEY` from the subprocess environment. This forces the spawned process to authenticate via your Max plan (free) rather than using the API key (billable). Without this, every automatic session note would incur API charges.
 
 ---
 
@@ -184,6 +229,16 @@ pai observation stats
 ### Session summaries
 
 When a session ends, PAI generates a structured summary capturing what was requested, investigated, learned, completed, and what the next steps are. These summaries feed into the progressive context system, giving future sessions a concise picture of past work.
+
+---
+
+## Whisper Rules
+
+PAI injects a set of critical operating rules into every user prompt via the `UserPromptSubmit` hook. These rules fire before Claude processes your message — making them effectively permanent: they survive context compaction, `/clear`, and session restarts.
+
+The whisper rules are stored in `~/.claude/whisper-rules.md` and are fully customizable. The default rules include the git commit format, the no-email-sending constraint, and other high-priority behavioral anchors from your `CLAUDE.md`.
+
+The pattern is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/letta) approach to persistent rule injection in Claude sessions.
 
 ---
 

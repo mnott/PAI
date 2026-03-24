@@ -6,7 +6,7 @@ Technical reference for PAI's modular plugin system, cross-platform support, use
 
 ## Overview
 
-PAI is structured as a modular plugin system with 8 named modules organized into 3 pricing tiers. The architecture supports Claude Code (full integration), Cursor (MCP only), and Gemini CLI (MCP only).
+PAI is structured as a modular plugin system with 8 named modules organized into 3 pricing tiers. The architecture supports Claude Code (full integration), Cursor (MCP only), and Gemini CLI (MCP only). Current version: 0.8.0.
 
 ```
 PAI Knowledge OS
@@ -54,24 +54,24 @@ Each module has a `plugins/<module>/plugin.json` that declares:
 
 | Module | Tier | Hooks | Skills | Description |
 |--------|------|-------|--------|-------------|
-| `core` | free | 6 | 3 | Memory engine, sessions, projects, security |
-| `productivity` | free | 2 | 6 | Plan, Review, Journal, Research, Share, Createskill |
-| `ui` | free | 2 | 0 | Tab titles, statusline, tab coloring |
+| `core` | free | 6 | 3 | Memory engine, sessions, projects, security, auto-registration |
+| `productivity` | free | 2 | 7 | Plan, Review, Journal, Research, Share, Createskill, Reconstruct |
+| `ui` | free | 3 | 0 | Tab titles, statusline, tab coloring, whisper rules |
 | `context-preservation` | free | 3 | 0 | Context compression and relay |
 | `semantic-search` | pro | 0 | 0 | pgvector, reranking, hybrid search |
-| `observability` | pro | 13 | 2 | Event capture, classification, summaries |
+| `observability` | pro | 13 | 2 | Event capture, classification, AI-powered session summaries, topic detection |
 | `zettelkasten` | enterprise | 0 | 5 | Graph operations, vault intelligence |
 | `creative` | enterprise | 0 | 2 | Art direction, story, voice/prosody |
 
 ### Hook Distribution
 
-Total: 26 hook registrations across 6 modules.
+Total: 27 hook registrations across 6 modules.
 
-**Core (6):** load-core-context, load-project-context, initialize-session, security-validator, stop-hook, pai-session-stop.sh
+**Core (6):** load-core-context, load-project-context (with auto-registration), initialize-session, security-validator, stop-hook, pai-session-stop.sh
 
 **Productivity (2):** sync-todo-to-md, cleanup-session-files
 
-**UI (2):** update-tab-titles, update-tab-on-action
+**UI (3):** update-tab-titles, update-tab-on-action, whisper-rules
 
 **Context Preservation (3):** context-compression-hook, pai-pre-compact.sh, post-compact-inject
 
@@ -79,11 +79,11 @@ Total: 26 hook registrations across 6 modules.
 
 ### Skill Distribution
 
-Total: 18 skills across 5 modules.
+Total: 19 skills across 5 modules.
 
 **Core (3):** Sessions, Route, Name
 
-**Productivity (6):** Plan, Review, Journal, Research, Share, Createskill
+**Productivity (7):** Plan, Review, Journal, Research, Share, Createskill, Reconstruct
 
 **Observability (2):** Observability, SearchHistory
 
@@ -162,9 +162,9 @@ Claude Code gets the complete PAI experience:
 |------------|---------|
 | MCP Tools (9) | Full |
 | MCP Resources (11) | Full |
-| MCP Prompts (18) | Full |
-| Hooks (26 registrations) | Full |
-| Skills (18 SKILL.md stubs) | Full |
+| MCP Prompts (19) | Full |
+| Hooks (27 registrations) | Full |
+| Skills (19 SKILL.md stubs) | Full |
 | Statusline | Full |
 | Tab management | Full |
 
@@ -342,16 +342,31 @@ No migration needed. The plugin architecture is purely additive:
 
 ## Future Roadmap
 
-### Phase 1 (v0.7.0 — Current)
+### Phase 1 (v0.7.0 — Implemented)
 - Module manifest system
 - Cross-platform manifests
 - User extension points
 - Tier annotations (no enforcement)
 
-### Phase 2 (v0.8.0)
+### Phase 2 (v0.8.0 — Implemented)
+- AI-powered session notes via daemon work queue
+- Topic-based note splitting (Jaccard similarity)
+- Whisper rules hook (persistent rule injection)
+- Reconstruct skill (retroactive session note creation)
+- API key stripping for cost-safe headless Claude spawning
+
+### Phase 3 (v0.9.0)
 - `pai plugins list` — show installed modules and tiers
 - `pai plugins enable/disable <module>` — selective module activation
-- Build system reads `pai-plugin.json` to generate platform manifests
+- License validation system
+- `pai license activate <key>` command
+- Graceful tier gating with upgrade prompts
+
+### Phase 4 (v1.0.0)
+- Plugin marketplace integration
+- Third-party plugin support
+- Plugin dependency resolution
+- Community plugin repository
 
 ### Phase 3 (v0.9.0)
 - License validation system

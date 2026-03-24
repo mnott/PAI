@@ -28,14 +28,19 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Persistent session memory** | No | Yes — auto-indexed, 449K+ chunks |
 | **Session registry** | No | Yes — SQLite, tracks 77+ projects |
 | **Background daemon** | No | Yes — launchd, IPC via Unix socket |
-| **MCP server** | No | Yes — 9 tools, 18 prompts, 11 resources exposed to Claude Code |
+| **MCP server** | No | Yes — 9 tools, 19 prompts, 11 resources exposed to Claude Code |
 | **Keyword search (BM25)** | No | Yes — GIN full-text index, PostgreSQL |
 | **Semantic search (vector)** | No | Yes — pgvector HNSW, Snowflake Arctic 768-dim |
 | **Multi-backend storage** | No | Yes — SQLite (simple) or PostgreSQL (full) |
 | **Obsidian vault bridge** | No | Yes — symlinks + auto-generated topic pages |
 | **Project lifecycle** | No | Yes — promote, archive, move, detect from cwd |
+| **Auto project registration** | No | Yes — detects .git, package.json, pubspec.yaml, etc. on session start |
 | **Setup wizard** | No | Yes — idempotent 14-step interactive wizard |
-| **Hook system** | No | Yes — pre-compact, session-stop, auto-cleanup |
+| **Hook system** | No | Yes — pre-compact, session-stop, auto-cleanup, whisper rules |
+| **Automatic session notes** | No | Yes — AI-generated via daemon worker (Opus/Sonnet), topic-based splitting |
+| **Topic-based note splitting** | No | Yes — Jaccard similarity detects topic shifts, creates separate notes |
+| **Whisper rules** | No | Yes — injects critical rules on every prompt, survives compaction and /clear |
+| **Session note reconstruction** | No | Yes — /reconstruct skill retroactively creates notes from JSONL + git history |
 | **Backup / restore** | No | Yes — timestamped pg_dump + registry export |
 | **Multi-session concurrency** | n/a | Yes — daemon multiplexes Claude sessions |
 | **Custom statusline** | No | Yes — model, MCPs, context meter, colors |

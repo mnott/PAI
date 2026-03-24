@@ -1,4 +1,4 @@
-# PAI Knowledge OS — Architecture
+# PAI Knowledge OS — Architecture (v0.8.0)
 
 Technical reference for PAI's architecture, database schema, CLI commands, and development setup.
 
@@ -151,7 +151,7 @@ If both commands return healthy output, PAI is running. Open a new Claude Code s
 
 ## MCP Server
 
-PAI exposes 9 tools, 18 on-demand prompts (skills), and 11 reference resources to Claude Code via a daemon-backed MCP shim. The shim speaks stdio (what Claude Code expects) and proxies each request to the background daemon over NDJSON on a Unix socket.
+PAI exposes 9 tools, 19 on-demand prompts (skills), and 11 reference resources to Claude Code via a daemon-backed MCP shim. The shim speaks stdio (what Claude Code expects) and proxies each request to the background daemon over NDJSON on a Unix socket.
 
 ```
 Claude Code (stdio)
@@ -207,6 +207,7 @@ The MCP server registers 18 prompts that Claude can invoke as on-demand skills. 
 | `name` | Session and project naming conventions |
 | `observability` | Observation system usage and querying |
 | `plan` | Forward-looking planning from TODOs and recent activity |
+| `reconstruct` | Retroactively create session notes from JSONL transcripts and git history |
 | `research` | Structured research methodology |
 | `review` | Retrospective review of work over a time period |
 | `route` | Session note routing across projects |
@@ -467,6 +468,8 @@ The PAI daemon is a persistent background service that handles indexing, embeddi
 - Proxies all MCP tool calls from the shim to PostgreSQL
 - Re-indexes all active projects on a configurable interval (default: every 5 minutes)
 - Generates text embeddings asynchronously using Snowflake Arctic Embed (768-dim)
+- Processes the persistent work queue: session summaries, topic detection, note updates
+- Spawns headless Claude CLI processes for AI-powered session summarization
 
 ### Configuration
 
@@ -494,6 +497,62 @@ The PAI daemon is a persistent background service that handles indexing, embeddi
 ### Launchd Service
 
 The daemon runs under the label `com.pai.pai-daemon`. The plist is installed to `~/Library/LaunchAgents/` by `pai daemon install`. launchd restarts the daemon automatically if it exits.
+
+---
+
+## Work Queue and Session Summary Pipeline
+
+The daemon owns a persistent work queue (`~/.config/pai/work-queue.json`) that decouples hook triggers from actual work. Hooks push lightweight work items to the queue and exit immediately. The daemon processes items sequentially from a background worker loop.
+
+### Work Item Types
+
+| Type | Who enqueues | Who processes | Description |
+|------|-------------|---------------|-------------|
+| `session-summary` | PreCompact, Stop hooks | `session-summary-worker.ts` | AI-powered summarization of JSONL transcript + git history |
+| `topic-detect` | PreCompact hook | `topic-detect-worker.ts` | BM25-based topic shift detection for note splitting |
+| `session-end` | Stop hook | `work-queue-worker.ts` | General session cleanup coordination |
+| `note-update` | Session summary worker | `work-queue-worker.ts` | Write or update a session note file |
+| `todo-update` | Session summary worker | `work-queue-worker.ts` | Update TODO.md with session state |
+
+Work items are retried with exponential backoff (default max 3 attempts). The queue is written atomically (write temp file, then rename) to prevent corruption on daemon restart.
+
+### Session Summary Pipeline
+
+```
+Stop or PreCompact hook fires
+    │
+    ├── Hook reads minimal data (session_id, transcript_path, cwd)
+    ├── Hook pushes { type: "session-summary", payload: {...} } to work queue
+    └── Hook exits (sub-second)
+
+    ⬇ Daemon worker loop picks up the item
+
+session-summary-worker.ts
+    │
+    ├── Reads JSONL transcript (500K limit for stop, 200K for compact)
+    ├── Reads recent git log (last 20 commits)
+    ├── Strips ANTHROPIC_API_KEY from environment
+    ├── Spawns headless Claude CLI (Opus for stop, Sonnet for compact)
+    ├── Prompt requests: TOPIC: line + Work Done / Key Decisions / Known Issues / Next Steps
+    ├── Compares TOPIC: against existing note title (Jaccard similarity < 30% → new note)
+    └── Writes or updates session note in project's Notes directory
+
+    ⬇ If topic-detect was also enqueued
+
+topic-detect-worker.ts
+    │
+    ├── Extracts recent user messages from JSONL
+    ├── Runs BM25 topic shift detector against PAI memory DB
+    └── Records topic boundary marker (used by next session-summary run)
+```
+
+### Cooldown and Force Flags
+
+A 30-minute cooldown prevents redundant summary updates during active sessions. The Stop hook sets a `force: true` flag to bypass the cooldown, ensuring the final session state is always written. The PreCompact hook respects the cooldown to avoid O(n) summarizations during rapid compaction cycles.
+
+### Claude Binary Discovery
+
+The daemon runs under launchd with a minimal PATH. The `findClaudeBinary()` function checks `~/.local/bin/claude` first, then falls back to standard PATH resolution. This handles the common case where Claude CLI is installed via the npm global prefix, which launchd does not include in its environment PATH.
 
 ---
 
@@ -583,21 +642,22 @@ Claude Code Event
 | Hook | Event | Purpose |
 |------|-------|---------|
 | `load-core-context.mjs` | SessionStart | Loads PAI skill system and core configuration |
-| `load-project-context.mjs` | SessionStart | Detects project, loads notes dir, TODO, session note |
+| `load-project-context.mjs` | SessionStart | Detects project, loads notes dir, TODO, session note; auto-registers new projects from .git, package.json, pubspec.yaml, and other signals |
 | `initialize-session.mjs` | SessionStart | Creates numbered session note, registers in PAI registry |
 | `post-compact-inject.mjs` | SessionStart (compact) | Reads saved state and injects into post-compaction context |
 | `security-validator.mjs` | PreToolUse (Bash) | Validates shell commands against security rules |
 | `capture-all-events.mjs` | All events | Observability — logs every hook event to session timeline |
 | `observe.mjs` | PostToolUse | Classifies tool calls into typed observations (decision/bugfix/feature/refactor/discovery/change) |
 | `inject-observations.mjs` | SessionStart | Injects recent observation context (compact index + timeline) |
-| `context-compression-hook.mjs` | PreCompact | Extracts session state, saves checkpoint, writes temp file for relay |
+| `context-compression-hook.mjs` | PreCompact | Extracts session state, saves checkpoint, pushes session-summary work item to daemon |
 | `capture-tool-output.mjs` | PostToolUse | Records tool inputs/outputs for observability dashboard |
 | `update-tab-on-action.mjs` | PostToolUse | Updates terminal tab title based on current activity |
 | `sync-todo-to-md.mjs` | PostToolUse (TodoWrite) | Syncs Claude's internal TODO list to `Notes/TODO.md` |
 | `cleanup-session-files.mjs` | UserPromptSubmit | Cleans up stale temp files between prompts |
 | `update-tab-titles.mjs` | UserPromptSubmit | Sets terminal tab title from session context |
-| `stop-hook.mjs` | Stop | Writes work items to session note, sends notification |
-| `capture-session-summary.mjs` | SessionEnd | Final session summary written to session note |
+| `whisper-rules.mjs` | UserPromptSubmit | Injects critical operating rules on every prompt; rules survive compaction and /clear |
+| `stop-hook.mjs` | Stop | Pushes session-summary work item to daemon queue, sends notification |
+| `capture-session-summary.mjs` | SessionEnd | Pushes session-summary work item to daemon queue |
 | `subagent-stop-hook.mjs` | SubagentStop | Captures sub-agent completion for observability |
 
 ### Context Preservation Relay
@@ -942,8 +1002,14 @@ src/
 │   ├── daemon/             # Daemon server internals
 │   │   ├── dispatcher.ts   # Tool dispatch (zettel, observation, memory)
 │   │   ├── handler.ts      # NDJSON request handler
-│   │   └── server.ts       # Socket server
-│   ├── indexer/            # Background index scheduler
+│   │   ├── scheduler.ts    # Background index scheduler
+│   │   ├── server.ts       # Socket server
+│   │   ├── state.ts        # Shared daemon state
+│   │   └── types.ts        # Shared type definitions
+│   ├── session-summary-worker.ts  # AI-powered session summarization (Opus/Sonnet)
+│   ├── topic-detect-worker.ts     # BM25-based topic shift detection
+│   ├── work-queue-worker.ts       # Generic work item processor
+│   ├── work-queue.ts              # Persistent file-backed work queue
 │   ├── config.ts           # Runtime configuration
 │   └── index.ts            # Daemon entry point
 ├── daemon-mcp/
@@ -954,12 +1020,14 @@ src/
 │   └── index.ts            # MCP shim entry point (stdio → socket)
 ├── hooks/
 │   └── ts/                 # TypeScript hook sources by event
-│       ├── PreCompact/
-│       ├── PreToolUse/
-│       ├── PostToolUse/
-│       ├── SessionStart/
-│       ├── Stop/
-│       └── UserPromptSubmit/
+│       ├── pre-compact/    # context-compression-hook.ts
+│       ├── pre-tool-use/   # security-validator
+│       ├── post-tool-use/  # observe, capture-tool-output, sync-todo-to-md, update-tab-on-action
+│       ├── session-start/  # load-core-context, load-project-context, initialize-session, inject-observations, post-compact-inject
+│       ├── session-end/    # capture-session-summary
+│       ├── stop/           # stop-hook
+│       ├── subagent-stop/  # subagent-stop-hook
+│       └── user-prompt/    # cleanup-session-files, update-tab-titles, whisper-rules
 ├── mcp/
 │   └── tools/              # Shared tool implementations
 │       ├── memory.ts
