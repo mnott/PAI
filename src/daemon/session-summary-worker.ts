@@ -527,7 +527,11 @@ function computeTopicOverlap(topicA: string, topicB: string): number {
 }
 
 /** Threshold: below this overlap ratio, we consider topics different. */
-const TOPIC_OVERLAP_THRESHOLD = 0.3;
+// Raised from 0.3 to 0.15 — lower threshold means topics must be MORE different
+// to trigger a split. 0.3 was too aggressive: incremental work on the same project
+// (e.g., "Flutter Rewrite" vs "Fix Transcription in Flutter") was splitting into
+// separate notes on every compaction.
+const TOPIC_OVERLAP_THRESHOLD = 0.15;
 
 // ---------------------------------------------------------------------------
 // Session note writing
