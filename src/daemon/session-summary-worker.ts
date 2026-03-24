@@ -363,23 +363,22 @@ async function getGitContext(cwd: string, sinceTime?: string): Promise<string> {
  * Checks PATH first, then common installation locations.
  */
 function findClaudeBinary(): string | null {
-  // Check common locations
+  // Check known locations first (launchd PATH is minimal, bare "claude" won't resolve)
   const candidates = [
-    "claude",  // In PATH
+    join(homedir(), ".local", "bin", "claude"),
     join(homedir(), ".claude", "local", "claude"),
     "/usr/local/bin/claude",
-    join(homedir(), ".local", "bin", "claude"),
+    "/opt/homebrew/bin/claude",
   ];
 
   for (const candidate of candidates) {
     try {
-      // For bare "claude", we rely on PATH resolution — execFile handles this
-      if (candidate === "claude") return candidate;
       if (existsSync(candidate)) return candidate;
     } catch { /* skip */ }
   }
 
-  return null;
+  // Last resort: try bare "claude" in case PATH has it
+  return "claude";
 }
 
 /**
