@@ -1,8 +1,27 @@
 # PAI Knowledge OS — v0.8.0
 
-Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. You re-explain everything, every time. PAI fixes this.
+Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
-Install PAI and Claude remembers. Ask it what you were working on. Ask it to find that conversation about the database schema. Ask it to pick up exactly where the last session ended. It knows.
+## Automatic Session Notes — by Topic
+
+PAI's headline feature: **every session is automatically documented.** No manual note-taking, no "pause session" commands, no forgetting to save what you did.
+
+When you work, a background daemon watches your session. On every compaction and at session end, it reads the JSONL conversation transcript, combines it with your git history, and spawns a headless Claude process to write a structured session note — what was built, what decisions were made, what problems were hit, what's left to do.
+
+**When you change topics mid-session, PAI creates a new note.** If you start the day debugging audio, then pivot to a Flutter rewrite, you get two notes — not one giant file mixing unrelated work:
+
+```
+Notes/2026/03/
+  0001 - 2026-03-23 - Phase 1 Research and Architecture.md
+  0002 - 2026-03-24 - Background Audio and iOS Conflicts.md
+  0003 - 2026-03-24 - Flutter Rewrite with Whisper.md     ← auto-split, same day
+```
+
+Topic detection uses Jaccard word similarity between the new summary's topic and the existing note's title. Below 30% overlap = new note.
+
+**Model tiering:** Opus for final session summaries (best quality, runs once). Sonnet for mid-session checkpoints (good quality, runs on compaction). All using your Max plan — no API charges.
+
+This is not a template or a skeleton. These are real notes with build error chronologies, architectural decisions with rationale, code snippets, and "what was tried and failed" sections. The kind of notes you'd write yourself if you had time.
 
 ---
 
@@ -151,7 +170,7 @@ The summarizer uses tiered model selection based on the trigger:
 
 When a session covers multiple distinct topics, PAI creates separate notes rather than one long note for the whole session. The summarizer outputs a `TOPIC:` line describing the subject of the current work. PAI compares this against the existing note title using Jaccard word similarity — when similarity falls below 30%, a new note is created automatically.
 
-Notes within the same day are numbered sequentially: `0042_2026-03-24_session-name.md`, `0043_2026-03-24_different-topic.md`, and so on.
+Notes within the same day are numbered sequentially: `0042 - 2026-03-24 - Session Name.md`, `0043 - 2026-03-24 - Different Topic.md`, and so on.
 
 ### One Note Per Session
 
