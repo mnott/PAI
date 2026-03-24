@@ -17,13 +17,14 @@ So I built PAI — a background daemon that automatically documents every sessio
 The interesting part: **it detects topic changes mid-session.** If you start debugging audio, then pivot to a Flutter rewrite, you get two separate notes — automatically. No manual tagging, no "pause session."
 
 Under the hood:
+
 - Daemon spawns headless Claude (using your Max plan) to summarize
 - Topic detection via Jaccard word similarity
 - Whisper rules inject critical constraints on every prompt (survives compaction)
 - 21 skills: weekly reviews, session reconstruction, note consolidation
 - Federated search across all projects (BM25 + vector + cross-encoder reranking)
 
-Everything runs locally. No cloud. No API charges.
+Everything runs locally. No cloud. No API charges. Link in the first comment.
 
 Open source: github.com/mnott/PAI
 
