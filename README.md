@@ -253,11 +253,22 @@ When a session ends, PAI generates a structured summary capturing what was reque
 
 ## Whisper Rules
 
-PAI injects a set of critical operating rules into every user prompt via the `UserPromptSubmit` hook. These rules fire before Claude processes your message — making them effectively permanent: they survive context compaction, `/clear`, and session restarts.
+PAI provides a hook that injects user-defined rules into every prompt via `UserPromptSubmit`. Rules survive compaction, `/clear`, and session restarts — they fire on every single turn, making them the most reliable way to enforce behavioral constraints.
 
-The whisper rules are stored in `~/.claude/whisper-rules.md` and are fully customizable. The default rules include the git commit format, the no-email-sending constraint, and other high-priority behavioral anchors from your `CLAUDE.md`.
+**PAI ships the mechanism. You provide the rules.** The file `~/.claude/whisper-rules.md` does not exist by default. Use the `/whisper` skill to manage your rules:
 
-The pattern is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/letta) approach to persistent rule injection in Claude sessions.
+```
+/whisper                          — show current rules
+/whisper add "NEVER send emails"  — add a rule
+/whisper remove 3                 — remove rule #3
+/whisper list                     — list with line numbers
+```
+
+Or edit `~/.claude/whisper-rules.md` directly — one rule per line, plain text.
+
+**Keep rules focused.** Every rule is injected on every prompt. Too many rules dilute effectiveness and waste tokens. Reserve whisper rules for truly critical constraints that keep getting violated despite being in CLAUDE.md.
+
+The pattern is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/claude-subconscious) approach to persistent context injection.
 
 ---
 

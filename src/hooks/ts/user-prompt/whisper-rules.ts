@@ -21,20 +21,17 @@ import { homedir } from "node:os";
 const WHISPER_FILE = join(homedir(), ".claude", "whisper-rules.md");
 
 function getWhisperRules(): string {
-  // User-customizable whisper file takes priority
+  // User-managed whisper file — PAI provides the hook, user provides the rules
+  // Configure via /whisper skill or edit ~/.claude/whisper-rules.md directly
   if (existsSync(WHISPER_FILE)) {
     try {
       const content = readFileSync(WHISPER_FILE, "utf-8").trim();
       if (content) return content;
-    } catch { /* fall through to defaults */ }
+    } catch { /* ignore read errors */ }
   }
 
-  // Hardcoded critical rules — the ones that keep getting violated
-  return [
-    "NEVER suggest pausing, stopping, or ending the session. The user decides when to stop. Not you. Ever.",
-    "NEVER send emails. Always create drafts. No exceptions.",
-    "NEVER add Co-Authored-By or AI attribution to git commits.",
-  ].join("\n");
+  // No rules configured — silent (no injection)
+  return "";
 }
 
 function main() {

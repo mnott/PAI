@@ -17,3 +17,4 @@ export { vaultEmerge } from "./vault-emerge.js";
 export { vaultOrphans } from "./vault-orphans.js";
 export { vaultTrace } from "./vault-trace.js";
 export { reconstruct } from "./reconstruct.js";
+export { whisper } from "./whisper.js";
