@@ -474,12 +474,20 @@ function extractTopic(summaryText: string): string | null {
 }
 
 /**
- * Extract the title/topic from an existing session note.
- * Looks at the H1 "# Session NNNN: Title" line.
+ * Extract the topic from an existing session note.
+ * First checks for a <!-- TOPIC: ... --> comment (stored by previous summaries).
+ * Falls back to the H1 "# Session NNNN: Title" line.
+ *
+ * The HTML comment is the reliable source because the H1 gets renamed by
+ * renameSessionNote, which can add/change words and cause false topic shifts.
  */
 function extractExistingNoteTitle(notePath: string): string | null {
   try {
     const content = readFileSync(notePath, "utf-8");
+    // Prefer stored TOPIC comment (exact match to what the summarizer produced)
+    const topicComment = content.match(/<!-- TOPIC:\s*(.+?)\s*-->/);
+    if (topicComment) return topicComment[1].trim();
+    // Fallback to H1
     const match = content.match(/^# Session \d+:\s*(.+)$/m);
     if (match) return match[1].trim();
   } catch { /* ignore */ }
@@ -656,6 +664,17 @@ function updateNoteWithSummary(notePath: string, summaryText: string): void {
 
   let content = readFileSync(notePath, "utf-8");
 
+  // Update the TOPIC comment if present (keeps topic comparison stable across renames)
+  const newTopic = extractTopic(summaryText);
+  if (newTopic) {
+    if (content.includes("<!-- TOPIC:")) {
+      content = content.replace(/<!-- TOPIC:.*?-->/, `<!-- TOPIC: ${newTopic} -->`);
+    } else {
+      // Insert after H1 line
+      content = content.replace(/^(# Session .+)$/m, `$1\n<!-- TOPIC: ${newTopic} -->`);
+    }
+  }
+
   // Extract the work items from the AI summary
   const workDoneMatch = summaryText.match(
     /## Work Done\n\n([\s\S]*?)(?=\n## Key Decisions|\n## Known Issues|\n\*\*Tags|\n$)/
@@ -726,6 +745,9 @@ function createNoteFromSummary(notesDir: string, summaryText: string): string | 
 
     const date = new Date().toISOString().split("T")[0];
 
+    // Extract topic before stripping it (stored as HTML comment for future comparison)
+    const topic = extractTopic(summaryText);
+
     // Build the final note content, merging AI output with the PAI note structure.
     // Strip the TOPIC: line (used for topic detection, not for the note body).
     const aiBody = summaryText
@@ -737,6 +759,7 @@ function createNoteFromSummary(notesDir: string, summaryText: string): string | 
       .trim();
 
     const finalContent = `# Session ${noteNumber}: ${title}
+${topic ? `<!-- TOPIC: ${topic} -->` : ""}
 
 **Date:** ${date}
 **Status:** In Progress
