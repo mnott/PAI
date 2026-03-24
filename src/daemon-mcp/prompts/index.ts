@@ -18,3 +18,4 @@ export { vaultOrphans } from "./vault-orphans.js";
 export { vaultTrace } from "./vault-trace.js";
 export { reconstruct } from "./reconstruct.js";
 export { whisper } from "./whisper.js";
+export { consolidate } from "./consolidate.js";
