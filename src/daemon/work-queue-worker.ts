@@ -6,8 +6,9 @@
  * work summaries, updating the session note, and updating TODO.md.
  * Handles 'session-summary' items by spawning Haiku for AI-powered note generation.
  *
- * Other item types (note-update, todo-update, topic-detect)
- * are stubs — they log and complete immediately, ready for future expansion.
+ * Handles 'topic-detect' items by running BM25-based topic shift detection.
+ * Other item types (note-update, todo-update) are stubs — they log and
+ * complete immediately, ready for future expansion.
  */
 
 import { readFileSync } from "node:fs";
@@ -26,6 +27,11 @@ import {
   handleSessionSummary,
   type SessionSummaryPayload,
 } from "./session-summary-worker.js";
+
+import {
+  handleTopicDetect,
+  type TopicDetectPayload,
+} from "./topic-detect-worker.js";
 
 // Hooks lib imports — resolving through the compiled JS path.
 // These are the same utilities used by stop-hook.ts.
@@ -125,9 +131,12 @@ async function processNextItem(): Promise<void> {
         await handleSessionSummary(item.payload as SessionSummaryPayload);
         break;
 
+      case "topic-detect":
+        await handleTopicDetect(item.payload as TopicDetectPayload);
+        break;
+
       case "note-update":
       case "todo-update":
-      case "topic-detect":
         // Stubs — log and complete
         process.stderr.write(
           `[work-queue-worker] Item type '${item.type}' is not yet implemented — completing as no-op.\n`

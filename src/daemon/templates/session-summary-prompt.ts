@@ -1,9 +1,13 @@
 /**
- * session-summary-prompt.ts — Haiku prompt template for AI-powered session summaries
+ * session-summary-prompt.ts — Prompt template for AI-powered session summaries
  *
- * Produces a prompt that instructs Haiku to generate a structured session note
- * from extracted user messages and git commits. The output format matches
- * PAI's existing session note structure (Reconstruct skill format).
+ * Produces a prompt that instructs the summarizer model to generate a structured
+ * session note from extracted user messages and git commits. The output format
+ * matches PAI's existing session note structure (Reconstruct skill format).
+ *
+ * The prompt also requests a TOPIC line on the first line of output, which the
+ * session-summary-worker uses to detect topic shifts and decide whether to
+ * create a new note or update the existing one.
  */
 
 // ---------------------------------------------------------------------------
@@ -30,9 +34,9 @@ export interface SummaryPromptParams {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the prompt string to send to Haiku for session summarization.
+ * Build the prompt string to send to the summarizer model.
  *
- * Returns a single string suitable for piping to `claude --model haiku --print`.
+ * Returns a single string suitable for piping to `claude --model <model> --print`.
  */
 export function buildSessionSummaryPrompt(params: SummaryPromptParams): string {
   const {
@@ -83,7 +87,9 @@ Do NOT include:
 ${updateInstruction}
 Format your response EXACTLY as follows (no extra text before or after):
 
-# Session: [Descriptive Title - 5-8 words summarizing the main accomplishment]
+TOPIC: [A short topic label, max 60 characters, describing the WORK DONE — not quoting user messages. Format as "Topic1, Topic2, and Topic3" if multiple themes. Example: "Session Summary Worker, Topic Detection"]
+
+# Session: [Descriptive title summarizing what was ACCOMPLISHED, max 60 characters. Describe the work done, not the user's request. Bad: "Dark Mode Button Does Nothing". Good: "Dark Mode Toggle, Keyboard IPC, and Audio Fix"]
 
 **Date:** ${date}
 **Status:** In Progress

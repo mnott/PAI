@@ -6,7 +6,12 @@
  *   2. Extracting user messages and assistant context
  *   3. Gathering git commits from the session period
  *   4. Spawning Claude (sonnet for compaction, opus for session end) to generate a structured summary
- *   5. Writing the summary to the project's session note
+ *   5. Comparing the new topic against the existing note's topic
+ *   6. Creating a NEW note if the topic shifted, or updating the existing one
+ *
+ * Topic detection: the summarizer outputs a TOPIC: line as the first line of
+ * its response. This is compared against the existing note's title using word
+ * overlap. If overlap is below ~30%, a new note is created.
  *
  * Designed to run inside the daemon's work queue worker. All errors are
  * thrown (not swallowed) so the work queue retry logic handles them.
@@ -17,6 +22,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, basename } from "node:path";
@@ -454,6 +460,76 @@ async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promis
 }
 
 // ---------------------------------------------------------------------------
+// Topic extraction and comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the TOPIC: line from the summarizer output.
+ * Returns the topic string, or null if not found.
+ */
+function extractTopic(summaryText: string): string | null {
+  const match = summaryText.match(/^TOPIC:\s*(.+)$/m);
+  if (!match) return null;
+  return match[1].trim();
+}
+
+/**
+ * Extract the title/topic from an existing session note.
+ * Looks at the H1 "# Session NNNN: Title" line.
+ */
+function extractExistingNoteTitle(notePath: string): string | null {
+  try {
+    const content = readFileSync(notePath, "utf-8");
+    const match = content.match(/^# Session \d+:\s*(.+)$/m);
+    if (match) return match[1].trim();
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Compute word overlap ratio between two topic strings.
+ * Returns a value in [0, 1] — 1.0 means identical word sets.
+ *
+ * Uses lowercased, normalized words. Stop words and very short words
+ * are excluded to avoid false positives on common terms.
+ */
+function computeTopicOverlap(topicA: string, topicB: string): number {
+  const stopWords = new Set([
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "was", "are", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "might", "can", "shall", "this", "that",
+    "these", "those", "it", "its", "new", "session", "work", "done",
+  ]);
+
+  const normalize = (text: string): Set<string> => {
+    const words = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w));
+    return new Set(words);
+  };
+
+  const wordsA = normalize(topicA);
+  const wordsB = normalize(topicB);
+
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+
+  let intersection = 0;
+  for (const w of wordsA) {
+    if (wordsB.has(w)) intersection++;
+  }
+
+  // Jaccard similarity
+  const union = new Set([...wordsA, ...wordsB]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+/** Threshold: below this overlap ratio, we consider topics different. */
+const TOPIC_OVERLAP_THRESHOLD = 0.3;
+
+// ---------------------------------------------------------------------------
 // Session note writing
 // ---------------------------------------------------------------------------
 
@@ -462,7 +538,9 @@ async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promis
  *
  * Strategy:
  *   - Find the current month's latest note
- *   - If it's from today, update it with the new summary
+ *   - If it's from today, compare topics:
+ *     - Same topic (overlap >= 30%) → update existing note
+ *     - Different topic (overlap < 30%) → create a NEW note
  *   - If it's from a different day, create a new note
  */
 function writeSessionNote(
@@ -475,6 +553,9 @@ function writeSessionNote(
 
   const today = new Date().toISOString().split("T")[0];
 
+  // Extract the new topic from the summarizer output
+  const newTopic = extractTopic(summaryText);
+
   if (notePath) {
     const noteFilename = basename(notePath);
     // Check if this note is from today
@@ -482,11 +563,61 @@ function writeSessionNote(
     const noteDate = dateMatch ? dateMatch[1] : "";
 
     if (noteDate === today) {
-      // Update existing note — replace the Work Done section with AI summary
-      updateNoteWithSummary(notePath, summaryText);
-      process.stderr.write(
-        `[session-summary] Updated existing note: ${noteFilename}\n`
-      );
+      // Check for topic shift — two signals:
+      // 1. TOPIC: line from summarizer vs existing note title (word overlap)
+      // 2. topic-boundary.json written by topic-detect-worker (project-level shift)
+      const existingTitle = extractExistingNoteTitle(notePath);
+      let topicShifted = false;
+
+      // Signal 1: summarizer topic vs existing note title
+      if (newTopic && existingTitle) {
+        const overlap = computeTopicOverlap(newTopic, existingTitle);
+        process.stderr.write(
+          `[session-summary] Topic overlap: ${(overlap * 100).toFixed(1)}%` +
+          ` (new="${newTopic}", existing="${existingTitle}")\n`
+        );
+
+        if (overlap < TOPIC_OVERLAP_THRESHOLD) {
+          topicShifted = true;
+          process.stderr.write(
+            `[session-summary] Topic shift detected (word overlap) — creating new note.\n`
+          );
+        }
+      }
+
+      // Signal 2: topic boundary marker from topic-detect-worker
+      if (!topicShifted) {
+        const boundaryPath = join(notesInfo.path, "topic-boundary.json");
+        if (existsSync(boundaryPath)) {
+          try {
+            const boundary = JSON.parse(readFileSync(boundaryPath, "utf-8"));
+            if (boundary.timestamp) {
+              const boundaryAge = Date.now() - new Date(boundary.timestamp).getTime();
+              // Only honor boundaries from the last 30 minutes
+              if (boundaryAge < 30 * 60 * 1000) {
+                topicShifted = true;
+                process.stderr.write(
+                  `[session-summary] Topic shift detected (boundary marker) — ` +
+                  `${boundary.previousProject} → ${boundary.suggestedProject}\n`
+                );
+              }
+            }
+            // Consume the boundary file (one-shot)
+            unlinkSync(boundaryPath);
+          } catch { /* ignore invalid boundary file */ }
+        }
+      }
+
+      if (topicShifted) {
+        // Different topic — create a NEW note (topic-based split)
+        notePath = createNoteFromSummary(notesInfo.path, summaryText);
+      } else {
+        // Same topic — update existing note
+        updateNoteWithSummary(notePath, summaryText);
+        process.stderr.write(
+          `[session-summary] Updated existing note: ${noteFilename}\n`
+        );
+      }
     } else {
       // Different day — create a new note
       notePath = createNoteFromSummary(notesInfo.path, summaryText);
@@ -591,8 +722,10 @@ function createNoteFromSummary(notesDir: string, summaryText: string): string | 
 
     const date = new Date().toISOString().split("T")[0];
 
-    // Build the final note content, merging AI output with the PAI note structure
+    // Build the final note content, merging AI output with the PAI note structure.
+    // Strip the TOPIC: line (used for topic detection, not for the note body).
     const aiBody = summaryText
+      .replace(/^TOPIC:.*$/m, "")
       .replace(/^# Session:.*$/m, "")
       .replace(/^\*\*Date:\*\*.*$/m, "")
       .replace(/^\*\*Status:\*\*.*$/m, "")
