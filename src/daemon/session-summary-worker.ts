@@ -403,8 +403,11 @@ async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promis
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // Strip ANTHROPIC_API_KEY so claude CLI uses the Max plan (free)
+    // instead of billing against the API key
+    const { ANTHROPIC_API_KEY: _, ...envWithoutApiKey } = process.env;
     const child = spawn(claudeBin, ["--model", model, "-p", "--no-session-persistence"], {
-      env: { ...process.env },
+      env: envWithoutApiKey,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
