@@ -6,7 +6,7 @@ Claude Code has a memory problem. Every new session starts cold — no idea what
 
 PAI's headline feature: **every session is automatically documented.** No manual note-taking, no "pause session" commands, no forgetting to save what you did.
 
-When you work, a background daemon watches your session. On every compaction and at session end, it reads the JSONL conversation transcript, combines it with your git history, and spawns a headless Claude process to write a structured session note — what was built, what decisions were made, what problems were hit, what's left to do.
+When you work, a background daemon watches your session **continuously**. Every time Claude's context compacts — which happens automatically as the conversation grows — the daemon reads the JSONL transcript, combines it with your git history, and spawns a headless Claude process to write a structured session note. Not just at session end. Midway through your work, while you're still coding. The notes build up in real time as you go — what was built, what decisions were made, what problems were hit, what's left to do.
 
 **When you change topics mid-session, PAI creates a new note.** If you start the day debugging audio, then pivot to a Flutter rewrite, you get two notes — not one giant file mixing unrelated work:
 
