@@ -15,3 +15,12 @@ export type { HealthOptions, DeadLink, HealthResult } from "./health.js";
 
 export { zettelSuggest } from "./suggest.js";
 export type { SuggestOptions, Suggestion } from "./suggest.js";
+
+export { zettelGodNotes } from "./god-notes.js";
+export type { GodNoteOptions, GodNote, GodNoteResult } from "./god-notes.js";
+
+export { zettelCommunities } from "./communities.js";
+export type { CommunityOptions, Community, CommunityNode, CommunityResult } from "./communities.js";
+
+export { saveQueryResult } from "./query-feedback.js";
+export type { QueryRecord } from "./query-feedback.js";

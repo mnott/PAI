@@ -88,8 +88,29 @@ export class PostgresBackend implements StorageBackend {
         await targetPool.query(initSql);
         process.stderr.write(`[pai-postgres] Applied schema to database: ${targetDb}\n`);
       }
+
+      // Run incremental migrations for existing databases
+      await PostgresBackend.runMigrations(targetPool);
     } finally {
       await targetPool.end();
+    }
+  }
+
+  /**
+   * Run incremental migrations for existing databases.
+   * Each migration is idempotent — safe to run on databases that already have the change.
+   */
+  private static async runMigrations(pool: Pool): Promise<void> {
+    // Migration: add confidence column to vault_links if it does not exist
+    const colCheck = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'vault_links' AND column_name = 'confidence'`
+    );
+    if (colCheck.rowCount === 0) {
+      await pool.query(
+        "ALTER TABLE vault_links ADD COLUMN confidence TEXT NOT NULL DEFAULT 'EXTRACTED'"
+      );
+      process.stderr.write("[pai-postgres] Migration: added confidence column to vault_links\n");
     }
   }
 

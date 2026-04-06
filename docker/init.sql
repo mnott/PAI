@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS vault_links (
   target_path TEXT,
   link_type   TEXT NOT NULL DEFAULT 'wikilink',
   line_number INTEGER NOT NULL DEFAULT 0,
+  confidence  TEXT NOT NULL DEFAULT 'EXTRACTED',
   UNIQUE(source_path, target_raw, line_number)
 );
 CREATE INDEX IF NOT EXISTS idx_vl_source ON vault_links(source_path);
