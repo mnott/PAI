@@ -22,6 +22,12 @@ export interface HealthResult {
   lowConnectivity: string[];
   healthScore: number;
   computedAt: number;
+  /** Breakdown of links by confidence level (if confidence tagging is active). */
+  linkConfidence?: {
+    extracted: number;
+    inferred: number;
+    ambiguous: number;
+  };
 }
 
 function countComponents(nodes: string[], edges: Array<{ source: string; target: string }>): number {
@@ -191,6 +197,40 @@ export async function zettelHealth(backend: StorageBackend, opts?: HealthOptions
     }
   }
 
+  // --- linkConfidence ---
+  // Count links by confidence level using a sampling of all vault file paths.
+  // We reuse the link graph data we already fetched for totalLinks when scope=full.
+  let linkConfidence: HealthResult["linkConfidence"] | undefined;
+  if (scope === "full") {
+    try {
+      // Get all file paths to iterate their outbound links with confidence
+      const samplePaths = await backend.getAllVaultFilePaths();
+      const sampleSize = Math.min(samplePaths.length, 200); // limit for performance
+      const sampled = samplePaths.slice(0, sampleSize);
+      let extracted = 0;
+      let inferred = 0;
+      let ambiguous = 0;
+      for (const path of sampled) {
+        const links = await backend.getLinksFromSource(path);
+        for (const link of links) {
+          const c = link.confidence ?? "EXTRACTED";
+          if (c === "EXTRACTED") extracted++;
+          else if (c === "INFERRED") inferred++;
+          else ambiguous++;
+        }
+      }
+      // Extrapolate if we sampled
+      const factor = samplePaths.length > 0 ? samplePaths.length / sampleSize : 1;
+      linkConfidence = {
+        extracted: Math.round(extracted * factor),
+        inferred: Math.round(inferred * factor),
+        ambiguous: Math.round(ambiguous * factor),
+      };
+    } catch {
+      // Backend may not support confidence field yet — ignore
+    }
+  }
+
   // --- healthScore ---
   const deadRatio = totalLinks > 0 ? deadLinks.length / totalLinks : 0;
   const orphanRatio = totalFiles > 0 ? orphans.length / totalFiles : 0;
@@ -208,5 +248,6 @@ export async function zettelHealth(backend: StorageBackend, opts?: HealthOptions
     lowConnectivity,
     healthScore,
     computedAt,
+    linkConfidence,
   };
 }

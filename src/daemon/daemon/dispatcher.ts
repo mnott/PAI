@@ -78,8 +78,10 @@ export async function dispatchTool(
     case "zettel_surprise":
     case "zettel_suggest":
     case "zettel_converse":
-    case "zettel_themes": {
-      const { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes } = await import("../../mcp/tools.js");
+    case "zettel_themes":
+    case "zettel_god_notes":
+    case "zettel_communities": {
+      const { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes, toolZettelGodNotes, toolZettelCommunities } = await import("../../mcp/tools.js");
 
       switch (method) {
         case "zettel_explore": return toolZettelExplore(storageBackend, p as Parameters<typeof toolZettelExplore>[1]);
@@ -88,6 +90,8 @@ export async function dispatchTool(
         case "zettel_suggest": return toolZettelSuggest(storageBackend, p as Parameters<typeof toolZettelSuggest>[1]);
         case "zettel_converse": return toolZettelConverse(storageBackend, p as Parameters<typeof toolZettelConverse>[1]);
         case "zettel_themes": return toolZettelThemes(storageBackend, p as Parameters<typeof toolZettelThemes>[1]);
+        case "zettel_god_notes": return toolZettelGodNotes(storageBackend, p as Parameters<typeof toolZettelGodNotes>[1]);
+        case "zettel_communities": return toolZettelCommunities(storageBackend, p as Parameters<typeof toolZettelCommunities>[1]);
       }
       break;
     }

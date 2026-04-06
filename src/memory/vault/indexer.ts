@@ -248,6 +248,7 @@ export async function indexVault(
         targetPath: target,
         linkType,
         lineNumber: link.lineNumber,
+        confidence: "EXTRACTED",
       });
     }
   }

@@ -167,6 +167,21 @@ export async function toolMemorySearch(
       })
       .join("\n\n---\n\n");
 
+    // Query feedback loop: save query + result metadata for future indexing
+    try {
+      const { saveQueryResult } = await import("../../zettelkasten/query-feedback.js");
+      saveQueryResult({
+        query: params.query,
+        timestamp: Date.now(),
+        source: "memory_search",
+        sourceSlugs: withSlugs.slice(0, 5).map((r) => r.path),
+        answerPreview: withSlugs.slice(0, 3).map((r) => r.snippet.trim().slice(0, 150)).join(" | "),
+        resultCount: withSlugs.length,
+      });
+    } catch {
+      // Non-critical — don't fail the search if feedback logging errors
+    }
+
     return {
       content: [
         {

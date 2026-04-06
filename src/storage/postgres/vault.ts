@@ -184,7 +184,7 @@ export async function getVaultAlias(pool: Pool, vaultPath: string): Promise<{ ca
 // Vault links
 // ---------------------------------------------------------------------------
 
-type VaultLinkDbRow = { source_path: string; target_raw: string; target_path: string | null; link_type: string; line_number: number };
+type VaultLinkDbRow = { source_path: string; target_raw: string; target_path: string | null; link_type: string; line_number: number; confidence?: string };
 
 function mapVaultLinkRow(row: VaultLinkDbRow): VaultLinkRow {
   return {
@@ -193,6 +193,7 @@ function mapVaultLinkRow(row: VaultLinkDbRow): VaultLinkRow {
     targetPath: row.target_path,
     linkType: row.link_type,
     lineNumber: row.line_number,
+    confidence: (row.confidence as VaultLinkRow["confidence"]) ?? "EXTRACTED",
   };
 }
 
@@ -212,14 +213,15 @@ export async function replaceLinksForSources(pool: Pool, sourcePaths: string[], 
       const params: (string | number | null)[] = [];
       let idx = 1;
       for (const l of batch) {
-        values.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`);
-        params.push(l.sourcePath, l.targetRaw, l.targetPath, l.linkType, l.lineNumber);
+        values.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`);
+        params.push(l.sourcePath, l.targetRaw, l.targetPath, l.linkType, l.lineNumber, l.confidence ?? "EXTRACTED");
       }
       await client.query(
-        `INSERT INTO vault_links (source_path, target_raw, target_path, link_type, line_number)
+        `INSERT INTO vault_links (source_path, target_raw, target_path, link_type, line_number, confidence)
          VALUES ${values.join(", ")}
          ON CONFLICT (source_path, target_raw, line_number) DO UPDATE SET
-           target_path = EXCLUDED.target_path, link_type = EXCLUDED.link_type`,
+           target_path = EXCLUDED.target_path, link_type = EXCLUDED.link_type,
+           confidence = EXCLUDED.confidence`,
         params
       );
     }
@@ -234,7 +236,7 @@ export async function replaceLinksForSources(pool: Pool, sourcePaths: string[], 
 
 export async function getLinksFromSource(pool: Pool, sourcePath: string): Promise<VaultLinkRow[]> {
   const r = await pool.query<VaultLinkDbRow>(
-    "SELECT source_path, target_raw, target_path, link_type, line_number FROM vault_links WHERE source_path = $1",
+    "SELECT source_path, target_raw, target_path, link_type, line_number, confidence FROM vault_links WHERE source_path = $1",
     [sourcePath]
   );
   return r.rows.map(mapVaultLinkRow);
@@ -242,7 +244,7 @@ export async function getLinksFromSource(pool: Pool, sourcePath: string): Promis
 
 export async function getLinksToTarget(pool: Pool, targetPath: string): Promise<VaultLinkRow[]> {
   const r = await pool.query<VaultLinkDbRow>(
-    "SELECT source_path, target_raw, target_path, link_type, line_number FROM vault_links WHERE target_path = $1",
+    "SELECT source_path, target_raw, target_path, link_type, line_number, confidence FROM vault_links WHERE target_path = $1",
     [targetPath]
   );
   return r.rows.map(mapVaultLinkRow);
@@ -302,7 +304,7 @@ export async function getVaultLinksFromPaths(pool: Pool, sourcePaths: string[]):
   if (sourcePaths.length === 0) return [];
   const placeholders = sourcePaths.map((_, i) => `$${i + 1}`).join(", ");
   const r = await pool.query<VaultLinkDbRow>(
-    `SELECT source_path, target_raw, target_path, link_type, line_number FROM vault_links WHERE source_path IN (${placeholders}) AND target_path IS NOT NULL`,
+    `SELECT source_path, target_raw, target_path, link_type, line_number, confidence FROM vault_links WHERE source_path IN (${placeholders}) AND target_path IS NOT NULL`,
     sourcePaths
   );
   return r.rows.map(mapVaultLinkRow);

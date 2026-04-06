@@ -69,6 +69,8 @@ export interface VaultLinkRow {
   targetPath: string | null;
   linkType: string;
   lineNumber: number;
+  /** Confidence level: EXTRACTED (parsed from source), INFERRED (semantic), AMBIGUOUS (weak). */
+  confidence?: "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
 }
 
 export interface VaultHealthRow {

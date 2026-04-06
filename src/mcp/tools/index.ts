@@ -10,7 +10,7 @@
  *   notifications.ts — notification_config
  *   topics.ts        — topic_detect
  *   zettel.ts        — zettel_explore, zettel_health, zettel_surprise, zettel_suggest,
- *                      zettel_converse, zettel_themes
+ *                      zettel_converse, zettel_themes, zettel_god_notes, zettel_communities
  *   observations.ts  — observation_search, observation_timeline
  */
 
