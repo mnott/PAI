@@ -250,6 +250,127 @@ Restart Claude Code after installation for the tools to appear.
 
 ---
 
+## Memory Intelligence Layer
+
+These features extend the core memory engine with structured, time-aware, and cross-project intelligence. They ship in PAI v0.8.6, inspired by patterns from [mempalace](https://github.com/milla-jovovich/mempalace).
+
+### 4-Layer Wake-Up Context
+
+The `memory_wakeup` MCP tool loads context progressively at session start. The goal is a meaningful cold-start without flooding the context window.
+
+| Layer | Source | Content |
+|-------|--------|---------|
+| L0 | `~/.pai/identity.txt` | Stable identity: who you are, your style, your key projects |
+| L1 | Recent session notes (registry + filesystem) | Essential story: what you were doing, decisions made, where things stand |
+| L2 | On-demand `memory_search` query | Topic-specific context fetched when needed |
+| L3 | Full `memory_search` with reranking | Deep retrieval for complex questions |
+
+L0 and L1 are injected automatically via the `SessionStart` hook. L2 and L3 are triggered by the model during the session as needed.
+
+**File locations:**
+
+```
+~/.pai/identity.txt          # L0 identity — edit this to describe yourself
+Notes/                       # L1 source — the most recent session notes are read here
+~/.config/pai/config.json    # wakeupL1Count: N controls how many notes are read for L1
+```
+
+### Temporal Knowledge Graph
+
+The `kg_triples` table stores knowledge as typed, time-bounded triples. This allows facts to evolve over time rather than accumulating as a flat, undated collection.
+
+**Schema:**
+
+```sql
+CREATE TABLE kg_triples (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL,
+    subject     TEXT NOT NULL,
+    predicate   TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    valid_from  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    valid_to    TIMESTAMPTZ,          -- NULL means currently valid
+    confidence  REAL DEFAULT 1.0,
+    source      TEXT,                 -- where this fact came from
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX kg_triples_subject_idx ON kg_triples (tenant_id, subject);
+CREATE INDEX kg_triples_valid_idx   ON kg_triples (tenant_id, valid_from, valid_to);
+```
+
+**MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `kg_add` | Add a subject-predicate-object triple with `valid_from` (defaults to now) and optional `valid_to` |
+| `kg_query` | Query triples by subject, predicate, or object; filter by point-in-time (defaults to now) |
+| `kg_invalidate` | Set `valid_to = now()` on a triple, marking it as no longer true |
+| `kg_contradictions` | Surface triples that share a subject and predicate but have conflicting objects within overlapping validity windows |
+
+Contradiction detection uses predicate inversion rules (`uses → not_uses`, `works_at → not_works_at`, etc.) to identify direct contradictions. Fuzzy contradictions (same subject/predicate, different object without an explicit inversion rule) are flagged with lower confidence.
+
+### Memory Taxonomy
+
+`memory_taxonomy` returns a structured overview of the current state of indexed memory:
+
+```json
+{
+  "projects": [
+    { "slug": "pai", "sessions": 142, "chunks": 89341, "last_active": "2026-04-07" }
+  ],
+  "totals": {
+    "projects": 77,
+    "sessions": 1204,
+    "chunks": 449000,
+    "embeddings_coverage": 0.94
+  },
+  "recent_activity": [
+    { "project": "pai", "session": "0142", "date": "2026-04-07", "topic": "Memory Intelligence Layer" }
+  ]
+}
+```
+
+This is used both as a user-facing status tool and as a model-facing context signal — the model can call `memory_taxonomy` to understand what is indexed before deciding how to search.
+
+### Mid-Session Auto-Save
+
+The Stop hook normally fires once at the end of a session. The auto-save feature extends this: the Stop hook also fires every N human messages during a session, pushing a `session-summary` work item to the daemon and blocking the Stop event so the session continues.
+
+**Configuration:**
+
+```bash
+PAI_AUTO_SAVE_INTERVAL=15   # default: 15 human messages between saves
+```
+
+Set in `~/.config/pai/config.json` as `autoSaveInterval` or via the environment variable. Set to `0` to disable mid-session saves.
+
+**Loop prevention:** The hook sets a `stop_hook_active` flag in the work item. The daemon checks this flag before re-queuing save work. This prevents an auto-save from triggering another auto-save in a feedback loop.
+
+### Cross-Project Tunnel Detection
+
+`memory_tunnels` detects concepts that appear across multiple projects by comparing the vocabulary of each project's indexed content.
+
+**SQLite mode:** Uses the FTS5 vocabulary virtual table to extract term frequencies per project, then identifies terms that appear significantly in three or more projects.
+
+**PostgreSQL mode:** Uses `ts_stat()` on each project's `tsvector` content to extract term frequencies, then compares across projects using the same multi-project threshold.
+
+**Output:** A ranked list of concept-tunnel pairs:
+
+```json
+[
+  {
+    "concept": "rate limiting",
+    "projects": ["pai-daemon", "whazaa-mcp", "ringsaday-backend"],
+    "tunnel_strength": 0.87
+  }
+]
+```
+
+Tunnel strength is a normalized score based on term frequency across projects, IDF weighting, and the number of projects involved. Higher is more significant.
+
+---
+
 ## Search Modes
 
 Three modes, selectable via the `--mode` flag on the CLI or the `mode` parameter in MCP tool calls.

@@ -13,6 +13,8 @@ import {
   toolProjectHealth,
   toolProjectTodo,
   toolSessionRoute,
+  toolMemoryWakeup,
+  toolMemoryTaxonomy,
 } from "../../mcp/tools.js";
 import { detectTopicShift } from "../../topics/detector.js";
 import { registryDb, storageBackend, daemonConfig } from "./state.js";
@@ -58,6 +60,12 @@ export async function dispatchTool(
 
     case "project_todo":
       return toolProjectTodo(registryDb, p as Parameters<typeof toolProjectTodo>[1]);
+
+    case "memory_wakeup":
+      return toolMemoryWakeup(registryDb, p as Parameters<typeof toolMemoryWakeup>[1]);
+
+    case "memory_taxonomy":
+      return toolMemoryTaxonomy(registryDb, storageBackend, p as Parameters<typeof toolMemoryTaxonomy>[2]);
 
     case "topic_check":
       return detectTopicShift(
@@ -133,6 +141,29 @@ export async function dispatchTool(
         p as Parameters<typeof handleIdeaMaterialize>[0],
         daemonConfig.vaultPath
       );
+    }
+
+    case "kg_add":
+    case "kg_query":
+    case "kg_invalidate":
+    case "kg_contradictions": {
+      const { toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions } = await import("../../mcp/tools.js");
+      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
+      if (!pgPool) {
+        throw new Error(`${method} requires a Postgres storage backend`);
+      }
+      switch (method) {
+        case "kg_add":           return toolKgAdd(pgPool, p as Parameters<typeof toolKgAdd>[1]);
+        case "kg_query":         return toolKgQuery(pgPool, p as Parameters<typeof toolKgQuery>[1]);
+        case "kg_invalidate":    return toolKgInvalidate(pgPool, p as Parameters<typeof toolKgInvalidate>[1]);
+        case "kg_contradictions": return toolKgContradictions(pgPool, p as Parameters<typeof toolKgContradictions>[1]);
+      }
+      break;
+    }
+
+    case "memory_tunnels": {
+      const { toolMemoryTunnels } = await import("../../mcp/tools.js");
+      return toolMemoryTunnels(registryDb, storageBackend, p as Parameters<typeof toolMemoryTunnels>[2]);
     }
 
     default:

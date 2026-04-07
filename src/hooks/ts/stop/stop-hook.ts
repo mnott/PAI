@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
@@ -22,6 +22,87 @@ import {
 
 const DAEMON_SOCKET = process.env.PAI_SOCKET ?? '/tmp/pai.sock';
 const DAEMON_TIMEOUT_MS = 3_000;
+
+/**
+ * How many human messages must accumulate before triggering a mid-session
+ * auto-save. Overrideable via the PAI_AUTO_SAVE_INTERVAL env var.
+ */
+const AUTO_SAVE_INTERVAL = (() => {
+  const raw = process.env.PAI_AUTO_SAVE_INTERVAL;
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (!isNaN(n) && n > 0) return n;
+  }
+  return 15;
+})();
+
+// ---------------------------------------------------------------------------
+// Session-state helpers (mid-session auto-save)
+// ---------------------------------------------------------------------------
+
+const SESSION_STATE_DIR = join(
+  process.env.HOME ?? '/tmp',
+  '.config',
+  'pai',
+  'session-state'
+);
+
+interface SessionState {
+  humanMessageCount: number;
+}
+
+function readSessionState(sessionId: string): SessionState {
+  try {
+    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    if (!existsSync(stateFile)) return { humanMessageCount: 0 };
+    const raw = readFileSync(stateFile, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<SessionState>;
+    return {
+      humanMessageCount: typeof parsed.humanMessageCount === 'number' ? parsed.humanMessageCount : 0,
+    };
+  } catch {
+    return { humanMessageCount: 0 };
+  }
+}
+
+function writeSessionState(sessionId: string, state: SessionState): void {
+  try {
+    mkdirSync(SESSION_STATE_DIR, { recursive: true });
+    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (e) {
+    console.error(`STOP-HOOK: Could not write session state: ${e}`);
+  }
+}
+
+function deleteSessionState(sessionId: string): void {
+  try {
+    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    if (existsSync(stateFile)) {
+      unlinkSync(stateFile);
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
+ * Count human (user-role) messages in the transcript lines.
+ */
+function countHumanMessages(lines: string[]): number {
+  let count = 0;
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type === 'user' && entry.message?.role === 'user') {
+        count++;
+      }
+    } catch {
+      // Skip invalid JSON
+    }
+  }
+  return count;
+}
 
 // ---------------------------------------------------------------------------
 // Helper: safely convert Claude content (string | Block[]) to plain text
@@ -143,6 +224,64 @@ function enqueueWithDaemon(payload: {
       console.error(`STOP-HOOK: Daemon timeout after ${DAEMON_TIMEOUT_MS}ms — falling back.`);
       finish(false);
     }, DAEMON_TIMEOUT_MS);
+  });
+}
+
+/**
+ * Enqueue a session-summary work item with `force: true` for mid-session auto-save.
+ * Like the regular enqueueSessionSummaryWithDaemon but signals the daemon to
+ * summarise even though the session is still ongoing.
+ */
+function enqueueMidSessionSummaryWithDaemon(payload: {
+  cwd: string;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    let buffer = '';
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(ok: boolean): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve(ok);
+    }
+
+    const client = connect(DAEMON_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'session-summary',
+          priority: 3,
+          payload: {
+            cwd: payload.cwd,
+            force: true,
+          },
+        },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl === -1) return;
+      const line = buffer.slice(0, nl);
+      try {
+        const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
+        if (response.ok) {
+          console.error(`STOP-HOOK: Mid-session summary enqueued (id=${response.result?.id}).`);
+        }
+      } catch { /* ignore */ }
+      finish(true);
+    });
+
+    client.on('error', () => finish(false));
+    client.on('end', () => { if (!done) finish(false); });
+
+    timer = setTimeout(() => finish(false), DAEMON_TIMEOUT_MS);
   });
 }
 
@@ -450,12 +589,19 @@ async function main() {
 
   let transcriptPath: string;
   let cwd: string;
+  let stopHookActive: boolean = false;
+  let sessionId: string = '';
   try {
     const parsed = JSON.parse(input);
     transcriptPath = parsed.transcript_path;
     cwd = parsed.cwd || process.cwd();
+    stopHookActive = parsed.stop_hook_active === true;
+    // session_id may appear directly or be derivable from the transcript path
+    sessionId = parsed.session_id ?? basename(transcriptPath ?? '').replace(/\.jsonl$/, '');
     console.error(`Transcript path: ${transcriptPath}`);
     console.error(`Working directory: ${cwd}`);
+    console.error(`stop_hook_active: ${stopHookActive}`);
+    console.error(`session_id: ${sessionId}`);
   } catch (e) {
     console.error(`Error parsing input JSON: ${e}`);
     process.exit(0);
@@ -477,6 +623,56 @@ async function main() {
   }
 
   const lines = transcript.trim().split('\n');
+
+  // ---------------------------------------------------------------------------
+  // Mid-session auto-save check
+  // ---------------------------------------------------------------------------
+  // When stop_hook_active is FALSE (normal Stop event, not a re-entry from our
+  // own exit-code-2 block), we check whether enough human messages have
+  // accumulated to warrant an interim session summary.
+  //
+  // When stop_hook_active is TRUE the hook is already in the blocked-loop mode
+  // we triggered on the previous fire, so we skip the check entirely and proceed
+  // with normal session-end logic.
+  //
+  // Failure of this entire block must never abort the normal flow — wrap it all.
+  if (!stopHookActive && sessionId) {
+    try {
+      const currentMsgCount = countHumanMessages(lines);
+      const state = readSessionState(sessionId);
+      const prevCount = state.humanMessageCount;
+      const newMessages = currentMsgCount - prevCount;
+
+      console.error(
+        `STOP-HOOK: human messages — total=${currentMsgCount} prev=${prevCount} new=${newMessages} interval=${AUTO_SAVE_INTERVAL}`
+      );
+
+      if (newMessages >= AUTO_SAVE_INTERVAL) {
+        // Reset the counter now so we don't double-trigger on the re-entry fire.
+        writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
+
+        console.error(`STOP-HOOK: Auto-save threshold reached. Triggering mid-session summary.`);
+
+        // Fire-and-forget: push session-summary to daemon.
+        enqueueMidSessionSummaryWithDaemon({ cwd }).catch(() => {});
+
+        // Emit the blocking system-reminder to stdout so Claude re-reads it.
+        process.stdout.write(
+          `<system-reminder>\n[AUTO-SAVE] ${newMessages} messages processed. The daemon is now summarizing the session so far. Continue with your current task — this is background work.\n</system-reminder>\n`
+        );
+
+        // Exit code 2 blocks the Stop and injects the system-reminder into the
+        // conversation, setting stop_hook_active=true for the next fire.
+        process.exit(2);
+      } else {
+        // Update the stored count so we can measure delta on next fire.
+        writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
+      }
+    } catch (autoSaveError) {
+      // Never let auto-save logic block the normal Stop flow.
+      console.error(`STOP-HOOK: Auto-save check failed (non-fatal): ${autoSaveError}`);
+    }
+  }
 
   // Extract last user query for tab title / fallback
   let lastUserQuery = '';
@@ -554,6 +750,12 @@ async function main() {
   // We omit transcriptPath so the worker resolves it via findLatestJsonl(),
   // avoiding a race where the session-end hook moves the JSONL before the worker reads it.
   await enqueueSessionSummaryWithDaemon({ cwd });
+
+  // Clean up the session-state file now that the session has truly ended.
+  if (sessionId) {
+    deleteSessionState(sessionId);
+    console.error(`STOP-HOOK: Session state cleaned up for ${sessionId}.`);
+  }
 
   console.error(`STOP-HOOK COMPLETED SUCCESSFULLY at ${new Date().toISOString()}\n`);
 }

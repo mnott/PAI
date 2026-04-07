@@ -20,6 +20,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, basename, dirname, resolve } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
+import { buildWakeupContext } from '../../../memory/wakeup.js';
 import {
   PAI_DIR,
   findNotesDir,
@@ -505,6 +506,41 @@ THE ABOVE INSTRUCTIONS ARE MANDATORY. Follow them exactly.
 `;
     console.log(claudeMdReminder);
     console.error(`Injected CLAUDE.md content from: ${path}`);
+  }
+
+  // 10. Inject wake-up context (L0 identity + L1 essential story) if available
+  // The detected PAI project root_path is used for L1 note lookup.
+  // We derive it from the `paiProjectBlock` detection result by re-running a
+  // lightweight registry lookup, or by falling back to cwd for local-notes projects.
+  try {
+    // Attempt to find the project root path from the registry via `pai project detect --json`
+    let wakeupRootPath: string | undefined;
+    try {
+      const { execFileSync: efs } = await import('child_process');
+      const raw2 = efs(paiBin, ['project', 'detect', '--json', cwd], {
+        encoding: 'utf-8',
+        env: process.env,
+      }).trim();
+      if (raw2) {
+        const det = JSON.parse(raw2) as { root_path?: string; slug?: string };
+        if (det.root_path) wakeupRootPath = det.root_path;
+      }
+    } catch {
+      // Non-fatal — fall back to cwd
+      wakeupRootPath = cwd;
+    }
+
+    const wakeupBlock = buildWakeupContext(wakeupRootPath);
+    if (wakeupBlock) {
+      const wakeupReminder = `\n<system-reminder>\nWAKEUP CONTEXT\n\n${wakeupBlock}\n</system-reminder>\n`;
+      console.log(wakeupReminder);
+      console.error('Injected wake-up context (L0+L1)');
+    } else {
+      console.error('No wake-up context to inject (no identity file or session notes)');
+    }
+  } catch (wakeupError) {
+    // Non-fatal — don't block session start
+    console.error('Wake-up context injection failed:', wakeupError);
   }
 
   console.error('\nProject context setup complete\n');
