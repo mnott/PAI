@@ -34,6 +34,7 @@ import { registerObservationCommands } from "./commands/observation.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
 import { registerTopicCommands } from "./commands/topic.js";
+import { registerKgCommands } from "./commands/kg.js";
 import { err } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,16 @@ const topicCmd = program
   .description("Topic shift detection: check whether context has drifted to a different project");
 
 registerTopicCommands(topicCmd);
+
+// ---------------------------------------------------------------------------
+// pai kg
+// ---------------------------------------------------------------------------
+
+const kgCmd = program
+  .command("kg")
+  .description("Temporal knowledge graph: backfill, query, list, stats");
+
+registerKgCommands(kgCmd);
 
 // ---------------------------------------------------------------------------
 // pai obsidian

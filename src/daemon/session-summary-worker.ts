@@ -37,6 +37,10 @@ import {
 } from "../hooks/ts/lib/project-utils/index.js";
 
 import { buildSessionSummaryPrompt } from "./templates/session-summary-prompt.js";
+import {
+  extractAndStoreTriples as kgExtractAndStoreTriples,
+} from "../memory/kg-extraction.js";
+import { registryDb, storageBackend, daemonConfig } from "./daemon/state.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -789,6 +793,83 @@ ${aiBody}
 }
 
 // ---------------------------------------------------------------------------
+// KG triple extraction
+// ---------------------------------------------------------------------------
+
+/** Narrow cast for backends that expose a Postgres pool. */
+interface BackendWithPool {
+  getPool?(): import("pg").Pool;
+}
+
+/**
+ * Look up the integer project_id from the registry DB for a given slug.
+ * Returns null if not found or registryDb is not yet initialized.
+ */
+function lookupProjectId(slug: string): number | null {
+  try {
+    if (!registryDb) return null;
+    const row = (registryDb as import("better-sqlite3").Database)
+      .prepare("SELECT id FROM projects WHERE slug = ? LIMIT 1")
+      .get(slug) as { id: number } | undefined;
+    return row?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract structured KG triples from a session summary and store them.
+ *
+ * This is best-effort: any error is logged but never propagated.
+ * Requires Postgres backend — silently no-ops on SQLite.
+ */
+async function extractAndStoreTriples(params: {
+  summaryText: string;
+  projectSlug: string;
+  projectId: number | null;
+  sessionId: string;
+  gitLog: string;
+  model: string;
+}): Promise<void> {
+  try {
+    // Only works with Postgres backend — KG tables live in Postgres
+    if (!storageBackend || storageBackend.backendType !== "postgres") {
+      return;
+    }
+
+    const pool = (storageBackend as BackendWithPool).getPool?.();
+    if (!pool) {
+      process.stderr.write("[session-summary] Triple extraction: no pool available.\n");
+      return;
+    }
+
+    // Check config flag (default: true)
+    const cfg = daemonConfig as (typeof daemonConfig & { kg_extraction_enabled?: boolean }) | undefined;
+    if (cfg && cfg.kg_extraction_enabled === false) {
+      process.stderr.write("[session-summary] Triple extraction disabled via kg_extraction_enabled=false.\n");
+      return;
+    }
+
+    const result = await kgExtractAndStoreTriples(pool, {
+      summaryText: params.summaryText,
+      projectSlug: params.projectSlug,
+      projectId: params.projectId,
+      sessionId: params.sessionId,
+      gitLog: params.gitLog,
+      model: "sonnet",
+    });
+
+    process.stderr.write(
+      `[session-summary] Triple extraction complete: ` +
+      `${result.extracted} extracted, ${result.added} added, ${result.superseded} superseded.\n`
+    );
+  } catch (err) {
+    // Entire extraction is best-effort — never fail the session summary
+    process.stderr.write(`[session-summary] Triple extraction failed: ${err}\n`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -937,6 +1018,20 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
       `[session-summary] Session note written: ${basename(notePath)}\n`
     );
   }
+
+  // -------------------------------------------------------------------------
+  // Step 6: Best-effort KG triple extraction (Postgres only)
+  // -------------------------------------------------------------------------
+  const effectiveSlug = projectSlug ?? basename(cwd);
+  const projectId = projectSlug ? lookupProjectId(projectSlug) : null;
+  await extractAndStoreTriples({
+    summaryText,
+    projectSlug: effectiveSlug,
+    projectId,
+    sessionId: sessionId ?? cwd,
+    gitLog,
+    model: selectedModel,
+  });
 
   // Mark cooldown
   markCooldown(cwd);

@@ -219,6 +219,42 @@ git commit -m "docs: reconstruct session notes for YYYY-MM-DD to YYYY-MM-DD"
 
 ---
 
+### Step 9 — Extract Knowledge Graph Triples
+
+After reconstructing the session notes, extract structured facts as triples and add them to the temporal knowledge graph. This populates the KG with verifiable facts from the historical record so that future queries (\`kg_query\`, \`pai kg query\`) can answer questions about past decisions.
+
+For each reconstructed note, call \`kg_add\` to store key facts. Examples of facts worth extracting:
+
+- **Project decisions**: \`subject=<project>\`, \`predicate=decided_to\`, \`object=<decision>\`
+- **Version bumps**: \`subject=<project>\`, \`predicate=shipped_version\`, \`object=<version>\`
+- **Architectural choices**: \`subject=<component>\`, \`predicate=uses\`, \`object=<technology>\`
+- **Status changes**: \`subject=<project>\`, \`predicate=status\`, \`object=<current_state>\`
+- **Dependencies**: \`subject=<project>\`, \`predicate=depends_on\`, \`object=<library>\`
+- **Ownership / location**: \`subject=<file_or_module>\`, \`predicate=lives_at\`, \`object=<path>\`
+
+**Procedure for each fact:**
+
+1. Call \`kg_query\` first with the same \`(subject, predicate)\` to check if a fact already exists.
+2. If a new fact supersedes an old one (same subject + predicate, different object), call \`kg_invalidate\` on the old triple's id BEFORE adding the new one.
+3. Call \`kg_add\` with the new fact, setting \`source_session\` to the reconstructed note filename and \`confidence: "EXTRACTED"\`.
+
+**Quality rules:**
+
+- Only extract **atomic, verifiable facts** that can be traced back to a commit, a user message, or an explicit decision in the note.
+- Skip opinions, speculation ("seems like", "probably"), and aspirational statements ("we should").
+- Use \`snake_case\` predicates.
+- Maximum **15 triples per note** — pick the most important.
+- Never invent project names, versions, or paths. Copy them verbatim.
+
+**Alternative (batch mode):** If reconstructing many notes at once, instead of calling \`kg_add\` interactively you may run \`pai kg backfill --project <slug>\` from the terminal after the notes are written. The backfill walks every note in \`Notes/YYYY/MM/\`, runs the same extractor the session-summary-worker uses, and is idempotent (state file at \`~/.config/pai/kg-backfill-state.json\`).
+
+After extraction, append a one-line note to the summary output:
+\`\`\`
+KG: extracted N triples (M added, K superseded) across the reconstructed notes.
+\`\`\`
+
+---
+
 ### Anti-Defaults
 
 - **NEVER overwrite existing notes.** Skip silently, report in summary.
