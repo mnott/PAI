@@ -521,6 +521,125 @@ async function startShim(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: memory_wakeup
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_wakeup",
+    [
+      "Load the 4-layer wake-up context for the current (or specified) project.",
+      "",
+      "Returns a progressive context block with:",
+      "  L0 Identity     — user identity from ~/.pai/identity.txt (~100 tokens, always included)",
+      "  L1 Essential Story — recent session note highlights: Work Done, Key Decisions, Next Steps",
+      "                       (~500-800 tokens, auto-extracted from the most recent notes)",
+      "",
+      "Use this at session start to quickly re-orient: who the user is, what they were doing,",
+      "and what decisions were made recently — without loading the full memory index.",
+      "",
+      "For deeper on-demand recall, use memory_search (L2/L3).",
+      "",
+      "Inspired by the mempalace progressive context loading pattern.",
+    ].join("\n"),
+    {
+      project: z
+        .string()
+        .optional()
+        .describe(
+          "Project slug or absolute root path. Omit to auto-detect from the current working directory."
+        ),
+      token_budget: z
+        .number()
+        .int()
+        .min(100)
+        .max(4000)
+        .optional()
+        .describe(
+          "Maximum tokens for the L1 essential story block. Default: 800 (~3200 chars)."
+        ),
+    },
+    async (args) => proxyTool("memory_wakeup", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: memory_taxonomy
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_taxonomy",
+    [
+      "Return the SHAPE of stored memory without requiring a search query.",
+      "",
+      "Answers 'what do I know about?' rather than 'what do I know about X?'",
+      "",
+      "Returns:",
+      "  - All active projects with session count, indexed file count, last activity date, and tags",
+      "  - Global totals (projects, sessions, indexed files, chunks)",
+      "  - Recent activity — last 10 sessions across all projects",
+      "",
+      "Use this at session start for a quick orientation, before memory_search for a",
+      "specific topic, or when you want to know which projects have recorded memory.",
+      "",
+      "Inspired by mempalace's mempalace_get_taxonomy tool.",
+    ].join("\n"),
+    {
+      include_archived: z
+        .boolean()
+        .optional()
+        .describe("Include archived projects in the result. Default: false."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of projects to return. Default: 50."),
+    },
+    async (args) => proxyTool("memory_taxonomy", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: memory_tunnels
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_tunnels",
+    [
+      "Find 'tunnels' — concepts that appear across multiple projects in PAI memory.",
+      "",
+      "A tunnel is a shared term or phrase that appears in chunks from at least two",
+      "distinct projects, surfacing serendipitous cross-project connections in your",
+      "knowledge graph (inspired by the memory palace / palace graph concept).",
+      "",
+      "Results are sorted by project breadth (most cross-cutting first), then by",
+      "raw occurrence count. Each tunnel includes the concept, which projects contain",
+      "it, total occurrences, and first/last seen timestamps.",
+    ].join("\n"),
+    {
+      min_projects: z
+        .number()
+        .int()
+        .min(2)
+        .optional()
+        .describe("Minimum distinct projects a concept must appear in. Default: 2."),
+      min_occurrences: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Minimum total chunk occurrences across all projects. Default: 3."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Maximum number of tunnels to return. Default: 20."),
+    },
+    async (args) => proxyTool("memory_tunnels", args)
+  );
+
+  // -------------------------------------------------------------------------
   // Connect transport and start serving
   // -------------------------------------------------------------------------
 

@@ -149,6 +149,27 @@ CREATE TABLE IF NOT EXISTS vault_health (
 CREATE INDEX IF NOT EXISTS idx_vh_orphan ON vault_health(is_orphan) WHERE is_orphan = 1;
 
 -- ---------------------------------------------------------------------------
+-- Temporal Knowledge Graph — fact triples with time-scoping
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS kg_triples (
+  id             SERIAL PRIMARY KEY,
+  subject        TEXT NOT NULL,
+  predicate      TEXT NOT NULL,
+  object         TEXT NOT NULL,
+  project_id     INTEGER REFERENCES projects(id),
+  source_session TEXT,
+  valid_from     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  valid_to       TIMESTAMP,
+  confidence     TEXT DEFAULT 'EXTRACTED',
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kg_subject   ON kg_triples(subject);
+CREATE INDEX IF NOT EXISTS idx_kg_predicate ON kg_triples(predicate);
+CREATE INDEX IF NOT EXISTS idx_kg_object    ON kg_triples(object);
+CREATE INDEX IF NOT EXISTS idx_kg_valid     ON kg_triples(valid_from, valid_to);
+
+-- ---------------------------------------------------------------------------
 -- Summary view (handy for debugging)
 -- ---------------------------------------------------------------------------
 

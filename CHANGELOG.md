@@ -4,6 +4,29 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [0.8.6] — 2026-04-07
+
+### Added
+
+- **4-layer wake-up context** — `memory_wakeup` MCP tool loads identity (L0, from `~/.pai/identity.txt`), essential story (L1, from recent session notes), with on-demand topic queries (L2) and deep search (L3) available during the session. Called automatically by the `SessionStart` hook. Inspired by [mempalace](https://github.com/milla-jovovich/mempalace).
+
+- **Temporal knowledge graph** — New `kg_triples` table with `valid_from`/`valid_to` timestamps. Four MCP tools: `kg_add` (add a time-bounded fact), `kg_query` (query facts valid at a given point in time), `kg_invalidate` (expire a fact), `kg_contradictions` (surface conflicting facts). Facts can now evolve over time rather than accumulating as an undated flat store. Inspired by [mempalace](https://github.com/milla-jovovich/mempalace).
+
+- **Memory taxonomy** — `memory_taxonomy` MCP tool returns a structured overview of all indexed content: per-project session and chunk counts, embedding coverage, and recent activity. Useful as both a user-facing status tool and a model-facing context signal. Inspired by [mempalace](https://github.com/milla-jovovich/mempalace).
+
+- **Mid-session auto-save** — The Stop hook now fires a session-summary work item every 15 human messages (configurable via `PAI_AUTO_SAVE_INTERVAL` env var or `autoSaveInterval` in `config.json`). Returns `continue: true` to block the Stop event and keep the session running. A `stop_hook_active` flag on the work item prevents save loops. Inspired by [mempalace](https://github.com/milla-jovovich/mempalace).
+
+- **Cross-project tunnel detection** — `memory_tunnels` MCP tool detects concepts shared across multiple projects by comparing FTS vocabulary (SQLite: FTS5 `vocab` virtual table; PostgreSQL: `ts_stat()`). Returns ranked concept-tunnel pairs with a tunnel strength score. Inspired by [mempalace](https://github.com/milla-jovovich/mempalace).
+
+### Previously shipped (v0.8.5) — credited here for completeness
+
+- **God-note detection** (`zettel_god_notes`) — Surfaces notes with disproportionately high in-degree link counts. Inspired by [graphify](https://github.com/safishamsi/graphify).
+- **Confidence tagging on vault links** — The `vault_links` table carries a `confidence` column on each directed link. Inspired by [graphify](https://github.com/safishamsi/graphify).
+- **Query feedback loop** — Queries and results are logged to `~/.config/pai/queries/` to improve future retrieval. Inspired by [graphify](https://github.com/safishamsi/graphify).
+- **Community detection** (`zettel_communities`) — Louvain community detection partitions the vault link graph into thematic clusters. Inspired by [graphify](https://github.com/safishamsi/graphify), which uses the Leiden algorithm.
+
+---
+
 ## [0.8.0] — 2026-03-24
 
 ### Added

@@ -190,6 +190,60 @@ When spawning headless Claude CLI processes for summarization, the daemon strips
 
 ---
 
+## Progressive Memory Loading
+
+PAI loads context in layers at session start rather than all at once. This keeps early-session latency low while giving Claude everything it needs to be useful immediately.
+
+### The Four Layers
+
+| Layer | What it loads | When |
+|-------|---------------|------|
+| **L0 — Identity** | Your identity file (`~/.pai/identity.txt`) — who you are, your working style, key preferences | Always, at every session start |
+| **L1 — Essential story** | Summaries from the most recent session notes — what you were doing, what decisions were made, where things stand | Always, at session start |
+| **L2 — Topic queries** | On-demand retrieval for the current topic — fetched when a specific question or task is identified | On demand, during the session |
+| **L3 — Deep search** | Full `memory_search` across all indexed content — for when L2 is not enough | On demand, when explicitly needed |
+
+L0 and L1 fire automatically via the `memory_wakeup` MCP tool, which is called by the `SessionStart` hook. L2 and L3 are invoked as needed — the model decides when to go deeper based on the question at hand.
+
+### Configuring Your Identity File
+
+Create `~/.pai/identity.txt` with a short description of yourself and your working style. Claude will see this at every session start. Example:
+
+```
+Matthias. Principal engineer. Work across TypeScript, Dart, and shell scripting.
+Projects: PAI (AI infrastructure), RingsADay (Flutter app), Scribe (MCP server).
+Prefer concise explanations, hate unnecessary hedging.
+```
+
+---
+
+## Advanced Memory Tools
+
+### Temporal Knowledge Graph
+
+Facts change over time. The `kg_triples` table stores knowledge as subject-predicate-object triples with `valid_from` and `valid_to` timestamps, so facts can expire and contradict each other rather than accumulating in an undated blob.
+
+Four MCP tools cover the full lifecycle:
+
+- `kg_add` — Add a fact with a start date (and optional end date)
+- `kg_query` — Query the graph, filtered to facts valid at a given point in time
+- `kg_invalidate` — Mark a fact as no longer true (sets `valid_to`)
+- `kg_contradictions` — Surface facts that directly contradict each other, using predicate inversion rules
+
+Example: "Matthias uses PostgreSQL" added in March; "Matthias uses SQLite" added in April with the March fact invalidated. `kg_query` in April sees only the current fact; `kg_query` for March sees the historical one.
+
+### Memory Taxonomy
+
+`memory_taxonomy` gives a shape-of-memory overview: projects, session counts, chunk counts, embedding coverage, and recent activity. Think of it as a dashboard for your knowledge base — useful both for the model (to understand what it knows) and for you (to audit what is indexed).
+
+### Cross-Project Tunnels
+
+`memory_tunnels` detects concepts that appear across multiple projects. It works by comparing FTS vocabulary in SQLite mode or `ts_stat` output in PostgreSQL mode. When a concept — a library name, a design pattern, a person's name — shows up in three separate projects, PAI surfaces that connection as a tunnel.
+
+This reveals unexpected intellectual bridges: the same concurrency pattern used in PAI's daemon showing up in your Flutter app's state management, or a vendor name appearing in both your notes and your job applications.
+
+---
+
 ## Automatic Observation Capture
 
 PAI automatically classifies and stores every significant tool call during your sessions. When you edit a file, run a command, or make a decision, PAI captures it as a structured observation — building a searchable timeline of everything you've done across all projects.

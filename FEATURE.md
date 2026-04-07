@@ -40,6 +40,11 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Automatic session notes** | No | Yes — AI-generated via daemon worker (Opus/Sonnet), topic-based splitting |
 | **Topic-based note splitting** | No | Yes — Jaccard similarity detects topic shifts, creates separate notes |
 | **Whisper rules** | No | Yes — injects critical rules on every prompt, survives compaction and /clear |
+| **4-layer wake-up context** | No | Yes — `memory_wakeup` tool loads identity (L0), recent story (L1), on-demand topic (L2), deep search (L3) |
+| **Temporal knowledge graph** | No | Yes — `kg_add`, `kg_query`, `kg_invalidate`, `kg_contradictions` tools; facts have `valid_from`/`valid_to` timestamps |
+| **Memory taxonomy tool** | No | Yes — `memory_taxonomy` surfaces project/session/chunk counts and recent activity at a glance |
+| **Mid-session auto-save** | No | Yes — Stop hook fires every 15 human messages (configurable via `PAI_AUTO_SAVE_INTERVAL`), saves without ending session |
+| **Cross-project tunnel detection** | No | Yes — `memory_tunnels` finds concepts shared across multiple projects via FTS vocabulary comparison |
 | **Session note reconstruction** | No | Yes — /reconstruct skill retroactively creates notes from JSONL + git history |
 | **Backup / restore** | No | Yes — timestamped pg_dump + registry export |
 | **Multi-session concurrency** | n/a | Yes — daemon multiplexes Claude sessions |

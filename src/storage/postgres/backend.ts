@@ -112,6 +112,32 @@ export class PostgresBackend implements StorageBackend {
       );
       process.stderr.write("[pai-postgres] Migration: added confidence column to vault_links\n");
     }
+
+    // Migration: create kg_triples table if it does not exist
+    const kgCheck = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'kg_triples'`
+    );
+    if (kgCheck.rowCount === 0) {
+      await pool.query(`
+        CREATE TABLE kg_triples (
+          id             SERIAL PRIMARY KEY,
+          subject        TEXT NOT NULL,
+          predicate      TEXT NOT NULL,
+          object         TEXT NOT NULL,
+          project_id     INTEGER,
+          source_session TEXT,
+          valid_from     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          valid_to       TIMESTAMP,
+          confidence     TEXT DEFAULT 'EXTRACTED',
+          created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX idx_kg_subject   ON kg_triples(subject)`);
+      await pool.query(`CREATE INDEX idx_kg_predicate ON kg_triples(predicate)`);
+      await pool.query(`CREATE INDEX idx_kg_object    ON kg_triples(object)`);
+      await pool.query(`CREATE INDEX idx_kg_valid     ON kg_triples(valid_from, valid_to)`);
+      process.stderr.write("[pai-postgres] Migration: created kg_triples table\n");
+    }
   }
 
   constructor(config: PostgresConfig) {
