@@ -647,7 +647,17 @@ async function main() {
         `STOP-HOOK: human messages — total=${currentMsgCount} prev=${prevCount} new=${newMessages} interval=${AUTO_SAVE_INTERVAL}`
       );
 
-      if (newMessages >= AUTO_SAVE_INTERVAL) {
+      // First-run safeguard: if the state file is missing and we're looking at
+      // a session that already has more than 2x the interval in messages, it's
+      // an existing long-running session that predates the auto-save feature.
+      // Initialize the counter to the current count instead of auto-saving
+      // immediately — otherwise every new message triggers a save.
+      if (prevCount === 0 && currentMsgCount > AUTO_SAVE_INTERVAL * 2) {
+        writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
+        console.error(
+          `STOP-HOOK: First-run safeguard — initializing counter to ${currentMsgCount} (session predates auto-save feature).`
+        );
+      } else if (newMessages >= AUTO_SAVE_INTERVAL) {
         // Reset the counter now so we don't double-trigger on the re-entry fire.
         writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
 
