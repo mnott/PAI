@@ -272,7 +272,7 @@ function enqueueMidSessionSummaryWithDaemon(payload: {
       try {
         const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
         if (response.ok) {
-          console.error(`STOP-HOOK: Mid-session summary enqueued (id=${response.result?.id}).`);
+          debug(`STOP-HOOK: Mid-session summary enqueued (id=${response.result?.id}).`);
         }
       } catch { /* ignore */ }
       finish(true);
@@ -333,7 +333,7 @@ function enqueueSessionSummaryWithDaemon(payload: {
       try {
         const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
         if (response.ok) {
-          console.error(`STOP-HOOK: Session summary enqueued (id=${response.result?.id}).`);
+          debug(`STOP-HOOK: Session summary enqueued (id=${response.result?.id}).`);
         }
       } catch { /* ignore */ }
       finish(true);
@@ -562,13 +562,19 @@ async function executeDirectly(
 // Main
 // ---------------------------------------------------------------------------
 
+// Debug logging only when PAI_HOOK_DEBUG=1 — otherwise stop-hook is silent
+const DEBUG = process.env.PAI_HOOK_DEBUG === '1';
+function debug(msg: string): void {
+  if (DEBUG) console.error(msg);
+}
+
 async function main() {
   if (isProbeSession()) {
     process.exit(0);
   }
 
   const timestamp = new Date().toISOString();
-  console.error(`\nSTOP-HOOK TRIGGERED AT ${timestamp}`);
+  debug(`\nSTOP-HOOK TRIGGERED AT ${timestamp}`);
 
   // Read stdin
   let input = '';
@@ -598,10 +604,10 @@ async function main() {
     stopHookActive = parsed.stop_hook_active === true;
     // session_id may appear directly or be derivable from the transcript path
     sessionId = parsed.session_id ?? basename(transcriptPath ?? '').replace(/\.jsonl$/, '');
-    console.error(`Transcript path: ${transcriptPath}`);
-    console.error(`Working directory: ${cwd}`);
-    console.error(`stop_hook_active: ${stopHookActive}`);
-    console.error(`session_id: ${sessionId}`);
+    debug(`Transcript path: ${transcriptPath}`);
+    debug(`Working directory: ${cwd}`);
+    debug(`stop_hook_active: ${stopHookActive}`);
+    debug(`session_id: ${sessionId}`);
   } catch (e) {
     console.error(`Error parsing input JSON: ${e}`);
     process.exit(0);
@@ -616,7 +622,7 @@ async function main() {
   let transcript: string;
   try {
     transcript = readFileSync(transcriptPath, 'utf-8');
-    console.error(`Transcript loaded: ${transcript.split('\n').length} lines`);
+    debug(`Transcript loaded: ${transcript.split('\n').length} lines`);
   } catch (e) {
     console.error(`Error reading transcript: ${e}`);
     process.exit(0);
@@ -643,7 +649,7 @@ async function main() {
       const prevCount = state.humanMessageCount;
       const newMessages = currentMsgCount - prevCount;
 
-      console.error(
+      debug(
         `STOP-HOOK: human messages — total=${currentMsgCount} prev=${prevCount} new=${newMessages} interval=${AUTO_SAVE_INTERVAL}`
       );
 
@@ -654,14 +660,14 @@ async function main() {
       // immediately — otherwise every new message triggers a save.
       if (prevCount === 0 && currentMsgCount > AUTO_SAVE_INTERVAL * 2) {
         writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
-        console.error(
+        debug(
           `STOP-HOOK: First-run safeguard — initializing counter to ${currentMsgCount} (session predates auto-save feature).`
         );
       } else if (newMessages >= AUTO_SAVE_INTERVAL) {
         // Reset the counter now so we don't double-trigger on the re-entry fire.
         writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
 
-        console.error(`STOP-HOOK: Auto-save threshold reached. Triggering mid-session summary.`);
+        debug(`STOP-HOOK: Auto-save threshold reached. Triggering mid-session summary.`);
 
         // Fire-and-forget: push session-summary to daemon.
         enqueueMidSessionSummaryWithDaemon({ cwd }).catch(() => {});
@@ -764,10 +770,10 @@ async function main() {
   // Clean up the session-state file now that the session has truly ended.
   if (sessionId) {
     deleteSessionState(sessionId);
-    console.error(`STOP-HOOK: Session state cleaned up for ${sessionId}.`);
+    debug(`STOP-HOOK: Session state cleaned up for ${sessionId}.`);
   }
 
-  console.error(`STOP-HOOK COMPLETED SUCCESSFULLY at ${new Date().toISOString()}\n`);
+  debug(`STOP-HOOK COMPLETED SUCCESSFULLY at ${new Date().toISOString()}\n`);
 }
 
 main().catch(() => {});
