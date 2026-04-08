@@ -664,22 +664,19 @@ async function main() {
           `STOP-HOOK: First-run safeguard — initializing counter to ${currentMsgCount} (session predates auto-save feature).`
         );
       } else if (newMessages >= AUTO_SAVE_INTERVAL) {
-        // Reset the counter now so we don't double-trigger on the re-entry fire.
+        // Reset the counter so we don't re-trigger on the next fire.
         writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
 
         debug(`STOP-HOOK: Auto-save threshold reached. Triggering mid-session summary.`);
 
         // Fire-and-forget: push session-summary to daemon.
-        enqueueMidSessionSummaryWithDaemon({ cwd }).catch(() => {});
-
-        // Emit the blocking system-reminder to stdout so Claude re-reads it.
-        process.stdout.write(
-          `<system-reminder>\n[AUTO-SAVE] ${newMessages} messages processed. The daemon is now summarizing the session so far. Continue with your current task — this is background work.\n</system-reminder>\n`
-        );
-
-        // Exit code 2 blocks the Stop and injects the system-reminder into the
-        // conversation, setting stop_hook_active=true for the next fire.
-        process.exit(2);
+        // We used to exit(2) to block the Stop, but Claude Code surfaces that
+        // as "Stop hook error" in the terminal — annoying cosmetic noise.
+        // The whisper rules already enforce "never stop" behavior, so blocking
+        // is redundant. Just fire the work item and exit 0 silently.
+        try {
+          await enqueueMidSessionSummaryWithDaemon({ cwd });
+        } catch { /* daemon may not be running — non-fatal */ }
       } else {
         // Update the stored count so we can measure delta on next fire.
         writeSessionState(sessionId, { humanMessageCount: currentMsgCount });
