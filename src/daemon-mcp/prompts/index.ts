@@ -19,3 +19,4 @@ export { vaultTrace } from "./vault-trace.js";
 export { reconstruct } from "./reconstruct.js";
 export { whisper } from "./whisper.js";
 export { consolidate } from "./consolidate.js";
+export { advisor } from "./advisor.js";
