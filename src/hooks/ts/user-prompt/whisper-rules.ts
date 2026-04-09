@@ -54,9 +54,9 @@ function getAdvisorGuidance(): string {
   let mode = config.mode ?? "auto";
   if (mode === "auto" && typeof config.weeklyBudgetPercent === "number") {
     const pct = config.weeklyBudgetPercent;
-    if (pct < 70) mode = "normal";
-    else if (pct < 85) mode = "conservative";
-    else if (pct < 95) mode = "strict";
+    if (pct < 60) mode = "normal";
+    else if (pct < 80) mode = "conservative";
+    else if (pct < 92) mode = "strict";
     else mode = "critical";
   }
 

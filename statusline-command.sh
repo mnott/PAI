@@ -427,6 +427,12 @@ if [ -f "$usage_cache" ]; then
         pace_dot="${pace_color}${spend_per_day}%% / ${budget_per_day}%%${RESET}"
     fi
 
+    # Write weekly budget to advisor-mode.json for the whisper hook
+    _advisor_file="${HOME}/.claude/advisor-mode.json"
+    if [ -n "$seven_day_int" ] 2>/dev/null; then
+        printf '{"weeklyBudgetPercent":%d,"mode":"auto"}\n' "$seven_day_int" > "$_advisor_file" 2>/dev/null
+    fi
+
     # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: 29% → Fr. 08:00
     five_label="5h: ${five_hour_int}%%"
     [ -n "$five_reset_fmt" ] && five_label="${five_label} → ${five_reset_fmt}"
