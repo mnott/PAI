@@ -13,6 +13,7 @@ logs/
 # Claude Code project files — track skills, ignore notes
 .claude/*
 !.claude/skills/
+!.claude/commands/
 
 Notes/
 .pai/
