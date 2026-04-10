@@ -428,15 +428,53 @@ if [ -f "$usage_cache" ]; then
     fi
 
     # Write weekly budget to advisor-mode.json for the whisper hook
+    # Preserve existing mode if manually set — only update weeklyBudgetPercent
     _advisor_file="${HOME}/.claude/advisor-mode.json"
     if [ -n "$seven_day_int" ] 2>/dev/null; then
-        printf '{"weeklyBudgetPercent":%d,"mode":"auto"}\n' "$seven_day_int" > "$_advisor_file" 2>/dev/null
+        _existing_mode="auto"
+        _existing_force=""
+        if [ -f "$_advisor_file" ]; then
+            _existing_mode=$(jq -r '.mode // "auto"' "$_advisor_file" 2>/dev/null)
+            _existing_force=$(jq -r '.forceModel // empty' "$_advisor_file" 2>/dev/null)
+        fi
+        if [ -n "$_existing_force" ]; then
+            printf '{"weeklyBudgetPercent":%d,"mode":"%s","forceModel":"%s"}\n' "$seven_day_int" "$_existing_mode" "$_existing_force" > "$_advisor_file" 2>/dev/null
+        else
+            printf '{"weeklyBudgetPercent":%d,"mode":"%s"}\n' "$seven_day_int" "$_existing_mode" > "$_advisor_file" 2>/dev/null
+        fi
     fi
 
-    # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: 29% → Fr. 08:00
+    # Compute advisor mode label (mirrors thresholds in whisper-rules.ts)
+    # If mode is manually set (not "auto"), show that instead of auto-calculated
+    advisor_label=""
+    advisor_label_color=""
+    _display_mode="$_existing_mode"
+    if [ "$_display_mode" = "auto" ]; then
+        if [ "$seven_day_int" -ge 92 ] 2>/dev/null; then
+            _display_mode="critical"
+        elif [ "$seven_day_int" -ge 80 ] 2>/dev/null; then
+            _display_mode="strict"
+        elif [ "$seven_day_int" -ge 60 ] 2>/dev/null; then
+            _display_mode="conservative"
+        fi
+    fi
+    case "$_display_mode" in
+        "critical") advisor_label="critical"; advisor_label_color="$BRIGHT_RED" ;;
+        "strict") advisor_label="strict"; advisor_label_color="$BRIGHT_ORANGE" ;;
+        "conservative") advisor_label="conserve"; advisor_label_color="$BRIGHT_YELLOW" ;;
+        "normal") advisor_label="normal"; advisor_label_color="$BRIGHT_GREEN" ;;
+    esac
+    # Mark forced modes with a pin symbol so user knows it's not auto
+    if [ "$_existing_mode" != "auto" ] && [ -n "$advisor_label" ]; then
+        advisor_label="📌${advisor_label}"
+    fi
+
+    # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: ⚡strict 91% → Fr. 08:00
     five_label="5h: ${five_hour_int}%%"
     [ -n "$five_reset_fmt" ] && five_label="${five_label} → ${five_reset_fmt}"
-    seven_label="7d: ${seven_day_int}%%"
+    seven_label="7d: "
+    [ -n "$advisor_label" ] && seven_label="${seven_label}${advisor_label_color}${advisor_label}${RESET} "
+    seven_label="${seven_label}${seven_day_int}%%"
     [ -n "$seven_reset_fmt" ] && seven_label="${seven_label} → ${seven_reset_fmt}"
 
     usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${five_color}${five_label}${RESET}"
