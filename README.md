@@ -1,4 +1,4 @@
-# PAI Knowledge OS — v0.8.0
+# PAI Knowledge OS — v0.9.7
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
@@ -96,6 +96,108 @@ This is not a template or a skeleton. These are real notes with build error chro
 - "Suggest connections for this note" — proactive link suggestions using semantic + graph signals
 - "What does my vault say about knowledge management?" — use the vault as a thinking partner
 
+### Budget Management
+
+- "How much budget do I have left?" — shows current weekly usage and advisor mode
+- "Go easy on the budget" — switches to conservative mode (prefer haiku subagents)
+- "Lock it down" — switches to critical mode (minimize all token usage)
+- "Go full power" — switches to normal mode (no constraints)
+- "Back to auto" — resets to auto mode (derives from weekly budget percentage)
+
+---
+
+## Skills
+
+PAI ships 22 skills — slash commands that activate specialized workflows. Each responds to natural language triggers as well as the `/command` syntax.
+
+### Productivity
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `/advisor` | "budget mode", "save budget", "go easy on the budget" | Manage budget-aware model tiering for subagents |
+| `/plan` | "plan my week", "what should I focus on", "priorities" | Plan tomorrow/week/month based on open tasks and calendar |
+| `/review` | "review my week", "what did I do", "recap" | Daily/weekly/monthly review of work accomplished |
+| `/journal` | "journal", "note to self", "capture this thought" | Create, read, or search personal journal entries |
+| `/share` | "share on LinkedIn", "tweet about", "post to Bluesky" | Generate social media posts about completed work |
+
+### Session Management
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `/sessions` | "list sessions", "where was I working" | Navigate sessions, projects, switch working context |
+| `/route` | "what project is this", "tag this session" | Detect which PAI project the current session belongs to |
+| `/name` | "name this session", "rename session" | Name or rename the current session |
+| `/search-history` | "search history", "find past", "what did we do" | Search past sessions and previous work by keyword |
+| `/consolidate` | "consolidate notes", "clean up notes", "merge duplicates" | Merge duplicate session notes, fix titles, renumber |
+| `/reconstruct` | "reconstruct sessions", "backfill session notes" | Retroactively create notes from JSONL transcripts and git history |
+
+### Obsidian Vault
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `/vault-context` | "morning briefing", "load vault context" | Load Obsidian vault context for a briefing |
+| `/vault-connect` | "connect X and Y", "how does X relate to Y" | Find connections between two topics in the vault |
+| `/vault-emerge` | "what's emerging", "find patterns", "themes in vault" | Surface emerging themes and clusters |
+| `/vault-orphans` | "find orphans", "unlinked notes" | Find and reconnect orphaned notes with zero inbound links |
+| `/vault-trace` | "trace idea", "how did X evolve", "idea history" | Trace the evolution of an idea across vault notes over time |
+
+### Tools & System
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `/whisper` | "add whisper rule", "show whisper rules" | Manage persistent behavioral constraints injected on every prompt |
+| `/research` | "do research", "extract wisdom", "analyze content" | Web research, content extraction, and analysis via parallel agents |
+| `/art` | "create diagram", "flowchart", "visualize" | Create visual content, diagrams, flowcharts, and AI-generated images |
+| `/story` | "explain this as a story", "create story explanation" | Create numbered narrative story explanations of any content |
+| `/observability` | "start observability", "monitor agents" | Start, stop, or check the multi-agent observability dashboard |
+| `/createskill` | "create skill", "validate skill" | Create, validate, update, or canonicalize a PAI skill |
+
+---
+
+## Budget-Aware Advisor Mode
+
+PAI tracks your weekly Claude usage and automatically adjusts subagent model selection to stay within budget. The statusline shows your current mode at a glance.
+
+### How it works
+
+The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.claude/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
+
+### Automatic thresholds
+
+| Budget Used | Mode | Subagent Model | Behavior |
+|-------------|------|----------------|----------|
+| < 60% | normal | Any | No constraints |
+| 60–80% | conservative | Haiku preferred | Escalate to sonnet only if haiku insufficient |
+| 80–92% | strict | Haiku only | Minimize spawning, no opus subagents |
+| > 92% | critical | Haiku or none | Essential work only, minimize all token usage |
+
+### Statusline display
+
+The advisor mode label appears on the context line:
+
+```
+💎 Context: 12K / 1000K (68%) │ 5h: 3% → 13:18 │ 1d: 5% / 8% │ 7d: strict 91% → Fr. 08:00
+```
+
+Manually forced modes show a 📌 prefix (e.g. `📌normal 91%`) so you always know whether the mode was auto-calculated or manually set.
+
+### Switching modes
+
+Use `/advisor` commands or plain language:
+
+```
+/advisor mode normal          — force normal mode
+/advisor auto                 — reset to auto (budget-driven)
+/advisor force haiku          — force all subagents to haiku
+
+"go full power"               — normal mode
+"be conservative"             — conservative mode
+"lock it down"                — critical mode
+"back to auto"                — auto mode
+```
+
+Changes take effect on the next prompt — no restart needed.
+
 ---
 
 ## Quick Start
@@ -134,8 +236,8 @@ PAI runs hooks at every stage of a Claude Code session:
 
 | Event | What PAI Does |
 |-------|--------------|
-| **Session Start** | Loads project context, detects which project you're in, auto-registers new projects, creates a session note |
-| **User Prompt** | Cleans up temp files, updates terminal tab titles, injects whisper rules on every prompt |
+| **Session Start** | Loads project context, detects which project you're in, auto-registers new projects, creates a session note, injects recent observations |
+| **User Prompt** | Cleans up temp files, updates terminal tab titles, injects whisper rules and advisor mode guidance on every prompt |
 | **Pre-Compact** | Saves session state checkpoint, pushes `session-summary` work item to daemon, sends notification |
 | **Post-Compact** | Injects preserved state back into Claude's context |
 | **Tool Use** | Classifies tool calls into structured observations (decision/bugfix/feature/refactor/discovery/change) |
@@ -261,7 +363,7 @@ A PostToolUse hook fires after every Claude Code tool call. A rule-based classif
 | **discovery** | File reads, searches | Reading code, grep searches, glob patterns |
 | **change** | File edits | Editing source files, updating configs |
 
-Observations are stored in PostgreSQL with content-hash deduplication (30-second window) to prevent duplicates from rapid tool calls.
+Observations are stored with content-hash deduplication (30-second window) to prevent duplicates from rapid tool calls.
 
 ### Progressive context injection
 
@@ -350,7 +452,7 @@ The value is the context percentage at which compaction triggers. `80` means com
 
 ### Statusline indicator
 
-Once set, PAI's statusline shows `[auto-compact:80%]` next to the context meter on line 3, so you always know auto-compact is active and at what threshold.
+PAI's statusline shows the remaining context until auto-compact triggers as a percentage on line 3, along with your 5-hour and 7-day usage limits, daily pace indicator, and advisor mode label.
 
 ### Set it up with one prompt
 
@@ -559,6 +661,36 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 
 ---
 
+## Release History
+
+18 releases shipped from v0.7.2 to v0.9.7 (March 19 – April 10, 2026):
+
+| Version | Feature |
+|---------|---------|
+| v0.7.2 | Auto-registration, one-note-per-session, Reconstruct skill |
+| v0.7.3 | Automatic AI-powered session notes via daemon |
+| v0.7.4 | Auto-register on parent match |
+| v0.7.5 | Tiered model selection (opus/sonnet/haiku) |
+| v0.7.6 | Find claude binary in launchd |
+| v0.7.7 | Whisper rules hook |
+| v0.7.8 | Strip API key from daemon (prevent billing) |
+| v0.8.0 | Topic-based note splitting |
+| v0.8.1 | /whisper skill, remove hardcoded defaults |
+| v0.8.2 | Reduce topic split sensitivity |
+| v0.8.3 | /consolidate skill |
+| v0.8.4 | Store TOPIC in HTML comment |
+| v0.8.5 | God-note detection, confidence tagging, Louvain communities, query feedback |
+| v0.9.0 | 4-layer wake-up, temporal KG, taxonomy, tunnels, mid-session auto-save |
+| v0.9.1 | KG backfill CLI, shared kg-extraction module |
+| v0.9.2 | Stop-hook first-run safeguard |
+| v0.9.3 | Silence stop-hook diagnostics |
+| v0.9.4 | Remove exit(2) noise |
+| v0.9.5 | Budget-aware advisor mode |
+| v0.9.6 | Statusline auto-writes budget to advisor |
+| v0.9.7 | Advisor mode label in statusline, natural language mode switching |
+
+---
+
 ## Companion Projects
 
 PAI works great alongside these tools (also by the same author):
@@ -582,4 +714,3 @@ The automatic observation capture system — classifying tool calls into structu
 ## License
 
 MIT
-

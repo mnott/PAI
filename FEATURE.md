@@ -48,7 +48,11 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Session note reconstruction** | No | Yes — /reconstruct skill retroactively creates notes from JSONL + git history |
 | **Backup / restore** | No | Yes — timestamped pg_dump + registry export |
 | **Multi-session concurrency** | n/a | Yes — daemon multiplexes Claude sessions |
-| **Custom statusline** | No | Yes — model, MCPs, context meter, colors |
+| **Budget-aware advisor mode** | No | Yes — auto-adjusts subagent model tiering based on weekly usage (normal/conservative/strict/critical) |
+| **Natural language mode switching** | No | Yes — say "go easy on the budget" or "lock it down" to change advisor mode |
+| **22 built-in skills** | No | Yes — /review, /plan, /journal, /share, /whisper, /advisor, /reconstruct, /consolidate, /vault-*, /research, /art, and more |
+| **God-note detection** | No | Yes — detects overgrown session notes with confidence tagging, Louvain community detection |
+| **Custom statusline** | No | Yes — model, MCPs, context meter, usage limits, advisor mode, pace indicator, colors |
 | **Local / private** | Yes | Yes — no cloud, no external API for core |
 | **Docker required** | No | Only for full mode (PostgreSQL); SQLite mode needs none |
 | **macOS / Linux** | Yes | Yes |
