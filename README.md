@@ -2,6 +2,52 @@
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
+Install PAI and Claude remembers. Ask it what you were working on. Ask it to find that conversation about the database schema. Ask it to pick up exactly where the last session ended. It knows.
+
+## Quick Start
+
+Tell Claude Code:
+
+> Clone https://github.com/mnott/PAI and set it up for me
+
+Or manually:
+
+### 1. Install
+
+```bash
+git clone https://github.com/mnott/PAI
+cd PAI
+bun install
+bun run build
+```
+
+### 2. Run the setup wizard
+
+```bash
+pai setup
+```
+
+The wizard walks you through: storage mode (SQLite or PostgreSQL), project directories, Obsidian vault path, MCP server registration, CLAUDE.md template, and daemon configuration. It's idempotent — safe to re-run anytime.
+
+### 3. Start the daemon
+
+```bash
+pai daemon start
+```
+
+The daemon runs in the background via launchd, indexing your sessions and serving the MCP tools. It starts automatically on login.
+
+### 4. Verify
+
+```bash
+pai daemon status    # should show "running"
+pai memory search "test"   # should return results after indexing
+```
+
+That's it. Claude Code now has persistent memory across all sessions.
+
+---
+
 ## Automatic Session Notes — by Topic
 
 PAI's headline feature: **every session is automatically documented.** No manual note-taking, no "pause session" commands, no forgetting to save what you did.
@@ -183,14 +229,17 @@ Manually forced modes show a 📌 prefix (e.g. `📌normal 91%`) so you always k
 
 ### Switching modes
 
-Use `/advisor` commands or plain language:
+Use `/budget` commands, `/Advisor` skill, or plain language:
 
 ```
-/advisor mode normal          — force normal mode
-/advisor auto                 — reset to auto (budget-driven)
-/advisor force haiku          — force all subagents to haiku
+/budget auto                  — reset to auto (budget-driven)
+/budget mode normal           — force normal mode
+/budget force haiku           — force all subagents to haiku
 
-"go full power"               — normal mode
+/Advisor auto                 — same, via skill (note: capital A)
+/Advisor mode strict          — force strict mode
+
+"go full power"               — normal mode (plain language)
 "be conservative"             — conservative mode
 "lock it down"                — critical mode
 "back to auto"                — auto mode
@@ -198,15 +247,7 @@ Use `/advisor` commands or plain language:
 
 Changes take effect on the next prompt — no restart needed.
 
----
-
-## Quick Start
-
-Tell Claude Code:
-
-> Clone https://github.com/mnott/PAI and set it up for me
-
-Claude finds the setup skill, checks your system, runs the interactive wizard, and configures itself. You answer a few questions — simple mode or full mode, where your projects live, whether you use Obsidian — and Claude does the rest.
+> **Note:** `/advisor` (lowercase) conflicts with a Claude Code built-in command. Use `/budget` or `/Advisor` (capital A) instead.
 
 ---
 
