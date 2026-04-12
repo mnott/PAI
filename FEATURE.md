@@ -52,6 +52,9 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **Natural language mode switching** | No | Yes — say "go easy on the budget" or "lock it down" to change advisor mode |
 | **22 built-in skills** | No | Yes — /review, /plan, /journal, /share, /whisper, /advisor, /reconstruct, /consolidate, /vault-*, /research, /art, and more |
 | **God-note detection** | No | Yes — detects overgrown session notes with confidence tagging, Louvain community detection |
+| **Privacy tags** | Yes — `<private>` blocks excluded from memory | Yes — `<private>` blocks stripped before indexing, never stored or searched |
+| **3-layer search pattern** | Yes — search index → timeline → get_observations | Yes — compact format (~50 tokens/result) → memory_get for full content |
+| **One-command install** | Yes — `npx claude-mem install` | Yes — `npx @tekmidian/pai install` |
 | **Custom statusline** | No | Yes — model, MCPs, context meter, usage limits, advisor mode, pace indicator, colors |
 | **Local / private** | Yes | Yes — no cloud, no external API for core |
 | **Docker required** | No | Only for full mode (PostgreSQL); SQLite mode needs none |

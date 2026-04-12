@@ -10,6 +10,12 @@ Tell Claude Code:
 
 > Clone https://github.com/mnott/PAI and set it up for me
 
+Or install with a single command:
+
+```bash
+npx @tekmidian/pai install
+```
+
 Or manually:
 
 ### 1. Install
@@ -466,6 +472,50 @@ Or edit `~/.claude/whisper-rules.md` directly — one rule per line, plain text.
 **Keep rules focused.** Every rule is injected on every prompt. Too many rules dilute effectiveness and waste tokens. Reserve whisper rules for truly critical constraints that keep getting violated despite being in CLAUDE.md.
 
 The pattern is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/claude-subconscious) approach to persistent context injection.
+
+---
+
+## Privacy Tags
+
+Wrap any content in `<private>...</private>` tags to exclude it from PAI's memory index. Private content is stripped before chunking — it's never stored, never searched, never surfaced.
+
+```markdown
+## API Keys
+<private>
+STRIPE_KEY=sk_live_abc123
+DATABASE_URL=postgres://user:pass@host/db
+</private>
+
+## Architecture Notes
+The payment system uses Stripe webhooks...
+```
+
+The architecture notes get indexed. The API keys don't. Works in session notes, memory files, and any markdown PAI indexes.
+
+---
+
+## Token-Efficient Search (3-Layer Pattern)
+
+For budget-conscious usage, PAI supports a compact search format that returns ~10x fewer tokens per result. Instead of fetching full snippets upfront, get a compact index first, then drill into interesting results.
+
+### The workflow
+
+```
+1. Search with format="compact"  →  IDs + paths + scores (~50 tokens/result)
+2. Review the index, pick interesting results
+3. Use memory_get to read full content for those specific files
+```
+
+### Example
+
+```
+"Search for authentication with compact format"
+  → Claude passes format: "compact" to memory_search
+  → Gets a tight index: [1] pai — src/auth.ts L10-45 score=0.892
+  → Then reads only the files that matter
+```
+
+Via MCP, pass `format: "compact"` to the `memory_search` tool. Default is `"full"` (current behavior with snippets).
 
 ---
 
