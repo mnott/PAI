@@ -198,9 +198,20 @@ function buildOverlapPrefix(
  *  4. Apply overlap: each chunk includes the last `overlap` tokens from the
  *     previous chunk.
  */
+/**
+ * Strip `<private>...</private>` blocks from content before indexing.
+ * Content within these tags is excluded from memory — never stored or searched.
+ */
+export function stripPrivateTags(content: string): string {
+  return content.replace(/<private>[\s\S]*?<\/private>/gi, "");
+}
+
 export function chunkMarkdown(content: string, opts?: ChunkOptions): Chunk[] {
   const maxTokens = opts?.maxTokens ?? DEFAULT_MAX_TOKENS;
   const overlapTokens = opts?.overlap ?? DEFAULT_OVERLAP;
+
+  // Strip private content before indexing
+  content = stripPrivateTags(content);
 
   if (!content.trim()) return [];
 

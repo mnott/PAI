@@ -32,6 +32,8 @@ export interface MemorySearchParams {
   /** Maximum characters per result snippet. Default 200.
    *  Limit context consumption — MCP results go into Claude's context window. */
   snippetLength?: number;
+  /** Output format: "full" (default, includes snippets) or "compact" (IDs + metadata only, ~10x fewer tokens). */
+  format?: "full" | "compact";
 }
 
 export async function toolMemorySearch(
@@ -154,9 +156,15 @@ export async function toolMemorySearch(
     }
 
     const rerankLabel = shouldRerank ? " +rerank" : "";
+    const useCompact = params.format === "compact";
     const formatted = withSlugs
       .map((r, i) => {
-        const header = `[${i + 1}] ${r.projectSlug ?? `project:${r.projectId}`} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
+        const slug = r.projectSlug ?? `project:${r.projectId}`;
+        if (useCompact) {
+          // Compact format: ~50-100 tokens per result — ID, path, score only
+          return `[${i + 1}] ${slug} — ${r.path} L${r.startLine}-${r.endLine} score=${r.score.toFixed(3)}`;
+        }
+        const header = `[${i + 1}] ${slug} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
         // Truncate snippet to snippetLength — limit context consumption.
         // MCP results go into Claude's context window; keep each result tight.
         const raw = r.snippet.trim();
@@ -165,7 +173,7 @@ export async function toolMemorySearch(
           : raw;
         return `${header}\n${snippet}`;
       })
-      .join("\n\n---\n\n");
+      .join(useCompact ? "\n" : "\n\n---\n\n");
 
     // Query feedback loop: save query + result metadata for future indexing
     try {

@@ -128,6 +128,7 @@ async function runSetup(): Promise<void> {
 export function registerSetupCommand(program: Command): void {
   program
     .command("setup")
+    .alias("install")
     .description(
       "Interactive setup wizard — configure storage, embeddings, agent config, and indexing",
     )

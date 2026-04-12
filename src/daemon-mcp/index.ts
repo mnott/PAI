@@ -237,6 +237,9 @@ async function startShim(): Promise<void> {
       "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
+      "",
+      "Token-efficient workflow: use format='compact' first (~50 tokens/result),",
+      "then memory_get on interesting results for full content. ~10x token savings.",
     ].join("\n"),
     {
       query: z
@@ -285,6 +288,12 @@ async function startShim(): Promise<void> {
         .optional()
         .describe(
           "Apply recency boost: score halves every N days. 0 = off. Default from config (typically 90). Applied after reranking."
+        ),
+      format: z
+        .enum(["full", "compact"])
+        .optional()
+        .describe(
+          "Output format. 'full' (default) includes snippets. 'compact' returns IDs + metadata only (~10x fewer tokens). Use compact first, then memory_get for full details on interesting results."
         ),
     },
     async (args) => proxyTool("memory_search", args)
