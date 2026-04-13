@@ -73,27 +73,29 @@ function getAdvisorGuidance(): string {
       return [
         `ADVISOR MODE (conservative — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
         "Use HAIKU for all subagents (Agent tool, model: haiku) unless the task explicitly requires deep reasoning.",
-        "Main context stays on the current model. Only escalate subagents to sonnet if haiku output quality is insufficient.",
-        "Prefer fewer, more focused subagent calls over many parallel ones.",
+        "Main context is opus (most expensive) — delegate work to haiku subagents to save budget.",
+        "Only escalate subagents to sonnet if haiku output quality is insufficient.",
       ].join(" ");
 
     case "strict":
       return [
         `ADVISOR MODE (strict — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
         "Use HAIKU for ALL subagents without exception (Agent tool, model: haiku).",
-        "Minimize subagent spawning — do simple tasks directly in main context.",
-        "Only spawn subagents for genuinely independent parallel work.",
-        "Never spawn opus subagents.",
+        "Delegate work to haiku subagents aggressively — main context is opus and costs 20x more per token.",
+        "For any substantial task, use swarm mode: spawn ONE haiku orchestrator agent that handles everything, return only the result.",
+        "Keep main context responses short — receive results from agents, summarize briefly, done.",
+        "Never spawn opus or sonnet subagents.",
       ].join(" ");
 
     case "critical":
       return [
         `ADVISOR MODE (critical — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
-        "MINIMIZE ALL TOKEN USAGE. Do NOT spawn subagents unless absolutely essential.",
-        "Work directly in main context. Keep responses concise.",
-        "Use haiku model if you must spawn a subagent.",
-        "Skip background research, parallel exploration, and spotchecks.",
-        "The user is near their weekly limit — every token counts.",
+        "MINIMIZE ALL TOKEN USAGE. Main context is opus — the most expensive model.",
+        "For ANY non-trivial task, immediately spawn a single haiku orchestrator agent and let it handle everything including sub-delegation.",
+        "Main context should only send the task and receive the final result — do not do work here.",
+        "Keep main context responses extremely concise — short answers, minimal explanation.",
+        "Never spawn opus or sonnet subagents. Skip spotchecks.",
+        "The user is near their weekly limit — every opus token in main context costs 20x a haiku token.",
       ].join(" ");
 
     default:

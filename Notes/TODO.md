@@ -1,9 +1,11 @@
 ## Continue
 
-> **Last session:** 0017 - 2026-04-10 - Budget Advisor Statusline Fix And Advisor Mode Switching Research
-> **Paused at:** 2026-04-10T06:23:05.206Z
+> **Last session:** 0025 - 2026-04-13 - Fixed Advisor Strict Mode To Delegate Instead Of Hoard
+> **Paused at:** 2026-04-13T06:43:37.776Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+> Work completed:
+> - Added swarm mode guidance to strict and critical advisor modes.
 
 ---
 
@@ -125,6 +127,41 @@
 
 ## Resolved Since Last Update
 
+### Sessions 0001–0013 — 18 Releases (v0.7.2 → v0.9.6), Mar 19 – Apr 9
+
+Shipped across 22 days in a single mega-session spanning multiple compactions:
+
+| Version | Feature |
+|---------|---------|
+| v0.7.2 | Auto-registration, one-note-per-session, Reconstruct skill |
+| v0.7.3 | Automatic AI-powered session notes via daemon |
+| v0.7.4 | Auto-register on parent match |
+| v0.7.5 | Tiered model selection (opus/sonnet/haiku) |
+| v0.7.6 | Find claude binary in launchd |
+| v0.7.7 | Whisper rules hook |
+| v0.7.8 | Strip API key from daemon (prevent billing) |
+| v0.8.0 | Topic-based note splitting |
+| v0.8.1 | /whisper skill, remove hardcoded defaults |
+| v0.8.2 | Reduce topic split sensitivity |
+| v0.8.3 | /consolidate skill |
+| v0.8.4 | Store TOPIC in HTML comment |
+| v0.8.5 | God-note detection, confidence tagging, Louvain communities, query feedback |
+| v0.9.0 | 4-layer wake-up, temporal KG, taxonomy, tunnels, mid-session auto-save |
+| v0.9.1 | KG backfill CLI, shared kg-extraction module |
+| v0.9.2 | Stop-hook first-run safeguard |
+| v0.9.3 | Silence stop-hook diagnostics |
+| v0.9.4 | Remove exit(2) noise |
+| v0.9.5 | Budget-aware advisor mode |
+| v0.9.6 | Statusline auto-writes budget to advisor |
+
+### Session 0017 — v0.9.7 (current session)
+- [x] Advisor mode label in statusline (strict/conserve/critical/normal with color coding)
+- [x] 📌 prefix for manually forced modes vs auto-calculated
+- [x] Statusline preserves manual mode/forceModel — no longer overwrites with "auto"
+- [x] Natural language advisor mode switching ("go easy on the budget", "lock it down", etc.)
+- [x] Fixed threshold table drift in advisor prompt (60/80/92 matching whisper-rules.ts)
+- [x] Published @tekmidian/pai@0.9.7
+
 ### Session 0008 — Stop Hook Continue Fix
 - [x] Fixed stop hook to call `updateTodoContinue()` on normal session end — previously only pre-compact hook wrote ## Continue
 - [x] Improved fallback text in `updateTodoContinue()` to include working directory instead of generic "check session note"
@@ -240,4 +277,4 @@
 
 ---
 
-*Last updated: 2026-04-10T06:23:05.206Z*
+*Last updated: 2026-04-13T06:43:37.776Z*
