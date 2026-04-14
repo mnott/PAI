@@ -35,6 +35,7 @@ import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
 import { registerTopicCommands } from "./commands/topic.js";
 import { registerKgCommands } from "./commands/kg.js";
+import { registerDbCommands } from "./commands/db.js";
 import { err } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -191,6 +192,16 @@ const kgCmd = program
   .description("Temporal knowledge graph: backfill, query, list, stats");
 
 registerKgCommands(kgCmd);
+
+// ---------------------------------------------------------------------------
+// pai db
+// ---------------------------------------------------------------------------
+
+const dbCmd = program
+  .command("db")
+  .description("Database inspection: query, tables, schema (sqlite or postgres)");
+
+registerDbCommands(dbCmd);
 
 // ---------------------------------------------------------------------------
 // pai obsidian

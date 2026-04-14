@@ -10,30 +10,37 @@ export function buildTripleExtractionPrompt(params: {
   projectSlug: string;
   gitLog: string;
 }): string {
-  return `Extract atomic facts from this coding session as JSON triples.
+  return `Extract structured entities and relations from this coding session.
 
-A triple has three parts:
-- subject: the entity being described (project name, person, file, concept)
-- predicate: the relationship (uses, depends_on, version, status, lives_at, decided_to, etc.)
-- object: the value or other entity
+Output a single JSON object with two arrays: "entities" and "relations".
 
-Output ONLY a JSON array. Each fact must be verifiable from the session content.
+Entity types: project | person | concept | tool | file | version | decision | technology | organization
 
 Rules:
-- Be SPECIFIC: "Glidr uses FSRS algorithm" not "the project uses an algorithm"
-- Use snake_case predicates
+- Be SPECIFIC: entity names must be concrete (e.g., "FSRS", "Glidr", "Matthias")
+- Use snake_case relation verb phrases (e.g., "uses_algorithm", "decided_to", "shipped_version")
 - Skip opinions, speculation, and "we should" statements
-- Skip facts already obvious from project metadata (e.g., "PAI is written in TypeScript" if PAI is the project)
-- Maximum 15 triples per session — pick the most important
-- Each triple should be a fact that might be queried later
+- Skip entities obvious from project metadata unless they have a meaningful relation
+- Maximum 15 relations per session — pick the most important
+- Each entity should have a brief description (1 sentence, what it is in this context)
+- Each relation must reference entity names that appear in the entities array
 
 Example output:
-[
-  {"subject": "Glidr", "predicate": "uses_algorithm", "object": "FSRS"},
-  {"subject": "Glidr", "predicate": "shipped_version", "object": "1.0.5"},
-  {"subject": "Quassl", "predicate": "platform", "object": "iOS"},
-  {"subject": "Matthias", "predicate": "decided_to", "object": "rewrite Quassl in Flutter"}
-]
+{
+  "entities": [
+    {"name": "Glidr", "type": "project", "description": "Flashcard app using FSRS spaced repetition"},
+    {"name": "FSRS", "type": "concept", "description": "Free Spaced Repetition Scheduler algorithm"},
+    {"name": "Matthias", "type": "person", "description": "Developer of Glidr and Quassl"},
+    {"name": "Quassl", "type": "project", "description": "iOS app being rewritten in Flutter"},
+    {"name": "Flutter", "type": "technology", "description": "Cross-platform mobile framework"}
+  ],
+  "relations": [
+    {"source": "Glidr", "relation": "uses_algorithm", "target": "FSRS"},
+    {"source": "Glidr", "relation": "shipped_version", "target": "1.0.5"},
+    {"source": "Matthias", "relation": "decided_to_rewrite", "target": "Quassl"},
+    {"source": "Quassl", "relation": "migrating_to", "target": "Flutter"}
+  ]
+}
 
 PROJECT: ${params.projectSlug}
 
@@ -43,5 +50,5 @@ ${params.sessionContent}
 GIT COMMITS:
 ${params.gitLog}
 
-JSON triples:`;
+JSON object (entities + relations):`;
 }

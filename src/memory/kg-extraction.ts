@@ -14,9 +14,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Pool } from "pg";
+import type { Database } from "better-sqlite3";
 
 import { buildTripleExtractionPrompt } from "../daemon/templates/triple-extraction-prompt.js";
 import { kgAdd, kgQuery, kgInvalidate } from "./kg.js";
+import { upsertKgEntity } from "./kg-entity.js";
 
 // ---------------------------------------------------------------------------
 // Claude CLI binary discovery
@@ -122,6 +124,10 @@ export interface ExtractTriplesParams {
   sessionId: string;
   gitLog?: string;
   model?: "haiku" | "sonnet" | "opus";
+  /** Optional federation SQLite db — when provided, entities are upserted into kg_entities (QW1) */
+  federationDb?: Database;
+  /** Tenant ID for multi-tenant entity scoping (default: "default") */
+  tenantId?: string;
 }
 
 export interface ExtractTriplesResult {
@@ -161,9 +167,50 @@ export async function extractAndStoreTriples(
     .replace(/\s*```$/m, "")
     .trim();
 
-  let triples: Array<{ subject: string; predicate: string; object: string }>;
+  // Support both legacy array format and new structured format
+  type LegacyTriple = { subject: string; predicate: string; object: string };
+  type NewRelation = { source: string; relation: string; target: string };
+  type NewEntity = { name: string; type: string; description: string };
+  type NewFormat = { entities: NewEntity[]; relations: NewRelation[] };
+
+  let triples: Array<LegacyTriple>;
   try {
-    triples = JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+
+    if (Array.isArray(parsed)) {
+      // Legacy format: [{subject, predicate, object}]
+      triples = parsed;
+    } else if (parsed && typeof parsed === "object" && Array.isArray(parsed.relations)) {
+      // New structured format: {entities: [...], relations: [...]}
+      const newFmt = parsed as NewFormat;
+
+      // QW1: Upsert entities into federation SQLite kg_entities table when db is available
+      if (params.federationDb && Array.isArray(newFmt.entities)) {
+        const tenantId = params.tenantId ?? "default";
+        for (const entity of newFmt.entities) {
+          if (!entity.name) continue;
+          try {
+            upsertKgEntity(params.federationDb, {
+              name: entity.name,
+              type: entity.type ?? "unknown",
+              description: entity.description,
+              tenantId,
+            });
+          } catch (entityErr) {
+            process.stderr.write(`[kg-extraction] entity upsert error (${entity.name}): ${entityErr}\n`);
+          }
+        }
+      }
+
+      triples = newFmt.relations.map((r: NewRelation) => ({
+        subject: r.source,
+        predicate: r.relation,
+        object: r.target,
+      }));
+    } else {
+      process.stderr.write(`[kg-extraction] Unexpected JSON shape — neither array nor {entities,relations}\n`);
+      return stats;
+    }
   } catch (e) {
     process.stderr.write(`[kg-extraction] JSON parse failed: ${e}\n`);
     return stats;

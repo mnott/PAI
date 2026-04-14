@@ -15,6 +15,8 @@ import {
   toolSessionRoute,
   toolMemoryWakeup,
   toolMemoryTaxonomy,
+  toolMemoryFeedback,
+  toolMemoryKgSearch,
 } from "../../mcp/tools.js";
 import { detectTopicShift } from "../../topics/detector.js";
 import { registryDb, storageBackend, daemonConfig } from "./state.js";
@@ -164,6 +166,28 @@ export async function dispatchTool(
     case "memory_tunnels": {
       const { toolMemoryTunnels } = await import("../../mcp/tools.js");
       return toolMemoryTunnels(registryDb, storageBackend, p as Parameters<typeof toolMemoryTunnels>[2]);
+    }
+
+    case "memory_feedback": {
+      // MR2: feedback weight loop — requires SQLite federation db
+      const federationDb = (storageBackend as { getSqliteDb?: () => import("better-sqlite3").Database }).getSqliteDb?.();
+      if (!federationDb) {
+        throw new Error("memory_feedback requires a SQLite federation backend (getSqliteDb not available)");
+      }
+      return toolMemoryFeedback(federationDb, p as Parameters<typeof toolMemoryFeedback>[1]);
+    }
+
+    case "memory_kg_search": {
+      // MR1: graph-completion retrieval — requires SQLite federation db + Postgres pool
+      const federationDb = (storageBackend as { getSqliteDb?: () => import("better-sqlite3").Database }).getSqliteDb?.();
+      if (!federationDb) {
+        throw new Error("memory_kg_search requires a SQLite federation backend (getSqliteDb not available)");
+      }
+      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
+      if (!pgPool) {
+        throw new Error("memory_kg_search requires a Postgres storage backend for KG triple expansion");
+      }
+      return toolMemoryKgSearch(federationDb, pgPool, p as Parameters<typeof toolMemoryKgSearch>[2]);
     }
 
     default:

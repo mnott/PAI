@@ -40,6 +40,7 @@ import { buildSessionSummaryPrompt } from "./templates/session-summary-prompt.js
 import {
   extractAndStoreTriples as kgExtractAndStoreTriples,
 } from "../memory/kg-extraction.js";
+import { openFederation } from "../memory/db.js";
 import { registryDb, storageBackend, daemonConfig } from "./daemon/state.js";
 
 // ---------------------------------------------------------------------------
@@ -850,14 +851,21 @@ async function extractAndStoreTriples(params: {
       return;
     }
 
-    const result = await kgExtractAndStoreTriples(pool, {
-      summaryText: params.summaryText,
-      projectSlug: params.projectSlug,
-      projectId: params.projectId,
-      sessionId: params.sessionId,
-      gitLog: params.gitLog,
-      model: "sonnet",
-    });
+    const federationDb = openFederation();
+    let result;
+    try {
+      result = await kgExtractAndStoreTriples(pool, {
+        summaryText: params.summaryText,
+        projectSlug: params.projectSlug,
+        projectId: params.projectId,
+        sessionId: params.sessionId,
+        gitLog: params.gitLog,
+        model: "sonnet",
+        federationDb,
+      });
+    } finally {
+      federationDb.close();
+    }
 
     process.stderr.write(
       `[session-summary] Triple extraction complete: ` +
