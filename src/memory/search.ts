@@ -29,6 +29,8 @@ export interface SearchResult {
   tier: string;
   source: string;
   updatedAt?: number;     // Unix ms from memory_chunks.updated_at
+  lastAccessedAt?: number; // Unix ms from memory_chunks.last_accessed_at (QW2)
+  chunkId?: string;        // chunk ID for last_accessed_at update (QW2)
 }
 
 export interface SearchOptions {
@@ -142,14 +144,17 @@ export function searchMemory(
   // bm25(memory_fts) returns negative values (lower = better match)
   const sql = `
     SELECT
+      c.id,
       c.project_id,
       c.path,
       c.start_line,
       c.end_line,
-      c.text       AS snippet,
+      c.text             AS snippet,
       c.tier,
       c.source,
       c.updated_at,
+      c.last_accessed_at,
+      c.relevance_score,
       bm25(memory_fts) AS bm25_score
     FROM memory_fts
     JOIN memory_chunks c ON memory_fts.id = c.id
@@ -160,6 +165,7 @@ export function searchMemory(
   `;
 
   let rows: Array<{
+    id: string;
     project_id: number;
     path: string;
     start_line: number;
@@ -168,6 +174,8 @@ export function searchMemory(
     tier: string;
     source: string;
     updated_at: number;
+    last_accessed_at: number | null;
+    relevance_score: number | null;
     bm25_score: number;
   }>;
 
@@ -181,18 +189,26 @@ export function searchMemory(
   const minScore = opts?.minScore ?? 0.0;
 
   return rows
-    .map((row) => ({
-      projectId: row.project_id,
-      path: row.path,
-      startLine: row.start_line,
-      endLine: row.end_line,
-      snippet: row.snippet,
+    .map((row) => {
       // Negate so higher = better match for callers
-      score: -row.bm25_score,
-      tier: row.tier,
-      source: row.source,
-      updatedAt: row.updated_at,
-    }))
+      const baseScore = -row.bm25_score;
+      // MR2: scale by feedback relevance_score: multiplier in [0.5, 1.5]
+      const relevanceScore = row.relevance_score ?? 0.5;
+      const score = baseScore * (0.5 + relevanceScore);
+      return {
+        chunkId: row.id,
+        projectId: row.project_id,
+        path: row.path,
+        startLine: row.start_line,
+        endLine: row.end_line,
+        snippet: row.snippet,
+        score,
+        tier: row.tier,
+        source: row.source,
+        updatedAt: row.updated_at,
+        lastAccessedAt: row.last_accessed_at ?? undefined,
+      };
+    })
     .filter((r) => r.score >= minScore);
 }
 
@@ -243,7 +259,7 @@ export function searchMemorySemantic(
   // Hard cap for SQLite semantic path — prevents OOM on large corpora.
   // Use Postgres for production semantic search.
   const sql = `
-    SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding, updated_at
+    SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding, updated_at, last_accessed_at, relevance_score
     FROM memory_chunks
     ${where}
     LIMIT 5000
@@ -260,6 +276,8 @@ export function searchMemorySemantic(
     source: string;
     embedding: Buffer;
     updated_at: number;
+    last_accessed_at: number | null;
+    relevance_score: number | null;
   }>;
 
   if (rows.length === 0) return [];
@@ -267,8 +285,12 @@ export function searchMemorySemantic(
   // Compute cosine similarity for every chunk
   const scored = rows.map((row) => {
     const vec = deserializeEmbedding(row.embedding);
-    const score = cosineSimilarity(queryEmbedding, vec);
+    const baseScore = cosineSimilarity(queryEmbedding, vec);
+    // MR2: scale by feedback relevance_score: multiplier in [0.5, 1.5]
+    const relevanceScore = row.relevance_score ?? 0.5;
+    const score = baseScore * (0.5 + relevanceScore);
     return {
+      chunkId: row.id,
       projectId: row.project_id,
       path: row.path,
       startLine: row.start_line,
@@ -278,6 +300,7 @@ export function searchMemorySemantic(
       tier: row.tier,
       source: row.source,
       updatedAt: row.updated_at,
+      lastAccessedAt: row.last_accessed_at ?? undefined,
     };
   });
 
@@ -379,6 +402,32 @@ export function searchMemoryHybrid(
 }
 
 // ---------------------------------------------------------------------------
+// Access timestamp tracking (QW2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Update last_accessed_at for a set of chunk IDs to the current timestamp.
+ *
+ * Called after a successful search to record that these chunks were retrieved.
+ * This enables the recency boost to account for access patterns, not just
+ * modification time.
+ *
+ * Best-effort: errors are silently ignored so search is never blocked.
+ */
+export function touchChunksLastAccessed(db: Database, chunkIds: string[]): void {
+  if (chunkIds.length === 0) return;
+  try {
+    const now = Date.now();
+    const placeholders = chunkIds.map(() => "?").join(", ");
+    db.prepare(
+      `UPDATE memory_chunks SET last_accessed_at = ? WHERE id IN (${placeholders})`
+    ).run(now, ...chunkIds);
+  } catch {
+    // non-critical — do not block search results
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Slug lookup helper
 // ---------------------------------------------------------------------------
 
@@ -452,8 +501,12 @@ export function applyRecencyBoost(
   return results
     .map((r) => {
       const normalized = range === 0 ? 1 : (r.score - minScore) / range;
-      const decay = r.updatedAt
-        ? Math.exp(-lambda * Math.max(0, (now - r.updatedAt) / 86_400_000))
+      // QW2: use the more recent of updated_at and last_accessed_at for recency decay
+      const effectiveTs = r.updatedAt != null && r.lastAccessedAt != null
+        ? Math.max(r.updatedAt, r.lastAccessedAt)
+        : (r.lastAccessedAt ?? r.updatedAt);
+      const decay = effectiveTs
+        ? Math.exp(-lambda * Math.max(0, (now - effectiveTs) / 86_400_000))
         : 1; // no timestamp → no penalty
       return { ...r, score: normalized * decay };
     })

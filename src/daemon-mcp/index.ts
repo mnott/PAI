@@ -649,6 +649,108 @@ async function startShim(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: memory_feedback (MR2 — feedback weight loop)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_feedback",
+    [
+      "Apply relevance feedback to memory chunks to improve future search ranking.",
+      "",
+      "After reading search results, rate their relevance to adjust the EMA-based",
+      "feedback weights. Higher-rated chunks will score better in future searches",
+      "via the multiplier: final_score *= (0.5 + relevance_score).",
+      "",
+      "Also updates feedback weights on KG entities mentioned in those chunks.",
+      "",
+      "Rating scale: 1 = not relevant, 3 = somewhat relevant, 5 = highly relevant.",
+      "",
+      "Use chunk IDs from memory_search compact format results.",
+    ].join("\n"),
+    {
+      chunk_ids: z
+        .array(z.string())
+        .describe("Array of chunk IDs to apply feedback to (from memory_search results)."),
+      rating: z
+        .number()
+        .min(1)
+        .max(5)
+        .describe("Relevance rating from 1 (not relevant) to 5 (highly relevant)."),
+      tenant_id: z
+        .string()
+        .optional()
+        .describe("Tenant ID for entity feedback scoping. Default: 'default'."),
+    },
+    async (args) => proxyTool("memory_feedback", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: memory_kg_search (MR1 — graph-completion retrieval)
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_kg_search",
+    [
+      "Graph-completion search: combines vector search with knowledge-graph neighborhood expansion.",
+      "",
+      "Algorithm:",
+      "  Phase 1: Wide vector search (seed chunks) using the query embedding",
+      "  Phase 2: Extract entity mentions from seed chunks (matched against kg_entities)",
+      "  Phase 3: BFS neighborhood expansion in kg_triples (1-2 hops from matched entities)",
+      "  Phase 4: Re-rank all collected triples against the query embedding",
+      "",
+      "Returns ranked KG triples with relevance scores, surfacing graph-derived context",
+      "that pure vector search would miss — relationships, facts, and entity connections.",
+      "",
+      "Requires Postgres backend with a populated kg_triples table.",
+      "Use kg_add to populate the knowledge graph, or rely on automatic extraction.",
+      "",
+      "Parameters:",
+      "  query              — Free-text query (converted to embedding for Phase 1)",
+      "  project_id         — Restrict seed search to a specific project (optional)",
+      "  wide_k             — Number of seed chunks from Phase 1 (default: 50)",
+      "  neighborhood_depth — BFS hop depth for KG expansion (default: 1, max: 2)",
+      "  top_k              — Maximum triples to return after re-ranking (default: 20)",
+    ].join("\n"),
+    {
+      query: z
+        .string()
+        .describe("Free-text search query — used to generate embedding for Phase 1 vector search."),
+      project_id: z
+        .number()
+        .int()
+        .optional()
+        .describe("Restrict seed vector search to a specific project ID. Omit to search all projects."),
+      wide_k: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Number of seed chunks to fetch in Phase 1 vector search. Default: 50."),
+      neighborhood_depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(2)
+        .optional()
+        .describe("BFS hop depth for KG neighborhood expansion. Default: 1. Max: 2."),
+      top_k: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Maximum KG triples to return after re-ranking. Default: 20."),
+      tenant_id: z
+        .string()
+        .optional()
+        .describe("Tenant ID for entity lookup scoping. Default: 'default'."),
+    },
+    async (args) => proxyTool("memory_kg_search", args)
+  );
+
+  // -------------------------------------------------------------------------
   // Connect transport and start serving
   // -------------------------------------------------------------------------
 

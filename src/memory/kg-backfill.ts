@@ -21,6 +21,7 @@ import { openRegistry } from "../registry/db.js";
 import { loadConfig } from "../daemon/config.js";
 import { createStorageBackend } from "../storage/factory.js";
 import { extractAndStoreTriples } from "./kg-extraction.js";
+import { openFederation } from "./db.js";
 
 // ---------------------------------------------------------------------------
 // State file
@@ -166,6 +167,9 @@ export async function backfillKgFromNotes(
 
   const pool: Pool = (backend as unknown as { getPool(): Pool }).getPool();
 
+  // Open federation SQLite for entity upserts (kg_entities table)
+  const federationDb = openFederation();
+
   // -- Load projects -------------------------------------------------------
   const registry = openRegistry();
   let projects: ProjectRow[];
@@ -229,6 +233,7 @@ export async function backfillKgFromNotes(
         sessionId: `backfill:${notePath}`,
         gitLog: "",
         model: "sonnet",
+        federationDb,
       });
 
       result.notes_processed++;
@@ -248,6 +253,7 @@ export async function backfillKgFromNotes(
   }
 
   if (!options.dryRun) saveState(state);
+  federationDb.close();
   await backend.close();
 
   return result;

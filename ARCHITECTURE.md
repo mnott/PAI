@@ -1,4 +1,4 @@
-# PAI Knowledge OS — Architecture (v0.8.0)
+# PAI Knowledge OS — Architecture (v0.9.10)
 
 Technical reference for PAI's architecture, database schema, CLI commands, and development setup.
 
@@ -1046,6 +1046,78 @@ These tables are populated by the PostToolUse hook classifier and queried by the
 | `created_at` | TIMESTAMPTZ | Summary timestamp |
 
 **Indexes:** B-tree on project_id, session_id, type, created_at DESC, content_hash.
+
+### Knowledge Graph Entity Tables (PostgreSQL)
+
+Introduced in v0.9.10 to support entity deduplication and graph-completion search.
+
+**`kg_entities`** — Deduplicated named entities with content-address hashing:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Primary key |
+| `project_id` | INTEGER | Owning project (FK → registry projects) |
+| `name` | TEXT | Canonical entity name (normalized) |
+| `type` | TEXT | Entity type: `person`, `project`, `library`, `concept`, `place`, `other` |
+| `content_hash` | TEXT | SHA-256 of `lower(trim(name))` — identity key for deduplication |
+| `last_accessed_at` | TIMESTAMPTZ | Timestamp of last `memory_get` that touched this entity |
+| `created_at` | TIMESTAMPTZ | First observation timestamp |
+
+The `content_hash` column carries a unique constraint per `project_id`. When two indexing passes encounter the same entity name, they resolve to the same row — no duplicates accumulate.
+
+**`kg_entity_chunks`** — Join table linking entities to the chunks they appear in:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `entity_id` | INTEGER | FK → kg_entities.id |
+| `chunk_id` | TEXT | FK → pai_chunks.id (SHA-256) |
+
+**Indexes:** Unique on `(project_id, content_hash)`, B-tree on entity_id, chunk_id.
+
+---
+
+### Graph-Completion Search Pipeline
+
+`graphCompletionSearch` in `src/memory/graph-search.ts` implements the four-stage pipeline:
+
+1. **Vector seeds** — calls the standard `memory_search` with `mode: "semantic"` to retrieve top-K chunks by embedding similarity.
+2. **Entity resolution** — for each seed chunk, looks up associated entities via `kg_entity_chunks`.
+3. **Graph traversal** — fetches one-hop neighbors from `kg_triples` for each resolved entity; collects their associated chunk IDs via `kg_entity_chunks`.
+4. **Re-rank** — merges seed chunks with neighbor-expanded candidates, deduplicates, and scores the full set with the cross-encoder. Returns results sorted by final cross-encoder score.
+
+The pipeline is invoked when the `memory_search` MCP tool receives `mode: "graph"`. It falls back to hybrid search in SQLite mode (no graph available).
+
+---
+
+### Feedback Weight EMA System
+
+`src/memory/feedback.ts` maintains a `search_feedback` table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `chunk_id` | TEXT | FK → pai_chunks.id |
+| `project_id` | INTEGER | Owning project |
+| `weight` | REAL | Current EMA weight (default 1.0) |
+| `signal_count` | INTEGER | Total positive signals received |
+| `updated_at` | TIMESTAMPTZ | Last signal timestamp |
+
+When `memory_get` is called for a chunk, a positive signal is recorded and the weight updated:
+
+```
+new_weight = alpha * 1.0 + (1 - alpha) * old_weight   (alpha = 0.1 by default)
+```
+
+The `memory_search` result scorer multiplies each chunk's base score by its feedback weight before final ranking. A chunk accessed 10 times reaches approximately 1.65x its baseline score; one accessed 50 times approaches 2.0x.
+
+Access timestamps are written to both `kg_entities.last_accessed_at` (for entity rows) and `pai_chunks.last_accessed_at` (for chunk rows) on every `memory_get` call. This supports the recency boost calculation and enables future LRU eviction for very large knowledge bases.
+
+---
+
+### Multi-Tenant Isolation
+
+Every memory table (`pai_chunks`, `pai_files`, `kg_entities`, `kg_entity_chunks`, `kg_triples`, `pai_observations`, `pai_session_summaries`, `search_feedback`) carries a `project_id` column. All queries in the storage backend append `WHERE project_id = $1` when `all_projects` is false (the default).
+
+Cross-project visibility is opt-in: pass `all_projects: true` to `memory_search`, or use `--all` with the CLI. The `memory_tunnels` MCP tool explicitly queries across projects to surface cross-project concept bridges — this is its intended purpose, not a leak.
 
 **Content Tiers:**
 

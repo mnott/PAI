@@ -72,30 +72,31 @@ function getAdvisorGuidance(): string {
     case "conservative":
       return [
         `ADVISOR MODE (conservative — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
-        "Use HAIKU for all subagents (Agent tool, model: haiku) unless the task explicitly requires deep reasoning.",
-        "Main context is opus (most expensive) — delegate work to haiku subagents to save budget.",
-        "Only escalate subagents to sonnet if haiku output quality is insufficient.",
+        "Main context is opus (most expensive — 20x haiku, 5x sonnet). Delegate aggressively to subagents.",
+        "Default subagents to SONNET (Agent tool, model: sonnet). Use haiku for simple lookups/verification.",
+        "For substantial tasks, use swarm mode: spawn a sonnet orchestrator that delegates to haiku workers.",
+        "Keep main context responses short — the goal is to minimize opus token burn.",
       ].join(" ");
 
     case "strict":
       return [
         `ADVISOR MODE (strict — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
-        "Use HAIKU for ALL subagents without exception (Agent tool, model: haiku).",
-        "Delegate work to haiku subagents aggressively — main context is opus and costs 20x more per token.",
-        "For any substantial task, use swarm mode: spawn ONE haiku orchestrator agent that handles everything, return only the result.",
+        "Main context is opus (most expensive — 20x haiku, 5x sonnet). Minimize work done here.",
+        "Default subagents to SONNET (Agent tool, model: sonnet) for implementation and research. Use haiku for simple tasks.",
+        "For any substantial task, use swarm mode: spawn ONE sonnet orchestrator that delegates to haiku workers.",
         "Keep main context responses short — receive results from agents, summarize briefly, done.",
-        "Never spawn opus or sonnet subagents.",
+        "Never spawn opus subagents. Every line of opus output costs 5x what sonnet costs.",
       ].join(" ");
 
     case "critical":
       return [
         `ADVISOR MODE (critical — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
-        "MINIMIZE ALL TOKEN USAGE. Main context is opus — the most expensive model.",
-        "For ANY non-trivial task, immediately spawn a single haiku orchestrator agent and let it handle everything including sub-delegation.",
+        "MINIMIZE ALL TOKEN USAGE. Main context is opus — the most expensive model (20x haiku, 5x sonnet).",
+        "For ANY non-trivial task, immediately spawn a sonnet orchestrator agent and let it handle everything.",
         "Main context should only send the task and receive the final result — do not do work here.",
         "Keep main context responses extremely concise — short answers, minimal explanation.",
-        "Never spawn opus or sonnet subagents. Skip spotchecks.",
-        "The user is near their weekly limit — every opus token in main context costs 20x a haiku token.",
+        "Use sonnet for orchestration, haiku for workers. Never spawn opus subagents. Skip spotchecks.",
+        "The user is near their weekly limit — do as little as possible in opus main context.",
       ].join(" ");
 
     default:

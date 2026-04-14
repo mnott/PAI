@@ -22,7 +22,7 @@
 import type { Database } from "better-sqlite3";
 
 /** Current schema version. Bump when adding new columns or tables. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const FEDERATION_SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -40,17 +40,19 @@ CREATE TABLE IF NOT EXISTS memory_files (
 );
 
 CREATE TABLE IF NOT EXISTS memory_chunks (
-  id           TEXT    PRIMARY KEY,
-  project_id   INTEGER NOT NULL,
-  source       TEXT    NOT NULL DEFAULT 'memory',
-  tier         TEXT    NOT NULL DEFAULT 'topic',
-  path         TEXT    NOT NULL,
-  start_line   INTEGER NOT NULL,
-  end_line     INTEGER NOT NULL,
-  hash         TEXT    NOT NULL,
-  text         TEXT    NOT NULL,
-  updated_at   INTEGER NOT NULL,
-  embedding    BLOB
+  id               TEXT    PRIMARY KEY,
+  project_id       INTEGER NOT NULL,
+  source           TEXT    NOT NULL DEFAULT 'memory',
+  tier             TEXT    NOT NULL DEFAULT 'topic',
+  path             TEXT    NOT NULL,
+  start_line       INTEGER NOT NULL,
+  end_line         INTEGER NOT NULL,
+  hash             TEXT    NOT NULL,
+  text             TEXT    NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  last_accessed_at INTEGER,
+  relevance_score  REAL    DEFAULT 0.5,
+  embedding        BLOB
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -68,6 +70,23 @@ CREATE INDEX IF NOT EXISTS idx_mc_project ON memory_chunks(project_id);
 CREATE INDEX IF NOT EXISTS idx_mc_source  ON memory_chunks(project_id, source);
 CREATE INDEX IF NOT EXISTS idx_mc_tier    ON memory_chunks(tier);
 CREATE INDEX IF NOT EXISTS idx_mf_project ON memory_files(project_id);
+
+CREATE TABLE IF NOT EXISTS kg_entities (
+  entity_id       TEXT    PRIMARY KEY,
+  tenant_id       TEXT    NOT NULL DEFAULT 'default',
+  name            TEXT    NOT NULL,
+  type            TEXT    NOT NULL DEFAULT 'unknown',
+  description     TEXT,
+  first_seen      INTEGER,
+  last_seen       INTEGER,
+  mention_count   INTEGER NOT NULL DEFAULT 1,
+  feedback_weight REAL    NOT NULL DEFAULT 0.5,
+  UNIQUE(tenant_id, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kge_tenant    ON kg_entities(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kge_name      ON kg_entities(tenant_id, name);
+CREATE INDEX IF NOT EXISTS idx_kge_type      ON kg_entities(tenant_id, type);
 `;
 
 /**
@@ -95,11 +114,11 @@ export function initializeFederationSchema(db: Database): void {
  * been migrated.
  */
 function runMigrations(db: Database): void {
-  // Migration: add embedding BLOB column if it does not already exist.
-  // This handles databases created before Phase 2.5 (schema v1).
   const columns = db.prepare("PRAGMA table_info(memory_chunks)").all() as Array<{
     name: string;
   }>;
+
+  // Migration v1→v2: add embedding BLOB column (schema v2, Phase 2.5)
   const hasEmbedding = columns.some((c) => c.name === "embedding");
   if (!hasEmbedding) {
     db.exec("ALTER TABLE memory_chunks ADD COLUMN embedding BLOB");
@@ -109,4 +128,15 @@ function runMigrations(db: Database): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_mc_embedding ON memory_chunks(id) WHERE embedding IS NOT NULL",
   );
+
+  // Migration v4→v5: add last_accessed_at and relevance_score columns (QW2 + MR2)
+  const hasLastAccessedAt = columns.some((c) => c.name === "last_accessed_at");
+  if (!hasLastAccessedAt) {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN last_accessed_at INTEGER");
+  }
+
+  const hasRelevanceScore = columns.some((c) => c.name === "relevance_score");
+  if (!hasRelevanceScore) {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN relevance_score REAL DEFAULT 0.5");
+  }
 }

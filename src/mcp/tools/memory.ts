@@ -5,7 +5,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import type { Database } from "better-sqlite3";
-import { populateSlugs, searchMemoryHybrid } from "../../memory/search.js";
+import { populateSlugs, searchMemoryHybrid, touchChunksLastAccessed } from "../../memory/search.js";
 import type { StorageBackend } from "../../storage/interface.js";
 import type { SearchConfig } from "../../daemon/config.js";
 import type { SearchResult } from "../../memory/search.js";
@@ -124,6 +124,24 @@ export async function toolMemorySearch(
       } else {
         results = searchMemory(federation, params.query, searchOpts);
       }
+    }
+
+    // QW2: Update last_accessed_at for returned chunks (best-effort, non-blocking)
+    try {
+      const chunkIds = results
+        .map((r) => r.chunkId)
+        .filter((id): id is string => id != null);
+      if (chunkIds.length > 0) {
+        // Resolve a raw SQLite Database handle if available
+        const rawDb = !isBackend(federation)
+          ? federation
+          : (federation as { getSqliteDb?: () => Database }).getSqliteDb?.() ?? null;
+        if (rawDb) {
+          touchChunksLastAccessed(rawDb, chunkIds);
+        }
+      }
+    } catch {
+      // non-critical — never block search results
     }
 
     // Cross-encoder reranking (on by default)

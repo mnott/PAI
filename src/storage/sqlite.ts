@@ -30,6 +30,14 @@ export class SQLiteBackend implements StorageBackend {
     return this.db;
   }
 
+  /**
+   * Alias for getRawDb() — used by the dispatcher for operations that require
+   * direct SQLite access (e.g. memory_feedback, touchChunksLastAccessed).
+   */
+  getSqliteDb(): Database {
+    return this.db;
+  }
+
   // -------------------------------------------------------------------------
   // Lifecycle
   // -------------------------------------------------------------------------

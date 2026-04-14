@@ -1,4 +1,4 @@
-# PAI Knowledge OS — v0.9.7
+# PAI Knowledge OS — v0.9.10
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
@@ -393,6 +393,53 @@ This reveals unexpected intellectual bridges: the same concurrency pattern used 
 
 ---
 
+## Memory Architecture
+
+PAI's memory system uses a three-tier hybrid store inspired by Cognee's approach to knowledge graphs and retrieval. Each tier has a distinct role, and they work together to answer queries that no single store could handle alone.
+
+### Three-Tier Hybrid Store
+
+| Tier | Backend | What it stores |
+|------|---------|----------------|
+| **Chunks + entities** | SQLite (simple mode) or PostgreSQL (full mode) | Text chunks with embeddings; named entity records with content-address hashes |
+| **Knowledge graph** | PostgreSQL (`kg_triples`) | Subject-predicate-object triples with `valid_from`/`valid_to` timestamps |
+| **Vector embeddings** | pgvector (full mode) | 768-dimensional Snowflake Arctic embeddings on chunks and vault notes |
+
+### Entity Deduplication via Content-Address Hashing
+
+Named entities (people, projects, libraries, concepts) extracted during indexing are stored in a `kg_entities` table and deduplicated using a content-address hash derived from the entity's canonical name. Two mentions of "PostgreSQL" in different session notes resolve to a single entity row — the hash acts as a stable identity, so the graph stays normalized even as new content is indexed.
+
+### Graph-Completion Search Pipeline
+
+Standard vector search finds semantically similar chunks. Graph-completion search goes further:
+
+1. **Vector seeds** — a semantic search returns the top-K most relevant chunks.
+2. **Graph traversal** — the entities mentioned in those chunks are looked up in `kg_triples`; their immediate neighbors are fetched (one hop).
+3. **Candidate expansion** — the neighbor entities' associated chunks are added to the result set.
+4. **Re-rank** — the expanded candidate set is re-scored by the cross-encoder, which reads each (query, result) pair together. Results are sorted by this final relevance score.
+
+This means a query about "the PAI daemon" can surface a session note that mentions the daemon only indirectly — because a connected entity (the Unix socket, the launchd service) appears in both the graph and the note.
+
+### Feedback Loop with Relevance Scoring
+
+Every search result that is subsequently retrieved via `memory_get` (i.e., actually read by the model) generates a positive feedback signal. These signals are stored and used to adjust future search weights using an exponential moving average (EMA):
+
+```
+new_weight = alpha * signal + (1 - alpha) * old_weight
+```
+
+The default alpha is 0.1, so recent positive signals gradually raise a chunk's effective score without overriding the semantic baseline. This creates a personalization loop: content you actually use rises in future rankings; content you skip does not.
+
+### Access Timestamp Tracking
+
+Every chunk row carries a `last_accessed_at` timestamp updated on each `memory_get` call. This supports recency boost (content accessed recently scores higher) and enables future eviction policies for very large knowledge bases.
+
+### Multi-Tenant Support
+
+PAI isolates memory by project. Every chunk, entity, and observation row carries a `project_id` foreign key. Searches default to the current project; the `all_projects: true` flag (or `--all` CLI option) lifts the filter. Knowledge-graph triples carry a `project_id` as well, so cross-project tunnels (`memory_tunnels`) are detected explicitly rather than accidentally.
+
+---
+
 ## Automatic Observation Capture
 
 PAI automatically classifies and stores every significant tool call during your sessions. When you edit a file, run a command, or make a decision, PAI captures it as a structured observation — building a searchable timeline of everything you've done across all projects.
@@ -754,7 +801,7 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 
 ## Release History
 
-18 releases shipped from v0.7.2 to v0.9.7 (March 19 – April 10, 2026):
+21 releases shipped from v0.7.2 to v0.9.10 (March 19 – April 13, 2026):
 
 | Version | Feature |
 |---------|---------|
@@ -779,6 +826,9 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 | v0.9.5 | Budget-aware advisor mode |
 | v0.9.6 | Statusline auto-writes budget to advisor |
 | v0.9.7 | Advisor mode label in statusline, natural language mode switching |
+| v0.9.8 | Privacy tags, compact search format, npx install |
+| v0.9.9 | Fix advisor mode to delegate to haiku instead of hoarding in opus |
+| v0.9.10 | Cognee-inspired three-tier memory: entity deduplication, graph-completion search, feedback EMA |
 
 ---
 
@@ -799,6 +849,8 @@ PAI works great alongside these tools (also by the same author):
 PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiessler)'s concept of Personal AI Infrastructure and his [Fabric](https://github.com/danielmiessler/fabric) project — a Python CLI for augmenting human capabilities with reusable AI prompt patterns. Fabric is excellent and solves a different problem; PAI takes the same philosophy in a different direction: persistent memory, session continuity, and deep Claude Code integration. See [FEATURE.md](FEATURE.md) for a detailed comparison.
 
 The automatic observation capture system — classifying tool calls into structured observations with progressive context injection — is inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by [thedotmack](https://github.com/thedotmack). claude-mem demonstrated that automatic memory capture during Claude Code sessions dramatically improves continuity. PAI adapts this concept with a rule-based classifier, PostgreSQL storage, and three-layer progressive disclosure.
+
+The three-store hybrid memory architecture — combining SQLite/PostgreSQL chunks with a knowledge graph and vector embeddings, graph-completion search (vector seeds → graph traversal → re-rank), and the feedback EMA relevance loop — is inspired by [Cognee](https://github.com/topoteretes/cognee) by [topoteretes](https://github.com/topoteretes). Cognee showed that unifying structured knowledge graphs with unstructured vector retrieval produces dramatically better recall. PAI adapts this pattern to the personal knowledge OS context with project-scoped multi-tenancy and content-address entity deduplication.
 
 ---
 

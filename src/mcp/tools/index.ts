@@ -30,3 +30,5 @@ export * from "./kg.js";
 export * from "./wakeup.js";
 export * from "./taxonomy.js";
 export * from "./tunnels.js";
+export * from "./feedback.js";
+export * from "./kg-search.js";
