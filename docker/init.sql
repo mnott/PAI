@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS kg_triples (
   subject        TEXT NOT NULL,
   predicate      TEXT NOT NULL,
   object         TEXT NOT NULL,
-  project_id     INTEGER REFERENCES projects(id),
+  project_id     INTEGER,  -- References registry.db projects via ID, not a Postgres FK
   source_session TEXT,
   valid_from     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   valid_to       TIMESTAMP,

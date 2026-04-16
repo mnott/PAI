@@ -20,6 +20,7 @@ import {
 } from "../../mcp/tools.js";
 import { detectTopicShift } from "../../topics/detector.js";
 import { registryDb, storageBackend, daemonConfig } from "./state.js";
+import { openFederation } from "../../memory/db.js";
 import type { PostgresBackendWithPool } from "./types.js";
 
 /**
@@ -169,25 +170,28 @@ export async function dispatchTool(
     }
 
     case "memory_feedback": {
-      // MR2: feedback weight loop — requires SQLite federation db
-      const federationDb = (storageBackend as { getSqliteDb?: () => import("better-sqlite3").Database }).getSqliteDb?.();
-      if (!federationDb) {
-        throw new Error("memory_feedback requires a SQLite federation backend (getSqliteDb not available)");
+      // MR2: feedback weight loop — uses federation.db (SQLite) directly
+      const federationDb = openFederation();
+      try {
+        return await toolMemoryFeedback(federationDb, p as Parameters<typeof toolMemoryFeedback>[1]);
+      } finally {
+        federationDb.close();
       }
-      return toolMemoryFeedback(federationDb, p as Parameters<typeof toolMemoryFeedback>[1]);
     }
 
     case "memory_kg_search": {
-      // MR1: graph-completion retrieval — requires SQLite federation db + Postgres pool
-      const federationDb = (storageBackend as { getSqliteDb?: () => import("better-sqlite3").Database }).getSqliteDb?.();
-      if (!federationDb) {
-        throw new Error("memory_kg_search requires a SQLite federation backend (getSqliteDb not available)");
-      }
+      // MR1: graph-completion retrieval — federation.db (SQLite) + Postgres pool
+      const federationDb = openFederation();
       const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
       if (!pgPool) {
+        federationDb.close();
         throw new Error("memory_kg_search requires a Postgres storage backend for KG triple expansion");
       }
-      return toolMemoryKgSearch(federationDb, pgPool, p as Parameters<typeof toolMemoryKgSearch>[2]);
+      try {
+        return await toolMemoryKgSearch(federationDb, pgPool, p as Parameters<typeof toolMemoryKgSearch>[2]);
+      } finally {
+        federationDb.close();
+      }
     }
 
     default:
