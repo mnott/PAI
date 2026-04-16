@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0028 - 2026-04-16 - Session Commands Hook And Kg Search Fix Releases
-> **Paused at:** 2026-04-16T10:47:23.199Z
+> **Last session:** 0029 - 2026-04-16 - Session Resume Context Load
+> **Paused at:** 2026-04-16T10:56:27.727Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -275,4 +275,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-04-16T10:47:23.199Z*
+*Last updated: 2026-04-16T10:56:27.727Z*
