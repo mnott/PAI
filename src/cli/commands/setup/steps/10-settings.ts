@@ -43,6 +43,7 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       DA: daName,
     },
     hooks: [
+      { hookType: "SessionStart", command: "${PAI_DIR}/Hooks/session-commands.mjs" },
       { hookType: "SessionStart", command: "${PAI_DIR}/Hooks/load-core-context.mjs" },
       { hookType: "SessionStart", command: "${PAI_DIR}/Hooks/load-project-context.mjs" },
       { hookType: "SessionStart", command: "${PAI_DIR}/Hooks/initialize-session.mjs" },
