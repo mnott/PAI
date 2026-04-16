@@ -1,11 +1,9 @@
 ## Continue
 
-> **Last session:** 0025 - 2026-04-13 - Fixed Advisor Strict Mode To Delegate Instead Of Hoard
-> **Paused at:** 2026-04-13T06:43:37.776Z
+> **Last session:** 0027 - 2026-04-15 - Seriousletter Pdf Export Permission Investigation
+> **Paused at:** 2026-04-16T10:29:20.050Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
-> Work completed:
-> - Added swarm mode guidance to strict and critical advisor modes.
 
 ---
 
@@ -277,4 +275,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-04-13T06:43:37.776Z*
+*Last updated: 2026-04-16T10:29:20.050Z*
