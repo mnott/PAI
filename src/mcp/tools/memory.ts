@@ -178,11 +178,12 @@ export async function toolMemorySearch(
     const formatted = withSlugs
       .map((r, i) => {
         const slug = r.projectSlug ?? `project:${r.projectId}`;
+        const idPart = r.chunkId ? ` id=${r.chunkId}` : "";
         if (useCompact) {
-          // Compact format: ~50-100 tokens per result — ID, path, score only
-          return `[${i + 1}] ${slug} — ${r.path} L${r.startLine}-${r.endLine} score=${r.score.toFixed(3)}`;
+          // Compact format: chunk ID, path, score — pass id to memory_feedback to rate this result
+          return `[${i + 1}]${idPart} ${slug} — ${r.path} L${r.startLine}-${r.endLine} score=${r.score.toFixed(3)}`;
         }
-        const header = `[${i + 1}] ${slug} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
+        const header = `[${i + 1}]${idPart} ${slug} — ${r.path} (lines ${r.startLine}-${r.endLine}) score=${r.score.toFixed(4)} tier=${r.tier} source=${r.source}`;
         // Truncate snippet to snippetLength — limit context consumption.
         // MCP results go into Claude's context window; keep each result tight.
         const raw = r.snippet.trim();

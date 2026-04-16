@@ -293,7 +293,7 @@ async function startShim(): Promise<void> {
         .enum(["full", "compact"])
         .optional()
         .describe(
-          "Output format. 'full' (default) includes snippets. 'compact' returns IDs + metadata only (~10x fewer tokens). Use compact first, then memory_get for full details on interesting results."
+          "Output format. 'full' (default) includes snippets. 'compact' returns IDs + metadata only (~10x fewer tokens). Use compact first, then memory_get for full details on interesting results. Each result includes 'id=<chunk_id>' which can be passed to memory_feedback."
         ),
     },
     async (args) => proxyTool("memory_search", args)
