@@ -1,5 +1,5 @@
 /**
- * Index, embed, and vault index schedulers for the PAI daemon.
+ * Index, embed, vault index, and registry scan schedulers for the PAI daemon.
  * Exports run* functions (also called on-demand by the IPC handler)
  * and the start* functions invoked once at daemon startup.
  */
@@ -279,4 +279,41 @@ export function startEmbedScheduler(): void {
 
   if (timer.unref) timer.unref();
   setEmbedSchedulerTimer(timer);
+}
+
+// ---------------------------------------------------------------------------
+// Registry scan scheduler
+// ---------------------------------------------------------------------------
+
+const REGISTRY_SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const REGISTRY_SCAN_STARTUP_DELAY_MS = 10_000;     // 10 seconds after daemon start
+
+/**
+ * Start the periodic registry scan scheduler.
+ * First scan runs 10 seconds after startup (enough time for IPC to stabilise).
+ * Subsequent scans run every 30 minutes.
+ * Uses the work-queue so the scan runs on the worker thread without blocking IPC.
+ */
+export function startRegistryScanScheduler(): void {
+  process.stderr.write(
+    "[pai-daemon] Registry scan scheduler: every 30min (first in 10s)\n"
+  );
+
+  setTimeout(() => {
+    import("../../daemon/work-queue-worker.js")
+      .then(({ enqueueRegistryScan }) => enqueueRegistryScan())
+      .catch((e) => {
+        process.stderr.write(`[pai-daemon] Startup registry scan error: ${e}\n`);
+      });
+  }, REGISTRY_SCAN_STARTUP_DELAY_MS);
+
+  const timer = setInterval(() => {
+    import("../../daemon/work-queue-worker.js")
+      .then(({ enqueueRegistryScan }) => enqueueRegistryScan())
+      .catch((e) => {
+        process.stderr.write(`[pai-daemon] Scheduled registry scan error: ${e}\n`);
+      });
+  }, REGISTRY_SCAN_INTERVAL_MS);
+
+  if (timer.unref) timer.unref();
 }

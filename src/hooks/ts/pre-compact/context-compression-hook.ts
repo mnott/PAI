@@ -358,6 +358,47 @@ function saveCumulativeState(notesDir: string, data: TranscriptData, notePath: s
 }
 
 // ---------------------------------------------------------------------------
+// Daemon IPC — enqueue registry-scan work item
+// ---------------------------------------------------------------------------
+
+/**
+ * Enqueue a registry-scan work item with the daemon.
+ * Fire-and-forget — never throws, never blocks the pre-compact hook.
+ */
+function enqueueRegistryScan(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve();
+    }
+
+    const client = connect(DAEMON_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'registry-scan',
+          priority: 5,
+          payload: {},
+        },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', () => finish());
+    client.on('error', () => finish());
+    client.on('end', () => finish());
+    timer = setTimeout(() => finish(), DAEMON_TIMEOUT_MS);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Daemon IPC — enqueue session-summary work item
 // ---------------------------------------------------------------------------
 
@@ -637,6 +678,13 @@ async function main() {
       console.error(`Could not enqueue session-summary: ${err}`);
     }
   }
+
+  // -----------------------------------------------------------------------
+  // Enqueue registry-scan so pai session recent stays fresh after compaction
+  // -----------------------------------------------------------------------
+  try {
+    await enqueueRegistryScan();
+  } catch { /* non-fatal */ }
 
   // Send ntfy.sh notification
   const ntfyMessage = tokenCount > 0

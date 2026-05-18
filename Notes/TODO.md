@@ -1,9 +1,18 @@
 ## Continue
 
-> **Last session:** 0029 - 2026-04-16 - Session Resume Context Load
-> **Paused at:** 2026-04-16T10:56:27.727Z
+> **Last session:** 0006 - 2026-05-18 - This Was In Another Session That Did An Autocmpact
+> **Paused at:** 2026-05-18T17:03:28.721Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+> Recent user requests:
+> - To https://github.com/mnott/PAI.git
+> - 1	## Continue
+> - The file /Users/i052341/Daten/Cloud/Development/ai/PAI/Notes/TODO.md has been updated successfully.
+> Files modified this session:
+> - /Users/i052341/dev/ai/PAI/src/cli/commands/project.ts
+> - /Users/i052341/Daten/Cloud/Development/ai/PAI/Notes/swarm/decision.md
+> - /Users/i052341/.claude/skills/user/Review/SKILL.md
+> - /Users/i052341/dev/ai/PAI/scripts/build-skill-stubs.mjs
 
 ---
 
@@ -275,4 +284,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-04-16T10:56:27.727Z*
+*Last updated: 2026-05-18T17:03:28.721Z*

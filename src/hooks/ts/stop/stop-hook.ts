@@ -228,6 +228,43 @@ function enqueueWithDaemon(payload: {
 }
 
 /**
+ * Enqueue a registry-scan work item with the daemon.
+ * Fire-and-forget — never throws, never blocks the session stop.
+ */
+function enqueueRegistryScanWithDaemon(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve();
+    }
+
+    const client = connect(DAEMON_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'registry-scan',
+          priority: 5,
+          payload: {},
+        },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', () => finish());
+    client.on('error', () => finish());
+    client.on('end', () => finish());
+    timer = setTimeout(() => finish(), DAEMON_TIMEOUT_MS);
+  });
+}
+
+/**
  * Enqueue a session-summary work item with `force: true` for mid-session auto-save.
  * Like the regular enqueueSessionSummaryWithDaemon but signals the daemon to
  * summarise even though the session is still ongoing.
@@ -763,6 +800,9 @@ async function main() {
   // We omit transcriptPath so the worker resolves it via findLatestJsonl(),
   // avoiding a race where the session-end hook moves the JSONL before the worker reads it.
   await enqueueSessionSummaryWithDaemon({ cwd });
+
+  // Enqueue a registry-scan so pai session recent stays fresh after this session ends.
+  await enqueueRegistryScanWithDaemon();
 
   // Clean up the session-state file now that the session has truly ended.
   if (sessionId) {

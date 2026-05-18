@@ -289,7 +289,9 @@ export function renderTable(headers: string[], rows: string[][]): string {
   const renderRow = (row: string[], isHeader = false) => {
     const cells = widths.map((w, i) => {
       const cell = row[i] ?? "";
-      return isHeader ? pad(bold(cell), w + (cell.length - stripAnsi(cell).length)) : pad(cell, w + (cell.length - stripAnsi(cell).length));
+      // pad() already strips ANSI internally to compute visible length,
+      // so pass the target visible width directly — no fudge factor needed.
+      return isHeader ? pad(bold(cell), w) : pad(cell, w);
     });
     return "  " + cells.join("  ");
   };
