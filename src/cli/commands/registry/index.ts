@@ -101,7 +101,8 @@ export function registerRegistryCommands(
     .option("--add-dir <path>", "Add a directory to scan_dirs config")
     .option("--remove-dir <path>", "Remove a directory from scan_dirs config")
     .option("--show-dirs", "Show currently configured scan directories")
-    .action((opts: { addDir?: string; removeDir?: string; showDirs?: boolean }) => {
+    .option("--quick", "Minimal output mode (used by hooks and daemon)")
+    .action((opts: { addDir?: string; removeDir?: string; showDirs?: boolean; quick?: boolean }) => {
       if (opts.showDirs) {
         const config = loadScanConfig();
         if (!config.scan_dirs.length) {
@@ -149,7 +150,7 @@ export function registerRegistryCommands(
         }
       }
       if (!opts.addDir && !opts.removeDir) {
-        cmdScan(getDb());
+        cmdScan(getDb(), { quick: opts.quick });
       }
     });
 

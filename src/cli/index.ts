@@ -3,13 +3,17 @@
  * PAI Knowledge OS — CLI entry point
  *
  * Command tree:
- *   pai project add|list|info|archive|unarchive|move|tag|alias|edit
- *   pai session  list|info
+ *   pai sessions list|goto|pause|info|rename|...  (canonical plural namespace)
+ *   pai projects list|cd|add|info|...             (canonical plural namespace)
  *   pai registry scan|migrate|stats|rebuild
  *   pai memory   index|search|status
  *   pai search   <query>   (placeholder — Phase 3)
  *   pai update
  *   pai version
+ *
+ * Daily verb shortcuts (top-level):
+ *   pai pause / pai resume / pai cd
+ *   pai sessions / pai projects / pai notes
  */
 
 import { Command } from "commander";
@@ -18,8 +22,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openRegistry } from "../registry/db.js";
 import type { Database } from "better-sqlite3";
-import { registerProjectCommands, cmdGo } from "./commands/project.js";
-import { registerSessionCommands } from "./commands/session.js";
+import { registerProjectsCommands, cmdGo } from "./commands/project/projects-index.js";
+import { registerSessionsCommands } from "./commands/session/sessions-index.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup.js";
 import { registerRegistryCommands } from "./commands/registry.js";
 import { registerMemoryCommands } from "./commands/memory.js";
@@ -37,6 +41,11 @@ import { registerTopicCommands } from "./commands/topic.js";
 import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
 import { err } from "./utils.js";
+import { cmdPause } from "./commands/session/pause.js";
+import { cmdGoto } from "./commands/session/goto.js";
+import { cmdRecent } from "./commands/session/recent.js";
+import { cmdList as cmdNotesList } from "./commands/session/commands.js";
+import { resolveIdentifier } from "./commands/project/helpers.js";
 
 // ---------------------------------------------------------------------------
 // Version resolution
@@ -81,28 +90,51 @@ const program = new Command();
 program
   .name("pai")
   .description("PAI Knowledge OS — Personal AI Infrastructure CLI")
-  .version(getVersion(), "-V, --version", "Print version and exit");
+  .version(getVersion(), "-V, --version", "Print version and exit")
+  .addHelpText(
+    "after",
+    `
+Daily verbs (short forms):
+  pai pause               Save state + display safe-exit reminder
+  pai resume <name>       Go to a session (resume or start fresh)
+  pai cd <name>           cd to a project directory
+
+Listings:
+  pai sessions            Resumable sessions catalog
+  pai projects            Known project directories
+  pai notes               Markdown session notes
+
+Subcommands (power users):
+  pai sessions ...        Session management (list, goto, pause, ...)
+  pai projects ...        Project management (cd, list, ...)
+  pai registry ...        Registry maintenance (scan, ...)
+  pai memory ...          Memory engine (index, search, ...)
+
+Shell integration:
+  eval "$(pai shell-init)"    # Add to ~/.zshrc for pai cd to work`
+  );
 
 // ---------------------------------------------------------------------------
-// pai project
+// pai projects  (canonical plural namespace)
 // ---------------------------------------------------------------------------
 
-const projectCmd = program
-  .command("project")
-  .description("Manage registered projects");
+const projectsCmd = program
+  .command("projects")
+  .description("Manage registered projects (list, cd, add, info, ...)");
 
-registerProjectCommands(projectCmd, getDb);
+registerProjectsCommands(projectsCmd, getDb);
 
 // ---------------------------------------------------------------------------
-// pai session
+// pai sessions  (canonical plural namespace)
+// Bare `pai sessions` runs the default `list` subcommand.
 // ---------------------------------------------------------------------------
 
-const sessionCmd = program
-  .command("session")
-  .description("Browse session notes");
+const sessionsCmd = program
+  .command("sessions")
+  .description("Session management (list, goto, pause, ...)");
 
-registerSessionCommands(sessionCmd, getDb);
-registerSessionCleanupCommand(sessionCmd, getDb);
+registerSessionsCommands(sessionsCmd, getDb);
+registerSessionCleanupCommand(sessionsCmd, getDb);
 
 // ---------------------------------------------------------------------------
 // pai registry
@@ -247,6 +279,140 @@ program
   )
   .action((query: string) => {
     cmdGo(getDb(), query);
+  });
+
+// ---------------------------------------------------------------------------
+// DAILY VERBS — top-level short forms
+// ---------------------------------------------------------------------------
+
+// pai pause [--dry-run]
+program
+  .command("pause")
+  .description(
+    "Save state and display safe-exit instructions for the current session.\n" +
+      "Writes a ## Continue checkpoint to the project's TODO.md.\n" +
+      "Long form: pai sessions pause"
+  )
+  .option("--dry-run", "Preview the ## Continue block without writing it")
+  .action((opts: { dryRun?: boolean }) => {
+    cmdPause(getDb(), opts);
+  });
+
+// pai resume <name> [--skip-name] [--skip-go] [--dry-run]
+program
+  .command("resume <name>")
+  .description(
+    "Go to a session by name: resume if resumable, start fresh otherwise.\n" +
+      "Long form: pai sessions goto <name>"
+  )
+  .option("--skip-name", "Do not prepend /Name to restore the session name")
+  .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume")
+  .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
+  .action(
+    (name: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
+      cmdGoto(getDb(), name, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
+    }
+  );
+
+// pai cd <identifier>  — prints path; shell wrapper does the actual cd
+program
+  .command("cd <identifier>")
+  .description(
+    "cd to a project directory (shell wrapper handles the actual cd).\n" +
+      "Long form: pai projects cd <identifier>\n" +
+      "The shell function installed by pai shell-init intercepts this command\n" +
+      "and calls builtin cd with the resolved path."
+  )
+  .action((identifier: string) => {
+    const project = resolveIdentifier(getDb(), identifier);
+    if (!project) {
+      console.error(`Project not found: ${identifier}`);
+      process.exit(1);
+    }
+    process.stdout.write(project.root_path + "\n");
+  });
+
+// Note: `pai sessions` and `pai projects` are now defined as the canonical
+// namespaces above (with `isDefault: true` on their `list` subcommands).
+// Bare invocation (`pai sessions`, `pai projects`) triggers the default list.
+
+// ---------------------------------------------------------------------------
+// pai notes  — markdown session notes
+// ---------------------------------------------------------------------------
+
+const notesCmd = program
+  .command("notes [project-slug]")
+  .description(
+    "Markdown session notes — list notes, optionally filtered to a project."
+  )
+  .option("--limit <n>", "Maximum number of notes to show", "20")
+  .option("--status <status>", "Filter by status: open | completed | compacted")
+  .action(
+    (
+      projectSlug: string | undefined,
+      opts: { limit?: string; status?: string }
+    ) => {
+      cmdNotesList(getDb(), projectSlug, opts);
+    }
+  );
+
+// pai notes list [project-slug] — explicit sub-action (same behaviour)
+notesCmd
+  .command("list [project-slug]")
+  .description("List markdown session notes (same as: pai notes)")
+  .option("--limit <n>", "Maximum number of notes to show", "20")
+  .option("--status <status>", "Filter by status: open | completed | compacted")
+  .action(
+    (
+      projectSlug: string | undefined,
+      opts: { limit?: string; status?: string }
+    ) => {
+      cmdNotesList(getDb(), projectSlug, opts);
+    }
+  );
+
+// ---------------------------------------------------------------------------
+// pai shell-init  — emit shell function for eval "$(pai shell-init)"
+// ---------------------------------------------------------------------------
+
+program
+  .command("shell-init")
+  .description(
+    "Emit shell integration code. Add to ~/.zshrc:\n" +
+      '  eval "$(pai shell-init)"'
+  )
+  .action(() => {
+    // The shell function intercepts commands that need a real `cd`:
+    //   pai cd <name>           → resolves via pai cd, then builtin cd
+    //   pai projects cd <name>  → same (long form)
+    // Everything else is passed through to the real pai binary unchanged.
+    process.stdout.write(
+      `# PAI shell integration — generated by: pai shell-init
+pai() {
+  if [[ "$1" == "cd" ]]; then
+    local dir=$(command pai cd "$2" 2>/dev/null)
+    if [[ -n "$dir" && -d "$dir" ]]; then
+      builtin cd "$dir"
+      echo "-> $dir"
+    else
+      echo "Project not found: $2" >&2
+      return 1
+    fi
+  elif [[ "$1" == "projects" && "$2" == "cd" ]]; then
+    local dir=$(command pai projects cd "$3" 2>/dev/null)
+    if [[ -n "$dir" && -d "$dir" ]]; then
+      builtin cd "$dir"
+      echo "-> $dir"
+    else
+      echo "Project not found: $3" >&2
+      return 1
+    fi
+  else
+    command pai "$@"
+  fi
+}
+`
+    );
   });
 
 // ---------------------------------------------------------------------------

@@ -16,25 +16,30 @@ import {
 } from "./commands.js";
 import { cmdCheckpoint } from "./checkpoint.js";
 import { cmdHandover } from "./handover.js";
+import { cmdRecent } from "./recent.js";
+import { cmdGoto } from "./goto.js";
+import { cmdPause } from "./pause.js";
 
 export function registerSessionCommands(
   sessionCmd: Command,
   getDb: () => Database
 ): void {
-  // pai session list [project-slug]
+  // pai session list [-n N] [--all] [--json]
+  // NEW: resumable sessions catalog (was "recent"). Short form: pai sessions.
   sessionCmd
-    .command("list [project-slug]")
-    .description("List sessions, optionally filtered to a single project")
-    .option("--limit <n>", "Maximum number of sessions to show", "20")
-    .option("--status <status>", "Filter by status: open | completed | compacted")
-    .action(
-      (
-        projectSlug: string | undefined,
-        opts: { limit?: string; status?: string }
-      ) => {
-        cmdList(getDb(), projectSlug, opts);
-      }
-    );
+    .command("list")
+    .description(
+      "Resumable sessions catalog — named sessions with resume status.\n" +
+        "Short form: pai sessions\n" +
+        "Default shows all sessions you've named or that are resumable.\n" +
+        "Use --all to also show unnamed orphan sessions."
+    )
+    .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
+    .option("--all", "Include unnamed orphan sessions (not in clc registry)")
+    .option("--json", "Output raw JSON instead of formatted table")
+    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
+      cmdRecent(getDb(), opts);
+    });
 
   // pai session info <project-slug> <number>
   sessionCmd
@@ -143,6 +148,58 @@ export function registerSessionCommands(
     .option("--json", "Output raw JSON instead of formatted display")
     .action((opts: { minutes?: string; json?: boolean }) => {
       cmdActive(getDb(), opts);
+    });
+
+  // pai session recent — DEPRECATED alias for `pai session list`
+  sessionCmd
+    .command("recent")
+    .description("[Deprecated] Use `pai session list` or `pai sessions` instead.")
+    .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
+    .option("--all", "Include unnamed orphan sessions (not in clc registry)")
+    .option("--json", "Output raw JSON instead of formatted table")
+    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
+      process.stderr.write(
+        "Deprecated: `pai session recent` — use `pai session list` or `pai sessions` instead.\n"
+      );
+      cmdRecent(getDb(), opts);
+    });
+
+  // pai session goto <name-or-id-or-prefix> [--skip-name] [--skip-go] [--dry-run]
+  sessionCmd
+    .command("goto <name-or-id>")
+    .description(
+      "Go to a session: resume if a resumable snapshot exists, start fresh otherwise.\n" +
+        "Recommended short form: pai resume <name>\n" +
+        "Resolves by clc/registry name (case-insensitive) or UUID prefix.\n" +
+        "Sends '/Name <name>\\ngo' as the initial prompt so the PAI ## Continue hook fires."
+    )
+    .option("--skip-name", "Do not prepend /Name to set the session name in chrome")
+    .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume (## Continue)")
+    .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
+    .action(
+      (nameOrId: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
+        process.stderr.write(
+          "Note: `pai session goto` works but `pai resume` is the new shorter form.\n"
+        );
+        cmdGoto(getDb(), nameOrId, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
+      }
+    );
+
+  // pai session pause [--dry-run]
+  sessionCmd
+    .command("pause")
+    .description(
+      "Write a ## Continue checkpoint to the project's TODO.md.\n" +
+        "Recommended short form: pai pause\n" +
+        "Ctrl+C bypasses the stop-hook, orphaning the session (cannot --resume).\n" +
+        "Use /exit inside Claude Code to preserve full session resumability."
+    )
+    .option("--dry-run", "Preview the ## Continue block without writing it")
+    .action((opts: { dryRun?: boolean }) => {
+      process.stderr.write(
+        "Note: `pai session pause` works but `pai pause` is the new shorter form.\n"
+      );
+      cmdPause(getDb(), opts);
     });
 
   // pai session auto-route [--cwd path] [--context "text"] [--json]

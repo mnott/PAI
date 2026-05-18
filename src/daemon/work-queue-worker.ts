@@ -5,6 +5,7 @@
  * Handles 'session-end' work items by reading the transcript, extracting
  * work summaries, updating the session note, and updating TODO.md.
  * Handles 'session-summary' items by spawning Haiku for AI-powered note generation.
+ * Handles 'registry-scan' items by running performScan() against the registry DB.
  *
  * Handles 'topic-detect' items by running BM25-based topic shift detection.
  * Other item types (note-update, todo-update) are stubs — they log and
@@ -16,10 +17,12 @@ import { basename, dirname } from "node:path";
 
 import {
   dequeue,
+  enqueue,
   markCompleted,
   markFailed,
   cleanup,
   getStats,
+  hasPendingOrProcessingOfType,
   type WorkItem,
 } from "./work-queue.js";
 
@@ -32,6 +35,10 @@ import {
   handleTopicDetect,
   type TopicDetectPayload,
 } from "./topic-detect-worker.js";
+
+// Registry scan — called from handleRegistryScan()
+import { performScan } from "../cli/commands/registry/scan.js";
+import { registryDb } from "./daemon/state.js";
 
 // Hooks lib imports — resolving through the compiled JS path.
 // These are the same utilities used by stop-hook.ts.
@@ -133,6 +140,10 @@ async function processNextItem(): Promise<void> {
 
       case "topic-detect":
         await handleTopicDetect(item.payload as TopicDetectPayload);
+        break;
+
+      case "registry-scan":
+        await handleRegistryScan();
         break;
 
       case "note-update":
@@ -265,6 +276,59 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
     // Non-fatal
     process.stderr.write(`[work-queue-worker] Could not move session files: ${moveError}\n`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// registry-scan handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Run performScan() against the registry DB.
+ *
+ * Debounce: if another registry-scan job is already pending in the queue,
+ * we still run this one (dequeue already picked it), but enqueueRegistryScan()
+ * checks before enqueuing so duplicates rarely reach here.
+ */
+async function handleRegistryScan(): Promise<void> {
+  if (!registryDb) {
+    throw new Error("registry-scan: registryDb not initialized yet");
+  }
+
+  const t0 = Date.now();
+  process.stderr.write("[work-queue-worker] Running registry scan...\n");
+
+  const result = performScan(registryDb);
+  const elapsed = Date.now() - t0;
+
+  process.stderr.write(
+    `[work-queue-worker] Registry scan complete: ` +
+    `${result.projectsScanned} projects (${result.projectsNew} new, ${result.projectsUpdated} updated), ` +
+    `${result.sessionsScanned} sessions (${result.sessionsNew} new) in ${elapsed}ms.\n`
+  );
+
+  if (result.skipped.length > 0) {
+    process.stderr.write(
+      `[work-queue-worker] Registry scan: ${result.skipped.length} project(s) skipped (path not found).\n`
+    );
+  }
+}
+
+/**
+ * Enqueue a registry-scan work item — debounced.
+ * If a registry-scan item is already pending or processing, skip enqueue.
+ */
+export function enqueueRegistryScan(): void {
+  // Debounce: skip if already queued or processing
+  if (hasPendingOrProcessingOfType("registry-scan")) {
+    process.stderr.write("[work-queue-worker] Registry scan already pending/processing — skipping duplicate enqueue.\n");
+    return;
+  }
+
+  enqueue({
+    type: "registry-scan",
+    priority: 5, // lowest priority — runs after session-end, session-summary
+    payload: {},
+  });
 }
 
 // ---------------------------------------------------------------------------

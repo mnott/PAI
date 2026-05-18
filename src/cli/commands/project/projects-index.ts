@@ -1,6 +1,8 @@
 /**
- * Commander registration for all `pai project` sub-commands.
- * Imports from focused sub-modules and wires up CLI options.
+ * Commander registration for all `pai projects` sub-commands (plural namespace).
+ *
+ * This is the canonical namespace. `pai project <subcmd>` (singular) is a
+ * deprecated alias that forwards here with a stderr notice.
  */
 
 import type { Command } from "commander";
@@ -26,35 +28,15 @@ import { resolveIdentifier } from "./helpers.js";
 
 export { cmdGo };
 
-export function registerProjectCommands(
-  projectCmd: Command,
+export function registerProjectsCommands(
+  projectsCmd: Command,
   getDb: () => Database
 ): void {
-  // pai project add <path>
-  projectCmd
-    .command("add <path>")
-    .description("Register a project directory in the PAI registry")
-    .option("--slug <slug>", "Override auto-generated slug")
-    .option(
-      "--type <type>",
-      "Project type: local | central | obsidian-linked | external",
-      "local"
-    )
-    .option("--display-name <name>", "Human-readable display name")
-    .action(
-      (
-        rawPath: string,
-        opts: { slug?: string; type?: string; displayName?: string }
-      ) => {
-        cmdAdd(getDb(), rawPath, opts);
-      }
-    );
-
-  // pai project list
-  projectCmd
-    .command("list")
+  // pai projects list — default when `pai projects` is invoked bare
+  projectsCmd
+    .command("list", { isDefault: true })
     .description(
-      "List registered projects. Short form: pai projects"
+      "List registered projects. Short form: pai projects (bare, no subcommand)"
     )
     .option("--status <status>", "Filter by status: active | archived")
     .option("--tag <tag>", "Filter by tag")
@@ -63,68 +45,8 @@ export function registerProjectCommands(
       cmdList(getDb(), opts);
     });
 
-  // pai project info <slug>
-  projectCmd
-    .command("info <slug>")
-    .description("Show full details for a project")
-    .action((slug: string) => {
-      cmdInfo(getDb(), slug);
-    });
-
-  // pai project archive <slug>
-  projectCmd
-    .command("archive <slug>")
-    .description("Archive a project")
-    .action((slug: string) => {
-      cmdArchive(getDb(), slug);
-    });
-
-  // pai project unarchive <slug>
-  projectCmd
-    .command("unarchive <slug>")
-    .description("Restore an archived project to active status")
-    .action((slug: string) => {
-      cmdUnarchive(getDb(), slug);
-    });
-
-  // pai project move <slug> <new-path>
-  projectCmd
-    .command("move <slug> <new-path>")
-    .description("Update the root path for a project")
-    .action((slug: string, newPath: string) => {
-      cmdMove(getDb(), slug, newPath);
-    });
-
-  // pai project tag <slug> <tags...>
-  projectCmd
-    .command("tag <slug> <tags...>")
-    .description("Add one or more tags to a project")
-    .action((slug: string, tags: string[]) => {
-      cmdTag(getDb(), slug, tags);
-    });
-
-  // pai project alias <slug> <alias>
-  projectCmd
-    .command("alias <slug> <alias>")
-    .description("Register an alternative slug for a project")
-    .action((slug: string, alias: string) => {
-      cmdAlias(getDb(), slug, alias);
-    });
-
-  // pai project edit <slug>
-  projectCmd
-    .command("edit <slug>")
-    .description("Edit project metadata")
-    .option("--display-name <name>", "New display name")
-    .option("--type <type>", "New type")
-    .action(
-      (slug: string, opts: { displayName?: string; type?: string }) => {
-        cmdEdit(getDb(), slug, opts);
-      }
-    );
-
-  // pai project cd <slug-or-number>
-  projectCmd
+  // pai projects cd <identifier>
+  projectsCmd
     .command("cd <identifier>")
     .description(
       "cd to a project directory. Short form: pai cd <name>\n" +
@@ -139,35 +61,106 @@ export function registerProjectCommands(
       process.stdout.write(project.root_path + "\n");
     });
 
-  // pai project detect [path]
-  projectCmd
+  // pai projects add <path>
+  projectsCmd
+    .command("add <path>")
+    .description("Register a project directory in the PAI registry")
+    .option("--slug <slug>", "Override auto-generated slug")
+    .option("--type <type>", "Project type: local | central | obsidian-linked | external", "local")
+    .option("--display-name <name>", "Human-readable display name")
+    .action(
+      (
+        rawPath: string,
+        opts: { slug?: string; type?: string; displayName?: string }
+      ) => {
+        cmdAdd(getDb(), rawPath, opts);
+      }
+    );
+
+  // pai projects info <slug>
+  projectsCmd
+    .command("info <slug>")
+    .description("Show full details for a project")
+    .action((slug: string) => {
+      cmdInfo(getDb(), slug);
+    });
+
+  // pai projects archive <slug>
+  projectsCmd
+    .command("archive <slug>")
+    .description("Archive a project")
+    .action((slug: string) => {
+      cmdArchive(getDb(), slug);
+    });
+
+  // pai projects unarchive <slug>
+  projectsCmd
+    .command("unarchive <slug>")
+    .description("Restore an archived project to active status")
+    .action((slug: string) => {
+      cmdUnarchive(getDb(), slug);
+    });
+
+  // pai projects move <slug> <new-path>
+  projectsCmd
+    .command("move <slug> <new-path>")
+    .description("Update the root path for a project")
+    .action((slug: string, newPath: string) => {
+      cmdMove(getDb(), slug, newPath);
+    });
+
+  // pai projects tag <slug> <tags...>
+  projectsCmd
+    .command("tag <slug> <tags...>")
+    .description("Add one or more tags to a project")
+    .action((slug: string, tags: string[]) => {
+      cmdTag(getDb(), slug, tags);
+    });
+
+  // pai projects alias <slug> <alias>
+  projectsCmd
+    .command("alias <slug> <alias>")
+    .description("Register an alternative slug for a project")
+    .action((slug: string, alias: string) => {
+      cmdAlias(getDb(), slug, alias);
+    });
+
+  // pai projects edit <slug>
+  projectsCmd
+    .command("edit <slug>")
+    .description("Edit project metadata")
+    .option("--display-name <name>", "New display name")
+    .option("--type <type>", "New type")
+    .action(
+      (slug: string, opts: { displayName?: string; type?: string }) => {
+        cmdEdit(getDb(), slug, opts);
+      }
+    );
+
+  // pai projects detect [path]
+  projectsCmd
     .command("detect [path]")
-    .description(
-      "Detect which registered project the given path (or CWD) belongs to"
-    )
+    .description("Detect which registered project the given path (or CWD) belongs to")
     .option("--json", "Output raw JSON instead of human-readable text")
     .action((pathArg: string | undefined, opts: { json?: boolean }) => {
       cmdDetect(getDb(), pathArg, opts);
     });
 
-  // pai project health
-  projectCmd
+  // pai projects health
+  projectsCmd
     .command("health")
     .description(
       "Audit all registered projects: check which paths still exist, find moved/dead projects"
     )
-    .option(
-      "--fix",
-      "Auto-remediate where possible (update moved paths, archive dead zero-session projects)"
-    )
+    .option("--fix", "Auto-remediate where possible")
     .option("--json", "Output raw JSON report")
     .option("--status <category>", "Filter output to: active | stale | dead")
     .action((opts: { fix?: boolean; json?: boolean; status?: string }) => {
       cmdHealth(getDb(), opts);
     });
 
-  // pai project consolidate <slug-or-number>
-  projectCmd
+  // pai projects consolidate <identifier>
+  projectsCmd
     .command("consolidate <identifier>")
     .description(
       "Consolidate scattered ~/.claude/projects/.../Notes/ directories for a project into its canonical Notes/ location"
@@ -180,48 +173,33 @@ export function registerProjectCommands(
       }
     );
 
-  // pai project promote
-  projectCmd
+  // pai projects promote
+  projectsCmd
     .command("promote")
     .description("Promote a session note into a new standalone project")
-    .requiredOption(
-      "--from-session <path>",
-      "Path to the session note markdown file"
-    )
-    .requiredOption(
-      "--to <path>",
-      "Directory path for the new project (must not exist)"
-    )
-    .option(
-      "--name <name>",
-      "Display name for the new project (derived from filename if omitted)"
-    )
+    .requiredOption("--from-session <path>", "Path to the session note markdown file")
+    .requiredOption("--to <path>", "Directory path for the new project (must not exist)")
+    .option("--name <name>", "Display name for the new project (derived from filename if omitted)")
     .action((opts: { fromSession: string; to: string; name?: string }) => {
       cmdPromote(getDb(), opts);
     });
 
-  // pai project go <query>
-  projectCmd
+  // pai projects go <query>
+  projectsCmd
     .command("go <query>")
     .description(
       "Print the root path for a project by slug, partial name, or fuzzy match.\n" +
-        "Designed for shell integration: cd $(pai project go <query>)\n" +
-        "Or set a shell alias: alias pcd='cd $(pai project go)'"
+        "Designed for shell integration: cd $(pai projects go <query>)"
     )
     .action((query: string) => {
       cmdGo(getDb(), query);
     });
 
-  // pai project name <slug-or-number> <shortname>
-  projectCmd
+  // pai projects name <identifier> <shortname>
+  projectsCmd
     .command("name <identifier> <shortname>")
-    .description(
-      "Give a project a short name for quick access (used by AIBroker to launch sessions)"
-    )
-    .option(
-      "--permission <level>",
-      "Permission level: full | trusted | default (or raw CLI flags)"
-    )
+    .description("Give a project a short name for quick access")
+    .option("--permission <level>", "Permission level: full | trusted | default")
     .action(
       (
         identifier: string,
@@ -232,16 +210,16 @@ export function registerProjectCommands(
       }
     );
 
-  // pai project unname <shortname>
-  projectCmd
+  // pai projects unname <shortname>
+  projectsCmd
     .command("unname <shortname>")
     .description("Remove a project's short name")
     .action((shortname: string) => {
       cmdUnname(getDb(), shortname);
     });
 
-  // pai project names
-  projectCmd
+  // pai projects names
+  projectsCmd
     .command("names")
     .description("List named projects (your curated shortlist)")
     .option("--json", "Output JSON for AIBroker consumption")
@@ -249,13 +227,12 @@ export function registerProjectCommands(
       cmdNames(getDb(), opts);
     });
 
-  // pai project config [identifier]
-  projectCmd
+  // pai projects config [identifier]
+  projectsCmd
     .command("config [identifier]")
     .description(
       "View or modify session launch config for a project.\n" +
-        "Use --options to discover available keys and presets.\n" +
-        "Use --defaults to manage global defaults for new sessions."
+        "Use --options to discover available keys and presets."
     )
     .option(
       "--set <key=value...>",
@@ -269,14 +246,8 @@ export function registerProjectCommands(
       (v: string, prev: string[]) => [...prev, v],
       [] as string[]
     )
-    .option(
-      "--preset <name>",
-      "Apply a permission preset: full | trusted | default"
-    )
-    .option(
-      "--defaults",
-      "Manage global session defaults instead of a project"
-    )
+    .option("--preset <name>", "Apply a permission preset: full | trusted | default")
+    .option("--defaults", "Manage global session defaults instead of a project")
     .option("--options", "List available config keys and presets")
     .option("--json", "Output JSON")
     .option("--reset", "Reset config to empty (inherit global defaults)")

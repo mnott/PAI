@@ -30,7 +30,8 @@ export type WorkItemType =
   | "session-summary"
   | "note-update"
   | "todo-update"
-  | "topic-detect";
+  | "topic-detect"
+  | "registry-scan";
 
 export type WorkItemStatus =
   | "pending"
@@ -325,6 +326,22 @@ export function getStats(): WorkQueueStats {
     stats[item.status as keyof Omit<WorkQueueStats, "total">]++;
   }
   return stats;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if any pending or processing item of the given type exists.
+ * Used for debouncing work items that are expensive to run concurrently.
+ */
+export function hasPendingOrProcessingOfType(type: WorkItemType): boolean {
+  return _queue.some(
+    (i) =>
+      i.type === type &&
+      (i.status === "pending" || i.status === "processing")
+  );
 }
 
 // ---------------------------------------------------------------------------

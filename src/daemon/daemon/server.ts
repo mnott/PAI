@@ -25,7 +25,7 @@ import {
   embedSchedulerTimer,
   storageBackend,
 } from "./state.js";
-import { startIndexScheduler, startEmbedScheduler } from "./scheduler.js";
+import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -167,6 +167,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // Work queue — load persisted items and start worker loop
   loadQueue();
   startWorker();
+
+  // Registry scan scheduler — keeps pai session recent up to date automatically
+  startRegistryScanScheduler();
 
   const server = await startIpcServer(config.socketPath);
 

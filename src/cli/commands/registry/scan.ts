@@ -301,13 +301,23 @@ export function performScan(db: Database): ScanResult {
 // cmdScan
 // ---------------------------------------------------------------------------
 
-export function cmdScan(db: Database): void {
+/**
+ * Run the registry scan CLI command.
+ *
+ * @param opts.quick  When true, skips verbose output (same scan, less noise).
+ *                    The underlying scan is always incremental via upsert —
+ *                    this flag exists for hook/daemon-triggered invocations that
+ *                    want minimal log output.
+ */
+export function cmdScan(db: Database, opts: { quick?: boolean } = {}): void {
   const config = loadScanConfig();
-  console.log(dim("Scanning ~/.claude/projects/ ..."));
-  if (config.scan_dirs.length) {
-    console.log(dim(`Scanning ${config.scan_dirs.length} extra dir(s): ${config.scan_dirs.join(", ")}`));
+  if (!opts.quick) {
+    console.log(dim("Scanning ~/.claude/projects/ ..."));
+    if (config.scan_dirs.length) {
+      console.log(dim(`Scanning ${config.scan_dirs.length} extra dir(s): ${config.scan_dirs.join(", ")}`));
+    }
+    console.log(dim("Scanning project-root Notes/ directories ..."));
   }
-  console.log(dim("Scanning project-root Notes/ directories ..."));
 
   let result: ScanResult;
   try {
@@ -317,20 +327,28 @@ export function cmdScan(db: Database): void {
     process.exit(1);
   }
 
-  console.log(
-    ok(`Scanned ${bold(String(result.projectsScanned))} projects, ${bold(String(result.sessionsScanned))} session notes.`)
-  );
-  console.log(dim(`  Projects: ${result.projectsNew} new, ${result.projectsUpdated} updated`));
-  console.log(dim(`  Sessions: ${result.sessionsNew} new`));
+  if (!opts.quick) {
+    console.log(
+      ok(`Scanned ${bold(String(result.projectsScanned))} projects, ${bold(String(result.sessionsScanned))} session notes.`)
+    );
+    console.log(dim(`  Projects: ${result.projectsNew} new, ${result.projectsUpdated} updated`));
+    console.log(dim(`  Sessions: ${result.sessionsNew} new`));
 
-  if (result.skipped.length) {
-    console.log();
-    console.log(warn(`  ${result.skipped.length} project(s) skipped (path not found on disk):`));
-    for (const s of result.skipped.slice(0, 10)) {
-      console.log(dim(`    ${s}`));
+    if (result.skipped.length) {
+      console.log();
+      console.log(warn(`  ${result.skipped.length} project(s) skipped (path not found on disk):`));
+      for (const s of result.skipped.slice(0, 10)) {
+        console.log(dim(`    ${s}`));
+      }
+      if (result.skipped.length > 10) {
+        console.log(dim(`    ... and ${result.skipped.length - 10} more`));
+      }
     }
-    if (result.skipped.length > 10) {
-      console.log(dim(`    ... and ${result.skipped.length - 10} more`));
-    }
+  } else {
+    // Quick mode: single compact line (stderr so it doesn't pollute pipe output)
+    process.stderr.write(
+      `[registry-scan] ${result.projectsScanned} projects, ${result.sessionsScanned} sessions ` +
+      `(${result.projectsNew}+${result.sessionsNew} new).\n`
+    );
   }
 }
