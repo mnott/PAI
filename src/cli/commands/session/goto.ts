@@ -1,28 +1,29 @@
 /**
- * pai session goto <name-or-id> [--no-name] [--no-go] [--dry-run]
+ * pai resume <name>  /  pai sessions goto <name>  [--dry-run]
  *
- * Smart session launcher:
- *   - Resolves the name across ALL named sessions (clc registry + resumable).
- *   - If a resumable UUID is found for the matching project:
- *       claude --resume <uuid> "/Name <friendlyName>\ngo"
- *   - Else (project exists but no resumable session):
- *       claude "/Name <friendlyName>\ngo"   — fresh session, same project dir
- *   - If the name cannot be resolved at all, exits with an error.
+ * Smart session launcher with auto-fallback:
  *
- * Prompt arg mechanic (mirrors clc's combined_prompt):
- *   The initial-prompt positional is ONE string. It contains:
- *     /Name <friendlyName>\ngo
- *   where \n is a real newline. The /Name sets the session chrome; the "go"
- *   on the next line triggers PAI's session-commands hook (## Continue resume).
+ *   1. Resolve name → (uuid?, projectDir, friendlyName)
+ *   2. chdir(projectDir)
+ *   3. If uuid is set:
+ *        a. Probe: claude --resume <uuid> --print --output-format=json "_"
+ *                  (timeout 5s; exits non-zero / logs "No conversation found" if invalid)
+ *        b. If probe succeeds:
+ *             exec  claude --resume <uuid> --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *        c. Else (probe failed):
+ *             print clear stderr line: "Resume failed. Starting fresh session in same dir."
+ *             exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *   4. Else (no uuid known):
+ *        exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
  *
- *   Use --no-name to skip the /Name prefix (omits name restoration).
- *   Use --no-go  to skip the trailing "go" (no auto-resume trigger).
- *   Use both to pass no initial prompt at all.
+ * Why both --name AND /Name?
+ *   --name <friendlyName>       → sets Claude Code's internal session label
+ *   "/Name <friendlyName>\ngo"  → runs the /Name slash command via AIBroker, which updates
+ *                                  iTerm tab title, statusline, and AIBroker session registry;
+ *                                  the \ngo on the next line triggers PAI's ## Continue resume
  *
- * cwd mechanic:
- *   Claude Code resolves symlinks before encoding the project dir. We must
- *   realpathSync() the directory so the encoding matches and --resume works.
- *   Priority: clcDirectory → registryRootPath → decodedPath (all realpathSync'd).
+ * The probe adds ~300ms on the happy path. On the fallback path, total latency is the same
+ * as a fresh start.
  */
 
 import type { Database } from "better-sqlite3";
@@ -38,13 +39,53 @@ import {
 } from "../../lib/session-scan.js";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Probe helper
 // ---------------------------------------------------------------------------
 
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1_048_576) return `${Math.round(bytes / 1024)}K`;
-  return `${(bytes / 1_048_576).toFixed(1)}M`;
+interface ProbeResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Run  claude --resume <uuid> --print --output-format=json "_"  in the given cwd.
+ * Returns ok=true if the session is resumable (exit 0 and no "No conversation found"
+ * in stderr).  Timeout: 5 seconds.
+ */
+function probeResume(uuid: string, cwd: string): ProbeResult {
+  const result = spawnSync(
+    "claude",
+    ["--resume", uuid, "--print", "--output-format=json", "_"],
+    {
+      cwd,
+      timeout: 5_000,
+      env: process.env,
+      // Capture stderr for inspection; suppress stdout (tty)
+      stdio: ["ignore", "ignore", "pipe"],
+    }
+  );
+
+  if (result.error) {
+    return { ok: false, reason: `spawn error: ${result.error.message}` };
+  }
+
+  const stderr = result.stderr?.toString("utf8") ?? "";
+
+  if (
+    stderr.toLowerCase().includes("no conversation found") ||
+    stderr.toLowerCase().includes("session not found")
+  ) {
+    return { ok: false, reason: "No conversation found for this UUID" };
+  }
+
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      reason: `claude exited ${result.status ?? "signal"}${stderr ? `: ${stderr.slice(0, 120).trim()}` : ""}`,
+    };
+  }
+
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -54,9 +95,9 @@ function fmtSize(bytes: number): string {
 export function cmdGoto(
   db: Database,
   query: string,
-  opts: { noName?: boolean; noGo?: boolean; dryRun?: boolean }
+  opts: { dryRun?: boolean }
 ): void {
-  // Scan all named sessions (resumable + stubs + transcript-only from clc registry).
+  // ---- 1. Resolve name → session ----
   const allSessions = scanSessions(db, { limit: 500, filter: "named" });
 
   let resolved;
@@ -69,8 +110,7 @@ export function cmdGoto(
 
   const { session: matchedSession, friendlyName } = resolved;
 
-  // If the matched session itself is resumable, use it directly.
-  // Otherwise, look for another resumable session in the same encodedDir.
+  // ---- 2. Find best resumable UUID for this project ----
   let resumableUuid: string | undefined;
   let resumableSession: ScannedSession | undefined;
 
@@ -89,9 +129,7 @@ export function cmdGoto(
     }
   }
 
-  // Determine cwd for claude.
-  // Priority: clcDirectory → registryRootPath → decodedPath, all realpathSync'd.
-  // If realpathSync throws (directory moved/deleted), error with a clear message.
+  // ---- 3. Determine project dir (realpathSync for --resume cwd correctness) ----
   const rawDir =
     matchedSession.clcDirectory ??
     matchedSession.registryRootPath ??
@@ -111,67 +149,100 @@ export function cmdGoto(
     process.exit(1);
   }
 
-  // Build the initial-prompt arg.
-  // Structure:  /Name <friendlyName>\ngo
-  //   - /Name part: only when --no-name is NOT set AND friendlyName is known
-  //   - go part:    only when --no-go is NOT set
-  //   - If both parts absent: no prompt arg at all
-  const useName = !opts.noName && !!friendlyName;
-  const useGo = !opts.noGo;
+  // ---- 4. Build argv components ----
+  const name = friendlyName ?? query;
+  // Initial prompt: /Name sets tab/statusline via AIBroker; \ngo triggers ## Continue
+  const promptArg = `/Name ${name}\ngo`;
 
-  let promptArg: string | null = null;
-  if (useName && friendlyName) {
-    promptArg = useGo ? `/Name ${friendlyName}\ngo` : `/Name ${friendlyName}`;
-  } else if (useGo) {
-    promptArg = "go";
-  }
-
-  const fullArgv: string[] = resumableUuid
-    ? ["claude", "--resume", resumableUuid, ...(promptArg ? [promptArg] : [])]
-    : ["claude", ...(promptArg ? [promptArg] : [])];
-
+  // ---- 5. Dry-run mode ----
   if (opts.dryRun) {
-    const mode = resumableUuid ? "RESUME" : "FRESH";
-    console.log("\n" + chalk.bold(`Dry run — would execute (${mode}):`) + "\n");
-    console.log(`  cwd:            ${chalk.cyan(projectDir)}`);
-    // Show the prompt arg with \n escaped for readability
-    const argDisplay = fullArgv
-      .map((a) =>
-        a.includes("\n") ? `"${a.replace(/\n/g, "\\n")}"` : a.startsWith("/Name") ? `"${a}"` : a
-      )
-      .join(" ");
-    console.log(`  argv:           ${chalk.white(argDisplay)}`);
-    if (useName && friendlyName) {
-      console.log(`  name:           ${chalk.green(friendlyName)}`);
-    }
-    if (resumableSession) {
-      console.log(`\n  session:        ${resumableSession.uuid}`);
-      console.log(`  age:            ${fmtAge(resumableSession.mtime)}`);
-      console.log(`  system lines:   ${resumableSession.topLevelSystemLines}`);
+    if (resumableUuid) {
+      const argvResume = `claude --resume ${resumableUuid} --name "${name}" "/Name ${name}\\ngo"`;
+      const argvFresh = `claude --name "${name}" "/Name ${name}\\ngo"`;
       console.log(
-        `  user msgs:      ${resumableSession.userLines > 0 ? resumableSession.userLines : "—"}`
+        "\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n"
       );
+      console.log(`  cwd:      ${chalk.cyan(projectDir)}`);
+      console.log(`  probe:    claude --resume ${resumableUuid} --print --output-format=json "_"`);
+      console.log(`  argv:     ${chalk.white(argvResume)}`);
+      console.log(`  fallback: ${chalk.yellow(argvFresh)}`);
+      if (resumableSession) {
+        console.log(`\n  uuid:     ${resumableSession.uuid}`);
+        console.log(`  age:      ${fmtAge(resumableSession.mtime)}`);
+        console.log(`  status:   ${resumableSession.sessionStatus}`);
+        console.log(`  sys:      ${resumableSession.topLevelSystemLines} system lines`);
+      }
     } else {
+      const argvFresh = `claude --name "${name}" "/Name ${name}\\ngo"`;
       console.log(
-        `\n  mode:           ${chalk.yellow("fresh session (no resumable snapshot)")}`
+        "\n" + chalk.bold("Dry run — would exec (FRESH path, no resumable UUID):") + "\n"
       );
+      console.log(`  cwd:   ${chalk.cyan(projectDir)}`);
+      console.log(`  argv:  ${chalk.white(argvFresh)}`);
     }
-    console.log(`  project path:   ${matchedSession.decodedPath}`);
     console.log();
     return;
   }
 
-  // Replace current process with claude
-  const result = spawnSync(fullArgv[0], fullArgv.slice(1), {
-    cwd: projectDir,
-    stdio: "inherit",
-    env: process.env,
-  });
+  // ---- 6. Live execution ----
+  if (resumableUuid) {
+    // Probe first
+    const probe = probeResume(resumableUuid, projectDir);
 
-  if (result.error) {
-    console.error(err(`Failed to launch claude: ${result.error.message}`));
-    process.exit(1);
+    if (probe.ok) {
+      // Happy path: session is resumable
+      const result = spawnSync(
+        "claude",
+        ["--resume", resumableUuid, "--name", name, promptArg],
+        {
+          cwd: projectDir,
+          stdio: "inherit",
+          env: process.env,
+        }
+      );
+      if (result.error) {
+        console.error(err(`Failed to launch claude: ${result.error.message}`));
+        process.exit(1);
+      }
+      process.exit(result.status ?? 0);
+    } else {
+      // Fallback path
+      process.stderr.write(
+        chalk.yellow(
+          `\n  Resume failed for ${resumableUuid.slice(0, 8)}: ${probe.reason ?? "unknown error"}\n` +
+            `  Starting fresh session in same directory.\n\n`
+        )
+      );
+      const result = spawnSync(
+        "claude",
+        ["--name", name, promptArg],
+        {
+          cwd: projectDir,
+          stdio: "inherit",
+          env: process.env,
+        }
+      );
+      if (result.error) {
+        console.error(err(`Failed to launch claude: ${result.error.message}`));
+        process.exit(1);
+      }
+      process.exit(result.status ?? 0);
+    }
+  } else {
+    // No UUID at all — fresh start
+    const result = spawnSync(
+      "claude",
+      ["--name", name, promptArg],
+      {
+        cwd: projectDir,
+        stdio: "inherit",
+        env: process.env,
+      }
+    );
+    if (result.error) {
+      console.error(err(`Failed to launch claude: ${result.error.message}`));
+      process.exit(1);
+    }
+    process.exit(result.status ?? 0);
   }
-
-  process.exit(result.status ?? 0);
 }

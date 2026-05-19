@@ -37,8 +37,8 @@ export function registerSessionCommands(
     .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
     .option("--all", "Include unnamed orphan sessions (not in clc registry)")
     .option("--json", "Output raw JSON instead of formatted table")
-    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
-      cmdRecent(getDb(), opts);
+    .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
+      await cmdRecent(getDb(), opts);
     });
 
   // pai session info <project-slug> <number>
@@ -157,11 +157,11 @@ export function registerSessionCommands(
     .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
     .option("--all", "Include unnamed orphan sessions (not in clc registry)")
     .option("--json", "Output raw JSON instead of formatted table")
-    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
+    .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
       process.stderr.write(
         "Deprecated: `pai session recent` — use `pai session list` or `pai sessions` instead.\n"
       );
-      cmdRecent(getDb(), opts);
+      await cmdRecent(getDb(), opts);
     });
 
   // pai session goto <name-or-id-or-prefix> [--skip-name] [--skip-go] [--dry-run]

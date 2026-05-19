@@ -1,8 +1,5 @@
 /**
  * Commander registration for all `pai sessions` sub-commands (plural namespace).
- *
- * This is the canonical namespace. `pai session <subcmd>` (singular) is a
- * deprecated alias that forwards here with a stderr notice.
  */
 
 import type { Command } from "commander";
@@ -22,6 +19,8 @@ import { cmdHandover } from "./handover.js";
 import { cmdRecent } from "./recent.js";
 import { cmdGoto } from "./goto.js";
 import { cmdPause } from "./pause.js";
+import { cmdEnd } from "./end.js";
+import { cmdPauseAll } from "./pause-all.js";
 
 export function registerSessionsCommands(
   sessionsCmd: Command,
@@ -39,11 +38,11 @@ export function registerSessionsCommands(
     .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
     .option("--all", "Include unnamed orphan sessions (not in clc registry)")
     .option("--json", "Output raw JSON instead of formatted table")
-    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
-      cmdRecent(getDb(), opts);
+    .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
+      await cmdRecent(getDb(), opts);
     });
 
-  // pai sessions goto <name-or-id> [--skip-name] [--skip-go] [--dry-run]
+  // pai sessions goto <name-or-id> [--dry-run]
   sessionsCmd
     .command("goto <name-or-id>")
     .description(
@@ -51,12 +50,10 @@ export function registerSessionsCommands(
         "Recommended short form: pai resume <name>\n" +
         "Resolves by clc/registry name (case-insensitive) or UUID prefix."
     )
-    .option("--skip-name", "Do not prepend /Name to restore the session name")
-    .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume")
     .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
     .action(
-      (nameOrId: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
-        cmdGoto(getDb(), nameOrId, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
+      (nameOrId: string, opts: { dryRun?: boolean }) => {
+        cmdGoto(getDb(), nameOrId, { dryRun: opts.dryRun });
       }
     );
 
@@ -73,18 +70,36 @@ export function registerSessionsCommands(
       cmdPause(getDb(), opts);
     });
 
-  // pai sessions recent — DEPRECATED alias for `pai sessions list`
+  // pai sessions pause-all [--exit] [--wait <ms>] [--dry-run]
   sessionsCmd
-    .command("recent")
-    .description("[Deprecated] Use `pai sessions list` instead.")
-    .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
-    .option("--all", "Include unnamed orphan sessions (not in clc registry)")
-    .option("--json", "Output raw JSON instead of formatted table")
-    .action((opts: { n?: string; all?: boolean; json?: boolean }) => {
-      process.stderr.write(
-        "Deprecated: `pai sessions recent` — use `pai sessions list` instead.\n"
-      );
-      cmdRecent(getDb(), opts);
+    .command("pause-all")
+    .description(
+      "Pause every live Claude Code session via AIBroker.\n" +
+        "Requires AIBroker to be running. Sends 'pause session' to each live iTerm2 pane.\n" +
+        "Top-level short form: pai pause all"
+    )
+    .option("--exit", "Also send /exit to each session after it has saved state")
+    .option("--wait <ms>", "Milliseconds to wait before /exit (default: 5000)", "5000")
+    .option("--dry-run", "Show what would be sent without actually sending")
+    .action(async (opts: { exit?: boolean; wait?: string; dryRun?: boolean }) => {
+      await cmdPauseAll({
+        exit: opts.exit,
+        dryRun: opts.dryRun,
+        wait: opts.wait !== undefined ? parseInt(opts.wait, 10) : undefined,
+      });
+    });
+
+  // pai sessions end [--dry-run]
+  sessionsCmd
+    .command("end")
+    .description(
+      "Finalize a session: write ## Continue checkpoint + mark session note Completed.\n" +
+        "Recommended short form: pai end\n" +
+        "Use /exit inside Claude Code after running this command."
+    )
+    .option("--dry-run", "Preview all changes without writing them")
+    .action((opts: { dryRun?: boolean }) => {
+      cmdEnd(getDb(), opts);
     });
 
   // pai sessions info <project-slug> <number>
