@@ -13,13 +13,26 @@
  *   line of type "system". Sessions that only have a sessions/ counterpart cannot be
  *   resumed by Claude Code regardless of how much transcript content they have.
  *
- * Scan strategy:
- *   1. Walk top-level <project>/<uuid>.jsonl files (fast: ~20 files total).
- *   2. For each, check system line count to set the resumable flag.
- *   3. Join with sessions/<uuid>.jsonl (if present) for user lines, last prompt, ai-title.
- *   4. Enrich with clc name registry and PAI registry root path.
+ * Stale-UUID problem (fixed in this version):
+ *   The clc session.json registry stores ONE uuid per named session — the uuid Claude Code
+ *   had when the user last named the session. If the user resumes and the session gets a
+ *   new uuid (or they Ctrl+C and start fresh), the registry entry still points to the OLD
+ *   uuid. The scanner now resolves names to the MOST RECENT top-level jsonl in the project
+ *   directory, not the clc-cached uuid.
  *
- * Used by: pai session recent, pai session resume
+ * Resolution strategy:
+ *   1. Walk top-level <project>/<uuid>.jsonl files (Pass 1).
+ *   2. For each, attach the clc name if the uuid matches (exact hit).
+ *   3. After Pass 1, for every clc registry entry:
+ *      a. If the cached uuid was found → already handled.
+ *      b. Find the encodedDir for this entry's directory.
+ *      c. Check ALL sessions in that encodedDir (already in our Pass-1 results).
+ *      d. Pick the MOST RECENT resumable session in that dir and attach the name to it.
+ *         If no resumable session, fall through to transcript-only pass.
+ *   4. This means the displayed uuid for "Jobs Matthias" is always today's active session,
+ *      not the stale cached one.
+ *
+ * Used by: pai sessions, pai resume
  */
 
 import { readdirSync, statSync, readFileSync, existsSync, realpathSync } from "node:fs";
@@ -313,7 +326,11 @@ function resolveFilter(opts: ScanOptions): "named" | "all" | "resumable" {
  * Scan ~/.claude/projects/ for all Claude Code sessions.
  *
  * Pass 1: walk top-level <project>/<uuid>.jsonl files (the resumability source).
- * Pass 2: add clc registry entries that have no top-level jsonl (transcript-only).
+ * Pass 2: handle clc registry entries whose cached UUID was not found in Pass 1.
+ *         For each such entry, scan the entry's project dir for the FRESHEST session
+ *         and attach the registry name to it. This fixes the stale-UUID bug where
+ *         clc's session.json points to an old uuid after a fresh start.
+ * Pass 3: any remaining clc entries with truly no top-level jsonl → transcript-only.
  *
  * Filter modes:
  *   "named"     — resumable + registry-known stubs + transcript-only (default)
@@ -336,6 +353,8 @@ export function scanSessions(
   const results: ScannedSession[] = [];
   // Track which UUIDs we've already added (from the jsonl walk)
   const seenUuids = new Set<string>();
+  // Track which clc names we've already attached to a session
+  const attachedClcUuids = new Set<string>();
 
   let encodedDirs: string[];
   try {
@@ -343,6 +362,10 @@ export function scanSessions(
   } catch {
     return [];
   }
+
+  // Build a map: encodedDir → all top-level sessions found in Pass 1
+  // This is used in Pass 2 to find the freshest session for a clc registry entry.
+  const sessionsByEncodedDir = new Map<string, ScannedSession[]>();
 
   // ---- Pass 1: walk top-level <project>/<uuid>.jsonl files ----
   for (const encodedDir of encodedDirs) {
@@ -383,10 +406,14 @@ export function scanSessions(
           ? "stub"
           : "orphan";
 
-      // Apply filter
-      if (filterMode === "resumable" && !resumable) continue;
-      if (filterMode === "named" && !resumable && !inRegistry) continue;
-      // filterMode === "all" includes everything
+      // Apply filter — but include ALL in this pass so Pass 2 can use them
+      // We'll filter again when deciding what to add to `results`.
+      const passesFilter =
+        filterMode === "resumable"
+          ? resumable
+          : filterMode === "named"
+            ? resumable || inRegistry
+            : true;
 
       // Join with sessions/ transcript (best-effort)
       const sessionJsonlPath = join(projectDir, "sessions", `${uuid}.jsonl`);
@@ -399,10 +426,10 @@ export function scanSessions(
       const mtime = topInfo.mtime || transcript.mtime;
 
       // Name resolution: clc registry (verbatim) → ai-title → project basename
-      const friendlyName = clcInfo?.name ?? transcript.aiTitle ?? projectBasename ?? undefined;
+      const friendlyName =
+        clcInfo?.name ?? transcript.aiTitle ?? projectBasename ?? undefined;
 
-      seenUuids.add(uuid);
-      results.push({
+      const session: ScannedSession = {
         uuid,
         shortId: uuid.slice(0, 8),
         encodedDir,
@@ -421,93 +448,145 @@ export function scanSessions(
         friendlyName,
         clcDirectory: clcInfo?.directory,
         registryRootPath,
-      });
+      };
+
+      // Track in per-dir map for Pass 2 lookups (all sessions, regardless of filter)
+      if (!sessionsByEncodedDir.has(encodedDir)) {
+        sessionsByEncodedDir.set(encodedDir, []);
+      }
+      sessionsByEncodedDir.get(encodedDir)!.push(session);
+
+      seenUuids.add(uuid);
+      if (inRegistry) attachedClcUuids.add(uuid);
+
+      if (passesFilter) {
+        results.push(session);
+      }
     }
   }
 
-  // ---- Pass 2: clc registry entries with no top-level jsonl (transcript-only) ----
-  // Only relevant for "named" and "all" filter modes.
+  // ---- Pass 2: clc registry entries whose cached UUID wasn't found as a top-level file ----
+  // For each such entry, find the project's encodedDir and look for the FRESHEST
+  // resumable session there. Attach the clc name to it.
+  // This fixes the stale-UUID bug: clc may store a uuid that's no longer valid,
+  // but the project dir has a new active session the user is actually in.
   if (filterMode !== "resumable") {
-    for (const [uuid, clcInfo] of clcInfoMap) {
-      if (seenUuids.has(uuid)) continue; // already added in pass 1
+    for (const [cachedUuid, clcInfo] of clcInfoMap) {
+      if (attachedClcUuids.has(cachedUuid)) continue; // already named in Pass 1
 
-      // Find which encodedDir this uuid might live in (check sessions/ subdirs)
-      // We need to locate the project directory for this uuid.
-      // Strategy: check if sessions/<uuid>.jsonl exists under any project dir,
-      // OR use the clc directory to derive the encoded dir.
+      // Derive the encodedDir from clcInfo.directory
       let foundEncodedDir: string | undefined;
-      let foundTranscriptPath: string | undefined;
-
-      // Try to derive encodedDir from clcInfo.directory via realpathSync
       if (clcInfo.directory) {
-        try {
-          const real = realpathSyncSafe(clcInfo.directory);
-          if (real) {
-            // Encode the real path the same way Claude Code does
-            const encoded = encodeProjectDir(real);
-            const candidateTranscript = join(
-              CLAUDE_PROJECTS_DIR,
-              encoded,
-              "sessions",
-              `${uuid}.jsonl`
-            );
-            if (existsSync(candidateTranscript)) {
-              foundEncodedDir = encoded;
-              foundTranscriptPath = candidateTranscript;
-            } else {
-              // Project dir exists but no transcript for this uuid
-              const candidateProjectDir = join(CLAUDE_PROJECTS_DIR, encoded);
-              if (existsSync(candidateProjectDir)) {
-                foundEncodedDir = encoded;
-              }
-            }
+        const real = realpathSyncSafe(clcInfo.directory);
+        if (real) {
+          const encoded = encodeProjectDir(real);
+          if (existsSync(join(CLAUDE_PROJECTS_DIR, encoded))) {
+            foundEncodedDir = encoded;
           }
-        } catch {
-          // path doesn't exist — that's fine, we'll use clcDirectory as decodedPath fallback
         }
       }
 
-      // Fallback: scan all project dirs for sessions/<uuid>.jsonl
+      // Fallback: check if the cached uuid exists as a sessions/ transcript somewhere
       if (!foundEncodedDir) {
         for (const encodedDir of encodedDirs) {
-          const candidateTranscript = join(
-            CLAUDE_PROJECTS_DIR,
-            encodedDir,
-            "sessions",
-            `${uuid}.jsonl`
-          );
-          if (existsSync(candidateTranscript)) {
+          if (existsSync(join(CLAUDE_PROJECTS_DIR, encodedDir, "sessions", `${cachedUuid}.jsonl`))) {
             foundEncodedDir = encodedDir;
-            foundTranscriptPath = candidateTranscript;
             break;
           }
         }
       }
 
-      const encodedDir = foundEncodedDir ?? "";
+      if (foundEncodedDir) {
+        const dirSessions = sessionsByEncodedDir.get(foundEncodedDir) ?? [];
+
+        // Find the freshest RESUMABLE session in this dir that doesn't yet have a name
+        const freshestResumable = dirSessions
+          .filter((s) => s.resumable && !s.friendlyName)
+          .sort((a, b) => b.mtime - a.mtime)[0];
+
+        if (freshestResumable) {
+          // Attach the clc name to this fresher session
+          freshestResumable.friendlyName = clcInfo.name;
+          freshestResumable.clcDirectory =
+            freshestResumable.clcDirectory ?? clcInfo.directory;
+          freshestResumable.sessionStatus = "resumable";
+          attachedClcUuids.add(freshestResumable.uuid);
+
+          // Add to results if not already there (it might have been filtered out as orphan)
+          if (!seenUuids.has(freshestResumable.uuid) || !results.includes(freshestResumable)) {
+            // It was added to sessionsByEncodedDir but might have been filtered from results
+            if (!results.includes(freshestResumable)) {
+              results.push(freshestResumable);
+            }
+          }
+          continue; // Done with this clc entry
+        }
+
+        // No unnamed resumable session found. The project might have resumable sessions
+        // that already have a name (different name). Or only stubs/orphans.
+        // Fall through to transcript-only handling below.
+      }
+
+      // ---- Pass 3: truly no top-level jsonl → transcript-only ----
+      if (!foundEncodedDir) {
+        // We couldn't find the project dir at all
+        const encodedDir = "";
+        const decodedPath = clcInfo.directory ?? cachedUuid;
+        const registryRootPath = undefined;
+
+        const transcript: TranscriptInfo = { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime: 0 };
+        const mtime = transcript.mtime;
+
+        seenUuids.add(cachedUuid);
+        results.push({
+          uuid: cachedUuid,
+          shortId: cachedUuid.slice(0, 8),
+          encodedDir,
+          decodedPath,
+          topLevelPath: "",
+          topLevelSystemLines: 0,
+          topLevelSize: 0,
+          resumable: false,
+          sessionStatus: "transcript-only",
+          sessionJsonlPath: undefined,
+          userLines: 0,
+          lastUserPrompt: "",
+          msgCount: 0,
+          mtime,
+          friendlyName: clcInfo.name,
+          clcDirectory: clcInfo.directory,
+          registryRootPath,
+        });
+        continue;
+      }
+
+      // Project dir was found but no unnamed resumable session.
+      // Check sessions/ for the cached uuid transcript.
+      const foundTranscriptPath = existsSync(
+        join(CLAUDE_PROJECTS_DIR, foundEncodedDir, "sessions", `${cachedUuid}.jsonl`)
+      )
+        ? join(CLAUDE_PROJECTS_DIR, foundEncodedDir, "sessions", `${cachedUuid}.jsonl`)
+        : undefined;
+
       const decodedPath =
         clcInfo.directory ??
-        (foundEncodedDir
-          ? (smartDecodeDir(foundEncodedDir) ?? foundEncodedDir.replace(/-/g, "/"))
-          : uuid);
-      const registryRootPath = foundEncodedDir
-        ? rootPathMap.get(foundEncodedDir)
-        : undefined;
-      const topLevelPath = foundEncodedDir
-        ? join(CLAUDE_PROJECTS_DIR, foundEncodedDir, `${uuid}.jsonl`)
-        : "";
+        (smartDecodeDir(foundEncodedDir) ?? foundEncodedDir.replace(/-/g, "/"));
+      const registryRootPath = rootPathMap.get(foundEncodedDir);
+      const topLevelPath = join(
+        CLAUDE_PROJECTS_DIR,
+        foundEncodedDir,
+        `${cachedUuid}.jsonl`
+      );
 
       const transcript: TranscriptInfo = foundTranscriptPath
         ? parseTranscript(foundTranscriptPath)
         : { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime: 0 };
 
-      const mtime = transcript.mtime;
-
-      seenUuids.add(uuid);
+      seenUuids.add(cachedUuid);
       results.push({
-        uuid,
-        shortId: uuid.slice(0, 8),
-        encodedDir,
+        uuid: cachedUuid,
+        shortId: cachedUuid.slice(0, 8),
+        encodedDir: foundEncodedDir,
         decodedPath,
         topLevelPath,
         topLevelSystemLines: 0,
@@ -519,7 +598,7 @@ export function scanSessions(
         lastUserPrompt: transcript.lastUserPrompt,
         msgCount: transcript.msgCount,
         aiTitle: transcript.aiTitle,
-        mtime,
+        mtime: transcript.mtime,
         friendlyName: clcInfo.name,
         clcDirectory: clcInfo.directory,
         registryRootPath,
@@ -532,7 +611,7 @@ export function scanSessions(
 }
 
 // ---------------------------------------------------------------------------
-// Path encoding helpers for pass 2
+// Path encoding helpers
 // ---------------------------------------------------------------------------
 
 /** Claude Code's project-dir encoding: replace /  .  -  (space) with - */
@@ -639,6 +718,6 @@ export function resolveSessionByNameOrId(
   }
 
   throw new Error(
-    `No resumable session found matching "${query}".\n\nRun: pai session recent          to list resumable sessions.\nRun: pai session recent --all    to include transcript-only sessions.`
+    `No session found matching "${query}".\n\nRun: pai sessions          to list sessions.\nRun: pai sessions --all    to include transcript-only sessions.`
   );
 }

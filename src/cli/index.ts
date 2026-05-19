@@ -12,7 +12,7 @@
  *   pai version
  *
  * Daily verb shortcuts (top-level):
- *   pai pause / pai resume / pai cd
+ *   pai pause / pai end / pai resume / pai cd
  *   pai sessions / pai projects / pai notes
  */
 
@@ -42,8 +42,10 @@ import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
 import { err } from "./utils.js";
 import { cmdPause } from "./commands/session/pause.js";
+import { cmdEnd } from "./commands/session/end.js";
 import { cmdGoto } from "./commands/session/goto.js";
 import { cmdRecent } from "./commands/session/recent.js";
+import { cmdPauseAll } from "./commands/session/pause-all.js";
 import { cmdList as cmdNotesList } from "./commands/session/commands.js";
 import { resolveIdentifier } from "./commands/project/helpers.js";
 
@@ -96,6 +98,7 @@ program
     `
 Daily verbs (short forms):
   pai pause               Save state + display safe-exit reminder
+  pai end                 Finalize session: pause + mark note Completed
   pai resume <name>       Go to a session (resume or start fresh)
   pai cd <name>           cd to a project directory
 
@@ -105,7 +108,7 @@ Listings:
   pai notes               Markdown session notes
 
 Subcommands (power users):
-  pai sessions ...        Session management (list, goto, pause, ...)
+  pai sessions ...        Session management (list, goto, pause, end, ...)
   pai projects ...        Project management (cd, list, ...)
   pai registry ...        Registry maintenance (scan, ...)
   pai memory ...          Memory engine (index, search, ...)
@@ -285,32 +288,60 @@ program
 // DAILY VERBS — top-level short forms
 // ---------------------------------------------------------------------------
 
-// pai pause [--dry-run]
+// pai pause [all] [--dry-run] [--exit] [--wait <ms>]
+// When called as `pai pause all`, pauses every live session via AIBroker.
+// When called as `pai pause`, saves state for the current session.
 program
-  .command("pause")
+  .command("pause [target]")
   .description(
     "Save state and display safe-exit instructions for the current session.\n" +
       "Writes a ## Continue checkpoint to the project's TODO.md.\n" +
+      "Use `pai pause all` to pause every live session via AIBroker.\n" +
       "Long form: pai sessions pause"
   )
-  .option("--dry-run", "Preview the ## Continue block without writing it")
-  .action((opts: { dryRun?: boolean }) => {
-    cmdPause(getDb(), opts);
+  .option("--dry-run", "Preview changes without writing them")
+  .option("--exit", "(pause all only) Also send /exit to each session after pausing")
+  .option("--wait <ms>", "(pause all only) Milliseconds to wait before /exit (default: 5000)", "5000")
+  .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string }) => {
+    if (target === "all") {
+      await cmdPauseAll({
+        exit: opts.exit,
+        dryRun: opts.dryRun,
+        wait: opts.wait !== undefined ? parseInt(opts.wait, 10) : undefined,
+      });
+    } else {
+      if (target !== undefined) {
+        console.error(`Unknown target: ${target}. Did you mean 'pai pause all'?`);
+        process.exitCode = 1;
+        return;
+      }
+      cmdPause(getDb(), { dryRun: opts.dryRun });
+    }
   });
 
-// pai resume <name> [--skip-name] [--skip-go] [--dry-run]
+// pai end [--dry-run]
+program
+  .command("end")
+  .description(
+    "Finalize a session: save state, mark note Completed, display safe-exit instructions.\n" +
+      "Long form: pai sessions end"
+  )
+  .option("--dry-run", "Preview all changes without writing them")
+  .action((opts: { dryRun?: boolean }) => {
+    cmdEnd(getDb(), opts);
+  });
+
+// pai resume <name> [--dry-run]
 program
   .command("resume <name>")
   .description(
     "Go to a session by name: resume if resumable, start fresh otherwise.\n" +
       "Long form: pai sessions goto <name>"
   )
-  .option("--skip-name", "Do not prepend /Name to restore the session name")
-  .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume")
   .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
   .action(
-    (name: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
-      cmdGoto(getDb(), name, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
+    (name: string, opts: { dryRun?: boolean }) => {
+      cmdGoto(getDb(), name, { dryRun: opts.dryRun });
     }
   );
 
