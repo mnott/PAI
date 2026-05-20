@@ -6,6 +6,7 @@
  */
 
 import { readdirSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { sha256File } from "../../utils/hash.js";
 import { join, normalize } from "node:path";
 import { homedir } from "node:os";

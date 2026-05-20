@@ -48,20 +48,24 @@ function fmtStatus(status: SessionStatus): string {
 // Live-sessions rendering (AIBroker integration)
 // ---------------------------------------------------------------------------
 
-function renderLiveSessions(liveSessions: AiBrokerSession[]): void {
-  if (liveSessions.length === 0) return;
+function renderLiveSessions(allLiveSessions: AiBrokerSession[]): void {
+  // Filter to Claude sessions only (bare shells have no paiName)
+  const claudeSessions = allLiveSessions.filter(
+    (s) => s.paiName !== null && s.paiName !== undefined && s.paiName !== ""
+  );
+  const skippedCount = allLiveSessions.length - claudeSessions.length;
+
+  if (claudeSessions.length === 0) return;
 
   console.log("\n" + header("Live Sessions") + "\n");
 
   const liveHeaders = ["#", "iTerm2 id", "name", "at prompt", "paiName"];
-  const liveRows = liveSessions.map((s, idx) => {
+  const liveRows = claudeSessions.map((s, idx) => {
     const shortId = s.sessionId.slice(0, 8);
     const name = s.name.length > 32 ? s.name.slice(0, 31) + "…" : s.name;
-    const paiName = s.paiName
-      ? s.paiName.length > 20
-        ? s.paiName.slice(0, 19) + "…"
-        : s.paiName
-      : dim("—");
+    const paiName = s.paiName!.length > 20
+      ? s.paiName!.slice(0, 19) + "…"
+      : s.paiName!;
     const atPrompt = s.atPrompt ? chalk.green("yes") : chalk.yellow("busy");
 
     return [
@@ -74,6 +78,12 @@ function renderLiveSessions(liveSessions: AiBrokerSession[]): void {
   });
 
   console.log(renderTable(liveHeaders, liveRows));
+
+  if (skippedCount > 0) {
+    console.log(
+      dim(`  (${skippedCount} non-Claude tab${skippedCount === 1 ? "" : "s"} hidden — use pai pause all to see full list)`)
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,13 +134,16 @@ export async function cmdRecent(
   }
 
   // ── Live section ──────────────────────────────────────────────────────────
+  const hasClaudeLive = liveSessions.some(
+    (s) => s.paiName !== null && s.paiName !== undefined && s.paiName !== ""
+  );
   if (liveSessions.length > 0) {
     renderLiveSessions(liveSessions);
   }
 
   // ── Paused / disk-scan section ────────────────────────────────────────────
   if (sessions.length === 0) {
-    if (liveSessions.length === 0) {
+    if (!hasClaudeLive) {
       // Nothing at all
       if (includeAll) {
         console.log(err("No sessions found in ~/.claude/projects/."));
@@ -145,7 +158,7 @@ export async function cmdRecent(
         );
       }
     }
-    // If we had live sessions, nothing more to print.
+    // If we had live Claude sessions, nothing more to print.
     return;
   }
 
@@ -185,7 +198,7 @@ export async function cmdRecent(
       dim("Go to a session:   ") +
       chalk.white("pai resume <name>") +
       "\n" +
-      (liveSessions.length > 0
+      (hasClaudeLive
         ? dim("Pause all live:    ") + chalk.white("pai pause all") + "\n"
         : "") +
       (includeAll

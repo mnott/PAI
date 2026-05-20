@@ -1,6 +1,7 @@
 /** Registry scan command: walk ~/.claude/projects/ and populate the registry. */
 
 import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 import { ok, warn, err, dim, bold } from "../../utils.js";
@@ -9,6 +10,45 @@ import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } f
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import type { Database } from "better-sqlite3";
+
+// ---------------------------------------------------------------------------
+// clc session.json fallback map
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a reverse map from encoded-dir → real path using the clc session
+ * registry (~/.claude/session.json).
+ *
+ * The clc registry stores { sessions: [{ directory, ... }, ...] }. For each
+ * entry with a resolvable directory, we encode the realpath and add it to
+ * the map. This lets the scanner recover project paths that are not in
+ * Claude's session-registry.json but were registered by clc.
+ */
+function buildClcDirMap(): Map<string, string> {
+  const map = new Map<string, string>();
+  const sessionFile = join(homedir(), ".claude", "session.json");
+  if (!existsSync(sessionFile)) return map;
+
+  try {
+    const raw = readFileSync(sessionFile, "utf8");
+    const parsed = JSON.parse(raw) as { sessions?: Array<{ directory?: string }> };
+    for (const entry of parsed.sessions ?? []) {
+      const dir = entry.directory;
+      if (!dir) continue;
+      try {
+        const real = realpathSync(dir);
+        if (!existsSync(real)) continue;
+        const encoded = encodeDir(real);
+        map.set(encoded, real);
+      } catch {
+        // Unresolvable path — skip
+      }
+    }
+  } catch {
+    // Unparseable — return empty map
+  }
+  return map;
+}
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -110,9 +150,20 @@ export function performScan(db: Database): ScanResult {
   });
 
   const lookupMap = buildEncodedDirMap();
+  const clcMap = buildClcDirMap();
 
   for (const encodedDir of entries) {
-    const rootPath = decodeEncodedDir(encodedDir, lookupMap);
+    let rootPath = decodeEncodedDir(encodedDir, lookupMap);
+
+    // If the decoded path doesn't exist, try the clc session.json fallback map.
+    // The clc map is keyed by encodeDir(realpathSync(directory)), so paths that
+    // were registered by clc but not in session-registry.json can be recovered.
+    if (!existsSync(rootPath) && clcMap.has(encodedDir)) {
+      const clcPath = clcMap.get(encodedDir)!;
+      if (existsSync(clcPath)) {
+        rootPath = clcPath;
+      }
+    }
 
     if (!existsSync(rootPath)) {
       result.skipped.push(`${encodedDir} (decoded: ${rootPath} — path not found on disk)`);

@@ -1,7 +1,19 @@
+## AIBroker Followups
+
+- [ ] **`aibroker_sessions` MCP returns empty** — AIBroker's `sessions` IPC handler calls
+  `manager.listSessions()` which uses an internal session store (not iTerm2). The
+  `session_content` handler correctly reads iTerm2 directly via `readAllSessionContent()`.
+  Fix: update AIBroker's `sessions` handler to call `readAllSessionContent()` instead of
+  `manager.listSessions()`, or add a new `list_sessions` IPC method that delegates to
+  `session_content`. Track in AIBroker repo: `/Users/i052341/dev/ai/AIBroker/`.
+  **PAI already uses `session_content` everywhere so this is low-priority.**
+
+---
+
 ## Continue
 
-> **Last session:** 0011 - 2026-05-19 - Pai Resume Diagnostics, Aibroker Registry Probing
-> **Paused at:** 2026-05-19T15:20:24.340Z
+> **Last session:** 0013 - 2026-05-20 - Session Restart Guidance And Continuation
+> **Paused at:** 2026-05-20T08:15:51.867Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -275,4 +287,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-05-19T15:20:24.340Z*
+*Last updated: 2026-05-20T08:15:51.867Z*
