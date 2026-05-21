@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * PAI Knowledge OS — CLI entry point
+ * PAI Knowledge OS — CLI entry point (v0.10.0 topic-first redesign)
  *
- * Command tree:
- *   pai sessions list|goto|pause|info|rename|...  (canonical plural namespace)
- *   pai projects list|cd|add|info|...             (canonical plural namespace)
- *   pai registry scan|migrate|stats|rebuild
- *   pai memory   index|search|status
- *   pai search   <query>   (placeholder — Phase 3)
- *   pai update
- *   pai version
+ * Top-level surface:
+ *   pai                    → recent sessions picker
+ *   pai <topic>            → history search + candidate picker + launch
+ *   pai <uuid-prefix>      → direct session resume via filesystem scan
+ *   pai cd <name>          → cd to project directory (no Claude launch)
+ *   pai pause [all]        → save state (or mass-pause every live session)
+ *   pai end                → finalize session
  *
- * Daily verb shortcuts (top-level):
- *   pai pause / pai end / pai resume / pai cd
- *   pai sessions / pai projects / pai notes
+ * Power-user namespaces (still accessible, hidden from main help):
+ *   pai sessions ...       → full session management
+ *   pai projects ...       → project management
+ *   pai registry ...       → registry maintenance
+ *   pai memory ...         → memory engine
  */
 
 import { Command } from "commander";
@@ -22,7 +23,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openRegistry } from "../registry/db.js";
 import type { Database } from "better-sqlite3";
-import { registerProjectsCommands, cmdGo } from "./commands/project/projects-index.js";
+import { registerProjectsCommands } from "./commands/project/projects-index.js";
+import { findMovedPath } from "./commands/project/commands.js";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { registerSessionsCommands } from "./commands/session/sessions-index.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup.js";
 import { registerRegistryCommands } from "./commands/registry.js";
@@ -40,14 +44,15 @@ import { registerNotifyCommands } from "./commands/notify.js";
 import { registerTopicCommands } from "./commands/topic.js";
 import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
-import { err } from "./utils.js";
+import { err, warn, ok, dim, shortenPath, encodeDir, now } from "./utils.js";
 import { cmdPause } from "./commands/session/pause.js";
 import { cmdEnd } from "./commands/session/end.js";
 import { cmdGoto } from "./commands/session/goto.js";
-import { cmdRecent } from "./commands/session/recent.js";
 import { cmdPauseAll } from "./commands/session/pause-all.js";
 import { cmdList as cmdNotesList } from "./commands/session/commands.js";
 import { resolveIdentifier } from "./commands/project/helpers.js";
+import { cmdFind } from "./commands/find.js";
+import { cmdMain } from "./commands/main-resolver.js";
 
 // ---------------------------------------------------------------------------
 // Version resolution
@@ -96,20 +101,23 @@ program
   .addHelpText(
     "after",
     `
-Daily verbs (short forms):
-  pai pause               Save state + display safe-exit reminder
-  pai end                 Finalize session: pause + mark note Completed
-  pai resume <name>       Go to a session (resume or start fresh)
-  pai cd <name>           cd to a project directory
+Usage:
+  pai                     Show recent sessions (interactive picker)
+  pai <topic>             Find sessions by topic and launch the chosen one
+  pai <uuid-prefix>       Resume a specific session by UUID
+  pai cd <name>           cd to a project directory (no Claude launch)
+  pai pause [all]         Save state (or mass-pause every live session)
+  pai end                 Finalize session: save state + mark note Completed
 
-Listings:
-  pai sessions            Resumable sessions catalog
-  pai projects            Known project directories
-  pai notes               Markdown session notes
+Examples:
+  pai mdf                 Find all sessions where you worked on MDF
+  pai solar panels        Free-text search across your prompt history
+  pai 81c5c3dc            Resume session by UUID prefix
+  pai                     See the 20 most recent sessions
 
-Subcommands (power users):
-  pai sessions ...        Session management (list, goto, pause, end, ...)
-  pai projects ...        Project management (cd, list, ...)
+Power-user namespaces (run "pai sessions --help" etc. for details):
+  pai sessions ...        Full session management (list, goto, info, ...)
+  pai projects ...        Project management (cd, rebind, list, ...)
   pai registry ...        Registry maintenance (scan, ...)
   pai memory ...          Memory engine (index, search, ...)
 
@@ -269,22 +277,6 @@ const observationCmd = program
 registerObservationCommands(observationCmd);
 
 // ---------------------------------------------------------------------------
-// pai go <query>  — top-level shortcut for pai project go
-// ---------------------------------------------------------------------------
-
-program
-  .command("go <query>")
-  .description(
-    "Jump to a project directory by slug or partial name.\n" +
-    "Prints the root path to stdout — use with: cd $(pai go <query>)\n" +
-    "Example shell function in ~/.zshrc:\n" +
-    "  pcd() { cd \"$(pai go \"$@\")\" }"
-  )
-  .action((query: string) => {
-    cmdGo(getDb(), query);
-  });
-
-// ---------------------------------------------------------------------------
 // DAILY VERBS — top-level short forms
 // ---------------------------------------------------------------------------
 
@@ -331,12 +323,13 @@ program
     cmdEnd(getDb(), opts);
   });
 
-// pai resume <name> [--dry-run]
+// pai resume <name> [--dry-run]  — compat alias for pai sessions goto
+// Power users can also use: pai sessions goto <name>
 program
   .command("resume <name>")
   .description(
-    "Go to a session by name: resume if resumable, start fresh otherwise.\n" +
-      "Long form: pai sessions goto <name>"
+    "Go to a session by name or UUID: resume if resumable, start fresh otherwise.\n" +
+      "Also: pai <name>  (shorter)  |  pai sessions goto <name>  (long form)"
   )
   .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
   .action(
@@ -352,15 +345,69 @@ program
     "cd to a project directory (shell wrapper handles the actual cd).\n" +
       "Long form: pai projects cd <identifier>\n" +
       "The shell function installed by pai shell-init intercepts this command\n" +
-      "and calls builtin cd with the resolved path."
+      "and calls builtin cd with the resolved path.\n" +
+      "Auto-detects moved projects when the registered path no longer exists."
   )
   .action((identifier: string) => {
-    const project = resolveIdentifier(getDb(), identifier);
+    const db = getDb();
+    const project = resolveIdentifier(db, identifier);
     if (!project) {
       console.error(`Project not found: ${identifier}`);
       process.exit(1);
+      return;
     }
-    process.stdout.write(project.root_path + "\n");
+
+    if (existsSync(project.root_path)) {
+      process.stdout.write(project.root_path + "\n");
+      return;
+    }
+
+    // Path missing — search for moved location
+    process.stderr.write(
+      warn(`Path not found: ${project.root_path}\n`) +
+      dim("  Searching for moved location...\n")
+    );
+
+    const result = findMovedPath(project.root_path);
+
+    if (result.found) {
+      const newPath = result.found;
+      const newEncoded = encodeDir(newPath);
+      const ts = now();
+      db.prepare(
+        "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+      ).run(newPath, newEncoded, ts, project.id);
+      process.stderr.write(
+        ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
+        dim(`  → ${newPath}\n`) +
+        ok("Registry updated.\n")
+      );
+      process.stdout.write(newPath + "\n");
+      return;
+    }
+
+    if (result.ambiguous) {
+      process.stderr.write(
+        warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
+      );
+      for (const candidate of result.ambiguous!) {
+        process.stderr.write(dim(`  ${candidate}\n`));
+      }
+      process.stderr.write(
+        dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    process.stderr.write(
+      err(
+        `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
+        `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
+      ) +
+      dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
+    );
+    process.exitCode = 1;
   });
 
 // Note: `pai sessions` and `pai projects` are now defined as the canonical
@@ -368,7 +415,7 @@ program
 // Bare invocation (`pai sessions`, `pai projects`) triggers the default list.
 
 // ---------------------------------------------------------------------------
-// pai notes  — markdown session notes
+// pai notes  — markdown session notes (power user, still accessible)
 // ---------------------------------------------------------------------------
 
 const notesCmd = program
@@ -401,6 +448,22 @@ notesCmd
       cmdNotesList(getDb(), projectSlug, opts);
     }
   );
+
+// ---------------------------------------------------------------------------
+// pai find <query>  — explicit history search (power user alias)
+// ---------------------------------------------------------------------------
+
+program
+  .command("find <query>")
+  .description(
+    "Search prompt history for matching sessions.\n" +
+      "Same as: pai <query>  (the default command does history search too)"
+  )
+  .option("-n, --n <count>", "Maximum number of sessions to show", "20")
+  .option("--json", "Output as JSON array")
+  .action(async (query: string, opts: { n?: string; json?: boolean }) => {
+    await cmdFind(query, opts);
+  });
 
 // ---------------------------------------------------------------------------
 // pai shell-init  — emit shell function for eval "$(pai shell-init)"
@@ -447,21 +510,26 @@ pai() {
   });
 
 // ---------------------------------------------------------------------------
-// pai search <query>  (Phase 3 placeholder)
+// pai [query] [pick]  — DEFAULT COMMAND: topic-first session resolver (v0.10.0)
+//
+// Must be registered LAST so named subcommands take priority.
+// Commander matches named commands first; if nothing matches, this catches it.
 // ---------------------------------------------------------------------------
 
 program
-  .command("search <query>")
-  .description("Full-text search across sessions and notes (Phase 3)")
-  .option("--projects <p1,p2>", "Restrict search to these project slugs (comma-separated)")
-  .option("--limit <n>", "Maximum results to return", "10")
-  .action((query: string, opts: { projects?: string; limit?: string }) => {
-    console.log(
-      `\n  Search is coming in Phase 3.\n\n` +
-        `  Query:    ${query}\n` +
-        `  Projects: ${opts.projects ?? "(all)"}\n` +
-        `  Limit:    ${opts.limit ?? 10}\n`
-    );
+  .command("query [query] [pick]", { isDefault: true, hidden: true })
+  .description(
+    "Find and launch a session by topic, name, or UUID.\n" +
+      "No arg → recent sessions picker\n" +
+      "Topic  → history search → candidate list → pick #\n" +
+      "UUID   → direct resume via filesystem scan"
+  )
+  .option("-y, --auto", "Auto-pick #1 without prompting")
+  .option("--dry-run", "Print what would happen without launching")
+  .option("-n, --n <count>", "Max candidates for history search", "20")
+  .action(async (query: string | undefined, pick: string | undefined, opts: { auto?: boolean; dryRun?: boolean; n?: string }) => {
+    const pickN = pick !== undefined ? parseInt(pick, 10) : undefined;
+    await cmdMain(getDb(), query, pickN, opts);
   });
 
 // ---------------------------------------------------------------------------
@@ -494,8 +562,3 @@ program.exitOverride((error) => {
 // ---------------------------------------------------------------------------
 
 program.parse(process.argv);
-
-// If no sub-command given, print help
-if (process.argv.length <= 2) {
-  program.help();
-}

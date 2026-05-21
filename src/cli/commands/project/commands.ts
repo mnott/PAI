@@ -1,7 +1,7 @@
 /**
  * Core project CRUD commands: add, list, info, archive, unarchive, move, tag,
- * alias, edit, detect, consolidate, go — plus private helpers levenshtein,
- * containsIgnoreCase, and findProjectNotesDirs.
+ * alias, edit, detect, consolidate, go, rebind — plus private helpers levenshtein,
+ * containsIgnoreCase, findProjectNotesDirs, and findMovedPath.
  */
 
 import type { Database } from "better-sqlite3";
@@ -12,7 +12,7 @@ import {
   mkdirSync,
   renameSync,
 } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import {
@@ -48,6 +48,7 @@ import {
   getLastSessionDate,
   upsertTag,
 } from "./helpers.js";
+import { loadScanConfig, resolveHome } from "../registry/scan.js";
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -121,6 +122,141 @@ function findProjectNotesDirs(project: ProjectRow): {
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Moved-project detection
+// ---------------------------------------------------------------------------
+
+// Directories to skip during filesystem walk
+const SKIP_DIRS = new Set([
+  ".git", "node_modules", ".next", ".nuxt", "dist", "build", "coverage",
+  ".cache", "__pycache__", "vendor", ".svn", ".hg", "venv", ".venv",
+  "target",  // Rust/Java build dir
+  "Notes",   // PAI session notes — not project roots
+]);
+
+/**
+ * Walk `dir` up to `maxDepth` levels deep, collecting all subdirectory paths
+ * whose basename matches `targetBasename` (case-insensitive on macOS/case-sensitive
+ * on Linux, whichever is appropriate — we use exact case matching to keep it
+ * correct and fast).
+ *
+ * Skips hidden directories and known build/tool dirs.
+ * Stops walking a branch if the deadline is exceeded (returns partial results).
+ */
+function walkForBasename(
+  dir: string,
+  targetBasename: string,
+  maxDepth: number,
+  deadline: number,
+  results: string[]
+): void {
+  if (Date.now() > deadline) return;
+  if (maxDepth <= 0) return;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (Date.now() > deadline) return;
+    if (entry.startsWith(".")) continue;
+    if (SKIP_DIRS.has(entry)) continue;
+
+    const full = join(dir, entry);
+    let isDir = false;
+    try {
+      isDir = statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) continue;
+
+    // Case-insensitive comparison for the target basename (handles macOS APFS)
+    if (entry.toLowerCase() === targetBasename.toLowerCase()) {
+      results.push(full);
+      // Don't recurse into the match itself — we want the directory, not children
+      continue;
+    }
+
+    walkForBasename(full, targetBasename, maxDepth - 1, deadline, results);
+  }
+}
+
+/**
+ * Try to find where a project has moved.
+ *
+ * Searches scan_dirs from config (plus a set of common fallback dirs) for a
+ * directory whose basename matches the basename of the registered root_path.
+ *
+ * Returns:
+ *   { found: string }   — exactly one match found
+ *   { ambiguous: string[] }  — multiple matches found
+ *   { found: undefined }     — no match found (or timed out)
+ */
+export function findMovedPath(registeredPath: string): { found?: string; ambiguous?: string[] } {
+  const targetBasename = basename(registeredPath);
+  const config = loadScanConfig();
+  const deadline = Date.now() + 5_000; // 5-second max
+
+  // Build the list of top-level directories to search
+  const home = homedir();
+  const configDirs = (config.scan_dirs ?? []).map((d) => resolveHome(d));
+
+  // Walk UP the registered path to find the deepest existing ancestor.
+  // This is the best search root when a project has moved within the same tree.
+  // e.g. ~/Cloud/Ablage/2025/Project → ~/Cloud/Ablage/2026/Project
+  //      Deepest existing ancestor: ~/Cloud/Ablage (if 2025 is gone but Ablage exists)
+  function deepestExistingAncestor(p: string): string | null {
+    let current = p;
+    while (true) {
+      const parent = join(current, "..");
+      if (parent === current) return null; // filesystem root
+      if (parent === home) return null;    // don't use home itself as search root
+      if (existsSync(parent)) return parent;
+      current = parent;
+    }
+  }
+
+  const ancestorRoot = deepestExistingAncestor(registeredPath);
+
+  const fallbackDirs = [
+    join(home, "dev"),
+    join(home, "Desktop"),
+    join(home, "Projects"),
+    join(home, "Documents"),
+    // Common cloud-storage root folders (Synology Drive, iCloud, etc.)
+    join(home, "Cloud"),
+    join(home, "Daten", "Cloud"),
+    join(home, "Daten"),
+    join(home, "Library", "Mobile Documents", "com~apple~CloudDocs"),  // iCloud Drive
+    // The deepest ancestor of the registered path that still exists on disk
+    ...(ancestorRoot ? [ancestorRoot] : []),
+  ];
+
+  // Deduplicate and filter to existing directories
+  const searchRoots = [...new Set([...configDirs, ...fallbackDirs])]
+    .map((d) => {
+      try { return resolve(d); } catch { return null; }
+    })
+    .filter((d): d is string => d !== null && existsSync(d));
+
+  const results: string[] = [];
+  for (const root of searchRoots) {
+    if (Date.now() > deadline) break;
+    walkForBasename(root, targetBasename, 6, deadline, results);
+  }
+
+  // Deduplicate results (different roots might overlap)
+  const unique = [...new Set(results)];
+
+  if (unique.length === 0) return {};
+  if (unique.length === 1) return { found: unique[0] };
+  return { ambiguous: unique };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +340,7 @@ export function cmdAdd(
 
 export function cmdList(
   db: Database,
-  opts: { status?: string; tag?: string; type?: string }
+  opts: { status?: string; tag?: string; type?: string; all?: boolean }
 ): void {
   let query = `
     SELECT p.*,
@@ -215,9 +351,12 @@ export function cmdList(
   const params: unknown[] = [];
   const where: string[] = [];
 
+  // Default: active only, unless --all or explicit --status given
   if (opts.status) {
     where.push("p.status = ?");
     params.push(opts.status);
+  } else if (!opts.all) {
+    where.push("p.status = 'active'");
   }
   if (opts.type) {
     where.push("p.type = ?");
@@ -261,7 +400,15 @@ export function cmdList(
     )
   );
   console.log();
-  console.log(dim(`  ${rows.length} project(s)`));
+
+  // When showing active-only, inform the user about hidden archived projects
+  const totalRow = db.prepare("SELECT COUNT(*) AS cnt FROM projects").get() as { cnt: number };
+  const hiddenCount = totalRow.cnt - rows.length;
+  if (!opts.all && !opts.status && hiddenCount > 0) {
+    console.log(dim(`  ${rows.length} active project(s)  (${hiddenCount} archived — use --all to show)`));
+  } else {
+    console.log(dim(`  ${rows.length} project(s)`));
+  }
 }
 
 export function cmdInfo(db: Database, identifier: string): void {
@@ -594,6 +741,59 @@ export function cmdConsolidate(
   console.log(ok(`  Consolidated ${movedCount} file(s) into ${canonicalNotes}`));
 }
 
+/**
+ * Attempt moved-path recovery for a project whose registered root_path is
+ * missing. Updates the DB if exactly one candidate is found.
+ *
+ * Returns the new path on success, or undefined if ambiguous/not found.
+ * Prints all messages to stderr (safe for shell-wrapper stdout capture).
+ */
+function tryRecoverMovedProject(db: Database, project: ProjectRow): string | undefined {
+  process.stderr.write(
+    warn(`Path not found: ${project.root_path}\n`) +
+    dim("  Searching for moved location...\n")
+  );
+
+  const result = findMovedPath(project.root_path);
+
+  if (result.found) {
+    const newPath = result.found;
+    const newEncoded = encodeDir(newPath);
+    const ts = now();
+    db.prepare(
+      "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+    ).run(newPath, newEncoded, ts, project.id);
+    process.stderr.write(
+      ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
+      dim(`  → ${newPath}\n`) +
+      ok("Registry updated.\n")
+    );
+    return newPath;
+  }
+
+  if (result.ambiguous) {
+    process.stderr.write(
+      warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
+    );
+    for (const candidate of result.ambiguous) {
+      process.stderr.write(dim(`  ${candidate}\n`));
+    }
+    process.stderr.write(
+      dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
+    );
+    return undefined;
+  }
+
+  process.stderr.write(
+    err(
+      `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
+      `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
+    ) +
+    dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
+  );
+  return undefined;
+}
+
 export function cmdGo(db: Database, query: string): void {
   const all = db
     .prepare(
@@ -613,6 +813,12 @@ export function cmdGo(db: Database, query: string): void {
   // 1. Exact slug or alias match
   const exact = getProject(db, query);
   if (exact) {
+    if (!existsSync(exact.root_path)) {
+      const recovered = tryRecoverMovedProject(db, exact);
+      if (!recovered) { process.exitCode = 1; return; }
+      process.stdout.write(recovered + "\n");
+      return;
+    }
     process.stdout.write(exact.root_path + "\n");
     return;
   }
@@ -626,7 +832,14 @@ export function cmdGo(db: Database, query: string): void {
   );
 
   if (partial.length === 1) {
-    process.stdout.write(partial[0].root_path + "\n");
+    const p = partial[0];
+    if (!existsSync(p.root_path)) {
+      const recovered = tryRecoverMovedProject(db, p);
+      if (!recovered) { process.exitCode = 1; return; }
+      process.stdout.write(recovered + "\n");
+      return;
+    }
+    process.stdout.write(p.root_path + "\n");
     return;
   }
 
@@ -675,4 +888,54 @@ export function cmdGo(db: Database, query: string): void {
     console.error(dim("  Run: pai project list  (to see all projects)"));
   }
   process.exit(1);
+}
+
+export function cmdRebind(
+  db: Database,
+  slug: string,
+  newPath: string
+): void {
+  const project = requireProject(db, slug);
+  const resolved = resolve(newPath.startsWith("~/") ? join(homedir(), newPath.slice(2)) : newPath);
+
+  if (!existsSync(resolved)) {
+    console.error(err(`Path does not exist: ${resolved}`));
+    process.exit(1);
+  }
+
+  let isDir = false;
+  try {
+    isDir = statSync(resolved).isDirectory();
+  } catch {
+    // stat failed
+  }
+  if (!isDir) {
+    console.error(err(`Path is not a directory: ${resolved}`));
+    process.exit(1);
+  }
+
+  const newEncoded = encodeDir(resolved);
+
+  // Check if another project already owns this path
+  const conflict = db
+    .prepare("SELECT slug FROM projects WHERE encoded_dir = ? AND id != ?")
+    .get(newEncoded, project.id) as { slug: string } | undefined;
+  if (conflict) {
+    console.error(
+      err(`Path is already registered to project: ${bold(conflict.slug)}\n`) +
+      dim(`  ${resolved}\n`) +
+      dim(`  Archive or move that project first, or choose a different path.`)
+    );
+    process.exit(1);
+  }
+
+  const ts = now();
+  db.prepare(
+    "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+  ).run(resolved, newEncoded, ts, project.id);
+
+  console.log(ok(`Rebound: ${bold(slug)}`));
+  console.log(dim(`  Old path: ${project.root_path}`));
+  console.log(dim(`  New path: ${resolved}`));
+  console.log(dim(`  Encoded:  ${newEncoded}`));
 }

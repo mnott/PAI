@@ -1,21 +1,17 @@
-## AIBroker Followups
+## Continue
 
-- [ ] **`aibroker_sessions` MCP returns empty** — AIBroker's `sessions` IPC handler calls
-  `manager.listSessions()` which uses an internal session store (not iTerm2). The
-  `session_content` handler correctly reads iTerm2 directly via `readAllSessionContent()`.
-  Fix: update AIBroker's `sessions` handler to call `readAllSessionContent()` instead of
-  `manager.listSessions()`, or add a new `list_sessions` IPC method that delegates to
-  `session_content`. Track in AIBroker repo: `/Users/i052341/dev/ai/AIBroker/`.
-  **PAI already uses `session_content` everywhere so this is low-priority.**
+> **Last session:** 0019 - 2026-05-21 - Session Discovery Ux, Statusline Width, Auth Tokens
+> **Paused at:** 2026-05-21T15:23:59.628Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
 ---
 
-## Continue
+## AIBroker Followups
 
-> **Last session:** 0013 - 2026-05-20 - Session Restart Guidance And Continuation
-> **Paused at:** 2026-05-20T08:15:51.867Z
->
-> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+- [x] **`aibroker_sessions` MCP returns empty** — Fixed in AIBroker commit 1eb8d7b: replaced
+  `manager.listSessions()` with `snapshotAllSessions()` (AppleScript). Returns 16 sessions.
+  PAI v0.9.17 switched from `session_content` to the faster `sessions` IPC method everywhere.
 
 ---
 
@@ -287,4 +283,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-05-20T08:15:51.867Z*
+*Last updated: 2026-05-21T15:23:59.628Z*

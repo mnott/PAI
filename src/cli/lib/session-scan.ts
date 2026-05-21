@@ -656,6 +656,89 @@ export interface ResolvedSession {
 }
 
 /**
+ * Filesystem-level UUID scan: walk ALL ~/.claude/projects/<encoded-dir>/<uuid>.jsonl
+ * looking for top-level files whose UUID starts with `prefix`.
+ *
+ * Returns a ScannedSession-like object (minimal fields) for each match, or an empty
+ * array if nothing is found. This is used as a fallback when the regular catalog
+ * (limited to named/recent sessions) doesn't contain the requested UUID.
+ *
+ * Complexity: O(number of project directories + files per dir). Typically <200 dirs
+ * with a handful of top-level jsonl each — fast enough for an interactive CLI.
+ */
+function scanFilesystemForUuidPrefix(prefix: string): ScannedSession[] {
+  if (!existsSync(CLAUDE_PROJECTS_DIR)) return [];
+
+  const prefixLower = prefix.toLowerCase();
+  const matches: ScannedSession[] = [];
+
+  let encodedDirs: string[];
+  try {
+    encodedDirs = readdirSync(CLAUDE_PROJECTS_DIR);
+  } catch {
+    return [];
+  }
+
+  for (const encodedDir of encodedDirs) {
+    const projectDir = join(CLAUDE_PROJECTS_DIR, encodedDir);
+    try {
+      if (!statSync(projectDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    let files: string[];
+    try {
+      files = readdirSync(projectDir);
+    } catch {
+      continue;
+    }
+
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const uuid = file.slice(0, -6);
+      if (!UUID_RE.test(uuid)) continue;
+      if (!uuid.toLowerCase().startsWith(prefixLower)) continue;
+
+      const topLevelPath = join(projectDir, file);
+      const topInfo = parseTopLevel(topLevelPath);
+      const resumable = topInfo.systemLines > 0;
+      const decodedPath = smartDecodeDir(encodedDir) ?? encodedDir.replace(/-/g, "/");
+
+      // Check sessions/ transcript for prompt and title
+      const sessionJsonlPath = join(projectDir, "sessions", `${uuid}.jsonl`);
+      const hasTranscript = existsSync(sessionJsonlPath);
+      const transcript: TranscriptInfo = hasTranscript
+        ? parseTranscript(sessionJsonlPath)
+        : { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime: 0 };
+
+      matches.push({
+        uuid,
+        shortId: uuid.slice(0, 8),
+        encodedDir,
+        decodedPath,
+        topLevelPath,
+        topLevelSystemLines: topInfo.systemLines,
+        topLevelSize: topInfo.size,
+        resumable,
+        sessionStatus: resumable ? "resumable" : "stub",
+        sessionJsonlPath: hasTranscript ? sessionJsonlPath : undefined,
+        userLines: transcript.userLines,
+        lastUserPrompt: transcript.lastUserPrompt,
+        msgCount: transcript.msgCount,
+        aiTitle: transcript.aiTitle,
+        mtime: topInfo.mtime || transcript.mtime,
+        friendlyName: transcript.aiTitle ?? basename(decodedPath),
+        clcDirectory: undefined,
+        registryRootPath: undefined,
+      });
+    }
+  }
+
+  return matches.sort((a, b) => b.mtime - a.mtime);
+}
+
+/**
  * Resolve a name-or-id-or-prefix to a single ScannedSession.
  *
  * Comparisons are case-insensitive; stored casing is preserved in output.
@@ -663,7 +746,8 @@ export interface ResolvedSession {
  * Priority:
  *  1. Exact case-insensitive match on friendlyName
  *  2. Partial case-insensitive match (contains)
- *  3. UUID prefix match
+ *  3. UUID prefix match against the in-memory catalog
+ *  4. UUID prefix match against the full filesystem (fallback for any session)
  */
 export function resolveSessionByNameOrId(
   sessions: ScannedSession[],
@@ -699,7 +783,7 @@ export function resolveSessionByNameOrId(
     );
   }
 
-  // 3. UUID prefix
+  // 3. UUID prefix against catalog
   const byUuid = sessions.filter((s) => s.uuid.startsWith(qLower));
   if (byUuid.length === 1) {
     return { session: byUuid[0], friendlyName: byUuid[0].friendlyName };
@@ -717,7 +801,30 @@ export function resolveSessionByNameOrId(
     );
   }
 
+  // 4. Filesystem fallback — scan ALL ~/.claude/projects/*/<uuid>.jsonl files
+  //    This handles any session UUID, even if not in the named/recent catalog.
+  //    Only attempted when the query looks like a UUID prefix (hex + dashes).
+  const UUID_PREFIX_RE = /^[0-9a-f-]{4,36}$/i;
+  if (UUID_PREFIX_RE.test(qLower)) {
+    const fsSessions = scanFilesystemForUuidPrefix(qLower);
+    if (fsSessions.length === 1) {
+      return { session: fsSessions[0], friendlyName: fsSessions[0].friendlyName };
+    }
+    if (fsSessions.length > 1) {
+      const candidates = fsSessions
+        .slice(0, 5)
+        .map(
+          (s, i) =>
+            `  ${i + 1}. ${s.shortId}  ${s.friendlyName ?? s.decodedPath}  (${fmtAge(s.mtime)} ago)`
+        )
+        .join("\n");
+      throw new Error(
+        `UUID prefix "${query}" is ambiguous — ${fsSessions.length} matches:\n${candidates}\n\nProvide more characters.`
+      );
+    }
+  }
+
   throw new Error(
-    `No session found matching "${query}".\n\nRun: pai sessions          to list sessions.\nRun: pai sessions --all    to include transcript-only sessions.`
+    `No session found matching "${query}".\n\nRun: pai sessions          to list sessions.\nRun: pai sessions --all    to include transcript-only sessions.\nRun: pai find <words>      to search prompt history.`
   );
 }

@@ -147,6 +147,67 @@ function extractCompletedMessage(lines: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// AIBroker IPC helper — persistent name re-assertion
+// ---------------------------------------------------------------------------
+
+const AIBROKER_SOCKET = '/tmp/aibroker.sock';
+const AIBROKER_TIMEOUT_MS = 2_000;
+
+/**
+ * Ask AIBroker for the persisted user-chosen name for the current iTerm2 session.
+ * Returns the name string, or null if AIBroker is not running or no name is set.
+ * Uses ITERM_SESSION_ID environment variable as the session identifier.
+ */
+async function getPersistentTabName(): Promise<string | null> {
+  const itermSessionId = process.env.ITERM_SESSION_ID;
+  if (!itermSessionId) return null;
+
+  return new Promise((resolve) => {
+    let done = false;
+    let buffer = '';
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(result: string | null): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      try { client.destroy(); } catch { /* ignore */ }
+      resolve(result);
+    }
+
+    const client = connect(AIBROKER_SOCKET, () => {
+      const msg = JSON.stringify({
+        id: randomUUID(),
+        method: 'get_persistent_name',
+        params: { itermSessionId },
+      }) + '\n';
+      client.write(msg);
+    });
+
+    client.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const nl = buffer.indexOf('\n');
+      if (nl === -1) return;
+      const line = buffer.slice(0, nl);
+      try {
+        const response = JSON.parse(line) as { ok: boolean; result?: { name: string | null } };
+        if (response.ok && response.result?.name) {
+          finish(response.result.name);
+        } else {
+          finish(null);
+        }
+      } catch {
+        finish(null);
+      }
+    });
+
+    client.on('error', () => finish(null));
+    client.on('end', () => { if (!done) finish(null); });
+    timer = setTimeout(() => finish(null), AIBROKER_TIMEOUT_MS);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Daemon IPC relay — fast path
 // ---------------------------------------------------------------------------
 
@@ -773,6 +834,25 @@ async function main() {
   }
   if (message) {
     process.stderr.write(`\x1b]2;${message.slice(0, 50)}\x07`);
+  }
+
+  // Re-assert persistent name — overrides any auto-title Claude Code may have set.
+  // If the user ran /Name "Solar" earlier, that name sticks for the life of the session.
+  {
+    const persistentName = await getPersistentTabName();
+    if (persistentName) {
+      try {
+        const { execSync } = await import('child_process');
+        const escaped = persistentName.replace(/'/g, "'\\''");
+        execSync(`printf '\\033]0;${escaped}\\007' >&2`);
+        execSync(`printf '\\033]2;${escaped}\\007' >&2`);
+        execSync(`printf '\\033]30;${escaped}\\007' >&2`);
+        process.stderr.write(`\x1b]2;${persistentName.slice(0, 50)}\x07`);
+        console.error(`Tab title re-asserted to persistent name: "${persistentName}"`);
+      } catch (e) {
+        console.error(`Failed to re-assert persistent tab title: ${e}`);
+      }
+    }
   }
 
   // Send ntfy.sh notification (fast, fire-and-forget)

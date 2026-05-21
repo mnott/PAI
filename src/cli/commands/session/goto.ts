@@ -104,7 +104,12 @@ export function cmdGoto(
   try {
     resolved = resolveSessionByNameOrId(allSessions, query);
   } catch (resolveErr) {
-    console.error(err(String(resolveErr).replace(/^Error: /, "")));
+    let msg = String(resolveErr).replace(/^Error: /, "");
+    // Append pai find suggestion for "not found" errors
+    if (msg.includes("No session found matching")) {
+      msg += `\n\nTip: pai find "${query}"  — search prompt history by keywords`;
+    }
+    console.error(err(msg));
     process.exit(1);
   }
 
