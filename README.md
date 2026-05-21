@@ -1,4 +1,4 @@
-# PAI Knowledge OS — v0.9.17
+# PAI Knowledge OS — v0.10.0
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
@@ -299,15 +299,37 @@ All hooks are TypeScript compiled to `.mjs` modules. They run as separate proces
 
 PAI gives you a complete picture of every Claude Code session running on your machine — live tabs in iTerm2, paused snapshots on disk, and everything in between.
 
-### Daily Verbs
+### The Core Idea: Think in Topics
 
-The four commands you'll use every day:
+The user's mental model is simple: "I did something on a given subject. Where was I working on it? Let me continue."
+
+PAI v0.10.0 is built around this. You think in **topics**, not project names or session UUIDs. PAI handles the lookup.
 
 ```bash
-pai sessions          # What's running and what's paused
+pai mdf             # Find every session where you worked on MDF
+pai solar panels    # Free-text search across your prompt history
+pai 0856d40b        # Resume by UUID prefix (from pai sessions)
+pai                 # Show all recent sessions (interactive picker)
+```
+
+When you type `pai mdf`, PAI checks:
+1. Is "mdf" a named session in the catalog? → launch immediately, no picker
+2. Is "mdf" a UUID prefix? → direct filesystem resume
+3. Otherwise → grep `~/.claude/history.jsonl` for matching prompts, show candidate list, you pick a number
+
+The picked session resolves to the best resumable snapshot in the same project directory. PAI probes `claude --resume` automatically. If the snapshot is stale, it starts a fresh Claude in the same directory.
+
+### Daily Verbs
+
+The commands you'll use every day:
+
+```bash
+pai                   # Recent sessions picker (live + disk)
+pai <topic>           # Find + launch session by topic/keyword/UUID
+pai cd <name>         # cd to a project directory (no Claude launch)
 pai pause             # Save state checkpoint (write ## Continue to TODO.md)
 pai pause all         # Pause every live Claude session at once
-pai resume <name>     # Jump back into a paused session
+pai end               # Finalize: save state + mark session note Completed
 ```
 
 And inside Claude Code, the two slash commands that matter:
@@ -317,24 +339,41 @@ And inside Claude Code, the two slash commands that matter:
 /end      →  same as /pause, plus marks the session note Completed
 ```
 
-### Listing Sessions
+### Finding Sessions
 
-`pai sessions` (or `pai sessions list`) shows two sections:
+`pai` (no args) shows two sections:
 
-**Live Sessions** — pulled from AIBroker in real time. One row per active iTerm2 pane running Claude Code. Columns: `#`, `id` (first 8 chars of the iTerm2 session UUID), `name` (your `/Name` or the tab title), `at prompt` (green "yes" = idle, yellow "busy" = Claude is running), `kind` (claude or shell).
+**Live Sessions** — pulled from AIBroker in real time. One row per active iTerm2 pane running Claude Code. Columns: `#`, `id`, `name`, `at prompt`.
 
-By default, bare shell tabs are hidden. Use `--all-tabs` to include them:
+**Recent Sessions** — disk scan of `~/.claude/projects/`, sorted by last-modified.
 
-```bash
-pai sessions              # Claude panes only
-pai sessions --all-tabs   # Everything, including zsh terminals and SSH panes
+`pai <topic>` searches your prompt history in `~/.claude/history.jsonl`, groups results by session, and shows a table:
+
+```
+Sessions matching "mdf":
+
+  #  id        when              project                              last matching prompt
+  -  --------  ----------------  -----------------------------------  -------------------------
+  1  6269cf64  2026-05-21 08:20  /…MDF/Infrastruktur/20 - Webseiten  "ok so we recently had an order…"
+  2  abe2d977  2026-02-23 08:40  /…MDF/Infrastruktur/20 - Webseiten  "yes the session notes for Whazaa…"
+
+  Enter # to launch (1-2), or press Enter to cancel:
 ```
 
-**Paused / Resumable Sessions** — disk scan of `~/.claude/projects/`. These are sessions you've exited from. `resumable` (green) means you can `claude --resume` into them; `stub` and `transcript-only` (yellow) mean the exit was incomplete but the transcript survives.
+Type the number and press Enter. PAI launches Claude, resumes if possible, starts fresh if not.
+
+Use `pai <topic> --auto` (or `-y`) to auto-pick #1 without the prompt. Use `pai <topic> 2` to pick #2 directly.
+
+### Power User Access
+
+The full session management namespace is still available for power users:
 
 ```bash
-pai sessions              # named sessions (those you've /Name'd or that have snapshots)
-pai sessions --all        # include unnamed orphan sessions too
+pai sessions              # Live + disk listing (same as bare pai, with more columns)
+pai sessions --all        # Include unnamed orphan sessions
+pai sessions --all-tabs   # Include shell tabs in the live section
+pai sessions goto <name>  # Named-session resolver (same as pai <name>)
+pai sessions list         # Explicit listing (same as pai sessions)
 ```
 
 ### Pausing All Sessions at Once
@@ -365,15 +404,6 @@ Ctrl+C or closing the terminal kills the Claude Code process abruptly. The sessi
 `/exit` sends a clean shutdown signal. Claude Code runs its Stop and Session End hooks, which trigger PAI to write the session note, push the final summary to the daemon, and save a resumable snapshot. The difference in recovery quality between a clean `/exit` and a Ctrl+C is significant for long sessions.
 
 If you do accidentally close a terminal, use `pai sessions --all` to find the orphaned transcript. The `/reconstruct` skill can retroactively generate a session note from it.
-
-### Resuming a Session
-
-```bash
-pai resume <name>         # resume by session name (case-insensitive)
-pai resume <uuid-prefix>  # resume by UUID prefix (first 8 chars from pai sessions)
-```
-
-This is shorthand for `pai sessions goto <name>`. If a resumable snapshot exists, it runs `claude --resume <uuid>`. If only a transcript exists, it opens a fresh Claude session in the right directory.
 
 ---
 
@@ -883,7 +913,7 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 
 ## Release History
 
-28 releases shipped from v0.7.2 to v0.9.17 (March 19 – May 21, 2026):
+31 releases shipped from v0.7.2 to v0.10.0 (March 19 – May 21, 2026):
 
 | Version | Feature |
 |---------|---------|
@@ -917,7 +947,9 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 | v0.9.14 | AIBroker live-session integration: `pai sessions` shows live iTerm2 panes |
 | v0.9.15 | `pai pause all`: pause every live Claude session at once via AIBroker |
 | v0.9.16 | createHash import fix, registry scan clc fallback map |
-| v0.9.17 | Switch live-session listing to `sessions` IPC (metadata-only, faster); `--all-tabs` flag; Session Management docs |
+| v0.9.17 | Switch live-session listing to `sessions` IPC (metadata-only, faster); `--all-tabs` flag |
+| v0.9.18 | `pai projects`: moved-project auto-detect, rebind command, active-only default listing |
+| v0.10.0 | Topic-first redesign: `pai <topic>` universal resolver, history search, sticky tab titles |
 
 ---
 

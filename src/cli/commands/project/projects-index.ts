@@ -21,7 +21,12 @@ import {
   cmdDetect,
   cmdConsolidate,
   cmdGo,
+  cmdRebind,
+  findMovedPath,
 } from "./commands.js";
+import { existsSync } from "node:fs";
+import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../utils.js";
+import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig } from "./session-config.js";
 import { cmdHealth } from "./health.js";
 import { resolveIdentifier } from "./helpers.js";
@@ -36,12 +41,14 @@ export function registerProjectsCommands(
   projectsCmd
     .command("list", { isDefault: true })
     .description(
-      "List registered projects. Short form: pai projects (bare, no subcommand)"
+      "List registered projects. Short form: pai projects (bare, no subcommand)\n" +
+        "Default: active projects only. Use --all to include archived."
     )
+    .option("--all", "Include archived projects (default: active only)")
     .option("--status <status>", "Filter by status: active | archived")
     .option("--tag <tag>", "Filter by tag")
     .option("--type <type>", "Filter by type")
-    .action((opts: { status?: string; tag?: string; type?: string }) => {
+    .action((opts: { all?: boolean; status?: string; tag?: string; type?: string }) => {
       cmdList(getDb(), opts);
     });
 
@@ -50,15 +57,69 @@ export function registerProjectsCommands(
     .command("cd <identifier>")
     .description(
       "cd to a project directory. Short form: pai cd <name>\n" +
-        "(The shell wrapper handles the actual cd; pure output here.)"
+        "(The shell wrapper handles the actual cd; pure output here.)\n" +
+        "Auto-detects moved projects when the registered path no longer exists."
     )
     .action((identifier: string) => {
-      const project = resolveIdentifier(getDb(), identifier);
+      const db = getDb();
+      const project = resolveIdentifier(db, identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
         process.exit(1);
+        return;
       }
-      process.stdout.write(project.root_path + "\n");
+
+      if (existsSync(project.root_path)) {
+        process.stdout.write(project.root_path + "\n");
+        return;
+      }
+
+      // Path missing — search for moved location
+      process.stderr.write(
+        warn(`Path not found: ${project.root_path}\n`) +
+        dim("  Searching for moved location...\n")
+      );
+
+      const result = findMovedPath(project.root_path);
+
+      if (result.found) {
+        const newPath = result.found;
+        const newEncoded = encodeDir(newPath);
+        const ts = now();
+        db.prepare(
+          "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
+        ).run(newPath, newEncoded, ts, project.id);
+        process.stderr.write(
+          ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
+          dim(`  → ${newPath}\n`) +
+          ok("Registry updated.\n")
+        );
+        process.stdout.write(newPath + "\n");
+        return;
+      }
+
+      if (result.ambiguous) {
+        process.stderr.write(
+          warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
+        );
+        for (const candidate of result.ambiguous) {
+          process.stderr.write(dim(`  ${candidate}\n`));
+        }
+        process.stderr.write(
+          dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      process.stderr.write(
+        err(
+          `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
+          `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
+        ) +
+        dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
+      );
+      process.exitCode = 1;
     });
 
   // pai projects add <path>
@@ -107,6 +168,17 @@ export function registerProjectsCommands(
     .description("Update the root path for a project")
     .action((slug: string, newPath: string) => {
       cmdMove(getDb(), slug, newPath);
+    });
+
+  // pai projects rebind <slug> <new-path>
+  projectsCmd
+    .command("rebind <slug> <new-path>")
+    .description(
+      "Manually update the root_path for a project (for when auto-detect found multiple matches).\n" +
+        "Validates the new path exists and is a directory, then updates the registry."
+    )
+    .action((slug: string, newPath: string) => {
+      cmdRebind(getDb(), slug, newPath);
     });
 
   // pai projects tag <slug> <tags...>
