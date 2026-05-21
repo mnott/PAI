@@ -19,7 +19,7 @@ import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { renderTable, err, dim, header } from "../../utils.js";
 import { scanSessions, fmtAge, type SessionStatus } from "../../lib/session-scan.js";
-import { fetchLiveSessions, type AiBrokerSession } from "../../lib/aibroker-client.js";
+import { fetchLiveSessions, type AiBrokerSessionMeta } from "../../lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,32 +48,34 @@ function fmtStatus(status: SessionStatus): string {
 // Live-sessions rendering (AIBroker integration)
 // ---------------------------------------------------------------------------
 
-function renderLiveSessions(allLiveSessions: AiBrokerSession[]): void {
-  // Filter to Claude sessions only (bare shells have no paiName)
-  const claudeSessions = allLiveSessions.filter(
-    (s) => s.paiName !== null && s.paiName !== undefined && s.paiName !== ""
-  );
-  const skippedCount = allLiveSessions.length - claudeSessions.length;
+function renderLiveSessions(allLiveSessions: AiBrokerSessionMeta[], allTabs: boolean): void {
+  // Default: Claude sessions only (kind === "claude"). --all-tabs includes shells.
+  const displayed = allTabs
+    ? allLiveSessions
+    : allLiveSessions.filter((s) => s.kind !== "shell");
+  const skippedCount = allLiveSessions.length - displayed.length;
 
-  if (claudeSessions.length === 0) return;
+  if (displayed.length === 0) return;
 
   console.log("\n" + header("Live Sessions") + "\n");
 
-  const liveHeaders = ["#", "iTerm2 id", "name", "at prompt", "paiName"];
-  const liveRows = claudeSessions.map((s, idx) => {
+  const liveHeaders = ["#", "id", "name", "at prompt", "kind"];
+  const liveRows = displayed.map((s, idx) => {
     const shortId = s.sessionId.slice(0, 8);
-    const name = s.name.length > 32 ? s.name.slice(0, 31) + "…" : s.name;
-    const paiName = s.paiName!.length > 20
-      ? s.paiName!.slice(0, 19) + "…"
-      : s.paiName!;
+    // Prefer paiName for Claude sessions, fall back to iTerm2 tab name
+    const rawName = s.paiName ?? s.name;
+    const name = rawName.length > 36 ? rawName.slice(0, 35) + "…" : rawName;
     const atPrompt = s.atPrompt ? chalk.green("yes") : chalk.yellow("busy");
+    const kind = s.kind === "claude"
+      ? chalk.cyan(s.kind)
+      : chalk.dim(s.kind);
 
     return [
       chalk.dim(String(idx + 1)),
       chalk.cyan(shortId),
       name,
       atPrompt,
-      paiName,
+      kind,
     ];
   });
 
@@ -81,7 +83,7 @@ function renderLiveSessions(allLiveSessions: AiBrokerSession[]): void {
 
   if (skippedCount > 0) {
     console.log(
-      dim(`  (${skippedCount} non-Claude tab${skippedCount === 1 ? "" : "s"} hidden — use pai pause all to see full list)`)
+      dim(`  (${skippedCount} shell tab${skippedCount === 1 ? "" : "s"} hidden — use --all-tabs to show)`)
     );
   }
 }
@@ -92,10 +94,11 @@ function renderLiveSessions(allLiveSessions: AiBrokerSession[]): void {
 
 export async function cmdRecent(
   db: Database,
-  opts: { n?: string; all?: boolean; json?: boolean }
+  opts: { n?: string; all?: boolean; allTabs?: boolean; json?: boolean }
 ): Promise<void> {
   const limit = parseInt(opts.n ?? "20", 10);
   const includeAll = opts.all === true;
+  const allTabs = opts.allTabs === true;
 
   // Fetch live sessions from AIBroker (silently no-ops if not running).
   const liveSessions = await fetchLiveSessions();
@@ -108,10 +111,13 @@ export async function cmdRecent(
   if (opts.json) {
     const output = {
       live: liveSessions.map((s) => ({
+        index: s.index,
         sessionId: s.sessionId,
         name: s.name,
-        paiName: s.paiName ?? null,
+        paiName: s.paiName,
         atPrompt: s.atPrompt,
+        kind: s.kind,
+        active: s.active,
       })),
       paused: sessions.map((s, idx) => ({
         idx: idx + 1,
@@ -134,11 +140,9 @@ export async function cmdRecent(
   }
 
   // ── Live section ──────────────────────────────────────────────────────────
-  const hasClaudeLive = liveSessions.some(
-    (s) => s.paiName !== null && s.paiName !== undefined && s.paiName !== ""
-  );
+  const hasClaudeLive = liveSessions.some((s) => s.kind === "claude");
   if (liveSessions.length > 0) {
-    renderLiveSessions(liveSessions);
+    renderLiveSessions(liveSessions, allTabs);
   }
 
   // ── Paused / disk-scan section ────────────────────────────────────────────

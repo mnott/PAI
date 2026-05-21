@@ -37,8 +37,9 @@ export function registerSessionsCommands(
     )
     .option("-n <count>", "Maximum sessions to show (default: 20)", "20")
     .option("--all", "Include unnamed orphan sessions (not in clc registry)")
+    .option("--all-tabs", "Show all iTerm2 tabs in Live Sessions, including bare shells")
     .option("--json", "Output raw JSON instead of formatted table")
-    .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
+    .action(async (opts: { n?: string; all?: boolean; allTabs?: boolean; json?: boolean }) => {
       await cmdRecent(getDb(), opts);
     });
 

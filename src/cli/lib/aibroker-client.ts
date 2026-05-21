@@ -15,18 +15,26 @@ import { randomUUID } from "node:crypto";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AiBrokerSession {
+/**
+ * Lightweight session metadata returned by the AIBroker `sessions` IPC method.
+ * Does NOT include scrollback content — use `session_content` for that.
+ */
+export interface AiBrokerSessionMeta {
+  index: number;
   sessionId: string;
+  /** iTerm2 tab title or profile name */
   name: string;
-  content: string;
-  paiName?: string;
+  /** PAI session name set via /Name; null for bare shells */
+  paiName: string | null;
   atPrompt: boolean;
-  contentHash?: string;
-  changed?: boolean;
+  /** "claude" for Claude Code panes, "shell" for bare terminals */
+  kind: "claude" | "shell";
+  /** Whether this is the currently focused pane */
+  active: boolean;
 }
 
-export interface AiBrokerSessionContentResult {
-  sessions: AiBrokerSession[];
+interface AiBrokerSessionsResult {
+  sessions: AiBrokerSessionMeta[];
 }
 
 // ---------------------------------------------------------------------------
@@ -130,13 +138,16 @@ export function callAiBroker(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all live iTerm2 sessions from AIBroker.
+ * Fetch all live iTerm2 session metadata from AIBroker via the `sessions` method.
  * Returns an empty array if AIBroker is not running.
+ *
+ * This is metadata-only (no scrollback). It is faster than `session_content`
+ * and the correct source for listing/routing purposes.
  */
-export async function fetchLiveSessions(): Promise<AiBrokerSession[]> {
+export async function fetchLiveSessions(): Promise<AiBrokerSessionMeta[]> {
   try {
-    const result = await callAiBroker("session_content", { lineCount: 0 });
-    const sessions = (result as unknown as AiBrokerSessionContentResult).sessions;
+    const result = await callAiBroker("sessions", {});
+    const sessions = (result as unknown as AiBrokerSessionsResult).sessions;
     if (!Array.isArray(sessions)) return [];
     return sessions;
   } catch {

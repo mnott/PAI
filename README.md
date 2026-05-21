@@ -1,4 +1,4 @@
-# PAI Knowledge OS — v0.9.10
+# PAI Knowledge OS — v0.9.17
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
@@ -292,6 +292,88 @@ PAI runs hooks at every stage of a Claude Code session:
 | **Stop** | Pushes `session-summary` work item to daemon, sends notification |
 
 All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes and communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation). Hooks are thin relays — they capture minimal data and immediately push work items to the daemon queue, which handles all heavy processing asynchronously.
+
+---
+
+## Session Management
+
+PAI gives you a complete picture of every Claude Code session running on your machine — live tabs in iTerm2, paused snapshots on disk, and everything in between.
+
+### Daily Verbs
+
+The four commands you'll use every day:
+
+```bash
+pai sessions          # What's running and what's paused
+pai pause             # Save state checkpoint (write ## Continue to TODO.md)
+pai pause all         # Pause every live Claude session at once
+pai resume <name>     # Jump back into a paused session
+```
+
+And inside Claude Code, the two slash commands that matter:
+
+```
+/pause    →  write checkpoint to TODO.md, print handoff block, then type /exit
+/end      →  same as /pause, plus marks the session note Completed
+```
+
+### Listing Sessions
+
+`pai sessions` (or `pai sessions list`) shows two sections:
+
+**Live Sessions** — pulled from AIBroker in real time. One row per active iTerm2 pane running Claude Code. Columns: `#`, `id` (first 8 chars of the iTerm2 session UUID), `name` (your `/Name` or the tab title), `at prompt` (green "yes" = idle, yellow "busy" = Claude is running), `kind` (claude or shell).
+
+By default, bare shell tabs are hidden. Use `--all-tabs` to include them:
+
+```bash
+pai sessions              # Claude panes only
+pai sessions --all-tabs   # Everything, including zsh terminals and SSH panes
+```
+
+**Paused / Resumable Sessions** — disk scan of `~/.claude/projects/`. These are sessions you've exited from. `resumable` (green) means you can `claude --resume` into them; `stub` and `transcript-only` (yellow) mean the exit was incomplete but the transcript survives.
+
+```bash
+pai sessions              # named sessions (those you've /Name'd or that have snapshots)
+pai sessions --all        # include unnamed orphan sessions too
+```
+
+### Pausing All Sessions at Once
+
+When you're done for the day and have multiple Claude windows open:
+
+```bash
+pai pause all             # send "pause session" to every live Claude pane
+pai pause all --dry-run   # preview what would be sent
+pai pause all --exit      # also send /exit after each session saves state
+```
+
+AIBroker must be running for this to work. Shell tabs (bare zsh, SSH panes) are automatically skipped — only Claude Code panes receive the pause command. The count of skipped tabs is printed to stderr.
+
+### /pause and /end Inside Claude Code
+
+Type `/pause` or `/end` from inside an active Claude Code session (not from a shell — these are Claude Code slash commands, not CLI commands):
+
+- `/pause` — Claude writes a `## Continue` block to the project's `TODO.md`, prints a handoff summary with the session ID, then tells you to type `/exit`. The next session starts by reading that TODO.md block and picking up exactly where you left off.
+- `/end` — Same as `/pause`, plus Claude marks the session note as Completed and writes a final summary. Use this when you're genuinely done with a topic, not just pausing mid-task.
+
+After either command, type `/exit` to exit Claude Code cleanly.
+
+### Why /exit and Not Ctrl+C
+
+Ctrl+C or closing the terminal kills the Claude Code process abruptly. The session note generation hook never fires, the checkpoint is not written, and the session cannot be resumed with `claude --resume`.
+
+`/exit` sends a clean shutdown signal. Claude Code runs its Stop and Session End hooks, which trigger PAI to write the session note, push the final summary to the daemon, and save a resumable snapshot. The difference in recovery quality between a clean `/exit` and a Ctrl+C is significant for long sessions.
+
+If you do accidentally close a terminal, use `pai sessions --all` to find the orphaned transcript. The `/reconstruct` skill can retroactively generate a session note from it.
+
+### Resuming a Session
+
+```bash
+pai resume <name>         # resume by session name (case-insensitive)
+pai resume <uuid-prefix>  # resume by UUID prefix (first 8 chars from pai sessions)
+```
+
+This is shorthand for `pai sessions goto <name>`. If a resumable snapshot exists, it runs `claude --resume <uuid>`. If only a transcript exists, it opens a fresh Claude session in the right directory.
 
 ---
 
@@ -801,7 +883,7 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 
 ## Release History
 
-21 releases shipped from v0.7.2 to v0.9.10 (March 19 – April 13, 2026):
+28 releases shipped from v0.7.2 to v0.9.17 (March 19 – May 21, 2026):
 
 | Version | Feature |
 |---------|---------|
@@ -829,6 +911,13 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 | v0.9.8 | Privacy tags, compact search format, npx install |
 | v0.9.9 | Fix advisor mode to delegate to haiku instead of hoarding in opus |
 | v0.9.10 | Cognee-inspired three-tier memory: entity deduplication, graph-completion search, feedback EMA |
+| v0.9.11 | Session-commands hook for truncation resilience |
+| v0.9.12 | Dispatcher uses openFederation directly for kg_search/feedback |
+| v0.9.13 | Emit chunk IDs in memory_search output |
+| v0.9.14 | AIBroker live-session integration: `pai sessions` shows live iTerm2 panes |
+| v0.9.15 | `pai pause all`: pause every live Claude session at once via AIBroker |
+| v0.9.16 | createHash import fix, registry scan clc fallback map |
+| v0.9.17 | Switch live-session listing to `sessions` IPC (metadata-only, faster); `--all-tabs` flag; Session Management docs |
 
 ---
 

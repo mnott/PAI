@@ -16,7 +16,7 @@ import chalk from "chalk";
 import {
   fetchLiveSessions,
   sendToSession,
-  type AiBrokerSession,
+  type AiBrokerSessionMeta,
 } from "../../lib/aibroker-client.js";
 import { header, dim, ok, err, warn } from "../../utils.js";
 
@@ -28,7 +28,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sessionLabel(s: AiBrokerSession): string {
+function sessionLabel(s: AiBrokerSessionMeta): string {
   const name = s.paiName ?? s.name;
   return `${chalk.cyan(s.sessionId.slice(0, 8))} ${chalk.bold(name)}`;
 }
@@ -45,7 +45,7 @@ export async function cmdPauseAll(opts: {
   const waitMs = opts.wait ?? 5_000; // ms to wait after "pause session" before /exit
 
   // ── Fetch live sessions ────────────────────────────────────────────────────
-  let liveSessions: AiBrokerSession[];
+  let liveSessions: AiBrokerSessionMeta[];
   try {
     liveSessions = await fetchLiveSessions();
   } catch (e) {
@@ -55,10 +55,8 @@ export async function cmdPauseAll(opts: {
     return;
   }
 
-  // ── Filter: Claude sessions only ─────────────────────────────────────────
-  const claudeSessions = liveSessions.filter(
-    (s) => s.paiName !== null && s.paiName !== undefined && s.paiName !== ""
-  );
+  // ── Filter: Claude sessions only (skip bare shells) ───────────────────────
+  const claudeSessions = liveSessions.filter((s) => s.kind === "claude");
   const skipped = liveSessions.length - claudeSessions.length;
 
   if (skipped > 0) {
@@ -95,7 +93,7 @@ export async function cmdPauseAll(opts: {
       "\n"
   );
 
-  const results: Array<{ session: AiBrokerSession; pauseOk: boolean; exitOk?: boolean; error?: string }> = [];
+  const results: Array<{ session: AiBrokerSessionMeta; pauseOk: boolean; exitOk?: boolean; error?: string }> = [];
 
   for (const s of claudeSessions) {
     process.stdout.write("  " + sessionLabel(s) + " … ");
@@ -150,7 +148,7 @@ export async function cmdPauseAll(opts: {
         err(`${failed} failed.`)
     );
     for (const r of results.filter((r) => !r.pauseOk)) {
-      const label = r.session.paiName ?? r.session.name;
+      const label = r.session.paiName ?? r.session.name ?? r.session.sessionId.slice(0, 8);
       console.log(err(`  ${label}: ${r.error ?? "unknown error"}`));
     }
   }
