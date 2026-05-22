@@ -1,22 +1,24 @@
 /**
  * main-resolver.ts
  *
- * `pai [<query>]`  —  topic-first session discovery and launcher (v0.10.0)
+ * `pai [<query>]`  —  topic-first session discovery and launcher (v0.11.0)
  *
  * Decision tree:
- *   1. No arg          → show interactive picker of recent sessions (top 20 by mtime)
+ *   1. No arg          → show deduped session listing (one row per name)
  *   2. UUID prefix     → universal filesystem scan; auto-launch the match
- *   3. Known name      → catalog name match; auto-launch immediately
- *   4. Free-text query → search history.jsonl; show candidates with excerpt; user picks
+ *   3. Any string:
+ *      a. Live match (by paiName) → aibroker_switch → iTerm tab to front. Done.
+ *      b. Resumable match         → probe + claude --resume <uuid>
+ *      c. Transcript/stub match   → fresh claude in same project dir
+ *      d. No name match           → free-text history search → picker
  *
- * The "-y" / "--auto" flag skips the interactive prompt and picks candidate #1.
- * "pai <query> <N>" also picks candidate #N directly.
- *
- * Launch logic (shared with goto.ts):
- *   - Find best resumable UUID for the matched project dir
- *   - Probe claude --resume to verify it's still valid
- *   - If valid: claude --resume <uuid> --name <name> "/Name <name>\ngo"
- *   - If invalid: claude --name <name> "/Name <name>\ngo"  (fresh in same dir)
+ * Dedup algorithm for listing:
+ *   - Collect live Claude sessions from AIBroker (kind:"claude")
+ *   - Collect disk sessions from session-scan (named filter)
+ *   - Build unified entries, group by name (case-insensitive)
+ *   - Within each group, pick by priority: live > resumable > transcript-only > stub > orphan
+ *   - Within same priority, pick latest by mtime
+ *   - Output ONE row per name with status column
  */
 
 import type { Database } from "better-sqlite3";
@@ -33,10 +35,117 @@ import {
   type ScannedSession,
 } from "../lib/session-scan.js";
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
-import { fetchLiveSessions } from "../lib/aibroker-client.js";
+import { fetchLiveSessions, switchToSession, type AiBrokerSessionMeta } from "../lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
-// Probe helper (same as goto.ts)
+// Status priority for dedup
+// ---------------------------------------------------------------------------
+
+type UnifiedStatus = "live" | "resumable" | "transcript-only" | "stub" | "orphan";
+
+const STATUS_PRIORITY: Record<UnifiedStatus, number> = {
+  live: 0,
+  resumable: 1,
+  "transcript-only": 2,
+  stub: 3,
+  orphan: 4,
+};
+
+interface UnifiedSession {
+  name: string;
+  status: UnifiedStatus;
+  /** Only present for live sessions */
+  liveSessionId?: string;
+  /** Only present for disk sessions */
+  diskSession?: ScannedSession;
+  lastActivity: number;
+  project: string;
+  lastPrompt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Build deduped catalog
+// ---------------------------------------------------------------------------
+
+function buildDeduped(
+  liveSessions: AiBrokerSessionMeta[],
+  diskSessions: ScannedSession[]
+): UnifiedSession[] {
+  const byName = new Map<string, UnifiedSession>();
+
+  // Process live Claude sessions
+  for (const s of liveSessions) {
+    if (s.kind === "shell") continue;
+    const rawName = s.paiName ?? s.name ?? s.sessionId.slice(0, 8);
+    const key = rawName.toLowerCase();
+    const entry: UnifiedSession = {
+      name: rawName,
+      status: "live",
+      liveSessionId: s.sessionId,
+      lastActivity: Date.now(),
+      project: "",
+      lastPrompt: "",
+    };
+    const existing = byName.get(key);
+    if (!existing || STATUS_PRIORITY["live"] < STATUS_PRIORITY[existing.status]) {
+      byName.set(key, entry);
+    }
+  }
+
+  // Process disk sessions
+  for (const s of diskSessions) {
+    const rawName = s.friendlyName ?? s.shortId;
+    const key = rawName.toLowerCase();
+
+    let status: UnifiedStatus;
+    if (s.resumable) {
+      status = "resumable";
+    } else if (s.sessionStatus === "transcript-only") {
+      status = "transcript-only";
+    } else if (s.sessionStatus === "stub") {
+      status = "stub";
+    } else {
+      status = "orphan";
+    }
+
+    const entry: UnifiedSession = {
+      name: rawName,
+      status,
+      diskSession: s,
+      lastActivity: s.mtime,
+      project: s.decodedPath ?? "",
+      lastPrompt: s.lastUserPrompt ?? "",
+    };
+
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, entry);
+    } else {
+      const existingPriority = STATUS_PRIORITY[existing.status];
+      const newPriority = STATUS_PRIORITY[status];
+      if (newPriority < existingPriority) {
+        byName.set(key, entry);
+      } else if (newPriority === existingPriority && entry.lastActivity > existing.lastActivity) {
+        // Same priority — keep most recent
+        byName.set(key, entry);
+      }
+    }
+  }
+
+  // Sort: live first, then by lastActivity desc
+  const entries = Array.from(byName.values());
+  entries.sort((a, b) => {
+    const pa = STATUS_PRIORITY[a.status];
+    const pb = STATUS_PRIORITY[b.status];
+    if (pa !== pb) return pa - pb;
+    return b.lastActivity - a.lastActivity;
+  });
+
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// Probe helper
 // ---------------------------------------------------------------------------
 
 interface ProbeResult {
@@ -80,37 +189,28 @@ function probeResume(uuid: string, cwd: string): ProbeResult {
 }
 
 // ---------------------------------------------------------------------------
-// Launch session
+// Launch session (disk-based)
 // ---------------------------------------------------------------------------
 
-/**
- * Launch Claude for the given session. Handles resume probe + fallback to fresh.
- * Never returns on success (process.exit inside spawnSync block).
- */
 function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
   dryRun: boolean
 ): void {
-  // Find the best resumable UUID in this project dir
   let resumableUuid: string | undefined;
-  let resumableSession: ScannedSession | undefined;
 
   if (session.resumable) {
     resumableUuid = session.uuid;
-    resumableSession = session;
   } else if (session.encodedDir) {
     const sameProject = allSessions.filter(
       (s) => s.encodedDir === session.encodedDir && s.resumable
     );
     sameProject.sort((a, b) => b.mtime - a.mtime);
     if (sameProject.length > 0) {
-      resumableSession = sameProject[0];
-      resumableUuid = resumableSession.uuid;
+      resumableUuid = sameProject[0].uuid;
     }
   }
 
-  // Determine project dir
   const rawDir =
     session.clcDirectory ??
     session.registryRootPath ??
@@ -199,23 +299,15 @@ function launchSession(
 // History match → ScannedSession bridge
 // ---------------------------------------------------------------------------
 
-/**
- * Given a SessionMatch from history search, find the corresponding ScannedSession
- * (for launch). Falls back to a minimal synthetic session using the decodedPath
- * from the history entry's project field.
- */
 function matchToSession(
   match: SessionMatch,
   allSessions: ScannedSession[]
 ): ScannedSession | null {
   if (!match.sessionId) return null;
 
-  // Try catalog first (for friendlyName, registryRootPath, resumable status)
   const catalogMatch = allSessions.find((s) => s.uuid === match.sessionId);
   if (catalogMatch) return catalogMatch;
 
-  // Not in catalog — synthesize a minimal session using the project path from history
-  // The sessionId is UUID format, use it to find the top-level jsonl directly
   if (!match.project) return null;
 
   return {
@@ -255,6 +347,16 @@ function fmtTs(ts: number): string {
 function shortenProject(p: string, maxLen = 44): string {
   if (!p || p.length <= maxLen) return p || dim("—");
   return "…" + p.slice(-(maxLen - 1));
+}
+
+function fmtStatus(s: UnifiedStatus): string {
+  switch (s) {
+    case "live":          return chalk.green("live");
+    case "resumable":     return chalk.cyan("resumable");
+    case "transcript-only": return chalk.dim("transcript");
+    case "stub":          return chalk.dim("stub");
+    case "orphan":        return chalk.dim("orphan");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +401,9 @@ export async function cmdMain(
   const allSessions = scanSessions(db, { limit: 500, filter: "named" });
 
   // -----------------------------------------------------------------------
-  // Case 1: No query → recent session picker
+  // Case 1: No query → deduped session listing
   // -----------------------------------------------------------------------
   if (!query) {
-    // Show live sessions from AIBroker + most recent disk sessions
     let liveSessions: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
     try {
       liveSessions = await fetchLiveSessions();
@@ -310,46 +411,37 @@ export async function cmdMain(
       // AIBroker not running — show only disk sessions
     }
 
-    const claudeLive = liveSessions.filter((s) => s.kind !== "shell");
-    const recentDisk = allSessions.slice(0, maxResults);
+    const deduped = buildDeduped(liveSessions, allSessions);
 
-    if (claudeLive.length === 0 && recentDisk.length === 0) {
+    if (deduped.length === 0) {
       console.log(warn("No sessions found. Start Claude Code in a project directory first."));
       return;
     }
 
-    // Live sessions section
-    if (claudeLive.length > 0) {
-      console.log("\n" + header("Live Sessions") + "\n");
-      const liveHeaders = ["#", "id", "name", "at prompt"];
-      const liveRows = claudeLive.map((s, i) => [
+    console.log("\n" + header("Sessions") + "\n");
+    const tableHeaders = ["#", "name", "status", "age", "project", "last prompt"];
+    const tableRows = deduped.slice(0, maxResults).map((entry, i) => {
+      const age =
+        entry.status === "live"
+          ? chalk.green("now")
+          : dim(fmtAge(entry.lastActivity));
+      const snippet = entry.lastPrompt.replace(/\n+/g, " ").trim().slice(0, 36);
+      const project = entry.diskSession
+        ? dim(shortenProject(entry.diskSession.friendlyName ?? entry.diskSession.decodedPath, 28))
+        : dim("—");
+      return [
         dim(String(i + 1)),
-        chalk.cyan(s.sessionId.slice(0, 8)),
-        s.paiName ?? s.name ?? dim("—"),
-        s.atPrompt ? chalk.green("yes") : chalk.dim("no"),
-      ]);
-      console.log(renderTable(liveHeaders, liveRows));
-    }
-
-    // Recent disk sessions section
-    if (recentDisk.length > 0) {
-      console.log("\n" + header("Recent Sessions") + "\n");
-      const diskHeaders = ["#", "id", "age", "project", "last prompt"];
-      const diskRows = recentDisk.map((s, i) => {
-        const snippet = s.lastUserPrompt.replace(/\n+/g, " ").trim().slice(0, 40);
-        return [
-          dim(String(i + 1)),
-          chalk.cyan(s.shortId),
-          dim(fmtAge(s.mtime)),
-          dim(shortenProject(s.friendlyName ?? s.decodedPath, 30)),
-          chalk.dim(snippet ? `"${snippet}"` : "—"),
-        ];
-      });
-      console.log(renderTable(diskHeaders, diskRows));
-    }
+        chalk.white(entry.name),
+        fmtStatus(entry.status),
+        age,
+        project,
+        chalk.dim(snippet ? `"${snippet}"` : "—"),
+      ];
+    });
+    console.log(renderTable(tableHeaders, tableRows));
 
     console.log();
-    console.log(dim("  Resume a session: ") + chalk.white("pai <topic>") + dim("  or  ") + chalk.white("pai <id>"));
+    console.log(dim("  Switch/resume/start: ") + chalk.white("pai <name>") + dim("  or  ") + chalk.white("pai <uuid-prefix>"));
     console.log();
     return;
   }
@@ -359,7 +451,6 @@ export async function cmdMain(
   // -----------------------------------------------------------------------
   const UUID_PREFIX_RE = /^[0-9a-f-]{8,36}$/i;
   if (UUID_PREFIX_RE.test(query)) {
-    // Try catalog first
     const byUuid = allSessions.filter((s) => s.uuid.startsWith(query.toLowerCase()));
     if (byUuid.length === 1) {
       launchSession(byUuid[0], allSessions, opts.dryRun ?? false);
@@ -370,47 +461,125 @@ export async function cmdMain(
       process.exitCode = 1;
       return;
     }
-    // Fall through to name match / history search — UUID might be a partial word too
+    // Fall through to name match / history search
   }
 
   // -----------------------------------------------------------------------
-  // Case 3: Known session name → auto-launch
+  // Case 3: Name match against deduped catalog
   // -----------------------------------------------------------------------
   {
-    const qLower = query.toLowerCase();
-    const byExact = allSessions.filter(
-      (s) => s.friendlyName && s.friendlyName.toLowerCase() === qLower
-    );
-    if (byExact.length >= 1) {
-      launchSession(byExact[0], allSessions, opts.dryRun ?? false);
-      return;
+    // Fetch live sessions for the switch path
+    let liveSessions: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
+    try {
+      liveSessions = await fetchLiveSessions();
+    } catch {
+      // AIBroker not running
     }
 
-    const byPartial = allSessions.filter(
-      (s) => s.friendlyName && s.friendlyName.toLowerCase().includes(qLower)
-    );
-    if (byPartial.length === 1) {
-      launchSession(byPartial[0], allSessions, opts.dryRun ?? false);
-      return;
+    const deduped = buildDeduped(liveSessions, allSessions);
+    const qLower = query.toLowerCase();
+
+    // Exact name match first
+    const exactMatch = deduped.find((e) => e.name.toLowerCase() === qLower);
+    if (exactMatch) {
+      if (exactMatch.status === "live" && exactMatch.liveSessionId) {
+        // Switch iTerm tab to front
+        if (opts.dryRun) {
+          console.log("\n" + chalk.bold("Dry run — would switch iTerm tab:") + "\n");
+          console.log(`  target: ${exactMatch.name} (${exactMatch.liveSessionId.slice(0, 8)})`);
+          console.log(`  action: aibroker_switch + osascript iTerm activate`);
+          console.log();
+          return;
+        }
+        const result = await switchToSession(exactMatch.liveSessionId);
+        if (result.ok) {
+          console.log(ok(`Switched to live session: ${chalk.white(exactMatch.name)}`));
+        } else {
+          console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));
+          console.error(dim("  Falling back to disk launch..."));
+          // Fall through to disk session handling
+          if (exactMatch.diskSession) {
+            launchSession(exactMatch.diskSession, allSessions, opts.dryRun ?? false);
+          }
+        }
+        return;
+      }
+
+      // Disk-based launch (resumable, transcript-only, stub)
+      if (exactMatch.diskSession) {
+        launchSession(exactMatch.diskSession, allSessions, opts.dryRun ?? false);
+        return;
+      }
     }
-    if (byPartial.length > 1) {
+
+    // Partial name match
+    const partialMatches = deduped.filter(
+      (e) => e.name.toLowerCase().includes(qLower)
+    );
+    if (partialMatches.length === 1) {
+      const match = partialMatches[0];
+      if (match.status === "live" && match.liveSessionId) {
+        if (opts.dryRun) {
+          console.log("\n" + chalk.bold("Dry run — would switch iTerm tab:") + "\n");
+          console.log(`  target: ${match.name} (${match.liveSessionId.slice(0, 8)})`);
+          console.log(`  action: aibroker_switch + osascript iTerm activate`);
+          console.log();
+          return;
+        }
+        const result = await switchToSession(match.liveSessionId);
+        if (result.ok) {
+          console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
+        } else {
+          console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));
+          if (match.diskSession) {
+            launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+          }
+        }
+        return;
+      }
+      if (match.diskSession) {
+        launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+        return;
+      }
+    }
+
+    if (partialMatches.length > 1) {
       // Multiple named sessions match — show as candidates
       console.log("\n" + header(`Sessions matching "${query}"`) + "\n");
-      const headers = ["#", "id", "age", "name", "project"];
-      const rows = byPartial.slice(0, maxResults).map((s, i) => [
-        dim(String(i + 1)),
-        chalk.cyan(s.shortId),
-        dim(fmtAge(s.mtime)),
-        s.friendlyName ?? dim("—"),
-        dim(shortenProject(s.decodedPath, 36)),
-      ]);
+      const headers = ["#", "name", "status", "age", "project"];
+      const rows = partialMatches.slice(0, maxResults).map((entry, i) => {
+        const age =
+          entry.status === "live"
+            ? chalk.green("now")
+            : dim(fmtAge(entry.lastActivity));
+        const project = entry.diskSession
+          ? dim(shortenProject(entry.diskSession.decodedPath, 36))
+          : dim("—");
+        return [
+          dim(String(i + 1)),
+          chalk.white(entry.name),
+          fmtStatus(entry.status),
+          age,
+          project,
+        ];
+      });
       console.log(renderTable(headers, rows));
       console.log();
 
       if (pickN !== undefined) {
         const idx = pickN - 1;
-        if (idx >= 0 && idx < byPartial.length) {
-          launchSession(byPartial[idx], allSessions, opts.dryRun ?? false);
+        if (idx >= 0 && idx < partialMatches.length) {
+          const match = partialMatches[idx];
+          if (match.status === "live" && match.liveSessionId) {
+            if (!opts.dryRun) {
+              await switchToSession(match.liveSessionId);
+              console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
+            }
+            return;
+          }
+          if (match.diskSession) {
+            launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+          }
           return;
         }
         console.error(err(`Invalid choice: ${pickN}`));
@@ -419,13 +588,31 @@ export async function cmdMain(
       }
 
       if (opts.auto) {
-        launchSession(byPartial[0], allSessions, opts.dryRun ?? false);
+        const match = partialMatches[0];
+        if (match.status === "live" && match.liveSessionId) {
+          if (!opts.dryRun) {
+            await switchToSession(match.liveSessionId);
+            console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
+          }
+          return;
+        }
+        if (match.diskSession) {
+          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+        }
         return;
       }
 
-      const choice = await askForChoice(Math.min(byPartial.length, maxResults));
+      const choice = await askForChoice(Math.min(partialMatches.length, maxResults));
       if (choice !== null) {
-        launchSession(byPartial[choice - 1], allSessions, opts.dryRun ?? false);
+        const match = partialMatches[choice - 1];
+        if (match.status === "live" && match.liveSessionId) {
+          await switchToSession(match.liveSessionId);
+          console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
+          return;
+        }
+        if (match.diskSession) {
+          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+        }
       }
       return;
     }
@@ -437,6 +624,7 @@ export async function cmdMain(
   if (!existsSync(HISTORY_FILE)) {
     console.error(err("~/.claude/history.jsonl not found."));
     console.error(dim("  No prompt history available for search."));
+    console.error(dim(`  Try: pai  (no args) to see all sessions.`));
     process.exitCode = 1;
     return;
   }
@@ -447,7 +635,7 @@ export async function cmdMain(
   if (matches.length === 0) {
     console.log(warn(`No sessions found matching "${query}".`));
     console.log(dim(`  Try a shorter or different search term.`));
-    console.log(dim(`  Or run: `) + chalk.white("pai") + dim(" (no args) to see all recent sessions."));
+    console.log(dim(`  Or run: `) + chalk.white("pai") + dim(" (no args) to see all sessions."));
     return;
   }
 
@@ -472,7 +660,6 @@ export async function cmdMain(
   console.log(renderTable(headers, rows));
   console.log();
 
-  // Direct pick by inline number
   if (pickN !== undefined) {
     const idx = pickN - 1;
     if (idx >= 0 && idx < matches.length) {
@@ -490,7 +677,6 @@ export async function cmdMain(
     return;
   }
 
-  // Auto-pick first
   if (opts.auto) {
     const session = matchToSession(matches[0], allSessions);
     if (!session) {
@@ -502,7 +688,6 @@ export async function cmdMain(
     return;
   }
 
-  // Interactive pick
   const choice = await askForChoice(matches.length);
   if (choice !== null) {
     const session = matchToSession(matches[choice - 1], allSessions);

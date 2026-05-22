@@ -299,34 +299,28 @@ All hooks are TypeScript compiled to `.mjs` modules. They run as separate proces
 
 PAI gives you a complete picture of every Claude Code session running on your machine — live tabs in iTerm2, paused snapshots on disk, and everything in between.
 
-### The Core Idea: Think in Topics
+### The Core Idea: One Entry Point
 
-The user's mental model is simple: "I did something on a given subject. Where was I working on it? Let me continue."
+`pai <name>` is the universal session command. It does the right thing based on session state:
 
-PAI v0.10.0 is built around this. You think in **topics**, not project names or session UUIDs. PAI handles the lookup.
+- **Live session** — switches the iTerm2 tab to front (no new Claude launched)
+- **Resumable session** — probes `claude --resume`, launches with the saved UUID
+- **Transcript/stub** — starts a fresh Claude in the same project directory
+- **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
 
 ```bash
-pai mdf             # Find every session where you worked on MDF
-pai solar panels    # Free-text search across your prompt history
-pai 0856d40b        # Resume by UUID prefix (from pai sessions)
-pai                 # Show all recent sessions (interactive picker)
+pai aibroker        # Switch to the live AIBroker tab (iTerm comes to front)
+pai youdrill        # Resume the youdrill session, or fresh if snapshot is stale
+pai mdf             # Free-text search across your prompt history
+pai 0856d40b        # Resume by UUID prefix
+pai                 # Show all sessions (deduped, one row per name)
 ```
 
-When you type `pai mdf`, PAI checks:
-1. Is "mdf" a named session in the catalog? → launch immediately, no picker
-2. Is "mdf" a UUID prefix? → direct filesystem resume
-3. Otherwise → grep `~/.claude/history.jsonl` for matching prompts, show candidate list, you pick a number
-
-The picked session resolves to the best resumable snapshot in the same project directory. PAI probes `claude --resume` automatically. If the snapshot is stale, it starts a fresh Claude in the same directory.
-
-### Daily Verbs
-
-The commands you'll use every day:
+### Daily Commands
 
 ```bash
-pai                   # Recent sessions picker (live + disk)
-pai <topic>           # Find + launch session by topic/keyword/UUID
-pai cd <name>         # cd to a project directory (no Claude launch)
+pai                   # List sessions (deduped by name, one row per name)
+pai <name>            # Switch / resume / fresh — universal
 pai pause             # Save state checkpoint (write ## Continue to TODO.md)
 pai pause all         # Pause every live Claude session at once
 pai end               # Finalize: save state + mark session note Completed
@@ -339,15 +333,25 @@ And inside Claude Code, the two slash commands that matter:
 /end      →  same as /pause, plus marks the session note Completed
 ```
 
-### Finding Sessions
+### Session Listing
 
-`pai` (no args) shows two sections:
+`pai` (no args) shows a single deduped table — one row per session name, regardless of how many snapshots exist on disk:
 
-**Live Sessions** — pulled from AIBroker in real time. One row per active iTerm2 pane running Claude Code. Columns: `#`, `id`, `name`, `at prompt`.
+```
+Sessions:
 
-**Recent Sessions** — disk scan of `~/.claude/projects/`, sorted by last-modified.
+  #   name        status      age       project                       last prompt
+  --  ----------  ----------  --------  ----------------------------  --------------------------
+  1   AIBroker    live        now       —                             —
+  2   PAI         resumable   2m ago    /…dev/ai/PAI                  "refactor session listing…"
+  3   MDF         transcript  3d ago    /…MDF/Infrastruktur/Webseiten "ok so we recently had…"
+```
 
-`pai <topic>` searches your prompt history in `~/.claude/history.jsonl`, groups results by session, and shows a table:
+Status values: `live` (active iTerm tab), `resumable` (clean snapshot on disk), `transcript` (history available, not resumable), `stub` (empty or minimal).
+
+### Finding Sessions by Topic
+
+`pai <topic>` first checks session names, then falls back to searching your prompt history:
 
 ```
 Sessions matching "mdf":
@@ -360,16 +364,14 @@ Sessions matching "mdf":
   Enter # to launch (1-2), or press Enter to cancel:
 ```
 
-Type the number and press Enter. PAI launches Claude, resumes if possible, starts fresh if not.
-
-Use `pai <topic> --auto` (or `-y`) to auto-pick #1 without the prompt. Use `pai <topic> 2` to pick #2 directly.
+Use `pai <topic> --auto` (or `-y`) to auto-pick #1. Use `pai <topic> 2` to pick directly.
 
 ### Power User Access
 
-The full session management namespace is still available for power users:
+The full session management namespace is still available:
 
 ```bash
-pai sessions              # Live + disk listing (same as bare pai, with more columns)
+pai sessions              # Live + disk listing (with more columns)
 pai sessions --all        # Include unnamed orphan sessions
 pai sessions --all-tabs   # Include shell tabs in the live section
 pai sessions goto <name>  # Named-session resolver (same as pai <name>)

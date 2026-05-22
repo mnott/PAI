@@ -169,3 +169,27 @@ export async function sendToSession(
     return { ok: false, error: String(e) };
   }
 }
+
+/**
+ * Switch iTerm2 focus to the session identified by `target`.
+ *
+ * `target` can be a sessionId, paiName, or tab index number (as string).
+ * After switching, activates the iTerm2 application itself so the window
+ * comes to the foreground.
+ *
+ * Returns { ok: true } if AIBroker confirmed the switch, or
+ * { ok: false, error } if AIBroker is not running or the session was not found.
+ */
+export async function switchToSession(target: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await callAiBroker("switch", { target });
+    // Bring iTerm2 itself to the foreground (the IPC only selects the tab)
+    const { spawnSync } = await import("node:child_process");
+    spawnSync("osascript", ["-e", 'tell application "iTerm" to activate'], {
+      stdio: "ignore",
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}

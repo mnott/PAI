@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /**
- * PAI Knowledge OS — CLI entry point (v0.10.0 topic-first redesign)
+ * PAI Knowledge OS — CLI entry point (v0.11.0 deduped sessions + universal pai <name>)
  *
- * Top-level surface:
- *   pai                    → recent sessions picker
- *   pai <topic>            → history search + candidate picker + launch
+ * Daily surface:
+ *   pai                    → deduped session listing (one row per name)
+ *   pai <name>             → universal: switch live tab / resume / fresh
  *   pai <uuid-prefix>      → direct session resume via filesystem scan
- *   pai cd <name>          → cd to project directory (no Claude launch)
  *   pai pause [all]        → save state (or mass-pause every live session)
  *   pai end                → finalize session
  *
@@ -101,28 +100,25 @@ program
   .addHelpText(
     "after",
     `
-Usage:
-  pai                     Show recent sessions (interactive picker)
-  pai <topic>             Find sessions by topic and launch the chosen one
-  pai <uuid-prefix>       Resume a specific session by UUID
-  pai cd <name>           cd to a project directory (no Claude launch)
-  pai pause [all]         Save state (or mass-pause every live session)
-  pai end                 Finalize session: save state + mark note Completed
+Daily commands:
+  pai                     List your sessions (deduped by name)
+  pai <name>              Switch / resume / fresh — universal
+  pai pause               Save state checkpoint for the current session
+  pai pause all           Pause every live Claude session at once
+  pai end                 Finalize current session: save state + mark Completed
+
+Subcommands (advanced):
+  pai sessions ...        Full session management
+  pai projects ...        Project management
+  pai registry ...        Registry maintenance
+  pai memory ...          Memory engine
+  pai shell-init          Shell integration (eval "$(pai shell-init)")
 
 Examples:
-  pai mdf                 Find all sessions where you worked on MDF
-  pai solar panels        Free-text search across your prompt history
+  pai aibroker            Switch to the live AIBroker tab in iTerm
+  pai mdf                 Find sessions where you worked on MDF
   pai 81c5c3dc            Resume session by UUID prefix
-  pai                     See the 20 most recent sessions
-
-Power-user namespaces (run "pai sessions --help" etc. for details):
-  pai sessions ...        Full session management (list, goto, info, ...)
-  pai projects ...        Project management (cd, rebind, list, ...)
-  pai registry ...        Registry maintenance (scan, ...)
-  pai memory ...          Memory engine (index, search, ...)
-
-Shell integration:
-  eval "$(pai shell-init)"    # Add to ~/.zshrc for pai cd to work`
+  pai                     See all sessions (deduped, one row per name)`
   );
 
 // ---------------------------------------------------------------------------
@@ -323,13 +319,12 @@ program
     cmdEnd(getDb(), opts);
   });
 
-// pai resume <name> [--dry-run]  — compat alias for pai sessions goto
-// Power users can also use: pai sessions goto <name>
+// pai resume <name> [--dry-run]  — hidden compat alias; use `pai <name>` instead
 program
-  .command("resume <name>")
+  .command("resume <name>", { hidden: true })
   .description(
     "Go to a session by name or UUID: resume if resumable, start fresh otherwise.\n" +
-      "Also: pai <name>  (shorter)  |  pai sessions goto <name>  (long form)"
+      "Prefer: pai <name>  |  Long form: pai sessions goto <name>"
   )
   .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
   .action(
@@ -338,9 +333,9 @@ program
     }
   );
 
-// pai cd <identifier>  — prints path; shell wrapper does the actual cd
+// pai cd <identifier>  — hidden; shell wrapper does the actual cd
 program
-  .command("cd <identifier>")
+  .command("cd <identifier>", { hidden: true })
   .description(
     "cd to a project directory (shell wrapper handles the actual cd).\n" +
       "Long form: pai projects cd <identifier>\n" +
