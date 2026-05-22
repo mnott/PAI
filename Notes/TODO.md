@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0019 - 2026-05-21 - Session Discovery Ux, Statusline Width, Auth Tokens
-> **Paused at:** 2026-05-21T15:23:59.628Z
+> **Last session:** 0020 - 2026-05-21 - Pai Release Verification And Pailot Session Discovery Debug
+> **Paused at:** 2026-05-22T04:18:57.009Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -283,4 +283,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-05-21T15:23:59.628Z*
+*Last updated: 2026-05-22T04:18:57.009Z*

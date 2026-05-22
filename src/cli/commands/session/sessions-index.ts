@@ -21,6 +21,7 @@ import { cmdGoto } from "./goto.js";
 import { cmdPause } from "./pause.js";
 import { cmdEnd } from "./end.js";
 import { cmdPauseAll } from "./pause-all.js";
+import { cmdClearNames } from "./clear-names.js";
 
 export function registerSessionsCommands(
   sessionsCmd: Command,
@@ -199,6 +200,19 @@ export function registerSessionsCommands(
     .option("--json", "Output raw JSON instead of formatted display")
     .action((opts: { minutes?: string; json?: boolean }) => {
       cmdActive(getDb(), opts);
+    });
+
+  // pai sessions clear-names [--dry-run]
+  sessionsCmd
+    .command("clear-names")
+    .description(
+      "Recovery: wipe corrupted iTerm2 session name state.\n" +
+        "Clears ~/.aibroker/session-names.json AND user.paiName from all live iTerm2 sessions.\n" +
+        "After running this, use /Name to re-label each tab."
+    )
+    .option("--dry-run", "Preview what would be cleared without making changes")
+    .action(async (opts: { dryRun?: boolean }) => {
+      await cmdClearNames(opts);
     });
 
   // pai sessions auto-route [--cwd path] [--context "text"] [--json]
