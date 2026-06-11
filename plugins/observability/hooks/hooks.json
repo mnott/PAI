@@ -1,75 +1,126 @@
 {
-  "module": "observability",
-  "description": "Automatic observation capture, event logging, tool output recording, and session summaries",
-  "hooks": [
+  "SessionStart": [
     {
-      "event": "SessionStart",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart",
-      "description": "Log SessionStart event to session timeline"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart"
+        }
+      ]
     },
     {
-      "event": "SessionStart",
-      "command": "${PAI_DIR}/Hooks/inject-observations.mjs",
-      "description": "Inject recent observation context (compact index + timeline)"
-    },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/inject-observations.mjs"
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
     {
-      "event": "UserPromptSubmit",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit",
-      "description": "Log UserPromptSubmit event to session timeline"
-    },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit"
+        }
+      ]
+    }
+  ],
+  "PreToolUse": [
     {
-      "event": "PreToolUse",
       "matcher": "*",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse",
-      "description": "Log PreToolUse event to session timeline"
-    },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse"
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
     {
-      "event": "PostToolUse",
       "matcher": "*",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse",
-      "description": "Log PostToolUse event to session timeline"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse"
+        }
+      ]
     },
     {
-      "event": "PostToolUse",
       "matcher": "*",
-      "command": "${PAI_DIR}/Hooks/observe.mjs",
-      "description": "Classify tool calls into typed observations (decision/bugfix/feature/refactor/discovery/change)"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/observe.mjs"
+        }
+      ]
     },
     {
-      "event": "PostToolUse",
       "matcher": "*",
-      "command": "${PAI_DIR}/Hooks/capture-tool-output.mjs",
-      "description": "Record tool inputs/outputs for observability dashboard"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-tool-output.mjs"
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type Stop"
+        }
+      ]
+    }
+  ],
+  "SubagentStop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/subagent-stop-hook.mjs"
+        }
+      ]
     },
     {
-      "event": "Stop",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type Stop",
-      "description": "Log Stop event to session timeline"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SubagentStop"
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-session-summary.mjs"
+        }
+      ]
     },
     {
-      "event": "SubagentStop",
-      "command": "${PAI_DIR}/Hooks/subagent-stop-hook.mjs",
-      "description": "Capture sub-agent completion for observability"
-    },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionEnd"
+        }
+      ]
+    }
+  ],
+  "PreCompact": [
     {
-      "event": "SubagentStop",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SubagentStop",
-      "description": "Log SubagentStop event to session timeline"
-    },
-    {
-      "event": "SessionEnd",
-      "command": "${PAI_DIR}/Hooks/capture-session-summary.mjs",
-      "description": "Generate final session summary and write to session note"
-    },
-    {
-      "event": "SessionEnd",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type SessionEnd",
-      "description": "Log SessionEnd event to session timeline"
-    },
-    {
-      "event": "PreCompact",
-      "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreCompact",
-      "description": "Log PreCompact event to session timeline"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreCompact"
+        }
+      ]
     }
   ]
 }

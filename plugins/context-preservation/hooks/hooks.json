@@ -1,23 +1,32 @@
 {
-  "module": "context-preservation",
-  "description": "Context compression and relay across compaction cycles",
-  "hooks": [
+  "PreCompact": [
     {
-      "event": "PreCompact",
-      "command": "${PAI_DIR}/Hooks/context-compression-hook.mjs",
-      "description": "Extract session state, save checkpoint, write temp file for relay to post-compact"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/context-compression-hook.mjs"
+        }
+      ]
     },
     {
-      "event": "PreCompact",
       "matcher": "",
-      "command": "${PAI_DIR}/Hooks/pai-pre-compact.sh",
-      "description": "Shell-level pre-compact processing"
-    },
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/pai-pre-compact.sh"
+        }
+      ]
+    }
+  ],
+  "SessionStart": [
     {
-      "event": "SessionStart",
       "matcher": "compact",
-      "command": "${PAI_DIR}/Hooks/post-compact-inject.mjs",
-      "description": "Read saved state from temp file and inject into post-compaction context"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${PAI_DIR}/Hooks/post-compact-inject.mjs"
+        }
+      ]
     }
   ]
 }
