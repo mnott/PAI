@@ -15,6 +15,8 @@ import {
   queryObservations,
   queryRecentObservations,
   storeSessionSummary,
+  recordSkillInvocation,
+  querySkillTelemetry,
 } from "../../observations/store.js";
 import {
   registryDb,
@@ -241,6 +243,70 @@ export async function handleRequest(
       });
 
       sendResponse(socket, { id, ok: true, result: { ok: true, id: insertedId } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  // ---- Skill telemetry (Postgres only) ------------------------------------
+
+  if (method === "skill_telemetry_record") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Skill telemetry requires Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as {
+        skill_name: string;
+        source?: string;
+        scope?: string;
+        cwd?: string;
+      };
+
+      let project_slug: string | null = null;
+      if (p.cwd) {
+        const row = registryDb.prepare(
+          "SELECT slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
+        ).get(p.cwd) as { slug: string } | undefined;
+        if (row) project_slug = row.slug;
+      }
+
+      await recordSkillInvocation(pool, {
+        skill_name: p.skill_name,
+        source: p.source,
+        scope: p.scope,
+        project_slug,
+      });
+
+      sendResponse(socket, { id, ok: true, result: { ok: true } });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      sendResponse(socket, { id, ok: false, error: msg });
+    }
+    socket.end();
+    return;
+  }
+
+  if (method === "skill_telemetry_query") {
+    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
+    if (!pool) {
+      sendResponse(socket, { id, ok: false, error: "Skill telemetry requires Postgres backend" });
+      socket.end();
+      return;
+    }
+    try {
+      const p = params as { scope?: string; status?: string; limit?: number };
+      const rows = await querySkillTelemetry(pool, {
+        scope: p.scope,
+        status: p.status,
+        limit: p.limit,
+      });
+      sendResponse(socket, { id, ok: true, result: rows });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       sendResponse(socket, { id, ok: false, error: msg });

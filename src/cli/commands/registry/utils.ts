@@ -2,6 +2,7 @@
 
 import type { Database } from "better-sqlite3";
 import { now } from "../../utils.js";
+import { basename } from "node:path";
 
 /**
  * Upsert a project row. Returns { id, isNew }.
@@ -10,6 +11,9 @@ import { now } from "../../utils.js";
  *  1. root_path  — most reliable; handles slug collisions
  *  2. encoded_dir — Claude project dirs are canonical
  *  3. Insert with suffix-deduplication on slug collision
+ *
+ * display_name is set to basename(rootPath) on INSERT so that the unified
+ * listing always shows a human-readable name rather than the kebab-case slug.
  */
 export function upsertProject(
   db: Database,
@@ -65,13 +69,17 @@ export function upsertProject(
     finalSlug = `${slug}-${attempt}`;
   }
 
+  // Use basename(rootPath) as the human display name. If rootPath is empty or
+  // just "/" fall back to the slug so we always have something non-empty.
+  const displayName = basename(rootPath) || finalSlug;
+
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO projects
          (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'local', 'active', ?, ?)`
     )
-    .run(finalSlug, finalSlug, rootPath, encodedDir, ts, ts);
+    .run(finalSlug, displayName, rootPath, encodedDir, ts, ts);
 
   if (result.changes === 0) {
     const fallback =

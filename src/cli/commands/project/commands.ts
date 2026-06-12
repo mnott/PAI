@@ -385,8 +385,9 @@ export function cmdList(
 
   const tableRows = rows.map((r, i) => [
     dim(String(i + 1)),
-    bold(r.slug),
-    dim(shortenPath(r.root_path, 50)),
+    bold(r.display_name ?? r.slug),
+    dim(r.slug),
+    dim(shortenPath(r.root_path, 44)),
     r.status === "active" ? chalk.green(r.status) : chalk.yellow(r.status),
     dim(r.type),
     String(r.session_count),
@@ -395,7 +396,7 @@ export function cmdList(
 
   console.log(
     renderTable(
-      ["#", "Slug", "Path", "Status", "Type", "Sessions", "Last Active"],
+      ["#", "Name", "Slug", "Path", "Status", "Type", "Sessions", "Last Active"],
       tableRows
     )
   );

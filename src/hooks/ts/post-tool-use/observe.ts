@@ -274,6 +274,45 @@ function classify(toolName: string, toolInput: Record<string, unknown>): Observa
 }
 
 // ---------------------------------------------------------------------------
+// Skill telemetry capture (self-educating skill system, Phase 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the invoked skill name from a tool call, or null if this call is not
+ * a skill invocation. Two signals:
+ *   - the `Skill` tool (tool_input.skill)
+ *   - Bash `skill-workflow-notification WORKFLOW SKILL` (2nd arg is the skill)
+ */
+function extractSkillInvocation(
+  toolName: string,
+  toolInput: Record<string, unknown>
+): string | null {
+  if (toolName === 'Skill') {
+    return str(toolInput.skill) || null;
+  }
+  if (toolName === 'Bash') {
+    // Matches both the hyphenated doc form and the real camelCase tool path:
+    //   ~/.claude/Tools/SkillWorkflowNotification GIT CORE
+    //   skill-workflow-notification GIT CORE
+    // Capture order is WORKFLOW then SKILL — we want the skill (2nd arg).
+    const cmd = str(toolInput.command);
+    const m = cmd.match(/skill[-]?workflow[-]?notification\s+(\S+)\s+(\S+)/i);
+    if (m) return m[2];
+  }
+  return null;
+}
+
+async function maybeRecordSkill(hookData: HookData): Promise<void> {
+  const skill = extractSkillInvocation(hookData.tool_name, hookData.tool_input);
+  if (!skill) return;
+  await sendToDaemon('skill_telemetry_record', {
+    skill_name: skill,
+    source: 'local',
+    cwd: hookData.cwd ?? '',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -291,6 +330,10 @@ async function main() {
 
     // Skip probe/health-check sessions
     if (isProbeSession(hookData.cwd)) process.exit(0);
+
+    // Record skill telemetry BEFORE the SKIP gate (the Skill tool is skipped
+    // for observations but is exactly the signal we want for telemetry).
+    await maybeRecordSkill(hookData);
 
     // Skip uninteresting tools
     if (SKIP_TOOLS.has(hookData.tool_name)) process.exit(0);

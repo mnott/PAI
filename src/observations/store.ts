@@ -352,6 +352,146 @@ export async function storeSessionSummary(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Skill telemetry — self-educating skill system, Phase 1 (capture)
+// ---------------------------------------------------------------------------
+
+export interface SkillTelemetryRow {
+  id: number;
+  scope: string;
+  skill_name: string;
+  source: string;
+  status: string;
+  trigger_count: number;
+  accept_count: number;
+  first_triggered: Date;
+  last_triggered: Date;
+  context_projects: string[];
+  hash: string | null;
+  audit_status: string | null;
+  last_audited: Date | null;
+}
+
+export interface RecordSkillInvocationInput {
+  skill_name: string;
+  /** 'local' | 'skills.sh' | repo slug */
+  source?: string;
+  /** governance seam — defaults to 'default' */
+  scope?: string;
+  /** project slug for context_projects rollup */
+  project_slug?: string | null;
+}
+
+export interface QuerySkillTelemetryOptions {
+  scope?: string;
+  status?: string;
+  limit?: number;
+}
+
+const SKILL_TELEMETRY_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS pai_skill_telemetry (
+  id               SERIAL PRIMARY KEY,
+  scope            TEXT NOT NULL DEFAULT 'default',
+  skill_name       TEXT NOT NULL,
+  source           TEXT NOT NULL DEFAULT 'local',
+  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('trial','active','archived')),
+  trigger_count    INTEGER NOT NULL DEFAULT 0,
+  accept_count     INTEGER NOT NULL DEFAULT 0,
+  first_triggered  TIMESTAMPTZ DEFAULT NOW(),
+  last_triggered   TIMESTAMPTZ DEFAULT NOW(),
+  context_projects JSONB DEFAULT '[]'::jsonb,
+  hash             TEXT,
+  audit_status     TEXT,
+  last_audited     TIMESTAMPTZ,
+  UNIQUE(scope, skill_name, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skilltel_scope   ON pai_skill_telemetry(scope);
+CREATE INDEX IF NOT EXISTS idx_skilltel_status  ON pai_skill_telemetry(scope, status);
+CREATE INDEX IF NOT EXISTS idx_skilltel_last    ON pai_skill_telemetry(last_triggered DESC);
+`;
+
+let _skillTelemetryEnsured = false;
+
+export async function ensureSkillTelemetryTable(pool: Pool): Promise<void> {
+  if (_skillTelemetryEnsured) return;
+  await pool.query(SKILL_TELEMETRY_SCHEMA_SQL);
+  _skillTelemetryEnsured = true;
+}
+
+/**
+ * Record a single skill invocation. Upserts on (scope, skill_name, source):
+ * increments trigger_count, refreshes last_triggered, and dedup-merges the
+ * project slug into context_projects.
+ */
+export async function recordSkillInvocation(
+  pool: Pool,
+  input: RecordSkillInvocationInput
+): Promise<void> {
+  await ensureSkillTelemetryTable(pool);
+
+  const scope = input.scope ?? 'default';
+  const source = input.source ?? 'local';
+  const proj = input.project_slug ?? null;
+  const initialProjects = JSON.stringify(proj ? [proj] : []);
+
+  await pool.query(
+    `INSERT INTO pai_skill_telemetry
+       (scope, skill_name, source, trigger_count, context_projects)
+     VALUES ($1, $2, $3, 1, $4::jsonb)
+     ON CONFLICT (scope, skill_name, source) DO UPDATE SET
+       trigger_count    = pai_skill_telemetry.trigger_count + 1,
+       last_triggered   = NOW(),
+       context_projects = CASE
+         WHEN $5::text IS NULL THEN pai_skill_telemetry.context_projects
+         WHEN pai_skill_telemetry.context_projects @> to_jsonb($5::text)
+           THEN pai_skill_telemetry.context_projects
+         ELSE pai_skill_telemetry.context_projects || to_jsonb($5::text)
+       END`,
+    [scope, input.skill_name, source, initialProjects, proj]
+  );
+}
+
+/**
+ * List skill telemetry rows, most-triggered first.
+ */
+export async function querySkillTelemetry(
+  pool: Pool,
+  opts: QuerySkillTelemetryOptions = {}
+): Promise<SkillTelemetryRow[]> {
+  await ensureSkillTelemetryTable(pool);
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  conditions.push(`scope = $${idx++}`);
+  params.push(opts.scope ?? 'default');
+
+  if (opts.status !== undefined) {
+    conditions.push(`status = $${idx++}`);
+    params.push(opts.status);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+  const limit = opts.limit ?? 100;
+  params.push(limit);
+
+  const result = await pool.query<SkillTelemetryRow>(
+    `SELECT id, scope, skill_name, source, status,
+            trigger_count, accept_count,
+            first_triggered, last_triggered,
+            context_projects, hash, audit_status, last_audited
+     FROM pai_skill_telemetry
+     ${where}
+     ORDER BY trigger_count DESC, last_triggered DESC
+     LIMIT $${idx}`,
+    params
+  );
+
+  return result.rows;
+}
+
 /**
  * Most recent session summaries for a project, ordered by created_at DESC.
  */

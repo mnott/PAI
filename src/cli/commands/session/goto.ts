@@ -37,6 +37,7 @@ import {
   fmtAge,
   type ScannedSession,
 } from "../../lib/session-scan.js";
+import { printExitDir } from "../../lib/exit-dir.js";
 
 // ---------------------------------------------------------------------------
 // Probe helper
@@ -209,6 +210,7 @@ export function cmdGoto(
         console.error(err(`Failed to launch claude: ${result.error.message}`));
         process.exit(1);
       }
+      printExitDir(projectDir);
       process.exit(result.status ?? 0);
     } else {
       // Fallback path
@@ -231,6 +233,7 @@ export function cmdGoto(
         console.error(err(`Failed to launch claude: ${result.error.message}`));
         process.exit(1);
       }
+      printExitDir(projectDir);
       process.exit(result.status ?? 0);
     }
   } else {
@@ -248,6 +251,7 @@ export function cmdGoto(
       console.error(err(`Failed to launch claude: ${result.error.message}`));
       process.exit(1);
     }
+    printExitDir(projectDir);
     process.exit(result.status ?? 0);
   }
 }

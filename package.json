@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -23,7 +23,9 @@
     "tab-color-command.sh",
     "scripts/build-hooks.mjs",
     "scripts/build-skill-stubs.mjs",
+    "scripts/build-docs.mjs",
     "src/hooks",
+    "docs",
     "README.md",
     "LICENSE",
     "ARCHITECTURE.md",
@@ -54,7 +56,7 @@
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
   "scripts": {
-    "build": "tsdown && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync",
+    "build": "tsdown && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",

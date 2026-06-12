@@ -37,13 +37,25 @@ export function registerProjectsCommands(
   projectsCmd: Command,
   getDb: () => Database
 ): void {
-  // pai projects list — default when `pai projects` is invoked bare
+  // pai projects (bare) — show the unified deduped listing, same as `pai`.
+  // The old project-only listing is still available as `pai projects list-raw`.
   projectsCmd
     .command("list", { isDefault: true })
     .description(
-      "List registered projects. Short form: pai projects (bare, no subcommand)\n" +
-        "Default: active projects only. Use --all to include archived."
+      "Show the unified deduped listing (same as `pai`).\n" +
+        "Use --all to include cold / zero-session / archived projects."
     )
+    .option("--all", "Show all entries including cold / zero-session / archived projects")
+    .option("-n, --n <count>", "Max rows to show", "20")
+    .action(async (opts: { all?: boolean; n?: string }) => {
+      const { cmdMain } = await import("../main-resolver.js");
+      await cmdMain(getDb(), undefined, undefined, opts);
+    });
+
+  // Raw legacy project listing (registry rows only, with slug + path)
+  projectsCmd
+    .command("list-raw")
+    .description("Raw registry listing with slug, path, status, last_active columns")
     .option("--all", "Include archived projects (default: active only)")
     .option("--status <status>", "Filter by status: active | archived")
     .option("--tag <tag>", "Filter by tag")
