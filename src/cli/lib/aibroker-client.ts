@@ -10,6 +10,7 @@
 
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +32,8 @@ export interface AiBrokerSessionMeta {
   kind: "claude" | "shell";
   /** Whether this is the currently focused pane */
   active: boolean;
+  /** Last user prompt seen in scrollback (only populated by fetchLiveSessionsWithPrompts) */
+  lastPrompt?: string;
 }
 
 interface AiBrokerSessionsResult {
@@ -156,6 +159,73 @@ export async function fetchLiveSessions(): Promise<AiBrokerSessionMeta[]> {
 }
 
 /**
+ * Fetch live sessions WITH the last user prompt extracted from terminal scrollback.
+ *
+ * Heavier than `fetchLiveSessions` (one IPC call returning full content for
+ * every session), but yields a `lastPrompt` field useful for the unified
+ * listing.
+ */
+export async function fetchLiveSessionsWithPrompts(): Promise<
+  (AiBrokerSessionMeta & { lastPrompt?: string })[]
+> {
+  // Get the basic metadata first (always works, fast).
+  const metas = await fetchLiveSessions();
+  if (metas.length === 0) return [];
+
+  // Then enrich with last prompts via session_content (single call, all sessions).
+  try {
+    const contentResult = (await callAiBroker("session_content", { lines: 60 })) as {
+      sessions?: Array<{ sessionId: string; content?: string }>;
+    };
+    const contentMap = new Map<string, string>();
+    for (const s of contentResult.sessions ?? []) {
+      if (s.sessionId && typeof s.content === "string") {
+        contentMap.set(s.sessionId, s.content);
+      }
+    }
+    return metas.map((m) => {
+      const content = contentMap.get(m.sessionId);
+      const lastPrompt = content ? extractLastUserPrompt(content) : undefined;
+      return { ...m, lastPrompt };
+    });
+  } catch {
+    return metas.map((m) => ({ ...m }));
+  }
+}
+
+/**
+ * Extract the most-recent user prompt from a terminal scrollback string.
+ *
+ * Claude Code's TUI shows user input lines prefixed with `❯ `. We scan from
+ * the bottom up, skipping the active input box (between the two horizontal
+ * rule lines) and the statusline footer.
+ */
+function extractLastUserPrompt(content: string): string | undefined {
+  const lines = content.split("\n");
+  // Walk bottom-up looking for the most recent user-typed line.
+  // Claude Code marks user prompts with one of these prefixes:
+  //   ❯ <text>      (current/recent prompt in the input box or scrollback)
+  //   > <text>      (older variant)
+  // The line MUST have non-empty content after the prompt symbol.
+  // Skip the active input box (often empty `❯`) and statusline (👋 PAI CC...).
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    // Match ❯ or > (followed by space) then content
+    const m = line.match(/^[❯>]\s+(.+?)\s*$/);
+    if (!m) continue;
+    let text = m[1].trim();
+    if (!text) continue;
+    // Skip lines that are just box-drawing or known UI noise
+    if (/^[─━═]+/.test(text)) continue;
+    if (text.startsWith("👋")) continue;
+    // Strip ANSI escape sequences that may leak in
+    text = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "").trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+/**
  * Send text to a specific AIBroker session by its iTerm2 sessionId.
  */
 export async function sendToSession(
@@ -189,6 +259,46 @@ export async function switchToSession(target: string): Promise<{ ok: boolean; er
       stdio: "ignore",
     });
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/**
+ * Bring the iTerm2 tab containing a specific session to the front.
+ *
+ * This is the mechanism AIBroker's screenshot path uses: match the session by
+ * its iTerm2 session id (the `sessionId` returned by `fetchLiveSessions`, which
+ * is iTerm's own `id of session`), then `select` its window, tab, and session.
+ * Unlike the `switch` IPC (which only flips an internal index and never touches
+ * iTerm), this actually reveals the tab.
+ */
+export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
+  // Strip any "iterm:" style prefix, matching AIBroker's stripItermPrefix.
+  const id = itermSessionId.replace(/^iterm:/i, "").trim();
+  const script = `tell application "iTerm2"
+  activate
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if id of s is "${id}" then
+          select w
+          select t
+          select s
+          return "ok"
+        end if
+      end repeat
+    end repeat
+  end repeat
+  return "not-found"
+end tell`;
+  try {
+    const r = spawnSync("osascript", ["-e", script], { encoding: "utf8" });
+    if (r.status !== 0) {
+      return { ok: false, error: (r.stderr || "osascript failed").trim() };
+    }
+    if ((r.stdout ?? "").trim() === "ok") return { ok: true };
+    return { ok: false, error: "session not found in any iTerm2 window" };
   } catch (e) {
     return { ok: false, error: String(e) };
   }

@@ -1,24 +1,18 @@
 /**
  * main-resolver.ts
  *
- * `pai [<query>]`  —  topic-first session discovery and launcher (v0.11.0)
+ * `pai [<query>]`  —  topic-first session discovery and launcher (v0.11.1)
  *
  * Decision tree:
  *   1. No arg          → show deduped session listing (one row per name)
  *   2. UUID prefix     → universal filesystem scan; auto-launch the match
  *   3. Any string:
- *      a. Live match (by paiName) → aibroker_switch → iTerm tab to front. Done.
- *      b. Resumable match         → probe + claude --resume <uuid>
- *      c. Transcript/stub match   → fresh claude in same project dir
- *      d. No name match           → free-text history search → picker
+ *      a. Live match (by normalized paiName) → aibroker_switch → iTerm tab to front. Done.
+ *      b. Resumable match                    → probe + claude --resume <uuid>
+ *      c. Transcript/stub match              → fresh claude in same project dir
+ *      d. No name match                      → free-text history search → picker
  *
- * Dedup algorithm for listing:
- *   - Collect live Claude sessions from AIBroker (kind:"claude")
- *   - Collect disk sessions from session-scan (named filter)
- *   - Build unified entries, group by name (case-insensitive)
- *   - Within each group, pick by priority: live > resumable > transcript-only > stub > orphan
- *   - Within same priority, pick latest by mtime
- *   - Output ONE row per name with status column
+ * Dedup + name normalization logic: src/cli/lib/dedup-sessions.ts (shared with listing).
  */
 
 import type { Database } from "better-sqlite3";
@@ -27,122 +21,24 @@ import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
-import { err, dim, warn, ok, header, bold, renderTable, fmtDate, shortenPath } from "../utils.js";
+import { err, dim, warn, ok, header, renderTable } from "../utils.js";
 import {
   scanSessions,
-  resolveSessionByNameOrId,
   fmtAge,
   type ScannedSession,
 } from "../lib/session-scan.js";
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
-import { fetchLiveSessions, switchToSession, type AiBrokerSessionMeta } from "../lib/aibroker-client.js";
-
-// ---------------------------------------------------------------------------
-// Status priority for dedup
-// ---------------------------------------------------------------------------
-
-type UnifiedStatus = "live" | "resumable" | "transcript-only" | "stub" | "orphan";
-
-const STATUS_PRIORITY: Record<UnifiedStatus, number> = {
-  live: 0,
-  resumable: 1,
-  "transcript-only": 2,
-  stub: 3,
-  orphan: 4,
-};
-
-interface UnifiedSession {
-  name: string;
-  status: UnifiedStatus;
-  /** Only present for live sessions */
-  liveSessionId?: string;
-  /** Only present for disk sessions */
-  diskSession?: ScannedSession;
-  lastActivity: number;
-  project: string;
-  lastPrompt: string;
-}
-
-// ---------------------------------------------------------------------------
-// Build deduped catalog
-// ---------------------------------------------------------------------------
-
-function buildDeduped(
-  liveSessions: AiBrokerSessionMeta[],
-  diskSessions: ScannedSession[]
-): UnifiedSession[] {
-  const byName = new Map<string, UnifiedSession>();
-
-  // Process live Claude sessions
-  for (const s of liveSessions) {
-    if (s.kind === "shell") continue;
-    const rawName = s.paiName ?? s.name ?? s.sessionId.slice(0, 8);
-    const key = rawName.toLowerCase();
-    const entry: UnifiedSession = {
-      name: rawName,
-      status: "live",
-      liveSessionId: s.sessionId,
-      lastActivity: Date.now(),
-      project: "",
-      lastPrompt: "",
-    };
-    const existing = byName.get(key);
-    if (!existing || STATUS_PRIORITY["live"] < STATUS_PRIORITY[existing.status]) {
-      byName.set(key, entry);
-    }
-  }
-
-  // Process disk sessions
-  for (const s of diskSessions) {
-    const rawName = s.friendlyName ?? s.shortId;
-    const key = rawName.toLowerCase();
-
-    let status: UnifiedStatus;
-    if (s.resumable) {
-      status = "resumable";
-    } else if (s.sessionStatus === "transcript-only") {
-      status = "transcript-only";
-    } else if (s.sessionStatus === "stub") {
-      status = "stub";
-    } else {
-      status = "orphan";
-    }
-
-    const entry: UnifiedSession = {
-      name: rawName,
-      status,
-      diskSession: s,
-      lastActivity: s.mtime,
-      project: s.decodedPath ?? "",
-      lastPrompt: s.lastUserPrompt ?? "",
-    };
-
-    const existing = byName.get(key);
-    if (!existing) {
-      byName.set(key, entry);
-    } else {
-      const existingPriority = STATUS_PRIORITY[existing.status];
-      const newPriority = STATUS_PRIORITY[status];
-      if (newPriority < existingPriority) {
-        byName.set(key, entry);
-      } else if (newPriority === existingPriority && entry.lastActivity > existing.lastActivity) {
-        // Same priority — keep most recent
-        byName.set(key, entry);
-      }
-    }
-  }
-
-  // Sort: live first, then by lastActivity desc
-  const entries = Array.from(byName.values());
-  entries.sort((a, b) => {
-    const pa = STATUS_PRIORITY[a.status];
-    const pb = STATUS_PRIORITY[b.status];
-    if (pa !== pb) return pa - pb;
-    return b.lastActivity - a.lastActivity;
-  });
-
-  return entries;
-}
+import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
+import { printExitDir } from "../lib/exit-dir.js";
+import {
+  buildDeduped,
+  normalizeName,
+  STATUS_PRIORITY,
+  fmtUnifiedStatus,
+  renderDedupedSessions,
+  type UnifiedSession,
+  type RegisteredProject,
+} from "../lib/dedup-sessions.js";
 
 // ---------------------------------------------------------------------------
 // Probe helper
@@ -262,6 +158,7 @@ function launchSession(
         console.error(err(`Failed to launch claude: ${result.error.message}`));
         process.exit(1);
       }
+      printExitDir(projectDir);
       process.exit(result.status ?? 0);
     } else {
       process.stderr.write(
@@ -279,6 +176,7 @@ function launchSession(
         console.error(err(`Failed to launch claude: ${result.error.message}`));
         process.exit(1);
       }
+      printExitDir(projectDir);
       process.exit(result.status ?? 0);
     }
   } else {
@@ -291,6 +189,7 @@ function launchSession(
       console.error(err(`Failed to launch claude: ${result.error.message}`));
       process.exit(1);
     }
+    printExitDir(projectDir);
     process.exit(result.status ?? 0);
   }
 }
@@ -349,16 +248,6 @@ function shortenProject(p: string, maxLen = 44): string {
   return "…" + p.slice(-(maxLen - 1));
 }
 
-function fmtStatus(s: UnifiedStatus): string {
-  switch (s) {
-    case "live":          return chalk.green("live");
-    case "resumable":     return chalk.cyan("resumable");
-    case "transcript-only": return chalk.dim("transcript");
-    case "stub":          return chalk.dim("stub");
-    case "orphan":        return chalk.dim("orphan");
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Interactive picker prompt
 // ---------------------------------------------------------------------------
@@ -382,6 +271,31 @@ async function askForChoice(max: number): Promise<number | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Shared switch helper (live session → iTerm tab)
+// ---------------------------------------------------------------------------
+
+async function doSwitch(
+  entry: UnifiedSession,
+  dryRun: boolean
+): Promise<boolean> {
+  if (!entry.liveSessionId) return false;
+  if (dryRun) {
+    console.log("\n" + chalk.bold("Dry run — would switch iTerm tab:") + "\n");
+    console.log(`  target: ${entry.name} (${entry.liveSessionId.slice(0, 8)})`);
+    console.log(`  action: aibroker_switch + osascript iTerm activate`);
+    console.log();
+    return true;
+  }
+  const result = await switchToSession(entry.liveSessionId);
+  if (result.ok) {
+    console.log(ok(`Switched to live session: ${chalk.white(entry.name)}`));
+    return true;
+  }
+  console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Main command
 // ---------------------------------------------------------------------------
 
@@ -389,6 +303,31 @@ export interface MainResolverOpts {
   auto?: boolean;    // -y / --auto: pick #1 without prompting
   dryRun?: boolean;  // --dry-run: show what would happen
   n?: string;        // --n <count>: max candidates for history search
+  all?: boolean;     // --all: show cold / 0-session / archived projects too
+}
+
+function getRegisteredProjects(db: Database, all = false): RegisteredProject[] {
+  try {
+    const statusClause = all ? "" : "WHERE p.status = 'active'";
+    return db
+      .prepare(`
+        SELECT
+          p.slug,
+          p.display_name,
+          p.root_path,
+          p.status,
+          COUNT(s.id) AS session_count,
+          MAX(s.created_at) AS last_active
+        FROM projects p
+        LEFT JOIN sessions s ON s.project_id = p.id
+        ${statusClause}
+        GROUP BY p.id
+        ORDER BY last_active DESC NULLS LAST, p.updated_at DESC
+      `)
+      .all() as RegisteredProject[];
+  } catch {
+    return [];
+  }
 }
 
 export async function cmdMain(
@@ -398,51 +337,23 @@ export async function cmdMain(
   opts: MainResolverOpts
 ): Promise<void> {
   const maxResults = parseInt(opts.n ?? "20", 10);
+  const showAll = opts.all ?? false;
+  // Live sessions: metadata-only fetch (1s) — last-prompt fetch is too slow
+  // (~8s for AppleScript per-session scrollback). For live entries, last-prompt
+  // stays empty; user can `pai <name>` to switch into the tab and see context.
+  const livePromise = !query
+    ? fetchLiveSessions().catch(() => [] as Awaited<ReturnType<typeof fetchLiveSessions>>)
+    : Promise.resolve([]);
   const allSessions = scanSessions(db, { limit: 500, filter: "named" });
+  const registeredProjects = getRegisteredProjects(db, showAll);
 
   // -----------------------------------------------------------------------
-  // Case 1: No query → deduped session listing
+  // Case 1: No query → deduped session listing (shared renderer)
   // -----------------------------------------------------------------------
   if (!query) {
-    let liveSessions: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
-    try {
-      liveSessions = await fetchLiveSessions();
-    } catch {
-      // AIBroker not running — show only disk sessions
-    }
-
-    const deduped = buildDeduped(liveSessions, allSessions);
-
-    if (deduped.length === 0) {
-      console.log(warn("No sessions found. Start Claude Code in a project directory first."));
-      return;
-    }
-
-    console.log("\n" + header("Sessions") + "\n");
-    const tableHeaders = ["#", "name", "status", "age", "project", "last prompt"];
-    const tableRows = deduped.slice(0, maxResults).map((entry, i) => {
-      const age =
-        entry.status === "live"
-          ? chalk.green("now")
-          : dim(fmtAge(entry.lastActivity));
-      const snippet = entry.lastPrompt.replace(/\n+/g, " ").trim().slice(0, 36);
-      const project = entry.diskSession
-        ? dim(shortenProject(entry.diskSession.friendlyName ?? entry.diskSession.decodedPath, 28))
-        : dim("—");
-      return [
-        dim(String(i + 1)),
-        chalk.white(entry.name),
-        fmtStatus(entry.status),
-        age,
-        project,
-        chalk.dim(snippet ? `"${snippet}"` : "—"),
-      ];
-    });
-    console.log(renderTable(tableHeaders, tableRows));
-
-    console.log();
-    console.log(dim("  Switch/resume/start: ") + chalk.white("pai <name>") + dim("  or  ") + chalk.white("pai <uuid-prefix>"));
-    console.log();
+    const liveSessions = await livePromise;
+    const deduped = buildDeduped(liveSessions, allSessions, registeredProjects, showAll);
+    renderDedupedSessions(deduped, showAll ? undefined : maxResults);
     return;
   }
 
@@ -465,10 +376,9 @@ export async function cmdMain(
   }
 
   // -----------------------------------------------------------------------
-  // Case 3: Name match against deduped catalog
+  // Case 3: Name match against deduped catalog (normalized + slug matching)
   // -----------------------------------------------------------------------
   {
-    // Fetch live sessions for the switch path
     let liveSessions: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
     try {
       liveSessions = await fetchLiveSessions();
@@ -476,66 +386,42 @@ export async function cmdMain(
       // AIBroker not running
     }
 
-    const deduped = buildDeduped(liveSessions, allSessions);
-    const qLower = query.toLowerCase();
+    const deduped = buildDeduped(liveSessions, allSessions, registeredProjects, showAll);
+    // Normalize the query the same way we normalize session names
+    // Also support slug form: "jobs-grazyna" → "jobs grazyna" for matching
+    const qNorm = normalizeName(query).toLowerCase();
+    const qSlug = query.toLowerCase().replace(/\s+/g, "-"); // words → slug form for slug lookup
 
-    // Exact name match first
-    const exactMatch = deduped.find((e) => e.name.toLowerCase() === qLower);
+    // Match helper: checks normalized display name AND slug
+    const nameMatches = (e: UnifiedSession, q: string) =>
+      e.name.toLowerCase() === q ||
+      (e.slug !== undefined && e.slug.toLowerCase() === qSlug);
+    const nameIncludes = (e: UnifiedSession, q: string) =>
+      e.name.toLowerCase().includes(q) ||
+      (e.slug !== undefined && e.slug.toLowerCase().includes(qSlug));
+
+    // Exact normalized-name match first (display_name or slug)
+    const exactMatch = deduped.find((e) => nameMatches(e, qNorm));
     if (exactMatch) {
-      if (exactMatch.status === "live" && exactMatch.liveSessionId) {
-        // Switch iTerm tab to front
-        if (opts.dryRun) {
-          console.log("\n" + chalk.bold("Dry run — would switch iTerm tab:") + "\n");
-          console.log(`  target: ${exactMatch.name} (${exactMatch.liveSessionId.slice(0, 8)})`);
-          console.log(`  action: aibroker_switch + osascript iTerm activate`);
-          console.log();
-          return;
-        }
-        const result = await switchToSession(exactMatch.liveSessionId);
-        if (result.ok) {
-          console.log(ok(`Switched to live session: ${chalk.white(exactMatch.name)}`));
-        } else {
-          console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));
-          console.error(dim("  Falling back to disk launch..."));
-          // Fall through to disk session handling
-          if (exactMatch.diskSession) {
-            launchSession(exactMatch.diskSession, allSessions, opts.dryRun ?? false);
-          }
-        }
-        return;
+      if (exactMatch.status === "live") {
+        const switched = await doSwitch(exactMatch, opts.dryRun ?? false);
+        if (switched) return;
+        // Fallback: if switch failed and there's a disk session, launch it
       }
-
-      // Disk-based launch (resumable, transcript-only, stub)
       if (exactMatch.diskSession) {
         launchSession(exactMatch.diskSession, allSessions, opts.dryRun ?? false);
         return;
       }
     }
 
-    // Partial name match
-    const partialMatches = deduped.filter(
-      (e) => e.name.toLowerCase().includes(qLower)
-    );
+    // Partial normalized-name match (display_name or slug)
+    const partialMatches = deduped.filter((e) => nameIncludes(e, qNorm));
+
     if (partialMatches.length === 1) {
       const match = partialMatches[0];
-      if (match.status === "live" && match.liveSessionId) {
-        if (opts.dryRun) {
-          console.log("\n" + chalk.bold("Dry run — would switch iTerm tab:") + "\n");
-          console.log(`  target: ${match.name} (${match.liveSessionId.slice(0, 8)})`);
-          console.log(`  action: aibroker_switch + osascript iTerm activate`);
-          console.log();
-          return;
-        }
-        const result = await switchToSession(match.liveSessionId);
-        if (result.ok) {
-          console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
-        } else {
-          console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));
-          if (match.diskSession) {
-            launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-          }
-        }
-        return;
+      if (match.status === "live") {
+        const switched = await doSwitch(match, opts.dryRun ?? false);
+        if (switched) return;
       }
       if (match.diskSession) {
         launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
@@ -544,7 +430,7 @@ export async function cmdMain(
     }
 
     if (partialMatches.length > 1) {
-      // Multiple named sessions match — show as candidates
+      // Multiple matches — show picker
       console.log("\n" + header(`Sessions matching "${query}"`) + "\n");
       const headers = ["#", "name", "status", "age", "project"];
       const rows = partialMatches.slice(0, maxResults).map((entry, i) => {
@@ -558,7 +444,7 @@ export async function cmdMain(
         return [
           dim(String(i + 1)),
           chalk.white(entry.name),
-          fmtStatus(entry.status),
+          fmtUnifiedStatus(entry.status),
           age,
           project,
         ];
@@ -566,20 +452,20 @@ export async function cmdMain(
       console.log(renderTable(headers, rows));
       console.log();
 
+      const pickMatch = async (match: UnifiedSession) => {
+        if (match.status === "live") {
+          await doSwitch(match, opts.dryRun ?? false);
+          return;
+        }
+        if (match.diskSession) {
+          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
+        }
+      };
+
       if (pickN !== undefined) {
         const idx = pickN - 1;
         if (idx >= 0 && idx < partialMatches.length) {
-          const match = partialMatches[idx];
-          if (match.status === "live" && match.liveSessionId) {
-            if (!opts.dryRun) {
-              await switchToSession(match.liveSessionId);
-              console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
-            }
-            return;
-          }
-          if (match.diskSession) {
-            launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-          }
+          await pickMatch(partialMatches[idx]);
           return;
         }
         console.error(err(`Invalid choice: ${pickN}`));
@@ -588,31 +474,13 @@ export async function cmdMain(
       }
 
       if (opts.auto) {
-        const match = partialMatches[0];
-        if (match.status === "live" && match.liveSessionId) {
-          if (!opts.dryRun) {
-            await switchToSession(match.liveSessionId);
-            console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
-          }
-          return;
-        }
-        if (match.diskSession) {
-          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-        }
+        await pickMatch(partialMatches[0]);
         return;
       }
 
       const choice = await askForChoice(Math.min(partialMatches.length, maxResults));
       if (choice !== null) {
-        const match = partialMatches[choice - 1];
-        if (match.status === "live" && match.liveSessionId) {
-          await switchToSession(match.liveSessionId);
-          console.log(ok(`Switched to live session: ${chalk.white(match.name)}`));
-          return;
-        }
-        if (match.diskSession) {
-          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-        }
+        await pickMatch(partialMatches[choice - 1]);
       }
       return;
     }
@@ -624,7 +492,7 @@ export async function cmdMain(
   if (!existsSync(HISTORY_FILE)) {
     console.error(err("~/.claude/history.jsonl not found."));
     console.error(dim("  No prompt history available for search."));
-    console.error(dim(`  Try: pai  (no args) to see all sessions.`));
+    console.error(dim("  Try: pai  (no args) to see all sessions."));
     process.exitCode = 1;
     return;
   }
@@ -634,8 +502,8 @@ export async function cmdMain(
 
   if (matches.length === 0) {
     console.log(warn(`No sessions found matching "${query}".`));
-    console.log(dim(`  Try a shorter or different search term.`));
-    console.log(dim(`  Or run: `) + chalk.white("pai") + dim(" (no args) to see all sessions."));
+    console.log(dim("  Try a shorter or different search term."));
+    console.log(dim("  Or run: ") + chalk.white("pai") + dim(" (no args) to see all sessions."));
     return;
   }
 
@@ -660,16 +528,20 @@ export async function cmdMain(
   console.log(renderTable(headers, rows));
   console.log();
 
+  const launchHistoryMatch = (match: SessionMatch) => {
+    const session = matchToSession(match, allSessions);
+    if (!session) {
+      console.error(err("Could not resolve session for launch (no project path)."));
+      process.exitCode = 1;
+      return;
+    }
+    launchSession(session, allSessions, opts.dryRun ?? false);
+  };
+
   if (pickN !== undefined) {
     const idx = pickN - 1;
     if (idx >= 0 && idx < matches.length) {
-      const session = matchToSession(matches[idx], allSessions);
-      if (!session) {
-        console.error(err("Could not resolve session for launch (no project path)."));
-        process.exitCode = 1;
-        return;
-      }
-      launchSession(session, allSessions, opts.dryRun ?? false);
+      launchHistoryMatch(matches[idx]);
       return;
     }
     console.error(err(`Invalid choice: ${pickN}`));
@@ -678,24 +550,12 @@ export async function cmdMain(
   }
 
   if (opts.auto) {
-    const session = matchToSession(matches[0], allSessions);
-    if (!session) {
-      console.error(err("Could not resolve session for launch (no project path)."));
-      process.exitCode = 1;
-      return;
-    }
-    launchSession(session, allSessions, opts.dryRun ?? false);
+    launchHistoryMatch(matches[0]);
     return;
   }
 
   const choice = await askForChoice(matches.length);
   if (choice !== null) {
-    const session = matchToSession(matches[choice - 1], allSessions);
-    if (!session) {
-      console.error(err("Could not resolve session for launch (no project path)."));
-      process.exitCode = 1;
-      return;
-    }
-    launchSession(session, allSessions, opts.dryRun ?? false);
+    launchHistoryMatch(matches[choice - 1]);
   }
 }

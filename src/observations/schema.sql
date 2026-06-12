@@ -39,3 +39,26 @@ CREATE TABLE IF NOT EXISTS pai_session_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_ss_project ON pai_session_summaries(project_id);
 CREATE INDEX IF NOT EXISTS idx_ss_session ON pai_session_summaries(session_id);
+
+-- Skill telemetry — self-educating skill system, Phase 1 (capture)
+-- scope is the governance seam (personal = 'default'; multi-tenant adds tenants)
+CREATE TABLE IF NOT EXISTS pai_skill_telemetry (
+  id               SERIAL PRIMARY KEY,
+  scope            TEXT NOT NULL DEFAULT 'default',
+  skill_name       TEXT NOT NULL,
+  source           TEXT NOT NULL DEFAULT 'local',
+  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('trial','active','archived')),
+  trigger_count    INTEGER NOT NULL DEFAULT 0,
+  accept_count     INTEGER NOT NULL DEFAULT 0,
+  first_triggered  TIMESTAMPTZ DEFAULT NOW(),
+  last_triggered   TIMESTAMPTZ DEFAULT NOW(),
+  context_projects JSONB DEFAULT '[]'::jsonb,
+  hash             TEXT,
+  audit_status     TEXT,
+  last_audited     TIMESTAMPTZ,
+  UNIQUE(scope, skill_name, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skilltel_scope  ON pai_skill_telemetry(scope);
+CREATE INDEX IF NOT EXISTS idx_skilltel_status ON pai_skill_telemetry(scope, status);
+CREATE INDEX IF NOT EXISTS idx_skilltel_last   ON pai_skill_telemetry(last_triggered DESC);

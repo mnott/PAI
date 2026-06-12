@@ -345,6 +345,23 @@ export function performScan(db: Database): ScanResult {
     }
   }
 
+  // Phase 5: Backfill display_name for rows where it still equals the slug.
+  // This converts legacy entries created before the basename-based naming was
+  // introduced: "jobs-grazyna" → "Jobs Grazyna" (from basename of root_path).
+  {
+    const stale = db
+      .prepare("SELECT id, slug, root_path FROM projects WHERE display_name = slug AND root_path IS NOT NULL AND root_path != ''")
+      .all() as { id: number; slug: string; root_path: string }[];
+
+    for (const row of stale) {
+      const name = basename(row.root_path);
+      if (name && name !== row.slug) {
+        db.prepare("UPDATE projects SET display_name = ?, updated_at = ? WHERE id = ?")
+          .run(name, Date.now(), row.id);
+      }
+    }
+  }
+
   return result;
 }
 

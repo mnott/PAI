@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0020 - 2026-05-21 - Pai Release Verification And Pailot Session Discovery Debug
-> **Paused at:** 2026-05-22T04:18:57.009Z
+> **Last session:** 0006 - 2026-06-12 - Pai Session Picker — Enter First Menu, Live Tab Switch
+> **Paused at:** 2026-06-12T12:11:05.901Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -283,4 +283,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-05-22T04:18:57.009Z*
+*Last updated: 2026-06-12T12:11:05.901Z*

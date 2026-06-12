@@ -1,4 +1,4 @@
-# PAI Knowledge OS — v0.10.0
+# PAI Knowledge OS
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
@@ -51,6 +51,34 @@ pai memory search "test"   # should return results after indexing
 ```
 
 That's it. Claude Code now has persistent memory across all sessions.
+
+---
+
+## Command Reference
+
+Every `pai` command area has its own man page, **generated from the live CLI** so it never drifts from the actual commands. Read them three ways:
+
+```bash
+pai help            # list all command areas (the index)
+pai help memory     # the full man page for one area, in your terminal
+pai memory --help   # terse Commander help for any command
+```
+
+Browse the same pages on GitHub under [`docs/commands/`](docs/commands/README.md). Each page lists every subcommand, its arguments and options, and worked examples. The reference below in this README is the *guided tour*; `docs/commands/` is the *complete reference*.
+
+| Area | What it covers |
+|------|----------------|
+| [`pai memory`](docs/commands/memory.md) | Federated search, indexing, embeddings |
+| [`pai projects`](docs/commands/projects.md) | Project registry: add, cd, info, health, rebind |
+| [`pai kg`](docs/commands/kg.md) | Temporal knowledge graph |
+| [`pai zettel`](docs/commands/zettel.md) | Zettelkasten intelligence over your vault |
+| [`pai observation`](docs/commands/observation.md) | Automatic tool-call observation capture |
+| [`pai skill`](docs/commands/skill.md) | Skill telemetry (self-educating skill system) |
+| [`pai obsidian`](docs/commands/obsidian.md) | Obsidian vault sync |
+| [`pai daemon`](docs/commands/daemon.md) | Daemon lifecycle |
+| [`pai notify`](docs/commands/notify.md) | Notification configuration |
+| [`pai backup`](docs/commands/backup.md) · [`pai restore`](docs/commands/restore.md) | Data safety |
+| … | See [the full index](docs/commands/README.md) for all areas |
 
 ---
 
@@ -301,25 +329,29 @@ PAI gives you a complete picture of every Claude Code session running on your ma
 
 ### The Core Idea: One Entry Point
 
-`pai <name>` is the universal session command. It does the right thing based on session state:
+Two ways in, both forgiving:
 
-- **Live session** — switches the iTerm2 tab to front (no new Claude launched)
-- **Resumable session** — probes `claude --resume`, launches with the saved UUID
-- **Transcript/stub** — starts a fresh Claude in the same project directory
-- **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
+- **`pai`** (no args) — opens the **interactive picker**: type to search across projects *and* sessions, then act on the highlighted row with a single key.
+- **`pai <name>`** — the universal session command when you already know the name. It does the right thing based on session state:
+  - **Live session** — switches the iTerm2 tab to front (no new Claude launched)
+  - **Resumable session** — probes `claude --resume`, launches with the saved UUID
+  - **Transcript/stub** — starts a fresh Claude in the same project directory
+  - **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
 
 ```bash
+pai                 # Interactive picker — search, then go / new / cd / finder / remove
 pai aibroker        # Switch to the live AIBroker tab (iTerm comes to front)
 pai youdrill        # Resume the youdrill session, or fresh if snapshot is stale
 pai mdf             # Free-text search across your prompt history
 pai 0856d40b        # Resume by UUID prefix
-pai                 # Show all sessions (deduped, one row per name)
+pai --list          # Static deduped table (the old no-args behaviour)
 ```
 
 ### Daily Commands
 
 ```bash
-pai                   # List sessions (deduped by name, one row per name)
+pai                   # Interactive picker (projects + sessions; search then act)
+pai --list            # Static deduped listing (one row per name)
 pai <name>            # Switch / resume / fresh — universal
 pai pause             # Save state checkpoint (write ## Continue to TODO.md)
 pai pause all         # Pause every live Claude session at once
@@ -333,9 +365,48 @@ And inside Claude Code, the two slash commands that matter:
 /end      →  same as /pause, plus marks the session note Completed
 ```
 
-### Session Listing
+### The Interactive Picker
 
-`pai` (no args) shows a single deduped table — one row per session name, regardless of how many snapshots exist on disk:
+Run `pai` with no arguments to open a self-contained terminal selector (no `fzf` or other dependency) over a **unified, deduped list of both projects and sessions** — tagged so the two stay distinct. It's the one place to answer "where did I work on X, and take me there."
+
+```
+  pai  —  find a project or session
+  search > samba
+
+  live      Chenarlier   now   …/Raspi/Chenarlier   samba setup monster reverse proxy
+  project   Glidr        2d    …/apps/glidr          claude pai research
+
+  ────────────────────────────────────────
+  Chenarlier   /Users/…/Raspi/Chenarlier
+  recent notes:
+    10 - Samba Setup/01 - Samba Server Setup.md   1mo
+    00 - Monster/00 - Monster.md                  3mo
+  ────────────────────────────────────────
+  g go to tab · n new · c cd · f finder · d remove · s search · ↑↓ move · q quit
+```
+
+**Two modes.** You start in *command mode* (single keys are actions). Press `s` (or `/`) to enter *search mode* (type a topic — it filters by name, path, **and folded-in note file/folder names**, so `samba` finds a project literally named "Chenarlier"); `Enter` or `esc` returns to command mode.
+
+**Command keys** act immediately on the highlighted row:
+
+| Key | Action |
+|-----|--------|
+| `g` | **Go to** the running iTerm2 tab (for live rows) |
+| `n` | **New** Claude session in that directory (current terminal) |
+| `c` | **cd** into the folder only — no Claude (your shell stays there) |
+| `f` | Open the folder in **Finder** / Explorer / `xdg-open` (keeps the picker open) |
+| `d` | **Remove** from PAI's list — archives the project (reversible, files untouched); asks `y/N` first |
+| `s` `/` | Enter **search** mode |
+| `↑↓` `j` `k` | Move the highlight |
+| `q` `esc` | Quit |
+
+`Enter` on a row takes the smart default: a live row → go to its tab, otherwise → new session.
+
+The `c` (cd) action needs PAI's shell integration to change your shell's directory — see [Finding the Claude Binary](#finding-the-claude-binary) / `pai shell-init`. On a non-interactive terminal (piped output), `pai` falls back to the static listing automatically.
+
+### Static Listing
+
+`pai --list` shows a single deduped table — one row per session name, regardless of how many snapshots exist on disk:
 
 ```
 Sessions:
@@ -952,6 +1023,9 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 | v0.9.17 | Switch live-session listing to `sessions` IPC (metadata-only, faster); `--all-tabs` flag |
 | v0.9.18 | `pai projects`: moved-project auto-detect, rebind command, active-only default listing |
 | v0.10.0 | Topic-first redesign: `pai <topic>` universal resolver, history search, sticky tab titles |
+| v0.10.1 | `pai sessions clear-names` recovery command |
+| v0.11.0 | Deduped session listing + universal `pai <name>` (switch / resume / fresh) |
+| v0.12.0 | Interactive picker: `pai` opens a modal search-and-act selector over projects + sessions (g go · n new · c cd · f finder · d remove); note-keyword filtering; quoted exit-dir path |
 
 ---
 
