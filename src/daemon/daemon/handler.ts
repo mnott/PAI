@@ -66,6 +66,7 @@ export async function handleRequest(
   if (method === "status") {
     const dbStats = await (async () => {
       try {
+        if (!storageBackend) return null;
         const fedStats = await storageBackend.getStats();
         const projects = (
           registryDb
@@ -90,7 +91,7 @@ export async function handleRequest(
         lastEmbedTime: lastEmbedTime ? new Date(lastEmbedTime).toISOString() : null,
         embedIntervalSecs: daemonConfig.embedIntervalSecs,
         socketPath: daemonConfig.socketPath,
-        storageBackend: storageBackend.backendType,
+        storageBackend: storageBackend?.backendType ?? "initializing",
         db: dbStats,
         vaultIndexInProgress,
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,

@@ -142,36 +142,47 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     process.exit(1);
   }
 
-  try {
-    const backend = await createStorageBackend(config);
-    setStorageBackend(backend);
-    process.stderr.write(
-      `[pai-daemon] Federation backend: ${backend.backendType}\n`
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[pai-daemon] Fatal: Could not open federation storage: ${msg}\n`);
-    process.exit(1);
-  }
+  // Start the IPC server immediately so `pai daemon status` answers even while
+  // we are still waiting for the federation backend (e.g. Postgres coming up
+  // after a reboot). The status handler tolerates a not-yet-ready backend.
+  const server = await startIpcServer(config.socketPath);
 
-  startIndexScheduler();
-
-  if (storageBackend.backendType === "postgres") {
-    startEmbedScheduler();
-  } else {
-    process.stderr.write(
-      "[pai-daemon] Embed scheduler: disabled (SQLite backend)\n"
-    );
-  }
-
-  // Work queue — load persisted items and start worker loop
-  loadQueue();
-  startWorker();
-
-  // Registry scan scheduler — keeps pai session recent up to date automatically
+  // Registry scan scheduler only needs the registry DB — safe to start now.
   startRegistryScanScheduler();
 
-  const server = await startIpcServer(config.socketPath);
+  // Connect the federation backend in the background. When storageBackend is
+  // "postgres" this retries forever (never silently falls back to SQLite), so
+  // the boot race with Docker/Postgres resolves itself once Postgres is up.
+  // Only then do we start the federation-dependent schedulers and work queue —
+  // this also keeps the first index run from firing against an unready backend.
+  void createStorageBackend(config, { waitForPostgres: true })
+    .then((backend) => {
+      setStorageBackend(backend);
+      process.stderr.write(
+        `[pai-daemon] Federation backend: ${backend.backendType}\n`
+      );
+
+      startIndexScheduler();
+
+      if (backend.backendType === "postgres") {
+        startEmbedScheduler();
+      } else {
+        process.stderr.write(
+          "[pai-daemon] Embed scheduler: disabled (SQLite backend)\n"
+        );
+      }
+
+      // Work queue — load persisted items and start worker loop
+      loadQueue();
+      startWorker();
+    })
+    .catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      process.stderr.write(
+        `[pai-daemon] Fatal: Could not open federation storage: ${msg}\n`
+      );
+      process.exit(1);
+    });
 
   const shutdown = async (signal: string): Promise<void> => {
     process.stderr.write(`\n[pai-daemon] ${signal} received. Stopping.\n`);

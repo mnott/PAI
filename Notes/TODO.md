@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0007 - 2026-06-12 - Pai Picker Docs, Generated Command Reference, V0.12.0 Ship
-> **Paused at:** 2026-06-17T17:39:04.597Z
+> **Last session:** 0008 - 2026-06-17 - Picker Handover, Aibroker Fix, Daemon Startup Race
+> **Paused at:** 2026-06-17T20:12:51.231Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -283,4 +283,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-06-17T17:39:04.597Z*
+*Last updated: 2026-06-17T20:12:51.231Z*
