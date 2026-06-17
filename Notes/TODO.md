@@ -1,9 +1,35 @@
 ## Continue
 
-> **Last session:** 0006 - 2026-06-12 - Pai Session Picker — Enter First Menu, Live Tab Switch
-> **Paused at:** 2026-06-12T12:11:05.901Z
+> **Last session:** 0007 - 2026-06-17 - Interactive `pai` Picker (modal TUI) — shipped v0.12.0
+> **Paused at:** 2026-06-17
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+
+### What shipped this session — v0.12.0 (published to npm, pushed `d3fd578` on `main`)
+
+Replaced the bare-`pai` static list with a **self-contained modal TUI picker** (no fzf). Drove it through many UX iterations with the user; final design is what they actually wanted.
+
+**The picker (`src/cli/commands/pick.ts` — NEW, the core file):**
+- `pai` (no args, TTY) → `cmdPick` → `runSelector()`. Non-TTY / piped → falls back to the static `renderDedupedSessions`. `pai --list` forces the static table.
+- Unified, deduped feed of **projects + sessions** via `buildDeduped(...)` (passed `showAll=true` so cold/idle projects show; archived filtered by `getProjects`). Dir resolution spans **all** projects incl. archived + by normalized name — this is why an archived/live project like Chenarlier resolves its directory.
+- **Two modes** (the key insight that finally worked): *command mode* = single keys are actions; *search mode* (enter with `s` or `/`) = letters filter. fzf failed because it is ALWAYS in filter mode, so action letters got typed into the search box.
+- **Command keys (fire immediately on highlighted row):** `g` go to running iTerm tab · `n` new session in dir · `c` cd-only · `f` Finder (cross-platform, stays open) · `d` remove from list (archive, y/N confirm) · `s`/`/` search · `↑↓`/`j`/`k` move · `q`/esc quit. Enter = smart default (live→go, else→new).
+- Filtering matches name + path + **folded note file/folder names** (so `samba`/`monster` surface "Chenarlier"). Body-text of notes is NOT searched yet (see next steps).
+- Every rendered line is truncated to window width (`truncVisible`) so narrow windows don't wrap/desync. Blank-named rows filtered out.
+
+**Supporting changes:**
+- `src/cli/lib/launch.ts` (NEW) — `launchInDir(dir, name, {resumableUuid, forceFresh, dryRun})`, launches Claude in the CURRENT terminal (never switches tabs).
+- `src/cli/lib/aibroker-client.ts` — added `revealItermSession(itermSessionId)`: the WORKING tab-switch via the screenshot AppleScript (`select w/t/s`). The old `switchToSession` fed the iTerm GUID to AIBroker's index-based `switch` handler → `parseInt` NaN → "not found". `sessions` IPC returns `sessionId = iTerm session id` (uppercase GUID).
+- `src/cli/lib/exit-dir.ts` + shell-init in `src/cli/program.ts` — exit-dir path now QUOTED (`cd "..."`). Added a bare-`pai` branch to the `pai()` shell wrapper that captures the chosen dir via a `PAI_PICK_OUT` temp file so `c` (cd) changes the parent shell. **Needs `exec zsh` / new tab to take effect.**
+- README updated (Interactive Picker section, `pai --list`, version table). docs/commands auto-regenerated.
+
+### Next steps / open ideas
+- [ ] **Deep body-text search in the picker** — currently filters name/path/note-filenames only. Wire an `s`-mode option (or a key) that reloads the feed from the FTS memory index (`pai memory search`, fast non-rerank mode) so topics living only inside note *bodies* (e.g. "docker on monster") surface. Backend already works.
+- [ ] **Unify the old `pai <query>` resolver** (`src/cli/commands/main-resolver.ts` `cmdMain` / `doSwitch`) — it still uses the broken `switchToSession` (index-based) AND still has the fuzzy bug that started all this (`pai search chenarlier` matched "Job Search"). Should route live-switches through `revealItermSession` and ideally fall into the picker on ambiguity.
+- [ ] Pre-existing `tsc --noEmit` errors in `src/hooks/ts/...`, `src/memory/tunnels.ts`, `src/memory/wakeup.ts` — unrelated to this work; bundler (tsdown) tolerates them. Clean up someday.
+
+### Verification state
+- Build clean; published `@tekmidian/pai@0.12.0`; committed (55 files) + pushed. Zero type errors in the new files. Interactive key loop + live archive-write were NOT headlessly testable — user confirmed the picker "actually works" live (g/n/c/f/d all exercised).
 
 ---
 
@@ -283,4 +309,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-06-12T12:11:05.901Z*
+*Last updated: 2026-06-12T12:24:24.714Z*
