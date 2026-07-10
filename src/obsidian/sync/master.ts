@@ -44,8 +44,29 @@ function removeOldBacklink(filePath: string): boolean {
 }
 
 /**
+ * Return true if the note has a meaningful body — i.e. content beyond blank
+ * lines, horizontal rules, and an existing master-note footer.
+ *
+ * Guards against stamping a "← Master" backlink onto an empty note, which
+ * produces a misleading dangling stub (empty body + footer only). Whatever
+ * emptied the note, we must not decorate it as if it were a real session.
+ */
+function hasMeaningfulBody(content: string): boolean {
+  const body = content
+    .replace(/\n---\n\[\[_[^\]]*-master\|[^\]]*\]\]\n?$/, "") // drop existing master footer
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return t !== "" && t !== "---";
+    })
+    .join("");
+  return body.length > 0;
+}
+
+/**
  * Append the master note backlink footer to a session file, idempotently.
- * Only writes if the sentinel string is not already present.
+ * Only writes if the sentinel string is not already present AND the note has
+ * a meaningful body (never stamp a footer onto an empty note).
  */
 function appendBacklinkIfMissing(
   filePath: string,
@@ -58,6 +79,10 @@ function appendBacklinkIfMissing(
   } catch {
     return false;
   }
+  // Never stamp a footer onto an empty note — that is exactly the dangling-stub
+  // signature (empty body + master backlink) we are trying to prevent.
+  if (!hasMeaningfulBody(content)) return false;
+
   const masterName = masterFilename(slug).replace(/\.md$/, "");
   const sentinel = `[[${masterName}|`;
   if (content.includes(sentinel)) return false;

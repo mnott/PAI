@@ -560,11 +560,40 @@ const TOPIC_OVERLAP_THRESHOLD = 0.15;
  *     - Different topic (overlap < 30%) → create a NEW note
  *   - If it's from a different day, create a new note
  */
+/**
+ * Return true if the summarizer output has a meaningful body — i.e. content
+ * beyond the TOPIC:/title/metadata/horizontal-rule scaffolding.
+ *
+ * A summary that is only headers (no Work Done items) must NOT create or update
+ * a note: doing so births an empty-bodied scaffold that later rename/finalize
+ * can strip to a footer-only stub. This is the born-stub failure mode.
+ */
+function summaryHasContent(summaryText: string): boolean {
+  const body = summaryText
+    .replace(/^TOPIC:.*$/m, "")
+    .replace(/^# Session:.*$/m, "")
+    .replace(/^\*\*(Date|Status|Completed):\*\*.*$/gm, "")
+    .replace(/^#{1,6}\s.*$/gm, "")   // bare section headers (## Work Done, etc.)
+    .replace(/^---$/gm, "")
+    .replace(/<!--[\s\S]*?-->/g, "") // template placeholder comments
+    .trim();
+  return body.length > 0;
+}
+
 function writeSessionNote(
   cwd: string,
   summaryText: string,
   filesModified: string[]
 ): string | null {
+  // Never create/update a note from a body-less summary — that is the born-stub
+  // path (empty scaffold → stripped to a footer-only stub on finalize/rename).
+  if (!summaryHasContent(summaryText)) {
+    process.stderr.write(
+      `[session-summary] Summary has no meaningful body — skipping note write.\n`
+    );
+    return null;
+  }
+
   const notesInfo = findNotesDir(cwd);
   let notePath = getCurrentNotePath(notesInfo.path);
 
