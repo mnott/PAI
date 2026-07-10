@@ -162,24 +162,27 @@ export function cmdUnname(db: Database, shortname: string): void {
   }
 }
 
-export function cmdNames(db: Database, opts: { json?: boolean }): void {
+export function cmdNames(db: Database, opts: { json?: boolean; all?: boolean }): void {
+  // --all: LEFT JOIN so projects WITHOUT a curated alias are included too (for
+  //         AIBroker's picker to search everything). Unnamed projects get their
+  //         slug as the launch key (pai project config resolves by slug).
   const rows = db.prepare(`
     SELECT p.*, a.alias AS name,
       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
       (SELECT MAX(s.created_at) FROM sessions s WHERE s.project_id = p.id) AS last_active
     FROM projects p
-    JOIN aliases a ON a.project_id = p.id
+    ${opts.all ? "LEFT JOIN" : "JOIN"} aliases a ON a.project_id = p.id
     WHERE p.status = 'active'
     ORDER BY p.updated_at DESC
-  `).all() as (ProjectRow & { name: string; session_count: number; last_active: number | null; session_config: string | null })[];
+  `).all() as (ProjectRow & { name: string | null; session_count: number; last_active: number | null; session_config: string | null })[];
 
   if (opts.json) {
     const grouped = new Map<number, unknown>();
     for (const row of rows) {
       if (!grouped.has(row.id)) {
         grouped.set(row.id, {
-          name: row.name,
-          names: [row.name],
+          name: row.name ?? row.slug, // launch key: alias if named, else slug
+          names: row.name ? [row.name] : [],
           slug: row.slug,
           display_name: row.display_name,
           root_path: row.root_path,
@@ -187,7 +190,7 @@ export function cmdNames(db: Database, opts: { json?: boolean }): void {
           last_active: row.last_active ? new Date(row.last_active).toISOString() : null,
           session_config: row.session_config ? JSON.parse(row.session_config) : null,
         });
-      } else {
+      } else if (row.name) {
         (grouped.get(row.id) as { names: string[] }).names.push(row.name);
       }
     }
@@ -206,12 +209,12 @@ export function cmdNames(db: Database, opts: { json?: boolean }): void {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
 
-    const allNames = rows.filter(r => r.id === row.id).map(r => r.name);
+    const allNames = rows.filter(r => r.id === row.id).map(r => r.name).filter(Boolean) as string[];
     const config = row.session_config ? JSON.parse(row.session_config) as SessionConfig : null;
     const perm = config?.permission ?? dim('default');
 
     tableRows.push([
-      bold(allNames.join(', ')),
+      bold(allNames.length ? allNames.join(', ') : row.slug),
       row.slug,
       dim(shortenPath(row.root_path, 40)),
       typeof perm === 'string' ? perm : dim('default'),

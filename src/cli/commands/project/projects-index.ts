@@ -307,7 +307,8 @@ export function registerProjectsCommands(
     .command("names")
     .description("List named projects (your curated shortlist)")
     .option("--json", "Output JSON for AIBroker consumption")
-    .action((opts: { json?: boolean }) => {
+    .option("--all", "Include ALL active registered projects, not just the named shortlist")
+    .action((opts: { json?: boolean; all?: boolean }) => {
       cmdNames(getDb(), opts);
     });
 

@@ -310,6 +310,7 @@ List named projects (your curated shortlist)
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--json` | Output JSON for AIBroker consumption |  |
+| `--all` | Include ALL active registered projects, not just the named shortlist |  |
 
 
 ### pai project config [identifier]
