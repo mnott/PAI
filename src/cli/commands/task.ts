@@ -182,7 +182,9 @@ export function registerTaskCommands(taskCmd: Command): void {
 
       // A dry run must never contact a session, so skip detection entirely
       // rather than detecting and then declining to use it.
-      const transport = opts.dryRun ? null : await detectAiBroker();
+      const transport = opts.dryRun
+        ? null
+        : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
 
       if (!opts.dryRun && !transport) {
         console.log(dim("  No aibroker CLI with `dispatch` found — reporting ownership only."));
