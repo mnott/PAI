@@ -167,6 +167,14 @@ export interface TaskConfig {
    * reports which project owns each task and leaves acting to the user.
    */
   autoDispatch: boolean;
+
+  /**
+   * Seconds AIBroker may spend on a single dispatch, spawn included.
+   *
+   * Passed down to the transport so both sides share one deadline. Raise it on
+   * a loaded machine where sessions are slow to start accepting input.
+   */
+  dispatchTimeoutSecs?: number;
 }
 
 export const DEFAULT_TASK_CONFIG: TaskConfig = {

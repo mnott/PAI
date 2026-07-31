@@ -15,8 +15,24 @@
 import { execFile } from "node:child_process";
 import type { Transport, TransportResult } from "../dispatch.js";
 
-/** Long enough to cover launching a terminal tab and waiting for it to settle. */
-const DISPATCH_TIMEOUT_MS = 60_000;
+/**
+ * How long AIBroker may spend on one dispatch, in seconds.
+ *
+ * A cold spawn measured ~10s on an idle machine, but boot time is not bounded:
+ * under load a session can take considerably longer to start accepting input.
+ */
+const DEFAULT_DISPATCH_TIMEOUT_SECS = 180;
+
+/**
+ * Margin between AIBroker's own deadline and when we kill the process.
+ *
+ * These two timeouts must never disagree. If ours fired first we would kill a
+ * dispatch mid-flight and report a transport failure that AIBroker cannot
+ * reproduce from its own CLI — a phantom bug, in the other repo, with no trace
+ * on either side. So we always pass our budget down via `--timeout` and give
+ * it room to time out first and tell us why.
+ */
+const KILL_MARGIN_MS = 15_000;
 
 interface WireResult {
   outcome?: string;
@@ -40,12 +56,12 @@ const VALID_OUTCOMES = new Set([
  * and reasoning, so they are long, multi-line, and full of quotes and
  * backticks. argv would mangle them or hit length limits.
  */
-function run(bin: string, args: string[], stdin: string): Promise<string> {
+function run(bin: string, args: string[], stdin: string, killAfterMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       bin,
       args,
-      { timeout: DISPATCH_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { timeout: killAfterMs, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
         // A non-zero exit carrying parseable JSON is a reported outcome, not a
         // crash — let the caller interpret it rather than throwing here.
@@ -61,17 +77,25 @@ function run(bin: string, args: string[], stdin: string): Promise<string> {
 }
 
 export class AiBrokerTransport implements Transport {
-  constructor(private readonly bin = "aibroker") {}
+  constructor(
+    private readonly bin = "aibroker",
+    private readonly timeoutSecs = DEFAULT_DISPATCH_TIMEOUT_SECS,
+  ) {}
 
   async dispatch(
     project: string,
     message: string,
     opts: { spawnIfAbsent: boolean },
   ): Promise<TransportResult> {
-    const args = ["dispatch", project, "--stdin", "--json"];
+    const args = ["dispatch", project, "--stdin", "--json", "--timeout", String(this.timeoutSecs)];
     if (!opts.spawnIfAbsent) args.push("--no-spawn");
 
-    const stdout = await run(this.bin, args, message);
+    const stdout = await run(
+      this.bin,
+      args,
+      message,
+      this.timeoutSecs * 1000 + KILL_MARGIN_MS,
+    );
 
     // The CLI prints diagnostics before its JSON, so take the last JSON object
     // rather than assuming stdout is clean.
@@ -113,7 +137,10 @@ export class AiBrokerTransport implements Transport {
  * shipped for a long time without `dispatch`, and an older install would
  * otherwise fail once per task instead of degrading cleanly up front.
  */
-export async function detectAiBroker(bin = "aibroker"): Promise<Transport | null> {
+export async function detectAiBroker(
+  bin = "aibroker",
+  timeoutSecs = DEFAULT_DISPATCH_TIMEOUT_SECS,
+): Promise<Transport | null> {
   try {
     const help = await new Promise<string>((resolve, reject) => {
       execFile(bin, ["help"], { timeout: 10_000 }, (error, stdout, stderr) => {
@@ -121,7 +148,7 @@ export async function detectAiBroker(bin = "aibroker"): Promise<Transport | null
         else resolve(stdout + stderr);
       });
     });
-    return help.includes("dispatch") ? new AiBrokerTransport(bin) : null;
+    return help.includes("dispatch") ? new AiBrokerTransport(bin, timeoutSecs) : null;
   } catch {
     return null;
   }
