@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0003 - 2026-07-31 - Aibroker Transport For Pai Task Dispatch
-> **Paused at:** 2026-07-31T21:00:03.985Z
+> **Last session:** 0003 - 2026-07-31 - Task Bus V0.13.0 — Live Dispatch And Release
+> **Paused at:** 2026-07-31T21:04:43.531Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -221,6 +221,25 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 | v0.12.0 | Interactive `pai` picker (search · go · new · cd · finder · remove) | `d3fd578` |
 | v0.12.1 | Daemon waits for Postgres instead of silent SQLite fallback | `e06b6d1` |
 | v0.12.2 | Never create or decorate empty session notes; `pai project names --all` | `ed1821d` |
+| v0.13.0 | Task bus — Todoist provider, ownership resolver, dispatch, `pai task`, Tasks skill | `c46c1bf` |
+| v0.13.1 | Share one dispatch deadline with aibroker (`--timeout` passed down) | `6398c91` |
+
+### Session 0003 — Task Bus, Live Dispatch, Coordinated Release (2026-07-31)
+- [x] Built the task bus: Todoist as shared cross-session state, `pai:<project>` ownership, dispatch to the owning session
+- [x] Todoist provider on **unified API v1** — REST v2 returns **410 Gone**; v1 paginates and returns completed/deleted tasks inline
+- [x] Coordinated with the AIBroker session: it shipped `aibroker dispatch` (aibroker@0.8.0), PAI consumes it as an *optional* transport
+- [x] Verified live: `delivered` (2/2 to Whazaa), `spawned` (TEKMidian cold start, 10.05s), `skipped`, and graceful degradation on a pre-dispatch CLI
+- [x] Registered `reconstruct`, `whisper`, `consolidate`, `advisor` as MCP prompts — exported and stubbed but unreachable via `prompts/get`
+- [x] Fixed `.gitignore`: bare `tasks/` matched any depth incl. `src/tasks/`, so the whole module would have committed as nothing while the build still passed locally
+- [x] Fixed the 60s-vs-90s timeout mismatch that would have killed slow spawns as unreproducible transport failures
+- [x] Filed AIBroker's mailbox silent-drop finding on the bus (`6h9g866Vx7P3GVph`) — the bus's first real use
+
+**Open from this session:**
+- [ ] **Write the LinkedIn post** — the reason the work was done; still unwritten
+- [ ] **Persist the Todoist token** — currently env-only, so `pai task` fails in any new shell. Run `pai setup` step 16
+- [ ] **Triage 6 unrouted findings** in `Mail & Identity 📧` — they match no PAI project, which is exactly what triage is for
+- [ ] **File the Postgres silent-outage as a routine** — 144 silent retries over ~2 days with `pai daemon status` reporting "idle"; meets the `Routines 🔁` evidence bar
+- [ ] Close or keep the three test tabs: `coogle`, `TEKMidian`, `whazaa` (the last holds a real work order)
 
 ### Session 0002 — Glidr Stub-Note Triage, Restore & Empty-Note Guards (2026-07-10)
 - [x] Traced 15 gutted Glidr session notes (**not 105** — 90 merely carried the sync footer) to Glidr commit `92b45da`
@@ -354,4 +373,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-07-31T21:00:03.985Z*
+*Last updated: 2026-07-31T21:04:43.531Z*
