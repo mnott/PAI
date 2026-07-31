@@ -23,6 +23,7 @@ import {
   stepDaemon,
   stepMcp,
   stepDirectories,
+  stepTaskBus,
   stepInitialIndex,
   stepSummary,
 } from "./steps/index.js";
@@ -95,8 +96,11 @@ async function runSetup(): Promise<void> {
     // Step 11: Directories (informational — no config written)
     await stepDirectories(rl);
 
+    // Step 11b: Task bus (optional external tracker)
+    const taskConfig = await stepTaskBus(rl);
+
     // Write config after gathering all choices
-    const allUpdates = { ...storageConfig, ...embeddingConfig };
+    const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig };
     mergeConfig(allUpdates);
 
     line();

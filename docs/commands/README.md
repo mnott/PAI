@@ -29,6 +29,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai setup`](setup.md) | Interactive setup wizard — configure storage, embeddings, agent config, and indexing |
 | [`pai shell-init`](shell-init.md) | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |
 | [`pai skill`](skill.md) | Skill telemetry and (future) discovery for the self-educating skill system |
+| [`pai task`](task.md) | Task bus: list, add, dispatch, and complete cross-session work |
 | [`pai topic`](topic.md) | Topic shift detection: check whether context has drifted to a different project |
 | [`pai update`](update.md) | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |
 | [`pai zettel`](zettel.md) | Zettelkasten intelligence: explore, surprise, converse, themes, health, suggest |
@@ -138,6 +139,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai shell-init` | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |
 | `pai skill` | Skill telemetry and (future) discovery for the self-educating skill system |
 | `pai skill telemetry` | Show skill-invocation telemetry (triggers, last used, projects) |
+| `pai task` | Task bus: list, add, dispatch, and complete cross-session work |
+| `pai task add <title>` | File a task onto the bus |
+| `pai task dispatch` | Hand open tasks to the PAI sessions that own them |
+| `pai task done <id>` | Mark a task complete on the tracker |
+| `pai task list` | List open tasks on the bus |
 | `pai topic` | Topic shift detection: check whether context has drifted to a different project |
 | `pai topic check <context>` | Check whether context text has drifted to a different project. |
 | `pai update` | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |

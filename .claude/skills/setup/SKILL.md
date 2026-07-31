@@ -568,6 +568,144 @@ pai obsidian sync
 
 ---
 
+## Step 15 — Task Bus / Todoist (Optional)
+
+The task bus lets any PAI session file work into a shared tracker, and lets a routine
+pick it up later and dispatch it to the session that owns it. Skip this step entirely if
+the user does not want an external tracker — PAI works fully without it.
+
+**Check first:**
+```bash
+python3 - <<'EOF'
+import json, os
+p = os.path.expanduser("~/.config/pai/config.json")
+c = json.load(open(p)) if os.path.exists(p) else {}
+t = c.get("tasks", {}).get("providers", {}).get("todoist", {})
+print("TASKBUS_CONFIGURED" if t.get("apiKey") and t.get("rootProjectId") else "TASKBUS_NOT_CONFIGURED")
+EOF
+echo "env token: ${TODOIST_API_KEY:+present}${TODOIST_API_KEY:-absent}"
+```
+
+**If TASKBUS_CONFIGURED:** report it and skip to Step 16.
+
+**If TASKBUS_NOT_CONFIGURED, ask:**
+
+> Would you like to enable the task bus? It uses Todoist as shared state so sessions can
+> hand work to each other. Requires a free Todoist account.
+>
+> (yes / no)
+
+If yes, walk the user through these — do not do them for them, the token is a credential:
+
+**1. Get the API token**
+
+> In Todoist: **Settings → Integrations → Developer**, then copy the **API token**.
+> Direct link: https://app.todoist.com/app/settings/integrations/developer
+>
+> Treat it like a password. It grants full read/write access to all your Todoist data.
+
+**2. Store it**
+
+Preferred — PAI config, so the daemon can use it without a Claude session attached:
+
+```bash
+python3 - <<'EOF'
+import json, os
+p = os.path.expanduser("~/.config/pai/config.json")
+os.makedirs(os.path.dirname(p), exist_ok=True)
+c = json.load(open(p)) if os.path.exists(p) else {}
+token = input("Paste your Todoist API token: ").strip()
+c.setdefault("tasks", {}).setdefault("providers", {}).setdefault("todoist", {})
+c["tasks"]["enabled"] = True
+c["tasks"]["providers"]["todoist"].update({"enabled": True, "apiKey": token})
+json.dump(c, open(p, "w"), indent=2)
+print("Saved to", p)
+EOF
+chmod 600 ~/.config/pai/config.json
+```
+
+Alternative: export `TODOIST_API_KEY` in the shell profile. PAI checks config first, then env.
+
+**Never** read the token out of `~/.claude.json`. The Todoist MCP stores one there, but that
+belongs to a different tool — PAI must not scrape another program's credentials.
+
+**3. Create the root project and record its ID**
+
+The bus needs one Todoist project to live in. Create it in the Todoist UI (any name — the
+convention is `Claude 🤖`), then find its ID:
+
+```bash
+curl -s -H "Authorization: Bearer $TODOIST_API_KEY" \
+  https://api.todoist.com/rest/v2/projects | python3 -m json.tool | grep -A1 '"name"'
+```
+
+Record the `id` of the project you created into `tasks.providers.todoist.rootProjectId`.
+
+**Store the ID, never the name.** Todoist's project search silently returns zero results
+for names containing emoji — resolving by name would report "no tasks" instead of failing,
+which is exactly the silent-failure class this subsystem exists to catch.
+
+**4. Explain the conventions**
+
+> Inside that project:
+> - Sub-projects named after your PAI projects own project-specific work.
+> - A `Findings` section is the inbox for things discovered sideways. Triage it weekly.
+> - Label a task `pai:<project>` to assign it explicitly. The label wins over the
+>   sub-project it sits in, so a task keeps its owner when you move it.
+
+**5. Register the Todoist MCP** (optional — only if the user wants Claude to read/write
+Todoist directly, in addition to PAI's own API access):
+
+```bash
+claude mcp add todoist -- npx -y @doist/todoist-ai
+```
+Then add `TODOIST_API_KEY` to that server's `env` block in `~/.claude.json`.
+
+---
+
+## Step 16 — Hookmark (Optional, macOS only)
+
+Hookmark gives files and notes stable `hook://` URLs. PAI uses them in task descriptions
+instead of filesystem paths, so a reference survives the file being renamed or moved, and
+opens on iOS in DEVONthink To Go. Everything degrades to plain paths without it.
+
+**Check first:**
+```bash
+if [ -d "/Applications/Hookmark.app" ] || [ -d "$HOME/Applications/Hookmark.app" ]; then
+  echo "HOOKMARK_INSTALLED"
+else
+  echo "HOOKMARK_MISSING"
+fi
+```
+
+**If HOOKMARK_MISSING:**
+
+> Hookmark is a paid macOS app (free trial) from https://hookproductivity.com — it is
+> entirely optional. Without it, PAI falls back to plain file paths in task descriptions.
+>
+> Install it? (yes / no)
+
+Only continue if the app is installed — the MCP is a wrapper around Hookmark's `hook` CLI
+and does nothing on its own.
+
+**Register the Hook MCP:**
+
+The Hook MCP is not published to npm; it is built from source. Clone and build it, then
+register it with the path to the built entry point:
+
+```bash
+# Replace <HOOK_REPO> with wherever you cloned it
+cd <HOOK_REPO> && npm install && npm run build
+claude mcp add hook -- node "<HOOK_REPO>/dist/index.js"
+```
+
+**Verify** by asking Claude to call `hookmark_frontmost` with Hookmark running. If it
+returns the active window's `hook://` URL, the integration works.
+
+Do not hardcode a path here from an existing machine — the location differs per install.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -581,6 +719,10 @@ pai obsidian sync
 | `pg_isready` times out | Wait 10 more seconds and retry; first pull of pgvector image is slow |
 | Build appears stale | Delete `dist/` and re-run `bun run build` |
 | Config exists but storage is wrong | Delete `~/.config/pai/config.json` and re-run Step 3 |
+| Task bus reports "no tasks" but Todoist has some | `rootProjectId` is wrong, or a *name* was stored where an ID belongs — Todoist project search returns nothing for names with emoji |
+| Todoist calls return 401 | Token revoked or truncated on paste. Re-copy from Settings → Integrations → Developer |
+| Tasks never reach the owning session | The owner has no PAI alias — run `pai project name <identifier> <shortname>`; only curated aliases can be dispatched to |
+| `hookmark_*` tools error or hang | Hookmark app not running, or not installed — it is macOS-only and the MCP is only a wrapper around its CLI |
 
 ---
 
@@ -603,3 +745,5 @@ pai obsidian sync
 - [ ] MCP tools accessible (try "Show me all my projects")
 - [ ] (Optional) CLAUDE.md installed or merged
 - [ ] (Optional) Obsidian vault synced
+- [ ] (Optional) Task bus configured — token stored, `rootProjectId` recorded as an **ID**
+- [ ] (Optional) Hookmark installed and `hook` MCP registered (macOS only)

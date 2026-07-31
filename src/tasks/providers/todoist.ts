@@ -1,0 +1,290 @@
+/**
+ * todoist.ts — Todoist provider for the task bus
+ *
+ * Talks to the Todoist REST API directly rather than going through the Todoist
+ * MCP. The MCP is scoped to a Claude session; the daemon has no session, so an
+ * MCP-only integration could never run the bus unattended.
+ *
+ * See Notes/docs/task-bus.md.
+ */
+
+import type {
+  ListOptions,
+  NewTask,
+  Task,
+  TaskPriority,
+  TaskProvider,
+  TodoistProviderConfig,
+} from "../types.js";
+import { UNROUTED } from "../types.js";
+import type { AliasMap } from "../resolver.js";
+import { resolveOwner } from "../resolver.js";
+
+/**
+ * Unified API v1. The older `/rest/v2` endpoints now return 410 Gone — they
+ * were sunset, so anything still targeting them fails outright rather than
+ * degrading.
+ */
+const API = "https://api.todoist.com/api/v1";
+
+// ---------------------------------------------------------------------------
+// Wire types (only the fields we rely on)
+// ---------------------------------------------------------------------------
+
+/** v1 wraps every collection and pages with an opaque cursor. */
+interface WirePage<T> {
+  results: T[];
+  next_cursor?: string | null;
+}
+
+interface WireProject {
+  id: string;
+  name: string;
+  parent_id?: string | null;
+  is_archived?: boolean;
+  is_deleted?: boolean;
+}
+
+interface WireTask {
+  id: string;
+  content: string;
+  description?: string;
+  project_id: string;
+  section_id?: string | null;
+  labels?: string[];
+  priority?: number; // 4 = p1 … 1 = p4
+  due?: { date?: string; datetime?: string } | null;
+  /** v1 returns completed and tombstoned tasks inline; both must be filtered. */
+  checked?: boolean;
+  is_deleted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+async function call<T>(
+  token: string,
+  path: string,
+  init?: { method?: string; body?: unknown },
+): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: init?.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: init?.body ? JSON.stringify(init.body) : undefined,
+  });
+
+  if (!res.ok) {
+    // 401 is by far the most common failure and the least self-explanatory,
+    // so name the cause rather than surfacing a bare status code.
+    const hint = res.status === 401 ? " (token rejected — check it was copied in full)" : "";
+    throw new Error(`Todoist ${res.status} ${res.statusText}${hint}`);
+  }
+
+  // 204 on delete/close — nothing to parse.
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/**
+ * Drain a paginated collection.
+ *
+ * Every v1 list endpoint pages. Stopping at the first page would silently
+ * truncate — the account here already exceeds one page of tasks — so follow the
+ * cursor to exhaustion. The guard is a safety stop against a server that keeps
+ * handing back the same cursor, not an intentional cap.
+ */
+async function collect<T>(token: string, path: string): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: string | null | undefined;
+  let guard = 0;
+
+  do {
+    const sep = path.includes("?") ? "&" : "?";
+    const url = cursor ? `${path}${sep}cursor=${encodeURIComponent(cursor)}` : path;
+    const page = await call<WirePage<T>>(token, url);
+    out.push(...(page.results ?? []));
+    cursor = page.next_cursor;
+  } while (cursor && ++guard < 100);
+
+  return out;
+}
+
+/**
+ * List every live project on the account.
+ *
+ * Exported because setup uses it both to let the user pick the bus root and to
+ * validate the token — a bad token fails here, at install time, rather than
+ * silently returning nothing during a routine.
+ */
+export async function listProjects(token: string): Promise<Array<{ id: string; name: string }>> {
+  const projects = await collect<WireProject>(token, "/projects");
+  return projects
+    .filter((p) => !p.is_archived && !p.is_deleted)
+    .map((p) => ({ id: p.id, name: p.name }));
+}
+
+// ---------------------------------------------------------------------------
+// Mapping
+// ---------------------------------------------------------------------------
+
+/** Todoist priority is inverted: 4 is urgent, 1 is lowest. */
+function toPriority(wire: number | undefined): TaskPriority {
+  switch (wire) {
+    case 4: return "p1";
+    case 3: return "p2";
+    case 2: return "p3";
+    default: return "p4";
+  }
+}
+
+function fromPriority(p: TaskPriority | undefined): number {
+  switch (p) {
+    case "p1": return 4;
+    case "p2": return 3;
+    case "p3": return 2;
+    default: return 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
+
+export class TodoistProvider implements TaskProvider {
+  readonly providerId = "todoist" as const;
+
+  constructor(
+    private readonly config: TodoistProviderConfig,
+    private readonly aliases: AliasMap,
+  ) {}
+
+  /**
+   * Resolution order is config → env → unconfigured. A missing token disables
+   * the provider rather than throwing: a user without a tracker still gets a
+   * fully working PAI.
+   */
+  private token(): string | null {
+    return this.config.apiKey?.trim() || process.env.TODOIST_API_KEY?.trim() || null;
+  }
+
+  isConfigured(): boolean {
+    return Boolean(this.config.enabled && this.token() && this.config.rootProjectId);
+  }
+
+  async listOpen(opts: ListOptions = {}): Promise<Task[]> {
+    const token = this.token();
+    if (!token || !this.config.rootProjectId) return [];
+
+    // Fetch the project tree once and keep only the bus subtree. Filtering
+    // client-side is deliberate: Todoist's project search returns zero results
+    // for names containing emoji, so a name query would silently find nothing.
+    const projects = await collect<WireProject>(token, "/projects");
+    const root = this.config.rootProjectId;
+    const inBus = new Map<string, WireProject>();
+    for (const p of projects) {
+      if (p.is_archived || p.is_deleted) continue;
+      if (p.id === root || p.parent_id === root) inBus.set(p.id, p);
+    }
+    if (inBus.size === 0) return [];
+
+    // Query per bus project rather than draining every task on the account.
+    // The account may hold thousands; the bus holds a handful.
+    const wire: WireTask[] = [];
+    for (const id of inBus.keys()) {
+      wire.push(...(await collect<WireTask>(token, `/tasks?project_id=${encodeURIComponent(id)}`)));
+    }
+
+    const out: Task[] = [];
+
+    for (const w of wire) {
+      if (w.checked || w.is_deleted) continue;
+
+      const container = inBus.get(w.project_id);
+      if (!container) continue;
+
+      // The bus root itself is not an owner — only its sub-projects mirror
+      // PAI projects. A task sitting at the root has no container hint.
+      const containerName = container.id === root ? null : container.name;
+      const owner = resolveOwner({ labels: w.labels ?? [], container: containerName }, this.aliases);
+
+      if (opts.owner && owner.project !== opts.owner) continue;
+      if (opts.includeUnrouted === false && owner.project === null) continue;
+
+      const due = w.due?.datetime ?? w.due?.date ?? null;
+      if (opts.dueBefore) {
+        // No due date means no deadline to miss — such tasks are never overdue,
+        // so they are excluded from a date-bounded sweep rather than always shown.
+        if (!due || due.slice(0, 10) > opts.dueBefore) continue;
+      }
+
+      out.push({
+        id: w.id,
+        title: w.content,
+        body: w.description ?? "",
+        owner,
+        due,
+        priority: toPriority(w.priority),
+        labels: w.labels ?? [],
+        // v1 does not return a task URL. Build the deep link from the ID so a
+        // dispatched task is still one click from the tracker.
+        sourceUrl: `https://app.todoist.com/app/task/${w.id}`,
+      });
+
+      if (opts.limit && out.length >= opts.limit) break;
+    }
+
+    return out;
+  }
+
+  async add(task: NewTask): Promise<Task> {
+    const token = this.token();
+    if (!token || !this.config.rootProjectId) {
+      throw new Error("Todoist provider is not configured — run `pai setup`.");
+    }
+
+    const labels = [...(task.labels ?? [])];
+    if (task.owner && !labels.some((l) => l.toLowerCase() === `pai:${task.owner!.toLowerCase()}`)) {
+      labels.push(`pai:${task.owner}`);
+    }
+
+    // Unowned work lands in the findings inbox when one is configured, so it is
+    // triaged later rather than lost at the root.
+    const sectionId = task.owner ? undefined : this.config.findingsSectionId;
+
+    const created = await call<WireTask>(token, "/tasks", {
+      method: "POST",
+      body: {
+        content: task.title,
+        description: task.body,
+        project_id: this.config.rootProjectId,
+        ...(sectionId ? { section_id: sectionId } : {}),
+        labels,
+        priority: fromPriority(task.priority),
+        ...(task.due ? { due_date: task.due } : {}),
+      },
+    });
+
+    return {
+      id: created.id,
+      title: created.content,
+      body: created.description ?? "",
+      owner: task.owner
+        ? resolveOwner({ labels, container: null }, this.aliases)
+        : { ...UNROUTED },
+      due: created.due?.datetime ?? created.due?.date ?? null,
+      priority: toPriority(created.priority),
+      labels: created.labels ?? [],
+      sourceUrl: `https://app.todoist.com/app/task/${created.id}`,
+    };
+  }
+
+  async complete(id: string): Promise<void> {
+    const token = this.token();
+    if (!token) throw new Error("Todoist provider is not configured — run `pai setup`.");
+    await call<void>(token, `/tasks/${id}/close`, { method: "POST" });
+  }
+}

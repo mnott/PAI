@@ -20,3 +20,4 @@ export { reconstruct } from "./reconstruct.js";
 export { whisper } from "./whisper.js";
 export { consolidate } from "./consolidate.js";
 export { advisor } from "./advisor.js";
+export { tasks } from "./tasks.js";

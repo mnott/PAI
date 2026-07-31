@@ -46,6 +46,11 @@ import {
   vaultEmerge,
   vaultOrphans,
   vaultTrace,
+  reconstruct,
+  whisper,
+  consolidate,
+  advisor,
+  tasks,
 } from "./prompts/index.js";
 import {
   aesthetic,
@@ -150,6 +155,14 @@ async function startShim(): Promise<void> {
     "vault-emerge": vaultEmerge,
     "vault-orphans": vaultOrphans,
     "vault-trace": vaultTrace,
+    // These four were exported and stubbed but never registered here, so
+    // `prompts/get` could not reach them. The stub generator reads the barrel,
+    // which is why the drift went unnoticed.
+    "reconstruct": reconstruct,
+    "whisper": whisper,
+    "consolidate": consolidate,
+    "advisor": advisor,
+    "tasks": tasks,
   };
 
   for (const [promptName, skill] of Object.entries(SKILL_PROMPTS)) {

@@ -17,7 +17,10 @@ logs/
 
 Notes/
 .pai/
-tasks/
+# Root-anchored: this hides the working tasks/todo.md convention, NOT src/tasks/
+# (the task-bus module). A bare `tasks/` matches any depth and silently drops
+# source from commits while the build still succeeds locally.
+/tasks/
 History/
 Journal/
 scratchpad/
