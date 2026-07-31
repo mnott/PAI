@@ -15,3 +15,4 @@ export { stepMcp } from "./12-mcp.js";
 export { stepDirectories } from "./13-directories.js";
 export { stepInitialIndex } from "./14-initial-index.js";
 export { stepSummary } from "./15-verify.js";
+export { stepTaskBus } from "./16-task-bus.js";

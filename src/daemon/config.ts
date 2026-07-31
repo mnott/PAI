@@ -11,6 +11,8 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
+import type { TaskConfig } from "../tasks/types.js";
+import { DEFAULT_TASK_CONFIG } from "../tasks/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,6 +83,9 @@ export interface PaiDaemonConfig {
 
   /** Search defaults — applied when MCP tool or CLI doesn't specify a value */
   search: SearchConfig;
+
+  /** Task bus — optional external tracker for cross-session work */
+  tasks: TaskConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +123,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   embeddingModel: "Snowflake/snowflake-arctic-embed-m-v1.5",
   logLevel: "info",
   notifications: DEFAULT_NOTIFICATION_CONFIG,
+  tasks: DEFAULT_TASK_CONFIG,
   search: {
     mode: "keyword",
     rerank: true,

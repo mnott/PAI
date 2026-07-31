@@ -1,9 +1,48 @@
 ## Continue
 
-> **Last session:** 0002 - 2026-07-10 - Glidr Stub Restore, Empty Note Guards, Backfill
-> **Paused at:** 2026-07-10T07:19:55.321Z
+> **Last session:** 0003 - 2026-07-31 - Aibroker Transport For Pai Task Dispatch
+> **Paused at:** 2026-07-31T20:31:43.361Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+
+---
+
+## Infrastructure — Postgres Outage Failure Mode (found 2026-07-26)
+
+The `pai-pgvector` container had been down ~2 days (exited alongside several other
+containers, likely a Docker/host restart). Consequences observed:
+
+- Daemon logged `Postgres unavailable (). Retry 144 in 15000ms...` — **144 retries, ~36 min**,
+  with no escalation and no notification.
+- Work queue silently backed up: `session-end`, `session-summary`, `registry-scan` all
+  enqueued and never drained. Session notes for the period were never written.
+- `pai daemon status` reported **"Daemon running / Index: idle"** — actively misleading;
+  it does not surface the Postgres block at all.
+Fixed for now by `docker start pai-pgvector`; daemon reconnected and drained the backlog.
+
+- [ ] **`pai daemon status` must surface storage-backend health** — report "waiting for Postgres,
+      N retries, queue depth M" instead of "idle"
+- [ ] **Escalate after N failed retries** — fire a notification (channels are already configured)
+      rather than looping silently forever
+
+### Separate bug: `pai memory status` hangs (NOT an outage symptom)
+
+Reproduced **with Postgres healthy** — hangs past 40s, killed at timeout. Meanwhile
+`pai memory search` returns normally (exit 0), so the backend itself is fine.
+
+Cause is in `src/cli/commands/memory/stats.ts:33` — the `status` action calls
+`openFederation()` and drives it with synchronous better-sqlite3 `.prepare()` calls,
+i.e. **it is hardwired to SQLite while `storageBackend` is `postgres`**. Suspect either
+unindexed `COUNT(*)` / `GROUP BY` full scans over the federation DB, or a synchronous
+lock wait against the DB the daemon is actively writing.
+
+- [ ] **Route `memory status` through the same storage abstraction `memory search` uses**,
+      instead of assuming SQLite
+- [ ] **Add a busy timeout + fail-fast error path** so it can never hang silently
+- [ ] Minor: the file is `stats.ts` and the command is `status` — `pai memory stats` errors
+      with "unknown command". Either alias it or rename for consistency.
+- [ ] **Investigate why `restart: unless-stopped` did not revive `pai-pgvector`** — compose file
+      lives in `docker/`; container shows `Exited (0)`, suggesting a deliberate stop, not a crash
 
 ---
 
@@ -160,7 +199,39 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 | v0.9.5 | Budget-aware advisor mode |
 | v0.9.6 | Statusline auto-writes budget to advisor |
 
-### Session 0017 — v0.9.7 (current session)
+### Sessions 0014–0002 — 16 Releases (v0.9.8 → v0.12.2), Apr – Jul 10
+
+Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
+
+| Version | Feature | Commit |
+|---------|---------|--------|
+| v0.9.8 | Privacy tags, compact search format, npx install | `1e342c0` |
+| v0.9.9 | Advisor mode delegates to haiku instead of hoarding in opus | `112e2f8` |
+| v0.9.10 | Cognee-inspired memory architecture | `1f78f40` |
+| v0.9.11 | `session-commands` hook for truncation resilience | `64740c2` |
+| v0.9.12 | Dispatcher uses `openFederation` directly for kg_search/feedback | `558879a` |
+| v0.9.13 | Emit chunk IDs in `memory_search` output | `8537322` |
+| v0.9.14 | Plural namespaces, top-level verbs, auto registry-scan | `17492b6` |
+| v0.9.15 | AIBroker live sessions, pause all, `/pause` + `/end` skills | `785ec1a` |
+| v0.9.16 | Daemon `createHash` import, scan clc fallback, live session filter | `35bff9d` |
+| v0.9.17 | AIBroker live-session integration + README session mgmt docs | `8d11545` |
+| v0.10.0 | Topic-first redesign + sticky tab titles | `e091b65` |
+| v0.10.1 | `sessions clear-names` recovery command | `928fa2e` |
+| v0.11.0 | Deduped sessions + universal `pai <name>` (switch/resume/fresh) | `84ff0ac` |
+| v0.12.0 | Interactive `pai` picker (search · go · new · cd · finder · remove) | `d3fd578` |
+| v0.12.1 | Daemon waits for Postgres instead of silent SQLite fallback | `e06b6d1` |
+| v0.12.2 | Never create or decorate empty session notes; `pai project names --all` | `ed1821d` |
+
+### Session 0002 — Glidr Stub-Note Triage, Restore & Empty-Note Guards (2026-07-10)
+- [x] Traced 15 gutted Glidr session notes (**not 105** — 90 merely carried the sync footer) to Glidr commit `92b45da`
+- [x] Restored 13 bodies from git history (Glidr `3cf00e1`); backfilled the 2 unrecoverable born-stubs (Glidr `7fb1b91`)
+- [x] Root-caused the born-stub path to `writeSessionNote` / `spawnSummarizer` returning empty summaries
+- [x] Shipped `hasMeaningfulBody` + `hasContent` guards in `src/obsidian/sync/master.ts` and `src/daemon/session-summary-worker.ts` (`1d6d437`) — confirmed working live
+- [x] Shipped `pai project names --all` (`a1e9e4f`)
+- [x] Persisted findings to `memory/obsidian-master-note-bug.md`
+- **Residual:** the original emptier of the 13 real notes was never pinned to PAI code (likely external, not reproducible). Guards make it harmless.
+
+### Session 0017 — v0.9.7
 - [x] Advisor mode label in statusline (strict/conserve/critical/normal with color coding)
 - [x] 📌 prefix for manually forced modes vs auto-calculated
 - [x] Statusline preserves manual mode/forceModel — no longer overwrites with "auto"
@@ -283,4 +354,4 @@ Shipped across 22 days in a single mega-session spanning multiple compactions:
 
 ---
 
-*Last updated: 2026-07-10T07:19:55.321Z*
+*Last updated: 2026-07-31T20:31:43.361Z*

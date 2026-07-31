@@ -32,6 +32,7 @@ import { registerObservationCommands } from "./commands/observation.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
+import { registerTaskCommands } from "./commands/task.js";
 import { registerTopicCommands } from "./commands/topic.js";
 import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
@@ -214,6 +215,17 @@ Examples:
     .description("Notification config: status, get, set, test, send");
 
   registerNotifyCommands(notifyCmd);
+
+  // -------------------------------------------------------------------------
+  // pai task
+  // -------------------------------------------------------------------------
+
+  const taskCmd = program
+    .command("task")
+    .alias("tasks")
+    .description("Task bus: list, add, dispatch, and complete cross-session work");
+
+  registerTaskCommands(taskCmd);
 
   // -------------------------------------------------------------------------
   // pai topic
