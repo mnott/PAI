@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0003 - 2026-07-31 - Task Bus V0.13.0 — Live Dispatch And Release
-> **Paused at:** 2026-07-31T21:04:43.531Z
+> **Last session:** 0003 - 2026-07-31 - Task Bus Dispatch, Shared Timeout, And 0.8.1 Verify
+> **Paused at:** 2026-07-31T21:21:25.260Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -373,4 +373,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-07-31T21:04:43.531Z*
+*Last updated: 2026-07-31T21:21:25.260Z*

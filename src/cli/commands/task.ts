@@ -9,7 +9,10 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "../../daemon/config.js";
+import { chmodSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
+import { readConfigRaw, writeConfigRaw } from "./setup/utils.js";
 import { openRegistry } from "../../registry/db.js";
 import { loadAliasMap } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";
@@ -43,6 +46,50 @@ function reportUnconfigured(): void {
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+
+/**
+ * Prompt for a secret without echoing it.
+ *
+ * Never accept a token as a command-line argument: argv is visible in `ps` to
+ * every user on the machine and lands in shell history verbatim.
+ */
+function promptSecret(question: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const out = process.stdout as NodeJS.WriteStream & { muted?: boolean };
+    // Swap in a writer that swallows echoed keystrokes but still lets the
+    // prompt itself through.
+    const write = out.write.bind(out);
+    (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = (s: string) => {
+      if (!out.muted) write(s);
+    };
+    write(question);
+    out.muted = true;
+    rl.question("", (answer) => {
+      out.muted = false;
+      write("\n");
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/** Show enough of a token to recognise it, never enough to use it. */
+function redact(token: string | undefined): string {
+  if (!token) return dim("(not set)");
+  return token.length <= 8 ? "********" : `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
+
+type RawTasks = {
+  enabled?: boolean;
+  autoDispatch?: boolean;
+  dispatchTimeoutSecs?: number;
+  providers?: { todoist?: { enabled?: boolean; apiKey?: string; rootProjectId?: string; findingsSectionId?: string } };
+};
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -197,6 +244,96 @@ export function registerTaskCommands(taskCmd: Command): void {
       });
 
       printResults(results);
+    });
+
+  taskCmd
+    .command("config")
+    .description("View or change task bus settings without running the full setup wizard")
+    .option("--token", "Prompt for the Todoist API token (input is hidden)")
+    .option("--from-env", "Adopt the token from TODOIST_API_KEY in the environment")
+    .option("--project <id>", "Tracker project ID that roots the bus (an ID, never a name)")
+    .option("--findings <id>", "Section ID for the findings inbox")
+    .option("--timeout <secs>", "Seconds a single dispatch may take", (v) => Number.parseInt(v, 10))
+    .option("--auto-dispatch <bool>", "Hand tasks to owning sessions automatically (true/false)")
+    .option("--disable", "Turn the task bus off without discarding its settings")
+    .action(async (opts) => {
+      const raw = readConfigRaw();
+      const tasks = (raw.tasks ?? {}) as RawTasks;
+      tasks.providers ??= {};
+      tasks.providers.todoist ??= {};
+      const todoist = tasks.providers.todoist;
+
+      const noChanges =
+        !opts.token && !opts.fromEnv && !opts.project && !opts.findings &&
+        opts.timeout === undefined && opts.autoDispatch === undefined && !opts.disable;
+
+      if (noChanges) {
+        console.log();
+        console.log(`  ${bold("Task bus")}      ${tasks.enabled ? chalk.green("enabled") : dim("disabled")}`);
+        console.log(`  ${bold("Token")}         ${redact(todoist.apiKey)}${
+          !todoist.apiKey && process.env.TODOIST_API_KEY ? dim("  (TODOIST_API_KEY is set in this shell)") : ""
+        }`);
+        console.log(`  ${bold("Root project")}  ${todoist.rootProjectId ?? dim("(not set)")}`);
+        console.log(`  ${bold("Findings")}      ${todoist.findingsSectionId ?? dim("(not set)")}`);
+        console.log(`  ${bold("Auto-dispatch")} ${tasks.autoDispatch ? chalk.green("on") : dim("off")}`);
+        console.log(`  ${bold("Timeout")}       ${tasks.dispatchTimeoutSecs ?? dim("default (180s)")}`);
+        console.log();
+        console.log(dim(`  ${CONFIG_FILE}`));
+        console.log();
+        return;
+      }
+
+      if (opts.token && opts.fromEnv) {
+        console.error(chalk.yellow("  Use either --token or --from-env, not both."));
+        process.exitCode = 1;
+        return;
+      }
+
+      if (opts.fromEnv) {
+        const envToken = process.env.TODOIST_API_KEY?.trim();
+        if (!envToken) {
+          console.error(chalk.yellow("  TODOIST_API_KEY is not set in this environment."));
+          process.exitCode = 1;
+          return;
+        }
+        todoist.apiKey = envToken;
+        todoist.enabled = true;
+        tasks.enabled = true;
+      }
+
+      if (opts.token) {
+        const entered = await promptSecret("  Todoist API token (hidden): ");
+        if (!entered) {
+          console.error(chalk.yellow("  No token entered. Nothing changed."));
+          process.exitCode = 1;
+          return;
+        }
+        todoist.apiKey = entered;
+        todoist.enabled = true;
+        tasks.enabled = true;
+      }
+
+      if (opts.project) { todoist.rootProjectId = opts.project; tasks.enabled = true; }
+      if (opts.findings) todoist.findingsSectionId = opts.findings;
+      if (opts.timeout !== undefined) tasks.dispatchTimeoutSecs = opts.timeout;
+      if (opts.autoDispatch !== undefined) tasks.autoDispatch = opts.autoDispatch === "true";
+      if (opts.disable) tasks.enabled = false;
+
+      raw.tasks = tasks;
+      writeConfigRaw(raw);
+
+      // The file now holds a credential. Narrow it before saying anything else,
+      // so a crash between write and chmod cannot leave it world-readable.
+      try {
+        chmodSync(CONFIG_FILE, 0o600);
+      } catch {
+        console.log(chalk.yellow(`  Could not restrict permissions on ${CONFIG_FILE} — check them by hand.`));
+      }
+
+      console.log(chalk.green("  Saved."));
+      if (todoist.apiKey && !todoist.rootProjectId) {
+        console.log(dim("  No root project set yet — run `pai task config --project <id>`."));
+      }
     });
 
   taskCmd

@@ -13,7 +13,7 @@ The bus is shared state that outlives any one session. Session-local work stays 
 pai task list --limit 1
 \`\`\`
 
-If this prints "Task bus is not configured", tell the user to run \`pai setup\` and complete the Task Bus step, then stop. Do not work around it by calling the Todoist MCP directly — the bus resolves ownership against the PAI registry, which the raw MCP knows nothing about.
+If this prints "Task bus is not configured", tell the user to run \`pai task config --token\` (hidden prompt, no wizard) or \`pai setup\` for the guided version, then stop. \`pai task config\` with no flags shows the current settings with the token redacted. Do not work around it by calling the Todoist MCP directly — the bus resolves ownership against the PAI registry, which the raw MCP knows nothing about.
 
 ---
 
