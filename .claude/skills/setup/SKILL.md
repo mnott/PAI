@@ -588,6 +588,12 @@ echo "env token: ${TODOIST_API_KEY:+present}${TODOIST_API_KEY:-absent}"
 
 **If TASKBUS_CONFIGURED:** report it and skip to Step 16.
 
+> **Changing this later does not need the wizard.** `pai task config` shows the current
+> settings (token redacted) and changes them one at a time:
+> `pai task config --token` (hidden prompt), `--from-env`, `--project <id>`,
+> `--auto-dispatch true|false`, `--disable`. Re-running all of `pai setup` to set one
+> value is why it tends not to get done.
+
 **If TASKBUS_NOT_CONFIGURED, ask:**
 
 > Would you like to enable the task bus? It uses Todoist as shared state so sessions can

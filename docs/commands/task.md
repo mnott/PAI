@@ -19,6 +19,7 @@ pai task <subcommand> [options]
 | [`pai task list`](#pai-task-list) | List open tasks on the bus |
 | [`pai task add <title>`](#pai-task-add-title) | File a task onto the bus |
 | [`pai task dispatch`](#pai-task-dispatch) | Hand open tasks to the PAI sessions that own them |
+| [`pai task config`](#pai-task-config) | View or change task bus settings without running the full setup wizard |
 | [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker |
 
 ### pai task list
@@ -69,6 +70,23 @@ Hand open tasks to the PAI sessions that own them
 | `--today` | Only tasks due today or overdue |  |
 | `--dry-run` | Report what would happen without contacting any session |  |
 | `--no-spawn` | Never launch a session; skip owners that are not running |  |
+
+
+### pai task config
+
+View or change task bus settings without running the full setup wizard
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--token` | Prompt for the Todoist API token (input is hidden) |  |
+| `--from-env` | Adopt the token from TODOIST_API_KEY in the environment |  |
+| `--project <id>` | Tracker project ID that roots the bus (an ID, never a name) |  |
+| `--findings <id>` | Section ID for the findings inbox |  |
+| `--timeout <secs>` | Seconds a single dispatch may take |  |
+| `--auto-dispatch <bool>` | Hand tasks to owning sessions automatically (true/false) |  |
+| `--disable` | Turn the task bus off without discarding its settings |  |
 
 
 ### pai task done <id>
