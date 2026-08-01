@@ -86,9 +86,9 @@ export interface SessionSummaryPayload {
   /** If true, bypass the cooldown check (e.g. triggered by stop-hook at session end). */
   force?: boolean;
   /** Model to use for summarization. Defaults based on trigger:
-   *  - "stop" trigger (session end): "opus" for best quality final summary
-   *  - "compact" trigger (auto-compaction): "sonnet" for incremental checkpoints
-   *  - Manual/reconstruct: "sonnet" for batch processing */
+   *  - forced (mid-session auto-save, every N messages): "haiku" — runs often
+   *  - everything else (manual, reconstruct, batch): "sonnet"
+   *  Session end does not summarise via an LLM at all; it is mechanical. */
   model?: "haiku" | "sonnet" | "opus";
 }
 
@@ -970,7 +970,17 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // Step 2: Extract content from the JSONL
   // -------------------------------------------------------------------------
   // Model selection: opus for session end (force=true), sonnet for auto-compact
-  const selectedModel = payload.model ?? (force ? "opus" : "sonnet");
+  // `force` means "skip the cooldown" and nothing else. It used to also select
+  // opus, on the assumption that a forced run was the one final session-end
+  // summary. It is not: session end is handled mechanically by handleSessionEnd
+  // and never reaches here. The only thing that sets force is the stop-hook's
+  // mid-session auto-save, which fires every AUTO_SAVE_INTERVAL human messages
+  // — so the most expensive model was running over a full transcript every 15
+  // messages, in every open session. Measured: 102 opus vs 5 sonnet in 16h.
+  //
+  // Incremental checkpoints are a summarisation task with a clear input; haiku
+  // is sufficient. Callers wanting better can still pass `model` explicitly.
+  const selectedModel = payload.model ?? (force ? "haiku" : "sonnet");
   const extracted = extractFromJsonl(jsonlPath, selectedModel);
 
   if (extracted.userMessages.length === 0) {
