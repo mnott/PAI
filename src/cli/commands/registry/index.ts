@@ -8,6 +8,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { cmdScan, loadScanConfig, saveScanConfig, resolveHome } from "./scan.js";
 import { cmdMigrate } from "./migrate.js";
+import { cmdDedupe } from "./dedupe.js";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // stats
@@ -176,6 +178,24 @@ export function registerRegistryCommands(
     .description("Erase all registry data and rebuild from the filesystem (destructive)")
     .action(() => {
       cmdRebuild(getDb());
+    });
+
+  // pai registry dedupe [--execute]
+  registryCmd
+    .command("dedupe")
+    .description(
+      "Merge registry rows that describe the same project.\n" +
+        "Two spellings of one directory (e.g. via a symlinked path prefix) register\n" +
+        "as separate projects and split session history between them. Rows are grouped\n" +
+        "by resolved path, so a merge only happens when the paths are provably identical.\n" +
+        "Dry-run by default; --execute backs up the registry first and merges in one transaction."
+    )
+    .option("--execute", "Actually perform the merge (default is dry-run)")
+    .action((opts: { execute?: boolean }) => {
+      cmdDedupe(getDb(), {
+        execute: opts.execute,
+        dbPath: join(homedir(), ".pai", "registry.db"),
+      });
     });
 
   // pai registry lookup --path <path>

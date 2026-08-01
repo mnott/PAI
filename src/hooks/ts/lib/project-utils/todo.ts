@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { findTodoPath } from './paths.js';
+import { applyContinue } from '../../../../session/checkpoint-block.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,8 +131,23 @@ export function addTodoCheckpoint(cwd: string, checkpoint: string): void {
 
 /**
  * Update the ## Continue section at the top of TODO.md.
- * Mirrors "pause session" behavior — gives the next session a starting point.
- * Replaces any existing ## Continue section.
+ *
+ * This is the unattended writer: the pre-compact hook and the daemon's
+ * work-queue worker both come through here. It used to build its own block and
+ * strip the existing section with `/## Continue\n[\s\S]*?\n---\n+/` — a
+ * non-greedy match to the first `---`, which cuts a rich checkpoint in half at
+ * the first horizontal rule inside its body and leaves the remainder orphaned
+ * in the document.
+ *
+ * More importantly it was the writer that actually destroyed model-authored
+ * checkpoints: `pai pause` wrote one, then this ran seconds later on session
+ * end and replaced it with `Working directory: … Check the latest session note
+ * for details.`
+ *
+ * It now delegates to the shared checkpoint module in "auto" mode, which means
+ * it inherits the preservation rules rather than reimplementing them. Guarding
+ * here rather than at each of the three call sites is deliberate: any future
+ * caller inherits the behaviour without knowing it exists.
  */
 export function updateTodoContinue(
   cwd: string,
@@ -139,40 +155,50 @@ export function updateTodoContinue(
   state: string | null,
   tokenDisplay: string
 ): void {
-  const todoPath = ensureTodoMd(cwd);
-  let content = readFileSync(todoPath, 'utf-8');
+  // Ensure a TODO.md exists so applyContinue writes to the same file the rest
+  // of the hooks lib uses.
+  ensureTodoMd(cwd);
 
-  // Remove existing ## Continue section
-  content = content.replace(/## Continue\n[\s\S]*?\n---\n+/, '');
+  const result = applyContinue({
+    rootPath: cwd,
+    authored: 'auto',
+    // The hooks identify a session by its note filename; `pai pause` resolves
+    // the same string from the registry (and falls back to this filename when
+    // the registry has no session row). They must agree, because this string
+    // is the key that decides whether an authored checkpoint belongs to the
+    // current session and must be preserved.
+    sessionLine: noteFilename.replace(/\.md$/, ''),
+    cwd,
+    body: state?.trim() || undefined,
+  });
 
-  const now = new Date().toISOString();
-  const stateLines = state
-    ? state.split('\n').filter(l => l.trim()).slice(0, 10).map(l => `> ${l}`).join('\n')
-    : `> Working directory: ${cwd}. Check the latest session note for details.`;
-
-  const continueSection = `## Continue
-
-> **Last session:** ${noteFilename.replace('.md', '')}
-> **Paused at:** ${now}
->
-${stateLines}
-
----
-
-`;
-
-  content = content.replace(/^\s+/, '');
-
-  const titleMatch = content.match(/^(# [^\n]+\n+)/);
-  if (titleMatch) {
-    content = titleMatch[1] + continueSection + content.substring(titleMatch[0].length);
-  } else {
-    content = continueSection + content;
+  if (result.action === 'preserved') {
+    console.error(
+      'TODO.md ## Continue left intact — authored checkpoint for this session'
+    );
+    return;
   }
 
-  content = content.replace(/(\n---\s*)*(\n\*Last updated:.*\*\s*)+$/g, '');
-  content = content.trimEnd() + `\n\n---\n\n*Last updated: ${now}*\n`;
+  if (result.action === 'failed') {
+    console.error(`TODO.md ## Continue update failed: ${result.error}`);
+    return;
+  }
 
-  writeFileSync(todoPath, content);
-  console.error('TODO.md ## Continue section updated');
+  // Refresh the trailing "Last updated" stamp without disturbing the block.
+  try {
+    const todoPath = result.path!;
+    const now = new Date().toISOString();
+    let content = readFileSync(todoPath, 'utf-8');
+    content = content.replace(/(\n---\s*)*(\n\*Last updated:.*\*\s*)+$/g, '');
+    content = content.trimEnd() + `\n\n---\n\n*Last updated: ${now}*\n`;
+    writeFileSync(todoPath, content);
+  } catch {
+    // Non-fatal — the checkpoint itself is already written.
+  }
+
+  console.error(
+    result.carriedForward
+      ? 'TODO.md ## Continue section updated (previous content carried forward)'
+      : 'TODO.md ## Continue section updated'
+  );
 }

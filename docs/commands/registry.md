@@ -18,6 +18,7 @@ pai registry <subcommand> [options]
 | [`pai registry migrate`](#pai-registry-migrate) | Import data from ~/.claude/session-registry.json |
 | [`pai registry stats`](#pai-registry-stats) | Show summary statistics for the registry |
 | [`pai registry rebuild`](#pai-registry-rebuild) | Erase all registry data and rebuild from the filesystem (destructive) |
+| [`pai registry dedupe`](#pai-registry-dedupe) | Merge registry rows that describe the same project. |
 | [`pai registry lookup`](#pai-registry-lookup) | Find the project slug for a filesystem path (for use in scripts) |
 
 ### pai registry scan
@@ -49,6 +50,22 @@ Show summary statistics for the registry
 Erase all registry data and rebuild from the filesystem (destructive)
 
 
+### pai registry dedupe
+
+Merge registry rows that describe the same project.
+
+Two spellings of one directory (e.g. via a symlinked path prefix) register
+as separate projects and split session history between them. Rows are grouped
+by resolved path, so a merge only happens when the paths are provably identical.
+Dry-run by default; --execute backs up the registry first and merges in one transaction.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--execute` | Actually perform the merge (default is dry-run) |  |
+
+
 ### pai registry lookup
 
 Find the project slug for a filesystem path (for use in scripts)
@@ -62,7 +79,7 @@ Find the project slug for a filesystem path (for use in scripts)
 
 ## See also
 
-[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai restore`](restore.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
+[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

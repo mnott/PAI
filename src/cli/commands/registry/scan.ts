@@ -76,6 +76,24 @@ export function saveScanConfig(config: PaiConfig): void {
   writeFileSync(PAI_CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
+/**
+ * Resolve a path to its canonical form, falling back to the input.
+ *
+ * Every path that becomes a `projects.root_path` must go through this. That
+ * column is UNIQUE, so two spellings of one directory create two projects and
+ * split session history between them. The spellings are not hypothetical: a
+ * configured scan_dir of `~/dev/ai` (where `~/dev` is a symlink) makes every
+ * project under it register under the symlinked path, while a session started
+ * from the resolved path registers a rival row.
+ */
+export function canonicalPath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 export function resolveHome(p: string): string {
   if (p.startsWith("~/")) return join(homedir(), p.slice(2));
   return resolve(p);
@@ -171,6 +189,20 @@ export function performScan(db: Database): ScanResult {
       continue;
     }
 
+    // Canonicalize before upserting.
+    //
+    // ~/.claude/projects/ holds one encoded entry per path *spelling*, so a
+    // directory reachable through a symlinked prefix (~/dev -> Cloud/Development)
+    // appears twice. Decoding each to its literal path registers two projects
+    // for one directory, and session history then splits between them —
+    // whichever spelling the shell used gets the session.
+    //
+    // upsertProject looks up by root_path first, so resolving here makes the
+    // second spelling land on the row the first one created instead of
+    // creating a rival. Both encoded_dir values stay valid for locating
+    // central notes; only the project identity is unified.
+    rootPath = canonicalPath(rootPath);
+
     const slug = slugify(basename(rootPath) || encodedDir);
     const { id, isNew } = upsertProject(db, slug, rootPath, encodedDir);
 
@@ -254,7 +286,10 @@ export function performScan(db: Database): ScanResult {
       });
 
       for (const child of children) {
-        const childPath = join(scanDir, child);
+        // Canonicalize: a scan_dir of "~/dev/ai" (symlinked prefix) would
+        // otherwise register every project under the symlinked spelling and
+        // duplicate anything already registered under the resolved one.
+        const childPath = canonicalPath(join(scanDir, child));
         const childSlug = slugify(child);
         const childEncoded = encodeDir(childPath);
 
@@ -318,8 +353,14 @@ export function performScan(db: Database): ScanResult {
 
       if (!registeredRow) continue;
 
-      if (registeredRow.root_path !== marker.projectRoot) {
-        const newEncoded = encodeDir(marker.projectRoot);
+      // The marker was found by walking a scan_dir, so its projectRoot carries
+      // whatever spelling that dir used. Canonicalize before comparing —
+      // otherwise this "repair" step rewrites a correct root_path back to the
+      // symlinked form on every scan, undoing any deduplication.
+      const markerRoot = canonicalPath(marker.projectRoot);
+
+      if (registeredRow.root_path !== markerRoot) {
+        const newEncoded = encodeDir(markerRoot);
         const now4 = Date.now();
 
         const encodedOwner = db
@@ -327,7 +368,7 @@ export function performScan(db: Database): ScanResult {
           .get(newEncoded) as { id: number } | undefined;
         const pathOwner = db
           .prepare("SELECT id FROM projects WHERE root_path = ?")
-          .get(marker.projectRoot) as { id: number } | undefined;
+          .get(markerRoot) as { id: number } | undefined;
 
         const encodedSafe = !encodedOwner || encodedOwner.id === registeredRow.id;
         const pathSafe = !pathOwner || pathOwner.id === registeredRow.id;
@@ -335,11 +376,11 @@ export function performScan(db: Database): ScanResult {
         if (encodedSafe && pathSafe) {
           db.prepare(
             "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-          ).run(marker.projectRoot, newEncoded, now4, registeredRow.id);
+          ).run(markerRoot, newEncoded, now4, registeredRow.id);
         } else if (pathSafe) {
           db.prepare(
             "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
-          ).run(marker.projectRoot, now4, registeredRow.id);
+          ).run(markerRoot, now4, registeredRow.id);
         }
       }
     }

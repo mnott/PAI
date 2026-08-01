@@ -13,98 +13,15 @@
  */
 
 import type { Database } from "better-sqlite3";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  renameSync,
-  mkdirSync,
-} from "node:fs";
-import { join, basename } from "node:path";
-import { homedir } from "node:os";
-import { realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { basename } from "node:path";
 import chalk from "chalk";
-import type { ProjectRow, SessionRow } from "./types.js";
-import { cmdPause } from "./pause.js";
-
-// ---------------------------------------------------------------------------
-// Notes-directory resolution (mirrors paths.ts without importing hooks lib)
-// ---------------------------------------------------------------------------
-
-/** Encode a path the same way Claude Code does. */
-function encodePath(path: string): string {
-  return path
-    .replace(/\//g, "-")
-    .replace(/\./g, "-")
-    .replace(/ /g, "-");
-}
-
-/** PAI_DIR — mirrors pai-paths.ts resolution. */
-function getPaiDir(): string {
-  const envDir = process.env.PAI_DIR;
-  if (envDir) {
-    try {
-      return realpathSync(envDir);
-    } catch {
-      return envDir;
-    }
-  }
-  return join(homedir(), ".claude");
-}
-
-/**
- * Find the notes directory for a project — checks local first, then central.
- * Returns null if neither exists (dry-run safe: don't create).
- */
-function findNotesDir(
-  rootPath: string,
-  encodedDir: string
-): string | null {
-  // Check local paths first
-  for (const rel of ["Notes", "notes", ".claude/Notes"]) {
-    const p = join(rootPath, rel);
-    if (existsSync(p)) return p;
-  }
-  // Central fallback: ~/.claude/projects/<encoded>/Notes
-  const central = join(getPaiDir(), "projects", encodedDir, "Notes");
-  if (existsSync(central)) return central;
-  return null;
-}
-
-/**
- * Find the current (latest) session note inside notesDir.
- * Searches YYYY/MM subdirectory (current month, then previous month),
- * then flat notesDir as legacy fallback.
- */
-function findLatestNote(notesDir: string): string | null {
-  const findIn = (dir: string): string | null => {
-    if (!existsSync(dir)) return null;
-    const files = readdirSync(dir)
-      .filter((f) => /^\d{3,4}[\s_-].*\.md$/.test(f))
-      .sort((a, b) => {
-        const na = parseInt(a.match(/^(\d+)/)?.[1] ?? "0", 10);
-        const nb = parseInt(b.match(/^(\d+)/)?.[1] ?? "0", 10);
-        return na - nb;
-      });
-    return files.length > 0 ? join(dir, files[files.length - 1]) : null;
-  };
-
-  const now = new Date();
-  const year = String(now.getFullYear());
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-
-  const current = findIn(join(notesDir, year, month));
-  if (current) return current;
-
-  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const py = String(prev.getFullYear());
-  const pm = String(prev.getMonth() + 1).padStart(2, "0");
-  const prevFound = findIn(join(notesDir, py, pm));
-  if (prevFound) return prevFound;
-
-  return findIn(notesDir);
-}
+import type { ProjectRow } from "./types.js";
+import { cmdPause, type PauseOptions } from "./pause.js";
+import {
+  findNotesDir,
+  findLatestNote,
+} from "../../../session/checkpoint-block.js";
 
 // ---------------------------------------------------------------------------
 // Session-note finalization (mirrors finalizeSessionNote from session-notes.ts)
@@ -139,7 +56,7 @@ function finalizeNote(notePath: string): { finalized: boolean; path: string } {
 // Command
 // ---------------------------------------------------------------------------
 
-export function cmdEnd(db: Database, opts: { dryRun?: boolean }): void {
+export function cmdEnd(db: Database, opts: PauseOptions): void {
   // ---- Step 1: Run pause logic (writes ## Continue, prints warning) ----
   // We call cmdPause first; it prints the ## Continue block and the initial
   // safe-exit box. We'll print the end-specific reminder afterwards.
