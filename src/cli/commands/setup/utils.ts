@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readJsonStrict, writeJsonAtomic } from "../../../config/json-store.js";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { CONFIG_DIR, CONFIG_FILE } from "../../../daemon/config.js";
@@ -119,20 +120,19 @@ export async function promptYesNo(
 // Config read/write helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * This file holds the Postgres connection string, the storage backend choice,
+ * notification routing and any tracker API token — none of which the user can
+ * reconstruct from memory. It previously returned {} on a parse failure and
+ * then overwrote the file, so a damaged config was replaced by whatever the
+ * current command happened to be setting.
+ */
 export function readConfigRaw(): Record<string, unknown> {
-  if (!existsSync(CONFIG_FILE)) return {};
-  try {
-    return JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+  return readJsonStrict(CONFIG_FILE, "~/.config/pai/config.json");
 }
 
 export function writeConfigRaw(data: Record<string, unknown>): void {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
-  }
-  writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2) + "\n", "utf-8");
+  writeJsonAtomic(CONFIG_FILE, data, { label: "~/.config/pai/config.json" });
 }
 
 export function mergeConfig(updates: Record<string, unknown>): void {
