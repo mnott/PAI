@@ -12,6 +12,32 @@ PAI_OS="pai"
 command -v "$PAI_OS" &>/dev/null || exit 0
 command -v sqlite3 &>/dev/null || exit 0
 
+# ---------------------------------------------------------------------------
+# Read the Claude session UUID from the hook payload
+# ---------------------------------------------------------------------------
+# Claude Code delivers the Stop event as JSON on stdin, carrying `session_id`.
+# That UUID is the only stable handle on this session: the steps below rename
+# (`session slug --apply`) and renumber (`session cleanup --execute`) the
+# session note, so anything derived from its filename has already changed by
+# the time the handover runs. Passing the UUID through is what lets the
+# handover recognise a checkpoint `pai pause` wrote minutes earlier instead of
+# mistaking it for a stale one and overwriting it.
+#
+# Read non-blocking: when no payload is piped in, carry on without it.
+
+CLAUDE_SESSION_UUID=""
+if [ ! -t 0 ]; then
+  HOOK_INPUT=$(timeout 2 cat 2>/dev/null || true)
+  if [ -n "$HOOK_INPUT" ]; then
+    if command -v jq &>/dev/null; then
+      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
+    else
+      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | python3 -c \
+        "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || true)
+    fi
+  fi
+fi
+
 REGISTRY_DB="$HOME/.pai/registry.db"
 [ -f "$REGISTRY_DB" ] || exit 0
 
@@ -88,7 +114,12 @@ fi
 # a handover section. If the command doesn't exist yet, fail gracefully.
 #
 
-"$PAI_OS" session handover "$PROJECT_SLUG" latest 2>/dev/null || true
+if [ -n "$CLAUDE_SESSION_UUID" ]; then
+  "$PAI_OS" session handover "$PROJECT_SLUG" latest \
+    --session-id "$CLAUDE_SESSION_UUID" 2>/dev/null || true
+else
+  "$PAI_OS" session handover "$PROJECT_SLUG" latest 2>/dev/null || true
+fi
 
 # Set tab color to completed state when session ends
 TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"

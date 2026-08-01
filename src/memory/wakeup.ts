@@ -8,7 +8,7 @@
  *   L3 Deep Search                  — unlimited federated memory search (memory_search tool).
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 
@@ -121,11 +121,41 @@ function findSessionNotes(notesDir: string): string[] {
 
   scanDir(notesDir);
 
-  // Sort: extract leading number, highest = most recent
+  // Sort newest-first by the DATE in the filename, not the note number.
+  //
+  // The note number is only monotonic within one uninterrupted numbering run.
+  // It restarts — per month directory, and after a registry merge renumbers a
+  // project — so "highest number" and "most recent" diverge. Observed live:
+  // `0184 - 2026-02-22` outranked `0008 - 2026-08-01`, and the wake-up context
+  // handed a resumed session five-month-old material as its recent history.
+  //
+  // `NNNN - YYYY-MM-DD - Title.md` is the enforced layout, so the date is the
+  // reliable key. Number breaks ties within a day; mtime is the last resort
+  // for notes that predate the naming convention.
+  const dateOf = (p: string): string =>
+    basename(p).match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
+  const numberOf = (p: string): number =>
+    parseInt(basename(p).match(/^(\d+)/)?.[1] ?? "0", 10);
+  const mtimeOf = (p: string): number => {
+    try {
+      return statSync(p).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+
   result.sort((a, b) => {
-    const numA = parseInt(basename(a).match(/^(\d+)/)?.[1] ?? "0", 10);
-    const numB = parseInt(basename(b).match(/^(\d+)/)?.[1] ?? "0", 10);
-    return numB - numA; // newest first
+    const dateA = dateOf(a);
+    const dateB = dateOf(b);
+    // Undated notes sort last rather than winning on an empty string.
+    if (dateA !== dateB) {
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateB.localeCompare(dateA);
+    }
+    const byNumber = numberOf(b) - numberOf(a);
+    if (byNumber !== 0) return byNumber;
+    return mtimeOf(b) - mtimeOf(a);
   });
 
   return result;

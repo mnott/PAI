@@ -63,11 +63,18 @@ Order is: **compose → write file → persist via CLI → print**. Never reorde
 
 ### Notes
 
-- \`--session-id\` is what makes \`claude --resume\` recoverable from TODO.md alone. Always
-  pass it.
+- \`--session-id\` is what makes \`claude --resume\` recoverable from TODO.md alone, and it is
+  also the key that protects your checkpoint from being overwritten. Always pass it.
+- The next session receives this checkpoint automatically: the SessionStart hook reads
+  \`## Continue\` and injects it. The user does not have to say "go" for it to arrive.
 - The session-stop hook runs \`pai session handover\` on exit. It will **not** overwrite the
-  checkpoint you just wrote — authored checkpoints for the current session are preserved,
-  and unattributed content in older blocks is carried forward rather than dropped.
+  checkpoint you just wrote — preservation is keyed on the session UUID, which survives the
+  note rename and renumber that the same hook performs a few steps earlier. Unattributed
+  content in older blocks is carried forward rather than dropped.
+- A rolling autosave (\`pai session autosave\`, wired to UserPromptSubmit and PostToolUse)
+  keeps a mechanical checkpoint fresh throughout the session, so an interrupted session
+  still leaves something behind. It never replaces an authored checkpoint for the same
+  session — yours always wins.
 - \`--no-body\` exists for deliberate metadata-only checkpoints. Do not reach for it to work
   around a failure in step 2 or 3.
 - Do **not** hand-place state below the generated header lines as a workaround. That was

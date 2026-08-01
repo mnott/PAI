@@ -255,11 +255,32 @@ export async function indexProjectWithBackend(
 const EMBED_BATCH_SIZE = 50;
 const EMBED_YIELD_EVERY = 1;
 
+/** Default ceiling on one pass. See EmbedPassOptions. */
+const DEFAULT_MAX_CHUNKS_PER_PASS = 5_000;
+/** Default wall-clock ceiling on one pass, in milliseconds. */
+const DEFAULT_MAX_MILLIS_PER_PASS = 120_000;
+
+export interface EmbedPassOptions {
+  /**
+   * Stop the pass after this many chunks. Unbounded passes are the reason a
+   * six-figure backlog starves the indexer: the daemon serialises indexing and
+   * embedding against each other, so a pass that runs for hours means nothing
+   * new gets indexed for hours. Bounding the pass costs nothing — every
+   * embedding is written as it is produced, so the next pass resumes exactly
+   * where this one stopped.
+   */
+  maxChunks?: number;
+  /** Stop the pass after this much wall-clock time, whichever bound hits first. */
+  maxMillis?: number;
+}
+
 /**
- * Generate and store embeddings for all unembedded chunks via the StorageBackend.
+ * Generate and store embeddings for unembedded chunks via the StorageBackend.
  *
- * Processes chunks in batches of EMBED_BATCH_SIZE, yielding to the event loop
- * every EMBED_YIELD_EVERY chunks to avoid blocking IPC calls from MCP shims.
+ * The pass is deliberately bounded (see EmbedPassOptions) and resumable: it
+ * takes a slice of the backlog, embeds it, and returns so the scheduler can run
+ * an index pass before coming back. Draining the whole backlog in one call
+ * starves indexing for as long as the call runs.
  *
  * The optional `shouldStop` callback is checked between every batch. When it
  * returns true the embed loop exits early so the caller (e.g. the daemon
@@ -271,10 +292,15 @@ export async function embedChunksWithBackend(
   backend: StorageBackend,
   shouldStop?: () => boolean,
   projectNames?: Map<number, string>,
+  options?: EmbedPassOptions,
 ): Promise<number> {
-  const { generateEmbedding, serializeEmbedding } = await import("../embeddings.js");
+  const { generateEmbeddings, serializeEmbedding } = await import("../embeddings.js");
 
-  const rows = await backend.getUnembeddedChunkIds();
+  const maxChunks = options?.maxChunks ?? DEFAULT_MAX_CHUNKS_PER_PASS;
+  const maxMillis = options?.maxMillis ?? DEFAULT_MAX_MILLIS_PER_PASS;
+  const deadline = Date.now() + maxMillis;
+
+  const rows = await backend.getUnembeddedChunkIds(undefined, maxChunks);
   if (rows.length === 0) return 0;
 
   const total = rows.length;
@@ -311,12 +337,37 @@ export async function embedChunksWithBackend(
       break;
     }
 
+    // Yield the daemon back to the indexer rather than run past the deadline.
+    // The remaining rows are simply picked up by the next scheduled pass.
+    if (Date.now() >= deadline) {
+      process.stderr.write(
+        `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${maxMillis}ms budget spent); resuming next pass\n`
+      );
+      break;
+    }
+
     const batch = rows.slice(i, i + EMBED_BATCH_SIZE);
 
-    for (let j = 0; j < batch.length; j++) {
-      const { id, text, project_id, path } = batch[j];
+    // Keep IPC responsive: the forward pass below is synchronous inside the
+    // model, so yield before entering it rather than between chunks.
+    await yieldToEventLoop();
 
-      // Log when switching to a new project
+    const vecs = await generateEmbeddings(batch.map((r) => r.text));
+    // Issue the writes together rather than one round-trip at a time. Measured
+    // on this machine the model embeds 40-67 chunks/s in isolation while the
+    // daemon managed ~5/s: the difference was one sequential UPDATE per chunk,
+    // so the pass spent most of its budget waiting on the network, not working.
+    // Concurrency is bounded by the batch size, which the pool handles; the
+    // SQLite backend is synchronous and simply ignores the difference.
+    await Promise.all(
+      batch.map((row, j) => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
+    );
+
+    // Attribute the batch to projects only after it is durably stored, and walk
+    // it in order so a batch straddling a project boundary credits each side
+    // correctly. Rows arrive ordered by project, so a boundary is a real
+    // transition, not the per-chunk flapping this logging used to produce.
+    for (const { project_id, path } of batch) {
       if (project_id !== currentProjectId) {
         if (currentProjectId !== -1) {
           process.stderr.write(
@@ -330,15 +381,6 @@ export async function embedChunksWithBackend(
         currentProjectId = project_id;
         projectEmbedded = 0;
       }
-
-      // Yield to the event loop periodically to keep IPC responsive
-      if ((embedded + j) % EMBED_YIELD_EVERY === 0) {
-        await yieldToEventLoop();
-      }
-
-      const vec = await generateEmbedding(text);
-      const blob = serializeEmbedding(vec);
-      await backend.updateEmbedding(id, blob);
       projectEmbedded++;
     }
 

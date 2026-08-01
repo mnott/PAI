@@ -139,10 +139,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai session` | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
 | `pai session active` | Show currently active Claude Code sessions. |
 | `pai session auto-route` | Auto-detect which project this session belongs to. |
+| `pai session autosave` | Refresh the ## Continue checkpoint from the transcript and working tree. |
 | `pai session checkpoint <message>` | Append a timestamped checkpoint to the active session note. |
 | `pai session cleanup [project-slug]` | Clean up session notes: delete empties, auto-name unnamed, move into YYYY/MM/ hierarchy, renumber |
 | `pai session goto <name-or-id>` | Go to a session: resume if a resumable snapshot exists, start fresh otherwise. |
-| `pai session handover [project-slug] [session-id]` | Write a ## Continue section to the project's TODO.md. |
+| `pai session handover [project-slug] [number-or-latest]` | Write a ## Continue section to the project's TODO.md. |
 | `pai session info <project-slug> <number>` | Show full details for a specific session |
 | `pai session list` | Resumable sessions catalog — named sessions with resume status. |
 | `pai session pause` | Write a ## Continue checkpoint to the project's TODO.md. |

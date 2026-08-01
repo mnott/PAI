@@ -16,6 +16,7 @@ import {
 } from "./commands.js";
 import { cmdCheckpoint } from "./checkpoint.js";
 import { cmdHandover } from "./handover.js";
+import { cmdAutosave } from "./autosave.js";
 import { cmdRecent } from "./recent.js";
 import { cmdGoto } from "./goto.js";
 import { cmdPause } from "./pause.js";
@@ -100,18 +101,29 @@ export function registerSessionCommands(
       }
     );
 
-  // pai session handover [project-slug] [session-id]
+  // pai session handover [project-slug] [number-or-latest]
   sessionCmd
-    .command("handover [project-slug] [session-id]")
+    .command("handover [project-slug] [number-or-latest]")
     .description(
       "Write a ## Continue section to the project's TODO.md.\n" +
         "Called automatically from session-stop and pre-compact hooks.\n" +
         "Records the last session identifier, timestamp, and working directory\n" +
         "so the next session can resume from the correct context."
     )
+    .option(
+      "--session-id <uuid>",
+      "Claude session UUID. Used to decide whether an existing authored\n" +
+        "checkpoint belongs to this session and must be preserved. Without it\n" +
+        "the comparison falls back to the session note filename, which the stop\n" +
+        "hook itself renames — so pass it whenever it is known."
+    )
     .action(
-      (projectSlug: string | undefined, sessionId: string | undefined) => {
-        cmdHandover(getDb(), projectSlug, sessionId);
+      (
+        projectSlug: string | undefined,
+        numberOrLatest: string | undefined,
+        opts: { sessionId?: string }
+      ) => {
+        cmdHandover(getDb(), projectSlug, numberOrLatest, opts.sessionId);
       }
     );
 
@@ -130,6 +142,30 @@ export function registerSessionCommands(
     )
     .action((message: string, opts: { minGap?: string }) => {
       cmdCheckpoint(message, opts);
+    });
+
+  // pai session autosave [--session-id <uuid>] [--min-gap <seconds>]
+  sessionCmd
+    .command("autosave")
+    .description(
+      "Refresh the ## Continue checkpoint from the transcript and working tree.\n" +
+        "Runs unattended from live hooks so an interrupted session still leaves\n" +
+        "a usable handover. Writes in auto mode, so a model-authored checkpoint\n" +
+        "for the same session is preserved untouched. Silent; always exits 0."
+    )
+    .option(
+      "--session-id <uuid>",
+      "Claude session UUID — the key that decides whether an existing authored\n" +
+        "checkpoint belongs to this session and must be left alone."
+    )
+    .option(
+      "--min-gap <seconds>",
+      "Minimum seconds between autosaves, shared across all triggers (default: 240)",
+      "240"
+    )
+    .option("--dry-run", "Print the block that would be written and exit")
+    .action((opts: { sessionId?: string; minGap?: string; dryRun?: boolean }) => {
+      cmdAutosave(getDb(), opts);
     });
 
   // pai session active [--minutes N] [--json]

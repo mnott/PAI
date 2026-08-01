@@ -165,9 +165,11 @@ const BOILERPLATE_PATTERNS = [
   /^>\s*Working directory:/,
   /^>\s*Resume with:/,
   /^>\s*_No checkpoint body was recorded/,
-  /^>?\s*$/,
   /^-{3,}$/,
 ];
+
+/** A blank line, with or without a blockquote marker. */
+const BLANK_LINE = /^>?\s*$/;
 
 /**
  * True when a section contains nothing but generated header lines.
@@ -182,11 +184,18 @@ const BOILERPLATE_PATTERNS = [
 export function isBoilerplateOnly(lines: string[]): boolean {
   return lines.every((line) => {
     const t = line.trim();
-    return BOILERPLATE_PATTERNS.some((re) => re.test(t));
+    return BLANK_LINE.test(t) || BOILERPLATE_PATTERNS.some((re) => re.test(t));
   });
 }
 
-/** Extract the non-boilerplate content of a section, or "" if there is none. */
+/**
+ * Extract the non-boilerplate content of a section, or "" if there is none.
+ *
+ * Interior blank lines are kept. They are not decoration — in Markdown they
+ * are what separates a paragraph from the table or list that follows, so
+ * dropping them (as this did while it treated every blank line as boilerplate)
+ * silently welds a checkpoint body into one unreadable run.
+ */
 export function extractSectionContent(lines: string[]): string {
   const kept: string[] = [];
   for (const line of lines) {
@@ -194,7 +203,35 @@ export function extractSectionContent(lines: string[]): string {
     if (BOILERPLATE_PATTERNS.some((re) => re.test(t))) continue;
     kept.push(line);
   }
-  return kept.join("\n").trim();
+  return trimBlankEdges(collapseBlankRuns(kept)).join("\n");
+}
+
+/** Drop leading and trailing blank lines, leaving interior spacing alone. */
+function trimBlankEdges(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && BLANK_LINE.test(lines[start].trim())) start += 1;
+  while (end > start && BLANK_LINE.test(lines[end - 1].trim())) end -= 1;
+  return lines.slice(start, end);
+}
+
+/**
+ * Collapse runs of blank lines to a single blank.
+ *
+ * Removing a boilerplate line leaves the blank that surrounded it behind, so
+ * stripping the header can open a three-line gap in the middle of the body.
+ * One blank line is all Markdown needs.
+ */
+function collapseBlankRuns(lines: string[]): string[] {
+  const out: string[] = [];
+  let lastWasBlank = false;
+  for (const line of lines) {
+    const isBlank = BLANK_LINE.test(line.trim());
+    if (isBlank && lastWasBlank) continue;
+    out.push(line);
+    lastWasBlank = isBlank;
+  }
+  return out;
 }
 
 /**
@@ -293,6 +330,75 @@ export function stripContinue(content: string): string {
   while (after.length > 0 && after[0].trim() === "") after.shift();
 
   return [...before, ...after].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Reading a checkpoint back
+// ---------------------------------------------------------------------------
+
+export interface ContinueCheckpoint {
+  meta: CheckpointMeta | null;
+  /** The authored body — the section with generated header lines removed. */
+  body: string;
+  /** The full section, heading included. */
+  raw: string;
+}
+
+/**
+ * Read the `## Continue` checkpoint out of a TODO.md.
+ *
+ * Writing a checkpoint is only half of a handover; something has to deliver it
+ * to the next session. This is the read side, used by the SessionStart hook.
+ *
+ * Returns null when there is no section, or when the section holds nothing but
+ * generated header lines — a bodyless block carries no information a new
+ * session does not already have, and injecting it would only add noise.
+ */
+export function readContinueCheckpoint(
+  content: string
+): ContinueCheckpoint | null {
+  const found = locateContinue(content);
+  if (!found) return null;
+
+  const body = found.meta
+    ? extractMarkedBody(found.lines)
+    : extractSectionContent(found.lines);
+  if (!body) return null;
+
+  return { meta: found.meta, body, raw: found.lines.join("\n") };
+}
+
+/**
+ * Extract the body of a marker-delimited block by position rather than by
+ * pattern.
+ *
+ * The layout is fixed: open marker, a contiguous run of `>` header lines, the
+ * body, then the close marker. Because the boundaries are known exactly, the
+ * body comes back byte-for-byte — including any `---` rules or `##` headings
+ * of its own, which a pattern-based filter would mistake for boilerplate and
+ * delete. Falls back to the pattern filter if the shape is not as expected.
+ */
+function extractMarkedBody(lines: string[]): string {
+  const markerIdx = lines.findIndex((l) => parseMarker(l) !== null);
+  if (markerIdx === -1) return extractSectionContent(lines);
+
+  const closeIdx = lines.findIndex(
+    (l, i) => i > markerIdx && l.trim() === MARKER_CLOSE
+  );
+  if (closeIdx === -1) return extractSectionContent(lines);
+
+  // Skip the blank lines and the `>` header run that follow the open marker.
+  let bodyStart = markerIdx + 1;
+  while (bodyStart < closeIdx) {
+    const t = lines[bodyStart].trim();
+    if (BLANK_LINE.test(t) || t.startsWith(">")) {
+      bodyStart += 1;
+      continue;
+    }
+    break;
+  }
+
+  return trimBlankEdges(lines.slice(bodyStart, closeIdx)).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +501,17 @@ export interface ApplyResult {
  *   1. An authored checkpoint for the SAME session is left untouched. The hooks
  *      fire after the model has already recorded the real state; overwriting it
  *      with metadata is the bug this module exists to fix.
+ *
+ *      "Same session" is decided by the Claude session UUID whenever both sides
+ *      know it, and only falls back to the human-readable session line when one
+ *      of them does not. The line is derived from the session note filename,
+ *      and `session-stop.sh` *renames and renumbers that file* — via `session
+ *      slug --apply` and `session cleanup --execute` — before it reaches the
+ *      handover step. So the key the hook computes at exit is not the key the
+ *      model wrote seconds earlier, and a filename-keyed comparison mismatches
+ *      by construction. Observed live on 2026-08-01: notes renumbered twice
+ *      within a single session. The UUID is the only identifier that holds
+ *      still.
  *   2. An authored checkpoint from an EARLIER session is stale — TODO.md would
  *      otherwise keep pointing at the wrong session — so it is replaced. Its
  *      content is not lost: `pai pause` mirrors every authored body into the
@@ -408,6 +525,25 @@ export interface ApplyResult {
  * A MODEL write always replaces: the model is authoring the checkpoint, and a
  * newer one supersedes an older one.
  */
+/**
+ * Do an existing checkpoint and an incoming write describe the same session?
+ *
+ * The UUID is authoritative when both sides carry one: it is assigned by Claude
+ * Code and never changes for the life of the session. The session line is a
+ * derived, mutable label and is only consulted when there is no UUID to compare
+ * — a checkpoint written before `--session-id` was threaded through, or an auto
+ * write from a caller that was not given one.
+ */
+function isSameSession(
+  meta: CheckpointMeta,
+  opts: Pick<ApplyOptions, "sessionId" | "sessionLine">
+): boolean {
+  if (meta.sessionId && opts.sessionId) {
+    return meta.sessionId === opts.sessionId;
+  }
+  return meta.session === opts.sessionLine;
+}
+
 export function applyContinue(opts: ApplyOptions): ApplyResult {
   const target = resolveTodoTarget(opts.rootPath, { create: !opts.dryRun });
   if (!target) {
@@ -425,15 +561,41 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
 
   if (opts.authored === "auto" && existing) {
     // Case 1 — authored, same session: hands off.
-    if (
-      existing.meta?.authored === "model" &&
-      existing.meta.session === opts.sessionLine
-    ) {
+    if (existing.meta?.authored === "model" && isSameSession(existing.meta, opts)) {
       return {
         action: "preserved",
         path: target.path,
         block: buildContinueBlock(opts),
         preservedMeta: existing.meta,
+      };
+    }
+
+    // Case 1b — the incoming write carries no body at all, and what is already
+    // there does. A metadata-only block says "see the latest session note", so
+    // replacing a real handover with one trades content for a pointer — and the
+    // pointer is not always good: observed live on 2026-08-01 in the AIBroker
+    // project, where the stop hook's bodyless handover overwrote the autosave's
+    // body and named a session note that had never been created, leaving the
+    // next session nothing to resume from.
+    //
+    // Deferring to the session note is only safe when the note demonstrably has
+    // the content. This code cannot see that, so it does the one thing that is
+    // never wrong: a write with nothing to say does not get to destroy
+    // something that does. A stale-but-real handover beats a fresh dead link.
+    // Scoped to blocks we marked. An unmarked block falls through to case 3,
+    // which salvages its content into the new block rather than freezing the
+    // old one — better, because an unmarked block has no session metadata worth
+    // preserving and may predate this scheme entirely.
+    if (
+      existing.meta &&
+      !(opts.body ?? "").trim() &&
+      !isBoilerplateOnly(existing.lines)
+    ) {
+      return {
+        action: "preserved",
+        path: target.path,
+        block: buildContinueBlock(opts),
+        preservedMeta: existing.meta ?? undefined,
       };
     }
 

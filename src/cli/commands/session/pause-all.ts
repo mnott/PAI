@@ -33,6 +33,65 @@ function sessionLabel(s: AiBrokerSessionMeta): string {
   return `${chalk.cyan(s.sessionId.slice(0, 8))} ${chalk.bold(name)}`;
 }
 
+/** Give each session a moment to pick up the prompt before judging it idle. */
+const SETTLE_MS = 4_000;
+/** How often to re-ask AIBroker which sessions are back at the prompt. */
+const POLL_MS = 2_000;
+
+/**
+ * Wait until each session is back at its prompt, i.e. has finished writing its
+ * checkpoint.
+ *
+ * This used to be a flat 5-second sleep before sending /exit. Authoring a real
+ * handover — reading state, composing it, writing the file — takes far longer
+ * than five seconds, so the exit routinely arrived mid-write and killed the
+ * session while it was saving the very thing the command exists to save.
+ *
+ * `atPrompt` is the signal that a session is idle again. Sessions still busy
+ * when the deadline passes are returned as stragglers and deliberately NOT
+ * exited: leaving a session open costs nothing, and killing one mid-write costs
+ * the checkpoint.
+ */
+async function waitForSessionsIdle(
+  sessionIds: string[],
+  timeoutMs: number
+): Promise<{ idle: Set<string>; stragglers: Set<string> }> {
+  const pending = new Set(sessionIds);
+  const idle = new Set<string>();
+
+  await sleep(Math.min(SETTLE_MS, timeoutMs));
+
+  const deadline = Date.now() + timeoutMs;
+  while (pending.size > 0 && Date.now() < deadline) {
+    let current: AiBrokerSessionMeta[];
+    try {
+      current = await fetchLiveSessions();
+    } catch {
+      // AIBroker blipped — try again on the next tick rather than assuming
+      // anything about sessions we can no longer see.
+      await sleep(POLL_MS);
+      continue;
+    }
+
+    for (const s of current) {
+      if (pending.has(s.sessionId) && s.atPrompt) {
+        pending.delete(s.sessionId);
+        idle.add(s.sessionId);
+      }
+    }
+
+    // A session that vanished from the list has already gone; stop waiting.
+    const visible = new Set(current.map((s) => s.sessionId));
+    for (const id of [...pending]) {
+      if (!visible.has(id)) pending.delete(id);
+    }
+
+    if (pending.size > 0) await sleep(POLL_MS);
+  }
+
+  return { idle, stragglers: pending };
+}
+
 // ---------------------------------------------------------------------------
 // Command
 // ---------------------------------------------------------------------------
@@ -42,7 +101,10 @@ export async function cmdPauseAll(opts: {
   dryRun?: boolean;
   wait?: number;
 }): Promise<void> {
-  const waitMs = opts.wait ?? 5_000; // ms to wait after "pause session" before /exit
+  // Upper bound on how long to wait for a session to finish its checkpoint —
+  // not a fixed delay. Generous, because the cost of waiting is nothing and the
+  // cost of exiting too early is the checkpoint.
+  const waitMs = opts.wait ?? 180_000;
 
   // ── Fetch live sessions ────────────────────────────────────────────────────
   let liveSessions: AiBrokerSessionMeta[];
@@ -115,12 +177,31 @@ export async function cmdPauseAll(opts: {
     if (pausedSessions.length > 0) {
       console.log(
         "\n" +
-          dim(`  Waiting ${waitMs / 1000}s for sessions to save state…`)
+          dim(
+            `  Waiting for sessions to finish writing their checkpoints ` +
+              `(up to ${Math.round(waitMs / 1000)}s)…`
+          )
       );
-      await sleep(waitMs);
+
+      const { stragglers } = await waitForSessionsIdle(
+        pausedSessions.map((s) => s.sessionId),
+        waitMs
+      );
 
       console.log();
       for (const s of pausedSessions) {
+        // Never exit a session that is still working — it is most likely still
+        // writing the checkpoint, and /exit would destroy it mid-write.
+        if (stragglers.has(s.sessionId)) {
+          console.log(
+            "  " +
+              sessionLabel(s) +
+              " " +
+              warn("still busy — left open, not exited")
+          );
+          continue;
+        }
+
         process.stdout.write("  " + sessionLabel(s) + " exiting … ");
         const exitResult = await sendToSession(s.sessionId, "/exit\n");
         const rec = results.find((r) => r.session.sessionId === s.sessionId)!;
@@ -130,6 +211,16 @@ export async function cmdPauseAll(opts: {
         } else {
           console.log(ok("exited"));
         }
+      }
+
+      if (stragglers.size > 0) {
+        console.log(
+          "\n" +
+            dim(
+              `  ${stragglers.size} session(s) were still working. Leaving a ` +
+                `session open is harmless; exiting one mid-write is not.`
+            )
+        );
       }
     }
   }

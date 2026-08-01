@@ -151,21 +151,24 @@ export function startIndexScheduler(): void {
     `[pai-daemon] Index scheduler: every ${daemonConfig.indexIntervalSecs}s\n`
   );
 
-  setTimeout(() => {
+  // Indexing and embedding are mutually exclusive (each defers to the other),
+  // and an index pass regularly outlasts the index interval. Left to two
+  // independent timers, the embed tick therefore lands while indexing is in
+  // progress and is dropped — observed live on 2026-08-01 as six consecutive
+  // index passes with no embed pass at all, and a 143k-chunk embedding backlog.
+  // Chaining embed onto the end of every index pass makes the alternation
+  // guaranteed rather than a race: index, then vault, then embed, every cycle.
+  const cycle = (label: string) =>
     runIndex()
       .then(() => runVaultIndex())
+      .then(() => runEmbed())
       .catch((e) => {
-        process.stderr.write(`[pai-daemon] Startup index error: ${e}\n`);
+        process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });
-  }, 2_000);
 
-  const timer = setInterval(() => {
-    runIndex()
-      .then(() => runVaultIndex())
-      .catch((e) => {
-        process.stderr.write(`[pai-daemon] Scheduled index error: ${e}\n`);
-      });
-  }, intervalMs);
+  setTimeout(() => void cycle("Startup"), 2_000);
+
+  const timer = setInterval(() => void cycle("Scheduled"), intervalMs);
 
   if (timer.unref) timer.unref();
   setIndexSchedulerTimer(timer);
@@ -208,7 +211,20 @@ export async function runEmbed(): Promise<void> {
     } catch { /* registry unavailable — IDs will be used instead */ }
 
     const { embedChunksWithBackend } = await import("../../memory/indexer-backend.js");
-    const count = await embedChunksWithBackend(storageBackend, () => shutdownRequested, projectNames);
+    // Explicit budgets so one embed phase can never outlast an index cycle.
+    // Backlogs drain across passes, not within one.
+    const count = await embedChunksWithBackend(
+      storageBackend,
+      () => shutdownRequested,
+      projectNames,
+      // Indexing settles to a few chunks per pass once caught up, so the daemon
+      // is idle most of the cycle and the embed budget is what actually sets
+      // drain rate. Measured 450 chunks per 90s against real (long) chunks, so
+      // a backlog only clears at roughly the budget's share of the cycle. What
+      // broke the starvation was bounding the pass at all, not this number —
+      // it can be raised freely as long as it stays finite.
+      { maxMillis: 240_000 },
+    );
 
     let vaultEmbedCount = 0;
     if (daemonConfig.vaultPath) {
@@ -227,6 +243,7 @@ export async function runEmbed(): Promise<void> {
           vaultSqliteBackend,
           () => shutdownRequested,
           vaultProjectNames,
+          { maxMillis: 45_000 },
         );
 
         try { federationDb.close(); } catch { /* ignore */ }

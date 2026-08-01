@@ -22,8 +22,9 @@ pai session <subcommand> [options]
 | [`pai session slug <project-slug> <number>`](#pai-session-slug-project-slug-number) | Generate a descriptive slug from the session JSONL transcript |
 | [`pai session tag <project-slug> <number> [tags...]`](#pai-session-tag-project-slug-number-tags) | Set or show tags on a session. Tags can be space-separated or comma-separated. |
 | [`pai session route <project-slug> <number> <target-project>`](#pai-session-route-project-slug-number-target-project) | Create a cross-reference link from a session to a target project |
-| [`pai session handover [project-slug] [session-id]`](#pai-session-handover-project-slug-session-id) | Write a ## Continue section to the project's TODO.md. |
+| [`pai session handover [project-slug] [number-or-latest]`](#pai-session-handover-project-slug-number-or-latest) | Write a ## Continue section to the project's TODO.md. |
 | [`pai session checkpoint <message>`](#pai-session-checkpoint-message) | Append a timestamped checkpoint to the active session note. |
+| [`pai session autosave`](#pai-session-autosave) | Refresh the ## Continue checkpoint from the transcript and working tree. |
 | [`pai session active`](#pai-session-active) | Show currently active Claude Code sessions. |
 | [`pai session recent`](#pai-session-recent) | [Deprecated] Use `pai session list` or `pai sessions` instead. |
 | [`pai session goto <name-or-id>`](#pai-session-goto-name-or-id) | Go to a session: resume if a resumable snapshot exists, start fresh otherwise. |
@@ -123,7 +124,7 @@ Create a cross-reference link from a session to a target project
 | `--type <type>` | Link type: related \| follow-up \| reference | `related` |
 
 
-### pai session handover [project-slug] [session-id]
+### pai session handover [project-slug] [number-or-latest]
 
 Write a ## Continue section to the project's TODO.md.
 
@@ -136,7 +137,13 @@ so the next session can resume from the correct context.
 | Argument | Kind |
 |----------|------|
 | `[project-slug]` | optional |
-| `[session-id]` | optional |
+| `[number-or-latest]` | optional |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--session-id <uuid>` | Claude session UUID. Used to decide whether an existing authored checkpoint belongs to this session and must be preserved. Without it the comparison falls back to the session note filename, which the stop hook itself renames — so pass it whenever it is known. |  |
 
 
 ### pai session checkpoint <message>
@@ -157,6 +164,23 @@ Rate-limited: skips silently if last checkpoint was < --min-gap seconds ago.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--min-gap <seconds>` | Minimum seconds between checkpoints (default: 300 = 5 minutes) | `300` |
+
+
+### pai session autosave
+
+Refresh the ## Continue checkpoint from the transcript and working tree.
+
+Runs unattended from live hooks so an interrupted session still leaves
+a usable handover. Writes in auto mode, so a model-authored checkpoint
+for the same session is preserved untouched. Silent; always exits 0.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--session-id <uuid>` | Claude session UUID — the key that decides whether an existing authored checkpoint belongs to this session and must be left alone. |  |
+| `--min-gap <seconds>` | Minimum seconds between autosaves, shared across all triggers (default: 240) | `240` |
+| `--dry-run` | Print the block that would be written and exit |  |
 
 
 ### pai session active

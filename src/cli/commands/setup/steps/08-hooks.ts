@@ -85,6 +85,7 @@ export async function stepHooks(rl: Rl): Promise<boolean> {
   line();
   installLink(join(hooksDir, "pre-compact.sh"), join(hooksTarget, "pai-pre-compact.sh"), "pai-pre-compact.sh");
   installLink(join(hooksDir, "session-stop.sh"), join(hooksTarget, "pai-session-stop.sh"), "pai-session-stop.sh");
+  installLink(join(hooksDir, "session-autosave.sh"), join(hooksTarget, "pai-session-autosave.sh"), "pai-session-autosave.sh");
 
   if (statuslineSrc) {
     installLink(statuslineSrc, join(claudeDir, "statusline-command.sh"), "statusline-command.sh");

@@ -9,6 +9,7 @@ import {
   applyContinue,
   appendCheckpointToNote,
   parseMarker,
+  readContinueCheckpoint,
   MARKER_CLOSE,
 } from "./checkpoint-block.js";
 
@@ -230,11 +231,65 @@ describe("applyContinue — preservation", () => {
       authored: "auto",
       sessionLine: "0004 - 2026-08-02 - A Later Session",
       cwd: root,
+      body: "Recent prompts and working tree for the later session.",
     });
 
     expect(result.action).toBe("written");
     expect(readTodo()).not.toContain("Whisper trim");
     expect(readTodo()).toContain("0004 - 2026-08-02 - A Later Session");
+  });
+
+  it("a bodyless auto write does NOT replace an earlier session's real handover", () => {
+    // Observed live on 2026-08-01 in the AIBroker project: the stop hook wrote a
+    // metadata-only checkpoint over a real one, deferring to a session note that
+    // was never created. The next session resumed with nothing and had to ask
+    // the user what they had been working on. A write with no content does not
+    // get to destroy content, even when it is about a newer session.
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine: SESSION,
+      cwd: root,
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0015 - 2026-08-01 - Audit Trail Concurrency Fix V0130",
+      sessionId: "91f7a040-15f6-4139-8452-da0436e5859f",
+      cwd: root,
+    });
+
+    expect(result.action).toBe("preserved");
+    expect(readTodo()).toContain("Whisper trim: two rules changed at once");
+    expect(readTodo()).not.toContain("No checkpoint body was recorded");
+  });
+
+  it("a bodyless auto write DOES replace a previous bodyless placeholder", () => {
+    // The converse: a placeholder carries nothing worth keeping, so a later
+    // bodyless write is free to refresh it and point at the current session.
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: SESSION,
+      cwd: root,
+    });
+
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0016 - 2026-08-02 - A Later Session",
+      cwd: root,
+    });
+
+    expect(result.action).toBe("written");
+    expect(readTodo()).toContain("0016 - 2026-08-02 - A Later Session");
   });
 
   it("an authored write always replaces, including another authored one", () => {
@@ -460,5 +515,252 @@ describe("appendCheckpointToNote", () => {
     );
     expect(appended).toBe(false);
     expect(error).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Preservation keyed on the session UUID
+// ---------------------------------------------------------------------------
+
+describe("applyContinue — UUID is the preservation key", () => {
+  /**
+   * The live failure. `session-stop.sh` runs `session slug --apply` and
+   * `session cleanup --execute` — both of which rewrite the session note
+   * filename — BEFORE it runs `session handover`. So the auto write always
+   * arrives with a different session line than the one `pai pause` recorded,
+   * and a filename-keyed comparison destroys the checkpoint every time.
+   */
+  it("preserves across a note rename when the UUID matches", () => {
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine: "0008 - 2026-08-01 - Voiceink Tcc Permission Issue",
+      sessionId: UUID,
+      cwd: root,
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    // The stop hook renamed and renumbered the note before reaching handover.
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0007 - 2026-08-01 - Pai 0160 Release Completed",
+      sessionId: UUID,
+      cwd: root,
+    });
+
+    expect(result.action).toBe("preserved");
+    expect(readTodo()).toContain("Whisper trim: two rules changed at once");
+  });
+
+  it("still replaces a genuinely different session even if the line matches", () => {
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine: SESSION,
+      sessionId: UUID,
+      cwd: root,
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    // Same derived line — numbering restarted — but a different session.
+    // Carries a body, so the only thing under test is session discrimination:
+    // a bodyless write is refused on content grounds before the UUID is
+    // consulted at all, which would make this pass for the wrong reason.
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: SESSION,
+      sessionId: "11111111-2222-3333-4444-555555555555",
+      cwd: root,
+      body: "Recent prompts and working tree for the genuinely different session.",
+    });
+
+    expect(result.action).toBe("written");
+    expect(readTodo()).not.toContain("Whisper trim");
+  });
+
+  it("falls back to the session line when the auto write has no UUID", () => {
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine: SESSION,
+      sessionId: UUID,
+      cwd: root,
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: SESSION,
+      cwd: root,
+    });
+
+    expect(result.action).toBe("preserved");
+  });
+
+  it("falls back to the session line for checkpoints written without a UUID", () => {
+    writeTodo("# TODO\n");
+
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine: SESSION,
+      cwd: root,
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    const result = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: SESSION,
+      sessionId: UUID,
+      cwd: root,
+    });
+
+    expect(result.action).toBe("preserved");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readContinueCheckpoint — the delivery half of a handover
+// ---------------------------------------------------------------------------
+
+describe("readContinueCheckpoint", () => {
+  it("returns the authored body and its metadata", () => {
+    const doc = buildContinueBlock({
+      authored: "model",
+      sessionLine: SESSION,
+      sessionId: UUID,
+      cwd: "/tmp/project",
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    const read = readContinueCheckpoint(doc);
+    expect(read).not.toBeNull();
+    expect(read!.meta?.authored).toBe("model");
+    expect(read!.meta?.session).toBe(SESSION);
+    expect(read!.meta?.sessionId).toBe(UUID);
+    expect(read!.meta?.ts).toBe(TS);
+  });
+
+  /**
+   * The body must survive byte-for-byte. Markdown depends on its blank lines:
+   * strip them and the paragraph, the heading and the table below it weld into
+   * one unreadable run by the time the next session reads it.
+   */
+  it("returns the body byte-for-byte, blank lines and --- rules intact", () => {
+    const doc = buildContinueBlock({
+      authored: "model",
+      sessionLine: SESSION,
+      cwd: "/tmp/project",
+      body: RICH_BODY,
+      timestamp: TS,
+    });
+
+    expect(readContinueCheckpoint(doc)!.body).toBe(RICH_BODY);
+  });
+
+  it("keeps a table readable — the shape a real handover uses", () => {
+    const table = [
+      "### Shipped",
+      "",
+      "| Area | What |",
+      "|---|---|",
+      "| Checkpoints | body mirrored into the note |",
+      "",
+      "70 tests (was 39).",
+    ].join("\n");
+
+    const doc = buildContinueBlock({
+      authored: "model",
+      sessionLine: SESSION,
+      cwd: "/tmp/project",
+      body: table,
+      timestamp: TS,
+    });
+
+    expect(readContinueCheckpoint(doc)!.body).toBe(table);
+  });
+
+  it("strips the generated header lines from the body", () => {
+    const doc = buildContinueBlock({
+      authored: "model",
+      sessionLine: SESSION,
+      cwd: "/tmp/project",
+      body: "The only real content.",
+      timestamp: TS,
+    });
+
+    const read = readContinueCheckpoint(doc);
+    expect(read!.body).toBe("The only real content.");
+    expect(read!.body).not.toContain("Last session:");
+  });
+
+  it("returns null for a bodyless auto block — nothing to hand over", () => {
+    const doc = buildContinueBlock({
+      authored: "auto",
+      sessionLine: SESSION,
+      cwd: "/tmp/project",
+      timestamp: TS,
+    });
+
+    expect(readContinueCheckpoint(doc)).toBeNull();
+  });
+
+  it("returns null when there is no ## Continue section at all", () => {
+    expect(readContinueCheckpoint("# TODO\n\n- [ ] something\n")).toBeNull();
+  });
+
+  it("reads an unmarked legacy block that carries real content", () => {
+    const doc = [
+      "## Continue",
+      "",
+      "> **Last session:** 0001 - 2026-07-01 - Old",
+      "",
+      "### Hand-placed state",
+      "",
+      "Worked around the clobbering bug by hand.",
+      "",
+      "---",
+      "",
+      "## Something else",
+    ].join("\n");
+
+    const read = readContinueCheckpoint(doc);
+    expect(read).not.toBeNull();
+    expect(read!.meta).toBeNull();
+    expect(read!.body).toContain("Worked around the clobbering bug by hand.");
+    // The blank line between heading and paragraph is preserved.
+    expect(read!.body).toBe(
+      "### Hand-placed state\n\nWorked around the clobbering bug by hand."
+    );
+  });
+
+  it("does not leak the following section into the body", () => {
+    const doc =
+      buildContinueBlock({
+        authored: "model",
+        sessionLine: SESSION,
+        cwd: "/tmp/project",
+        body: "Checkpoint content.",
+        timestamp: TS,
+      }) + "\n## Infrastructure\n\nUnrelated backlog item.\n";
+
+    const read = readContinueCheckpoint(doc);
+    expect(read!.body).toBe("Checkpoint content.");
+    expect(read!.body).not.toContain("Unrelated backlog item.");
   });
 });

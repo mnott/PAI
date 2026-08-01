@@ -83,6 +83,44 @@ export async function generateEmbedding(text: string, isQuery: boolean = false):
   return new Float32Array(output.data);
 }
 
+/**
+ * Generate normalized embeddings for several documents in one forward pass.
+ *
+ * The model call dominates embedding cost, and calling it once per chunk leaves
+ * most of the available throughput unused: measured on this machine, one-at-a-
+ * time runs at ~5 chunks/s, which turns a six-figure backlog into days of
+ * work. Batching amortises the per-call overhead across the batch.
+ *
+ * The pipeline returns one flat buffer for the whole batch, so it is sliced
+ * back apart by row. Order is preserved: result[i] corresponds to texts[i].
+ *
+ * Documents only — queries take the prefixed single-text path, since a search
+ * embeds exactly one string and gains nothing here.
+ */
+export async function generateEmbeddings(texts: string[]): Promise<Float32Array[]> {
+  if (texts.length === 0) return [];
+  if (texts.length === 1) return [await generateEmbedding(texts[0])];
+
+  const extractor = await getEmbedder();
+  const output = await extractor(texts, { pooling: "cls", normalize: true });
+  const flat = output.data as Float32Array;
+
+  const dim = flat.length / texts.length;
+  if (!Number.isInteger(dim)) {
+    throw new Error(
+      `Batched embedding returned ${flat.length} values for ${texts.length} inputs — not divisible`
+    );
+  }
+
+  const out: Float32Array[] = [];
+  for (let i = 0; i < texts.length; i++) {
+    // Copy rather than subarray: the caller stores these, and a view would
+    // pin the whole batch buffer in memory for the lifetime of one vector.
+    out.push(new Float32Array(flat.slice(i * dim, (i + 1) * dim)));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------

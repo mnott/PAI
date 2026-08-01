@@ -1,7 +1,18 @@
 {
   "module": "context-preservation",
-  "description": "Context compression and relay across compaction cycles",
+  "description": "Context preservation across compaction cycles, restarts, and interrupted sessions",
   "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "${PAI_DIR}/Hooks/pai-session-autosave.sh",
+      "description": "Refresh the rolling ## Continue checkpoint from the transcript and working tree (rate-limited). Never overwrites a model-authored checkpoint for the same session."
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "*",
+      "command": "${PAI_DIR}/Hooks/pai-session-autosave.sh",
+      "description": "Same rolling checkpoint, so a long working turn interrupted by Ctrl+C still leaves recoverable state"
+    },
     {
       "event": "PreCompact",
       "command": "${PAI_DIR}/Hooks/context-compression-hook.mjs",

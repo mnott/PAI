@@ -21,6 +21,7 @@ import { join, basename, dirname, resolve } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { buildWakeupContext } from '../../../memory/wakeup.js';
+import { readContinueCheckpoint } from '../../../session/checkpoint-block.js';
 import {
   PAI_DIR,
   findNotesDir,
@@ -488,6 +489,49 @@ Session Commands:
 
   // Output to stdout for Claude to receive
   console.log(reminder);
+
+  // 8.5. INJECT THE PAUSE CHECKPOINT
+  //
+  // `pai pause` writes the handover to TODO.md under `## Continue`. Until now
+  // nothing read it back: the session-commands hook only told the model to look
+  // there *if the user typed "go"*, so a resumed session started blind unless
+  // the user knew the magic word. Writing a handover nobody delivers is not a
+  // handover. Inject it, and say plainly that it is the previous session's
+  // state rather than an instruction to act on.
+  if (existsSync(todoPath)) {
+    try {
+      const checkpoint = readContinueCheckpoint(readFileSync(todoPath, 'utf-8'));
+      if (checkpoint) {
+        const from = checkpoint.meta?.session
+          ? `\nFrom session: ${checkpoint.meta.session}`
+          : '';
+        const when = checkpoint.meta?.ts ? `\nPaused at: ${checkpoint.meta.ts}` : '';
+        const resume = checkpoint.meta?.sessionId
+          ? `\nResume that session with: claude --resume ${checkpoint.meta.sessionId}`
+          : '';
+
+        console.log(`
+<system-reminder>
+HANDOVER FROM THE PREVIOUS SESSION
+
+Source: ${todoPath} (## Continue)${from}${when}${resume}
+
+${checkpoint.body}
+
+---
+This is recorded state, not a new instruction. Do not start acting on it
+unprompted. If the user says "go", "continue", or "weiter", resume from here.
+</system-reminder>
+`);
+        console.error(`Injected pause checkpoint (${checkpoint.body.length} chars)`);
+      } else {
+        console.error('No pause checkpoint body in TODO.md — nothing to hand over');
+      }
+    } catch (error) {
+      // Non-fatal — a malformed TODO.md must never block session start.
+      console.error('Checkpoint injection failed:', error);
+    }
+  }
 
   // 9. INJECT CLAUDE.md contents as system-reminders
   // This ensures Claude actually reads and processes the instructions

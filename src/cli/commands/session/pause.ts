@@ -79,8 +79,19 @@ export function resolveSessionLine(
   session: SessionRow | undefined,
   notePath: string | null
 ): string {
-  if (session) return formatSessionLine(session);
+  // The session note filename wins.
+  //
+  // It is what the unattended writers use, and agreement is the entire point —
+  // a mismatch means the hooks replace a checkpoint they should have preserved.
+  //
+  // The registry row is the weaker source: it is resolved with
+  // `ORDER BY number DESC`, which stops meaning "current" once a project has
+  // been merged. Numbers from both merged rows then coexist, so the highest
+  // number can be a session from months earlier while the note on disk is
+  // today's. Observed live: the registry offered "0184 - 2026-02-22" while the
+  // current note was "0007 - 2026-08-01".
   if (notePath) return basename(notePath).replace(/\.md$/, "");
+  if (session) return formatSessionLine(session);
   return "Unknown session";
 }
 
