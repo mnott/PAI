@@ -21,6 +21,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { registerRegistryCommands } from "./commands/registry.js";
 import { registerMemoryCommands } from "./commands/memory.js";
+import { registerIdentityCommands } from "./commands/identity.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerBackupCommands } from "./commands/backup.js";
@@ -196,6 +197,16 @@ Examples:
     .description("Memory engine: index, search, and status");
 
   registerMemoryCommands(memoryCmd, getDb);
+
+  // -------------------------------------------------------------------------
+  // pai identity
+  // -------------------------------------------------------------------------
+
+  const identityCmd = program
+    .command("identity")
+    .description("Declare who you are: self addresses and where mail is delivered");
+
+  registerIdentityCommands(identityCmd);
 
   // -------------------------------------------------------------------------
   // pai mcp

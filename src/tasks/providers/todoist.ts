@@ -53,7 +53,7 @@ interface WireTask {
   section_id?: string | null;
   labels?: string[];
   priority?: number; // 4 = p1 … 1 = p4
-  due?: { date?: string; datetime?: string } | null;
+  due?: { date?: string; datetime?: string; string?: string; is_recurring?: boolean } | null;
   /** v1 returns completed and tombstoned tasks inline; both must be filtered. */
   checked?: boolean;
   is_deleted?: boolean;
@@ -120,6 +120,23 @@ async function collect<T>(token: string, path: string): Promise<T[]> {
  * validate the token — a bad token fails here, at install time, rather than
  * silently returning nothing during a routine.
  */
+/** A bare calendar date — the only shape `due_date` accepts. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Build the due portion of a task write.
+ *
+ * Exported for testing: the whole defect was a one-word field choice, so the
+ * choice itself is what needs pinning.
+ */
+export function dueField(
+  due: string | null | undefined
+): Record<string, string> {
+  const value = due?.trim();
+  if (!value) return {};
+  return ISO_DATE.test(value) ? { due_date: value } : { due_string: value };
+}
+
 export async function listProjects(token: string): Promise<Array<{ id: string; name: string }>> {
   const projects = await collect<WireProject>(token, "/projects");
   return projects
@@ -235,6 +252,7 @@ export class TodoistProvider implements TaskProvider {
         body: w.description ?? "",
         owner,
         due,
+        recurrence: w.due?.is_recurring ? (w.due.string ?? null) : null,
         priority: toPriority(w.priority),
         labels: w.labels ?? [],
         // v1 does not return a task URL. Build the deep link from the ID so a
@@ -248,6 +266,21 @@ export class TodoistProvider implements TaskProvider {
     return out;
   }
 
+  /**
+   * Choose the wire field for a due value.
+   *
+   * `due_date` takes an ISO date and nothing else — "tomorrow" or "every day"
+   * come back as HTTP 400. Recurrence in particular is only expressible through
+   * `due_string`, which is the field Todoist runs its natural-language parser
+   * over. Sending everything as a date is what made `pai task add --repeat`
+   * impossible to write, and a repeating task is the whole mechanism behind a
+   * self-rescheduling routine on the bus.
+   *
+   * Strict ISO still goes to `due_date` rather than through the parser. The
+   * parser is locale-sensitive and there is no reason to hand it a value that
+   * is already unambiguous — this keeps existing ISO callers on exactly the
+   * path they were on.
+   */
   async add(task: NewTask): Promise<Task> {
     const token = this.token();
     if (!token || !this.config.rootProjectId) {
@@ -278,7 +311,7 @@ export class TodoistProvider implements TaskProvider {
         ...(sectionId ? { section_id: sectionId } : {}),
         labels,
         priority: fromPriority(task.priority),
-        ...(task.due ? { due_date: task.due } : {}),
+        ...dueField(task.due),
       },
     });
 
@@ -310,6 +343,20 @@ export class TodoistProvider implements TaskProvider {
   }
 
   /**
+   * Move a task's due date, expressed in Todoist's natural language.
+   *
+   * Always `due_string`, never `due_date`: writing a bare date to a recurring
+   * task drops the recurrence and turns a routine into a one-off, silently. To
+   * keep both, the caller passes the rule and the date together — Todoist
+   * accepts "every day at 08:00 starting 2026-08-02" and honours each half.
+   */
+  async setDue(id: string, dueString: string): Promise<void> {
+    const token = this.token();
+    if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
+    await call<WireTask>(token, `/tasks/${id}`, { method: "POST", body: { due_string: dueString } });
+  }
+
+  /**
    * Find the sub-project named `name` under the bus root, creating it if absent.
    *
    * Per-project sub-projects are the filing convention: a flat pile in the root
@@ -321,6 +368,24 @@ export class TodoistProvider implements TaskProvider {
    * Matching is case-insensitive and ignores decoration, so "Whazaa" finds an
    * existing "Whazaa 🐝" rather than creating a near-duplicate.
    */
+  /**
+   * The sub-projects under the bus root — i.e. every address a task can be
+   * filed against. Archived and deleted ones are excluded: they cannot receive
+   * work, so listing them would overstate what is reachable.
+   */
+  async listSubProjects(): Promise<Array<{ id: string; name: string }>> {
+    const token = this.token();
+    if (!token || !this.config.rootProjectId) {
+      throw new Error("Todoist provider is not configured — run `pai task config`.");
+    }
+
+    const root = this.config.rootProjectId;
+    const projects = await collect<WireProject>(token, "/projects");
+    return projects
+      .filter((p) => !p.is_archived && !p.is_deleted && p.parent_id === root)
+      .map((p) => ({ id: p.id, name: p.name }));
+  }
+
   async findOrCreateSubProject(name: string): Promise<{ id: string; created: boolean }> {
     const token = this.token();
     if (!token || !this.config.rootProjectId) {
@@ -350,6 +415,23 @@ export class TodoistProvider implements TaskProvider {
     const token = this.token();
     if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
     await call<unknown>(token, `/comments`, { method: "POST", body: { task_id: id, content } });
+  }
+
+  /** Comments on one task, oldest first. */
+  async listComments(taskId: string): Promise<Array<{ id: string; content: string }>> {
+    const token = this.token();
+    if (!token) return [];
+    const wire = await collect<{ id: string; content?: string }>(
+      token,
+      `/comments?task_id=${encodeURIComponent(taskId)}`
+    );
+    return wire.map((c) => ({ id: c.id, content: c.content ?? "" }));
+  }
+
+  async deleteComment(commentId: string): Promise<void> {
+    const token = this.token();
+    if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
+    await call<unknown>(token, `/comments/${commentId}`, { method: "DELETE" });
   }
 
   async complete(id: string): Promise<void> {

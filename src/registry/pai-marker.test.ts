@@ -47,13 +47,29 @@ describe("ensurePaiMarker", () => {
   it("does NOT create a Notes folder in a container directory", () => {
     // The Desktop case: a session was run there once, so the scanner sees it
     // as a project and would drop a Notes/ folder into it on every scan.
-    const desktop = join(homedir(), "Desktop");
-    const before = existsSync(join(desktop, "Notes"));
+    //
+    // Runs against a FAKE home, not the real one. This test used to call
+    // ensurePaiMarker against join(homedir(), "Desktop") and assert nothing
+    // appeared — which is only harmless for as long as the guard works. The
+    // moment it regresses, the very run that catches it also litters the
+    // user's real Desktop. A test that damages the thing it is checking is
+    // worse than no test.
+    //
+    // HOME has to be redirected rather than just passing a fake path:
+    // isContainerDirectory anchors on homedir(), so join(root, "Desktop") is
+    // not a container directory at all and would exercise the wrong branch.
+    const realHome = process.env.HOME;
+    try {
+      process.env.HOME = root;
+      const desktop = join(root, "Desktop");
+      mkdirSync(desktop, { recursive: true });
 
-    ensurePaiMarker(desktop, "desktop");
+      ensurePaiMarker(desktop, "desktop");
 
-    // Whatever the state was, this call must not have created anything.
-    expect(existsSync(join(desktop, "Notes"))).toBe(before);
+      expect(existsSync(join(desktop, "Notes"))).toBe(false);
+    } finally {
+      process.env.HOME = realHome;
+    }
   });
 
   it("leaves an existing marker in a container directory alone", () => {

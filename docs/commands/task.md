@@ -16,6 +16,7 @@ pai task <subcommand> [options]
 
 | Command | Description |
 |---------|-------------|
+| [`pai task projects`](#pai-task-projects) | Show which sessions can be given work from the tracker, and create the missing projects |
 | [`pai task list`](#pai-task-list) | List open tasks on the bus |
 | [`pai task add <title>`](#pai-task-add-title) | File a task onto the bus |
 | [`pai task dispatch`](#pai-task-dispatch) | Hand open tasks to the PAI sessions that own them |
@@ -23,6 +24,18 @@ pai task <subcommand> [options]
 | [`pai task schedule`](#pai-task-schedule) | Install, remove or inspect the launchd agent that ticks the scheduler |
 | [`pai task config`](#pai-task-config) | View or change task bus settings without running the full setup wizard |
 | [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker |
+
+### pai task projects
+
+Show which sessions can be given work from the tracker, and create the missing projects
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--create <names...>` | Create tracker projects for these session names |  |
+| `--create-all` | Create a project for every session that has none |  |
+
 
 ### pai task list
 
@@ -55,7 +68,7 @@ File a task onto the bus
 |--------|-------------|---------|
 | `--owner <project>` | PAI project that owns this (adds a pai: label) |  |
 | `--body <text>` | Full procedure and reasoning — not just a restatement of the title |  |
-| `--due <date>` | Due date (ISO or natural language) |  |
+| `--due <when>` | Due date: ISO, natural language, or a recurrence ("every monday at 9") |  |
 | `--priority <p>` | p1 (highest) … p4 (default) |  |
 | `--url <url>` | Reference — prefer a hook:// URL over a file path |  |
 | `--into <sub-project>` | File into this sub-project under the bus root, creating it if absent |  |
@@ -142,7 +155,7 @@ Mark a task complete on the tracker
 
 ## See also
 
-[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
+[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

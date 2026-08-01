@@ -15,7 +15,7 @@
 
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -27,9 +27,29 @@ export const SCHEDULE_LOG = "/tmp/pai-scheduler.log";
 /** Default tick, in seconds. */
 export const DEFAULT_INTERVAL_SECS = 900;
 
+/**
+ * Absolute path to the CLI entrypoint the agent should run.
+ *
+ * Resolving "index.mjs" next to this module was wrong. The bundler emits shared
+ * code into chunks at dist/ root, so import.meta.url pointed there and the plist
+ * was written against dist/index.mjs — the library barrel, which parses no argv,
+ * prints nothing and exits 0. The agent ticked every 15 minutes and did nothing
+ * at all, which looks identical to "nothing was due". Anchor on the package root
+ * and refuse to install rather than write a plist around a file that is not a CLI.
+ */
 function cliPath(): string {
-  // dist/cli/index.mjs at runtime
-  return fileURLToPath(new URL("index.mjs", import.meta.url));
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 6; i++) {
+    for (const candidate of [join(dir, "dist", "cli", "index.mjs"), join(dir, "cli", "index.mjs")]) {
+      if (existsSync(candidate)) return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(
+    "cannot locate the PAI CLI entrypoint (dist/cli/index.mjs) — refusing to install a scheduler that would silently do nothing"
+  );
 }
 
 export function generateSchedulePlist(intervalSecs: number, cli: string): string {

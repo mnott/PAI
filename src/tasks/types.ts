@@ -77,6 +77,15 @@ export interface Task {
   owner: TaskOwner;
   /** ISO 8601 date or datetime. Null when the task has no due date. */
   due: string | null;
+  /**
+   * The tracker's own recurrence text, e.g. "every day at 08:00". Null for a
+   * one-off.
+   *
+   * Kept verbatim rather than parsed into a rule because it is also the only
+   * way to write a recurrence back: Todoist re-parses this string, and it is
+   * what lets a due date be restored without destroying the recurrence.
+   */
+  recurrence?: string | null;
   priority: TaskPriority;
   labels: string[];
   /**
@@ -135,6 +144,28 @@ export interface TaskProvider {
   listOpen(opts: ListOptions): Promise<Task[]>;
   add(task: NewTask): Promise<Task>;
   complete(id: string): Promise<void>;
+
+  /**
+   * Rewrite a task's due date through the tracker's natural-language field.
+   *
+   * Optional, and deliberately expressed as a string rather than a date: a
+   * recurring task's schedule and its next occurrence are the same field, so
+   * moving the date without the rule silently downgrades a routine to a one-off.
+   * A provider that cannot express both at once should not offer this.
+   */
+  setDue?(id: string, dueString: string): Promise<void>;
+
+  /**
+   * Sub-projects under the bus root — the set of addresses a task can be filed
+   * against, one per session.
+   *
+   * Optional because it is not universal: a tracker may address work by tag or
+   * list rather than by nested project, and forcing a nesting concept onto one
+   * that has none would mean faking it. A provider without these simply does
+   * not offer session-scoped inboxes, and callers say so rather than failing.
+   */
+  listSubProjects?(): Promise<Array<{ id: string; name: string }>>;
+  findOrCreateSubProject?(name: string): Promise<{ id: string; created: boolean }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +235,12 @@ export const DEFAULT_TASK_CONFIG: TaskConfig = {
  * What happened to one task during a dispatch run.
  *
  * - "delivered"    — sent to an already-running session, and confirmed submitted
+ * - "queued"       — typed into a live session that was mid-turn, so submission
+ *                    could not be confirmed inside the window. This is delivery:
+ *                    Claude Code holds typed input until the current turn ends.
+ *                    Never retried — the text is already in the input box, so a
+ *                    second attempt is a second copy, not a retry. One trigger
+ *                    arrived three times on 2026-08-01 for exactly that reason.
  * - "spawned"      — none running; one was launched, came up, and received it
  * - "unrouted"     — no owner resolved; left in the findings inbox
  * - "unlaunchable" — an owner resolved but no PAI alias exists to launch it
@@ -220,6 +257,7 @@ export const DEFAULT_TASK_CONFIG: TaskConfig = {
  */
 export type DispatchOutcome =
   | "delivered"
+  | "queued"
   | "spawned"
   | "unrouted"
   | "unlaunchable"

@@ -44,6 +44,7 @@ interface WireResult {
 
 const VALID_OUTCOMES = new Set([
   "delivered",
+  "queued",
   "spawned",
   "unlaunchable",
   "unreachable",

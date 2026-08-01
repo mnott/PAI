@@ -27,6 +27,8 @@ import {
   expectedMinutes,
   type RunState,
   EMPTY_RUN_STATE,
+  wasTicked,
+  restoreDueString,
 } from "./scheduler.js";
 import type { Task } from "./types.js";
 
@@ -48,14 +50,60 @@ interface PersistedState extends RunState {
    * the "silently never runs" failure this whole subsystem exists to avoid.
    */
   failedDispatches: Record<string, number>;
+  /**
+   * Task id → the due date this tick saw.
+   *
+   * Durable rather than transient, unlike the rest of this file: it is the only
+   * record that a recurring task's due date moved, and a lost entry means the
+   * next tick cannot tell a hand-ticked task from one that was never due. That
+   * costs a missed run, not a wrong one — the first tick after a reset simply
+   * re-learns every date and triggers nothing.
+   */
+  lastSeenDue: Record<string, string>;
+  /**
+   * Task id → the due_string a hand-triggered run has to get back.
+   *
+   * Restoring once at trigger time is not enough. The session ends its run with
+   * `pai task done`, which advances the recurrence a second time — so a sweep
+   * run by hand on Saturday evening silently ate Sunday morning's scheduled
+   * one. Held here until the completion is seen, then re-applied.
+   */
+  triggeredRestore: Record<string, string>;
+  /**
+   * Task id → when this poller first saw a running claim on it.
+   *
+   * The claim is no longer only ours to make — AIBroker's webhook claims and
+   * dispatches on its own — so a claimed task often has no start time here.
+   * This dates those runs, which is what lets them age out instead of holding
+   * the interlock forever, and what separates a claim we have been watching
+   * from one appearing for the first time.
+   */
+  claimSeenAt: Record<string, number>;
 }
 
-const EMPTY: PersistedState = {
-  ...EMPTY_RUN_STATE,
-  history: {},
-  lastReported: {},
-  failedDispatches: {},
-};
+/**
+ * A fresh blank state, built per call rather than shared.
+ *
+ * This was a module-level constant spread into every load. A spread is shallow,
+ * so any field the persisted file did not carry — a fresh install, or a file
+ * written before that field existed — aliased the constant's own object, and
+ * writes to it leaked into every later load in the process. Harmless for the
+ * launchd tick, which loads once and exits, and quietly wrong everywhere else:
+ * it made test runs contaminate each other and would do the same to any caller
+ * that ticked twice.
+ */
+function emptyState(): PersistedState {
+  return {
+    startedAt: {},
+    failedProbes: {},
+    history: {},
+    lastReported: {},
+    failedDispatches: {},
+    lastSeenDue: {},
+    triggeredRestore: {},
+    claimSeenAt: {},
+  };
+}
 
 /** Consecutive failed dispatches before a task is reported as needing attention. */
 const DISPATCH_FAILURES_BEFORE_ALARM = 3;
@@ -65,17 +113,17 @@ const DISPATCH_FAILURES_BEFORE_ALARM = 3;
  * scheduler forever — starting fresh is the correct recovery here, which is
  * exactly the case json-store's guard is NOT for.
  */
-function loadState(): PersistedState {
+function loadState(file: string): PersistedState {
   try {
-    const raw = readJsonStrict(STATE_FILE, "~/.pai/scheduler-state.json");
-    return { ...EMPTY, ...(raw as unknown as PersistedState) };
+    const raw = readJsonStrict(file, "~/.pai/scheduler-state.json");
+    return { ...emptyState(), ...(raw as unknown as PersistedState) };
   } catch {
-    return { ...EMPTY };
+    return emptyState();
   }
 }
 
-function saveState(state: PersistedState): void {
-  writeJsonAtomic(STATE_FILE, state as unknown as Record<string, unknown>, { backup: false });
+function saveState(state: PersistedState, file: string): void {
+  writeJsonAtomic(file, state as unknown as Record<string, unknown>, { backup: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +175,13 @@ export interface TickOptions {
   autoDispatch: boolean;
   dryRun: boolean;
   now?: number;
+  /**
+   * Where run state is persisted. Overridable so the dispatch path can be
+   * tested at all: a real tick writes to disk, and the alternative — asserting
+   * only through `dryRun` — skips the transport entirely, which is precisely
+   * the code that misreported a delivered task as failed.
+   */
+  stateFile?: string;
 }
 
 export interface TickReport {
@@ -139,19 +194,75 @@ export interface TickReport {
 
 export async function tick(opts: TickOptions): Promise<TickReport> {
   const now = opts.now ?? Date.now();
-  const state = loadState();
+  const stateFile = opts.stateFile ?? STATE_FILE;
+  const state = loadState(stateFile);
   const report: TickReport = { decisions: [], dispatched: 0, completed: 0, stuck: 0, probed: 0 };
 
   const tasks = await opts.provider.listOpen({ includeUnrouted: true });
   const ordered = dispatchOrder(tasks);
 
   for (const task of ordered) {
-    const d = decide(task, { now, state, history: state.history });
+    // Captured before lastSeenDue is overwritten below — both the trigger
+    // detection and the webhook-trigger signature need the PREVIOUS tick's value.
+    const prevDue = state.lastSeenDue[task.id];
+
+    const d = decide(task, {
+      now,
+      state,
+      history: state.history,
+      lastSeenDue: state.lastSeenDue,
+      claimSeenAt: state.claimSeenAt,
+    });
     let note = "";
+
+    // Recorded for every task on every tick, whatever was decided — the next
+    // tick's ability to spot a hand-ticked task depends on it, and skipping the
+    // uninteresting cases is what would leave that blind.
+    if (!opts.dryRun && task.due) state.lastSeenDue[task.id] = task.due;
+
+    // Dated on first sight and dropped the moment the claim clears, so the next
+    // claim on the same task is timed from when IT appeared rather than from a
+    // stale entry belonging to a previous run.
+    if (!opts.dryRun) {
+      if (isRunning(task)) {
+        // A claim appearing at the same moment the due date advanced by exactly
+        // one period is the signature of a webhook-triggered run: the user
+        // ticked the box, AIBroker claimed it and dispatched, all before this
+        // tick. Recorded so the occurrence the tick consumed is given back after
+        // the run, the same as for a trigger this poller handled itself.
+        //
+        // Recorded ONLY — the date is not written back now. AIBroker decides
+        // whether the session may release its claim by checking that the due
+        // date has advanced past the occurrence it noted when claiming, so
+        // moving that date mid-run would make a finished run look unfinished
+        // and strand the claim.
+        if (state.claimSeenAt[task.id] === undefined && task.recurrence && prevDue !== undefined) {
+          if (wasTicked(task, prevDue)) {
+            state.triggeredRestore[task.id] = restoreDueString(task.recurrence, prevDue);
+          }
+        }
+        state.claimSeenAt[task.id] ??= now;
+      } else {
+        delete state.claimSeenAt[task.id];
+      }
+    }
 
     switch (d.action) {
       case "wait":
         continue; // not worth reporting
+
+      case "triggered": {
+        const r = await handleDispatch(task, 0, opts, state, now);
+        note = `ticked off by hand — ${r.note}`;
+        if (!opts.dryRun) {
+          report.dispatched++;
+          if (r.alarm) report.stuck++;
+          note += await restoreSchedule(task, d.restoreTo, opts, state);
+          // Held for the completion, which advances the recurrence again.
+          if (d.restoreTo) state.triggeredRestore[task.id] = d.restoreTo;
+        }
+        break;
+      }
 
       case "skip":
         note = d.reason;
@@ -172,9 +283,28 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
       }
 
       case "complete":
-        note = await handleComplete(task, d.durationMinutes, opts, state);
+        note = await handleComplete(task, d.durationMinutes, opts, state, now);
         if (!opts.dryRun) report.completed++;
         break;
+
+      case "abandoned": {
+        note = `claimed ${d.elapsedMinutes}m ago, past the ${d.thresholdMinutes}m limit — releasing the claim`;
+        if (!opts.dryRun) {
+          await opts.provider.setLabels(
+            task.id,
+            task.labels.filter((l) => l.toLowerCase() !== RUNNING_LABEL)
+          );
+          delete state.startedAt[task.id];
+          delete state.failedProbes[task.id];
+          delete state.claimSeenAt[task.id];
+          await clearRunningMark(task, opts);
+          // Reported as needing attention: a run that had to be released this
+          // way did not finish, and the next tick re-dispatching it is a repair,
+          // not business as usual.
+          report.stuck++;
+        }
+        break;
+      }
 
       case "probe":
       case "orphaned": {
@@ -192,7 +322,7 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
     report.decisions.push({ decision: d, note });
   }
 
-  if (!opts.dryRun) saveState(state);
+  if (!opts.dryRun) saveState(state, stateFile);
   return report;
 }
 
@@ -214,21 +344,46 @@ async function handleDispatch(
 
   if (!task.owner.project) return { note: "unrouted — cannot dispatch", alarm: false };
 
+  // Claim the task BEFORE dispatching, not after.
+  //
+  // This label is now the interlock between two independent dispatchers: this
+  // poller, and AIBroker's Todoist webhook, which fires on item:completed and
+  // skips any task already carrying it (aibroker 0.17.0). Setting it after the
+  // dispatch returned would leave a window — the whole length of a spawn — in
+  // which the webhook sees an unclaimed task and sends the same work order a
+  // second time. It was previously written only for crash visibility, where
+  // "after" was harmless; it is load-bearing now, so it has to come first.
+  //
+  // The cost is a label to undo when the dispatch does not land, which is the
+  // cheaper failure: a task wrongly marked running is visible and self-clears
+  // below, whereas a double-dispatched sweep reads Gmail twice and mails twice.
+  const claimed = [...task.labels, RUNNING_LABEL];
+  await opts.provider.setLabels(task.id, claimed);
+
   const result = await dispatchTask(task, {
     transport: opts.transport,
     autoDispatch: opts.autoDispatch,
     spawnIfAbsent: true,
   });
 
-  if (result.outcome === "delivered" || result.outcome === "spawned") {
-    // Mark running FIRST so a crash between here and the next tick leaves the
-    // task visibly in flight rather than being dispatched twice.
-    await opts.provider.setLabels(task.id, [...task.labels, RUNNING_LABEL]);
+  // `queued` counts as delivery. The message is sitting in a live session's
+  // input box; Claude Code simply will not read it until the current turn ends.
+  // Treating it as a failure marked a sweep NOT RUNNING while it was running,
+  // and left the task without its running label so a later tick could send it
+  // again — the same reasoning that makes `busy` positive evidence on the probe
+  // path, where a working session is exactly the one that cannot answer.
+  if (result.outcome === "delivered" || result.outcome === "queued" || result.outcome === "spawned") {
     state.startedAt[task.id] = now;
     delete state.failedProbes[task.id];
     delete state.failedDispatches[task.id];
+    await markRunning(task, opts, now);
     return { note: `${result.outcome} to ${result.session}${late}`, alarm: false };
   }
+
+  // Nothing is running, so release the claim — otherwise the task looks in
+  // flight forever and the next tick reports it orphaned rather than retrying.
+  await opts.provider.setLabels(task.id, task.labels);
+  await clearRunningMark(task, opts);
 
   const fails = (state.failedDispatches[task.id] ?? 0) + 1;
   state.failedDispatches[task.id] = fails;
@@ -246,11 +401,103 @@ async function handleDispatch(
   return { note: `not dispatched (${fails}/${DISPATCH_FAILURES_BEFORE_ALARM}): ${detail}`, alarm: false };
 }
 
+/**
+ * First line of the progress comment, and the only way it is ever found again.
+ *
+ * Deliberately matched by content rather than by a stored comment id. An id in
+ * the state file is one more thing that goes stale — lose the file and the
+ * comment is orphaned with nothing able to remove it. A sentinel is
+ * self-healing: any later release finds and clears it, whatever happened in
+ * between, and clearing is idempotent so doing it twice costs nothing.
+ */
+const RUNNING_COMMENT_MARK = "**RUNNING**";
+
+/**
+ * Post the human-facing progress marker.
+ *
+ * This is NOT an interlock and nothing may ever decide from it. `pai-running`
+ * is the machine-readable claim and both dispatchers read that alone. Two
+ * mechanisms tracking one piece of state and disagreeing is the shape of every
+ * defect found on 2026-08-01; this stays purely informational so it cannot
+ * become the sixth.
+ *
+ * Failure is swallowed on purpose. A comment that could not be posted must not
+ * cost the run — the sweep matters, the annotation does not.
+ */
+async function markRunning(task: Task, opts: TickOptions, startedAt: number): Promise<void> {
+  if (!opts.provider.comment) return;
+  const when = new Date(startedAt).toISOString().replace("T", " ").slice(0, 16);
+  try {
+    // Kept to one line on purpose. The first version explained the interlock
+    // design here and read as noise to the person it was written for — a
+    // progress marker's job is to say it is running, not to document why.
+    await opts.provider.comment(
+      task.id,
+      `${RUNNING_COMMENT_MARK} — started ${when} UTC, ${task.owner.project}. Disappears when it finishes.`
+    );
+  } catch {
+    // Deliberately silent: see above.
+  }
+}
+
+/**
+ * Remove any progress marker left on a task.
+ *
+ * Called from every path that releases the claim, including the ones that
+ * release it because something went wrong. A marker outliving its run is
+ * exactly the stale-state problem this whole subsystem keeps producing, so the
+ * cleanup is attached to the release rather than to the happy path.
+ */
+async function clearRunningMark(task: Task, opts: TickOptions): Promise<void> {
+  const { listComments, deleteComment } = opts.provider;
+  if (!listComments || !deleteComment) return;
+  try {
+    const comments = await listComments.call(opts.provider, task.id);
+    for (const c of comments) {
+      if (c.content.startsWith(RUNNING_COMMENT_MARK)) {
+        await deleteComment.call(opts.provider, c.id);
+      }
+    }
+  } catch {
+    // Same reasoning as posting it: never let the annotation break the run.
+  }
+}
+
+/**
+ * Put a hand-ticked task's schedule back.
+ *
+ * Deliberately after the dispatch and never in its place: the run is the point,
+ * and a tracker that refuses the write must not cost the user the sweep they
+ * asked for. A failure here is reported and nothing else — the task simply
+ * keeps the advanced date, which is where it would have stayed anyway.
+ */
+async function restoreSchedule(
+  task: Task,
+  restoreTo: string | null,
+  opts: TickOptions,
+  state: PersistedState
+): Promise<string> {
+  if (!restoreTo) return ", schedule left at the next occurrence";
+  if (!opts.provider.setDue) return ", schedule unchanged (provider cannot rewrite due dates)";
+
+  try {
+    await opts.provider.setDue(task.id, restoreTo);
+    // Record what we wrote, not what we read — the next tick must compare
+    // against the restored date or it would read the restore as a fresh jump.
+    const restoredDate = /starting (\d{4}-\d{2}-\d{2})/.exec(restoreTo)?.[1];
+    if (restoredDate) state.lastSeenDue[task.id] = restoredDate;
+    return `, schedule restored (${restoreTo})`;
+  } catch (e) {
+    return `, could NOT restore the schedule: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
 async function handleComplete(
   task: Task,
   durationMinutes: number | null,
   opts: TickOptions,
-  state: PersistedState
+  state: PersistedState,
+  now: number
 ): Promise<string> {
   if (opts.dryRun) return `would clear ${RUNNING_LABEL}, ${durationMinutes ?? "?"}m`;
 
@@ -259,9 +506,12 @@ async function handleComplete(
     task.labels.filter((l) => l.toLowerCase() !== RUNNING_LABEL)
   );
 
+  await clearRunningMark(task, opts);
+
   const wasStuck = (state.failedProbes[task.id] ?? 0) > 0;
   delete state.startedAt[task.id];
   delete state.failedProbes[task.id];
+  delete state.claimSeenAt[task.id];
 
   // A run that needed probing may have been stalled for most of its wall time.
   // Feeding that into the average would inflate every later threshold.
@@ -271,9 +521,49 @@ async function handleComplete(
     state.history[task.id] = hist.slice(-HISTORY_LIMIT);
   }
 
-  return durationMinutes === null
-    ? "completed (duration unknown)"
-    : `completed in ${durationMinutes}m${wasStuck ? " — not recorded, run was probed" : ""}`;
+  const base =
+    durationMinutes === null
+      ? "completed (duration unknown)"
+      : `completed in ${durationMinutes}m${wasStuck ? " — not recorded, run was probed" : ""}`;
+
+  return base + (await keepTriggeredSchedule(task, opts, state, now));
+}
+
+/**
+ * Give a hand-triggered run its schedule back, a second time.
+ *
+ * `pai task done` is the correct way to end a recurring run — the roll-forward
+ * is how completion is detected at all — but it advances the date on top of the
+ * advance the hand-tick already caused. Without this, using the checkbox as a
+ * Run Now button quietly cancelled the next scheduled occurrence, which is the
+ * exact behaviour the restore was added to prevent.
+ *
+ * Skipped when the slot has already passed: re-applying it would produce a task
+ * that is overdue the moment it is written, and the next tick would dispatch it.
+ */
+async function keepTriggeredSchedule(
+  task: Task,
+  opts: TickOptions,
+  state: PersistedState,
+  now: number
+): Promise<string> {
+  const keep = state.triggeredRestore[task.id];
+  if (!keep) return "";
+  delete state.triggeredRestore[task.id];
+
+  const date = /starting (\d{4}-\d{2}-\d{2})/.exec(keep)?.[1];
+  if (!date || !opts.provider.setDue) return "";
+  if (new Date(`${date}T23:59:59`).getTime() <= now) {
+    return ", triggered-run slot already past — schedule left as it is";
+  }
+
+  try {
+    await opts.provider.setDue(task.id, keep);
+    state.lastSeenDue[task.id] = date;
+    return `, schedule kept at ${date} (run was hand-triggered)`;
+  } catch (e) {
+    return `, could NOT keep the schedule: ${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 async function handleProbe(

@@ -18,7 +18,7 @@ import type { DispatchResult, Task } from "./types.js";
 /** What a transport reports back. Mirrors DispatchOutcome minus the states
  *  the bus decides for itself (`unrouted`, and `skipped` when disabled). */
 export interface TransportResult {
-  outcome: "delivered" | "spawned" | "unlaunchable" | "unreachable" | "skipped";
+  outcome: "delivered" | "queued" | "spawned" | "unlaunchable" | "unreachable" | "skipped";
   session?: string;
   reason?: string;
 }
@@ -49,6 +49,12 @@ export interface DispatchOptions {
   autoDispatch: boolean;
   /** Launch a session when the owner is not running. Default: true. */
   spawnIfAbsent?: boolean;
+  /**
+   * Reporting only — no session is contacted. Distinguishes "no transport was
+   * looked for" from "a transport was looked for and not found", which read
+   * identically without it and made a working setup look broken.
+   */
+  dryRun?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,14 +105,17 @@ export async function dispatchTask(
   const project = task.owner.project;
 
   if (!opts.autoDispatch || !opts.transport) {
-    return {
-      task,
-      outcome: "skipped",
-      session: project,
-      reason: opts.transport
+    // A dry run deliberately passes no transport, so the absence means nothing
+    // here — reporting it as "no transport available" made a healthy system
+    // look broken, and sent at least one investigation after a fault that did
+    // not exist. Routing has already succeeded by this point; say so.
+    const reason = opts.dryRun
+      ? `would dispatch to ${project} (dry run — no session contacted)`
+      : opts.transport
         ? "autoDispatch is off"
-        : "no transport available — run `pai <project>` to pick this up",
-    };
+        : "no transport available — run `pai <project>` to pick this up";
+
+    return { task, outcome: "skipped", session: project, reason };
   }
 
   let result: TransportResult;
