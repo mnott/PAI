@@ -40,9 +40,25 @@ interface PersistedState extends RunState {
   history: Record<string, number[]>;
   /** Task id → epoch ms of the last completion we reported. */
   lastReported: Record<string, number>;
+  /**
+   * Task id → consecutive dispatch attempts that did not land.
+   *
+   * Without this a task whose session has died to a shell is retried every
+   * tick, forever, reporting the same failure each time and escalating never —
+   * the "silently never runs" failure this whole subsystem exists to avoid.
+   */
+  failedDispatches: Record<string, number>;
 }
 
-const EMPTY: PersistedState = { ...EMPTY_RUN_STATE, history: {}, lastReported: {} };
+const EMPTY: PersistedState = {
+  ...EMPTY_RUN_STATE,
+  history: {},
+  lastReported: {},
+  failedDispatches: {},
+};
+
+/** Consecutive failed dispatches before a task is reported as needing attention. */
+const DISPATCH_FAILURES_BEFORE_ALARM = 3;
 
 /**
  * Run state is a rebuildable cache, so a damaged file must not block the
@@ -145,10 +161,15 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
         note = `${d.elapsedMinutes}m elapsed`;
         break;
 
-      case "dispatch":
-        note = await handleDispatch(task, d.overdueMinutes, opts, state, now);
-        if (!opts.dryRun) report.dispatched++;
+      case "dispatch": {
+        const r = await handleDispatch(task, d.overdueMinutes, opts, state, now);
+        note = r.note;
+        if (!opts.dryRun) {
+          report.dispatched++;
+          if (r.alarm) report.stuck++;
+        }
         break;
+      }
 
       case "complete":
         note = await handleComplete(task, d.durationMinutes, opts, state);
@@ -185,11 +206,13 @@ async function handleDispatch(
   opts: TickOptions,
   state: PersistedState,
   now: number
-): Promise<string> {
+): Promise<{ note: string; alarm: boolean }> {
   const late = overdue > 5 ? ` (${overdue}m late)` : "";
-  if (opts.dryRun) return `would dispatch to ${task.owner.project ?? "nobody"}${late}`;
+  if (opts.dryRun) {
+    return { note: `would dispatch to ${task.owner.project ?? "nobody"}${late}`, alarm: false };
+  }
 
-  if (!task.owner.project) return "unrouted — cannot dispatch";
+  if (!task.owner.project) return { note: "unrouted — cannot dispatch", alarm: false };
 
   const result = await dispatchTask(task, {
     transport: opts.transport,
@@ -203,10 +226,24 @@ async function handleDispatch(
     await opts.provider.setLabels(task.id, [...task.labels, RUNNING_LABEL]);
     state.startedAt[task.id] = now;
     delete state.failedProbes[task.id];
-    return `${result.outcome} to ${result.session}${late}`;
+    delete state.failedDispatches[task.id];
+    return { note: `${result.outcome} to ${result.session}${late}`, alarm: false };
   }
 
-  return `not dispatched: ${result.outcome}${result.reason ? " — " + result.reason : ""}`;
+  const fails = (state.failedDispatches[task.id] ?? 0) + 1;
+  state.failedDispatches[task.id] = fails;
+  const detail = `${result.outcome}${result.reason ? " — " + result.reason : ""}`;
+
+  if (fails >= DISPATCH_FAILURES_BEFORE_ALARM) {
+    // `unreachable` against a session that has exited to a shell will never
+    // resolve on its own: aibroker correctly refuses to type into it, and
+    // nothing here can close the tab. Retrying quietly forever is the failure.
+    return {
+      note: `NOT RUNNING — ${fails} failed dispatches: ${detail}`,
+      alarm: true,
+    };
+  }
+  return { note: `not dispatched (${fails}/${DISPATCH_FAILURES_BEFORE_ALARM}): ${detail}`, alarm: false };
 }
 
 async function handleComplete(
