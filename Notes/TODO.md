@@ -1,9 +1,11 @@
 ## Continue
 
-> **Last session:** 0001 - 2026-08-01 - Pai Daemon Token Burn Fix & Config Safety Guard + Scheduler Exploration
-> **Paused at:** 2026-08-01T11:01:43.629Z
+> **Last session:** 0001 - 2026-08-01 - Token Burn Fix (v0.13.3), Config Guard (v0.13.5), And Messaging Investigation
+> **Paused at:** 2026-08-01T11:08:10.026Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+> Work completed:
+> - **Shipped `@tekmidian/pai` 0.14.0** — registry confirms it, clean tree, pushed.
 
 ---
 
@@ -373,4 +375,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-01T11:01:43.629Z*
+*Last updated: 2026-08-01T11:08:10.026Z*

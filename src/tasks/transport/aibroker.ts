@@ -13,6 +13,7 @@
  */
 
 import { execFile } from "node:child_process";
+import type { ProbeAnswer } from "../poller.js";
 import type { Transport, TransportResult } from "../dispatch.js";
 
 /**
@@ -143,10 +144,7 @@ export class AiBrokerProber {
     private readonly timeoutSecs = 60,
   ) {}
 
-  async ask(
-    project: string,
-    question: string,
-  ): Promise<{ replied: boolean; reply?: string; reason?: string }> {
+  async ask(project: string, question: string): Promise<ProbeAnswer> {
     let stdout: string;
     try {
       stdout = await run(
@@ -156,25 +154,31 @@ export class AiBrokerProber {
         this.timeoutSecs * 1000 + KILL_MARGIN_MS,
       );
     } catch (e) {
-      return { replied: false, reason: e instanceof Error ? e.message : String(e) };
+      return { state: "silent", reason: e instanceof Error ? e.message : String(e) };
     }
 
     const start = stdout.lastIndexOf("{");
-    if (start === -1) return { replied: false, reason: "aibroker returned no JSON" };
+    if (start === -1) return { state: "silent", reason: "aibroker returned no JSON" };
 
     try {
       const wire = JSON.parse(stdout.slice(start)) as {
         replied?: boolean;
         reply?: string;
         reason?: string;
+        state?: string;
       };
-      // Anything other than an explicit true is treated as no answer. A
-      // malformed reply must not read as "the session is fine".
-      return wire.replied === true
-        ? { replied: true, reply: wire.reply }
-        : { replied: false, reason: wire.reason ?? "no reply" };
+
+      // Trust `state` when present. Fall back to `replied` for an older
+      // aibroker that predates it — but never infer "busy" from silence, which
+      // is the whole reason the fourth state exists.
+      const state = wire.state ?? (wire.replied === true ? "replied" : "silent");
+      if (state === "replied" || state === "busy" || state === "silent" || state === "absent") {
+        return { state, reply: wire.reply, reason: wire.reason };
+      }
+      // An unrecognised state must not read as healthy.
+      return { state: "silent", reason: `unexpected state from aibroker: ${String(wire.state)}` };
     } catch {
-      return { replied: false, reason: "aibroker returned malformed JSON" };
+      return { state: "silent", reason: "aibroker returned malformed JSON" };
     }
   }
 }
