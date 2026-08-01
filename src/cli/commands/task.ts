@@ -182,6 +182,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--due <date>", "Due date (ISO or natural language)")
     .option("--priority <p>", "p1 (highest) … p4 (default)")
     .option("--url <url>", "Reference — prefer a hook:// URL over a file path")
+    .option("--into <sub-project>", "File into this sub-project under the bus root, creating it if absent")
     .action(async (title, opts) => {
       const provider = buildProvider();
       if (!provider) return reportUnconfigured();
@@ -200,6 +201,7 @@ export function registerTaskCommands(taskCmd: Command): void {
         due: opts.due,
         priority: opts.priority,
         sourceUrl: opts.url,
+        into: opts.into,
       });
 
       console.log(chalk.green(`  Filed: ${created.title}`));

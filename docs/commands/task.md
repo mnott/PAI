@@ -58,6 +58,7 @@ File a task onto the bus
 | `--due <date>` | Due date (ISO or natural language) |  |
 | `--priority <p>` | p1 (highest) … p4 (default) |  |
 | `--url <url>` | Reference — prefer a hook:// URL over a file path |  |
+| `--into <sub-project>` | File into this sub-project under the bus root, creating it if absent |  |
 
 
 ### pai task dispatch
