@@ -25,6 +25,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RUNTIME_PATH_ENV_VARS } from "../src/runtime-paths.js";
 
 const sandbox = mkdtempSync(join(tmpdir(), "pai-test-home-"));
 
@@ -33,3 +34,17 @@ process.env.HOME = sandbox;
 // so setting only HOME would leave the guard half-applied.
 process.env.USERPROFILE = sandbox;
 process.env.XDG_CONFIG_HOME = join(sandbox, ".config");
+
+/**
+ * Sockets, logs and pidfiles are NOT home-derived — they are hardcoded absolute
+ * paths under /tmp, shared with a live daemon, and redirecting HOME does
+ * nothing for them. That distinction was missed once already: a fake-HOME run
+ * was taken as proof the suite touched no real state, when by construction it
+ * could only ever have inspected what landed under the redirected home.
+ *
+ * Iterating the exported list rather than naming paths here means a new runtime
+ * path cannot be added without also being protected.
+ */
+for (const key of RUNTIME_PATH_ENV_VARS) {
+  process.env[key] = join(sandbox, "runtime", key.toLowerCase());
+}

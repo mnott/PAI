@@ -11,6 +11,7 @@
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { aibrokerSocketPath } from "../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +45,11 @@ interface AiBrokerSessionsResult {
 // Core call
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SOCKET = process.env.AIBROKER_SOCKET ?? "/tmp/aibroker.sock";
+// AIBROKER_SOCKET stays first: it is AIBroker's own variable and a user who has
+// set it means it. The fallback goes through runtime-paths so the test guard
+// can redirect it — writing to a live socket from a test is the same hazard as
+// writing to live user state, and this one is not even ours.
+const DEFAULT_SOCKET = process.env.AIBROKER_SOCKET ?? aibrokerSocketPath();
 
 /**
  * Call an AIBroker IPC method and return the result.
