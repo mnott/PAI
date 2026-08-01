@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
+import { readJsonStrict, writeJsonAtomic } from "../../config/json-store.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -75,20 +76,18 @@ type HooksSection = Partial<Record<HookType, HookRule[]>>;
 // Read / write helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * ~/.claude/settings.json is Claude Code's own file, not ours: hooks, env,
+ * permissions, statusline, enabled plugins. PAI only ever adds to it. Returning
+ * {} for a damaged file and then writing meant a stray parse error could strip
+ * every hook registration the user had.
+ */
 export function readSettingsJson(): Record<string, unknown> {
-  if (!existsSync(SETTINGS_FILE)) return {};
-  try {
-    return JSON.parse(readFileSync(SETTINGS_FILE, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+  return readJsonStrict(SETTINGS_FILE, "~/.claude/settings.json");
 }
 
 export function writeSettingsJson(data: Record<string, unknown>): void {
-  if (!existsSync(CLAUDE_DIR)) {
-    mkdirSync(CLAUDE_DIR, { recursive: true });
-  }
-  writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2) + "\n", "utf-8");
+  writeJsonAtomic(SETTINGS_FILE, data, { label: "~/.claude/settings.json" });
 }
 
 // ---------------------------------------------------------------------------
