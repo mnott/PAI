@@ -129,7 +129,7 @@ function stepVerifyRepo(): string | null {
   const gitDir = capture("git rev-parse --show-toplevel", paiDir);
   if (!gitDir) {
     error("Not a git repository. Cannot update automatically.");
-    info("Install PAI via npm to get automatic updates: npm install -g @mnott/pai");
+    info("Install PAI via npm to get automatic updates: npm install -g @tekmidian/pai");
     return null;
   }
 

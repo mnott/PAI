@@ -24,13 +24,14 @@ import { execSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
+import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const CLAUDE_JSON_PATH = join(HOME, ".claude.json");
+// CLAUDE_JSON_PATH now imported from src/config/claude-json.ts
 const PLIST_LABEL = "com.pai.pai-daemon";
 const LAUNCH_AGENTS_DIR = join(HOME, "Library", "LaunchAgents");
 const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${PLIST_LABEL}.plist`);
@@ -61,19 +62,8 @@ function getShimBinPath(): string {
 // claude.json helpers
 // ---------------------------------------------------------------------------
 
-function readClaudeJson(): Record<string, unknown> {
-  if (!existsSync(CLAUDE_JSON_PATH)) return {};
-  try {
-    const raw = readFileSync(CLAUDE_JSON_PATH, "utf8");
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-function writeClaudeJson(data: Record<string, unknown>): void {
-  writeFileSync(CLAUDE_JSON_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
-}
+// Moved to src/config/claude-json.ts — see the note there on why returning {}
+// from a failed read was a data-loss bug rather than a convenience.
 
 // ---------------------------------------------------------------------------
 // launchd plist generation

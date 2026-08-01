@@ -11,12 +11,13 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { ok, warn, err, dim, bold } from "../utils.js";
+import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
-const CLAUDE_JSON_PATH = join(homedir(), ".claude.json");
+// CLAUDE_JSON_PATH now imported from src/config/claude-json.ts
 
 /**
  * Resolve the absolute path to the built MCP entry point.
@@ -36,19 +37,9 @@ function getMcpBinPath(): string {
 // Read / write ~/.claude.json safely
 // ---------------------------------------------------------------------------
 
-function readClaudeJson(): Record<string, unknown> {
-  if (!existsSync(CLAUDE_JSON_PATH)) return {};
-  try {
-    const raw = readFileSync(CLAUDE_JSON_PATH, "utf8");
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-function writeClaudeJson(data: Record<string, unknown>): void {
-  writeFileSync(CLAUDE_JSON_PATH, JSON.stringify(data, null, 2) + "\n", "utf8");
-}
+// Moved to src/config/claude-json.ts — these were duplicated here and in
+// daemon.ts, and both copies silently turned an unreadable file into {},
+// which the following write then made permanent.
 
 // ---------------------------------------------------------------------------
 // install
