@@ -25,6 +25,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai projects`](projects.md) | Manage registered projects (list, cd, add, info, ...) |
 | [`pai registry`](registry.md) | Registry maintenance: scan, migrate, stats, rebuild |
 | [`pai restore`](restore.md) | Restore from a backup directory (created by pai backup) |
+| [`pai session`](session.md) | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
 | [`pai sessions`](sessions.md) | Alias for `pai` — show the unified deduped listing. |
 | [`pai setup`](setup.md) | Interactive setup wizard — configure storage, embeddings, agent config, and indexing |
 | [`pai shell-init`](shell-init.md) | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |
@@ -128,12 +129,28 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects unarchive <slug>` | Restore an archived project to active status |
 | `pai projects unname <shortname>` | Remove a project's short name |
 | `pai registry` | Registry maintenance: scan, migrate, stats, rebuild |
+| `pai registry dedupe` | Merge registry rows that describe the same project. |
 | `pai registry lookup` | Find the project slug for a filesystem path (for use in scripts) |
 | `pai registry migrate` | Import data from ~/.claude/session-registry.json |
 | `pai registry rebuild` | Erase all registry data and rebuild from the filesystem (destructive) |
 | `pai registry scan` | Walk ~/.claude/projects/ and configured scan_dirs, upsert all projects |
 | `pai registry stats` | Show summary statistics for the registry |
 | `pai restore` | Restore from a backup directory (created by pai backup) |
+| `pai session` | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
+| `pai session active` | Show currently active Claude Code sessions. |
+| `pai session auto-route` | Auto-detect which project this session belongs to. |
+| `pai session checkpoint <message>` | Append a timestamped checkpoint to the active session note. |
+| `pai session cleanup [project-slug]` | Clean up session notes: delete empties, auto-name unnamed, move into YYYY/MM/ hierarchy, renumber |
+| `pai session goto <name-or-id>` | Go to a session: resume if a resumable snapshot exists, start fresh otherwise. |
+| `pai session handover [project-slug] [session-id]` | Write a ## Continue section to the project's TODO.md. |
+| `pai session info <project-slug> <number>` | Show full details for a specific session |
+| `pai session list` | Resumable sessions catalog — named sessions with resume status. |
+| `pai session pause` | Write a ## Continue checkpoint to the project's TODO.md. |
+| `pai session recent` | [Deprecated] Use `pai session list` or `pai sessions` instead. |
+| `pai session rename <project-slug> <number> <new-slug>` | Rename a session note — updates file on disk, H1 title, and registry |
+| `pai session route <project-slug> <number> <target-project>` | Create a cross-reference link from a session to a target project |
+| `pai session slug <project-slug> <number>` | Generate a descriptive slug from the session JSONL transcript |
+| `pai session tag <project-slug> <number> [tags...]` | Set or show tags on a session. Tags can be space-separated or comma-separated. |
 | `pai sessions` | Alias for `pai` — show the unified deduped listing. |
 | `pai setup` | Interactive setup wizard — configure storage, embeddings, agent config, and indexing |
 | `pai shell-init` | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |

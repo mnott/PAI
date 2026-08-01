@@ -37,6 +37,8 @@ import { registerTopicCommands } from "./commands/topic.js";
 import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
 import { registerHelpCommand } from "./commands/help.js";
+import { registerSessionCommands } from "./commands/session/index.js";
+import { registerSessionCleanupCommand } from "./commands/session-cleanup/index.js";
 import { err, warn, ok, dim, shortenPath, encodeDir, now } from "./utils.js";
 import { cmdPause } from "./commands/session/pause.js";
 import { cmdEnd } from "./commands/session/end.js";
@@ -142,6 +144,29 @@ Examples:
   // -------------------------------------------------------------------------
   // pai sessions  (alias for the unified `pai` listing)
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // pai session <subcommand>
+  //
+  // These were written, exported and never wired: neither
+  // registerSessionCommands nor registerSessionCleanupCommand was called from
+  // anywhere, so every `pai session <x>` fell through to the default `query`
+  // resolver and was interpreted as a prompt-history search.
+  //
+  // That is why session-stop.sh has been a near no-op — all four of its calls
+  // (`session cleanup --execute`, `session checkpoint`, `session slug --apply`,
+  // `session handover`) failed silently behind `2>/dev/null || true`.
+  // -------------------------------------------------------------------------
+
+  const sessionCmd = program
+    .command("session")
+    .description(
+      "Session management: list, info, checkpoint, handover, cleanup, slug, tag, route.\n" +
+        "Short forms: `pai pause`, `pai end`, `pai resume <name>`."
+    );
+
+  registerSessionCommands(sessionCmd, getDb);
+  registerSessionCleanupCommand(sessionCmd, getDb);
 
   program
     .command("sessions")
@@ -316,9 +341,21 @@ Examples:
         "Use `pai pause all` to pause every live session via AIBroker."
     )
     .option("--dry-run", "Preview changes without writing them")
+    .option(
+      "--body-file <path>",
+      "File holding the checkpoint markdown to persist ('-' reads stdin). Required unless --no-body."
+    )
+    .option(
+      "--session-id <uuid>",
+      "Claude Code session UUID — recorded as the `claude --resume` handle"
+    )
+    .option(
+      "--no-body",
+      "Deliberately write a metadata-only checkpoint (no content)"
+    )
     .option("--exit", "(pause all only) Also send /exit to each session after pausing")
     .option("--wait <ms>", "(pause all only) Milliseconds to wait before /exit (default: 5000)", "5000")
-    .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string }) => {
+    .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string; bodyFile?: string; sessionId?: string; body?: boolean }) => {
       if (target === "all") {
         await cmdPauseAll({
           exit: opts.exit,
@@ -331,19 +368,42 @@ Examples:
           process.exitCode = 1;
           return;
         }
-        cmdPause(getDb(), { dryRun: opts.dryRun });
+        // Commander maps `--no-body` to opts.body === false.
+        cmdPause(getDb(), {
+          dryRun: opts.dryRun,
+          bodyFile: opts.bodyFile,
+          sessionId: opts.sessionId,
+          noBody: opts.body === false,
+        });
       }
     });
 
-  // pai end [--dry-run]
+  // pai end [--body-file <path>] [--session-id <uuid>] [--no-body] [--dry-run]
   program
     .command("end")
     .description(
       "Finalize a session: save state, mark note Completed, display safe-exit instructions."
     )
     .option("--dry-run", "Preview all changes without writing them")
-    .action((opts: { dryRun?: boolean }) => {
-      cmdEnd(getDb(), opts);
+    .option(
+      "--body-file <path>",
+      "File holding the checkpoint markdown to persist ('-' reads stdin). Required unless --no-body."
+    )
+    .option(
+      "--session-id <uuid>",
+      "Claude Code session UUID — recorded as the `claude --resume` handle"
+    )
+    .option(
+      "--no-body",
+      "Deliberately write a metadata-only checkpoint (no content)"
+    )
+    .action((opts: { dryRun?: boolean; bodyFile?: string; sessionId?: string; body?: boolean }) => {
+      cmdEnd(getDb(), {
+        dryRun: opts.dryRun,
+        bodyFile: opts.bodyFile,
+        sessionId: opts.sessionId,
+        noBody: opts.body === false,
+      });
     });
 
   // pai clear-names [--dry-run]  — recovery: wipe corrupt iTerm/JSON name store

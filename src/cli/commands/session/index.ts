@@ -195,11 +195,28 @@ export function registerSessionCommands(
         "Use /exit inside Claude Code to preserve full session resumability."
     )
     .option("--dry-run", "Preview the ## Continue block without writing it")
-    .action((opts: { dryRun?: boolean }) => {
+    .option(
+      "--body-file <path>",
+      "File holding the checkpoint markdown to persist ('-' reads stdin). Required unless --no-body."
+    )
+    .option(
+      "--session-id <uuid>",
+      "Claude Code session UUID — recorded as the `claude --resume` handle"
+    )
+    .option(
+      "--no-body",
+      "Deliberately write a metadata-only checkpoint (no content)"
+    )
+    .action((opts: { dryRun?: boolean; bodyFile?: string; sessionId?: string; body?: boolean }) => {
       process.stderr.write(
         "Note: `pai session pause` works but `pai pause` is the new shorter form.\n"
       );
-      cmdPause(getDb(), opts);
+      cmdPause(getDb(), {
+        dryRun: opts.dryRun,
+        bodyFile: opts.bodyFile,
+        sessionId: opts.sessionId,
+        noBody: opts.body === false,
+      });
     });
 
   // pai session auto-route [--cwd path] [--context "text"] [--json]

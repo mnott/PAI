@@ -24,6 +24,8 @@ import {
   copyFileSync,
   readFileSync,
   writeFileSync,
+  renameSync,
+  rmSync,
 } from "fs";
 import { join, resolve, basename } from "path";
 import { homedir, platform } from "os";
@@ -51,8 +53,24 @@ const entryPoints = collectEntryPoints(HOOKS_SRC);
 
 console.log(`Building ${entryPoints.length} hooks with esbuild...`);
 
+// Build into a staging directory, then rename each artefact into place.
+//
+// ~/.claude/Hooks/*.mjs are symlinks to these files, and every LIVE Claude Code
+// session executes them on each tool call. esbuild truncates-then-writes, so
+// building straight to the output path leaves a window in which the file does
+// not exist — any hook firing during a build in another session dies with
+// "No such file or directory". That is not hypothetical: a rebuild here breaks
+// hooks in every other session that happens to fire during it.
+//
+// rename(2) within one filesystem is atomic, so a concurrent session sees
+// either the previous build or the new one, never a partial or absent file.
+const STAGING = join(HOOKS_OUT, ".staging");
+rmSync(STAGING, { recursive: true, force: true });
+mkdirSync(STAGING, { recursive: true });
+
 for (const entry of entryPoints) {
-  const outfile = join(HOOKS_OUT, basename(entry).replace(/\.ts$/, ".mjs"));
+  const name = basename(entry).replace(/\.ts$/, ".mjs");
+  const staged = join(STAGING, name);
 
   buildSync({
     entryPoints: [entry],
@@ -60,12 +78,23 @@ for (const entry of entryPoints) {
     platform: "node",
     target: "node20",
     format: "esm",
-    outfile,
+    outfile: staged,
     sourcemap: true,
   });
 
-  chmodSync(outfile, 0o755);
+  chmodSync(staged, 0o755);
+
+  // The sourceMappingURL comment is a bare filename, so the map must land in
+  // the same directory as the module. Move it first: a stale map for a moment
+  // is harmless, a missing module is not.
+  const stagedMap = `${staged}.map`;
+  if (existsSync(stagedMap)) {
+    renameSync(stagedMap, join(HOOKS_OUT, `${name}.map`));
+  }
+  renameSync(staged, join(HOOKS_OUT, name));
 }
+
+rmSync(STAGING, { recursive: true, force: true });
 
 console.log(`✔ ${entryPoints.length} hooks built to ${HOOKS_OUT}/`);
 

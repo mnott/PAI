@@ -16,7 +16,61 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+
+// ---------------------------------------------------------------------------
+// Container directories
+// ---------------------------------------------------------------------------
+
+/**
+ * Directories that hold projects but are not themselves projects.
+ *
+ * Running a single Claude session from ~/Desktop is enough for the scanner to
+ * register it as a project, after which every scan recreates a `Notes/PAI.md`
+ * inside it. The user gets a Notes folder on their Desktop that reappears
+ * however many times they delete it, containing a marker file that is
+ * otherwise empty.
+ *
+ * The session is still worth tracking — it just belongs in the central notes
+ * directory (~/.claude/projects/<encoded>/Notes) rather than as a folder
+ * dropped into the user's Desktop.
+ */
+const CONTAINER_DIRS = [
+  "Desktop",
+  "Documents",
+  "Downloads",
+  "Movies",
+  "Music",
+  "Pictures",
+  "Public",
+  "Library",
+  "Applications",
+];
+
+/**
+ * True when a path is a place projects live rather than a project itself:
+ * the home directory, a standard user container, or a system temp root.
+ *
+ * Only ever used to decline *creating* a marker. An existing marker is left
+ * alone — the user may have put one there deliberately.
+ */
+export function isContainerDirectory(projectRoot: string): boolean {
+  // Strip trailing slashes, but never strip the root itself down to "".
+  const strip = (s: string): string => s.replace(/(?!^)\/+$/, "");
+
+  const p = strip(resolve(projectRoot));
+  const home = strip(resolve(homedir()));
+
+  if (p === home || p === "/") return true;
+  if (p === "/tmp" || p === "/private/tmp" || p === "/var/tmp") return true;
+
+  for (const dir of CONTAINER_DIRS) {
+    if (p === join(home, dir)) return true;
+  }
+
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,6 +239,11 @@ export function ensurePaiMarker(
 
   // --- File does not exist — create from template ---
   if (!existsSync(markerPath)) {
+    // Never create a Notes/ folder inside a container directory. Doing so is
+    // what puts a Notes folder on the user's Desktop that comes back every
+    // time it is deleted.
+    if (isContainerDirectory(projectRoot)) return;
+
     mkdirSync(notesDir, { recursive: true });
     writeFileSync(markerPath, renderTemplate(slug, name), "utf8");
     return;
