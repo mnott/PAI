@@ -145,6 +145,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai task dispatch` | Hand open tasks to the PAI sessions that own them |
 | `pai task done <id>` | Mark a task complete on the tracker |
 | `pai task list` | List open tasks on the bus |
+| `pai task poll` | One scheduler tick: dispatch what is due, check what is running, report |
+| `pai task schedule` | Install, remove or inspect the launchd agent that ticks the scheduler |
+| `pai task schedule install` | Install the scheduler tick (default: every 15 minutes) |
+| `pai task schedule status` | Show whether the scheduler agent is installed and loaded |
+| `pai task schedule uninstall` | Remove the scheduler agent |
 | `pai topic` | Topic shift detection: check whether context has drifted to a different project |
 | `pai topic check <context>` | Check whether context text has drifted to a different project. |
 | `pai update` | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |

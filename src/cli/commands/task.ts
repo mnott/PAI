@@ -17,7 +17,9 @@ import { openRegistry } from "../../registry/db.js";
 import { loadAliasMap } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";
 import { dispatchAll } from "../../tasks/dispatch.js";
-import { detectAiBroker } from "../../tasks/transport/aibroker.js";
+import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js";
+import { tick } from "../../tasks/poller.js";
+import { installSchedule, uninstallSchedule, scheduleStatus, DEFAULT_INTERVAL_SECS } from "../../tasks/schedule-install.js";
 import type { DispatchResult, Task, TaskProvider } from "../../tasks/types.js";
 
 const dim = chalk.dim;
@@ -244,6 +246,88 @@ export function registerTaskCommands(taskCmd: Command): void {
       });
 
       printResults(results);
+    });
+
+  taskCmd
+    .command("poll")
+    .description("One scheduler tick: dispatch what is due, check what is running, report")
+    .option("--dry-run", "Show what would happen without touching anything")
+    .action(async (opts) => {
+      const provider = buildProvider();
+      if (!provider) return reportUnconfigured();
+
+      const config = loadConfig();
+      const transport = opts.dryRun ? null : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
+      const prober = opts.dryRun ? null : await detectProber();
+
+      const report = await tick({
+        provider: provider as TodoistProvider,
+        transport,
+        prober,
+        autoDispatch: config.tasks?.autoDispatch ?? false,
+        dryRun: Boolean(opts.dryRun),
+      });
+
+      if (report.decisions.length === 0) {
+        console.log(dim("  Nothing due, nothing running."));
+        return;
+      }
+
+      const mark: Record<string, string> = {
+        dispatch: chalk.green("→"),
+        complete: chalk.green("✓"),
+        running: dim("·"),
+        probe: chalk.yellow("?"),
+        orphaned: chalk.yellow("!"),
+        skip: dim("–"),
+        wait: dim(" "),
+      };
+
+      console.log();
+      for (const { decision, note } of report.decisions) {
+        console.log(`  ${mark[decision.action] ?? " "} ${decision.task.title}`);
+        if (note) console.log(`      ${dim(note)}`);
+      }
+      console.log();
+      console.log(
+        dim(
+          `  ${report.dispatched} dispatched, ${report.completed} completed, ` +
+          `${report.probed} probed, ${report.stuck} stuck`
+        )
+      );
+      console.log();
+    });
+
+  const scheduleCmd = taskCmd
+    .command("schedule")
+    .description("Install, remove or inspect the launchd agent that ticks the scheduler");
+
+  scheduleCmd
+    .command("install")
+    .description("Install the scheduler tick (default: every 15 minutes)")
+    .option("--interval <secs>", "Seconds between ticks", (v) => Number.parseInt(v, 10))
+    .action((opts) => {
+      const r = installSchedule(opts.interval || DEFAULT_INTERVAL_SECS);
+      console.log(r.loaded ? chalk.green(`  ${r.message}`) : chalk.yellow(`  ${r.message}`));
+      console.log(dim(`  ${r.plistPath}`));
+      console.log(dim(`  The schedule itself lives in Todoist — this only sets how often PAI looks.`));
+    });
+
+  scheduleCmd
+    .command("uninstall")
+    .description("Remove the scheduler agent")
+    .action(() => console.log(chalk.green(`  ${uninstallSchedule()}`)));
+
+  scheduleCmd
+    .command("status")
+    .description("Show whether the scheduler agent is installed and loaded")
+    .action(() => {
+      const s = scheduleStatus();
+      console.log();
+      console.log(`  ${s.installed ? chalk.green("installed") : dim("not installed")}` +
+        `  ${s.installed ? (s.running ? chalk.green("· loaded") : chalk.yellow("· not loaded")) : ""}`);
+      console.log(dim(`  ${s.detail}`));
+      console.log();
     });
 
   taskCmd

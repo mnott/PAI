@@ -282,6 +282,26 @@ export class TodoistProvider implements TaskProvider {
     };
   }
 
+  /**
+   * Replace a task's labels.
+   *
+   * Only ever sends `labels`. Never `due_date`: writing that field destroys a
+   * recurrence rule, silently turning a routine into a one-off. Measured — it
+   * cost me an invalid test before it cost anyone a schedule.
+   */
+  async setLabels(id: string, labels: string[]): Promise<void> {
+    const token = this.token();
+    if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
+    await call<WireTask>(token, `/tasks/${id}`, { method: "POST", body: { labels } });
+  }
+
+  /** Append a comment — used to keep run history on the task itself. */
+  async comment(id: string, content: string): Promise<void> {
+    const token = this.token();
+    if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
+    await call<unknown>(token, `/comments`, { method: "POST", body: { task_id: id, content } });
+  }
+
   async complete(id: string): Promise<void> {
     const token = this.token();
     if (!token) throw new Error("Todoist provider is not configured — run `pai setup`.");

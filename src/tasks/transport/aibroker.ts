@@ -131,6 +131,76 @@ export class AiBrokerTransport implements Transport {
 }
 
 /**
+ * Liveness prober backed by `aibroker ask`.
+ *
+ * Separate from Transport on purpose: asking must NEVER spawn. A probe that
+ * creates the session it is probing for turns "this session died" into "all is
+ * well", which is the failure the probe exists to catch.
+ */
+export class AiBrokerProber {
+  constructor(
+    private readonly bin = "aibroker",
+    private readonly timeoutSecs = 60,
+  ) {}
+
+  async ask(
+    project: string,
+    question: string,
+  ): Promise<{ replied: boolean; reply?: string; reason?: string }> {
+    let stdout: string;
+    try {
+      stdout = await run(
+        this.bin,
+        ["ask", project, "--stdin", "--json", "--timeout", String(this.timeoutSecs)],
+        question,
+        this.timeoutSecs * 1000 + KILL_MARGIN_MS,
+      );
+    } catch (e) {
+      return { replied: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+
+    const start = stdout.lastIndexOf("{");
+    if (start === -1) return { replied: false, reason: "aibroker returned no JSON" };
+
+    try {
+      const wire = JSON.parse(stdout.slice(start)) as {
+        replied?: boolean;
+        reply?: string;
+        reason?: string;
+      };
+      // Anything other than an explicit true is treated as no answer. A
+      // malformed reply must not read as "the session is fine".
+      return wire.replied === true
+        ? { replied: true, reply: wire.reply }
+        : { replied: false, reason: wire.reason ?? "no reply" };
+    } catch {
+      return { replied: false, reason: "aibroker returned malformed JSON" };
+    }
+  }
+}
+
+/**
+ * Return a prober if the installed `aibroker` supports `ask`.
+ *
+ * Probes for the subcommand rather than the binary: an older AIBroker would
+ * otherwise fail once per stuck task instead of the scheduler simply knowing it
+ * has no liveness check and saying so.
+ */
+export async function detectProber(bin = "aibroker"): Promise<AiBrokerProber | null> {
+  try {
+    const help = await new Promise<string>((resolve, reject) => {
+      execFile(bin, ["help"], { timeout: 10_000 }, (error, stdout, stderr) => {
+        if (error && !stdout) reject(error);
+        else resolve(stdout + stderr);
+      });
+    });
+    return /\bask\b/.test(help) ? new AiBrokerProber(bin) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return a transport if the `aibroker` CLI is present and supports dispatch.
  *
  * Probing for the subcommand rather than just the binary matters: AIBroker
