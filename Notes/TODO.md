@@ -1,13 +1,49 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0160 Release Completed" ts="2026-08-01T16:38:24.500Z" -->
+<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-01T21:30:03.969Z" -->
 
-> **Last session:** 0009 - 2026-08-01 - Pai 0160 Release Completed
-> **Paused at:** 2026-08-01T16:38:24.500Z
+> **Last session:** 0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler
+> **Paused at:** 2026-08-01T21:30:03.969Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+_Automatic checkpoint — 2026-08-01T21:30:03.934Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- then those that you have no project for those are actual directories somewhere each.
+- I am going to create a task in jobs matthias. [Task] pai task add --due rejects natural language and recurrence (HTTP 400)  REPRO (2026-08-01):   pai task add 'X' --owner jobs-matthias --body p --due…
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 43e2286 feat: v0.17.0 - deliver the handover, stop the indexer and embedder starving each other
+- 20 uncommitted path(s) (+30 more):
+
+```
+M Notes/TODO.md
+ M docs/commands/README.md
+ M docs/commands/backup.md
+ M docs/commands/clear-names.md
+ M docs/commands/daemon.md
+ M docs/commands/db.md
+ M docs/commands/end.md
+ M docs/commands/help.md
+ M docs/commands/kg.md
+ M docs/commands/mcp.md
+ M docs/commands/memory.md
+ M docs/commands/notify.md
+ M docs/commands/observation.md
+ M docs/commands/obsidian.md
+ M docs/commands/pause.md
+ M docs/commands/project.md
+ M docs/commands/projects.md
+ M docs/commands/registry.md
+ M docs/commands/restore.md
+ M docs/commands/session.md
+```
 
 <!-- /pai:checkpoint -->
 
@@ -378,4 +414,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-01T16:38:24.501Z*
+*Last updated: 2026-08-01T18:14:21.886Z*

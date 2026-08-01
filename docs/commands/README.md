@@ -14,6 +14,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai db`](db.md) | Database inspection: query, tables, schema (sqlite or postgres) |
 | [`pai end`](end.md) | Finalize a session: save state, mark note Completed, display safe-exit instructions. |
 | [`pai help`](help.md) | Show the man page for a command area (pai help <area>), or list all areas |
+| [`pai identity`](identity.md) | Declare who you are: self addresses and where mail is delivered |
 | [`pai kg`](kg.md) | Temporal knowledge graph: backfill, query, list, stats |
 | [`pai mcp`](mcp.md) | MCP server management: install and status |
 | [`pai memory`](memory.md) | Memory engine: index, search, and status |
@@ -55,6 +56,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai db tables` | List all tables in the selected database |
 | `pai end` | Finalize a session: save state, mark note Completed, display safe-exit instructions. |
 | `pai help` | Show the man page for a command area (pai help <area>), or list all areas |
+| `pai identity` | Declare who you are: self addresses and where mail is delivered |
+| `pai identity add <email>` | Declare an address as your own (widens what can be sent unreviewed) |
+| `pai identity remove <email>` | Stop treating an address as your own |
+| `pai identity set-delivery <email>` | Set where digests and 'mail me X' are delivered |
+| `pai identity show` | Show the configured identity |
 | `pai kg` | Temporal knowledge graph: backfill, query, list, stats |
 | `pai kg backfill` | Populate the KG from existing session notes (idempotent) |
 | `pai kg list` | List currently-valid triples |
@@ -164,6 +170,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai task done <id>` | Mark a task complete on the tracker |
 | `pai task list` | List open tasks on the bus |
 | `pai task poll` | One scheduler tick: dispatch what is due, check what is running, report |
+| `pai task projects` | Show which sessions can be given work from the tracker, and create the missing projects |
 | `pai task schedule` | Install, remove or inspect the launchd agent that ticks the scheduler |
 | `pai task schedule install` | Install the scheduler tick (default: every 15 minutes) |
 | `pai task schedule status` | Show whether the scheduler agent is installed and loaded |

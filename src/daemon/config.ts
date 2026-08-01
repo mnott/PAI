@@ -86,6 +86,51 @@ export interface PaiDaemonConfig {
 
   /** Task bus — optional external tracker for cross-session work */
   tasks: TaskConfig;
+
+  /** Who "me" is — addresses that count as the user's own. */
+  identity: IdentityConfig;
+}
+
+/**
+ * The user's own identity, for anything that delivers back to them.
+ *
+ * This exists so "my own address" is a fact the system can check rather than
+ * something a model infers from context. An assistant deciding on the spot
+ * whether an address looks like the user's is exactly the judgement that should
+ * not be re-made per message.
+ *
+ * Empty by default and never guessed at install time: an empty `selfEmails`
+ * means nothing is self-addressed, so anything reading this fails closed.
+ */
+export interface IdentityConfig {
+  /**
+   * Where digests and "mail me X" requests are delivered.
+   *
+   * Must be a mailbox separate from the account doing the sending. Gmail files
+   * a message sent from an account to itself — or to one of its own domain
+   * aliases — under Sent only, and it never reaches the inbox. The send reports
+   * success, so this fails silently and looks exactly like delivery. Observed
+   * 2026-08-01: mnott@mnott.ch → mnott@mnott.de, sent fine, invisible.
+   *
+   * Where a separate mailbox is not available, deliver by writing the message
+   * and adding the INBOX label to it rather than relying on the send path.
+   */
+  deliverTo?: string;
+
+  /**
+   * Every address that counts as the user's own.
+   *
+   * Used as an allowlist by anything that may act without review — outbound
+   * mail being the case that motivated it. Membership is the whole test: an
+   * address that is not listed is not the user's, however similar it looks.
+   * Plus-aliases and domain aliases must be listed explicitly rather than
+   * pattern-matched, because the patterns that would match them also match
+   * addresses belonging to other people.
+   */
+  selfEmails: string[];
+
+  /** The account used to send on the user's behalf, when one is configured. */
+  sendingAccount?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +169,9 @@ export const DEFAULTS: PaiDaemonConfig = {
   logLevel: "info",
   notifications: DEFAULT_NOTIFICATION_CONFIG,
   tasks: DEFAULT_TASK_CONFIG,
+  // Deliberately empty. An install must not guess who the user is: a wrong
+  // guess here is an address that can be mailed without review.
+  identity: { selfEmails: [] },
   search: {
     mode: "keyword",
     rerank: true,

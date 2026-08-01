@@ -21,6 +21,52 @@ import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js"
 import { tick } from "../../tasks/poller.js";
 import { installSchedule, uninstallSchedule, scheduleStatus, DEFAULT_INTERVAL_SECS } from "../../tasks/schedule-install.js";
 import type { DispatchResult, Task, TaskProvider } from "../../tasks/types.js";
+import {
+  readSessionManifest,
+  reconcile,
+  normalizeName,
+  type MappingRow,
+} from "../../tasks/projects.js";
+
+/**
+ * Render the session/project mapping.
+ *
+ * The three states are printed with different weight on purpose. "Cannot be
+ * addressed" is the only one that needs action, and it is the one that is
+ * otherwise invisible — filing a task for a session with no project looks
+ * exactly like filing one that works.
+ */
+function printProjectMapping(rows: MappingRow[], noBroker: boolean): void {
+  const mapped = rows.filter((r) => r.state === "mapped");
+  const unmapped = rows.filter((r) => r.state === "session-only");
+  const orphan = rows.filter((r) => r.state === "project-only");
+
+  console.log();
+  console.log(chalk.bold(`  Can receive work (${mapped.length})`));
+  for (const r of mapped) console.log(chalk.green("    ✓ ") + r.name);
+  if (mapped.length === 0) console.log(dim("    none"));
+
+  if (unmapped.length > 0) {
+    console.log();
+    console.log(chalk.bold(`  No project — cannot be addressed (${unmapped.length})`));
+    for (const r of unmapped) console.log(chalk.yellow("    · ") + r.name);
+    console.log();
+    console.log(dim("    pai task projects --create <name>...   or --create-all"));
+  }
+
+  if (orphan.length > 0) {
+    console.log();
+    console.log(chalk.bold(`  Project with no session (${orphan.length})`));
+    for (const r of orphan) console.log(dim("    · " + r.name));
+    console.log(dim("    Tasks filed here queue until that session launches — not a fault."));
+  }
+
+  if (noBroker) {
+    console.log();
+    console.log(dim("  AIBroker not reachable — showing tracker projects only."));
+  }
+  console.log();
+}
 
 const dim = chalk.dim;
 const bold = chalk.bold;
@@ -154,6 +200,61 @@ function printResults(results: DispatchResult[]): void {
 
 export function registerTaskCommands(taskCmd: Command): void {
   taskCmd
+    .command("projects")
+    .description("Show which sessions can be given work from the tracker, and create the missing projects")
+    .option("--create <names...>", "Create tracker projects for these session names")
+    .option("--create-all", "Create a project for every session that has none")
+    .action(async (opts) => {
+      const provider = buildProvider();
+      if (!provider) return reportUnconfigured();
+
+      if (!provider.listSubProjects || !provider.findOrCreateSubProject) {
+        console.log();
+        console.log(
+          chalk.yellow(`  ${provider.providerId} does not address work by sub-project.`)
+        );
+        console.log(dim("  Session-scoped inboxes need a tracker with nested projects."));
+        console.log();
+        return;
+      }
+
+      const [sessions, projects] = await Promise.all([
+        readSessionManifest(),
+        provider.listSubProjects(),
+      ]);
+
+      const rows = reconcile(sessions, projects);
+
+      const wanted = opts.createAll
+        ? rows.filter((r) => r.state === "session-only").map((r) => r.name)
+        : ((opts.create as string[] | undefined) ?? []);
+
+      if (wanted.length > 0) {
+        const addressable = new Set(
+          rows.filter((r) => r.state === "session-only").map((r) => normalizeName(r.name))
+        );
+        console.log();
+        for (const name of wanted) {
+          // Refuse to create a project for a session nobody has: it would look
+          // addressable and never be picked up, which is the failure this
+          // command exists to surface.
+          if (!addressable.has(normalizeName(name))) {
+            console.log(chalk.yellow(`  skipped  ${name}`) + dim(" — no such session, or it already has a project"));
+            continue;
+          }
+          const { id, created } = await provider.findOrCreateSubProject(name);
+          console.log(
+            (created ? chalk.green("  created  ") : dim("  exists   ")) + name + dim(`  ${id}`)
+          );
+        }
+        console.log();
+        return;
+      }
+
+      printProjectMapping(rows, sessions.length === 0);
+    });
+
+  taskCmd
     .command("list")
     .description("List open tasks on the bus")
     .option("--owner <project>", "Only tasks owned by this PAI project")
@@ -179,7 +280,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .description("File a task onto the bus")
     .option("--owner <project>", "PAI project that owns this (adds a pai: label)")
     .option("--body <text>", "Full procedure and reasoning — not just a restatement of the title")
-    .option("--due <date>", "Due date (ISO or natural language)")
+    .option("--due <when>", "Due date: ISO, natural language, or a recurrence (\"every monday at 9\")")
     .option("--priority <p>", "p1 (highest) … p4 (default)")
     .option("--url <url>", "Reference — prefer a hook:// URL over a file path")
     .option("--into <sub-project>", "File into this sub-project under the bus root, creating it if absent")
@@ -245,6 +346,7 @@ export function registerTaskCommands(taskCmd: Command): void {
         transport,
         autoDispatch: opts.dryRun ? false : (config.tasks?.autoDispatch ?? false),
         spawnIfAbsent: opts.spawn !== false,
+        dryRun: Boolean(opts.dryRun),
       });
 
       printResults(results);
@@ -277,10 +379,12 @@ export function registerTaskCommands(taskCmd: Command): void {
 
       const mark: Record<string, string> = {
         dispatch: chalk.green("→"),
+        triggered: chalk.green("▶"),
         complete: chalk.green("✓"),
         running: dim("·"),
         probe: chalk.yellow("?"),
         orphaned: chalk.yellow("!"),
+        abandoned: chalk.red("\u2a2f"),
         skip: dim("–"),
         wait: dim(" "),
       };

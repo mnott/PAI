@@ -50,6 +50,32 @@ const PROBE_FACTOR = 1.5;
 /** Consecutive unanswered probes before a run counts as stuck. */
 export const STUCK_AFTER_FAILED_PROBES = 3;
 
+/**
+ * Multiples of the expected duration after which a claim is released outright.
+ *
+ * The running label became an interlock once AIBroker's webhook started skipping
+ * any task carrying it (0.17.1). That closed the duplicate-dispatch hole and
+ * opened a worse one: nothing here ever took the label off except a completion,
+ * so a session that died mid-turn left the task claimed forever — the webhook
+ * skipping it, the poller probing it, and neither ever running it again. Silent
+ * permanent non-execution is the exact failure this subsystem exists to prevent,
+ * and it is worse than a duplicate run.
+ *
+ * Deliberately far beyond the probe threshold and NOT conditional on a probe
+ * saying the session is gone. An empty session list is how the hub itself failed
+ * on 2026-08-01, so "absent" is not trustworthy evidence; elapsed time is. A
+ * sweep that has been in flight for five hours is not in flight.
+ */
+export const ABANDON_FACTOR = 10;
+
+/** Floor for the same, so a task with a short learned duration is not released early. */
+export const ABANDON_FLOOR_MINUTES = 120;
+
+/** When a claim is old enough to be released regardless of what probes say. */
+export function abandonAfterMinutes(observed: number[]): number {
+  return Math.max(expectedMinutes(observed) * ABANDON_FACTOR, ABANDON_FLOOR_MINUTES);
+}
+
 // ---------------------------------------------------------------------------
 // Decisions
 // ---------------------------------------------------------------------------
@@ -57,6 +83,14 @@ export const STUCK_AFTER_FAILED_PROBES = 3;
 export type Decision =
   /** Not due yet. */
   | { action: "wait"; task: Task }
+  /**
+   * Ticked off in the tracker by hand — run it now, and put the schedule back.
+   *
+   * `restoreTo` is the due_string to write afterwards, or null to leave the
+   * advanced date alone (the occurrence that was just consumed is already past,
+   * so restoring it would only produce an immediately-overdue task).
+   */
+  | { action: "triggered"; task: Task; restoreTo: string | null }
   /** Due (or overdue within policy) and not running — dispatch it. */
   | { action: "dispatch"; task: Task; overdueMinutes: number }
   /** Overdue past its skip-if-late window — leave for the next occurrence. */
@@ -67,6 +101,14 @@ export type Decision =
   | { action: "probe"; task: Task; elapsedMinutes: number; expectedMinutes: number }
   /** Was running, due date has advanced — it finished. */
   | { action: "complete"; task: Task; durationMinutes: number | null }
+  /**
+   * Claimed so long ago that no run is plausibly still going — release it.
+   *
+   * Not a re-dispatch: the claim comes off and nothing else happens this tick.
+   * The task is still overdue, so the next tick dispatches it through the normal
+   * path, claim and all. Splitting it that way keeps one dispatcher.
+   */
+  | { action: "abandoned"; task: Task; elapsedMinutes: number; thresholdMinutes: number }
   /** Marked running but nothing knows about it — reconcile. */
   | { action: "orphaned"; task: Task; reason: string };
 
@@ -115,6 +157,114 @@ export function overdueMinutes(task: Task, now: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Manual trigger (the checkbox as a Run Now button)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why this is inferred from the due date rather than observed directly:
+ *
+ * Completing a recurring task leaves no completion event anywhere the API will
+ * show us. Measured 2026-08-01 against the live account — a recurring task was
+ * created, completed, and then queried through the completed-by-completion-date
+ * endpoint: it is absent. The task itself comes straight back as open with the
+ * due date advanced and the same id. So "the due date jumped forward while we
+ * were not running it" is the ONLY evidence a human ticked the box.
+ *
+ * That evidence is ambiguous — dragging the date forward looks identical — so
+ * the jump is checked against the recurrence period before it is believed. A
+ * daily task that moves by exactly one day was ticked; one that moves by three
+ * was rescheduled, and firing a sweep on that would both waste a run and undo
+ * the user's edit.
+ */
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Day-deltas consistent with one occurrence of `recurrence` elapsing.
+ *
+ * A set rather than a number because real rules are not fixed-length: a monthly
+ * task advances by 28 to 31 days, and "every weekday" by one to three. Null
+ * means the rule was not recognised, which the caller treats as permissive —
+ * an unrecognised recurrence is still a recurrence, and refusing to fire is the
+ * failure mode this whole mechanism exists to remove.
+ */
+export function expectedAdvanceDays(recurrence: string | null | undefined): number[] | null {
+  if (!recurrence) return null;
+  const r = recurrence.trim().toLowerCase();
+
+  if (/\bevery\s+(work ?day|weekday)/.test(r)) return [1, 2, 3];
+  if (/\bevery\s+other\s+day\b/.test(r)) return [2];
+  if (/\bevery\s+(\d+)\s+days?\b/.test(r)) {
+    const n = Number.parseInt(/\bevery\s+(\d+)\s+days?\b/.exec(r)![1]!, 10);
+    return n > 0 ? [n] : null;
+  }
+  if (/\bevery\s+day\b/.test(r) || /\bdaily\b/.test(r)) return [1];
+  if (/\bevery\s+(\d+)\s+weeks?\b/.test(r)) {
+    const n = Number.parseInt(/\bevery\s+(\d+)\s+weeks?\b/.exec(r)![1]!, 10);
+    return n > 0 ? [n * 7] : null;
+  }
+  // Before the weekday rule: an unanchored "mon" alternative also matches the
+  // "mon" in "month", which classified a monthly routine as weekly.
+  if (/\bevery\s+(month|\d+\s+months?)\b/.test(r) || /\bmonthly\b/.test(r)) return [28, 29, 30, 31];
+  if (/\bevery\s+year\b/.test(r) || /\byearly\b/.test(r) || /\bannually\b/.test(r)) return [365, 366];
+  if (
+    /\bevery\s+(?:week|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/.test(r) ||
+    /\bweekly\b/.test(r)
+  ) {
+    return [7];
+  }
+
+  return null;
+}
+
+/** Whole days between two due values, rounded — times of day are preserved by
+ *  both a completion and a drag, so they carry no signal either way. */
+function advanceDays(prevDue: string, newDue: string): number {
+  const a = new Date(prevDue.length <= 10 ? `${prevDue}T00:00:00` : prevDue).getTime();
+  const b = new Date(newDue.length <= 10 ? `${newDue}T00:00:00` : newDue).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return Number.NaN;
+  return Math.round((b - a) / MS_PER_DAY);
+}
+
+/**
+ * Did this task advance because someone ticked it off?
+ *
+ * A non-recurring task is never a trigger: completing one closes it, and it
+ * drops out of the open list rather than reappearing with a later date. So a
+ * forward jump there is unambiguously a reschedule.
+ */
+export function wasTicked(task: Task, prevDue: string | null | undefined): boolean {
+  if (!prevDue || !task.due || !task.recurrence) return false;
+  if (task.due <= prevDue) return false;
+
+  const moved = advanceDays(prevDue, task.due);
+  if (!Number.isFinite(moved) || moved <= 0) return false;
+
+  const expected = expectedAdvanceDays(task.recurrence);
+  return expected === null ? true : expected.includes(moved);
+}
+
+/**
+ * The due_string that puts a ticked task back where it was.
+ *
+ * Rule and date in one string on purpose. Writing the date alone through the
+ * tracker's date field drops the recurrence and quietly demotes a routine to a
+ * one-off — the failure the provider's `setDue` comment warns about. Todoist
+ * parses "every day at 08:00 starting 2026-08-02" and honours both halves;
+ * verified against the live API on 2026-08-01.
+ */
+export function restoreDueString(recurrence: string, prevDue: string): string {
+  const date = prevDue.slice(0, 10);
+  const hasTime = prevDue.length > 10;
+  const ruleCarriesTime = /\bat\s+\d/.test(recurrence);
+
+  // "every day" plus a datetime due would come back as a date-only occurrence,
+  // losing the time of day. Carry it explicitly when the rule does not.
+  const time = hasTime && !ruleCarriesTime ? ` at ${prevDue.slice(11, 16)}` : "";
+  return `${recurrence}${time} starting ${date}`;
+}
+
+// ---------------------------------------------------------------------------
 // Duration learning
 // ---------------------------------------------------------------------------
 
@@ -145,6 +295,22 @@ export interface DecideOptions {
   state: RunState;
   /** Task id → observed durations in minutes, most recent last. */
   history?: Record<string, number[]>;
+  /**
+   * Task id → the due date seen on the previous tick.
+   *
+   * The only way to notice a task was ticked off by hand. Absent on the first
+   * tick after install, which is why a missing entry can never mean "it moved".
+   */
+  lastSeenDue?: Record<string, string>;
+  /**
+   * Task id → when this poller FIRST saw the task carrying a running claim.
+   *
+   * Needed because the claim is no longer only ours to make: AIBroker's webhook
+   * claims and dispatches on its own, so a claimed task frequently has no start
+   * time here. This is the clock for those runs — both to age them out and to
+   * tell a claim we have been watching from one we are seeing for the first time.
+   */
+  claimSeenAt?: Record<string, number>;
 }
 
 /**
@@ -160,18 +326,41 @@ export function decide(task: Task, opts: DecideOptions): Decision {
   const startedAt = state.startedAt[task.id];
 
   if (running) {
-    // Completion is "the due date moved into the future" — not "closed".
-    // A recurring task is closed for an instant at most, so testing for closed
+    const claimSeenAt = opts.claimSeenAt?.[task.id];
+    const prevDue = opts.lastSeenDue?.[task.id];
+    const dueAdvanced = prevDue !== undefined && task.due !== null && task.due > prevDue;
+    const ourRun = startedAt !== undefined;
+
+    // Completion is "the due date moved into the future" — not "closed". A
+    // recurring task is closed for an instant at most, so testing for closed
     // would never fire.
-    if (overdue < 0) {
+    //
+    // But `overdue < 0` alone is only evidence for a run WE started. A run
+    // dispatched by AIBroker's webhook is triggered by the user ticking the box,
+    // which advances the due date before the run even begins — so the due sits
+    // in the future for the whole run, and this branch reported it finished on
+    // the very next tick and stripped the interlock mid-flight. Measured against
+    // a live probe on 2026-08-01: "✓ would clear pai-running" while the sweep
+    // was still going.
+    //
+    // For someone else's run the completion signal is the due date advancing
+    // AGAIN — and only once we have watched the claim across a tick, since the
+    // first advance we see is the trigger itself, not an ending.
+    const finishedElsewhere = dueAdvanced && claimSeenAt !== undefined && claimSeenAt < now;
+
+    if ((ourRun && overdue < 0) || finishedElsewhere) {
       const duration = startedAt ? Math.max(1, Math.round((now - startedAt) / 60_000)) : null;
       return { action: "complete", task, durationMinutes: duration };
     }
 
-    if (startedAt === undefined) {
-      // Labelled running, but we have no record of starting it. Either the
-      // state file was lost, or a previous run died without cleaning up.
-      // Probing is the safe response — never assume it is dead and re-dispatch.
+    // Clock for everything below. A claim we did not make still has to age out,
+    // or a webhook run whose session died would hold the interlock forever.
+    const clock = startedAt ?? claimSeenAt;
+    if (clock === undefined) {
+      // First sighting of a claim with nothing to date it by. Either the state
+      // file was lost or another dispatcher just claimed it. Probing is the safe
+      // response — never assume it is dead and re-dispatch. The next tick has a
+      // claim time and can age it properly.
       return {
         action: "orphaned",
         task,
@@ -179,12 +368,56 @@ export function decide(task: Task, opts: DecideOptions): Decision {
       };
     }
 
-    const elapsed = Math.max(0, Math.round((now - startedAt) / 60_000));
+    const elapsed = Math.max(0, Math.round((now - clock) / 60_000));
     const expected = expectedMinutes(opts.history?.[task.id] ?? []);
+
+    // Checked before probing: past this point the probe's answer no longer
+    // changes what should happen. Even a session replying "yes, still working"
+    // has been working ten times its usual run, and leaving the claim on is what
+    // turns one dead session into a routine that never runs again.
+    const abandonAfter = abandonAfterMinutes(opts.history?.[task.id] ?? []);
+    if (elapsed >= abandonAfter) {
+      return { action: "abandoned", task, elapsedMinutes: elapsed, thresholdMinutes: abandonAfter };
+    }
+
+    // Only interrogate our own runs. Asking after a session another dispatcher
+    // started tells us nothing actionable — we would not re-dispatch it either
+    // way — and the ageing above already bounds it.
+    if (!ourRun) return { action: "running", task, elapsedMinutes: elapsed };
+
     if (elapsed >= expected * PROBE_FACTOR) {
       return { action: "probe", task, elapsedMinutes: elapsed, expectedMinutes: expected };
     }
     return { action: "running", task, elapsedMinutes: elapsed };
+  }
+
+  // Checked before the wait branch, because a task that was just ticked always
+  // lands in the future — it would otherwise be indistinguishable from one that
+  // is simply not due yet, which is exactly how the checkbox came to look like
+  // a button that silently pushed the sweep out by a day.
+  const prevDue = opts.lastSeenDue?.[task.id];
+
+  // A claim we were watching until a moment ago means this advance is a run
+  // ENDING, not a box being ticked. Since aibroker 0.17.4 the finishing session
+  // drops the claim itself and then advances the recurrence with `pai task
+  // done` — so by the next tick the task is unclaimed with its due date exactly
+  // one period on, which is indistinguishable from a hand-tick and would have
+  // dispatched the same work a second time.
+  //
+  // The entry is still here because tick() clears it AFTER deciding, which is
+  // precisely the window this needs. When a whole run fits between two ticks we
+  // never see the claim at all — but then the due has advanced twice, once for
+  // the trigger and once for the completion, and the period check rejects it.
+  const wasClaimed = opts.claimSeenAt?.[task.id] !== undefined;
+
+  if (!wasClaimed && wasTicked(task, prevDue)) {
+    // Restore only a slot that has not passed. Putting back an occurrence that
+    // is already overdue leaves a task that reads as late the instant it is
+    // written, for a run that is starting right now.
+    const prevMs = new Date(prevDue!.length <= 10 ? `${prevDue}T00:00:00` : prevDue!).getTime();
+    const restoreTo =
+      task.recurrence && prevMs > now ? restoreDueString(task.recurrence, prevDue!) : null;
+    return { action: "triggered", task, restoreTo };
   }
 
   if (overdue < 0) return { action: "wait", task };
