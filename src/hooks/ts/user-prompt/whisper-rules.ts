@@ -50,8 +50,17 @@ function getAdvisorGuidance(): string {
     return "";
   }
 
-  // Determine mode
-  let mode = config.mode ?? "auto";
+  // Determine mode.
+  //
+  // `??` only substitutes on null/undefined, so a config written as
+  // {"mode": ""} — which is what the statusline produces when it has no manual
+  // override — left mode as the empty string. That matched no case below, so
+  // the advisor silently returned nothing regardless of budget. A budget guard
+  // that quietly does nothing is worse than none, because you believe you have
+  // one. Treat anything that is not a recognised mode as "auto".
+  const VALID = ["normal", "conservative", "strict", "critical", "auto"] as const;
+  let mode: string =
+    config.mode && (VALID as readonly string[]).includes(config.mode) ? config.mode : "auto";
   if (mode === "auto" && typeof config.weeklyBudgetPercent === "number") {
     const pct = config.weeklyBudgetPercent;
     if (pct < 60) mode = "normal";

@@ -1,7 +1,7 @@
 ## Continue
 
-> **Last session:** 0003 - 2026-07-31 - Task Bus Dispatch, Shared Timeout, And 0.8.1 Verify
-> **Paused at:** 2026-07-31T21:21:25.260Z
+> **Last session:** 0001 - 2026-08-01 - 0 Summarizer Spawn Failures
+> **Paused at:** 2026-08-01T07:03:17.399Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
@@ -373,4 +373,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-07-31T21:21:25.260Z*
+*Last updated: 2026-08-01T07:03:17.399Z*
