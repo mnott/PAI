@@ -98,6 +98,15 @@ export interface NewTask {
   priority?: TaskPriority;
   labels?: string[];
   sourceUrl?: string;
+  /**
+   * Sub-project to file into, created if absent.
+   *
+   * The convention is one sub-project per PAI project under the bus root. It
+   * previously existed only in the shape of the data, so every session had to
+   * re-derive it — and a session that inferred cautiously filed flat instead,
+   * which is exactly the pile the convention prevents.
+   */
+  into?: string;
 }
 
 // ---------------------------------------------------------------------------

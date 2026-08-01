@@ -62,6 +62,14 @@ pai task add "Short actionable title" \\
   --url "hook://..."
 \`\`\`
 
+**Always file into the sub-project for the PAI project you are working in**, using \`--into <name>\`. It is created if it does not exist:
+
+\`\`\`bash
+pai task add "Title" --into Clickr --owner clickr --body "..."
+\`\`\`
+
+Creating that sub-project is **following the convention, not inventing structure**. Do not file flat into the root out of caution — a flat pile buries findings across projects, and every session that hesitates makes it worse. Only omit \`--into\` for something genuinely cross-cutting.
+
 Rules:
 - **\`--body\` is not optional in practice.** Enough that the task is actionable months later, or by the user alone, without re-deriving anything. A bare title is a reminder that something was once known — worthless later.
 - **Omit \`--owner\` when you genuinely do not know.** It lands in the findings inbox for triage. Guessing is worse than leaving it unrouted.
@@ -91,6 +99,20 @@ For each \`unrouted\` item, decide with the user: assign an owner, act now, or d
 3. Otherwise unrouted
 
 A label matching nothing does **not** fall through to the container. The user meant somewhere specific; quietly routing elsewhere is worse than not routing.
+
+---
+
+### At session end
+
+\`pai end\` finalises the session note and TODO.md. It does **not** touch the tracker — it is a mechanical command and deciding what counts as an open item needs judgement.
+
+So before ending a session, file anything still open onto the bus yourself:
+
+\`\`\`bash
+pai task add "<open item>" --into <ProjectName> --owner <project> --body "<procedure + reasoning>"
+\`\`\`
+
+Otherwise the open items live only in a session note nobody re-reads, which is the loss the bus exists to prevent. If there is genuinely nothing open, say so rather than filing filler.
 
 ### Notes
 

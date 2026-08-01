@@ -131,6 +131,14 @@ export async function listProjects(token: string): Promise<Array<{ id: string; n
 // Mapping
 // ---------------------------------------------------------------------------
 
+/** Strip emoji and case so "Whazaa 🐝" and "whazaa" compare equal. */
+function normalizeName(raw: string): string {
+  return raw
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
+    .trim()
+    .toLowerCase();
+}
+
 /** Todoist priority is inverted: 4 is urgent, 1 is lowest. */
 function toPriority(wire: number | undefined): TaskPriority {
   switch (wire) {
@@ -253,14 +261,20 @@ export class TodoistProvider implements TaskProvider {
 
     // Unowned work lands in the findings inbox when one is configured, so it is
     // triaged later rather than lost at the root.
-    const sectionId = task.owner ? undefined : this.config.findingsSectionId;
+    const sectionId = task.owner || task.into ? undefined : this.config.findingsSectionId;
+
+    // Filing into a per-project sub-project keeps findings from piling up flat
+    // in the root, where they bury each other across projects.
+    const projectId = task.into
+      ? (await this.findOrCreateSubProject(task.into)).id
+      : this.config.rootProjectId;
 
     const created = await call<WireTask>(token, "/tasks", {
       method: "POST",
       body: {
         content: task.title,
         description: task.body,
-        project_id: this.config.rootProjectId,
+        project_id: projectId,
         ...(sectionId ? { section_id: sectionId } : {}),
         labels,
         priority: fromPriority(task.priority),
@@ -293,6 +307,42 @@ export class TodoistProvider implements TaskProvider {
     const token = this.token();
     if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
     await call<WireTask>(token, `/tasks/${id}`, { method: "POST", body: { labels } });
+  }
+
+  /**
+   * Find the sub-project named `name` under the bus root, creating it if absent.
+   *
+   * Per-project sub-projects are the filing convention: a flat pile in the root
+   * buries findings across projects. This exists so the convention can be
+   * executed rather than re-derived — a session that has to infer structure
+   * from the existing project list will sometimes infer cautiously and file
+   * flat, which is the mess the convention prevents.
+   *
+   * Matching is case-insensitive and ignores decoration, so "Whazaa" finds an
+   * existing "Whazaa 🐝" rather than creating a near-duplicate.
+   */
+  async findOrCreateSubProject(name: string): Promise<{ id: string; created: boolean }> {
+    const token = this.token();
+    if (!token || !this.config.rootProjectId) {
+      throw new Error("Todoist provider is not configured — run `pai task config`.");
+    }
+
+    const root = this.config.rootProjectId;
+    const projects = await collect<WireProject>(token, "/projects");
+    const want = normalizeName(name);
+
+    for (const p of projects) {
+      if (p.is_archived || p.is_deleted) continue;
+      if (p.parent_id === root && normalizeName(p.name) === want) {
+        return { id: p.id, created: false };
+      }
+    }
+
+    const created = await call<WireProject>(token, "/projects", {
+      method: "POST",
+      body: { name, parent_id: root },
+    });
+    return { id: created.id, created: true };
   }
 
   /** Append a comment — used to keep run history on the task itself. */
