@@ -19,6 +19,8 @@ pai task <subcommand> [options]
 | [`pai task list`](#pai-task-list) | List open tasks on the bus |
 | [`pai task add <title>`](#pai-task-add-title) | File a task onto the bus |
 | [`pai task dispatch`](#pai-task-dispatch) | Hand open tasks to the PAI sessions that own them |
+| [`pai task poll`](#pai-task-poll) | One scheduler tick: dispatch what is due, check what is running, report |
+| [`pai task schedule`](#pai-task-schedule) | Install, remove or inspect the launchd agent that ticks the scheduler |
 | [`pai task config`](#pai-task-config) | View or change task bus settings without running the full setup wizard |
 | [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker |
 
@@ -70,6 +72,43 @@ Hand open tasks to the PAI sessions that own them
 | `--today` | Only tasks due today or overdue |  |
 | `--dry-run` | Report what would happen without contacting any session |  |
 | `--no-spawn` | Never launch a session; skip owners that are not running |  |
+
+
+### pai task poll
+
+One scheduler tick: dispatch what is due, check what is running, report
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Show what would happen without touching anything |  |
+
+
+### pai task schedule
+
+Install, remove or inspect the launchd agent that ticks the scheduler
+
+
+### pai task schedule install
+
+Install the scheduler tick (default: every 15 minutes)
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--interval <secs>` | Seconds between ticks |  |
+
+
+### pai task schedule uninstall
+
+Remove the scheduler agent
+
+
+### pai task schedule status
+
+Show whether the scheduler agent is installed and loaded
 
 
 ### pai task config
