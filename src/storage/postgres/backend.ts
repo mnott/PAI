@@ -322,17 +322,19 @@ export class PostgresBackend implements StorageBackend {
     }
   }
 
-  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
+  async getUnembeddedChunkIds(projectId?: number, limit?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
+    const params: Array<number> = [];
+    let sql = "SELECT id, text, project_id, path FROM pai_chunks WHERE embedding IS NULL";
     if (projectId !== undefined) {
-      const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(
-        "SELECT id, text, project_id, path FROM pai_chunks WHERE embedding IS NULL AND project_id = $1 ORDER BY id",
-        [projectId]
-      );
-      return result.rows;
+      params.push(projectId);
+      sql += ` AND project_id = $${params.length}`;
     }
-    const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(
-      "SELECT id, text, project_id, path FROM pai_chunks WHERE embedding IS NULL ORDER BY id"
-    );
+    sql += " ORDER BY project_id, id";
+    if (limit !== undefined) {
+      params.push(limit);
+      sql += ` LIMIT $${params.length}`;
+    }
+    const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(sql, params);
     return result.rows;
   }
 

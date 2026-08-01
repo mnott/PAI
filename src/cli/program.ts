@@ -354,7 +354,14 @@ Examples:
       "Deliberately write a metadata-only checkpoint (no content)"
     )
     .option("--exit", "(pause all only) Also send /exit to each session after pausing")
-    .option("--wait <ms>", "(pause all only) Milliseconds to wait before /exit (default: 5000)", "5000")
+    .option(
+      "--wait <ms>",
+      "(pause all only) Max milliseconds to wait for a session to finish its\n" +
+        "checkpoint before /exit. Not a fixed delay — sessions are exited as soon\n" +
+        "as they return to the prompt, and any still busy at the deadline are left\n" +
+        "open rather than killed mid-write. (default: 180000)",
+      "180000"
+    )
     .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string; bodyFile?: string; sessionId?: string; body?: boolean }) => {
       if (target === "all") {
         await cmdPauseAll({

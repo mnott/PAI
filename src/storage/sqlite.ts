@@ -181,7 +181,7 @@ export class SQLiteBackend implements StorageBackend {
     })();
   }
 
-  async getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
+  async getUnembeddedChunkIds(projectId?: number, limit?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>> {
     const conditions = ["embedding IS NULL"];
     const params: (string | number)[] = [];
 
@@ -210,8 +210,8 @@ export class SQLiteBackend implements StorageBackend {
           WHEN path LIKE 'seriousletter/%' THEN 4
           WHEN path LIKE 'Attachments/%' THEN 5
           ELSE 2
-        END, id`)
-      .all(...params) as Array<{ id: string; text: string; project_id: number; path: string }>;
+        END, id${limit !== undefined ? " LIMIT ?" : ""}`)
+      .all(...params, ...(limit !== undefined ? [limit] : [])) as Array<{ id: string; text: string; project_id: number; path: string }>;
     return rows;
   }
 

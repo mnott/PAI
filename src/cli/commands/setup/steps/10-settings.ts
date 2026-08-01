@@ -52,12 +52,17 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       { hookType: "UserPromptSubmit", command: "${PAI_DIR}/Hooks/cleanup-session-files.mjs" },
       { hookType: "UserPromptSubmit", command: "${PAI_DIR}/Hooks/update-tab-titles.mjs" },
       { hookType: "UserPromptSubmit", command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit" },
+      // Rolling checkpoint. The model is not invoked on /exit and never on
+      // Ctrl+C, so a handover written at exit time is impossible — it has to
+      // already exist. Rate-limited internally; safe on high-frequency events.
+      { hookType: "UserPromptSubmit", command: "${PAI_DIR}/Hooks/pai-session-autosave.sh" },
       { hookType: "PreToolUse", matcher: "Bash", command: "${PAI_DIR}/Hooks/security-validator.mjs" },
       { hookType: "PreToolUse", matcher: "*", command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse" },
       { hookType: "PostToolUse", matcher: "TodoWrite", command: "${PAI_DIR}/Hooks/sync-todo-to-md.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse" },
       { hookType: "PostToolUse", matcher: "*", command: "${PAI_DIR}/Hooks/capture-tool-output.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${PAI_DIR}/Hooks/update-tab-on-action.mjs" },
+      { hookType: "PostToolUse", matcher: "*", command: "${PAI_DIR}/Hooks/pai-session-autosave.sh" },
       { hookType: "Stop", command: "${PAI_DIR}/Hooks/stop-hook.mjs" },
       { hookType: "Stop", command: "${PAI_DIR}/Hooks/capture-all-events.mjs --event-type Stop" },
       { hookType: "Stop", command: "${PAI_DIR}/Hooks/pai-session-stop.sh" },

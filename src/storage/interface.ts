@@ -166,10 +166,19 @@ export interface StorageBackend {
   deletePaths(projectId: number, paths: string[]): Promise<void>;
 
   /**
-   * Return all chunk IDs that have no embedding stored yet.
+   * Return chunk IDs that have no embedding stored yet.
    * Used by embedChunks() to find work to do.
+   *
+   * `limit` bounds how many rows come back. It matters: the rows carry the full
+   * chunk text, and an unbounded fetch against a six-figure backlog pulls the
+   * whole thing into memory before a single embedding is generated. The embed
+   * pass is resumable — every embedding is written as it is produced — so a
+   * bounded fetch loses nothing and simply resumes on the next pass.
+   *
+   * Rows are ordered by project so that per-project progress logging reflects
+   * real runs of work rather than flapping once per chunk.
    */
-  getUnembeddedChunkIds(projectId?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
+  getUnembeddedChunkIds(projectId?: number, limit?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
 
   /**
    * Store an embedding for a single chunk.

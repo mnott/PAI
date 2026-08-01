@@ -24,11 +24,34 @@ import {
   resolveNotePath,
   resolveProjectByCwd,
 } from "./pause.js";
+import {
+  findTranscripts,
+  buildAutosaveBody,
+  resolveTranscriptDir,
+} from "../../../session/autosave.js";
+
+/**
+ * Reconstruct a resumable digest for a session that is stopping.
+ *
+ * Best-effort by construction: this runs from a hook on every exit, so a failure
+ * to read the transcript must degrade to an empty body — which the checkpoint
+ * writer now treats as "do not overwrite what is already there" — rather than
+ * throw and interrupt Claude Code.
+ */
+function buildStopBody(project: ProjectRow, sessionId?: string): string {
+  try {
+    const transcriptPaths = findTranscripts(resolveTranscriptDir(project), sessionId);
+    return buildAutosaveBody({ cwd: process.cwd(), transcriptPaths });
+  } catch {
+    return "";
+  }
+}
 
 export function cmdHandover(
   db: Database,
   projectSlug: string | undefined,
-  numberOrLatest: string | undefined
+  numberOrLatest: string | undefined,
+  sessionId?: string
 ): void {
   // ---- 1. Resolve project ----
   let project: ProjectRow | undefined;
@@ -71,13 +94,27 @@ export function cmdHandover(
   // ---- 3. Write, preserving any authored checkpoint for this session ----
   //
   // The session line must be derived exactly as `pai pause` derives it — it is
-  // the key that decides preservation. Deriving it independently here is what
+  // the fallback preservation key, and deriving it independently here is what
   // let this command clobber a checkpoint written seconds earlier.
+  //
+  // The line alone is not enough. By the time this runs, `session-stop.sh` has
+  // already executed `session slug --apply` and `session cleanup --execute`,
+  // both of which rewrite the session note filename the line is derived from.
+  // The UUID is passed through precisely because it survives that.
+  // A body, not just a pointer. This used to write metadata only, on the
+  // assumption that the session note holds the real content — but the note is
+  // written by a different path that can fail or never run at all, and when it
+  // does the checkpoint names a file that does not exist. Reconstructing the
+  // same digest the autosave writes (recent prompts + working tree) costs one
+  // transcript read and means a stop-hook handover always carries something
+  // resumable on its own.
   applyContinue({
     rootPath: project!.root_path,
     authored: "auto",
     sessionLine: resolveSessionLine(project!, session, resolveNotePath(project!)),
+    sessionId,
     cwd: process.cwd(),
+    body: buildStopBody(project!, sessionId),
   });
 
   process.exit(0);

@@ -170,6 +170,7 @@ if (doSync) {
   const shellHooks = [
     ["src/hooks/pre-compact.sh", "pai-pre-compact.sh"],
     ["src/hooks/session-stop.sh", "pai-session-stop.sh"],
+    ["src/hooks/session-autosave.sh", "pai-session-autosave.sh"],
   ];
   for (const [src, destName] of shellHooks) {
     if (existsSync(src)) {
