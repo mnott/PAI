@@ -15,6 +15,14 @@
 import { describe, it, expect } from "vitest";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  RUNTIME_PATH_ENV_VARS,
+  paiSocketPath,
+  aibrokerSocketPath,
+  daemonLogPath,
+  daemonPidPath,
+  schedulerLogPath,
+} from "../src/runtime-paths.js";
 
 describe("test home is sandboxed", () => {
   it("does not resolve to the real home directory", () => {
@@ -42,5 +50,46 @@ describe("test home is sandboxed", () => {
     const value = process.env[name];
     expect(value, `${name} is not set — the guard did not run`).toBeTruthy();
     expect(value!).toContain(tmpdir());
+  });
+});
+
+/**
+ * Sockets, logs and pidfiles are NOT home-derived, and redirecting HOME does
+ * nothing for them — they are hardcoded absolutes under /tmp, shared with a
+ * live daemon.
+ *
+ * That distinction was missed once: a fake-HOME run was taken as evidence the
+ * suite touched no real state, when by construction it could only ever have
+ * inspected what landed under the redirected home. Writing to /tmp/pai.sock
+ * from a test would have been invisible to that proof and would have disrupted
+ * the running daemon.
+ */
+describe("runtime paths are sandboxed", () => {
+  it.each([...RUNTIME_PATH_ENV_VARS])("redirects %s", (name) => {
+    const value = process.env[name];
+    expect(value, `${name} is not set — the guard did not run`).toBeTruthy();
+    expect(value!).toContain(tmpdir());
+  });
+
+  it("resolves every accessor away from the live daemon's files", () => {
+    // The accessors read the environment at call time, so this is what real
+    // code gets — not merely what the guard set.
+    for (const p of [
+      paiSocketPath(),
+      aibrokerSocketPath(),
+      daemonLogPath(),
+      daemonPidPath(),
+      schedulerLogPath(),
+    ]) {
+      expect(p).toContain(tmpdir());
+      expect(p.startsWith("/tmp/pai")).toBe(false);
+      expect(p.startsWith("/tmp/aibroker")).toBe(false);
+    }
+  });
+
+  it("covers every declared runtime path, so adding one cannot skip the guard", () => {
+    for (const name of RUNTIME_PATH_ENV_VARS) {
+      expect(process.env[name]).toBeTruthy();
+    }
   });
 });

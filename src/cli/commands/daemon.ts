@@ -25,6 +25,7 @@ import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
+import { daemonLogPath } from "../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -35,7 +36,7 @@ const HOME = homedir();
 const PLIST_LABEL = "com.pai.pai-daemon";
 const LAUNCH_AGENTS_DIR = join(HOME, "Library", "LaunchAgents");
 const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${PLIST_LABEL}.plist`);
-const DAEMON_LOG = "/tmp/pai-daemon.log";
+const DAEMON_LOG = daemonLogPath();
 
 /**
  * Resolve the absolute path to the built daemon entry point.

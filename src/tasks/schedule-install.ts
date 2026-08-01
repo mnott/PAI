@@ -18,11 +18,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { schedulerLogPath } from "../runtime-paths.js";
 
 export const SCHEDULE_LABEL = "com.pai.task-scheduler";
 const LAUNCH_AGENTS = join(homedir(), "Library", "LaunchAgents");
 export const SCHEDULE_PLIST = join(LAUNCH_AGENTS, `${SCHEDULE_LABEL}.plist`);
-export const SCHEDULE_LOG = "/tmp/pai-scheduler.log";
+export const SCHEDULE_LOG = schedulerLogPath();
 
 /** Default tick, in seconds. */
 export const DEFAULT_INTERVAL_SECS = 900;

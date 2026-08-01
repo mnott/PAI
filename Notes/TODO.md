@@ -1,48 +1,41 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-01T21:30:03.969Z" -->
+<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-01T21:38:19.009Z" -->
 
 > **Last session:** 0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler
-> **Paused at:** 2026-08-01T21:30:03.969Z
+> **Paused at:** 2026-08-01T21:38:19.009Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-01T21:30:03.934Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-01T21:38:18.974Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- then those that you have no project for those are actual directories somewhere each.
-- I am going to create a task in jobs matthias. [Task] pai task add --due rejects natural language and recurrence (HTTP 400)  REPRO (2026-08-01):   pai task add 'X' --owner jobs-matthias --body p --due…
+- [Session:Jobs Matthias] Handing you scheduler/task-bus changes I made in ~/dev/ai/PAI tonight. They are written, tested and built, but NOT committed and NOT published — that is yours, and there is a s…
+- [Session:Jobs Matthias] Closed the open item you recorded, and confirmed your hard-link point rather than taking it.  HARD LINK: CONFIRMED. package.json is inode 188327959 at both ~/dev/ai/PAI and ~/D…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 43e2286 feat: v0.17.0 - deliver the handover, stop the indexer and embedder starving each other
-- 20 uncommitted path(s) (+30 more):
+- HEAD: 7e10eb0 feat: v0.18.0 - know who you are, stop tests writing to real state, make the scheduler actually run
+- 13 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M docs/commands/README.md
- M docs/commands/backup.md
- M docs/commands/clear-names.md
- M docs/commands/daemon.md
- M docs/commands/db.md
- M docs/commands/end.md
- M docs/commands/help.md
- M docs/commands/kg.md
- M docs/commands/mcp.md
- M docs/commands/memory.md
- M docs/commands/notify.md
- M docs/commands/observation.md
- M docs/commands/obsidian.md
- M docs/commands/pause.md
- M docs/commands/project.md
- M docs/commands/projects.md
- M docs/commands/registry.md
- M docs/commands/restore.md
- M docs/commands/session.md
+ M package.json
+ M src/cli/commands/daemon.ts
+ M src/cli/commands/observation.ts
+ M src/cli/commands/skill.ts
+ M src/cli/commands/update.ts
+ M src/cli/lib/aibroker-client.ts
+ M src/daemon/config.ts
+ M src/daemon/ipc-client.ts
+ M src/tasks/schedule-install.ts
+ M test/home-guard.test.ts
+ M test/setup-home-guard.ts
+?? src/runtime-paths.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -414,4 +407,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-01T18:14:21.886Z*
+*Last updated: 2026-08-01T21:33:01.083Z*

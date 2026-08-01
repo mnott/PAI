@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../utils.js";
+import { daemonPidPath } from "../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -285,7 +286,7 @@ function stepRestartDaemon(repoDir: string): void {
   step("Restarting PAI daemon...");
 
   // Try to find the daemon PID from the socket/pid file
-  const pidFile = "/tmp/pai-daemon.pid";
+  const pidFile = daemonPidPath();
   if (existsSync(pidFile)) {
     try {
       const pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);

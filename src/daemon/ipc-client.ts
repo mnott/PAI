@@ -19,13 +19,14 @@ import type {
 } from "../notifications/types.js";
 import type { TopicCheckParams, TopicCheckResult } from "../topics/detector.js";
 import type { AutoRouteResult } from "../session/auto-route.js";
+import { paiSocketPath } from "../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Protocol types
 // ---------------------------------------------------------------------------
 
 /** Default socket path */
-export const IPC_SOCKET_PATH = "/tmp/pai.sock";
+export const IPC_SOCKET_PATH = paiSocketPath();
 
 /** Timeout for IPC calls (60 seconds) */
 const IPC_TIMEOUT_MS = 60_000;

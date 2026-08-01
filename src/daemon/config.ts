@@ -13,6 +13,7 @@ import type { NotificationConfig } from "../notifications/types.js";
 import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
 import { DEFAULT_TASK_CONFIG } from "../tasks/types.js";
+import { paiSocketPath } from "../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -156,7 +157,7 @@ function perUserConnectionString(): string {
 // ---------------------------------------------------------------------------
 
 export const DEFAULTS: PaiDaemonConfig = {
-  socketPath: "/tmp/pai.sock",
+  socketPath: paiSocketPath(),
   indexIntervalSecs: 300,
   embedIntervalSecs: 600,
   storageBackend: "sqlite",

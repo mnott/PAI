@@ -11,6 +11,7 @@ import type { Command } from "commander";
 import { createConnection } from "net";
 import { warn, err, dim, bold, header } from "../utils.js";
 import chalk from "chalk";
+import { paiSocketPath } from "../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // IPC helper — communicates with PAI daemon via Unix socket
@@ -21,7 +22,7 @@ function ipcCall(method: string, params: Record<string, unknown>): Promise<unkno
     let settled = false;
     const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
 
-    const client = createConnection("/tmp/pai.sock", () => {
+    const client = createConnection(paiSocketPath(), () => {
       client.write(JSON.stringify({ id: 1, method, params }) + "\n");
     });
     let data = "";
