@@ -24,6 +24,7 @@ import {
   RUNNING_LABEL,
   STUCK_AFTER_FAILED_PROBES,
   type Decision,
+  expectedMinutes,
   type RunState,
   EMPTY_RUN_STATE,
 } from "./scheduler.js";
@@ -65,10 +66,39 @@ function saveState(state: PersistedState): void {
 // Liveness probe
 // ---------------------------------------------------------------------------
 
+/**
+ * What a probe found.
+ *
+ * The distinction that matters is `busy` versus `silent`. Claude Code queues
+ * typed input while mid-turn and does not read it until the turn ends, so a
+ * session doing exactly the work we gave it stays silent for minutes. Since we
+ * probe at expected x1.5 — precisely when a slow task is most likely still
+ * working — treating silence as death would have declared healthy sessions
+ * stuck on ordinary days and "recovered" them out from under themselves.
+ *
+ * AIBroker therefore decides liveness by sampling the screen before sending
+ * anything: a working session animates, an idle one is static. `busy` is
+ * positive evidence of life and must never count toward the stuck threshold.
+ */
+export type ProbeState = "replied" | "busy" | "silent" | "absent";
+
+export interface ProbeAnswer {
+  state: ProbeState;
+  reply?: string;
+  reason?: string;
+}
+
 export interface Prober {
   /** Ask the owning session whether it is still working. */
-  ask(project: string, question: string): Promise<{ replied: boolean; reply?: string; reason?: string }>;
+  ask(project: string, question: string): Promise<ProbeAnswer>;
 }
+
+/**
+ * Multiple of the expected duration past which a task is flagged even though it
+ * keeps reporting `busy`. A session can be alive and still wrong — stuck in a
+ * loop, waiting on a prompt that will never come. Liveness is not progress.
+ */
+const GROSS_OVERRUN_FACTOR = 5;
 
 // ---------------------------------------------------------------------------
 // Tick
@@ -231,21 +261,42 @@ async function handleProbe(
     `Are you still working on the task "${task.title}"? Reply in one short line.`
   );
 
-  if (answer.replied) {
+  // Both of these are evidence of life. `busy` especially: it means AIBroker saw
+  // the session actively producing output and deliberately sent nothing, so it
+  // costs no tokens and must not count as a strike.
+  if (answer.state === "replied" || answer.state === "busy") {
     state.failedProbes[task.id] = 0;
-    return { note: `alive after ${el}: ${answer.reply ?? "(no detail)"}`, stuck: false };
+
+    const expected = expectedMinutes(state.history[task.id] ?? []);
+    if (elapsed !== null && elapsed > expected * GROSS_OVERRUN_FACTOR) {
+      // Alive but far past any plausible runtime. Do not recover it — killing a
+      // working session is worse — but do not stay quiet either.
+      return {
+        note: `alive but ${el} against an expected ${expected}m — ${GROSS_OVERRUN_FACTOR}x over, worth a look`,
+        stuck: true,
+      };
+    }
+
+    return answer.state === "busy"
+      ? { note: `busy after ${el} (mid-turn, nothing sent)`, stuck: false }
+      : { note: `alive after ${el}: ${answer.reply ?? "(no detail)"}`, stuck: false };
   }
 
   const fails = (state.failedProbes[task.id] ?? 0) + 1;
   state.failedProbes[task.id] = fails;
 
+  // `absent` is stronger evidence than `silent`, but not acted on immediately:
+  // an empty session list is exactly how the hub failed on 2026-08-01, and
+  // re-dispatching on a lying hub would spawn a duplicate tab per task.
+  const what = answer.state === "absent" ? "session gone" : "no reply";
+
   if (fails >= STUCK_AFTER_FAILED_PROBES) {
     return {
-      note: `STUCK after ${el} and ${fails} unanswered probes (${answer.reason ?? "no reply"}) — needs attention`,
+      note: `STUCK after ${el} — ${what} x${fails} (${answer.reason ?? "no detail"})`,
       stuck: true,
     };
   }
-  return { note: `no reply ${fails}/${STUCK_AFTER_FAILED_PROBES} after ${el}`, stuck: false };
+  return { note: `${what} ${fails}/${STUCK_AFTER_FAILED_PROBES} after ${el}`, stuck: false };
 }
 
 export { isRunning };
