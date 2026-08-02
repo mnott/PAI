@@ -7,6 +7,19 @@ import type { Database } from "better-sqlite3";
 import type { ProjectRow } from "./types.js";
 import { err } from "../../utils.js";
 
+/**
+ * Find a project by slug or alias, case-insensitively.
+ *
+ * Slugs are conventionally lowercase, so exact matching went unnoticed until a
+ * project was deliberately named `Solar` — after which `pai project info solar`
+ * reported "Project not found" for a project sitting right there. Nobody types
+ * a name back with its capitalisation intact, and a lookup that demands it will
+ * be wrong more often than the user is.
+ *
+ * Exact match is still tried first: where two projects differ only by case, the
+ * one asked for by its exact name wins rather than whichever the database
+ * returns first.
+ */
 export function getProject(db: Database, slug: string): ProjectRow | undefined {
   const direct = db
     .prepare("SELECT * FROM projects WHERE slug = ?")
@@ -20,7 +33,20 @@ export function getProject(db: Database, slug: string): ProjectRow | undefined {
        WHERE a.alias = ?`
     )
     .get(slug) as ProjectRow | undefined;
-  return alias;
+  if (alias) return alias;
+
+  const insensitive = db
+    .prepare("SELECT * FROM projects WHERE lower(slug) = lower(?)")
+    .get(slug) as ProjectRow | undefined;
+  if (insensitive) return insensitive;
+
+  return db
+    .prepare(
+      `SELECT p.* FROM projects p
+       JOIN aliases a ON a.project_id = p.id
+       WHERE lower(a.alias) = lower(?)`
+    )
+    .get(slug) as ProjectRow | undefined;
 }
 
 export function requireProject(db: Database, slug: string): ProjectRow {
