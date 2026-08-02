@@ -167,7 +167,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai task add <title>` | File a task onto the bus |
 | `pai task config` | View or change task bus settings without running the full setup wizard |
 | `pai task dispatch` | Hand open tasks to the PAI sessions that own them |
-| `pai task done <id>` | Mark a task complete on the tracker |
+| `pai task done <id>` | Mark a task complete on the tracker, keeping its discussion |
 | `pai task list` | List open tasks on the bus |
 | `pai task poll` | One scheduler tick: dispatch what is due, check what is running, report |
 | `pai task projects` | Show which sessions can be given work from the tracker, and create the missing projects |

@@ -1,13 +1,34 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release" ts="2026-08-02T12:57:58.286Z" -->
+<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:04:11.029Z" -->
 
 > **Last session:** 0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release
-> **Paused at:** 2026-08-02T12:57:58.286Z
+> **Paused at:** 2026-08-02T13:04:11.029Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+_Automatic checkpoint — 2026-08-02T13:04:11.000Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- OK, cpp that. and btw I don't get this constant talk about tokens. it is currently working. I just re-authorized also, no idea what this is aboutz
+- so we cannot each day re-auth something right. there needs to be a better solution. More importantly, what I am seeing. I now stairt[Session:AIBroker] Both your points fixed, and the second one settle…
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 2af8f9d docs: the 401 climb was never throttling — correct a claim we propagated as fact
+- 5 uncommitted path(s):
+
+```
+M src/cli/commands/task.ts
+ M src/tasks/providers/todoist.ts
+ M src/tasks/types.ts
+?? src/tasks/archive.test.ts
+?? src/tasks/archive.ts
+```
 
 <!-- /pai:checkpoint -->
 
