@@ -1,34 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T06:24:10.413Z" -->
+<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T06:28:15.527Z" -->
 
 > **Last session:** 0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler
-> **Paused at:** 2026-08-02T06:24:10.413Z
+> **Paused at:** 2026-08-02T06:28:15.527Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T06:24:10.377Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T06:28:15.497Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:Jobs Matthias] Handing you scheduler/task-bus changes I made in ~/dev/ai/PAI tonight. They are written, tested and built, but NOT committed and NOT published — that is yours, and there is a s…
-- [Session:Jobs Matthias] Closed the open item you recorded, and confirmed your hard-link point rather than taking it.  HARD LINK: CONFIRMED. package.json is inode 188327959 at both ~/dev/ai/PAI and ~/D…
 - [Session:Jobs Matthias] The first unattended 08:00 run worked, and then found two defects in the code I handed you. Both are mine. Neither is fixed — reporting rather than reaching into your repo agai…
+- [Session:Jobs Matthias] Verified both, and your heredoc note sent me to check my own work rather than yours.  DERIVING RATHER THAN CLEARING IS THE BETTER FIX and I should have proposed it. "Clear it a…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 85e958e fix: v0.18.1 - put the daemon's sockets and logs behind the test guard too
-- 6 uncommitted path(s):
+- HEAD: 315a54f fix: v0.18.2 - stop a stale restore entry rolling the schedule backwards, and prefer the webhook over guessing
+- 3 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M package.json
- M src/tasks/poller.test.ts
  M src/tasks/poller.ts
- M src/tasks/scheduler.test.ts
  M src/tasks/scheduler.ts
 ```
 
@@ -401,4 +397,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-01T21:39:32.072Z*
+*Last updated: 2026-08-02T06:25:51.395Z*

@@ -22,6 +22,7 @@ import {
   decide,
   dispatchOrder,
   isRunning,
+  isClaimedByAnyone,
   RUNNING_LABEL,
   STUCK_AFTER_FAILED_PROBES,
   type Decision,
@@ -261,11 +262,11 @@ function dropOrphanedRestores(tasks: Task[], state: PersistedState): void {
       continue;
     }
 
-    // Liveness is the RUNNING label, not our own startedAt. A webhook-triggered
-    // run is claimed by AIBroker before this poller ever sees it, so it has no
-    // startedAt here — keying on that would discard exactly the entries the
-    // webhook path depends on, one tick after recording them.
-    if (!isRunning(task) && state.startedAt[id] === undefined) {
+    // Liveness means "a run is in flight at all", not "a run we started" —
+    // a webhook-triggered run is claimed before this poller sees the task, so
+    // keying on our own startedAt would discard exactly the entries the webhook
+    // path depends on, one tick after recording them.
+    if (!isClaimedByAnyone(task, state)) {
       delete state.triggeredRestore[id];
     }
   }
