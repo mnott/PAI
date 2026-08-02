@@ -446,3 +446,49 @@ describe("a finishing webhook run is not a hand-tick", () => {
     expect(d.action).not.toBe("triggered");
   });
 });
+
+describe("a live webhook takes precedence over the due-date guess", () => {
+  const daily = { recurrence: "every day at 08:00" };
+
+  /**
+   * The inference reads "due advanced exactly one period, unclaimed" as a tick.
+   * For a daily recurrence that is byte-identical to a human dragging the task
+   * forward one day, and to the poller repairing a due date it wrote wrongly
+   * itself — which is how repairing one duplicate sweep produced a second on
+   * 2026-08-02. No local signal separates them; a webhook has the real event.
+   */
+  it("does NOT infer a trigger when a webhook is delivering completions", () => {
+    const t = task({ ...daily, due: "2026-08-03T08:00:00" });
+    const d = decide(t, {
+      now: NOW,
+      state: EMPTY_RUN_STATE,
+      lastSeenDue: { t1: "2026-08-02T08:00:00" },
+      webhookActive: true,
+    });
+    expect(d.action).not.toBe("triggered");
+  });
+
+  it("still infers when no webhook is running — the fallback must survive", () => {
+    // A machine with no public endpoint has nothing else, so suppressing the
+    // guess everywhere would remove the feature rather than fix it.
+    const t = task({ ...daily, due: "2026-08-03T08:00:00" });
+    const d = decide(t, {
+      now: NOW,
+      state: EMPTY_RUN_STATE,
+      lastSeenDue: { t1: "2026-08-02T08:00:00" },
+      webhookActive: false,
+    });
+    expect(d.action).toBe("triggered");
+  });
+
+  it("defaults to inferring, so an unset flag cannot silently disable it", () => {
+    const t = task({ ...daily, due: "2026-08-03T08:00:00" });
+    const d = decide(t, {
+      now: NOW,
+      state: EMPTY_RUN_STATE,
+      lastSeenDue: { t1: "2026-08-02T08:00:00" },
+    });
+    expect(d.action).toBe("triggered");
+  });
+});
+

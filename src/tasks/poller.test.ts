@@ -424,3 +424,86 @@ describe("the human-facing progress marker", () => {
     expect(deleteComment).not.toHaveBeenCalledWith("c2");
   });
 });
+
+describe("a restore entry does not outlive its run", () => {
+  /**
+   * triggeredRestore was only ever consumed on the completion path, so a run
+   * ended any other way — abandoned, or released by hand — left the entry
+   * behind. It then fired on that task's NEXT completion, whenever that came.
+   *
+   * Observed 2026-08-02: entries from runs ended by hand the previous night
+   * fired on the first unattended 08:00 completion and wrote the due date from
+   * 08-03 back to 08-02. Already past, so the task was instantly overdue and
+   * the following tick would have dispatched a duplicate sweep.
+   */
+  function sweepTask(labels: string[] = []): Task {
+    return {
+      id: "sweep",
+      title: "Job sweep",
+      body: "",
+      owner: { project: "jobs-matthias", rootPath: "/j", source: "label" },
+      due: "2026-08-03T08:00:00",
+      recurrence: "every day at 08:00",
+      priority: "p4",
+      labels,
+    };
+  }
+
+  async function tickOrphan(task: Task, seed: Record<string, unknown>) {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-orphan-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, JSON.stringify(seed));
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([task]),
+      setLabels: vi.fn().mockResolvedValue(undefined),
+      setDue: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    try {
+      await tick({
+        provider,
+        transport: null,
+        prober: null,
+        autoDispatch: false,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+      return JSON.parse(readFileSync(stateFile, "utf8"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const ENTRY = "every day at 08:00 starting 2026-08-02";
+
+  it("drops an entry whose run is no longer claimed by anyone", async () => {
+    const after = await tickOrphan(sweepTask(), {
+      triggeredRestore: { sweep: ENTRY },
+      lastSeenDue: { sweep: "2026-08-03T08:00:00" },
+    });
+    expect(after.triggeredRestore.sweep).toBeUndefined();
+  });
+
+  it("keeps an entry while the task is still claimed", async () => {
+    // Liveness is the RUNNING label, not our own startedAt: a webhook-triggered
+    // run is claimed before this poller ever sees it, so keying on startedAt
+    // would discard exactly the entries the webhook path depends on.
+    const after = await tickOrphan(sweepTask([RUNNING_LABEL]), {
+      triggeredRestore: { sweep: ENTRY },
+      lastSeenDue: { sweep: "2026-08-03T08:00:00" },
+    });
+    expect(after.triggeredRestore.sweep).toBe(ENTRY);
+  });
+
+  it("keeps an entry for a run this poller itself started", async () => {
+    const after = await tickOrphan(sweepTask(), {
+      startedAt: { sweep: NOW - 60_000 },
+      triggeredRestore: { sweep: ENTRY },
+      lastSeenDue: { sweep: "2026-08-03T08:00:00" },
+    });
+    expect(after.triggeredRestore.sweep).toBe(ENTRY);
+  });
+});
+
