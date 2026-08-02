@@ -176,6 +176,15 @@ export interface TaskProvider {
    * the archive exists to keep.
    */
   listComments?(taskId: string): Promise<Array<{ id: string; content: string; postedAt?: string }>>;
+
+  /**
+   * One task by id, whether open or completed.
+   *
+   * Needed because archiving runs at or after completion, and a completed task
+   * is gone from `listOpen` — which is exactly the moment its discussion stops
+   * being visible and most needs keeping.
+   */
+  getTask?(id: string): Promise<Task | null>;
 }
 
 // ---------------------------------------------------------------------------

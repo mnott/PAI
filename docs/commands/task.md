@@ -23,6 +23,7 @@ pai task <subcommand> [options]
 | [`pai task poll`](#pai-task-poll) | One scheduler tick: dispatch what is due, check what is running, report |
 | [`pai task schedule`](#pai-task-schedule) | Install, remove or inspect the launchd agent that ticks the scheduler |
 | [`pai task config`](#pai-task-config) | View or change task bus settings without running the full setup wizard |
+| [`pai task archive <id>`](#pai-task-archive-id) | Save a task's discussion into the owning project's notes, without completing it |
 | [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker, keeping its discussion |
 
 ### pai task projects
@@ -140,6 +141,23 @@ View or change task bus settings without running the full setup wizard
 | `--timeout <secs>` | Seconds a single dispatch may take |  |
 | `--auto-dispatch <bool>` | Hand tasks to owning sessions automatically (true/false) |  |
 | `--disable` | Turn the task bus off without discarding its settings |  |
+
+
+### pai task archive <id>
+
+Save a task's discussion into the owning project's notes, without completing it
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--quiet` | Print nothing (for hook and webhook callers) |  |
 
 
 ### pai task done <id>

@@ -166,6 +166,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai skill telemetry` | Show skill-invocation telemetry (triggers, last used, projects) |
 | `pai task` | Task bus: list, add, dispatch, and complete cross-session work |
 | `pai task add <title>` | File a task onto the bus |
+| `pai task archive <id>` | Save a task's discussion into the owning project's notes, without completing it |
 | `pai task config` | View or change task bus settings without running the full setup wizard |
 | `pai task dispatch` | Hand open tasks to the PAI sessions that own them |
 | `pai task done <id>` | Mark a task complete on the tracker, keeping its discussion |

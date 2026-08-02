@@ -1,30 +1,35 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0013 - 2026-08-02 - Archival On Completion Pattern" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:43:36.265Z" -->
+<!-- pai:checkpoint authored="auto" session="0015 - 2026-08-02 - Task Archival, Session Reconnection, And Webhook Event Testing" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:23:35.612Z" -->
 
-> **Last session:** 0013 - 2026-08-02 - Archival On Completion Pattern
-> **Paused at:** 2026-08-02T13:43:36.265Z
+> **Last session:** 0015 - 2026-08-02 - Task Archival, Session Reconnection, And Webhook Event Testing
+> **Paused at:** 2026-08-02T15:23:35.612Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T13:43:36.218Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T15:23:35.573Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- those 67 can you start working on them
 - yes
+- does ticking off a task in todoist allow us to capture that event?
+- well I'd like to do that, so you could do 2 things: a) build it reactive, so via webhook reacting, b) untick the one i just ticked, so that c) I can then try it
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: c42942c feat: v0.20.0 - pai registry reconnect, and a correction to how bad this was
-- 2 uncommitted path(s):
+- HEAD: a54758f fix: v0.20.1 - stop the scan silently reverting a transcript repair
+- 6 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/registry/scan.ts
+ M docs/commands/README.md
+ M docs/commands/task.md
+ M src/cli/commands/task.ts
+ M src/tasks/providers/todoist.ts
+ M src/tasks/types.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -396,4 +401,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T13:28:33.801Z*
+*Last updated: 2026-08-02T15:20:37.245Z*

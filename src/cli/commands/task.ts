@@ -72,6 +72,7 @@ function printProjectMapping(rows: MappingRow[], noBroker: boolean): void {
 const dim = chalk.dim;
 const bold = chalk.bold;
 const warn = chalk.yellow;
+const ok = chalk.green;
 
 // ---------------------------------------------------------------------------
 // Wiring
@@ -529,6 +530,19 @@ export function registerTaskCommands(taskCmd: Command): void {
     });
 
   taskCmd
+    .command("archive <id>")
+    .description("Save a task's discussion into the owning project's notes, without completing it")
+    .option("--quiet", "Print nothing (for hook and webhook callers)")
+    .action(async (id, opts: { quiet?: boolean }) => {
+      const provider = buildProvider();
+      if (!provider) return reportUnconfigured();
+      const saved = await cmdArchiveTask(provider, id, { quiet: opts.quiet });
+      // Non-zero on failure so a webhook caller can tell nothing was saved
+      // rather than assuming success — the whole point is not losing content.
+      if (!saved) process.exitCode = 1;
+    });
+
+  taskCmd
     .command("done <id>")
     .description("Mark a task complete on the tracker, keeping its discussion")
     .option("--no-archive", "Complete without saving the comment thread")
@@ -556,6 +570,59 @@ export function registerTaskCommands(taskCmd: Command): void {
         );
       }
     });
+}
+
+/**
+ * `pai task archive <id>` — save a task's discussion without completing it.
+ *
+ * Split out from `done` so the webhook has something to call. Ticking the
+ * checkbox in the tracker is the completion path people actually use, and it
+ * never runs `pai task done` — so an archive wired only into that command
+ * fires on the route nobody takes and not on the route everybody does.
+ *
+ * Safe to call repeatedly: the archive rewrites one file per task from the full
+ * thread, so a duplicate webhook or a poller backstop covering the same
+ * completion costs one no-op.
+ */
+export async function cmdArchiveTask(
+  provider: TaskProvider,
+  id: string,
+  opts: { quiet?: boolean } = {}
+): Promise<boolean> {
+  if (!provider.getTask || !provider.listComments) {
+    if (!opts.quiet) console.log(warn(`  ${provider.providerId} cannot read a task's discussion.`));
+    return false;
+  }
+
+  const task = await provider.getTask(id);
+  if (!task) {
+    if (!opts.quiet) console.log(warn(`  No task ${id}.`));
+    return false;
+  }
+
+  const root = task.owner.rootPath;
+  if (!task.owner.project || !root) {
+    if (!opts.quiet) {
+      console.log(
+        warn("  No owning project — nothing archived. ") +
+          dim("Label it `pai:<project>` to give it a home.")
+      );
+    }
+    return false;
+  }
+
+  const comments = await provider.listComments(id);
+  const r = writeArchive(root, task, comments, new Date().toISOString());
+
+  if (!opts.quiet) {
+    const what = `${r.commentCount} comment${r.commentCount === 1 ? "" : "s"}`;
+    console.log(
+      r.written
+        ? ok(`  Saved (${what}) → `) + r.path
+        : dim(`  Already saved (${what}), unchanged.`)
+    );
+  }
+  return true;
 }
 
 /**
