@@ -1,28 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T21:10:12.019Z" -->
+<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T21:32:19.098Z" -->
 
 > **Last session:** 0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa
-> **Paused at:** 2026-08-02T21:10:12.019Z
+> **Paused at:** 2026-08-02T21:32:19.098Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T21:10:11.930Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T21:32:19.053Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- well home is literaelly started in ~/ so that Notes is fine. As to Solar that project could actually be moved here '/Users/i052341/Daten/Cloud/04 - Ablage/Ablage 2020 - 2029/Ablage 2026/Wohnen 2026/Fo…
+- [Task] A discussion was archived from the tracker — 2 comments on "Set up image generation MCP for PAI".  Filed provisionally at: /Users/i052341/Daten/Cloud/Development/ai/PAI/Notes/tasks/set-up-image…
+- [Task:comment] I've moved it to you does it make sense for you  (comment on "Daemon can stall silently when its storage backend is down")  [todoist:6h9mQRRMF6XcqrGh in:6h9pgQ53MWWmf67Q]
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 2766dbd feat: v0.25.0 - file into the project instead of stamping a label
-- 1 uncommitted path(s):
+- HEAD: 2eb2a03 fix: v0.25.1 - find a project whatever case it was typed in
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/memory/stats.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -394,4 +396,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T21:09:51.009Z*
+*Last updated: 2026-08-02T21:25:49.343Z*

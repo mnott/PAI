@@ -41,6 +41,48 @@ export function registerStatsCommands(
         process.exit(1);
       }
 
+      // Never wait indefinitely on a lock. These are unbounded COUNT(*) scans
+      // over a table the daemon writes continuously, so without a timeout this
+      // command does not fail — it hangs, with no output and no explanation,
+      // while `pai memory search` against the same data returns normally.
+      // Measured 2026-08-02: killed at 60s having produced zero bytes.
+      try {
+        federation.pragma("busy_timeout = 4000");
+      } catch {
+        /* older driver — the queries below still run, just without the guard */
+      }
+
+      // Say which database these numbers came from. With storageBackend set to
+      // postgres the real index lives there, and this file holds whatever
+      // SQLite still has — often far less. Reporting a small number as if it
+      // were the whole index is worse than reporting nothing, because it looks
+      // like an answer.
+      // Stop here when the live index is not in this file.
+      //
+      // These queries read the SQLite federation database. With storageBackend
+      // set to postgres that file holds almost nothing, so the figures would be
+      // wrong — and wrong in the worst direction, because a small number reads
+      // as an answer rather than as an absence. Reporting where the data
+      // actually is beats reporting a confident zero.
+      const backend = loadConfig().storageBackend;
+      if (backend !== "sqlite") {
+        console.log();
+        console.log(warn(`  Nothing to report from here.`));
+        console.log(
+          dim(`  storageBackend is "${backend}", so the live index is not in the`)
+        );
+        console.log(dim(`  SQLite federation database this command reads.`));
+        console.log();
+        console.log(`  Authoritative counts:  ${bold("pai daemon status")}`);
+        console.log();
+        try {
+          federation.close();
+        } catch {
+          /* already closed */
+        }
+        return;
+      }
+
       if (projectSlug) {
         const project = registryDb
           .prepare("SELECT id, slug, display_name FROM projects WHERE slug = ?")
