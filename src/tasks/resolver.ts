@@ -112,6 +112,28 @@ export interface ResolveInput {
   labels: string[];
   /** Name of the enclosing tracker container (sub-project), when there is one. */
   container?: string | null;
+  /**
+   * Where a task marked only with the bare `pai` marker goes. Omit to leave
+   * such a task unrouted, which sends it to the findings inbox for triage.
+   */
+  defaultOwner?: string | null;
+}
+
+/**
+ * Does this task carry the bare `pai` marker?
+ *
+ * The marker means "an AI should take this, and I do not know which one yet" —
+ * the single thing a task's location cannot express, and the reason to keep any
+ * label mechanism at all. Everything else is answered by the project it sits
+ * in, which is single-valued, visible, and changed by the act of moving it.
+ *
+ * Deliberately distinct from `pai:<name>`: that names a specific owner, this
+ * names none. Previously a bare `pai` was a near miss — it looked like an
+ * address and resolved to nothing — which meant the most natural thing to type
+ * was the one thing that silently did nothing.
+ */
+export function hasDefaultMarker(labels: string[]): boolean {
+  return labels.some((l) => l.trim().toLowerCase() === "pai");
 }
 
 /**
@@ -123,6 +145,36 @@ export interface ResolveInput {
  * no PAI project — that is expected, not a fault.
  */
 export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner {
+  // CONTAINER FIRST. A task sits in exactly one project; it can carry many
+  // labels. A multi-valued field cannot be the authoritative owner — with two
+  // `pai:` labels there is no principled winner, only whichever the code
+  // happens to see first.
+  //
+  // Labels also survive a move. On 2026-08-02 a task was moved from Clickr to
+  // AIBroker in the tracker UI and a comment on it was delivered to Clickr,
+  // because a label from its old home outranked the project it now sat in. The
+  // user had not seen the label and had not used labels in months. A field
+  // nobody is looking at should not outrank the one they just changed
+  // deliberately.
+  //
+  // So: the container decides whenever it resolves. Moving a task is then the
+  // whole act of re-assigning it, which is what someone dragging it between
+  // projects already believes they are doing.
+  if (input.container) {
+    const hit = aliases.get(normalize(input.container));
+    if (hit) {
+      return {
+        project: hit.alias,
+        rootPath: hit.rootPath,
+        source: "container",
+      };
+    }
+  }
+
+  // Labels remain the way to address a task whose container says nothing —
+  // sitting in the Inbox, at the bus root, or in a project that mirrors no PAI
+  // project. That is the case they are good at, and the only one where nothing
+  // else can express the intent.
   const label = ownerLabel(input.labels);
   if (label) {
     const hit = aliases.get(normalize(label));
@@ -133,23 +185,26 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
         source: "label",
       };
     }
-    // An explicit label that resolves to nothing is worth surfacing: the user
-    // meant to route this somewhere. Do not silently fall through to the
-    // container, which would send it to the wrong project.
+    // An explicit label that resolves to nothing is worth surfacing: someone
+    // meant to route this somewhere and named a project that does not exist.
     return { ...UNROUTED, rawHint: label };
   }
 
-  if (input.container) {
-    const hit = aliases.get(normalize(input.container));
+  // The bare marker: an AI should take this, nobody said which. Last, because
+  // anything more specific is a better answer — this is the Inbox case, where
+  // there is no location to read and no owner named.
+  if (input.defaultOwner && hasDefaultMarker(input.labels)) {
+    const hit = aliases.get(normalize(input.defaultOwner));
     if (hit) {
-      return {
-        project: hit.alias,
-        rootPath: hit.rootPath,
-        source: "container",
-      };
+      return { project: hit.alias, rootPath: hit.rootPath, source: "label" };
     }
-    return { ...UNROUTED, rawHint: input.container };
+    return { ...UNROUTED, rawHint: input.defaultOwner };
   }
+
+  // Container present but unrecognised, and nothing else to go on. Report what
+  // was tried — "Reading List 📚" maps to no PAI project, which is expected
+  // rather than a fault.
+  if (input.container) return { ...UNROUTED, rawHint: input.container };
 
   return { ...UNROUTED };
 }
