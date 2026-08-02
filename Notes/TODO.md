@@ -1,24 +1,24 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0011 - 2026-08-02 - Todoist Provider Task And Project Creation Flow" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T10:05:55.698Z" -->
+<!-- pai:checkpoint authored="auto" session="0011 - 2026-08-02 - Todoist Provider Api Implementation Verification" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T12:42:11.591Z" -->
 
-> **Last session:** 0011 - 2026-08-02 - Todoist Provider Task And Project Creation Flow
-> **Paused at:** 2026-08-02T10:05:55.698Z
+> **Last session:** 0011 - 2026-08-02 - Todoist Provider Api Implementation Verification
+> **Paused at:** 2026-08-02T12:42:11.591Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T10:05:55.664Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T12:42:11.559Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:Jobs Grazyna] Received. Two things done on my side so the file's load-bearing status survives a session with no memory of this exchange:  1. Warning block added at the top of the runbook itse…
+- If I move the whole executive search project below Jobs Matthias will that help?
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 4a7e593 fix: v0.18.4 - say so when the tracker silently truncates what we wrote
+- HEAD: e2aebfe docs: a warning is not a fix — say so where someone would conclude otherwise
 - 1 uncommitted path(s):
 
 ```
@@ -394,4 +394,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T10:05:52.556Z*
+*Last updated: 2026-08-02T12:41:59.194Z*

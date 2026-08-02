@@ -123,6 +123,64 @@ async function collect<T>(token: string, path: string): Promise<T[]> {
 /** A bare calendar date — the only shape `due_date` accepts. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** A project inside the bus, and the sub-project whose name decides its owner. */
+export interface OwnerContainer {
+  project: WireProject;
+  /** Name of the nearest ancestor directly under the root. Null at the root. */
+  ownerName: string | null;
+}
+
+/**
+ * Every project in the bus subtree, each mapped to the name that owns it.
+ *
+ * Ownership belongs to the sub-projects directly under the root — they are the
+ * ones mirroring PAI projects. Anything deeper is a FOLDER: a way to group work
+ * inside one owner's inbox, not a new owner. So `Claude / Jobs Matthias /
+ * Executive Search` is eighteen tasks belonging to Jobs Matthias, filed under a
+ * heading.
+ *
+ * This used to take the root and its direct children only. A grandchild was not
+ * merely unrouted, it was never QUERIED — its tasks did not exist as far as the
+ * bus was concerned. Which is the worst possible failure for this: the user
+ * organises work into a sub-project, it looks tidy, and nothing is ever
+ * dispatched. Observed 2026-08-02 with exactly the tree above.
+ *
+ * Descends from the root rather than walking up from each project, so a cycle
+ * in the parent chain — which the API should never produce, but a bad write
+ * could — cannot hang the poller.
+ */
+export function ownerContainers(
+  projects: WireProject[],
+  root: string
+): Map<string, OwnerContainer> {
+  const live = projects.filter((p) => !p.is_archived && !p.is_deleted);
+  const childrenOf = new Map<string, WireProject[]>();
+  for (const p of live) {
+    if (!p.parent_id) continue;
+    const siblings = childrenOf.get(p.parent_id);
+    if (siblings) siblings.push(p);
+    else childrenOf.set(p.parent_id, [p]);
+  }
+
+  const out = new Map<string, OwnerContainer>();
+  const rootProject = live.find((p) => p.id === root);
+  if (!rootProject) return out;
+
+  // The root carries no owner name: a task sitting there is unrouted, which is
+  // how the findings inbox is meant to work.
+  out.set(root, { project: rootProject, ownerName: null });
+
+  const walk = (project: WireProject, ownerName: string): void => {
+    if (out.has(project.id)) return; // cycle guard
+    out.set(project.id, { project, ownerName });
+    for (const child of childrenOf.get(project.id) ?? []) walk(child, ownerName);
+  };
+
+  for (const top of childrenOf.get(root) ?? []) walk(top, top.name);
+
+  return out;
+}
+
 /**
  * Report a write that the server silently shortened.
  *
@@ -250,12 +308,9 @@ export class TodoistProvider implements TaskProvider {
     // for names containing emoji, so a name query would silently find nothing.
     const projects = await collect<WireProject>(token, "/projects");
     const root = this.config.rootProjectId;
-    const inBus = new Map<string, WireProject>();
-    for (const p of projects) {
-      if (p.is_archived || p.is_deleted) continue;
-      if (p.id === root || p.parent_id === root) inBus.set(p.id, p);
-    }
-    if (inBus.size === 0) return [];
+    const owners = ownerContainers(projects, root);
+    if (owners.size === 0) return [];
+    const inBus = new Map([...owners].map(([id, o]) => [id, o.project]));
 
     // Query per bus project rather than draining every task on the account.
     // The account may hold thousands; the bus holds a handful.
@@ -269,13 +324,16 @@ export class TodoistProvider implements TaskProvider {
     for (const w of wire) {
       if (w.checked || w.is_deleted) continue;
 
-      const container = inBus.get(w.project_id);
-      if (!container) continue;
+      const entry = owners.get(w.project_id);
+      if (!entry) continue;
 
-      // The bus root itself is not an owner — only its sub-projects mirror
-      // PAI projects. A task sitting at the root has no container hint.
-      const containerName = container.id === root ? null : container.name;
-      const owner = resolveOwner({ labels: w.labels ?? [], container: containerName }, this.aliases);
+      // The owning name is the nearest ancestor directly under the root, NOT
+      // the project the task literally sits in. The bus root itself is not an
+      // owner — a task at the root has no container hint.
+      const owner = resolveOwner(
+        { labels: w.labels ?? [], container: entry.ownerName },
+        this.aliases
+      );
 
       if (opts.owner && owner.project !== opts.owner) continue;
       if (opts.includeUnrouted === false && owner.project === null) continue;
