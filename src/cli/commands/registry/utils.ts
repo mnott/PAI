@@ -2,7 +2,39 @@
 
 import type { Database } from "better-sqlite3";
 import { now } from "../../utils.js";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
+
+/**
+ * Would writing this encoded_dir replace a working one with a broken one?
+ *
+ * `encodeDir` is lossy: `~` and emoji do not survive it, so a value derived
+ * from a project's path can name a folder Claude Code never created. Every
+ * caller here derives its value that way, and this function is the single
+ * point they all pass through.
+ *
+ * `pai registry reconnect` repairs those by reading the cwd recorded inside the
+ * transcripts. Without this check the next scan silently reverts the repair —
+ * and it reverts it in the most confusing possible way, because a read taken
+ * straight after the repair still shows it. Observed twice on 2026-08-02:
+ * three projects reconnected, verified, and rediscovered as broken within the
+ * hour, with the repair command reporting success both times.
+ *
+ * Permits the write when the new value resolves to transcripts, or when the
+ * existing one resolves to nothing — i.e. whenever it cannot make things worse.
+ */
+function worthWriting(db: Database, projectId: number, encodedDir: string): boolean {
+  if (transcriptFiles(join(claudeProjectsDir(), encodedDir)).length > 0) return true;
+
+  const row = db
+    .prepare("SELECT encoded_dir FROM projects WHERE id = ?")
+    .get(projectId) as { encoded_dir: string | null } | undefined;
+
+  const current = row?.encoded_dir;
+  if (!current) return true;
+
+  return transcriptFiles(join(claudeProjectsDir(), current)).length === 0;
+}
 
 /**
  * Upsert a project row. Returns { id, isNew }.
@@ -32,7 +64,10 @@ export function upsertProject(
       .prepare("SELECT id FROM projects WHERE encoded_dir = ?")
       .get(encodedDir) as { id: number } | undefined;
 
-    if (!encodedOwner || encodedOwner.id === byPath.id) {
+    if (
+      (!encodedOwner || encodedOwner.id === byPath.id) &&
+      worthWriting(db, byPath.id, encodedDir)
+    ) {
       db.prepare(
         "UPDATE projects SET encoded_dir = ?, updated_at = ? WHERE id = ?"
       ).run(encodedDir, ts, byPath.id);

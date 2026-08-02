@@ -1,37 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0013 - 2026-08-02 - Archival On Completion Pattern" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:27:27.786Z" -->
+<!-- pai:checkpoint authored="auto" session="0013 - 2026-08-02 - Archival On Completion Pattern" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:43:36.265Z" -->
 
 > **Last session:** 0013 - 2026-08-02 - Archival On Completion Pattern
-> **Paused at:** 2026-08-02T13:27:27.786Z
+> **Paused at:** 2026-08-02T13:43:36.265Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T13:27:27.744Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T13:43:36.218Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- so we cannot each day re-auth something right. there needs to be a better solution. More importantly, what I am seeing. I now stairt[Session:AIBroker] Both your points fixed, and the second one settle…
-- ok are we both cpp'd now pai and aibroker?
 - those 67 can you start working on them
+- yes
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 9440af7 feat: v0.19.0 - keep the conversation that happened on a task
-- 8 uncommitted path(s):
+- HEAD: c42942c feat: v0.20.0 - pai registry reconnect, and a correction to how bad this was
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M docs/commands/README.md
- M docs/commands/registry.md
- M package.json
- M src/cli/commands/registry/index.ts
-?? src/cli/commands/registry/reconnect.ts
-?? src/registry/moved.test.ts
-?? src/registry/moved.ts
+ M src/cli/commands/registry/scan.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -403,4 +396,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T13:12:52.460Z*
+*Last updated: 2026-08-02T13:28:33.801Z*
