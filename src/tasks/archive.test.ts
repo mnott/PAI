@@ -97,6 +97,16 @@ describe("writeArchive", () => {
     expect(existsSync(r.path)).toBe(false);
   });
 
+  it("treats a re-archive at a later time as unchanged", () => {
+    // The completion stamp is `new Date()` at call time. Comparing it would
+    // make every re-archive differ by construction — the file rewritten on
+    // every duplicate delivery, and the owning session notified again each
+    // time about a discussion it has already been told about.
+    writeArchive(root, TASK, COMMENTS, "2026-08-02T14:00:00.000Z");
+    const later = writeArchive(root, TASK, COMMENTS, "2026-08-02T23:59:59.000Z");
+    expect(later.written).toBe(false);
+  });
+
   it("does not rewrite an unchanged file", () => {
     // A recurring task is archived on every completion. Rewriting an identical
     // file daily would churn its mtime and make the indexer re-read it for
