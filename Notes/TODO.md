@@ -1,33 +1,28 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Session Archival Strategy" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:31:45.317Z" -->
+<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Completion Event Investigation Continued" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:36:13.563Z" -->
 
-> **Last session:** 0017 - 2026-08-02 - Session Archival Strategy
-> **Paused at:** 2026-08-02T15:31:45.317Z
+> **Last session:** 0017 - 2026-08-02 - Task Completion Event Investigation Continued
+> **Paused at:** 2026-08-02T15:36:13.563Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T15:31:45.281Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T15:36:13.534Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- I ticked it, nothing happened on the Jobs Matthias session. so untick it again and help me understand what to do
-- well you know we had the idea that we want to archive the discussion if there was one happening on a task
+- still didnt appear to happen, so untick again, then create some task next to it and tick it after
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 621a323 feat: v0.21.0 - pai task archive, so ticking the box keeps the discussion too
-- 5 uncommitted path(s):
+- HEAD: 6f846f1 fix: v0.21.1 - archive a discussion, not every completion
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M package.json
- M src/cli/commands/task.ts
- M src/tasks/archive.test.ts
- M src/tasks/archive.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -399,4 +394,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T15:28:02.160Z*
+*Last updated: 2026-08-02T15:35:36.267Z*
