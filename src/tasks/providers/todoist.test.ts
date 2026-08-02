@@ -1,5 +1,54 @@
-import { describe, it, expect } from "vitest";
-import { dueField } from "./todoist.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { dueField, warnIfTruncated } from "./todoist.js";
+
+describe("warnIfTruncated", () => {
+  /**
+   * Todoist caps a task description at 16,383 characters and enforces it by
+   * TRUNCATION, not rejection — the request returns 200 and reports success.
+   * Measured 2026-08-02: a 19,457-character runbook stored as 16,383, losing
+   * the close-out section including the completion command, silently.
+   */
+  const warned = () => {
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return {
+      spy,
+      output: () => spy.mock.calls.map((c) => String(c[0])).join(""),
+    };
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("warns, with both counts, when the server shortened the text", () => {
+    const { output } = warned();
+    warnIfTruncated("task description", "x".repeat(19457), "x".repeat(16383));
+    expect(output()).toContain("truncated");
+    expect(output()).toContain("19457");
+    expect(output()).toContain("16383");
+    expect(output()).toContain("3074");
+  });
+
+  it("says nothing when the text came back whole", () => {
+    // The check must be silent in the normal case or it becomes noise and
+    // stops being read — which is how a real warning turns into background.
+    const { output } = warned();
+    warnIfTruncated("task description", "abc", "abc");
+    expect(output()).toBe("");
+  });
+
+  it("says nothing when there was nothing to send", () => {
+    const { output } = warned();
+    warnIfTruncated("task description", undefined, "");
+    warnIfTruncated("task description", "", "");
+    expect(output()).toBe("");
+  });
+
+  it("does not warn when the server returned MORE than was sent", () => {
+    // Some fields come back normalised or decorated. Only shrinkage is loss.
+    const { output } = warned();
+    warnIfTruncated("comment", "abc", "abc (edited)");
+    expect(output()).toBe("");
+  });
+});
 
 describe("dueField", () => {
   it("sends strict ISO as due_date, untouched by the parser", () => {
