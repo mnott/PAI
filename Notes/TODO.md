@@ -1,28 +1,29 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Completion Event Investigation Continued" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:36:13.563Z" -->
+<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Completion Event Investigation Continued" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:40:33.665Z" -->
 
 > **Last session:** 0017 - 2026-08-02 - Task Completion Event Investigation Continued
-> **Paused at:** 2026-08-02T15:36:13.563Z
+> **Paused at:** 2026-08-02T15:40:33.665Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T15:36:13.534Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T15:40:33.629Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - still didnt appear to happen, so untick again, then create some task next to it and tick it after
+- yeah got it but would it not make sense to after that also fire a message to the session if it is there to let it know about it - it may know where to correctly file that
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 6f846f1 fix: v0.21.1 - archive a discussion, not every completion
+- HEAD: e3489b2 feat: v0.22.0 - tell the owning session where an archived discussion landed
 - 1 uncommitted path(s):
 
 ```
-M Notes/TODO.md
+M src/tasks/archive.ts
 ```
 
 <!-- /pai:checkpoint -->

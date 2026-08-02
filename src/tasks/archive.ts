@@ -116,6 +116,14 @@ export function renderArchive(
   return out.join("\n");
 }
 
+/** Drop the `completed:` frontmatter line, so two archives are comparable. */
+function withoutStamp(body: string): string {
+  return body
+    .split("\n")
+    .filter((l) => !l.startsWith("completed: "))
+    .join("\n");
+}
+
 /**
  * Write the archive, skipping the write when nothing changed.
  *
@@ -144,7 +152,13 @@ export function writeArchive(
 
   if (existsSync(path)) {
     try {
-      if (readFileSync(path, "utf-8") === body) {
+      // Compare without the completion stamp. It is `new Date()` at call time,
+      // so including it makes every re-archive differ from the last by
+      // construction — the unchanged case could never fire, the file would be
+      // rewritten on every duplicate delivery, and the owning session would be
+      // notified again each time about a discussion it has already seen. The
+      // thread is what is being preserved; when to notice it is not part of it.
+      if (withoutStamp(readFileSync(path, "utf-8")) === withoutStamp(body)) {
         return { path, written: false, commentCount: comments.length };
       }
     } catch {
