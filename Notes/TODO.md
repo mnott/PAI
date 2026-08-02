@@ -1,29 +1,13 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T12:55:56.006Z" -->
+<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release" ts="2026-08-02T12:57:58.286Z" -->
 
 > **Last session:** 0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release
-> **Paused at:** 2026-08-02T12:55:56.006Z
+> **Paused at:** 2026-08-02T12:57:58.286Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T12:55:55.969Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
-
-### What was being asked
-
-- I did the auth, fix the whole thing please but right now I did add a comment and it came through
-
-### Working tree
-
-- Branch: `main`
-- HEAD: fbcd67b fix: v0.18.6 - a shared project must not inherit dispatch rights
-- 1 uncommitted path(s):
-
-```
-M Notes/TODO.md
-```
+Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
 <!-- /pai:checkpoint -->
 
@@ -394,4 +378,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T12:55:53.208Z*
+*Last updated: 2026-08-02T12:57:58.286Z*
