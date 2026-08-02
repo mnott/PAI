@@ -13,6 +13,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import type { TodoistProvider } from "./providers/todoist.js";
 import type { Transport } from "./dispatch.js";
@@ -182,6 +183,14 @@ export interface TickOptions {
    * the code that misreported a delivered task as failed.
    */
   stateFile?: string;
+  /**
+   * Override webhook detection. Left unset, the tick asks AIBroker once.
+   *
+   * Present so tests can pin both sides of the precedence rule without a live
+   * daemon — the whole point of the flag is which of two subsystems decides,
+   * and that is not testable if it can only be discovered by shelling out.
+   */
+  webhookActive?: boolean;
 }
 
 export interface TickReport {
@@ -192,6 +201,76 @@ export interface TickReport {
   probed: number;
 }
 
+/**
+ * Is a tracker webhook delivering completion events on this machine?
+ *
+ * Asked of AIBroker, which owns the receiver: `todoist status` reports whether
+ * an OAuth grant is on file, and without a grant no completion events arrive.
+ * Deliberately conservative — anything unexpected reads as "no webhook", which
+ * leaves the due-date inference running. That is the pre-existing behaviour and
+ * degrades to guessing rather than to silence.
+ *
+ * Cheap enough to run per tick (one short-lived process, once), and read live
+ * rather than cached because a grant can lapse at any moment — that happened
+ * mid-afternoon on 2026-08-01, and a cached "yes" would have suppressed the
+ * fallback exactly when it was needed.
+ */
+function detectWebhook(bin = "aibroker"): boolean {
+  try {
+    const out = execFileSync(bin, ["todoist", "status"], {
+      timeout: 10_000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // A grant on file is the only thing that matters; without one the receiver
+    // can verify webhooks but cannot resolve them, so no completion lands.
+    return /authoris|authoriz|token on file|grant/i.test(out) && !/no (token|grant)/i.test(out);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Discard restore entries whose run is no longer in flight.
+ *
+ * `triggeredRestore` belongs to one run: it records the occurrence that run
+ * consumed, to be handed back when the run completes. It was only ever consumed
+ * on the completion path, so a run that ended any other way — abandoned, or
+ * released by hand — left the entry behind, and it then fired on that task's
+ * NEXT completion, whenever that came.
+ *
+ * Observed 2026-08-02: runs ended by hand the previous night left entries that
+ * fired on the first unattended 08:00 completion and wrote the due date from
+ * 08-03 back to 08-02. That date was already past, so the task was instantly
+ * overdue and the following tick would have dispatched a duplicate sweep.
+ *
+ * Clearing it at each release site would work, and would have to be remembered
+ * at every site added later. Deriving it instead makes the class unreachable:
+ * an entry with no claim behind it describes a run that is over, whatever ended
+ * it. The claim is the only thing that says a run is still in flight.
+ */
+function dropOrphanedRestores(tasks: Task[], state: PersistedState): void {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+
+  for (const id of Object.keys(state.triggeredRestore)) {
+    const task = byId.get(id);
+
+    // Gone from the open list entirely — nothing will complete it again.
+    if (!task) {
+      delete state.triggeredRestore[id];
+      continue;
+    }
+
+    // Liveness is the RUNNING label, not our own startedAt. A webhook-triggered
+    // run is claimed by AIBroker before this poller ever sees it, so it has no
+    // startedAt here — keying on that would discard exactly the entries the
+    // webhook path depends on, one tick after recording them.
+    if (!isRunning(task) && state.startedAt[id] === undefined) {
+      delete state.triggeredRestore[id];
+    }
+  }
+}
+
 export async function tick(opts: TickOptions): Promise<TickReport> {
   const now = opts.now ?? Date.now();
   const stateFile = opts.stateFile ?? STATE_FILE;
@@ -200,6 +279,11 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
 
   const tasks = await opts.provider.listOpen({ includeUnrouted: true });
   const ordered = dispatchOrder(tasks);
+
+  if (!opts.dryRun) dropOrphanedRestores(tasks, state);
+
+  // Resolved once per tick, not per task: it is a property of the machine.
+  const webhookActive = opts.webhookActive ?? detectWebhook();
 
   for (const task of ordered) {
     // Captured before lastSeenDue is overwritten below — both the trigger
@@ -212,6 +296,7 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
       history: state.history,
       lastSeenDue: state.lastSeenDue,
       claimSeenAt: state.claimSeenAt,
+      webhookActive,
     });
     let note = "";
 

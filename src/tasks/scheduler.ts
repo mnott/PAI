@@ -303,6 +303,15 @@ export interface DecideOptions {
    */
   lastSeenDue?: Record<string, string>;
   /**
+   * True when a tracker webhook is delivering completion events.
+   *
+   * When set, the due-date trigger inference is switched off: the webhook sees
+   * the real event, so the guess can only add false positives. Defaults to
+   * false so a machine with no webhook keeps the fallback — which is the case
+   * the inference was written for.
+   */
+  webhookActive?: boolean;
+  /**
    * Task id → when this poller FIRST saw the task carrying a running claim.
    *
    * Needed because the claim is no longer only ours to make: AIBroker's webhook
@@ -410,7 +419,28 @@ export function decide(task: Task, opts: DecideOptions): Decision {
   // the trigger and once for the completion, and the period check rejects it.
   const wasClaimed = opts.claimSeenAt?.[task.id] !== undefined;
 
-  if (!wasClaimed && wasTicked(task, prevDue)) {
+  // Suppressed entirely where a webhook is live, and that is a deliberate
+  // precedence decision rather than a tuning knob.
+  //
+  // The inference reads "due advanced by exactly one period, unclaimed" as a
+  // tick. For a DAILY recurrence that is byte-identical to a human dragging the
+  // task forward one day, and to this poller repairing a due date it wrote
+  // wrongly itself. There is no local signal that separates them — it is an
+  // irreducible false positive, not something a tighter check can remove.
+  //
+  // A webhook has the actual item:completed event and no ambiguity at all. So
+  // where one is running, guessing is strictly worse than not guessing, and
+  // leaving both active means the fallback keeps firing on reschedules the
+  // webhook correctly ignored — which is how repairing one duplicate sweep
+  // produced a second on 2026-08-02.
+  //
+  // The costs are asymmetric, which is what settles it. A false positive
+  // dispatches real work nobody asked for — a sweep that scrapes, writes and
+  // sends mail. A false negative merely delays a hand-triggered run until the
+  // next tick, which then dispatches it on the ordinary overdue path. Guessing
+  // wrong in the expensive direction to save minutes in the cheap one is a bad
+  // trade wherever the unambiguous signal exists.
+  if (!opts.webhookActive && !wasClaimed && wasTicked(task, prevDue)) {
     // Restore only a slot that has not passed. Putting back an occurrence that
     // is already overdue leaves a task that reads as late the instant it is
     // written, for a run that is starting right now.
