@@ -1,29 +1,28 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T20:40:59.104Z" -->
+<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T20:59:33.834Z" -->
 
 > **Last session:** 0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa
-> **Paused at:** 2026-08-02T20:40:59.104Z
+> **Paused at:** 2026-08-02T20:59:33.834Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T20:40:59.003Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T20:59:33.802Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Task] A discussion was archived from the tracker — 1 comment on "Add the Home session as project to the Claude project please.".  Filed provisionally at: /Users/i052341/Daten/Cloud/Development/ai/PAI…
+- well I added a task to Home and it arrived in the session. Yet when I closed it nothinghappened there.
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: bf76b36 feat: v0.23.0 - the project a task sits in decides who owns it
-- 2 uncommitted path(s):
+- HEAD: 63e1cca feat: v0.24.0 - creating a tracker sub-project also makes it resolve
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/task.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -395,4 +394,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T20:36:48.753Z*
+*Last updated: 2026-08-02T20:54:57.027Z*

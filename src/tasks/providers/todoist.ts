@@ -463,8 +463,26 @@ export class TodoistProvider implements TaskProvider {
       throw new Error("Todoist provider is not configured — run `pai setup`.");
     }
 
+    // Prefer LOCATION over a label. Ownership resolves from the project a task
+    // sits in, so filing it into the owner's sub-project says the same thing
+    // the label would — visibly, in one place, and in the field someone changes
+    // when they re-assign it. A label added here would only be a second, quieter
+    // answer to the same question, and one that survives a move: on 2026-08-02 a
+    // task moved between projects was still routed by its old label.
+    //
+    // Only when no sub-project mirrors this owner does the label do real work,
+    // and then it is the sole way to express the intent.
+    let ownerProjectId: string | null = null;
+    if (task.owner && !task.into) {
+      ownerProjectId = await this.subProjectForOwner(task.owner);
+    }
+
     const labels = [...(task.labels ?? [])];
-    if (task.owner && !labels.some((l) => l.toLowerCase() === `pai:${task.owner!.toLowerCase()}`)) {
+    const needsLabel = task.owner && !task.into && !ownerProjectId;
+    if (
+      needsLabel &&
+      !labels.some((l) => l.toLowerCase() === `pai:${task.owner!.toLowerCase()}`)
+    ) {
       labels.push(`pai:${task.owner}`);
     }
 
@@ -476,7 +494,7 @@ export class TodoistProvider implements TaskProvider {
     // in the root, where they bury each other across projects.
     const projectId = task.into
       ? (await this.findOrCreateSubProject(task.into)).id
-      : this.config.rootProjectId;
+      : (ownerProjectId ?? this.config.rootProjectId);
 
     const created = await call<WireTask>(token, "/tasks", {
       method: "POST",
@@ -552,6 +570,31 @@ export class TodoistProvider implements TaskProvider {
    * filed against. Archived and deleted ones are excluded: they cannot receive
    * work, so listing them would overstate what is reachable.
    */
+  /**
+   * The existing sub-project that resolves to this owner, if there is one.
+   *
+   * Matched by running the ordinary ownership resolution over each sub-project
+   * name rather than comparing strings, because a display name is rarely its
+   * PAI slug — "AIBroker" is `broker`, "SL" is `seriousletter`. Reusing the
+   * resolver means filing and reading cannot disagree about where a task
+   * belongs, which is a class of bug we have already paid for.
+   *
+   * Deliberately does NOT create anything. Filing a task should not bring a new
+   * address into existence as a side effect; that is `--into`'s job, asked for
+   * explicitly.
+   */
+  private async subProjectForOwner(owner: string): Promise<string | null> {
+    try {
+      for (const p of await this.listSubProjects()) {
+        const resolved = resolveOwner({ labels: [], container: p.name }, this.aliases);
+        if (resolved.project === owner) return p.id;
+      }
+    } catch {
+      // Unreachable tracker — fall back to the label, which still routes.
+    }
+    return null;
+  }
+
   async listSubProjects(): Promise<Array<{ id: string; name: string }>> {
     const token = this.token();
     if (!token || !this.config.rootProjectId) {
