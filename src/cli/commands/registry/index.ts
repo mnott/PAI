@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { cmdScan, loadScanConfig, saveScanConfig, resolveHome } from "./scan.js";
 import { cmdMigrate } from "./migrate.js";
 import { cmdDedupe } from "./dedupe.js";
+import { cmdReconnect } from "./reconnect.js";
 import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -196,6 +197,22 @@ export function registerRegistryCommands(
         execute: opts.execute,
         dbPath: join(homedir(), ".pai", "registry.db"),
       });
+    });
+
+  // pai registry reconnect
+  registryCmd
+    .command("reconnect")
+    .description(
+      "Point projects back at the transcripts they lost.\n" +
+        "A project's encoded_dir is written once and never updated when the project\n" +
+        "moves, so handovers, session digests and checkpoints silently find nothing.\n" +
+        "Repairs are read from the transcripts themselves — each records the cwd it ran\n" +
+        "in — rather than re-derived from the naming rule that broke.\n" +
+        "Dry-run by default; --execute writes the corrected rows in one transaction."
+    )
+    .option("--execute", "Actually write the corrections (default is dry-run)")
+    .action((opts: { execute?: boolean }) => {
+      cmdReconnect(getDb(), { execute: opts.execute });
     });
 
   // pai registry lookup --path <path>

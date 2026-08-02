@@ -1,33 +1,37 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:04:11.029Z" -->
+<!-- pai:checkpoint authored="auto" session="0013 - 2026-08-02 - Archival On Completion Pattern" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T13:27:27.786Z" -->
 
-> **Last session:** 0012 - 2026-08-02 - Todoist Sub Project Hierarchy Refinement And Release
-> **Paused at:** 2026-08-02T13:04:11.029Z
+> **Last session:** 0013 - 2026-08-02 - Archival On Completion Pattern
+> **Paused at:** 2026-08-02T13:27:27.786Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T13:04:11.000Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T13:27:27.744Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- OK, cpp that. and btw I don't get this constant talk about tokens. it is currently working. I just re-authorized also, no idea what this is aboutz
 - so we cannot each day re-auth something right. there needs to be a better solution. More importantly, what I am seeing. I now stairt[Session:AIBroker] Both your points fixed, and the second one settle…
+- ok are we both cpp'd now pai and aibroker?
+- those 67 can you start working on them
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 2af8f9d docs: the 401 climb was never throttling — correct a claim we propagated as fact
-- 5 uncommitted path(s):
+- HEAD: 9440af7 feat: v0.19.0 - keep the conversation that happened on a task
+- 8 uncommitted path(s):
 
 ```
-M src/cli/commands/task.ts
- M src/tasks/providers/todoist.ts
- M src/tasks/types.ts
-?? src/tasks/archive.test.ts
-?? src/tasks/archive.ts
+M Notes/TODO.md
+ M docs/commands/README.md
+ M docs/commands/registry.md
+ M package.json
+ M src/cli/commands/registry/index.ts
+?? src/cli/commands/registry/reconnect.ts
+?? src/registry/moved.test.ts
+?? src/registry/moved.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -399,4 +403,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T12:57:58.286Z*
+*Last updated: 2026-08-02T13:12:52.460Z*
