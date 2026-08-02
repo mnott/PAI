@@ -8,6 +8,7 @@ import { ok, warn, err, dim, bold } from "../../utils.js";
 import { encodeDir } from "../../utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../../registry/migrate.js";
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
+import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import type { Database } from "better-sqlite3";
 
@@ -348,8 +349,10 @@ export function performScan(db: Database): ScanResult {
 
     for (const marker of markers) {
       const registeredRow = db
-        .prepare("SELECT id, root_path, slug FROM projects WHERE slug = ?")
-        .get(marker.slug) as { id: number; root_path: string; slug: string } | undefined;
+        .prepare("SELECT id, root_path, slug, encoded_dir FROM projects WHERE slug = ?")
+        .get(marker.slug) as
+        | { id: number; root_path: string; slug: string; encoded_dir: string | null }
+        | undefined;
 
       if (!registeredRow) continue;
 
@@ -373,7 +376,23 @@ export function performScan(db: Database): ScanResult {
         const encodedSafe = !encodedOwner || encodedOwner.id === registeredRow.id;
         const pathSafe = !pathOwner || pathOwner.id === registeredRow.id;
 
-        if (encodedSafe && pathSafe) {
+        // Never trade a working encoded_dir for one that resolves to nothing.
+        //
+        // encodeDir is lossy — `~` and emoji do not survive it — so re-deriving
+        // from the path can produce a folder name Claude Code never created.
+        // `pai registry reconnect` repairs exactly those by reading the cwd out
+        // of the transcripts, and this scan runs every 30 minutes from the
+        // daemon: without this check it silently reverts that repair, and the
+        // repair looks like it worked because a fresh read right afterwards
+        // still shows it. Observed on 2026-08-02 — three projects reconnected,
+        // reverted, and rediscovered as broken within the hour.
+        const derivedResolves = transcriptFiles(join(claudeProjectsDir(), newEncoded)).length > 0;
+        const currentResolves =
+          Boolean(registeredRow.encoded_dir) &&
+          transcriptFiles(join(claudeProjectsDir(), registeredRow.encoded_dir!)).length > 0;
+        const encodedWorthWriting = derivedResolves || !currentResolves;
+
+        if (encodedSafe && pathSafe && encodedWorthWriting) {
           db.prepare(
             "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
           ).run(markerRoot, newEncoded, now4, registeredRow.id);
