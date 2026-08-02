@@ -1,35 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0015 - 2026-08-02 - Task Archival, Session Reconnection, And Webhook Event Testing" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:23:35.612Z" -->
+<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Session Archival Strategy" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:31:45.317Z" -->
 
-> **Last session:** 0015 - 2026-08-02 - Task Archival, Session Reconnection, And Webhook Event Testing
-> **Paused at:** 2026-08-02T15:23:35.612Z
+> **Last session:** 0017 - 2026-08-02 - Session Archival Strategy
+> **Paused at:** 2026-08-02T15:31:45.317Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T15:23:35.573Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T15:31:45.281Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- yes
-- does ticking off a task in todoist allow us to capture that event?
-- well I'd like to do that, so you could do 2 things: a) build it reactive, so via webhook reacting, b) untick the one i just ticked, so that c) I can then try it
+- I ticked it, nothing happened on the Jobs Matthias session. so untick it again and help me understand what to do
+- well you know we had the idea that we want to archive the discussion if there was one happening on a task
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: a54758f fix: v0.20.1 - stop the scan silently reverting a transcript repair
-- 6 uncommitted path(s):
+- HEAD: 621a323 feat: v0.21.0 - pai task archive, so ticking the box keeps the discussion too
+- 5 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M docs/commands/README.md
- M docs/commands/task.md
+ M package.json
  M src/cli/commands/task.ts
- M src/tasks/providers/todoist.ts
- M src/tasks/types.ts
+ M src/tasks/archive.test.ts
+ M src/tasks/archive.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -401,4 +399,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T15:20:37.245Z*
+*Last updated: 2026-08-02T15:28:02.160Z*
