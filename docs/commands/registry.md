@@ -19,6 +19,7 @@ pai registry <subcommand> [options]
 | [`pai registry stats`](#pai-registry-stats) | Show summary statistics for the registry |
 | [`pai registry rebuild`](#pai-registry-rebuild) | Erase all registry data and rebuild from the filesystem (destructive) |
 | [`pai registry dedupe`](#pai-registry-dedupe) | Merge registry rows that describe the same project. |
+| [`pai registry reconnect`](#pai-registry-reconnect) | Point projects back at the transcripts they lost. |
 | [`pai registry lookup`](#pai-registry-lookup) | Find the project slug for a filesystem path (for use in scripts) |
 
 ### pai registry scan
@@ -64,6 +65,23 @@ Dry-run by default; --execute backs up the registry first and merges in one tran
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--execute` | Actually perform the merge (default is dry-run) |  |
+
+
+### pai registry reconnect
+
+Point projects back at the transcripts they lost.
+
+A project's encoded_dir is written once and never updated when the project
+moves, so handovers, session digests and checkpoints silently find nothing.
+Repairs are read from the transcripts themselves — each records the cwd it ran
+in — rather than re-derived from the naming rule that broke.
+Dry-run by default; --execute writes the corrected rows in one transaction.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--execute` | Actually write the corrections (default is dry-run) |  |
 
 
 ### pai registry lookup

@@ -139,6 +139,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai registry lookup` | Find the project slug for a filesystem path (for use in scripts) |
 | `pai registry migrate` | Import data from ~/.claude/session-registry.json |
 | `pai registry rebuild` | Erase all registry data and rebuild from the filesystem (destructive) |
+| `pai registry reconnect` | Point projects back at the transcripts they lost. |
 | `pai registry scan` | Walk ~/.claude/projects/ and configured scan_dirs, upsert all projects |
 | `pai registry stats` | Show summary statistics for the registry |
 | `pai restore` | Restore from a backup directory (created by pai backup) |
