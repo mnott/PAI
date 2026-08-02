@@ -141,6 +141,15 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  *
  * Warns rather than throws. The task exists and is usable; failing the call
  * would discard work that mostly succeeded. But it must not pass silently.
+ *
+ * THIS DOES NOT PREVENT THE LOSS. The truncation still happens and the tail is
+ * still gone — all this does is turn a silent data-loss bug into a loud one.
+ * That is a large improvement and it is not a resolution, and the difference
+ * matters because the obvious wrong conclusion from reading this function is
+ * "handled, so long content is fine now". It is not: whether anything is done
+ * about the warning depends on someone reading stderr. Long content belongs in
+ * a file, with the field pointing at it. Visible failure is not absence of
+ * failure.
  */
 export function warnIfTruncated(field: string, sent: string | undefined, stored: string | undefined): void {
   const before = sent?.length ?? 0;
