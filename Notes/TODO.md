@@ -1,34 +1,29 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T22:02:27.238Z" -->
+<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T22:06:37.840Z" -->
 
 > **Last session:** 0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa
-> **Paused at:** 2026-08-02T22:02:27.238Z
+> **Paused at:** 2026-08-02T22:06:37.840Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T22:02:27.174Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T22:06:37.807Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Task] A discussion was archived from the tracker — 2 comments on "Set up image generation MCP for PAI".  Filed provisionally at: /Users/i052341/Daten/Cloud/Development/ai/PAI/Notes/tasks/set-up-image…
 - [Task:comment] I've moved it to you does it make sense for you  (comment on "Daemon can stall silently when its storage backend is down")  [todoist:6h9mQRRMF6XcqrGh in:6h9pgQ53MWWmf67Q]
 - [Task:comment] I do not understand on that level what needs to be fixed. why don't you jsut fix instead of leaving stuff open that I have no idea what it is about  (comment on "Daemon can stall silent…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: bafc340 fix: v0.25.2 - pai memory status no longer hangs forever
-- 5 uncommitted path(s):
+- HEAD: 743ed3f feat: v0.26.0 - say when the storage backend is down, instead of reporting idle
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/daemon.ts
- M src/daemon/daemon/handler.ts
- M src/storage/factory.ts
-?? src/storage/outage.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -400,4 +395,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T21:34:30.879Z*
+*Last updated: 2026-08-02T22:06:06.258Z*

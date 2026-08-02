@@ -15,7 +15,18 @@ logs/
 !.claude/skills/
 !.claude/commands/
 
-Notes/
+# Session notes are voluminous, machine-local and regenerated — they do not
+# belong in the package. Notes/docs/ is different: product overview, pricing,
+# roadmap, technical architecture and the task-bus design are documentation, and
+# were silently local-only. `git ls-files Notes/` returned ONE file against 17
+# on disk, so a correction made to task-bus.md today existed on this machine and
+# nowhere else.
+#
+# Written as Notes/* rather than Notes/, because git cannot re-include anything
+# beneath an excluded DIRECTORY — the negation below only works if the directory
+# itself is not the thing excluded.
+Notes/*
+!Notes/docs/
 .pai/
 # Root-anchored: this hides the working tasks/todo.md convention, NOT src/tasks/
 # (the task-bus module). A bare `tasks/` matches any depth and silently drops
