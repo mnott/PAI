@@ -555,14 +555,18 @@ export class TodoistProvider implements TaskProvider {
   }
 
   /** Comments on one task, oldest first. */
-  async listComments(taskId: string): Promise<Array<{ id: string; content: string }>> {
+  async listComments(
+    taskId: string
+  ): Promise<Array<{ id: string; content: string; postedAt?: string }>> {
     const token = this.token();
     if (!token) return [];
-    const wire = await collect<{ id: string; content?: string }>(
+    const wire = await collect<{ id: string; content?: string; posted_at?: string }>(
       token,
       `/comments?task_id=${encodeURIComponent(taskId)}`
     );
-    return wire.map((c) => ({ id: c.id, content: c.content ?? "" }));
+    // posted_at is carried because the archive is a record: a discussion with
+    // no dates cannot be reconciled against anything that happened around it.
+    return wire.map((c) => ({ id: c.id, content: c.content ?? "", postedAt: c.posted_at }));
   }
 
   async deleteComment(commentId: string): Promise<void> {

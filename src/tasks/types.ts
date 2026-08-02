@@ -166,6 +166,16 @@ export interface TaskProvider {
    */
   listSubProjects?(): Promise<Array<{ id: string; name: string }>>;
   findOrCreateSubProject?(name: string): Promise<{ id: string; created: boolean }>;
+
+  /**
+   * The comment thread on a task, oldest first.
+   *
+   * Optional because not every tracker has threaded comments. Where it exists,
+   * the thread is usually where the reasoning lives — the question, the answer,
+   * the correction — and completing the task takes it out of view. That is what
+   * the archive exists to keep.
+   */
+  listComments?(taskId: string): Promise<Array<{ id: string; content: string; postedAt?: string }>>;
 }
 
 // ---------------------------------------------------------------------------

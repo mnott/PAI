@@ -23,7 +23,7 @@ pai task <subcommand> [options]
 | [`pai task poll`](#pai-task-poll) | One scheduler tick: dispatch what is due, check what is running, report |
 | [`pai task schedule`](#pai-task-schedule) | Install, remove or inspect the launchd agent that ticks the scheduler |
 | [`pai task config`](#pai-task-config) | View or change task bus settings without running the full setup wizard |
-| [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker |
+| [`pai task done <id>`](#pai-task-done-id) | Mark a task complete on the tracker, keeping its discussion |
 
 ### pai task projects
 
@@ -144,13 +144,19 @@ View or change task bus settings without running the full setup wizard
 
 ### pai task done <id>
 
-Mark a task complete on the tracker
+Mark a task complete on the tracker, keeping its discussion
 
 **Arguments**
 
 | Argument | Kind |
 |----------|------|
 | `<id>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--no-archive` | Complete without saving the comment thread |  |
 
 
 ## See also

@@ -21,6 +21,7 @@ import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js"
 import { tick } from "../../tasks/poller.js";
 import { installSchedule, uninstallSchedule, scheduleStatus, DEFAULT_INTERVAL_SECS } from "../../tasks/schedule-install.js";
 import type { DispatchResult, Task, TaskProvider } from "../../tasks/types.js";
+import { writeArchive } from "../../tasks/archive.js";
 import {
   readSessionManifest,
   reconcile,
@@ -70,6 +71,7 @@ function printProjectMapping(rows: MappingRow[], noBroker: boolean): void {
 
 const dim = chalk.dim;
 const bold = chalk.bold;
+const warn = chalk.yellow;
 
 // ---------------------------------------------------------------------------
 // Wiring
@@ -528,11 +530,73 @@ export function registerTaskCommands(taskCmd: Command): void {
 
   taskCmd
     .command("done <id>")
-    .description("Mark a task complete on the tracker")
-    .action(async (id) => {
+    .description("Mark a task complete on the tracker, keeping its discussion")
+    .option("--no-archive", "Complete without saving the comment thread")
+    .action(async (id, opts) => {
       const provider = buildProvider();
       if (!provider) return reportUnconfigured();
+
+      // Archive BEFORE completing. A completed task is harder to read back on
+      // some providers, and losing the thread is the failure this exists to
+      // prevent — so the copy is taken while the task is unambiguously there.
+      let archived: { path: string; written: boolean; commentCount: number } | null = null;
+      if (opts.archive !== false) {
+        archived = await archiveTaskThread(provider, id);
+      }
+
       await provider.complete(id);
       console.log(chalk.green(`  Completed ${id}.`));
+
+      if (archived) {
+        const what = `${archived.commentCount} comment${archived.commentCount === 1 ? "" : "s"}`;
+        console.log(
+          archived.written
+            ? dim(`  Discussion saved (${what}) → ${archived.path}`)
+            : dim(`  Discussion already saved (${what}), unchanged.`)
+        );
+      }
     });
+}
+
+/**
+ * Copy a task's thread into the notes of the project that owns it.
+ *
+ * Best-effort by design: this runs as a side effect of completing a task, and
+ * a failure to archive must never stop the task being completed. It reports
+ * what went wrong rather than throwing, because a silent skip here would lose
+ * exactly the content it exists to keep.
+ */
+async function archiveTaskThread(
+  provider: TaskProvider,
+  id: string
+): Promise<{ path: string; written: boolean; commentCount: number } | null> {
+  try {
+    if (!provider.listComments) return null;
+
+    const tasks = await provider.listOpen({ includeUnrouted: true });
+    const task = tasks.find((t) => t.id === id);
+    if (!task) {
+      console.log(dim(`  Not on the open list — nothing archived.`));
+      return null;
+    }
+
+    const project = task.owner.project;
+    const root = task.owner.rootPath;
+    if (!project || !root) {
+      console.log(
+        warn(`  No owning project — discussion not archived. `) +
+          dim(`Label it \`pai:<project>\` to give it a home.`)
+      );
+      return null;
+    }
+
+    const comments = await provider.listComments(id);
+    return writeArchive(root, task, comments, new Date().toISOString());
+  } catch (e) {
+    console.log(
+      warn(`  Could not archive the discussion: `) +
+        (e instanceof Error ? e.message : String(e))
+    );
+    return null;
+  }
 }
