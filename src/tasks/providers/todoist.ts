@@ -43,6 +43,11 @@ interface WireProject {
   parent_id?: string | null;
   is_archived?: boolean;
   is_deleted?: boolean;
+  /**
+   * True when the project has collaborators — i.e. someone other than the user
+   * can create tasks in it. See ownerContainers for why that matters here.
+   */
+  is_shared?: boolean;
 }
 
 interface WireTask {
@@ -172,6 +177,29 @@ export function ownerContainers(
 
   const walk = (project: WireProject, ownerName: string): void => {
     if (out.has(project.id)) return; // cycle guard
+
+    // A shared project is excluded, along with everything under it.
+    //
+    // Inheriting ownership down a subtree means a project only has to be MOVED
+    // under the root to gain the right to dispatch work into a session. For a
+    // project the user owns that is the entire point. For a shared one it is an
+    // escalation: a collaborator writes the task, and the task is a work order
+    // that spawns a terminal and types into it. Nobody reparents a project
+    // thinking about that.
+    //
+    // Excluded rather than merely unrouted, and announced rather than dropped
+    // quietly — a boundary that narrows in silence is the same defect as one
+    // that widens in silence. AIBroker reached the same conclusion from the
+    // other side on 2026-08-02 and made subtree grants opt-in; this is the
+    // equivalent for a poller that has no grant to opt into.
+    if (project.is_shared) {
+      process.stderr.write(
+        `pai: skipping shared project "${project.name}" (${project.id}) and anything under it — ` +
+          `tasks there can be written by a collaborator, and a dispatched task runs as you.\n`
+      );
+      return;
+    }
+
     out.set(project.id, { project, ownerName });
     for (const child of childrenOf.get(project.id) ?? []) walk(child, ownerName);
   };
