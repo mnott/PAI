@@ -1,30 +1,28 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0010 - 2026-08-02 - Incomplete — Insufficient Context" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T10:03:29.056Z" -->
+<!-- pai:checkpoint authored="auto" session="0011 - 2026-08-02 - Todoist Provider Task And Project Creation Flow" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T10:05:55.698Z" -->
 
-> **Last session:** 0010 - 2026-08-02 - Incomplete — Insufficient Context
-> **Paused at:** 2026-08-02T10:03:29.056Z
+> **Last session:** 0011 - 2026-08-02 - Todoist Provider Task And Project Creation Flow
+> **Paused at:** 2026-08-02T10:05:55.698Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T10:03:29.018Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T10:05:55.664Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- so you can use the pwd of jobs grazyna quite litereally. normally it is even just sufficient to tell that session do another job sweep. but if it now comes from todoist, it makes sense to instruct tha…
 - [Session:Jobs Grazyna] Received. Two things done on my side so the file's load-bearing status survives a session with no memory of this exchange:  1. Warning block added at the top of the runbook itse…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: fb37384 refactor: v0.18.3 - name the difference between our run and someone else's
-- 2 uncommitted path(s):
+- HEAD: 4a7e593 fix: v0.18.4 - say so when the tracker silently truncates what we wrote
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/tasks/providers/todoist.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -396,4 +394,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T10:02:16.578Z*
+*Last updated: 2026-08-02T10:05:52.556Z*

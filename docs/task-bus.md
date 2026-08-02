@@ -175,6 +175,27 @@ indistinguishable from being ignored. On delivery the receiver counts open
 tasks sharing a title and appends a note naming the count. Say which id you
 answered on.
 
+**Long content goes in a file, not in the task.** Todoist caps a task
+description at 16,383 characters and enforces it by **truncation, not
+rejection** — the request returns 200 and reports success. Measured 2026-08-02:
+19,457 characters sent, 16,383 stored, 3,074 lost off the end. What went missing
+was a runbook's close-out section, including the command that marks the task
+done, so a session working from it would have done the job correctly and then
+left the task showing a run in progress.
+
+Since v0.18.4 `pai task add` compares what came back against what was sent and
+warns on stderr with both counts. **That does not prevent the loss.** The tail is
+still gone; the warning only makes a silent failure a loud one, and whether
+anything happens next depends on someone reading stderr. Visible failure is not
+absence of failure — put the runbook in a file and let the description point at
+it.
+
+The check compares lengths rather than testing against 16,383 on purpose. The
+number is worth less than the shape: an API reporting success for an operation
+that did not fully happen stays invisible until someone inspects the artifact
+instead of the return value, and a hardcoded limit would be silently defeated by
+a sink that changes its cap.
+
 **Agent-authored content is marked** so a reply posted by a session does not
 come back as a fresh instruction and loop.
 
