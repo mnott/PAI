@@ -126,6 +126,38 @@ export const EMPTY_RUN_STATE: RunState = { startedAt: {}, failedProbes: {} };
 // Policy helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Did THIS poller start the run currently in flight?
+ *
+ * The distinction from {@link isClaimedByAnyone} has now caused three separate
+ * defects in three functions across two days, so it is named rather than
+ * re-derived from `startedAt` at each site.
+ *
+ * `startedAt` is set only when this poller dispatches. A run triggered through
+ * the tracker's webhook is claimed by AIBroker before this poller ever sees the
+ * task, so it has no `startedAt` here — and every piece of evidence that is
+ * sound for our own runs is worthless for those. Twice that produced a
+ * confident wrong answer: `overdue < 0` reported a webhook run finished on the
+ * tick after it started, and an orphan sweep keyed on `startedAt` would have
+ * discarded exactly the entries the webhook path depends on.
+ *
+ * Use this when the question is "can I trust state I recorded myself".
+ */
+export function isOurRun(state: RunState, taskId: string): boolean {
+  return state.startedAt[taskId] !== undefined;
+}
+
+/**
+ * Is anyone running this task — us, or a session claimed through the tracker?
+ *
+ * The RUNNING label is the shared interlock: whoever claims a task sets it,
+ * whichever side they are. Use this when the question is "is a run in flight at
+ * all", which is what liveness means for anything scoped to a run.
+ */
+export function isClaimedByAnyone(task: Task, state: RunState): boolean {
+  return isRunning(task) || isOurRun(state, task.id);
+}
+
 export function isRunning(task: Task): boolean {
   return task.labels.some((l) => l.toLowerCase() === RUNNING_LABEL);
 }
@@ -338,7 +370,7 @@ export function decide(task: Task, opts: DecideOptions): Decision {
     const claimSeenAt = opts.claimSeenAt?.[task.id];
     const prevDue = opts.lastSeenDue?.[task.id];
     const dueAdvanced = prevDue !== undefined && task.due !== null && task.due > prevDue;
-    const ourRun = startedAt !== undefined;
+    const ourRun = isOurRun(state, task.id);
 
     // Completion is "the due date moved into the future" — not "closed". A
     // recurring task is closed for an instant at most, so testing for closed

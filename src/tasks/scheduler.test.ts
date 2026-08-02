@@ -14,6 +14,8 @@ import {
   overdueMinutes,
   skipIfLateMinutes,
   isRunning,
+  isOurRun,
+  isClaimedByAnyone,
   RUNNING_LABEL,
   EMPTY_RUN_STATE,
   DEFAULT_EXPECTED_MINUTES,
@@ -489,6 +491,40 @@ describe("a live webhook takes precedence over the due-date guess", () => {
       lastSeenDue: { t1: "2026-08-02T08:00:00" },
     });
     expect(d.action).toBe("triggered");
+  });
+});
+
+describe("whose run is it", () => {
+  /**
+   * Confusing "we started it" with "someone is running it" has caused three
+   * separate defects in three functions across two days: a completion test that
+   * reported a webhook run finished on the tick after it began, an orphan sweep
+   * that would have discarded every webhook-triggered entry, and the claim
+   * timing before that. The two predicates exist so the distinction is named at
+   * the call site rather than re-derived from startedAt each time.
+   */
+  const claimed = task({ labels: [RUNNING_LABEL] });
+  const unclaimed = task({ labels: [] });
+
+  it("isOurRun is true only when this poller recorded the start", () => {
+    expect(isOurRun({ startedAt: { t1: 1 }, failedProbes: {} }, "t1")).toBe(true);
+    expect(isOurRun(EMPTY_RUN_STATE, "t1")).toBe(false);
+  });
+
+  it("isOurRun is FALSE for a run claimed through the tracker", () => {
+    // The trap: the task is genuinely running, but none of the state we
+    // recorded ourselves applies to it.
+    expect(isRunning(claimed)).toBe(true);
+    expect(isOurRun(EMPTY_RUN_STATE, "t1")).toBe(false);
+  });
+
+  it("isClaimedByAnyone covers the tracker's claim as well as ours", () => {
+    expect(isClaimedByAnyone(claimed, EMPTY_RUN_STATE)).toBe(true);
+    expect(isClaimedByAnyone(unclaimed, { startedAt: { t1: 1 }, failedProbes: {} })).toBe(true);
+  });
+
+  it("isClaimedByAnyone is false only when nothing holds the task", () => {
+    expect(isClaimedByAnyone(unclaimed, EMPTY_RUN_STATE)).toBe(false);
   });
 });
 
