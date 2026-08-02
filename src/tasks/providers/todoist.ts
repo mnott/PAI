@@ -124,6 +124,38 @@ async function collect<T>(token: string, path: string): Promise<T[]> {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Report a write that the server silently shortened.
+ *
+ * Todoist caps a task description at 16,383 characters and enforces it by
+ * TRUNCATION, not by rejection: the request returns 200 and the response says
+ * success. Measured 2026-08-02 — a 19,457-character runbook stored as 16,383,
+ * losing 3,074 characters off the end with no error anywhere. What went missing
+ * was the close-out section, so a session working from it would have done the
+ * job correctly and then never marked the task done.
+ *
+ * The general form is worth more than the specific limit, which is why this
+ * compares what came back rather than checking a number: an API that reports
+ * success for an operation that did not fully happen is invisible until someone
+ * inspects the artifact instead of the return value. Any sink with an unknown
+ * limit deserves the same treatment.
+ *
+ * Warns rather than throws. The task exists and is usable; failing the call
+ * would discard work that mostly succeeded. But it must not pass silently.
+ */
+export function warnIfTruncated(field: string, sent: string | undefined, stored: string | undefined): void {
+  const before = sent?.length ?? 0;
+  const after = stored?.length ?? 0;
+  if (before === 0 || after >= before) return;
+
+  process.stderr.write(
+    `\npai: WARNING — Todoist truncated the ${field}.\n` +
+      `  sent ${before} characters, stored ${after} — ${before - after} lost, silently.\n` +
+      `  The API reported success. Anything at the end of that text is gone.\n` +
+      `  Put long content in a file and reference it from the ${field} instead.\n\n`
+  );
+}
+
+/**
  * Build the due portion of a task write.
  *
  * Exported for testing: the whole defect was a one-word field choice, so the
@@ -315,6 +347,9 @@ export class TodoistProvider implements TaskProvider {
       },
     });
 
+    // The POST already returns what was stored, so this costs nothing.
+    warnIfTruncated("task description", task.body, created.description ?? "");
+
     return {
       id: created.id,
       title: created.content,
@@ -414,7 +449,14 @@ export class TodoistProvider implements TaskProvider {
   async comment(id: string, content: string): Promise<void> {
     const token = this.token();
     if (!token) throw new Error("Todoist provider is not configured — run `pai task config`.");
-    await call<unknown>(token, `/comments`, { method: "POST", body: { task_id: id, content } });
+    const created = await call<{ content?: string }>(token, `/comments`, {
+      method: "POST",
+      body: { task_id: id, content },
+    });
+    // Comments have their own cap, and the same truncate-and-report-success
+    // behaviour. A run history that quietly loses its tail is worse than none,
+    // because it reads as complete.
+    warnIfTruncated("comment", content, created?.content ?? "");
   }
 
   /** Comments on one task, oldest first. */

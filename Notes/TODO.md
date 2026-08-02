@@ -1,31 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T06:28:15.527Z" -->
+<!-- pai:checkpoint authored="auto" session="0010 - 2026-08-02 - Incomplete — Insufficient Context" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T10:03:29.056Z" -->
 
-> **Last session:** 0009 - 2026-08-01 - Pai 0.16.0 Release, Session Handover Implementation, And Task Scheduler
-> **Paused at:** 2026-08-02T06:28:15.527Z
+> **Last session:** 0010 - 2026-08-02 - Incomplete — Insufficient Context
+> **Paused at:** 2026-08-02T10:03:29.056Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T06:28:15.497Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T10:03:29.018Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:Jobs Matthias] The first unattended 08:00 run worked, and then found two defects in the code I handed you. Both are mine. Neither is fixed — reporting rather than reaching into your repo agai…
-- [Session:Jobs Matthias] Verified both, and your heredoc note sent me to check my own work rather than yours.  DERIVING RATHER THAN CLEARING IS THE BETTER FIX and I should have proposed it. "Clear it a…
+- so you can use the pwd of jobs grazyna quite litereally. normally it is even just sufficient to tell that session do another job sweep. but if it now comes from todoist, it makes sense to instruct tha…
+- [Session:Jobs Grazyna] Received. Two things done on my side so the file's load-bearing status survives a session with no memory of this exchange:  1. Warning block added at the top of the runbook itse…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 315a54f fix: v0.18.2 - stop a stale restore entry rolling the schedule backwards, and prefer the webhook over guessing
-- 3 uncommitted path(s):
+- HEAD: fb37384 refactor: v0.18.3 - name the difference between our run and someone else's
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/tasks/poller.ts
- M src/tasks/scheduler.ts
+ M src/tasks/providers/todoist.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -397,4 +396,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T06:25:51.395Z*
+*Last updated: 2026-08-02T10:02:16.578Z*
