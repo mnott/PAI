@@ -158,12 +158,25 @@ account that had genuinely authorised. Trust `aibroker todoist status`.
 **4. A lapsed grant looks like a healthy channel.** Webhooks are verified with
 the client *secret*, not the token, so **task delivery keeps working**. What
 breaks is everything needing the API: comment routing (a comment payload has no
-project or labels, so the parent must be fetched) and replying on a task. The
-signature is `401` with `error_code 477` and a `retry_after` that climbs —
-3, 7, 65, 129 seconds. That climb is throttling stacked on a dead credential, so
-retrying makes it worse. The reliable tell is the consent dialog appearing again
-for a URL that used to redirect straight through. Fix: `aibroker todoist auth`
-and one click.
+project or labels, so the parent must be fetched) and replying on a task. So the
+signature is the asymmetry itself — **tasks arrive, comments do not.**
+
+The response is `401` with `error_code 477` and a `retry_after` that climbs:
+3, 7, 65, 129 seconds.
+
+**That climb is not throttling, and this document said it was.** Todoist's
+reference states that `retry_after` is backoff metadata not limited to 429s, and
+that on a 477 you must *not* wait and retry the same token — an invalid token is
+invalid, and waiting changes nothing. The escalating numbers look exactly like
+rate limiting and are not. Corrected 2026-08-02, after the wrong explanation had
+been repeated between two codebases and written down here as fact.
+
+**Enable refresh tokens on the Todoist app.** Without them, Todoist issues
+tokens with no `expires_in` and no refresh path: they die and can only be fixed
+by re-authorising by hand, which is what produced two lapses in twenty hours.
+With them, the token refreshes on demand and the daily re-auth disappears.
+
+Fix for a grant that has already died: `aibroker todoist auth` and one click.
 
 ---
 
