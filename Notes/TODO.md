@@ -1,13 +1,35 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Archival System — Re Archive Deduplication And Verification" ts="2026-08-02T19:48:27.649Z" -->
+<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Task Resolver Update" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T20:28:20.288Z" -->
 
-> **Last session:** 0017 - 2026-08-02 - Task Archival System — Re Archive Deduplication And Verification
-> **Paused at:** 2026-08-02T19:48:27.649Z
+> **Last session:** 0018 - 2026-08-02 - Task Resolver Update
+> **Paused at:** 2026-08-02T20:28:20.288Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+_Automatic checkpoint — 2026-08-02T20:28:20.231Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- So I think the thing that should be taken into consideration really first is the project where something resides right? That should take precedence. I didn't even see that label and I haven't used lab…
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 36d9e4b chore: first archived task discussion, and a session checkpoint
+- 7 uncommitted path(s):
+
+```
+M Notes/TODO.md
+ M package.json
+ M src/cli/commands/task.ts
+ M src/tasks/providers/todoist.ts
+ M src/tasks/resolver.ts
+ M src/tasks/types.ts
+?? src/tasks/resolver.test.ts
+```
 
 <!-- /pai:checkpoint -->
 
@@ -378,4 +400,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T19:48:27.650Z*
+*Last updated: 2026-08-02T20:23:06.153Z*

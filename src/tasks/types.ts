@@ -234,6 +234,19 @@ export interface TaskConfig {
    * a loaded machine where sessions are slow to start accepting input.
    */
   dispatchTimeoutSecs?: number;
+
+  /**
+   * Project a task goes to when it carries the bare `pai` marker and its
+   * location says nothing — an Inbox capture, typically.
+   *
+   * This is the one thing a task's location cannot express: "an AI should take
+   * this, and I do not know which one yet". Everything else is answered by the
+   * project the task sits in.
+   *
+   * Unset means such a task stays UNROUTED, which is a legitimate choice: it
+   * then surfaces in the findings inbox for triage rather than being guessed at.
+   */
+  defaultOwner?: string;
 }
 
 export const DEFAULT_TASK_CONFIG: TaskConfig = {

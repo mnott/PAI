@@ -84,7 +84,9 @@ function buildProvider(): TaskProvider | null {
   if (!tasks?.enabled) return null;
 
   const aliases = loadAliasMap(openRegistry());
-  const provider = new TodoistProvider(tasks.providers.todoist, aliases);
+  const provider = new TodoistProvider(tasks.providers.todoist, aliases, {
+    defaultOwner: tasks.defaultOwner,
+  });
   return provider.isConfigured() ? provider : null;
 }
 

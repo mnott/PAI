@@ -312,6 +312,8 @@ export class TodoistProvider implements TaskProvider {
   constructor(
     private readonly config: TodoistProviderConfig,
     private readonly aliases: AliasMap,
+    /** Bus-level settings. Optional so existing callers keep working. */
+    private readonly taskConfig?: { defaultOwner?: string },
   ) {}
 
   /**
@@ -325,6 +327,11 @@ export class TodoistProvider implements TaskProvider {
 
   isConfigured(): boolean {
     return Boolean(this.config.enabled && this.token() && this.config.rootProjectId);
+  }
+
+  /** Owner for a task carrying only the bare `pai` marker. See ResolveInput. */
+  private get defaultOwner(): string | null {
+    return this.taskConfig?.defaultOwner ?? null;
   }
 
   /**
@@ -352,7 +359,7 @@ export class TodoistProvider implements TaskProvider {
     const entry = owners.get(w.project_id ?? "");
 
     const owner = resolveOwner(
-      { labels: w.labels ?? [], container: entry?.ownerName ?? null },
+      { labels: w.labels ?? [], container: entry?.ownerName ?? null, defaultOwner: this.defaultOwner },
       this.aliases
     );
 
@@ -401,7 +408,7 @@ export class TodoistProvider implements TaskProvider {
       // the project the task literally sits in. The bus root itself is not an
       // owner — a task at the root has no container hint.
       const owner = resolveOwner(
-        { labels: w.labels ?? [], container: entry.ownerName },
+        { labels: w.labels ?? [], container: entry.ownerName, defaultOwner: this.defaultOwner },
         this.aliases
       );
 
@@ -492,7 +499,7 @@ export class TodoistProvider implements TaskProvider {
       title: created.content,
       body: created.description ?? "",
       owner: task.owner
-        ? resolveOwner({ labels, container: null }, this.aliases)
+        ? resolveOwner({ labels, container: null, defaultOwner: this.defaultOwner }, this.aliases)
         : { ...UNROUTED },
       due: created.due?.datetime ?? created.due?.date ?? null,
       priority: toPriority(created.priority),
