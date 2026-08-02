@@ -36,6 +36,7 @@ import { runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
 import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
 import { notifyNewWork } from "../../daemon/work-queue-worker.js";
+import { getBackendOutage } from "../../storage/outage.js";
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -97,6 +98,10 @@ export async function handleRequest(
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
         vaultPath: daemonConfig.vaultPath ?? null,
         workQueue: getQueueStats(),
+        // Null when the backend is answering. Present, this is the reason
+        // everything else in this payload is stalled — and the reason status
+        // used to report "idle" for two days while nothing progressed.
+        backendOutage: getBackendOutage(),
       },
     });
     socket.end();
