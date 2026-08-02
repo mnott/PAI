@@ -327,6 +327,48 @@ export class TodoistProvider implements TaskProvider {
     return Boolean(this.config.enabled && this.token() && this.config.rootProjectId);
   }
 
+  /**
+   * Fetch one task by id, open or completed.
+   *
+   * `listOpen` cannot serve this: a completed task is gone from that list, and
+   * the whole point of archiving is to run at or after completion. Ownership is
+   * resolved the same way as in listOpen — label first, then the container
+   * walked up to the sub-project directly under the bus root.
+   */
+  async getTask(id: string): Promise<Task | null> {
+    const token = this.token();
+    if (!token || !this.config.rootProjectId) return null;
+
+    let w: WireTask;
+    try {
+      w = await call<WireTask>(token, `/tasks/${encodeURIComponent(id)}`);
+    } catch {
+      return null;
+    }
+    if (!w?.id) return null;
+
+    const projects = await collect<WireProject>(token, "/projects");
+    const owners = ownerContainers(projects, this.config.rootProjectId);
+    const entry = owners.get(w.project_id ?? "");
+
+    const owner = resolveOwner(
+      { labels: w.labels ?? [], container: entry?.ownerName ?? null },
+      this.aliases
+    );
+
+    return {
+      id: w.id,
+      title: w.content,
+      body: w.description ?? "",
+      owner,
+      due: w.due?.datetime ?? w.due?.date ?? null,
+      recurrence: w.due?.is_recurring ? (w.due.string ?? null) : null,
+      priority: toPriority(w.priority),
+      labels: w.labels ?? [],
+      sourceUrl: `https://app.todoist.com/app/task/${w.id}`,
+    };
+  }
+
   async listOpen(opts: ListOptions = {}): Promise<Task[]> {
     const token = this.token();
     if (!token || !this.config.rootProjectId) return [];
