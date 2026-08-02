@@ -8,6 +8,7 @@
  */
 
 import type { Command } from "commander";
+import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { chmodSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -28,6 +29,44 @@ import {
   normalizeName,
   type MappingRow,
 } from "../../tasks/projects.js";
+
+/**
+ * Make a tracker sub-project name resolve to the PAI project it belongs to.
+ *
+ * Ownership is decided by matching the container name against a curated alias.
+ * A session's display name is almost never its PAI slug — "SL" is
+ * `seriousletter`, "Home" is `i052341` — so a freshly created sub-project
+ * routes nowhere until someone connects the two. That gap bit twice on
+ * 2026-08-02: the project existed, looked addressable in every listing, and
+ * tasks filed into it came back unrouted.
+ *
+ * The session's working directory is what links them: the manifest gives the
+ * directory, the registry gives the project at that path. Returns a line worth
+ * printing, or null when nothing needed doing.
+ */
+function ensureAlias(db: Database, name: string, directory?: string): string | null {
+  if (!directory) return `no directory for "${name}" — set the alias by hand`;
+
+  const project = db
+    .prepare("SELECT id, slug FROM projects WHERE root_path = ? AND status = 'active'")
+    .get(directory) as { id: number; slug: string } | undefined;
+
+  if (!project) return `no PAI project at ${directory} — tasks here will not route`;
+
+  const existing = db
+    .prepare("SELECT project_id FROM aliases WHERE lower(alias) = lower(?)")
+    .get(name) as { project_id: number } | undefined;
+
+  if (existing) {
+    // Repointing someone else's alias would silently steal their address.
+    return existing.project_id === project.id
+      ? null
+      : `alias "${name}" already points elsewhere — left alone`;
+  }
+
+  db.prepare("INSERT INTO aliases (alias, project_id) VALUES (?, ?)").run(name, project.id);
+  return `aliased → ${project.slug}`;
+}
 
 /**
  * Render the session/project mapping.
@@ -251,6 +290,17 @@ export function registerTaskCommands(taskCmd: Command): void {
           console.log(
             (created ? chalk.green("  created  ") : dim("  exists   ")) + name + dim(`  ${id}`)
           );
+
+          // A project alone does not route. Ownership resolves by matching the
+          // container name against a curated alias, and a session's display
+          // name is rarely its PAI slug — "SL" is `seriousletter`, "Home" is
+          // `i052341`. Creating the project and stopping produced something
+          // that looked addressable and silently was not, twice, before this
+          // was wired in. The alias is not a separate step a user should have
+          // to know about; it is what makes the project mean anything.
+          const row = rows.find((r) => normalizeName(r.name) === normalizeName(name));
+          const note = ensureAlias(openRegistry(), name, row?.directory);
+          if (note) console.log(dim(`           ${note}`));
         }
         console.log();
         return;
