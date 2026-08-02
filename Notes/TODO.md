@@ -1,30 +1,13 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Completion Event Investigation Continued" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T15:40:33.665Z" -->
+<!-- pai:checkpoint authored="auto" session="0017 - 2026-08-02 - Task Archival System — Re Archive Deduplication And Verification" ts="2026-08-02T19:48:27.649Z" -->
 
-> **Last session:** 0017 - 2026-08-02 - Task Completion Event Investigation Continued
-> **Paused at:** 2026-08-02T15:40:33.665Z
+> **Last session:** 0017 - 2026-08-02 - Task Archival System — Re Archive Deduplication And Verification
+> **Paused at:** 2026-08-02T19:48:27.649Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T15:40:33.629Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
-
-### What was being asked
-
-- still didnt appear to happen, so untick again, then create some task next to it and tick it after
-- yeah got it but would it not make sense to after that also fire a message to the session if it is there to let it know about it - it may know where to correctly file that
-
-### Working tree
-
-- Branch: `main`
-- HEAD: e3489b2 feat: v0.22.0 - tell the owning session where an archived discussion landed
-- 1 uncommitted path(s):
-
-```
-M src/tasks/archive.ts
-```
+Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 
 <!-- /pai:checkpoint -->
 
@@ -395,4 +378,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T15:35:36.267Z*
+*Last updated: 2026-08-02T19:48:27.650Z*
