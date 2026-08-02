@@ -61,6 +61,38 @@ describe("ownerContainers", () => {
     expect(ownerContainers([p("a", "A")], ROOT).size).toBe(0);
   });
 
+  it("excludes a shared project, and everything under it", () => {
+    // Inheriting down a subtree means a project only has to be MOVED under the
+    // root to gain dispatch rights. For one the user owns that is the point;
+    // for a shared one it lets a collaborator write a work order that spawns a
+    // terminal and types into it.
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const m = ownerContainers(
+      [
+        p(ROOT, "Claude"),
+        p("shared", "Household", ROOT, { is_shared: true }),
+        p("under", "Errands", "shared"),
+        p("mine", "Jobs Matthias", ROOT),
+      ],
+      ROOT
+    );
+    expect(m.has("shared")).toBe(false);
+    expect(m.has("under")).toBe(false);
+    expect(m.has("mine")).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("says which project it skipped, rather than narrowing in silence", () => {
+    // A boundary that narrows quietly is the same defect as one that widens
+    // quietly: the tasks simply never appear and nothing explains why.
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    ownerContainers([p(ROOT, "Claude"), p("s", "Household", ROOT, { is_shared: true })], ROOT);
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toContain("Household");
+    expect(out).toContain("collaborator");
+    spy.mockRestore();
+  });
+
   it("terminates on a parent cycle instead of hanging the poller", () => {
     // The API should never produce this; a bad write could, and a poller that
     // never returns is worse than one that drops a project.
