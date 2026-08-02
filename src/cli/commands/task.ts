@@ -616,11 +616,15 @@ export async function cmdArchiveTask(
 
   if (!opts.quiet) {
     const what = `${r.commentCount} comment${r.commentCount === 1 ? "" : "s"}`;
-    console.log(
-      r.written
-        ? ok(`  Saved (${what}) → `) + r.path
-        : dim(`  Already saved (${what}), unchanged.`)
-    );
+    if (r.skipped === "no-discussion") {
+      console.log(dim("  No discussion on this task — nothing to archive."));
+    } else {
+      console.log(
+        r.written
+          ? ok(`  Saved (${what}) → `) + r.path
+          : dim(`  Already saved (${what}), unchanged.`)
+      );
+    }
   }
   return true;
 }

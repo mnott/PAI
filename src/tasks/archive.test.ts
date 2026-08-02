@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { archiveSlug, archivePath, renderArchive, writeArchive } from "./archive.js";
@@ -58,7 +58,8 @@ describe("renderArchive", () => {
   });
 
   it("states an empty thread rather than omitting the section", () => {
-    // A missing section says nothing; an empty one says it was checked.
+    // Only reached when a caller renders directly. writeArchive declines to
+    // create a file at all when there is no discussion — see below.
     const empty = renderArchive(TASK, [], "2026-08-02T14:00:00.000Z");
     expect(empty).toContain("Discussion (0)");
     expect(empty).toContain("No comments were posted");
@@ -84,6 +85,16 @@ describe("writeArchive", () => {
     expect(r.commentCount).toBe(2);
     expect(r.path).toBe(archivePath(root, TASK));
     expect(readFileSync(r.path, "utf-8")).toContain("counterparty");
+  });
+
+  it("writes nothing at all when there was no discussion", () => {
+    // The point is preserving a conversation that completing the task would
+    // bury. Where none happened, a file saying so is noise — and enough of it
+    // buries the notes that do carry something.
+    const r = writeArchive(root, TASK, [], "2026-08-02T14:00:00.000Z");
+    expect(r.written).toBe(false);
+    expect(r.skipped).toBe("no-discussion");
+    expect(existsSync(r.path)).toBe(false);
   });
 
   it("does not rewrite an unchanged file", () => {

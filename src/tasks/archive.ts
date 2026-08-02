@@ -35,6 +35,8 @@ export interface ArchiveResult {
   /** False when the file already held exactly this content. */
   written: boolean;
   commentCount: number;
+  /** Set when nothing was written and the reason was not "unchanged". */
+  skipped?: "no-discussion";
 }
 
 /**
@@ -128,6 +130,16 @@ export function writeArchive(
   completedAt: string
 ): ArchiveResult {
   const path = archivePath(projectRoot, task);
+
+  // Nothing was discussed, so there is nothing to keep. The point of this is to
+  // preserve a conversation that completing the task would otherwise bury —
+  // where no conversation happened, a file saying so is noise, and enough of it
+  // buries the notes that DO carry something. The task itself is not at risk:
+  // it stays in the tracker either way.
+  if (comments.length === 0) {
+    return { path, written: false, commentCount: 0, skipped: "no-discussion" };
+  }
+
   const body = renderArchive(task, comments, completedAt);
 
   if (existsSync(path)) {
