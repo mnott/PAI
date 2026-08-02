@@ -128,6 +128,27 @@ async function cmdStatus(): Promise<void> {
     console.log(ok(`  Daemon running`));
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
+
+    // Lead with the outage. Everything below it — index state, queue depth,
+    // totals — describes a system that is not moving, and printing those first
+    // is how "Index: idle" came to mean "all is well" during a two-day outage.
+    const outage = s["backendOutage"] as
+      | { backend: string; since: number; attempts: number; lastError: string }
+      | null
+      | undefined;
+    if (outage) {
+      const mins = Math.max(1, Math.round((Date.now() - outage.since) / 60_000));
+      const forHow = mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
+      console.log();
+      console.log(
+        err(`    BACKEND DOWN: ${outage.backend} unreachable for ${forHow}`)
+      );
+      console.log(warn(`    ${outage.attempts} attempts — ${outage.lastError}`));
+      console.log(
+        dim(`    Indexing, session notes and the work queue are stalled until it returns.`)
+      );
+      console.log();
+    }
     console.log(
       dim(
         `    Index:       ${s["indexInProgress"] ? "in progress" : "idle"}  (interval: ${s["indexIntervalSecs"]}s)`

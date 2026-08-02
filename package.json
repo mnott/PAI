@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.25.2",
+  "version": "0.26.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
