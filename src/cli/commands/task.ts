@@ -533,10 +533,18 @@ export function registerTaskCommands(taskCmd: Command): void {
     .command("archive <id>")
     .description("Save a task's discussion into the owning project's notes, without completing it")
     .option("--quiet", "Print nothing (for hook and webhook callers)")
-    .action(async (id, opts: { quiet?: boolean }) => {
+    .option("--no-notify", "Do not tell the owning session where the file landed")
+    .action(async (id, opts: { quiet?: boolean; notify?: boolean }) => {
       const provider = buildProvider();
       if (!provider) return reportUnconfigured();
-      const saved = await cmdArchiveTask(provider, id, { quiet: opts.quiet });
+      // Notifies by default: this command is the path something OUTSIDE the
+      // session took — a checkbox ticked in the tracker — so the session has no
+      // idea it happened. `task done` deliberately does not notify, because
+      // there the session is the one that just did it.
+      const saved = await cmdArchiveTask(provider, id, {
+        quiet: opts.quiet,
+        notify: opts.notify !== false,
+      });
       // Non-zero on failure so a webhook caller can tell nothing was saved
       // rather than assuming success — the whole point is not losing content.
       if (!saved) process.exitCode = 1;
@@ -587,7 +595,7 @@ export function registerTaskCommands(taskCmd: Command): void {
 export async function cmdArchiveTask(
   provider: TaskProvider,
   id: string,
-  opts: { quiet?: boolean } = {}
+  opts: { quiet?: boolean; notify?: boolean } = {}
 ): Promise<boolean> {
   if (!provider.getTask || !provider.listComments) {
     if (!opts.quiet) console.log(warn(`  ${provider.providerId} cannot read a task's discussion.`));
@@ -614,6 +622,10 @@ export async function cmdArchiveTask(
   const comments = await provider.listComments(id);
   const r = writeArchive(root, task, comments, new Date().toISOString());
 
+  if (r.written && opts.notify) {
+    await tellOwningSession(task, r.path, r.commentCount, opts.quiet);
+  }
+
   if (!opts.quiet) {
     const what = `${r.commentCount} comment${r.commentCount === 1 ? "" : "s"}`;
     if (r.skipped === "no-discussion") {
@@ -627,6 +639,63 @@ export async function cmdArchiveTask(
     }
   }
   return true;
+}
+
+/**
+ * Tell the owning session that a discussion was filed, if it is running.
+ *
+ * `Notes/tasks/` is a default, not a decision. The session that owns a project
+ * knows where things actually belong there — a dated triage folder, a ledger
+ * row, an existing note the discussion continues. It can move or link the file;
+ * this side cannot, because the convention lives in that project's head and not
+ * in PAI.
+ *
+ * **Never spawns.** Launching a session to tell it a file exists inverts the
+ * cost: the archive is already safely on disk, and a terminal opening by itself
+ * because someone ticked a checkbox is worse than a note filed one directory
+ * away from ideal. If nothing is running, the file simply waits.
+ *
+ * Best-effort throughout. The archive has already succeeded by the time this
+ * runs, and a notification that cannot be delivered must never turn a saved
+ * discussion into a reported failure.
+ */
+async function tellOwningSession(
+  task: Task,
+  path: string,
+  comments: number,
+  quiet?: boolean
+): Promise<void> {
+  const project = task.owner.project;
+  if (!project) return;
+
+  try {
+    const transport = await detectAiBroker();
+    if (!transport) return;
+
+    const message = [
+      `A discussion was archived from the tracker — ${comments} comment${comments === 1 ? "" : "s"} on "${task.title}".`,
+      "",
+      `Filed provisionally at: ${path}`,
+      `Tracker id: ${task.id}`,
+      "",
+      "This is a notification, not a work order. Nothing is waiting on you and the",
+      "content is already safe on disk.",
+      "",
+      "Notes/tasks/ is PAI's default, chosen without knowing this project's",
+      "conventions. If it belongs somewhere else here — a dated folder, a ledger",
+      "row, an existing note the discussion continues — move or link it, then say",
+      "nothing. If the default is fine, leave it.",
+    ].join("\n");
+
+    // spawnIfAbsent: false is the whole point — see the note above.
+    const result = await transport.dispatch(project, message, { spawnIfAbsent: false });
+
+    if (!quiet && result.outcome === "delivered") {
+      console.log(dim(`  Told the ${project} session where it landed.`));
+    }
+  } catch {
+    // Deliberately silent: the discussion is saved, which is what mattered.
+  }
 }
 
 /**

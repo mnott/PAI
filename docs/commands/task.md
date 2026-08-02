@@ -158,6 +158,7 @@ Save a task's discussion into the owning project's notes, without completing it
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--quiet` | Print nothing (for hook and webhook callers) |  |
+| `--no-notify` | Do not tell the owning session where the file landed |  |
 
 
 ### pai task done <id>
