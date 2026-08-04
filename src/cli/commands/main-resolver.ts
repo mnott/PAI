@@ -97,7 +97,7 @@ function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
   dryRun: boolean
-): void {
+): boolean {
   let resumableUuid: string | undefined;
 
   if (session.resumable) {
@@ -112,19 +112,21 @@ function launchSession(
     }
   }
 
-  const { dir: projectDir, tried } = resolveSessionDir(session);
+  const { dir: projectDir } = resolveSessionDir(session);
 
-  if (projectDir === undefined) {
-    console.error(
-      err(
-        `Session directory does not exist or cannot be resolved.\n` +
-          tried.map((c) => `  tried: ${c}\n`).join("") +
-          `  The directory may have moved or been deleted.`
-      )
-    );
-    process.exit(1);
-    return;
-  }
+  // A dead session must not end the whole attempt.
+  //
+  // This used to print an error and process.exit(1). But the caller has more
+  // candidates after this one — most importantly the registered PROJECT, whose
+  // path the registry keeps current — and `openMatch` already knows how to open
+  // a directory directly. Exiting here meant one stale transcript made a live
+  // project unreachable by name: the user asks for a name they can see in the
+  // listing, and gets a dead path instead of a session in the directory that
+  // plainly exists.
+  //
+  // Returning false lets resolution continue. If nothing at all can be opened,
+  // the caller reports that once, with everything it tried.
+  if (projectDir === undefined) return false;
 
   // A session is named for a human to recognise, so a UUID prefix is never an
   // acceptable answer. `friendlyName` is undefined for the sessions synthesized
@@ -148,7 +150,7 @@ function launchSession(
       console.log(`  argv: claude --name "${name}" "/Name ${name}\\ngo"`);
     }
     console.log();
-    return;
+    return true;
   }
 
   if (resumableUuid) {
@@ -332,8 +334,10 @@ async function openMatch(
     if (await doSwitch(entry, dryRun)) return true;
     // Switch failed — fall through and try to open it from disk instead.
   }
-  if (entry.diskSession) {
-    launchSession(entry.diskSession, allSessions, dryRun);
+  // A transcript whose directory is gone is not an answer. Fall through to the
+  // registered project below, whose path the registry keeps current — that is
+  // the difference between "your project moved" and "cannot open anything".
+  if (entry.diskSession && launchSession(entry.diskSession, allSessions, dryRun)) {
     return true;
   }
   if (entry.project && existsSync(entry.project)) {
@@ -457,10 +461,16 @@ export async function cmdMain(
     const newestFirst = (a: UnifiedSession, b: UnifiedSession) =>
       b.lastActivity - a.lastActivity;
 
-    // Exact normalized-name match first (display_name or slug), newest wins
+    // Exact normalized-name match first (display_name or slug), newest wins.
+    //
+    // Try EVERY exact match, not just the best one. They are ranked by recency,
+    // but the top-ranked entry can be unopenable — a transcript pointing at a
+    // directory that has since been renamed — while a lower-ranked entry for the
+    // same name is the live project sitting right there. Stopping at the first
+    // candidate turned "this name is ambiguous" into "this name is broken".
     const exactMatches = deduped.filter((e) => nameMatches(e, qNorm)).sort(newestFirst);
-    if (exactMatches.length > 0) {
-      if (await openMatch(exactMatches[0], allSessions, opts.dryRun ?? false)) return;
+    for (const match of exactMatches) {
+      if (await openMatch(match, allSessions, opts.dryRun ?? false)) return;
     }
 
     // Partial normalized-name match (display_name or slug)
@@ -539,6 +549,36 @@ export async function cmdMain(
         await pickMatch(partialMatches[choice - 1]);
       }
       return;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Case 3b: Registered project by name → open its directory
+  // -----------------------------------------------------------------------
+  // If a project is registered under this name and its directory is there, that
+  // is the answer, full stop. Naming a project should start a session in it.
+  //
+  // The deduped catalog cannot be relied on for this: it keeps ONE entry per
+  // project and prefers a transcript over the registry row, so when the
+  // transcript's recorded directory has gone stale the surviving entry carries a
+  // dead path and the live registry value is never consulted. The catalog is
+  // built for listing, where showing the session is right; it is the wrong
+  // source for "where do I open this".
+  //
+  // So ask the registry directly, before falling back to scraping prompt
+  // history — which is a search feature, not a way to open a known project.
+  {
+    const q = query.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    const byName = registeredProjects.filter((p) => {
+      const name = (p.display_name ?? "").toLowerCase().replace(/[-_]+/g, " ").trim();
+      const slug = (p.slug ?? "").toLowerCase().replace(/[-_]+/g, " ").trim();
+      return name === q || slug === q;
+    });
+    for (const p of byName) {
+      if (p.root_path && existsSync(p.root_path)) {
+        launchInDir(p.root_path, p.display_name ?? query, { dryRun: opts.dryRun ?? false });
+        return;
+      }
     }
   }
 
