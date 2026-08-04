@@ -1,37 +1,36 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T13:59:13.878Z" -->
+<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:07:47.523Z" -->
 
 > **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T13:59:13.878Z
+> **Paused at:** 2026-08-04T14:07:47.523Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T13:59:13.851Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:07:47.319Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - /Name PAI go
 - if you think these bits are good, then take them over
+- [Session:AIBroker] Accounting agrees on my side. `git status --short` here is exactly six entries — main-resolver.ts, goto.ts, launch.ts, session-scan.ts modified, launch.test.ts and session-scan.test…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 2d25cb6 docs: close the daemon storage-health items, flag the orphaned src/tasks diff
-- 11 uncommitted path(s):
+- HEAD: 790296d docs: record the orphaned scheduler diff as adopted
+- 9 uncommitted path(s):
 
 ```
 M Notes/TODO.md
  M src/cli/commands/main-resolver.ts
  M src/cli/commands/session/goto.ts
+ M src/cli/lib/dedup-sessions.ts
  M src/cli/lib/launch.ts
  M src/cli/lib/session-scan.ts
- M src/tasks/poller.test.ts
- M src/tasks/poller.ts
- M src/tasks/scheduler.test.ts
- M src/tasks/scheduler.ts
+?? src/cli/lib/dedup-sessions.test.ts
 ?? src/cli/lib/launch.test.ts
 ?? src/cli/lib/session-scan.test.ts
 ```
@@ -132,6 +131,51 @@ Renamed this session to **PAI** via `aibroker_rename`. No code was written, no f
 edited, nothing was committed. The work above is investigation and verification only.
 
 <!-- /pai:archived-handover -->
+
+---
+
+## 🔴 A cleanly-stopped session cannot be resumed AT ALL (measured 2026-08-04)
+
+**`claude --resume` does not accept a transcript that lives only in `sessions/`.** The stop hook
+MOVES every finished session's transcript from `<project>/<uuid>.jsonl` to
+`<project>/sessions/<uuid>.jsonl`. So ending a session cleanly is what makes it unresumable.
+
+Measured, not inferred — three probes, no tokens spent (no prompt sent, so no model call):
+
+| id | where | result |
+|----|-------|--------|
+| `b3462801` (Paperfull, 867 KB) | `sessions/` only | `No conversation found with session ID` |
+| `046bb712` (this project, 4 KB) | `sessions/` only | `No conversation found with session ID` |
+| `e5070a2f` (this session) | **top level** | found — different error, about deferred tools |
+
+Scale: this project has **1** top-level transcript and **52** in `sessions/`.
+
+The cruelty of it: **`046bb712` is the exact id PAI's own archived handover tells the user to run**
+(`Resume with: claude --resume 046bb712…`). PAI writes that line into every checkpoint, and for any
+cleanly-stopped session it is an instruction that cannot work.
+
+### This refutes a premise currently in the working tree
+
+`src/cli/lib/session-scan.ts` Pass 1b (AIBroker's, uncommitted) sets `resumable: true` and
+`sessionStatus: "resumable"` **unconditionally** for everything in `sessions/`, reasoning that
+"probeResume defines resumable as top level OR sessions/ — `claude --resume` accepts these. The
+scan is the only thing that thought otherwise, so it is the thing that was wrong."
+
+The scan's *visibility* fix is right and valuable — these sessions were vanishing from the catalog.
+The *resumability* label is wrong: the measurements above are the counter-example. So `pai <Name>`
+now confidently hands an unresumable id to `claude --resume`, which is the failure Matthias hit.
+
+- [ ] **Decide where the fix belongs** (AIBroker's file + the stop hook, so not taken unilaterally):
+      (a) stop hook leaves the transcript at top level, or leaves a copy/hardlink there; or
+      (b) resume restores `sessions/<uuid>.jsonl` to top level just before invoking `claude --resume`;
+      or (c) Pass 1b classifies `sessions/`-only as `transcript-only`, which is honest but leaves
+      every finished session unresumable.
+      (b) looks right — it fixes resume without changing what the stop hook is for — but it is a
+      behaviour decision, not a cleanup.
+- [ ] **Then fix the handover text**, which promises a resume that cannot work.
+- [x] Dedup no longer prefers the empty artefact of a failed resume over the real transcript
+      (`f9586ba`) — necessary, and on its own not sufficient: it selects a *better* id that is
+      still unresumable for the reason above.
 
 ---
 
