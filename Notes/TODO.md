@@ -247,6 +247,48 @@ importing AIBroker's `hasConversation`: **153 real sessions, 23.5 MB, had been w
 Restored them. Final state — **782 real sessions recovered, 2086 genuine stubs left alone, zero
 transcripts holding a conversation displaced anywhere on the machine.**
 
+## ✅ Registry cleanup DONE (2026-08-04, v0.32.0) — 157 rows → 147, zero orphans
+
+All five items Matthias authorised are complete. Backup taken first:
+`~/.pai/registry.db.bak-before-merges-1728`.
+
+**Six merges, 10 sessions preserved:**
+
+| merged | into | sessions moved |
+|---|---|---|
+| `ringsaday-1` | `ringsaday` | 0 |
+| `webseiten` | `20-webseiten` | 0 |
+| `stadtoldendorf` | `infrastruktur` | 1 |
+| `pferde` | `infrastruktur` | 1 |
+| `cool-haibt` | `infrastruktur` | 1 |
+| `strange-haibt` | `infrastruktur` | 7 |
+
+`infrastruktur` went 15 → 25 sessions. **Every merged slug is kept as an alias**, so
+`pai stadtoldendorf` still resolves.
+
+**Four rows unregistered** (0 sessions each): `tmp` (rooted at `/private/tmp`, active since
+February), `probe-project`, `ops-webui`, `webseiten-1`.
+
+**Two relocations applied** via `--fix`: `ideaverse` → `🧠 Ideaverse`, `operational-procedures` →
+`70 - Operational Procedures`. Seven genuinely-dead zero-session rows auto-archived.
+
+**Verified after: 0 orphaned rows across all five tables** (sessions, project_tags, aliases,
+compaction_log, links). That check matters because `PRAGMA foreign_keys` is 0 — a partial merge
+would not have failed, it would have silently orphaned rows.
+
+Missing paths: 33 → 25.
+
+### On `ringsaday-1` and `operational-procedures`, since Matthias asked
+
+- **`ringsaday-1`** was never a duplicate of the same directory: `ringsaday` (active, 126 sessions)
+  is the *code* at `Development/apps/maxapps/ringsaday`; `ringsaday-1` was the *vault notes* folder
+  at `Ideaverse/Appstore/ringsaday`. Same app, two folders, and the `-1` came from a slug collision
+  on 2026-02-23. With 0 sessions it was noise, so it was merged away rather than relocated.
+- **`operational-procedures`** is Segelflug theory notes (`Hobbies 2025/Segelflug/Theorie/`), 0
+  sessions. The folder had gained a `70 - ` prefix.
+
+---
+
 ## Dead registry paths — recovered (`fa687ef`, 2026-08-04)
 
 Renaming a directory **above** a project makes every project underneath it go missing at once.
