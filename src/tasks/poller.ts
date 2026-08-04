@@ -11,6 +11,7 @@
  * machine picks up where this one left off.
  */
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -95,6 +96,25 @@ interface PersistedState extends RunState {
    * from one appearing for the first time.
    */
   claimSeenAt: Record<string, number>;
+  /**
+   * Task id → the failure that made this task stop being dispatched.
+   *
+   * `failedDispatches` counts attempts and gates the ALARM. It never gated the
+   * RETRY, so a task whose dispatch could not possibly succeed was re-attempted
+   * every tick for as long as it stayed due. On 2026-08-04 that meant a fresh
+   * terminal window every fifteen minutes for nine hours, against a project
+   * directory that had been renamed months earlier: each attempt opened a tab,
+   * failed its `cd`, waited out the full 90s readiness timeout and gave up,
+   * changing nothing before the next one.
+   *
+   * Parking is the missing state between "failed" and "gave up". A parked task
+   * is still visible, still reported, and still escalates once — it simply
+   * stops being launched at something that cannot accept it. It unparks when
+   * the task's due date moves (the user rescheduled it) or when its parked
+   * reason no longer applies, which is what keeps this from being a one-way
+   * door that quietly retires a task nobody notices is gone.
+   */
+  parked: Record<string, { reason: string; at: number; due?: string }>;
 }
 
 /**
@@ -119,6 +139,7 @@ function emptyState(): PersistedState {
     lastSeenDue: {},
     triggeredRestore: {},
     claimSeenAt: {},
+    parked: {},
   };
 }
 
@@ -158,7 +179,13 @@ async function escalate(
       {
         event: "error",
         title: `PAI: ${headline}`,
-        message: `"${task.content}" ${detail}`,
+        // `title`, not `content`. Todoist's own API calls this field `content`
+        // and the provider renames it on the way in; writing the wire name here
+        // compiled to `undefined` and shipped in v0.27.0, so every alarm this
+        // path has ever sent read `"undefined" is due but has no owner`. The
+        // test below asserts the title appears, because the one that existed
+        // asserted only the tail of the sentence and passed all the way through.
+        message: `"${task.title}" ${detail}`,
       },
       loadConfig().notifications
     );
@@ -398,7 +425,7 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
         const r = await handleDispatch(task, 0, opts, state, now);
         note = `ticked off by hand — ${r.note}`;
         if (!opts.dryRun) {
-          report.dispatched++;
+          if (!r.parked) report.dispatched++;
           if (r.alarm) report.stuck++;
           note += await restoreSchedule(task, d.restoreTo, opts, state);
           // Held for the completion, which advances the recurrence again.
@@ -419,7 +446,10 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
         const r = await handleDispatch(task, d.overdueMinutes, opts, state, now);
         note = r.note;
         if (!opts.dryRun) {
-          report.dispatched++;
+          // A parked task is not dispatched, so it must not be counted as one.
+          // `dispatched: 1, stuck: 1` for a task nothing tried to launch reads
+          // as a dispatch that then went wrong — the opposite of what happened.
+          if (!r.parked) report.dispatched++;
           if (r.alarm) report.stuck++;
         }
         break;
@@ -473,16 +503,74 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
 // Actions
 // ---------------------------------------------------------------------------
 
+/**
+ * Is this failure a verdict rather than a setback?
+ *
+ * Retrying is the right default — a session that is briefly busy, an iTerm that
+ * has not finished launching, a machine under load all resolve on their own.
+ * A filesystem that does not have the directory is not one of those.
+ *
+ * A backstop, NOT the main guard. The missing-root case that motivated all of
+ * this is caught before dispatch by asking the disk directly (see
+ * `handleDispatch`), because AIBroker never phrases it this way: its report for
+ * a vanished root is `unreachable — Launched a session in <path> but it did not
+ * become ready within 90s`, which is indistinguishable in text from a machine
+ * under load. This function exists for reasons that DO name the fault — a
+ * transport throwing ENOENT, a future AIBroker that says so — and it is
+ * deliberately narrow, since anything vaguer would park transient failures and
+ * stop tasks that were only briefly unlucky.
+ */
+function isPermanentDispatchFailure(result: { outcome: string; reason?: string }): boolean {
+  const reason = result.reason ?? "";
+  return (
+    /project_root_missing/i.test(reason) ||
+    /which does not exist/i.test(reason) ||
+    /no such file or directory/i.test(reason)
+  );
+}
+
 async function handleDispatch(
   task: Task,
   overdue: number,
   opts: TickOptions,
   state: PersistedState,
   now: number
-): Promise<{ note: string; alarm: boolean }> {
+): Promise<{ note: string; alarm: boolean; parked?: boolean }> {
   const late = overdue > 5 ? ` (${overdue}m late)` : "";
   if (opts.dryRun) {
     return { note: `would dispatch to ${task.owner.project ?? "nobody"}${late}`, alarm: false };
+  }
+
+  // A parked task is not dispatched, but it is still reported every tick — the
+  // failure mode being avoided here is silence, not noise. Moving the due date
+  // is the unpark gesture: it is what a user does after fixing the cause, and
+  // it needs no command to remember.
+  const parked = state.parked[task.id];
+  if (parked) {
+    if (parked.due === (task.due ?? undefined)) {
+      // Re-escalated, not merely noted. `escalate` is idempotent inside its 24h
+      // window, so this costs one notification a day and buys the thing the
+      // whole v0.27.0 alarm existed for: a task that is not running cannot go
+      // quiet. Alarming once at the moment of parking and never again would
+      // rebuild the original failure in a new shape — a task scheduled every
+      // day, executing never, and saying so only in a log nobody tails.
+      await escalate(
+        task,
+        "task is parked",
+        `is still parked (${parked.reason}) and is not being retried. ` +
+          `Fix the cause and move its due date to release it.`,
+        state,
+        now
+      );
+      return {
+        note: `PARKED since ${new Date(parked.at).toISOString().slice(0, 16).replace("T", " ")} — ${parked.reason}`,
+        alarm: true,
+        parked: true,
+      };
+    }
+    // Rescheduled — the user has acted. Try again.
+    delete state.parked[task.id];
+    delete state.failedDispatches[task.id];
   }
 
   // Reaching here at all means the task is DUE: an undated task scores
@@ -507,6 +595,36 @@ async function handleDispatch(
       now
     );
     return { note: `unrouted — cannot dispatch${hint}${late}`, alarm: true };
+  }
+
+  // A registered root that is not on disk is checked HERE, before anything is
+  // spawned, because the transport cannot tell us about it.
+  //
+  // This is what the 2026-08-04 incident actually looked like from AIBroker's
+  // side: it opened the tab, the shell's `cd` failed, Claude never started, and
+  // it reported `unreachable — Launched a session in <path> but it did not
+  // become ready within 90s`. That sentence names the path and says nothing
+  // about it missing, so matching failure text for "does not exist" — the first
+  // shape of this guard — would have parked nothing at all while reading, in
+  // the diff, exactly like a fix. `/tmp/pai-scheduler.log` has the wording.
+  //
+  // Asked locally it is not a guess: the registry says where the project is,
+  // and either the directory is there or it is not. Nine hours of fifteen-minute
+  // retries, each costing a terminal window and a 90-second timeout, come down
+  // to one `existsSync`.
+  if (task.owner.rootPath && !existsSync(task.owner.rootPath)) {
+    const reason = `project root missing: ${task.owner.rootPath}`;
+    state.parked[task.id] = { reason, at: now, due: task.due ?? undefined };
+    await escalate(
+      task,
+      "task is not running",
+      `cannot be dispatched: its project directory ${task.owner.rootPath} does not exist ` +
+        `(renamed or moved?). It is now PARKED and will not be retried. Repoint the ` +
+        `project with \`pai project\` and move the task's due date to release it.`,
+      state,
+      now
+    );
+    return { note: `PARKED — ${reason}`, alarm: true, parked: true };
   }
 
   // Claim the task BEFORE dispatching, not after.
@@ -541,6 +659,7 @@ async function handleDispatch(
     state.startedAt[task.id] = now;
     delete state.failedProbes[task.id];
     delete state.failedDispatches[task.id];
+    delete state.parked[task.id];
     // Dropped on success so the day-long quiet window never outlives the fault
     // it described: a task fixed this morning and broken again tonight alarms
     // tonight, rather than staying muted until tomorrow.
@@ -558,19 +677,33 @@ async function handleDispatch(
   state.failedDispatches[task.id] = fails;
   const detail = `${result.outcome}${result.reason ? " — " + result.reason : ""}`;
 
-  if (fails >= DISPATCH_FAILURES_BEFORE_ALARM) {
+  // Some failures are verdicts, not setbacks. A project whose root directory
+  // does not exist cannot be launched by trying harder, so it parks on the
+  // first occurrence rather than burning three 90-second spawn timeouts and
+  // then retrying anyway.
+  const permanent = isPermanentDispatchFailure(result);
+
+  if (permanent || fails >= DISPATCH_FAILURES_BEFORE_ALARM) {
     // `unreachable` against a session that has exited to a shell will never
     // resolve on its own: aibroker correctly refuses to type into it, and
-    // nothing here can close the tab. Retrying quietly forever is the failure.
+    // nothing here can close the tab. Retrying quietly forever is the failure —
+    // so this now stops retrying as well as reporting.
+    state.parked[task.id] = {
+      reason: detail,
+      at: now,
+      due: task.due ?? undefined,
+    };
     await escalate(
       task,
       "task is not running",
-      `failed to dispatch ${fails} times (${detail}). It is scheduled and nothing is executing it.`,
+      `failed to dispatch ${permanent ? "" : `${fails} times `}(${detail}). ` +
+        `It is scheduled and nothing is executing it. It is now PARKED and will not ` +
+        `be retried until its due date moves — reschedule it once the cause is fixed.`,
       state,
       now
     );
     return {
-      note: `NOT RUNNING — ${fails} failed dispatches: ${detail}`,
+      note: `PARKED — ${permanent ? "permanent failure" : `${fails} failed dispatches`}: ${detail}`,
       alarm: true,
     };
   }
@@ -587,6 +720,26 @@ async function handleDispatch(
  * between, and clearing is idempotent so doing it twice costs nothing.
  */
 const RUNNING_COMMENT_MARK = "**RUNNING**";
+
+/**
+ * The cross-repo "this was written by a machine" prefix.
+ *
+ * AIBroker mirrors Todoist comments to the session that owns a task — which is
+ * wanted, and is how a human follow-up reaches the running work. Its echo guard
+ * (`AGENT_MARK` in `daemon/todoist-webhook.ts`) is what stops that mirror from
+ * feeding an agent its own writing, and it keys on this character.
+ *
+ * The progress marker below did not carry it. So: the poller dispatched the
+ * sweep, posted "RUNNING" to Todoist, Todoist fired a `note:added` webhook, and
+ * AIBroker mirrored the poller's own status line back as a work order — a
+ * SECOND session for the same task, 19 seconds after the first. Observed
+ * 2026-08-04 07:42:19 → 07:42:38 in `~/.aibroker/audit.jsonl`.
+ *
+ * Duplicated rather than imported because PAI must not depend on AIBroker. The
+ * value is a protocol constant between them; if it ever changes, it changes in
+ * both, and the mirror's own tests pin it on that side.
+ */
+const AGENT_MARK = "🤖";
 
 /**
  * Post the human-facing progress marker.
@@ -609,7 +762,8 @@ async function markRunning(task: Task, opts: TickOptions, startedAt: number): Pr
     // progress marker's job is to say it is running, not to document why.
     await opts.provider.comment(
       task.id,
-      `${RUNNING_COMMENT_MARK} — started ${when} UTC, ${task.owner.project}. Disappears when it finishes.`
+      `${AGENT_MARK} ${RUNNING_COMMENT_MARK} — started ${when} UTC, ${task.owner.project}. ` +
+        `Disappears when it finishes.`
     );
   } catch {
     // Deliberately silent: see above.
@@ -630,7 +784,11 @@ async function clearRunningMark(task: Task, opts: TickOptions): Promise<void> {
   try {
     const comments = await listComments.call(opts.provider, task.id);
     for (const c of comments) {
-      if (c.content.startsWith(RUNNING_COMMENT_MARK)) {
+      // `includes`, not `startsWith`: the marker gained an AGENT_MARK prefix,
+      // and markers posted before that change must still be found and cleared.
+      // The sentinel is meant to be self-healing — a matcher that only knows
+      // the current spelling orphans every comment written by the last one.
+      if (c.content.includes(RUNNING_COMMENT_MARK)) {
         await deleteComment.call(opts.provider, c.id);
       }
     }

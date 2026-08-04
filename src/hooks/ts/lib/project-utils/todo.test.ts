@@ -101,8 +101,12 @@ describe("updateTodoContinue", () => {
     updateTodoContinue(root, `${NOTE}.md`, "Fresh auto state", "session-end");
 
     const out = readTodo();
-    expect(out).not.toContain("Stale checkpoint.");
     expect(out).toContain("Fresh auto state");
+    // Replaced in the slot, kept in the file. `not.toContain` here was the
+    // assertion that made destroying a predecessor's handover look correct;
+    // on 2026-08-04 a live session lost one to exactly this path.
+    expect(out).toContain("Stale checkpoint.");
+    expect(out).toContain("## Previous handovers");
   });
 
   it("does not shred a rich body at the first --- inside it", () => {
@@ -120,9 +124,16 @@ describe("updateTodoContinue", () => {
     updateTodoContinue(root, `${NOTE}.md`, "Fresh auto state", "session-end");
 
     const out = readTodo();
-    // Replaced wholesale — no orphaned tail left behind in the document.
-    expect(out).not.toContain("### Watch");
-    expect(out).not.toContain("Whisper trim");
+    // Moved wholesale — no orphaned tail left behind, and no second copy.
+    //
+    // The regression this pins is the strip, not the policy: the old regex ran
+    // to the FIRST `---`, which for this body is in the middle, so half the
+    // block stayed in the document while the other half was rewritten. One
+    // occurrence of each marker is what "the whole block moved" looks like now
+    // that the block is archived rather than deleted.
+    expect(out.split("### Watch").length - 1).toBe(1);
+    expect(out.split("Whisper trim").length - 1).toBe(1);
+    expect(out.indexOf("### Watch")).toBeGreaterThan(out.indexOf("## Previous handovers"));
     expect(out).toContain("Do not lose me.");
     expect(out.split("## Continue").length - 1).toBe(1);
   });

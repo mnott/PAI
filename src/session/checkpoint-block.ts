@@ -59,6 +59,28 @@ export const TODO_LOCATIONS = [
 export const MARKER_OPEN = "<!-- pai:checkpoint";
 export const MARKER_CLOSE = "<!-- /pai:checkpoint -->";
 
+/**
+ * Markers for a handover that has been superseded but not thrown away.
+ *
+ * Deliberately NOT `pai:checkpoint`: `locateContinue` scans for that marker and
+ * for the `## Continue` heading, so an archived block written verbatim would be
+ * found as the live section and rewritten in place of it. Archived entries are
+ * inert by construction — different marker, no heading.
+ */
+export const ARCHIVE_OPEN = "<!-- pai:archived-handover";
+export const ARCHIVE_CLOSE = "<!-- /pai:archived-handover -->";
+export const ARCHIVE_HEADING = "## Previous handovers";
+
+/**
+ * How many superseded handovers TODO.md keeps.
+ *
+ * Enough that a handover survives a run of sessions that each end without
+ * pausing, which is the sequence that destroyed one on 2026-08-04. Not
+ * unbounded: TODO.md is read by a human at the top of every session, and a file
+ * that grows without limit stops being read, which is its own kind of loss.
+ */
+export const ARCHIVE_LIMIT = 5;
+
 export const CONTINUE_HEADING = "## Continue";
 
 /** Who wrote the checkpoint currently in TODO.md. */
@@ -156,15 +178,23 @@ export interface LocatedContinue {
 /**
  * Lines an auto-generated block is made of. Anything else in a section is
  * content somebody put there deliberately.
+ *
+ * The blockquote marker is optional on every pattern. These lines appear
+ * quoted when the block builder emits them as its header, and unquoted when a
+ * caller passes the same text as a BODY — which the session-stop hook does: it
+ * builds `Working directory: ${cwd}` and hands it over as state. Matching only
+ * the quoted form made such a body read as content, which is how a session
+ * that did no work at all overwrote a real handover on 2026-08-04. A line that
+ * merely restates the generated header is boilerplate wherever it sits.
  */
 const BOILERPLATE_PATTERNS = [
   /^##\s+Continue$/,
   /^<!--\s*\/?pai:checkpoint/,
-  /^>\s*\*\*Last session:\*\*/,
-  /^>\s*\*\*Paused at:\*\*/,
-  /^>\s*Working directory:/,
-  /^>\s*Resume with:/,
-  /^>\s*_No checkpoint body was recorded/,
+  /^>?\s*\*\*Last session:\*\*/,
+  /^>?\s*\*\*Paused at:\*\*/,
+  /^>?\s*Working directory:/,
+  /^>?\s*Resume with:/,
+  /^>?\s*_No checkpoint body was recorded/,
   /^-{3,}$/,
 ];
 
@@ -186,6 +216,20 @@ export function isBoilerplateOnly(lines: string[]): boolean {
     const t = line.trim();
     return BLANK_LINE.test(t) || BOILERPLATE_PATTERNS.some((re) => re.test(t));
   });
+}
+
+/**
+ * True when a checkpoint body says something the generated header does not.
+ *
+ * "Has a body" and "has something to say" are not the same question, and the
+ * preservation rules care only about the second. An unattended writer that
+ * emits a single line restating the working directory has produced a body by
+ * any string test and a handover by none.
+ */
+export function hasSubstance(body: string | null | undefined): boolean {
+  const text = (body ?? "").trim();
+  if (!text) return false;
+  return !isBoilerplateOnly(text.split("\n"));
 }
 
 /**
@@ -498,6 +542,8 @@ export interface ApplyResult {
   preservedMeta?: CheckpointMeta;
   /** Set when unattributed content was carried forward into the new block. */
   carriedForward?: boolean;
+  /** Set when a superseded model-authored handover was moved to the archive. */
+  archived?: boolean;
   error?: string;
 }
 
@@ -577,6 +623,75 @@ function isRecent(meta: CheckpointMeta, now?: string): boolean {
   return nowMs - then < AUTHORED_GRACE_MS;
 }
 
+/**
+ * Turn a live checkpoint block into an inert archive entry.
+ *
+ * Two things have to go: the `## Continue` heading and the `pai:checkpoint`
+ * marker. Both are what `locateContinue` looks for, so leaving either in place
+ * would let a later write treat the archive as the live section — and the next
+ * one after that would then archive the archive. Everything else is kept
+ * verbatim, because the body is the whole reason this exists.
+ */
+function toArchiveEntry(lines: string[], meta: CheckpointMeta | null): string[] {
+  const out: string[] = [];
+  const label = meta?.session ?? "Unknown session";
+  const stamp = meta?.ts ? ` — checkpointed ${meta.ts}` : "";
+  out.push(`${ARCHIVE_OPEN} session="${label}"${meta?.ts ? ` ts="${meta.ts}"` : ""} -->`);
+  out.push("");
+  out.push(`### ${label}${stamp}`);
+  out.push("");
+  for (const line of lines) {
+    if (line.trim() === CONTINUE_HEADING) continue;
+    if (line.trim().startsWith(MARKER_OPEN)) continue;
+    if (line.trim() === MARKER_CLOSE) continue;
+    if (line.trim() === "---") continue;
+    out.push(line);
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+  out.push("");
+  out.push(ARCHIVE_CLOSE);
+  return out;
+}
+
+/**
+ * Put a superseded handover into the archive section, newest first.
+ *
+ * `rest` is the document with the Continue section already stripped. The
+ * archive lives immediately below it so a reader meets the current handover
+ * first and the previous ones directly after, rather than hunting for them at
+ * the bottom of a file that also holds the project's open work.
+ */
+function archiveInto(rest: string, entry: string[]): string {
+  const lines = rest.split("\n");
+  const headingIdx = lines.findIndex((l) => l.trim() === ARCHIVE_HEADING);
+
+  if (headingIdx === -1) {
+    return [ARCHIVE_HEADING, "", ...entry, "", "---", "", rest.trimStart()].join("\n");
+  }
+
+  // Insert directly under the heading, then drop whatever falls past the cap.
+  const before = lines.slice(0, headingIdx + 1);
+  const after = lines.slice(headingIdx + 1);
+  while (after.length > 0 && after[0].trim() === "") after.shift();
+
+  const merged = [...entry, "", ...after];
+  const kept: string[] = [];
+  let seen = 0;
+  for (let i = 0; i < merged.length; i++) {
+    if (merged[i].trim().startsWith(ARCHIVE_OPEN)) {
+      seen += 1;
+      if (seen > ARCHIVE_LIMIT) {
+        // Everything from here to the end of THIS entry goes; keep scanning so
+        // anything after the archive section (other headings, open work) stays.
+        while (i < merged.length && merged[i].trim() !== ARCHIVE_CLOSE) i++;
+        continue; // skips the close marker too
+      }
+    }
+    kept.push(merged[i]);
+  }
+  return [...before, "", ...kept].join("\n");
+}
+
 export function applyContinue(opts: ApplyOptions): ApplyResult {
   const target = resolveTodoTarget(opts.rootPath, { create: !opts.dryRun });
   if (!target) {
@@ -591,6 +706,7 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
   const existing = locateContinue(target.content);
   let carriedForward = false;
   let effectiveBody = opts.body;
+  let archiveEntry: string[] | null = null;
 
   if (opts.authored === "auto" && existing) {
     // Case 1 — authored, same session: hands off.
@@ -603,7 +719,7 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
       };
     }
 
-    // Case 1b — the incoming write carries no body at all, and what is already
+    // Case 1b — the incoming write has nothing to say, and what is already
     // there does. A metadata-only block says "see the latest session note", so
     // replacing a real handover with one trades content for a pointer — and the
     // pointer is not always good: observed live on 2026-08-01 in the AIBroker
@@ -619,9 +735,18 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
     // which salvages its content into the new block rather than freezing the
     // old one — better, because an unmarked block has no session metadata worth
     // preserving and may predate this scheme entirely.
+    //
+    // The test is SUBSTANCE, not emptiness. It was emptiness until 2026-08-04,
+    // when a session that was opened and immediately exited destroyed the
+    // previous day's handover for every project it touched. Its stop hook found
+    // no work items and no completion message, so it sent the one line it
+    // always builds unconditionally — `Working directory: …`, a verbatim copy
+    // of a line the header already generates. Non-empty by a string test, so
+    // this guard stood down; worthless by any other reading. `hasSubstance`
+    // asks the question the comment above always claimed to be asking.
     if (
       existing.meta &&
-      !(opts.body ?? "").trim() &&
+      !hasSubstance(opts.body) &&
       !isBoilerplateOnly(existing.lines)
     ) {
       return {
@@ -668,6 +793,34 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
       };
     }
 
+    // Case 2c — an authored handover from an EARLIER session, past the grace
+    // window. Case 2 deleted it, on the reasoning that TODO.md must not freeze
+    // and that `pai pause` mirrors authored bodies into the session note.
+    //
+    // The first half is right. The second is an assumption, and on 2026-08-04
+    // it was false in the plainest way available: this project keeps no session
+    // notes at all (`Notes/*` is gitignored and none exist on disk), so the
+    // checkpoint WAS the only copy. It went at 08:36:29Z, to the autosave of a
+    // session that had been open for sixteen minutes and had typed one line —
+    // destroying, as its first act, the handover it had been started to read.
+    //
+    // This is also the escape the v0.27.2 guard could not close: that one asks
+    // whether the block is RECENT, and a handover written the night before is
+    // not. Age was never the question. Nothing here needs the old block gone;
+    // it only needs the slot. So the block moves down the file instead, and the
+    // freeze argument and the loss argument stop being in tension.
+    //
+    // Only for `model` blocks with something in them. An auto block is a
+    // transcript scrape that regenerates on the next tick, and archiving those
+    // would bury the real handovers under mechanical noise.
+    if (
+      existing.meta?.authored === "model" &&
+      !isBoilerplateOnly(existing.lines) &&
+      !isSameSession(existing.meta, opts)
+    ) {
+      archiveEntry = toArchiveEntry(existing.lines, existing.meta);
+    }
+
     // Case 3 — unmarked block holding content nobody can attribute to us.
     if (!existing.meta && !isBoilerplateOnly(existing.lines)) {
       const salvaged = extractSectionContent(existing.lines);
@@ -686,10 +839,11 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
   const block = buildContinueBlock({ ...opts, body: effectiveBody });
 
   if (opts.dryRun) {
-    return { action: "written", path: target.path, block, carriedForward };
+    return { action: "written", path: target.path, block, carriedForward, archived: !!archiveEntry };
   }
 
-  const newContent = block + stripContinue(target.content).trimStart();
+  const rest = stripContinue(target.content).trimStart();
+  const newContent = block + (archiveEntry ? archiveInto(rest, archiveEntry) : rest);
   const tmpPath = `${target.path}.continue.tmp`;
 
   try {
@@ -709,7 +863,7 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
     };
   }
 
-  return { action: "written", path: target.path, block, carriedForward };
+  return { action: "written", path: target.path, block, carriedForward, archived: !!archiveEntry };
 }
 
 // ---------------------------------------------------------------------------

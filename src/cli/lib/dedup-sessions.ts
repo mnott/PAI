@@ -135,7 +135,21 @@ export function buildDeduped(
   // Process live Claude sessions
   for (const s of liveSessions) {
     if (s.kind === "shell") continue;
-    const raw = s.paiName ?? s.name ?? s.sessionId.slice(0, 8);
+    // NOT the iTerm tab title.
+    //
+    // `s.name` is whatever iTerm is calling the tab right now, which tracks the
+    // foreground process and the window title escape codes. Using it as a
+    // session IDENTITY means any tab that happens to be titled like a project
+    // becomes a "live session" of that name — and because live entries win over
+    // project entries in the merge below, `pai <Project>` then SWITCHES to that
+    // tab instead of launching the project. Reported 2026-08-04: `pai PAI`
+    // printing "Switched to live session: pai" and opening nothing.
+    //
+    // A session's identity is the name PAI gave it. A session that has none is
+    // listed by its id and matches nothing by name, which is the safe answer:
+    // failing to find it launches a fresh one, whereas matching it wrongly
+    // hands the user someone else's terminal.
+    const raw = s.paiName ?? s.sessionId.slice(0, 8);
     const normalized = normalizeName(raw);
     const key = normalized.toLowerCase();
 

@@ -237,25 +237,38 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
       `[work-queue-worker] Finalized session note: ${basename(currentNotePath)}.\n`
     );
 
-    // Update TODO.md ## Continue section
-    try {
-      const stateLines: string[] = [];
-      stateLines.push(`Working directory: ${cwd}`);
-      if (workItems.length > 0) {
-        stateLines.push("", "Work completed:");
-        for (const wi of workItems.slice(0, 5)) {
-          stateLines.push(`- ${wi.title}`);
-        }
-      }
-      if (message) {
-        stateLines.push("", `Last completed: ${message}`);
-      }
-      updateTodoContinue(cwd, basename(currentNotePath), stateLines.join("\n"), "session-end");
-    } catch (todoError) {
-      // Non-fatal — log and continue
+    // Update TODO.md ## Continue section.
+    //
+    // A session that produced neither work items nor a completion message has
+    // no handover to write. Claiming the slot anyway hands the next session a
+    // block naming a session that did nothing — see the 2026-08-04 incident
+    // recorded in AIBroker's Notes. applyContinue now refuses such a write on
+    // its own; this skips building it in the first place, so the "last session"
+    // line keeps pointing at the last session that actually did something.
+    if (workItems.length === 0 && !message) {
       process.stderr.write(
-        `[work-queue-worker] Could not update TODO.md: ${todoError}\n`
+        "[work-queue-worker] Nothing to hand over — leaving TODO.md ## Continue intact.\n"
       );
+    } else {
+      try {
+        const stateLines: string[] = [];
+        stateLines.push(`Working directory: ${cwd}`);
+        if (workItems.length > 0) {
+          stateLines.push("", "Work completed:");
+          for (const wi of workItems.slice(0, 5)) {
+            stateLines.push(`- ${wi.title}`);
+          }
+        }
+        if (message) {
+          stateLines.push("", `Last completed: ${message}`);
+        }
+        updateTodoContinue(cwd, basename(currentNotePath), stateLines.join("\n"), "session-end");
+      } catch (todoError) {
+        // Non-fatal — log and continue
+        process.stderr.write(
+          `[work-queue-worker] Could not update TODO.md: ${todoError}\n`
+        );
+      }
     }
   } else {
     process.stderr.write(
