@@ -22,6 +22,7 @@ import {
   expectedAdvanceDays,
   wasTicked,
   restoreDueString,
+  triggeredSlotMs,
 } from "./scheduler.js";
 import type { Task } from "./types.js";
 
@@ -525,6 +526,84 @@ describe("whose run is it", () => {
 
   it("isClaimedByAnyone is false only when nothing holds the task", () => {
     expect(isClaimedByAnyone(unclaimed, EMPTY_RUN_STATE)).toBe(false);
+  });
+});
+
+describe("when a restored slot falls due", () => {
+  /**
+   * `triggeredSlotMs` decides whether restoring a hand-triggered schedule is
+   * still useful, so every branch of its time parsing is a branch of "does this
+   * task re-dispatch every tick for the rest of the day". The poller tests cover
+   * the two shapes `restoreDueString` emits; these cover the parsing itself,
+   * which the guard reaches with whatever spelling a human typed into Todoist.
+   *
+   * Expectations are built with the same local-midnight construction as the
+   * function rather than fixed epoch numbers: a Todoist "at 9am" means 9am where
+   * the user is, so the local reading is the correct one and hard-coded UTC
+   * would only pin the suite to one machine.
+   */
+  const localMs = (iso: string) => new Date(iso).getTime();
+
+  it("reads a bare hour with an am/pm suffix", () => {
+    expect(triggeredSlotMs("every day at 9am starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T09:00:00")
+    );
+  });
+
+  it("reads a 24-hour time with minutes", () => {
+    expect(triggeredSlotMs("every week at 08:30 starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T08:30:00")
+    );
+  });
+
+  it("moves an afternoon pm hour into the 24-hour clock", () => {
+    expect(triggeredSlotMs("every day at 5pm starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T17:00:00")
+    );
+  });
+
+  it("handles the two hours where am/pm and 24-hour disagree", () => {
+    // 12am is midnight and 12pm is noon — the one pair where the naive
+    // "add twelve for pm" and "leave am alone" rules are both wrong.
+    expect(triggeredSlotMs("every day at 12am starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T00:00:00")
+    );
+    expect(triggeredSlotMs("every day at 12pm starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T12:00:00")
+    );
+  });
+
+  it("falls back to end of day when the rule carries no time", () => {
+    // A date-only occurrence genuinely does run until the day is out, so the
+    // old end-of-day comparison was right — for this case only.
+    expect(triggeredSlotMs("every day starting 2026-08-01", "2026-08-01")).toBe(
+      localMs("2026-08-01T23:59:59")
+    );
+  });
+
+  it("finds the time in a rule whose weekday name also contains 'at'", () => {
+    // "Saturday" and "Sat" both contain "at". Two things have to hold for this
+    // to land on 09:00 rather than somewhere arbitrary — the word boundary, and
+    // the requirement that a digit follow — and the parse survives either one
+    // alone, so this pins the outcome rather than the mechanism.
+    for (const rule of ["every Saturday at 9am", "every Sat at 9am"]) {
+      expect(triggeredSlotMs(`${rule} starting 2026-08-01`, "2026-08-01"), rule).toBe(
+        localMs("2026-08-01T09:00:00")
+      );
+    }
+  });
+
+  it("parses every string restoreDueString can emit", () => {
+    // The real contract: these two functions are inverses, and the guard only
+    // works if the second can read whatever the first wrote.
+    const carriesTime = restoreDueString("every day at 9am", "2026-08-01T09:00");
+    const timeAppended = restoreDueString("every day", "2026-08-01T09:00");
+    expect(timeAppended).toContain("at 09:00");
+    for (const emitted of [carriesTime, timeAppended]) {
+      expect(triggeredSlotMs(emitted, "2026-08-01"), emitted).toBe(
+        localMs("2026-08-01T09:00:00")
+      );
+    }
   });
 });
 

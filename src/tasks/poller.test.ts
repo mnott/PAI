@@ -287,6 +287,30 @@ describe("a hand-triggered run keeps its schedule", () => {
     });
     expect(setDue).not.toHaveBeenCalled();
   });
+
+  /**
+   * The case above only proves the guard rejects a date that is wholly in the
+   * past, which an end-of-day comparison also does. The slot that actually bit
+   * was TODAY's, already elapsed by the clock: on 2026-08-04 a 09:00 daily was
+   * restored at 09:30 and then re-dispatched every two ticks for the rest of
+   * the day. Both spellings of the time appear because restoreDueString emits
+   * either, depending on whether the rule already carries one.
+   */
+  it("does not write back today's slot once its time of day has passed", async () => {
+    for (const entry of [
+      "every day at 08:00 starting 2026-08-01", // NOW is 12:00Z on that date
+      "every day at 9am starting 2026-08-01",
+    ]) {
+      const { setDue } = await completeOnce({ sweep: entry });
+      expect(setDue, entry).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still writes back today's slot when its time is yet to come", async () => {
+    const entry = "every day at 20:00 starting 2026-08-01";
+    const { setDue } = await completeOnce({ sweep: entry });
+    expect(setDue).toHaveBeenCalledWith("sweep", entry);
+  });
 });
 
 describe("a webhook-triggered run also keeps its schedule", () => {

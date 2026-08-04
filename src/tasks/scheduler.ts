@@ -296,6 +296,36 @@ export function restoreDueString(recurrence: string, prevDue: string): string {
   return `${recurrence}${time} starting ${date}`;
 }
 
+/**
+ * When a restored slot actually falls due — the inverse of `restoreDueString`.
+ *
+ * Callers need this to decide whether putting the slot back is still useful.
+ * Restoring one that has already passed writes a task that is overdue the
+ * instant it lands, and the next tick dispatches it, which advances the date,
+ * which restores it again: an unbounded loop that fires every tick for the rest
+ * of the day. That is not hypothetical — it happened on 2026-08-04 with "every
+ * day at 9am", which re-dispatched roughly every 30 minutes (two 900s ticks)
+ * because the guard compared against the end of the day rather than 09:00.
+ *
+ * Both shapes `restoreDueString` can emit put the time after "at", so one match
+ * covers "every day at 9am starting …" and "every week at 08:00 starting …".
+ * A rule carrying no time at all is a genuine date-only occurrence, and for
+ * those the slot really does run until the end of the day.
+ */
+export function triggeredSlotMs(keep: string, date: string): number {
+  const at = /\bat\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)?/i.exec(keep);
+  if (!at) return new Date(`${date}T23:59:59`).getTime();
+
+  let hour = Number(at[1]);
+  const suffix = at[3]?.toLowerCase();
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+
+  const hh = String(hour).padStart(2, "0");
+  const mm = String(Number(at[2] ?? 0)).padStart(2, "0");
+  return new Date(`${date}T${hh}:${mm}:00`).getTime();
+}
+
 // ---------------------------------------------------------------------------
 // Duration learning
 // ---------------------------------------------------------------------------
