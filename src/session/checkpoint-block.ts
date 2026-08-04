@@ -300,18 +300,28 @@ export function locateContinue(content: string): LocatedContinue | null {
 /**
  * Legacy scanner for blocks written before checkpoint markers existed.
  *
- * Terminates on a horizontal rule or the next level-2 heading. Note the
- * `(?!#)` — `###` is a *subsection* of `## Continue`, not a terminator. The
+ * Terminates on a horizontal rule or the next level-1 or level-2 heading. Note
+ * the `(?!#)` — `###` is a *subsection* of `## Continue`, not a terminator. The
  * original scanner stopped at any run of `#`, which meant a `### Restored
  * state` subsection fell outside the section entirely and could not be seen,
  * let alone carried forward.
+ *
+ * `#{1,2}` rather than `##`, because matching only `##` did not stop at an H1
+ * and therefore ATE IT. A TODO.md whose `## Continue` block precedes its
+ * `# TODO` title had the title absorbed into the section and destroyed on the
+ * next regenerate — reported independently by three sessions on 2026-08-03,
+ * one of which lost it three times and recovered from git each time.
+ *
+ * An H1 is a document-level heading. It can never be part of a `## Continue`
+ * section, so treating it as a terminator is not a heuristic improvement but a
+ * structural fact.
  */
 function heuristicEnd(lines: string[], startIdx: number): number {
   for (let i = startIdx + 1; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (
       trimmed === "---" ||
-      (/^##(?!#)/.test(trimmed) && trimmed !== CONTINUE_HEADING)
+      (/^#{1,2}(?!#)/.test(trimmed) && trimmed !== CONTINUE_HEADING)
     ) {
       return i;
     }

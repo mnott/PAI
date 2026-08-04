@@ -182,7 +182,13 @@ export async function cmdPauseAll(opts: {
       "\n"
   );
 
-  const results: Array<{ session: AiBrokerSessionMeta; pauseOk: boolean; exitOk?: boolean; error?: string }> = [];
+  const results: Array<{
+    session: AiBrokerSessionMeta;
+    pauseOk: boolean;
+    unconfirmed?: boolean;
+    exitOk?: boolean;
+    error?: string;
+  }> = [];
 
   for (const s of claudeSessions) {
     process.stdout.write("  " + sessionLabel(s) + " … ");
@@ -190,6 +196,23 @@ export async function cmdPauseAll(opts: {
     // Send "pause session" command
     // No trailing newline: the transport appends Enter itself.
     const pauseResult = await sendToSession(s.sessionId, "pause session");
+
+    // Three outcomes, not two. A timeout means the message reached the target's
+    // mailbox — the handler deposits before it waits for the submit ack — so the
+    // pause is under way and only the confirmation is missing.
+    //
+    // Printing that as FAILED is worse than useless: the obvious response is to
+    // run the command again, and a second "pause session" into a session that
+    // already paused nests a fresh "carried forward" block inside the one it
+    // just wrote. Measured across 15 sessions: 9 reported failed, 8 verifiably
+    // paused, and one refused the duplicate specifically to protect its own
+    // checkpoint.
+    if (pauseResult.timedOut) {
+      console.log(warn("sent — checkpoint still running (not confirmed)"));
+      results.push({ session: s, pauseOk: true, unconfirmed: true });
+      continue;
+    }
+
     if (!pauseResult.ok) {
       console.log(err("FAILED: " + (pauseResult.error ?? "unknown error")));
       results.push({ session: s, pauseOk: false, error: pauseResult.error });
@@ -256,19 +279,36 @@ export async function cmdPauseAll(opts: {
   // ── Summary ───────────────────────────────────────────────────────────────
   const total = results.length;
   const succeeded = results.filter((r) => r.pauseOk).length;
+  const unconfirmed = results.filter((r) => r.unconfirmed).length;
+  const confirmed = succeeded - unconfirmed;
   const failed = total - succeeded;
 
   console.log();
-  if (failed === 0) {
+  if (failed === 0 && unconfirmed === 0) {
     console.log(ok(`All ${total} session(s) paused successfully.`));
   } else {
     console.log(
-      warn(`${succeeded}/${total} session(s) paused. `) +
-        err(`${failed} failed.`)
+      ok(`${confirmed} confirmed`) +
+        (unconfirmed > 0 ? warn(`, ${unconfirmed} still writing`) : "") +
+        (failed > 0 ? err(`, ${failed} not delivered`) : "") +
+        dim(` — of ${total} session(s).`)
     );
     for (const r of results.filter((r) => !r.pauseOk)) {
       const label = r.session.paiName ?? r.session.name ?? r.session.sessionId.slice(0, 8);
       console.log(err(`  ${label}: ${r.error ?? "unknown error"}`));
+    }
+    if (unconfirmed > 0) {
+      // Said explicitly, because the whole cost of the old wording was that it
+      // read as "try again" when trying again is the one harmful move.
+      console.log(
+        dim(
+          `\n  "Still writing" means delivered — the session is composing its\n` +
+            `  checkpoint, which routinely outlasts the confirmation window.\n` +
+            `  Do NOT re-run to catch them: a second pause nests a new\n` +
+            `  "carried forward" block inside the one being written. Check with\n` +
+            `  \`pai session list\` in a minute instead.`
+        )
+      );
     }
   }
 

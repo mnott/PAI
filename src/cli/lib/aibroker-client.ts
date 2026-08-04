@@ -52,6 +52,22 @@ interface AiBrokerSessionsResult {
 const DEFAULT_SOCKET = process.env.AIBROKER_SOCKET ?? aibrokerSocketPath();
 
 /**
+ * How long to wait for `send_to_session`, which must exceed the server's own
+ * ack window or the caller gives up while the callee is still working.
+ *
+ * AIBroker waits up to SEND_ACK_TIMEOUT_MS (15s) for the submit confirmation —
+ * the text leaving the input line — before answering. The generic client
+ * timeout is 8s. So every send needing 8-15s to confirm reported
+ * "AIBroker IPC call timed out" while succeeding, and the handler's eventual
+ * `delivered: true` was written into a socket nobody was reading any more.
+ *
+ * Measured on `pai pause all` across 15 sessions: 9 reported failed, 8 of them
+ * verifiably paused. A caller's deadline shorter than the callee's is not a
+ * tuning question, it is a guaranteed false negative on every slow success.
+ */
+const SEND_TIMEOUT_MS = 30_000;
+
+/**
  * Call an AIBroker IPC method and return the result.
  *
  * Resolves with the `result` field of a successful response.
@@ -247,13 +263,21 @@ function extractLastUserPrompt(content: string): string | undefined {
  */
 export async function sendToSession(
   sessionId: string,
-  text: string
-): Promise<{ ok: boolean; error?: string }> {
+  text: string,
+  timeoutMs = SEND_TIMEOUT_MS
+): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
   try {
-    await callAiBroker("send_to_session", { target: sessionId, message: text });
+    await callAiBroker("send_to_session", { target: sessionId, message: text }, timeoutMs);
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: String(e) };
+    const error = String(e);
+    // A timeout is NOT a delivery failure, and conflating the two is expensive.
+    // The handler deposits into the target's mailbox BEFORE it waits for the
+    // submit ack, so a send that times out has still been delivered — only the
+    // confirmation is missing. Reported as a plain failure, the natural response
+    // is to send again, which is how `pai pause all` produced nested
+    // "carried forward" blocks in checkpoints that had already been written.
+    return { ok: false, error, timedOut: /timed out/i.test(error) };
   }
 }
 

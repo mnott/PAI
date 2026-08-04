@@ -764,3 +764,55 @@ describe("readContinueCheckpoint", () => {
     expect(read!.body).not.toContain("Unrelated backlog item.");
   });
 });
+
+/**
+ * The H1-eating bug.
+ *
+ * `heuristicEnd` terminated on `##` but not on `#`, so a TODO.md whose
+ * `## Continue` block sits ABOVE its `# TODO` title absorbed the title into the
+ * section — and every regenerate destroyed it. Three sessions reported this
+ * independently on 2026-08-03; one lost the H1 three times and restored it from
+ * git each time, which is the only reason anyone noticed.
+ *
+ * An H1 is a document-level heading and cannot belong to a level-2 section, so
+ * this is a structural fact rather than a tuned heuristic.
+ */
+describe("an H1 terminates the Continue section", () => {
+  const doc = [
+    "## Continue",
+    "",
+    "auto checkpoint body",
+    "",
+    "# TODO",
+    "",
+    "- [ ] a real task nobody wants deleted",
+    "",
+  ].join("\n");
+
+  it("does not swallow the H1 into the section", () => {
+    const found = locateContinue(doc);
+    expect(found).not.toBeNull();
+    expect(found!.lines.join("\n")).not.toContain("# TODO");
+  });
+
+  it("leaves the H1 and everything under it in place when stripped", () => {
+    const rest = stripContinue(doc);
+    expect(rest).toContain("# TODO");
+    expect(rest).toContain("- [ ] a real task nobody wants deleted");
+  });
+
+  it("still treats ### as a subsection rather than a terminator", () => {
+    // The opposite error, and the reason the original regex was narrow.
+    const withSub = ["## Continue", "", "### Restored state", "", "detail", ""].join("\n");
+    const found = locateContinue(withSub);
+    expect(found!.lines.join("\n")).toContain("### Restored state");
+    expect(found!.lines.join("\n")).toContain("detail");
+  });
+
+  it("still terminates at the next ## heading", () => {
+    const withH2 = ["## Continue", "", "body", "", "## Notes", "", "keep me", ""].join("\n");
+    const rest = stripContinue(withH2);
+    expect(rest).toContain("## Notes");
+    expect(rest).toContain("keep me");
+  });
+});
