@@ -17,7 +17,7 @@ export {
   ensureNotesDirSmart,
   ensureSessionsDir,
   ensureSessionsDirFromProjectDir,
-  moveSessionFilesToSessionsDir,
+  archiveSessionFilesToSessionsDir,
   findTodoPath,
   findClaudeMdPath,
   findAllClaudeMdPaths,

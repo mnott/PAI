@@ -8,7 +8,7 @@ import {
   sendNtfyNotification,
   getCurrentNotePath,
   finalizeSessionNote,
-  moveSessionFilesToSessionsDir,
+  archiveSessionFilesToSessionsDir,
   addWorkToSessionNote,
   findNotesDir,
   isProbeSession,
@@ -668,12 +668,12 @@ async function executeDirectly(
   // Move session .jsonl files to sessions/
   try {
     const transcriptDir = dirname(transcriptPath);
-    const movedCount = moveSessionFilesToSessionsDir(transcriptDir);
-    if (movedCount > 0) {
-      console.error(`Moved ${movedCount} session file(s) to sessions/`);
+    const archivedCount = archiveSessionFilesToSessionsDir(transcriptDir);
+    if (archivedCount > 0) {
+      console.error(`Archived ${archivedCount} session file(s) to sessions/`);
     }
   } catch (moveError) {
-    console.error(`Could not move session files: ${moveError}`);
+    console.error(`Could not archive session files: ${moveError}`);
   }
 }
 

@@ -9,7 +9,7 @@
  */
 
 import { dirname, basename } from 'path';
-import { moveSessionFilesToSessionsDir } from '../lib/project-utils';
+import { archiveSessionFilesToSessionsDir } from '../lib/project-utils';
 
 interface HookInput {
   session_id: string;
@@ -31,11 +31,16 @@ async function main() {
     const projectDir = dirname(data.transcript_path);
     const currentSessionFile = basename(data.transcript_path);
 
-    // Move stray .jsonl files, excluding the current active session (silent mode)
-    const movedCount = moveSessionFilesToSessionsDir(projectDir, currentSessionFile, true);
+    // Archive stray .jsonl files, excluding the current active session.
+    //
+    // The exclusion is kept even though nothing is destroyed any more: the
+    // archive is meant to hold FINISHED sessions, and linking a transcript that
+    // is still being written would offer session-summary-worker a live session
+    // as an archived candidate mid-turn. Stop hooks archive it when it ends.
+    const archivedCount = archiveSessionFilesToSessionsDir(projectDir, currentSessionFile, true);
 
-    if (movedCount > 0) {
-      console.error(`Cleaned up ${movedCount} session file(s) to sessions/`);
+    if (archivedCount > 0) {
+      console.error(`Archived ${archivedCount} session file(s) to sessions/`);
     }
   } catch {
     // Silent failure - don't block user prompts
