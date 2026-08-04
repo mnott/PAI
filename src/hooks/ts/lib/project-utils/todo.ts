@@ -3,7 +3,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { findTodoPath } from './paths.js';
 import { applyContinue } from '../../../../session/checkpoint-block.js';
 
@@ -130,6 +130,27 @@ export function addTodoCheckpoint(cwd: string, checkpoint: string): void {
 }
 
 /**
+ * The Claude Code session UUID, read off the transcript path.
+ *
+ * Claude Code names a transcript `<session-uuid>.jsonl`, so the hooks that
+ * receive a transcript path are holding the session's identity without knowing
+ * it. Both session-end writers had one available and neither used it.
+ *
+ * Shape-checked rather than trusted: only a UUID is returned, so a renamed,
+ * archived or otherwise unexpected filename yields undefined and the caller
+ * falls back to the session line rather than writing a `session-id` that
+ * identifies nothing. A wrong id is worse than none — it would make two
+ * different sessions compare equal.
+ */
+export function sessionIdFromTranscript(transcriptPath: string | undefined): string | undefined {
+  if (!transcriptPath) return undefined;
+  const base = basename(transcriptPath).replace(/\.jsonl$/, '');
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(base)
+    ? base
+    : undefined;
+}
+
+/**
  * Update the ## Continue section at the top of TODO.md.
  *
  * This is the unattended writer: the pre-compact hook and the daemon's
@@ -153,7 +174,18 @@ export function updateTodoContinue(
   cwd: string,
   noteFilename: string,
   state: string | null,
-  tokenDisplay: string
+  tokenDisplay: string,
+  /**
+   * The Claude Code session UUID, when the caller knows it.
+   *
+   * Optional only because a caller may genuinely not have it; supply it
+   * whenever you can. Without it `isSameSession` falls back to comparing the
+   * note FILENAME, and pausing renames the note — so a session stops
+   * recognising its own checkpoint seconds after writing it, and an automated
+   * write is then free to replace it as though it belonged to a predecessor.
+   * That is how a live session lost a model-authored handover on 2026-08-04.
+   */
+  sessionId?: string
 ): void {
   // Ensure a TODO.md exists so applyContinue writes to the same file the rest
   // of the hooks lib uses.
@@ -168,6 +200,9 @@ export function updateTodoContinue(
     // is the key that decides whether an authored checkpoint belongs to the
     // current session and must be preserved.
     sessionLine: noteFilename.replace(/\.md$/, ''),
+    // The UUID is authoritative when present; the line above is the fallback
+    // for callers that cannot supply one, and it is mutable by design.
+    sessionId,
     cwd,
     body: state?.trim() || undefined,
   });

@@ -47,5 +47,6 @@ export {
   updateTodoMd,
   addTodoCheckpoint,
   updateTodoContinue,
+  sessionIdFromTranscript,
 } from "./todo.js";
 export type { TodoItem } from "./todo.js";

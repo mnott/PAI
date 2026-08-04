@@ -47,7 +47,7 @@ import {
   getCurrentNotePath,
   addWorkToSessionNote,
   finalizeSessionNote,
-  updateTodoContinue,
+  updateTodoContinue, sessionIdFromTranscript,
   moveSessionFilesToSessionsDir,
   type WorkItem as NoteWorkItem,
 } from "../hooks/ts/lib/project-utils/index.js";
@@ -262,7 +262,15 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
         if (message) {
           stateLines.push("", `Last completed: ${message}`);
         }
-        updateTodoContinue(cwd, basename(currentNotePath), stateLines.join("\n"), "session-end");
+        updateTodoContinue(
+          cwd,
+          basename(currentNotePath),
+          stateLines.join("\n"),
+          "session-end",
+          // Same reasoning as the stop hook: the transcript filename is the
+          // session's real identity, and the note title is not.
+          sessionIdFromTranscript(transcriptPath)
+        );
       } catch (todoError) {
         // Non-fatal — log and continue
         process.stderr.write(
