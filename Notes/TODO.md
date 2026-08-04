@@ -1,15 +1,15 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0024 - 2026-08-04 - Transcript Archiving Implementation V0310" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T16:04:10.666Z" -->
+<!-- pai:checkpoint authored="auto" session="0024 - 2026-08-04 - Transcript Archiving Implementation V0310" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T16:05:58.152Z" -->
 
 > **Last session:** 0024 - 2026-08-04 - Transcript Archiving Implementation V0310
-> **Paused at:** 2026-08-04T16:04:10.666Z
+> **Paused at:** 2026-08-04T16:05:58.152Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T16:04:10.610Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T16:05:58.101Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
@@ -22,12 +22,8 @@ _Automatic checkpoint — 2026-08-04T16:04:10.610Z. Written without the model, f
 ### Working tree
 
 - Branch: `main`
-- HEAD: b946e98 fix: v0.32.2 — close the swallow-and-return-empty class, and ship init.sql
-- 1 uncommitted path(s):
-
-```
-M Notes/TODO.md
-```
+- HEAD: f382616 docs: searxng revived out of /tmp, and the open question of whether to keep it
+- Clean — nothing uncommitted.
 
 <!-- /pai:checkpoint -->
 
@@ -271,12 +267,34 @@ not survive, each found by trying rather than assuming:
   SearxNG serves html only by default, and the MCP asks for json. Added `search.formats: [html, json]`.
   Verified: 200, 20 results. "Up" was not "doing the thing it exists for".
 
-- [ ] **Decide whether this is worth keeping at all.** The webfetch-mcp README is explicit that it
-      exists for **LM Studio and local LLMs that cannot browse**. Claude Code has `WebSearch` and
-      `WebFetch` built in, so for these sessions it is redundant — and 11 dead days nobody noticed is
-      evidence it is not load-bearing. It *is* the piece that would give a local model search without
-      API keys, which is scoped further down this file (Ollama / Aider / Devstral). So: keep it if the
-      local-model plan is live, remove both containers and the `webfetch` MCP registration if not.
+### ⚠️ CORRECTION — "redundant with the built-ins" was wrong. KEEP IT.
+
+First conclusion here was that `webfetch` duplicates Claude Code's `WebSearch`/`WebFetch` and could go.
+That came from "a built-in exists" without checking **whether the built-in does the same thing**. It
+does not — same error shape as everything else today. Compared by reading the tool definitions:
+
+| tool | what it actually does |
+|---|---|
+| `WebSearch` (built-in) | **US-only**, per its own description |
+| `mcp__webfetch__web_search` (SearxNG) | no geo limit; `engines`, `language`, `site`, `time_range`, `safesearch`, paging |
+| `WebFetch` (built-in) | answers a prompt against the page via a small model — a **summary**, lossy |
+| `mcp__webfetch__web_fetch` | Mozilla Readability, returns the text **verbatim**, up to 100K chars |
+| `ctx_fetch_and_index` (context-mode) | indexes to a searchable store, ~3KB preview |
+
+Two real capabilities exist only in the MCP pair:
+
+- **Non-US search.** Much of the searching here is Swiss/German/French — job-room.ch, ORP, Segelflug
+  theory, MDF. `WebSearch` is US-only; SearxNG takes `language` and `site`.
+- **Verbatim page text.** `WebFetch` returns a model's summary. When a page needs quoting rather than
+  describing, only `mcp__webfetch__web_fetch` does it.
+
+So the 11 dead days measure that nobody noticed it, not that it was worthless — those searches were
+silently falling back to a US-only engine or to summaries.
+
+Cost of keeping: 146 MB + 20 MB, `restart=unless-stopped`, config now durable. Keeping.
+
+- [ ] Separately: it is *also* the prerequisite for giving a local model web access without API keys
+      (Ollama / Aider / Devstral, scoped further down). That case is unaffected either way.
 
 ---
 
