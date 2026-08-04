@@ -48,9 +48,19 @@ export function getBackendOutage(): BackendOutage | null {
   return current;
 }
 
+/**
+ * Human-readable elapsed time, for a status line rather than a log.
+ *
+ * Exported because the status command needs the duration on its own, to colour
+ * it separately from the rest of the sentence. Without this it kept a second
+ * copy of the same rounding, which is how two renderings of one outage drift.
+ */
+export function humanDuration(ms: number): string {
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  return mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
+}
+
 /** Human-readable duration, for a status line rather than a log. */
 export function describeOutage(o: BackendOutage, now = Date.now()): string {
-  const mins = Math.max(1, Math.round((now - o.since) / 60_000));
-  const forHow = mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
-  return `${o.backend} unreachable for ${forHow}, ${o.attempts} attempts — ${o.lastError}`;
+  return `${o.backend} unreachable for ${humanDuration(now - o.since)}, ${o.attempts} attempts — ${o.lastError}`;
 }
