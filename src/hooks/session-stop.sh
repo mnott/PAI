@@ -88,16 +88,54 @@ fi
 "$PAI_OS" session slug "$PROJECT_SLUG" latest --apply 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Sync Obsidian vault
+# Periodic housekeeping — NOT every turn
 # ---------------------------------------------------------------------------
+# The `Stop` event does not mean "the session ended". Claude Code fires it at the
+# end of EVERY assistant turn, so everything in this file runs after every single
+# message. Measured 2026-08-04, on this machine:
+#
+#     session cleanup --execute   17705 ms      <- machine-wide sweep
+#     obsidian sync                2813 ms      <- walks the vault
+#     detect + slug + checkpoint + handover   ~300 ms total
+#     stop-hook.mjs (separate hook)            4324 ms
+#
+# So roughly 25 SECONDS of work between one message and the next, and Matthias
+# could see it: "in the middle of the session I keep seeing running stop hooks".
+# Two of those calls are whole-machine passes over 112 project directories and
+# ~2900 transcripts. Doing that per turn is not a slow implementation, it is the
+# wrong trigger.
+#
+# The cheap calls stay per-turn: a checkpoint and a handover after every turn are
+# genuine crash insurance, and together they cost under a fifth of a second.
+#
+# The expensive two are debounced rather than moved to SessionEnd, deliberately —
+# SessionEnd does not fire when a session is killed, and these are exactly the
+# jobs that matter after an unclean exit. A stamp file gets them run regularly
+# without paying for them every turn. Override with PAI_HOUSEKEEPING_INTERVAL
+# (seconds, 0 disables the debounce and restores per-turn behaviour).
 
-"$PAI_OS" obsidian sync 2>/dev/null || true
+HOUSEKEEP_INTERVAL="${PAI_HOUSEKEEPING_INTERVAL:-1800}"
+HOUSEKEEP_STAMP="$HOME/.config/pai/.last-housekeeping"
+mkdir -p "$(dirname "$HOUSEKEEP_STAMP")" 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# Clean up empty/stale session notes
-# ---------------------------------------------------------------------------
+housekeeping_due() {
+  [ "$HOUSEKEEP_INTERVAL" = "0" ] && return 0
+  [ -f "$HOUSEKEEP_STAMP" ] || return 0
+  local last now
+  last=$(cat "$HOUSEKEEP_STAMP" 2>/dev/null || echo 0)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  now=$(date +%s)
+  [ $((now - last)) -ge "$HOUSEKEEP_INTERVAL" ]
+}
 
-"$PAI_OS" session cleanup --execute 2>/dev/null || true
+if housekeeping_due; then
+  # Stamp BEFORE running, not after: these take ~20s, and two turns finishing
+  # close together would otherwise both pass the check and run concurrently.
+  date +%s > "$HOUSEKEEP_STAMP" 2>/dev/null || true
+
+  "$PAI_OS" obsidian sync 2>/dev/null || true
+  "$PAI_OS" session cleanup --execute 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------------
 # Auto-checkpoint before stop (captures final state)

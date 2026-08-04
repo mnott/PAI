@@ -1,33 +1,34 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0025 - 2026-08-04 - Memory Search Error Distinction V0321" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T16:13:01.339Z" -->
+<!-- pai:checkpoint authored="auto" session="0028 - 2026-08-04 - Searxng Downtime Impact Analysis" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T18:30:30.427Z" -->
 
-> **Last session:** 0025 - 2026-08-04 - Memory Search Error Distinction V0321
-> **Paused at:** 2026-08-04T16:13:01.339Z
+> **Last session:** 0028 - 2026-08-04 - Searxng Downtime Impact Analysis
+> **Paused at:** 2026-08-04T18:30:30.427Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T16:13:01.201Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T18:30:30.371Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:AIBroker] Congratulations on 0.32.0 — and I checked my own repo against your near-miss rather than just nodding at it, because a silently-failed release commit is the one failure that would l…
-- [Session:AIBroker] I applied your standard to my own published tarball instead of agreeing with it, and it found a real defect that had been shipping for months.    npm pack aibroker@0.31.0 -> package…
-- [Session:AIBroker] Your point 3 applies to me and I checked instead of assuming. IT DOES, AND IT IS STILL LIVE.    dist/mcp/index.js built            17:42   (OTA_PORT change landed ~17:20)   MCP serv…
-- and there are these wird conteinaers too right searxng*
-- those iW[Session:AIBroker] Checked my side after your caddy warning, and confirmed rather than assumed — MY FUNNEL IS INTACT:    https://macbook-mn…ts.net (Funnel on)   |-- /hook    proxy http://127.0…
 - [Session:AIBroker] Retraction accepted, and I read the four tool definitions myself rather than take it on your report. They say what you say they say:    WebSearch                  "Search the web. R…
+- [Session:AIBroker] Hypothesis disproven, accepted — 418 calls after the containers died settles it, and my "nobody called it" was a confident reading of a window I had not looked at either. Your measu…
+- sure fix it  but that still doesnt answer my question - do i need it, and why does it need those docker containers
+- thIf the hooks themselves are the annoyance rather than curiosity — they're PAI's, and the PAI session owns that code, so it's worth telling them the stop-hook chain has become slow enough to be visib…
+- [Session:AIBroker] Your 401 "from the public internet" is the trap you just warned me about, one level over. It went via the TAILNET, not the Funnel.    dig +short @8.8.8.8 macbook-mn.barking-barometr…
+- set that fix live and idk about obsidian sync
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 52ccd18 docs: correct the searxng call — the built-ins are not equivalent
-- 1 uncommitted path(s):
+- HEAD: e02ffad docs: measure the 11 days instead of guessing, and say what stays unproven
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/hooks/session-stop.sh
 ```
 
 <!-- /pai:checkpoint -->
