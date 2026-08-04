@@ -232,6 +232,12 @@ describe("applyContinue — preservation", () => {
       sessionLine: "0004 - 2026-08-02 - A Later Session",
       cwd: root,
       body: "Recent prompts and working tree for the later session.",
+      // Pinned. Without it `isRecent` compares TS against the REAL clock, so
+      // this test's outcome depends on the date the suite happens to run on:
+      // run within an hour of TS and the predecessor reads as "recent", the
+      // write is preserved, and the assertion below fails for no reason a
+      // reader could see. A test about session AGE must state both ages.
+      timestamp: "2026-08-02T09:00:00.000Z",
     });
 
     expect(result.action).toBe("written");
@@ -586,6 +592,10 @@ describe("applyContinue — UUID is the preservation key", () => {
       sessionId: "11111111-2222-3333-4444-555555555555",
       cwd: root,
       body: "Recent prompts and working tree for the genuinely different session.",
+      // Pinned, same reason as above: this test is about session IDENTITY, and
+      // leaving the clock real lets recency decide it instead on any day the
+      // suite runs close enough to TS.
+      timestamp: "2026-08-02T09:00:00.000Z",
     });
 
     expect(result.action).toBe("written");
