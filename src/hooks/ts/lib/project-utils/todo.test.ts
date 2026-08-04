@@ -91,6 +91,11 @@ describe("updateTodoContinue", () => {
       sessionLine: "0001 - 2026-07-31 - Earlier",
       cwd: root,
       body: "Stale checkpoint.",
+      // Dated, deliberately. Without a stamp this block is written NOW, so the
+      // scenario becomes "an earlier session whose checkpoint is a millisecond
+      // old" — which cannot happen, and which a model checkpoint is now
+      // protected from being overwritten in. A real predecessor is hours old.
+      timestamp: "2026-07-31T09:00:00.000Z",
     });
 
     updateTodoContinue(root, `${NOTE}.md`, "Fresh auto state", "session-end");
@@ -109,6 +114,7 @@ describe("updateTodoContinue", () => {
       sessionLine: "0001 - 2026-07-31 - Earlier",
       cwd: root,
       body: RICH_BODY,
+      timestamp: "2026-07-31T09:00:00.000Z", // see above — a real predecessor is old
     });
 
     updateTodoContinue(root, `${NOTE}.md`, "Fresh auto state", "session-end");

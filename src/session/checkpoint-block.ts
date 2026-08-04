@@ -554,6 +554,29 @@ function isSameSession(
   return meta.session === opts.sessionLine;
 }
 
+/**
+ * How long a model-authored checkpoint is protected from automated overwriting.
+ *
+ * Sized for the race, not for the session: the gap between a model writing its
+ * checkpoint and a hook firing is seconds to minutes, and an hour covers even a
+ * slow checkpoint on a loaded machine. Anything genuinely from an earlier
+ * session is hours or days old and still falls through to case 2, which is what
+ * keeps TODO.md from freezing on a checkpoint nobody will ever replace.
+ */
+const AUTHORED_GRACE_MS = 60 * 60 * 1000;
+
+/** Was this checkpoint written recently enough to still belong to the run in progress? */
+function isRecent(meta: CheckpointMeta, now?: string): boolean {
+  if (!meta.ts) return false; // no stamp, no claim — case 2 decides as before
+  const then = Date.parse(meta.ts);
+  if (Number.isNaN(then)) return false;
+  const nowMs = now ? Date.parse(now) : Date.now();
+  if (Number.isNaN(nowMs)) return false;
+  // Guard the future too: a clock skew that puts the stamp ahead of now must
+  // not read as "very old" and license an overwrite.
+  return nowMs - then < AUTHORED_GRACE_MS;
+}
+
 export function applyContinue(opts: ApplyOptions): ApplyResult {
   const target = resolveTodoTarget(opts.rootPath, { create: !opts.dryRun });
   if (!target) {
@@ -606,6 +629,42 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
         path: target.path,
         block: buildContinueBlock(opts),
         preservedMeta: existing.meta ?? undefined,
+      };
+    }
+
+    // Case 2b — a model checkpoint written moments ago is THIS session's,
+    // whatever the identity comparison says.
+    //
+    // Case 2 deliberately lets an auto write replace an authored checkpoint
+    // from an EARLIER session, and that policy is right: TODO.md would freeze
+    // otherwise, and `pai pause` mirrors authored bodies into the session note.
+    // The bug is not the policy, it is that identity DEGRADES and healthy
+    // sessions fall into it.
+    //
+    // `sessionId` is optional on `pai pause`. Without it isSameSession compares
+    // a display line containing the note TITLE — and pausing renames the note.
+    // So a session writes a checkpoint, its note is renamed, the hook fires
+    // seconds later, no longer recognises its own work, and classifies it as a
+    // stale earlier session. Three sessions reported exactly this on
+    // 2026-08-03 from one `pai pause all`; one lost its checkpoint three times
+    // and recovered from git each time. Sessions without a clean repo would
+    // never have known it happened.
+    //
+    // Recency is the tiebreaker that identity cannot supply. A model checkpoint
+    // minutes old is not a stale predecessor by any reading, so an automated
+    // digest does not get to overwrite it. Older ones still fall through to
+    // case 2 and are replaced as before, which is what stops TODO.md freezing
+    // and keeps this from nesting carried-forward blocks without end.
+    if (
+      existing.meta?.authored === "model" &&
+      isRecent(existing.meta, opts.timestamp) &&
+      !isBoilerplateOnly(existing.lines)
+    ) {
+      return {
+        action: "preserved",
+        path: target.path,
+        block: buildContinueBlock(opts),
+        preservedMeta: existing.meta,
       };
     }
 
