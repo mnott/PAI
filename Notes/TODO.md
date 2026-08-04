@@ -1,58 +1,92 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" ts="2026-08-04T08:50:00.000Z" -->
+<!-- pai:checkpoint authored="model" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="046bb712-ab1f-429f-8f73-014f33f58f83" ts="2026-08-04T09:30:27.869Z" -->
 
 > **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T08:50:00.000Z
+> **Paused at:** 2026-08-04T09:30:27.869Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 046bb712-ab1f-429f-8f73-014f33f58f83`
 
-### STOP — the uncommitted changes in this repo are NOT yours
+### CLEARED — AIBroker landed and released; nothing here is blocked
 
-As of 2026-08-04 ~10:50 the working tree has ~10 modified files:
-`src/tasks/poller.ts`, `poller.test.ts`, `src/session/checkpoint-block.ts` (+test),
-`src/hooks/ts/stop/stop-hook.ts`, `src/daemon/work-queue-worker.ts`,
-`src/cli/commands/session/pause.ts`, `src/cli/lib/dedup-sessions.ts`,
-`src/cli/commands/main-resolver.ts`.
+*(Replaces the STOP notice written earlier today. That notice was correct when
+written and is now stale — leaving it would keep this session avoiding files
+nobody is holding.)*
 
-They are an IN-FLIGHT fix being made from the **AIBroker** session for the
-2026-08-04 session-continuity incident. Do not continue them, revert them,
-commit them, or "finish" them. Do not run `git checkout`/`restore` on this repo.
-If you need to change any of those files, say so first — two sessions editing one
-working copy is how work gets lost.
+The AIBroker session's in-flight work is **committed, pushed and published**:
 
-Full write-up:
-`/Users/i052341/Daten/Cloud/Development/ai/AIBroker/Notes/observation-2026-08-04-session-continuity-failure.md`
+- `@tekmidian/pai@0.30.1` — commit `8796a26`, working tree clean, 307 tests pass.
+- `aibroker@0.30.0` — commit `62c81fc`, working tree clean, 505 tests pass.
 
-What was fixed in PAI (already built, tests 220/220, NOT committed, NOT released):
-- `checkpoint-block.ts` — `hasSubstance()`; a checkpoint with nothing to say may
-  no longer overwrite one that has content.
-- `stop-hook.ts` / `work-queue-worker.ts` — a session that did no work no longer
-  writes a handover at all.
-- `pause.ts` — a pause is always `authored="model"`.
-- `poller.ts` — `parked` state, so a permanently-failing dispatch stops retrying;
-  progress marker now carries the agent mark so the Todoist comment mirror cannot
-  feed the scheduler's own status line back as a work order.
-- `dedup-sessions.ts` — a live session's identity no longer falls back to the
-  iTerm tab title (this is what made `pai PAI` "switch" to a tab instead of
-  launching the project).
-- `main-resolver.ts` — the switch message now prints the session id.
+Every file that was off-limits is now landed. Edit freely.
 
-### PAI's own prior state
+### The `isSameSession` thread is DONE, not blocked
 
-This session's real content is in its note, which is intact (8.6 KB):
-`Notes/2026/08/0022 - 2026-08-04 - Checkpoint Authorship Investigation.md`
+That item — "`isSameSession` is probabilistic and wants `--session-id` threaded
+through by every caller" — was completed by the AIBroker session and released in
+PAI 0.30.0.
 
-Open there: whether `authored: 'auto'` correctly protects model checkpoints
-(now answered — it did not, see `hasSubstance` above); `isSameSession` is still
-probabilistic and wants `--session-id` passed through by every caller.
+The comparison logic was already correct: the UUID wins whenever both sides carry
+one. The gap was that the ONE writer firing at session end never supplied an id,
+so the mutable note-title fallback was the live path in practice — and `pai pause`
+renames the note as it writes, which is why a session stopped recognising its own
+checkpoint seconds after writing it.
 
-_This block was rewritten by hand from the AIBroker session on 2026-08-04. The
-autosave stub it replaced listed only the uncommitted files above, which reads
-as a work item and is not one._
+`sessionIdFromTranscript()` (`src/hooks/ts/lib/project-utils/todo.ts`) reads the
+UUID off the transcript filename, which is what Claude Code names it, and
+shape-checks it: anything that is not a UUID returns undefined, because a wrong id
+is worse than none — it would make two different sessions compare equal.
+`updateTodoContinue` now takes that id and passes it through, and both callers
+(`stop-hook.ts`, `daemon/work-queue-worker.ts`) supply it. All four writers now
+carry identity.
+
+Pinned by `describe("session identity survives a renamed note")` in
+`src/hooks/ts/lib/project-utils/todo.test.ts` — same session, renamed note,
+checkpoint old enough that recency cannot be what saves it. Removing the
+pass-through fails it.
+
+The earlier open question — whether `authored: 'auto'` correctly protects model
+checkpoints — is answered: it did not. Hence `hasSubstance()`.
+
+### Finding this session — `pai memory status` is already fixed, TODO is stale
+
+`Notes/TODO.md:76-89` still lists "`pai memory status` hangs" as open. Two of its three
+checkboxes are satisfied in code, in `src/cli/commands/memory/stats.ts`:
+
+- `stats.ts:50` — `pragma("busy_timeout = 4000")`, so it can no longer block silently on a
+  lock the daemon holds. (Covers "add a busy timeout + fail-fast error path".)
+- `stats.ts:67-84` — reads `storageBackend` and, when it is not `sqlite`, stops and points
+  at `pai daemon status` rather than printing a confident wrong count from the near-empty
+  SQLite file. (Covers "route through the same storage abstraction / don't assume SQLite".)
+
+Still genuinely open from that block:
+- [ ] `pai memory stats` errors with "unknown command" — the file is `stats.ts`, the command
+      is `status`. Alias or rename.
+- [ ] Investigate why `restart: unless-stopped` did not revive `pai-pgvector`.
+- [ ] Cosmetic: `stats.ts:55-66` has the same explanation written out twice in two
+      consecutive comment paragraphs. Delete one.
+
+**The two fixed checkboxes were deliberately NOT ticked** — `Notes/TODO.md` is itself in
+AIBroker's modified set, so editing it would land in their diff. Tick them once the tree
+is clean.
+
+### Next step, decided but not started
+
+Take the **`pai daemon status` storage-health** item (`Notes/TODO.md:71-74`): report
+"waiting for Postgres, N retries, queue depth M" instead of "idle", and escalate after N
+failed retries instead of looping silently (144 retries over ~2 days went unnoticed).
+Chosen specifically because it touches `src/cli/commands/daemon/` and the daemon retry
+loop — neither is in AIBroker's 11 files, so both sessions can work the same checkout
+without colliding.
+
+### Session log
+
+Renamed this session to **PAI** via `aibroker_rename`. No code was written, no files were
+edited, nothing was committed. The work above is investigation and verification only.
 
 <!-- /pai:checkpoint -->
-
 
 ---
 ## Infrastructure — Postgres Outage Failure Mode (found 2026-07-26)
