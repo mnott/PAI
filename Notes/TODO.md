@@ -1,33 +1,34 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0032 - 2026-08-04 - V0.33.1 Release — `projects Here` Command And Personal Data Audit" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:40:33.518Z" -->
+<!-- pai:checkpoint authored="auto" session="0034 - 2026-08-04 - New Session" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:53:05.548Z" -->
 
-> **Last session:** 0032 - 2026-08-04 - V0.33.1 Release — `projects Here` Command And Personal Data Audit
-> **Paused at:** 2026-08-04T20:40:33.518Z
+> **Last session:** 0034 - 2026-08-04 - New Session
+> **Paused at:** 2026-08-04T20:53:05.548Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T20:40:33.408Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T20:53:05.488Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- and it should be name "Jobs Grazyna" not "Job Search Grazyna" right
-- I think I just want that this  pai "Jobs Grazyna"  opens  2  Jobs Search Grazyna  resumable  10h  …/Grazyna/Arbeit/Jobs Search Grazyna
-- directory:  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/Grazyna/Arbeit/Jobs Search Grazyna  name the project:  Jobs Grazyna
-- Datn is a smylink
 - so it has to be possible that I simply say "This is this project." in any directory. directories may move around over time.
 - ah that was just docs, keep going
+- ok yeah can you fix it
+- ok is that part done then?
+- so the right directory I am in it what do I do
+- I do not understand. seriously. I just want that if I say pai "Jobs Grazyna" it starts a claude session with /Name Jobs Grazyna in this directory  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/G…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 832da3e feat: v0.33.1 — `projects here`, and get personal data out of the package
-- 1 uncommitted path(s):
+- HEAD: 24606da fix: v0.33.2 — test the stale-path fall-through, and correct the last message
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/main-resolver.ts
 ```
 
 <!-- /pai:checkpoint -->
