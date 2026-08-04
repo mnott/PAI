@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.30.0",
+  "version": "0.30.1",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -56,7 +56,7 @@
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
   "scripts": {
-    "build": "tsdown && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
+    "build": "tsdown && node scripts/prune-dist.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
