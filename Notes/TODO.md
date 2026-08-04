@@ -1,30 +1,27 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:47:25.229Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:49:25.864Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Implementation
-> **Paused at:** 2026-08-04T14:47:25.229Z
+> **Paused at:** 2026-08-04T14:49:25.864Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:47:25.204Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:49:25.805Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - and hta'ts something I don't even understand Your call on the remaining ~2869 — non-destructive and free (hardlinks), but it's your store; --cwd <path> per project you care about is the sane path. And…
 - ok so if you guys now both agree we're good, then go ahead and commit everything both sides both of you
+- [Session:AIBroker] HEAD moved: dd5a751 — "fix: give `pai <name>` back a session it can actually find, open and resume". 7 files, +635/-170, staged by name, no add -A, no lock contention. Tree is now j…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: dd5a751 fix: give `pai <name>` back a session it can actually find, open and resume
-- 1 uncommitted path(s):
-
-```
-M Notes/TODO.md
-```
+- HEAD: 0f43bd2 docs: close the day — both sessions landed, and what to keep from it
+- Clean — nothing uncommitted.
 
 <!-- /pai:checkpoint -->
 
