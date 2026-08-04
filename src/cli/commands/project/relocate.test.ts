@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { norm, relocateRenamedAncestor } from "./relocate.js";
+import { norm, relocateRenamedAncestor, suggestMovedPath } from "./relocate.js";
 
 /**
  * Recovering projects orphaned by a renamed ancestor.
@@ -82,6 +82,105 @@ describe("an ancestor was renamed", () => {
     expect(relocateRenamedAncestor(join(root, "Ideaverse", "Appstore", "ringsaday"))).toBe(
       join(root, "🧠 Ideaverse", "📱 Appstore", "ringsaday")
     );
+  });
+});
+
+describe("an ordering prefix was added or removed", () => {
+  /**
+   * The vault numbers directories to force sort order — `04 - Ablage`,
+   * `08 - Others`, `20 - Webseiten` — and gaining or losing that prefix is the
+   * same kind of rename as gaining an emoji. norm() cannot see it because the
+   * digits survive: "webseiten" against "20webseiten".
+   *
+   * Found because MDF.md links to `Infrastruktur/20 - Webseiten` while the
+   * registry holds a dead entry for plain `Infrastruktur/Webseiten`.
+   */
+  it("matches a directory that gained a numeric prefix", () => {
+    mkdirSync(join(root, "Infrastruktur", "20 - Webseiten"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infrastruktur", "Webseiten"))).toBe(
+      join(root, "Infrastruktur", "20 - Webseiten")
+    );
+  });
+
+  it("matches a directory that lost its numeric prefix", () => {
+    mkdirSync(join(root, "Infrastruktur", "Webseiten"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infrastruktur", "20 - Webseiten"))).toBe(
+      join(root, "Infrastruktur", "Webseiten")
+    );
+  });
+
+  it("accepts the separators actually used", () => {
+    for (const [i, dir] of ["01. Alpha", "02_Alpha", "03) Alpha", "04Alpha"].entries()) {
+      const parent = join(root, `p${i}`);
+      mkdirSync(join(parent, dir), { recursive: true });
+      expect(relocateRenamedAncestor(join(parent, "Alpha")), dir).toBe(join(parent, dir));
+    }
+  });
+
+  it("does NOT treat a shared suffix as a match", () => {
+    // The loose version of this rule — "one normalised name ends with the other"
+    // — would match a wanted `Setup` to `01 - Base Setup`, a different directory.
+    // Only a leading run of digits comes off.
+    mkdirSync(join(root, "Infra", "01 - Base Setup"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infra", "Setup"))).toBeUndefined();
+  });
+
+  it("still refuses when the prefix rule creates ambiguity", () => {
+    mkdirSync(join(root, "Parent", "Alpha"), { recursive: true });
+    mkdirSync(join(root, "Parent", "20 - Alpha"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Parent", "Alpha", "x"))).toBeUndefined();
+  });
+});
+
+describe("never relocating onto another project's directory", () => {
+  /**
+   * Caught by the AIBroker session: `~/PAI` was "recovered" to `~/dev/ai/PAI`,
+   * which resolves to `~/Daten/Cloud/Development/ai/PAI` — a directory an ACTIVE
+   * project already owns. Two registry entries for one directory is the mess that
+   * had been merged out of this registry hours earlier.
+   *
+   * String comparison is what missed it: the two paths share nothing after
+   * `/Users/i052341/`. It has to be realpath.
+   */
+  it("refuses a candidate another project owns under a different spelling", () => {
+    const realDir = join(root, "cloud", "PAI");
+    mkdirSync(realDir, { recursive: true });
+    mkdirSync(join(root, "dev"), { recursive: true });
+    symlinkSync(realDir, join(root, "dev", "PAI"));
+
+    const registered = join(root, "gone", "PAI");
+
+    // On its own the basename-style walk would offer the symlinked spelling.
+    expect(suggestMovedPath(registered, [])).toBeUndefined(); // nothing above survives here
+
+    // The case that matters: a resolvable candidate, already owned.
+    const owned = join(root, "cloud", "🧠 Vault");
+    mkdirSync(owned, { recursive: true });
+    mkdirSync(join(root, "link"), { recursive: true });
+    symlinkSync(owned, join(root, "link", "Vault"));
+
+    expect(suggestMovedPath(join(root, "cloud", "Vault"), [])).toBe(owned);
+    expect(suggestMovedPath(join(root, "cloud", "Vault"), [join(root, "link", "Vault")]))
+      .toBeUndefined();
+  });
+
+  it("allows a candidate no other project owns", () => {
+    mkdirSync(join(root, "cloud", "🧠 Vault"), { recursive: true });
+    expect(
+      suggestMovedPath(join(root, "cloud", "Vault"), [join(root, "somewhere", "else")])
+    ).toBe(join(root, "cloud", "🧠 Vault"));
+  });
+
+  it("does not treat two unresolvable paths as the same directory", () => {
+    // realOrSelf falls back to the literal path; two different missing paths must
+    // not collide into one another and veto a good relocation.
+    mkdirSync(join(root, "cloud", "🧠 Vault"), { recursive: true });
+    expect(
+      suggestMovedPath(join(root, "cloud", "Vault"), [
+        join(root, "missing-a"),
+        join(root, "missing-b"),
+      ])
+    ).toBe(join(root, "cloud", "🧠 Vault"));
   });
 });
 
