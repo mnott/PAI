@@ -232,13 +232,25 @@ function extractLastUserPrompt(content: string): string | undefined {
 
 /**
  * Send text to a specific AIBroker session by its iTerm2 sessionId.
+ *
+ * The wire keys are `target` and `message`, and neither is negotiable — the
+ * handler rejects anything else with "target is required" before it looks at
+ * the rest. This was written as `{ target: sessionId, message: text }`, which is the shape of
+ * THIS function's own parameters rather than the shape of the IPC, so every
+ * call failed identically. `pai pause all` was the only caller, so the live
+ * path had never once executed: its --dry-run branch returns before sending,
+ * and that was the only branch anyone had exercised.
+ *
+ * The caller must NOT terminate `text` with a newline. The transport sends with
+ * `enter: true` and appends the Enter itself, so a trailing \n submits twice —
+ * once for the text and once for an empty prompt.
  */
 export async function sendToSession(
   sessionId: string,
   text: string
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    await callAiBroker("send_to_session", { sessionId, text });
+    await callAiBroker("send_to_session", { target: sessionId, message: text });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };

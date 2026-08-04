@@ -507,3 +507,169 @@ describe("a restore entry does not outlive its run", () => {
   });
 });
 
+
+/**
+ * A scheduled task that cannot route.
+ *
+ * The failure this pins is not "the task did not run" — it is that nothing
+ * said so. The daily check logged "unrouted — cannot dispatch" 151 times over
+ * two days into /tmp/pai-scheduler.log while reading, in the tracker, as
+ * "recurring, every day at 9am". A human found it, not this code.
+ *
+ * The discriminator is the due date, and it is load-bearing in BOTH directions:
+ * an unrouted task WITH one has promised to run and broken that promise, while
+ * an unrouted task WITHOUT one is the findings inbox at rest. Alarming on the
+ * second would bury the first.
+ */
+describe("unrouted scheduled tasks", () => {
+  const notify = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    notify.mockClear();
+    vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
+  });
+
+  function unroutedTask(due: string | null): Task {
+    return {
+      id: "daily",
+      title: "Daily check: WhatsApp, machine health, background jobs",
+      body: "",
+      // Exactly what resolveOwner returns for a task sitting at the bus root.
+      owner: { project: null, rootPath: null, source: "none", rawHint: "Mail & Identity" },
+      due,
+      priority: "p2",
+      labels: [],
+    };
+  }
+
+  async function tickUnrouted(task: Task, seed: Record<string, unknown> = {}) {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-unrouted-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, JSON.stringify(seed));
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([task]),
+      setLabels: vi.fn().mockResolvedValue(undefined),
+      setDue: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    try {
+      const report = await tick({
+        provider,
+        transport: null,
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+      return { report, state: JSON.parse(readFileSync(stateFile, "utf-8")) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("reports a due unrouted task as stuck", async () => {
+    // Was 0 before: the one dispatch failure that retrying can never fix was
+    // also the only one that did not raise an alarm.
+    const { report } = await tickUnrouted(unroutedTask("2026-08-01T09:00:00Z"));
+    expect(report.stuck).toBe(1);
+  });
+
+  it("says in the note which container failed to match", async () => {
+    const { report } = await tickUnrouted(unroutedTask("2026-08-01T09:00:00Z"));
+    const notes = report.decisions.map((d) => d.note).join("\n");
+    expect(notes).toContain("unrouted");
+    expect(notes).toContain("Mail & Identity");
+  });
+
+  it("records that it alarmed, so the next tick stays quiet", async () => {
+    const { state } = await tickUnrouted(unroutedTask("2026-08-01T09:00:00Z"));
+    expect(state.alarmedAt.daily).toBe(NOW);
+  });
+
+  it("does not alarm twice inside the quiet window", async () => {
+    // launchd runs this every 15 minutes. Alarming each time is how an alarm
+    // becomes noise and stops being read at all.
+    const { report } = await tickUnrouted(unroutedTask("2026-08-01T09:00:00Z"), {
+      alarmedAt: { daily: NOW - 60_000 },
+    });
+    expect(report.stuck).toBe(1); // still reported...
+    expect(notify).not.toHaveBeenCalled(); // ...but not sent again
+  });
+
+  it("alarms again once the quiet window has passed", async () => {
+    const { state } = await tickUnrouted(unroutedTask("2026-08-01T09:00:00Z"), {
+      alarmedAt: { daily: NOW - 25 * 60 * 60 * 1000 },
+    });
+    expect(state.alarmedAt.daily).toBe(NOW);
+  });
+
+  it("stays silent about an undated unrouted task", async () => {
+    // The findings inbox. UNROUTED is its normal resting state — a finding
+    // carries no date and promises nothing, so there is no broken promise to
+    // report. This is the case that makes the alarm above worth reading.
+    const { report, state } = await tickUnrouted(unroutedTask(null));
+    expect(report.stuck).toBe(0);
+    expect(state.alarmedAt.daily).toBeUndefined();
+  });
+});
+
+/**
+ * Guard for the test above, not for the code.
+ *
+ * "notify was not called" passes just as happily when the mock was never wired
+ * to the dynamic import at all — a vacuous green that would hide the whole
+ * escalation being dead. This pins the positive case so the negative one means
+ * something.
+ */
+describe("the alarm actually reaches the notification router", () => {
+  it("calls routeNotification for a due unrouted task", async () => {
+    const notify = vi.fn().mockResolvedValue(undefined);
+    vi.resetModules();
+    vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
+    vi.doMock("../daemon/config.js", () => ({ loadConfig: () => ({ notifications: {} }) }));
+
+    const { tick: freshTick } = await import("./poller.js");
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-notify-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, "{}");
+    try {
+      await freshTick({
+        provider: {
+          listOpen: vi.fn().mockResolvedValue([
+            {
+              id: "daily",
+              title: "Daily check",
+              body: "",
+              owner: { project: null, rootPath: null, source: "none" },
+              due: "2026-08-01T09:00:00Z",
+              priority: "p2",
+              labels: [],
+            },
+          ]),
+          setLabels: vi.fn().mockResolvedValue(undefined),
+          setDue: vi.fn().mockResolvedValue(undefined),
+          comment: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        transport: null,
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.doUnmock("../notifications/router.js");
+      vi.doUnmock("../daemon/config.js");
+      vi.resetModules();
+    }
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [payload] = notify.mock.calls[0];
+    expect(payload.event).toBe("error");
+    expect(payload.message).toContain("no owner");
+  });
+});
