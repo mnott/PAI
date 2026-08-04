@@ -164,6 +164,13 @@ export function ensureSessionsDirFromProjectDir(projectDir: string): string {
  * `transcriptFiles()` was checked before choosing this — they all test emptiness
  * (`.length > 0`), never count, so the duplicate cannot skew a project's stats.
  *
+ * `excludeFile` keeps a hook from archiving the transcript it is itself watching
+ * being written. It is not a "finished sessions only" guard and must not be read
+ * as one: it excludes exactly one file, the caller's own, so with two sessions
+ * live in one project each still archives the other mid-turn. A consumer that
+ * needs "finished only" has to enforce that itself — this function cannot know
+ * what is live.
+ *
  * Returns the number of files newly archived.
  */
 export function archiveSessionFilesToSessionsDir(

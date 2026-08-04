@@ -31,12 +31,20 @@ async function main() {
     const projectDir = dirname(data.transcript_path);
     const currentSessionFile = basename(data.transcript_path);
 
-    // Archive stray .jsonl files, excluding the current active session.
+    // Archive stray .jsonl files, excluding this session's own transcript.
     //
-    // The exclusion is kept even though nothing is destroyed any more: the
-    // archive is meant to hold FINISHED sessions, and linking a transcript that
-    // is still being written would offer session-summary-worker a live session
-    // as an archived candidate mid-turn. Stop hooks archive it when it ends.
+    // That exclusion is narrow, and worth stating precisely because it is easy to
+    // read as more: it keeps a hook from archiving the very file it is watching
+    // being written. It does NOT make the archive "finished sessions only" — it
+    // excludes exactly one file, the caller's. With two sessions live in one
+    // project, each one's prompt still archives the other's in-progress
+    // transcript.
+    //
+    // Harmless now that archiving is a hardlink and nothing is destroyed. If a
+    // consumer ever needs "finished only", the guard belongs in that consumer —
+    // session-summary-worker could skip a transcript modified seconds ago, or one
+    // whose uuid is in AIBroker's live-session list. The archiver cannot know
+    // what is live and should not pretend to.
     const archivedCount = archiveSessionFilesToSessionsDir(projectDir, currentSessionFile, true);
 
     if (archivedCount > 0) {
