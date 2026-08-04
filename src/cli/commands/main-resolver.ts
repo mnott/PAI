@@ -65,19 +65,41 @@ function launchSession(
     }
   }
 
-  const rawDir =
-    session.clcDirectory ??
-    session.registryRootPath ??
-    session.decodedPath;
+  // Try every directory we know of for this session, not just the first.
+  //
+  // These three disagree in practice, and the FIRST is the least trustworthy:
+  // `clcDirectory` and `decodedPath` are recorded per session and go stale the
+  // moment a project directory is renamed, while `registryRootPath` is kept
+  // current by `pai project move`. Committing to the preferred candidate and
+  // exiting made a live project unopenable by name — the session had been
+  // started when the directory had a different name, so the stale value pointed
+  // at a path that no longer existed while the registry held the right one.
+  //
+  // Order stays as it was, because the per-session value IS more specific when
+  // it is valid (it can point at a subdirectory the session actually ran in).
+  // What changed is that a candidate which does not resolve no longer ends the
+  // attempt.
+  const candidates = [
+    session.clcDirectory,
+    session.registryRootPath,
+    session.decodedPath,
+  ].filter((d): d is string => typeof d === "string" && d.length > 0);
 
-  let projectDir: string;
-  try {
-    projectDir = realpathSync(rawDir);
-  } catch {
+  let projectDir: string | undefined;
+  for (const candidate of candidates) {
+    try {
+      projectDir = realpathSync(candidate);
+      break;
+    } catch {
+      // Stale or deleted — try the next one.
+    }
+  }
+
+  if (projectDir === undefined) {
     console.error(
       err(
         `Session directory does not exist or cannot be resolved.\n` +
-          `  Path: ${rawDir}\n` +
+          candidates.map((c) => `  tried: ${c}\n`).join("") +
           `  The directory may have moved or been deleted.`
       )
     );
@@ -395,7 +417,7 @@ export async function cmdMain(
 
     const deduped = buildDeduped(liveSessions, allSessions, registeredProjects, showAll);
     // Normalize the query the same way we normalize session names
-    // Also support slug form: "jobs-grazyna" → "jobs grazyna" for matching
+    // Also support slug form: "jobs-beta" → "jobs beta" for matching
     const qNorm = normalizeName(query).toLowerCase();
     const qSlug = query.toLowerCase().replace(/\s+/g, "-"); // words → slug form for slug lookup
 
@@ -407,14 +429,42 @@ export async function cmdMain(
       e.name.toLowerCase().includes(q) ||
       (e.slug !== undefined && e.slug.toLowerCase().includes(qSlug));
 
-    // Exact normalized-name match first (display_name or slug)
-    const exactMatch = deduped.find((e) => nameMatches(e, qNorm));
-    if (exactMatch) {
-      if (await openMatch(exactMatch, allSessions, opts.dryRun ?? false)) return;
+    // Among equally-good matches, the most recently active one is what the user
+    // means. This used `deduped.find()`, which took whichever entry happened to
+    // come first — so a two-month-old note whose title matched EXACTLY beat the
+    // live project the user was actually working in, whose sessions carried an
+    // extra word in their names. Typing the project's own name opened its oldest
+    // session.
+    const newestFirst = (a: UnifiedSession, b: UnifiedSession) =>
+      b.lastActivity - a.lastActivity;
+
+    // Exact normalized-name match first (display_name or slug), newest wins
+    const exactMatches = deduped.filter((e) => nameMatches(e, qNorm)).sort(newestFirst);
+    if (exactMatches.length > 0) {
+      if (await openMatch(exactMatches[0], allSessions, opts.dryRun ?? false)) return;
     }
 
     // Partial normalized-name match (display_name or slug)
-    const partialMatches = deduped.filter((e) => nameIncludes(e, qNorm));
+    let partialMatches = deduped.filter((e) => nameIncludes(e, qNorm));
+
+    // Substring matching misses the common case where every query word is
+    // present but not adjacent: "foo baz" is not a substring of "foo bar baz",
+    // so a project whose directory gained a word became unreachable by the name
+    // its owner thinks of it by. Fall back to requiring every query WORD to
+    // appear somewhere in the name or slug. That stays narrow — a sibling
+    // project sharing only the first word still will not match, because it
+    // lacks the second.
+    if (partialMatches.length === 0) {
+      const qWords = qNorm.split(/\s+/).filter(Boolean);
+      if (qWords.length > 1) {
+        partialMatches = deduped.filter((e) => {
+          const haystack = `${e.name} ${e.slug ?? ""}`.toLowerCase();
+          return qWords.every((w) => haystack.includes(w));
+        });
+      }
+    }
+
+    partialMatches.sort(newestFirst);
 
     if (partialMatches.length === 1) {
       if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false)) return;

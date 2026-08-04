@@ -10,8 +10,8 @@ const ALIASES: AliasMap = new Map([
   ["broker", { alias: "broker", rootPath: "/dev/ai/AIBroker" }],
   ["clickr", { alias: "clickr", rootPath: "/dev/ai/clickr" }],
   // Keys are normalize()d: non-alphanumeric runs become hyphens, so the
-  // container "Jobs Matthias" and the label "pai:jobs matthias" both land here.
-  ["jobs-matthias", { alias: "jobs-matthias", rootPath: "/Job Search" }],
+  // container "Jobs Alpha" and the label "pai:jobs alpha" both land here.
+  ["jobs-alpha", { alias: "jobs-alpha", rootPath: "/Job Search" }],
 ]) as AliasMap;
 
 describe("resolveOwner — the project decides", () => {
@@ -44,10 +44,10 @@ describe("resolveOwner — the project decides", () => {
     // The case labels are genuinely good at: a task parked somewhere with no
     // owner of its own, addressed deliberately.
     const owner = resolveOwner(
-      { labels: ["pai:jobs matthias"], container: "Reading List 📚" },
+      { labels: ["pai:jobs alpha"], container: "Reading List 📚" },
       ALIASES
     );
-    expect(owner.project).toBe("jobs-matthias");
+    expect(owner.project).toBe("jobs-alpha");
     expect(owner.source).toBe("label");
   });
 
@@ -98,10 +98,10 @@ describe("the bare `pai` marker", () => {
     // The marker means "decide for me". A project that names an owner has
     // already decided.
     const owner = resolveOwner(
-      { labels: ["pai"], container: "jobs matthias", defaultOwner: "broker" },
+      { labels: ["pai"], container: "jobs alpha", defaultOwner: "broker" },
       ALIASES
     );
-    expect(owner.project).toBe("jobs-matthias");
+    expect(owner.project).toBe("jobs-alpha");
   });
 
   it("never outranks an explicit pai:<name> label", () => {

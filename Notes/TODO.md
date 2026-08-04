@@ -1,6 +1,64 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T18:37:48.986Z" -->
+<!-- pai:checkpoint authored="auto" session="0032 - 2026-08-04 - Readme And Task Bus Documentation Cleanup" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:14:35.892Z" -->
+
+> **Last session:** 0032 - 2026-08-04 - Readme And Task Bus Documentation Cleanup
+> **Paused at:** 2026-08-04T20:14:35.892Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
+
+_Automatic checkpoint — 2026-08-04T20:14:35.844Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- and it should be name "Jobs Grazyna" not "Job Search Grazyna" right
+- I think I just want that this  pai "Jobs Grazyna"  opens  2  Jobs Search Grazyna  resumable  10h  …/Grazyna/Arbeit/Jobs Search Grazyna
+- directory:  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/Grazyna/Arbeit/Jobs Search Grazyna  name the project:  Jobs Grazyna
+- Datn is a smylink
+- so it has to be possible that I simply say "This is this project." in any directory. directories may move around over time.
+- ah that was just docs, keep going
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 68ead63 docs: pause checkpoint for session 0028 — releases, open decisions, watch items
+- 20 uncommitted path(s) (+15 more):
+
+```
+M Notes/TODO.md
+ M README.md
+ M docs/commands/README.md
+ M docs/commands/project.md
+ M docs/commands/projects.md
+ M docs/task-bus.md
+ M package.json
+ M src/cli/commands/main-resolver.ts
+ M src/cli/commands/project/projects-index.ts
+ M src/cli/commands/project/relocate.test.ts
+ M src/cli/commands/project/relocate.ts
+ M src/cli/commands/registry/scan.ts
+ M src/cli/commands/task.ts
+ M src/cli/lib/dedup-sessions.test.ts
+ M src/cli/lib/dedup-sessions.ts
+ M src/cli/lib/session-scan.ts
+ M src/daemon/config.ts
+ M src/daemon/templates/triple-extraction-prompt.ts
+ M src/hooks/session-stop.sh
+ M src/hooks/ts/session-start/load-project-context.ts
+```
+
+<!-- /pai:checkpoint -->
+
+---
+## Previous handovers
+
+<!-- pai:archived-handover session="0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging" ts="2026-08-04T18:37:48.986Z" -->
+
+### 0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging — checkpointed 2026-08-04T18:37:48.986Z
+
+
 
 > **Last session:** 0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging
 > **Paused at:** 2026-08-04T18:37:48.986Z
@@ -109,10 +167,7 @@ Memories saved: `exit-zero-is-not-done`, `two-project-registrations`,
 Also corrected `MEMORY.md`, which had the cpp release order **backwards** (it said commit before
 publish).
 
-<!-- /pai:checkpoint -->
-
----
-## Previous handovers
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" ts="2026-08-04T09:30:27.869Z" -->
 

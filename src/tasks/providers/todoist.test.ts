@@ -8,7 +8,7 @@ describe("ownerContainers", () => {
    *
    * Before 2026-08-02 this took the root and its direct children only, so a
    * grandchild was not merely unrouted but never QUERIED. The user filed
-   * eighteen tasks into Claude/Jobs Matthias/Executive Search, it looked tidy,
+   * eighteen tasks into Claude/Jobs Alpha/Executive Search, it looked tidy,
    * and nothing was ever dispatched.
    */
   const ROOT = "root";
@@ -17,23 +17,23 @@ describe("ownerContainers", () => {
 
   const tree = [
     p(ROOT, "Claude"),
-    p("jm", "Jobs Matthias", ROOT),
+    p("jm", "Jobs Alpha", ROOT),
     p("exec", "Executive Search", "jm"),
     p("deep", "Firms", "exec"),
-    p("jg", "Jobs Grazyna", ROOT),
+    p("jg", "Jobs Beta", ROOT),
     p("outside", "Privates", undefined),
     p("outside-kid", "Medical", "outside"),
   ];
 
   it("gives a grandchild the owner of its top-level ancestor", () => {
     const m = ownerContainers(tree, ROOT);
-    expect(m.get("exec")?.ownerName).toBe("Jobs Matthias");
+    expect(m.get("exec")?.ownerName).toBe("Jobs Alpha");
   });
 
   it("keeps inheriting at any depth, not just one level down", () => {
     // A folder inside a folder is still just a folder.
     const m = ownerContainers(tree, ROOT);
-    expect(m.get("deep")?.ownerName).toBe("Jobs Matthias");
+    expect(m.get("deep")?.ownerName).toBe("Jobs Alpha");
   });
 
   it("leaves the root itself unowned, so its tasks stay unrouted", () => {
@@ -72,7 +72,7 @@ describe("ownerContainers", () => {
         p(ROOT, "Claude"),
         p("shared", "Household", ROOT, { is_shared: true }),
         p("under", "Errands", "shared"),
-        p("mine", "Jobs Matthias", ROOT),
+        p("mine", "Jobs Alpha", ROOT),
       ],
       ROOT
     );

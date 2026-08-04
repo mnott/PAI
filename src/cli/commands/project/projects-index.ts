@@ -30,6 +30,7 @@ import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig } from "./session-config.js";
 import { cmdHealth } from "./health.js";
 import { cmdMerge } from "./merge.js";
+import { cmdHere } from "./here.js";
 import { cmdUnregister } from "./unregister.js";
 import { resolveIdentifier } from "./helpers.js";
 
@@ -228,6 +229,20 @@ export function registerProjectsCommands(
     )
     .action((slug: string, newPath: string) => {
       cmdRebind(getDb(), slug, newPath);
+    });
+
+  // pai projects here <name>
+  projectsCmd
+    .command("here <name>")
+    .description(
+      "Declare that the CURRENT directory is this project — no slug, no path.\n" +
+        "Repoints an existing project of that name, or creates it. Stores the\n" +
+        "canonical (realpath) location, so a symlinked parent cannot register the\n" +
+        "same directory twice."
+    )
+    .option("--dry-run", "Show what would change without writing")
+    .action((name: string, opts: { dryRun?: boolean }) => {
+      cmdHere(getDb(), name, { dryRun: opts.dryRun });
     });
 
   // pai projects tag <slug> <tags...>

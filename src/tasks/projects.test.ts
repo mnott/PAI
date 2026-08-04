@@ -3,20 +3,20 @@ import { reconcile, normalizeName, type SessionEntry, type ProjectEntry } from "
 
 const sessions: SessionEntry[] = [
   { name: "PAI", directory: "/dev/PAI" },
-  { name: "Jobs Matthias", directory: "/Job Search" },
+  { name: "Jobs Alpha", directory: "/Job Search" },
   { name: "Whazaa", directory: "/dev/Whazaa" },
 ];
 
 const projects: ProjectEntry[] = [
   { id: "p1", name: "PAI" },
-  { id: "p2", name: "Jobs Matthias" },
+  { id: "p2", name: "Jobs Alpha" },
   { id: "p3", name: "Clickr" },
 ];
 
 describe("normalizeName", () => {
   it("compares the way a person scanning two lists would", () => {
-    expect(normalizeName("  Jobs   Matthias ")).toBe("jobs matthias");
-    expect(normalizeName("JOBS MATTHIAS")).toBe(normalizeName("Jobs Matthias"));
+    expect(normalizeName("  Jobs   Alpha ")).toBe("jobs alpha");
+    expect(normalizeName("JOBS ALPHA")).toBe(normalizeName("Jobs Alpha"));
   });
 });
 
@@ -52,8 +52,8 @@ describe("reconcile", () => {
 
   it("matches case- and whitespace-insensitively", () => {
     const r = reconcile(
-      [{ name: "jobs   grazyna", directory: "/g" }],
-      [{ id: "p9", name: "Jobs Grazyna" }]
+      [{ name: "jobs   beta", directory: "/g" }],
+      [{ id: "p9", name: "Jobs Beta" }]
     );
     expect(r).toHaveLength(1);
     expect(r[0].state).toBe("mapped");

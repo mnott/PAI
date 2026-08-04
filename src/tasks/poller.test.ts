@@ -20,9 +20,9 @@ const NOW = Date.parse("2026-08-01T12:00:00Z");
 function runningTask(): Task {
   return {
     id: "sweep",
-    title: "Jobs Matthias sweep",
+    title: "Jobs Alpha sweep",
     body: "",
-    owner: { project: "jobs-matthias", rootPath: "/tmp", source: "label" },
+    owner: { project: "jobs-alpha", rootPath: "/tmp", source: "label" },
     // Due in the past so it is not treated as complete.
     due: "2026-08-01T09:00:00Z",
     priority: "p2",
@@ -152,9 +152,9 @@ import type { Transport, TransportResult } from "./dispatch.js";
 function dueTask(): Task {
   return {
     id: "sweep",
-    title: "Jobs Matthias sweep",
+    title: "Jobs Alpha sweep",
     body: "",
-    owner: { project: "jobs-matthias", rootPath: "/tmp", source: "label" },
+    owner: { project: "jobs-alpha", rootPath: "/tmp", source: "label" },
     due: "2026-08-01T09:00:00Z", // overdue at NOW
     priority: "p2",
     labels: [],
@@ -162,7 +162,7 @@ function dueTask(): Task {
 }
 
 function fakeTransport(outcome: TransportResult["outcome"]): Transport {
-  return { dispatch: vi.fn().mockResolvedValue({ outcome, session: "jobs-matthias" }) };
+  return { dispatch: vi.fn().mockResolvedValue({ outcome, session: "jobs-alpha" }) };
 }
 
 async function dispatchOnce(outcome: TransportResult["outcome"]) {
@@ -224,9 +224,9 @@ describe("a hand-triggered run keeps its schedule", () => {
   function completingTask(): Task {
     return {
       id: "sweep",
-      title: "Jobs Matthias sweep",
+      title: "Jobs Alpha sweep",
       body: "",
-      owner: { project: "jobs-matthias", rootPath: "/tmp", source: "label" },
+      owner: { project: "jobs-alpha", rootPath: "/tmp", source: "label" },
       // Advanced into the future by the completion = "the run finished".
       due: "2026-08-03T08:00:00Z",
       recurrence: "every day at 08:00",
@@ -330,9 +330,9 @@ describe("a webhook-triggered run also keeps its schedule", () => {
   function webhookClaimed(): Task {
     return {
       id: "sweep",
-      title: "Jobs Matthias sweep",
+      title: "Jobs Alpha sweep",
       body: "",
-      owner: { project: "jobs-matthias", rootPath: "/tmp", source: "label" },
+      owner: { project: "jobs-alpha", rootPath: "/tmp", source: "label" },
       due: "2026-08-03T08:00:00", // advanced by the user's tick
       recurrence: "every day at 08:00",
       priority: "p2",
@@ -465,7 +465,7 @@ describe("a restore entry does not outlive its run", () => {
       id: "sweep",
       title: "Job sweep",
       body: "",
-      owner: { project: "jobs-matthias", rootPath: "/j", source: "label" },
+      owner: { project: "jobs-alpha", rootPath: "/j", source: "label" },
       due: "2026-08-03T08:00:00",
       recurrence: "every day at 08:00",
       priority: "p4",
@@ -727,7 +727,7 @@ describe("parking a task that cannot be dispatched", () => {
   });
 
   function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
-    return { dispatch: vi.fn().mockResolvedValue({ outcome, reason, session: "jobs-matthias" }) };
+    return { dispatch: vi.fn().mockResolvedValue({ outcome, reason, session: "jobs-alpha" }) };
   }
 
   async function tickWith(transport: Transport | null, seed: Record<string, unknown> = {}, task = dueTask()) {
@@ -849,7 +849,7 @@ describe("parking a task that cannot be dispatched", () => {
     );
     const gone: Task = {
       ...dueTask(),
-      owner: { project: "jobs-grazyna", rootPath: "/nope/gone", source: "label" },
+      owner: { project: "jobs-beta", rootPath: "/nope/gone", source: "label" },
     };
     const { report, state } = await tickWith(transport, {}, gone);
     expect(transport.dispatch).not.toHaveBeenCalled();
@@ -871,7 +871,7 @@ describe("parking a task that cannot be dispatched", () => {
     await tickWith(failingTransport("unlaunchable", MISSING_ROOT));
     expect(notify).toHaveBeenCalled();
     const [payload] = notify.mock.calls[0]!;
-    expect(payload.message).toContain("Jobs Matthias sweep");
+    expect(payload.message).toContain("Jobs Alpha sweep");
     expect(payload.message).not.toContain("undefined");
   });
 });

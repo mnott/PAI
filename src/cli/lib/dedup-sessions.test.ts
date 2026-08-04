@@ -2,7 +2,7 @@
  * Which session a name resolves to.
  *
  * `buildDeduped` decides what `pai <Name>` hands back, so a wrong answer here is
- * not a cosmetic listing bug — it is Matthias typing `pai Paperfull` and getting
+ * not a cosmetic listing bug — it is the owner typing `pai Paperfull` and getting
  * "No conversation found with session ID" while 867 KB of his work sits on disk
  * one second older than the empty file that beat it.
  *
@@ -19,8 +19,8 @@ import type { ScannedSession } from "./session-scan.js";
 function disk(over: Partial<ScannedSession> & { uuid: string }): ScannedSession {
   return {
     shortId: over.uuid.slice(0, 8),
-    encodedDir: "-Users-i052341-Daten-Cloud-Development-apps-Paperfull",
-    decodedPath: "/Users/i052341/Daten/Cloud/Development/apps/Paperfull",
+    encodedDir: "-Users-owner-Daten-Cloud-Development-apps-Paperfull",
+    decodedPath: "/Users/owner/Daten/Cloud/Development/apps/Paperfull",
     topLevelPath: "",
     topLevelSystemLines: 0,
     topLevelSize: 0,

@@ -25,6 +25,7 @@ pai project <subcommand> [options]
 | [`pai project unarchive <slug>`](#pai-project-unarchive-slug) | Restore an archived project to active status |
 | [`pai project move <slug> <new-path>`](#pai-project-move-slug-new-path) | Update the root path for a project |
 | [`pai project rebind <slug> <new-path>`](#pai-project-rebind-slug-new-path) | Manually update the root_path for a project (for when auto-detect found multiple matches). |
+| [`pai project here <name>`](#pai-project-here-name) | Declare that the CURRENT directory is this project — no slug, no path. |
 | [`pai project tag <slug> <tags...>`](#pai-project-tag-slug-tags) | Add one or more tags to a project |
 | [`pai project alias <slug> <alias>`](#pai-project-alias-slug-alias) | Register an alternative slug for a project |
 | [`pai project edit <slug>`](#pai-project-edit-slug) | Edit project metadata |
@@ -192,6 +193,27 @@ Validates the new path exists and is a directory, then updates the registry.
 |----------|------|
 | `<slug>` | required |
 | `<new-path>` | required |
+
+
+### pai project here <name>
+
+Declare that the CURRENT directory is this project — no slug, no path.
+
+Repoints an existing project of that name, or creates it. Stores the
+canonical (realpath) location, so a symlinked parent cannot register the
+same directory twice.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<name>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Show what would change without writing |  |
 
 
 ### pai project tag <slug> <tags...>

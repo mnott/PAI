@@ -14,7 +14,7 @@
  * self-addressed, and no pattern is ever inferred.
  *
  * Aliases are NOT matched by pattern, deliberately. `matthias.nott+x@gmail.com`
- * and `matthias.nott@gmail.com` are the same mailbox, and Gmail also ignores
+ * and `owner.name@example.com` are the same mailbox, and Gmail also ignores
  * dots — but the general forms of those rules ("same local part before a plus",
  * "same domain") also match addresses belonging to other people. Gmail's own
  * normalisation is Gmail's; other providers treat `+` and `.` as ordinary
@@ -135,8 +135,8 @@ export function maySendWithoutReview(
  * Gmail files a message sent from an account to itself, or to one of its own
  * domain aliases, under Sent only — it never appears in the inbox. The send
  * reports success, so the failure is invisible and indistinguishable from
- * delivery. This cost a real digest on 2026-08-01: mnott@mnott.ch →
- * mnott@mnott.de, sent cleanly, never seen.
+ * delivery. This cost a real digest on 2026-08-01: owner@example.ch →
+ * owner@example.de, sent cleanly, never seen.
  *
  * Detecting it in general is not possible from the addresses alone — whether
  * two addresses are the same Google account is a fact about the account, not
@@ -173,8 +173,8 @@ export function checkDeliveryReachability(
   }
 
   // The declared alias list is the only reliable signal, and it is why the list
-  // exists. The case that actually cost a digest was mnott@mnott.ch sending to
-  // mnott@mnott.de — one Google account behind two DIFFERENT domains, which no
+  // exists. The case that actually cost a digest was owner@example.ch sending to
+  // owner@example.de — one Google account behind two DIFFERENT domains, which no
   // comparison of the addresses themselves can reveal. Whether two addresses
   // are one mailbox is a fact about the account, not about their spelling.
   const aliases = sendingAccountAliases

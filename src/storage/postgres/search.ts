@@ -18,7 +18,7 @@ import { buildPgTsQuery } from "./helpers.js";
  * That cost a real wrong answer on 2026-08-04. `pai-pgvector` exited at 13:39Z and
  * the index lived inside it; for the next two hours every memory_search returned
  * cleanly empty. A sibling session searched for an open DMARC point, got nothing,
- * and told Matthias nothing was recorded. The search had run against a dead
+ * and told the owner nothing was recorded. The search had run against a dead
  * backend and was worthless — and nothing in the reply could have revealed that.
  *
  * So: throw. The MCP shim already turns a thrown error into a visible message, and

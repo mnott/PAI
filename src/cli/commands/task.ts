@@ -35,7 +35,7 @@ import {
  *
  * Ownership is decided by matching the container name against a curated alias.
  * A session's display name is almost never its PAI slug — "SL" is
- * `seriousletter`, "Home" is `i052341` — so a freshly created sub-project
+ * `seriousletter`, "Home" is `owner` — so a freshly created sub-project
  * routes nowhere until someone connects the two. That gap bit twice on
  * 2026-08-02: the project existed, looked addressable in every listing, and
  * tasks filed into it came back unrouted.
@@ -294,7 +294,7 @@ export function registerTaskCommands(taskCmd: Command): void {
           // A project alone does not route. Ownership resolves by matching the
           // container name against a curated alias, and a session's display
           // name is rarely its PAI slug — "SL" is `seriousletter`, "Home" is
-          // `i052341`. Creating the project and stopping produced something
+          // `owner`. Creating the project and stopping produced something
           // that looked addressable and silently was not, twice, before this
           // was wired in. The alias is not a separate step a user should have
           // to know about; it is what makes the project mean anything.

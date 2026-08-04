@@ -9,10 +9,10 @@ const TASK: Task = {
   id: "6hC4McG6",
   title: "Decide: apply to the EMA Partners CIO mandate, yes or no",
   body: "THE ROLE. Chief Information Officer, Raum Zürich.",
-  owner: { project: "jobs-matthias", rootPath: "/jm", source: "label" },
+  owner: { project: "jobs-alpha", rootPath: "/jm", source: "label" },
   due: "2026-08-07",
   priority: "p1",
-  labels: ["pai:jobs-matthias"],
+  labels: ["pai:jobs-alpha"],
 };
 
 const COMMENTS = [
@@ -54,7 +54,7 @@ describe("renderArchive", () => {
 
   it("records the owner and the task id in frontmatter", () => {
     expect(out).toContain("task_id: 6hC4McG6");
-    expect(out).toContain("owner: jobs-matthias");
+    expect(out).toContain("owner: jobs-alpha");
   });
 
   it("states an empty thread rather than omitting the section", () => {

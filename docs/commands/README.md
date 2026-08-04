@@ -101,6 +101,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project edit <slug>` | Edit project metadata |
 | `pai project go <query>` | Print the root path for a project by slug, partial name, or fuzzy match. |
 | `pai project health` | Audit all registered projects: check which paths still exist, find moved/dead projects |
+| `pai project here <name>` | Declare that the CURRENT directory is this project — no slug, no path. |
 | `pai project info <slug>` | Show full details for a project |
 | `pai project list` | Show the unified deduped listing (same as `pai`). |
 | `pai project list-raw` | Raw registry listing with slug, path, status, last_active columns |
@@ -125,6 +126,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects edit <slug>` | Edit project metadata |
 | `pai projects go <query>` | Print the root path for a project by slug, partial name, or fuzzy match. |
 | `pai projects health` | Audit all registered projects: check which paths still exist, find moved/dead projects |
+| `pai projects here <name>` | Declare that the CURRENT directory is this project — no slug, no path. |
 | `pai projects info <slug>` | Show full details for a project |
 | `pai projects list` | Show the unified deduped listing (same as `pai`). |
 | `pai projects list-raw` | Raw registry listing with slug, path, status, last_active columns |

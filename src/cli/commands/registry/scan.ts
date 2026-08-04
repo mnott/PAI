@@ -407,7 +407,7 @@ export function performScan(db: Database): ScanResult {
 
   // Phase 5: Backfill display_name for rows where it still equals the slug.
   // This converts legacy entries created before the basename-based naming was
-  // introduced: "jobs-grazyna" → "Jobs Grazyna" (from basename of root_path).
+  // introduced: "jobs-beta" → "Jobs Beta" (from basename of root_path).
   {
     const stale = db
       .prepare("SELECT id, slug, root_path FROM projects WHERE display_name = slug AND root_path IS NOT NULL AND root_path != ''")
