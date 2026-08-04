@@ -32,6 +32,7 @@ import {
   EMPTY_RUN_STATE,
   wasTicked,
   restoreDueString,
+  triggeredSlotMs,
 } from "./scheduler.js";
 import type { Task } from "./types.js";
 
@@ -919,7 +920,7 @@ async function keepTriggeredSchedule(
 
   const date = /starting (\d{4}-\d{2}-\d{2})/.exec(keep)?.[1];
   if (!date || !opts.provider.setDue) return "";
-  if (new Date(`${date}T23:59:59`).getTime() <= now) {
+  if (triggeredSlotMs(keep, date) <= now) {
     return ", triggered-run slot already past — schedule left as it is";
   }
 
