@@ -39,4 +39,5 @@ export {
   updateTodoMd,
   addTodoCheckpoint,
   updateTodoContinue,
+  sessionIdFromTranscript,
 } from "./project-utils/index.js";

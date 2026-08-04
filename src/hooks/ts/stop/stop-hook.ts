@@ -12,7 +12,7 @@ import {
   addWorkToSessionNote,
   findNotesDir,
   isProbeSession,
-  updateTodoContinue,
+  updateTodoContinue, sessionIdFromTranscript,
   WorkItem
 } from '../lib/project-utils';
 
@@ -646,7 +646,16 @@ async function executeDirectly(
           if (message) {
             stateLines.push('', `Last completed: ${message}`);
           }
-          updateTodoContinue(cwd, basename(currentNotePath), stateLines.join('\n'), 'session-end');
+          updateTodoContinue(
+            cwd,
+            basename(currentNotePath),
+            stateLines.join('\n'),
+            'session-end',
+            // Identity, not the note title. The note is renamed as the session
+            // ends, so the title-based comparison stops recognising this very
+            // session moments after it writes.
+            sessionIdFromTranscript(transcriptPath)
+          );
         } catch (todoError) {
           console.error(`Could not update TODO.md: ${todoError}`);
         }

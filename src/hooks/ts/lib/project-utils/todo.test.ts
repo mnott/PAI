@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { updateTodoContinue } from "./todo.js";
+import { updateTodoContinue, sessionIdFromTranscript } from "./todo.js";
 import { applyContinue } from "../../../../session/checkpoint-block.js";
 
 /**
@@ -145,5 +145,64 @@ describe("updateTodoContinue", () => {
     const out = readTodo();
     expect(out.split("*Last updated:").length - 1).toBe(1);
     expect(out).toContain("Second");
+  });
+});
+
+/**
+ * Identity survives the note being renamed.
+ *
+ * `isSameSession` prefers the UUID and falls back to the note filename. The
+ * fallback is not a detail: `pai pause` RENAMES the note as it writes, so a
+ * session that identifies itself by title stops recognising its own checkpoint
+ * seconds after writing it — and an automated write is then free to replace it
+ * as a predecessor's. Three sessions hit this on 2026-08-03 from one
+ * `pai pause all`; PAI's own checkpoint was lost to it on 2026-08-04.
+ *
+ * Both session-end writers hold the transcript path, whose basename IS the
+ * session UUID, and neither used it until now.
+ */
+describe("session identity survives a renamed note", () => {
+  const UUID = "6ffe89bd-1040-4e9f-b261-7020191e7faf";
+
+  function seedModelCheckpoint(sessionLine: string): void {
+    applyContinue({
+      rootPath: root,
+      authored: "model",
+      sessionLine,
+      sessionId: UUID,
+      cwd: root,
+      body: "Irreplaceable reasoning nobody wants flattened to a template.",
+      // Hours old, so the recency grace cannot be what saves it — the UUID must be.
+      timestamp: "2026-08-04T00:00:00.000Z",
+    });
+  }
+
+  it("preserves a model checkpoint when only the note TITLE changed", () => {
+    seedModelCheckpoint("0022 - 2026-08-04 - Old Title");
+
+    // Same session, renamed note. Without the id threaded through, the title
+    // comparison fails, this reads as a predecessor, and the handover is gone.
+    updateTodoContinue(root, "0022 - 2026-08-04 - Renamed By The Pause.md", "auto state", "session-end", UUID);
+
+    const out = readTodo();
+    expect(out).toContain("Irreplaceable reasoning");
+    expect(out).not.toContain("auto state");
+  });
+
+  it("still replaces a genuinely different session carrying a different id", () => {
+    seedModelCheckpoint("0022 - 2026-08-04 - Earlier");
+
+    updateTodoContinue(root, "0023 - 2026-08-04 - A Later Session.md", "auto state", "session-end",
+      "11111111-2222-3333-4444-555555555555");
+
+    expect(readTodo()).toContain("auto state");
+  });
+
+  it("sessionIdFromTranscript reads the uuid, and refuses anything else", () => {
+    expect(sessionIdFromTranscript(`/x/y/${UUID}.jsonl`)).toBe(UUID);
+    expect(sessionIdFromTranscript(`/x/y/sessions/${UUID}.jsonl`)).toBe(UUID);
+    // A wrong id is worse than none: it makes two different sessions compare equal.
+    expect(sessionIdFromTranscript("/x/y/not-a-uuid.jsonl")).toBeUndefined();
+    expect(sessionIdFromTranscript(undefined)).toBeUndefined();
   });
 });
