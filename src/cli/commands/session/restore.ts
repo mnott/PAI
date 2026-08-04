@@ -20,17 +20,9 @@
  * the single implementation.
  */
 
-import {
-  existsSync,
-  readdirSync,
-  statSync,
-  readFileSync,
-  openSync,
-  readSync,
-  closeSync,
-} from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { restoreTopLevel } from "../../lib/launch.js";
+import { restoreTopLevel, hasConversation } from "../../lib/launch.js";
 import { claudeProjectsDir } from "../../../registry/moved.js";
 import { smartDecodeDir, ok, warn, err, dim, bold } from "../../utils.js";
 
@@ -63,36 +55,34 @@ export interface DisplacedSession {
   hasConversation: boolean;
 }
 
-/**
- * Does this transcript hold an exchange, or only session metadata?
+/*
+ * Stub detection lives in launch.ts, imported above, and this is the second time
+ * today that duplicating a helper cost real work — so it stays imported.
  *
- * Reads a bounded head rather than the file: a real session's first assistant
- * line lands within the first few KB, and the alternative is reading 450 MB to
- * print a report. A stub is small by construction, so the whole file is read
- * anyway in the case that matters.
+ * The version that was here read a bounded 256 KB head and looked only for an
+ * assistant marker. AIBroker refuted it with measurements and both causes are
+ * confirmed on this machine:
+ *
+ *   b3462801, 867 KB, a session we had BOTH verified claude --resume accepts:
+ *     line 1 is 762,976 bytes — one hook-context attachment blob
+ *     first "type":"user" at byte 766,830
+ *   so any head shorter than 766 KB reports a working session as an empty stub.
+ *
+ *   b8cd4a5d, 2,626 bytes, 3 user lines and ZERO assistant lines: restored and
+ *   probed, claude FINDS it. A user-only transcript is resumable, so requiring an
+ *   assistant marker is simply the wrong test.
+ *
+ * Measured over this project's 52 archived transcripts: head+assistant-only said
+ * 20 real / 32 stubs, chunked-full-scan + user-OR-assistant says 33 real / 19
+ * stubs. Thirteen disagreements, every one of them head=stub / full=real — a 41%
+ * false-stub rate, all in the direction that talks the user out of a recovery.
+ * The "745 KB stub" I reported was one of these.
+ *
+ * Cost is not the tradeoff it looked like: a full scan short-circuits at the
+ * first marker, so a real session stops early, and a genuine stub is small
+ * enough to read whole. The head read paid 256 KB on every file including the
+ * ones it then got wrong.
  */
-function hasConversation(path: string, maxBytes = 256 * 1024): boolean {
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "r");
-    const buf = Buffer.alloc(maxBytes);
-    const read = readSync(fd, buf, 0, maxBytes, 0);
-    const head = buf.subarray(0, read).toString("utf8");
-    return head.includes('"type":"assistant"') || head.includes('"type": "assistant"');
-  } catch {
-    // Unreadable — assume it is real. Claiming a session is empty when it cannot
-    // be inspected would talk the user out of a restore that might work.
-    return true;
-  } finally {
-    if (fd !== undefined) {
-      try {
-        closeSync(fd);
-      } catch {
-        /* nothing useful to do */
-      }
-    }
-  }
-}
 
 /**
  * Transcripts that exist under `sessions/` with no twin at the project root.
