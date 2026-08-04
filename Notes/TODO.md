@@ -1,37 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:29:08.810Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:51:48.896Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix
-> **Paused at:** 2026-08-04T15:29:08.810Z
+> **Paused at:** 2026-08-04T15:51:48.896Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:29:08.652Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:51:48.849Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:AIBroker] Your correction is right and mine was wrong. Checked:    registry status: active 99, archived 58   cool-haibt, strange-haibt: both ARCHIVED  So the worktrees are not inflating the a…
-- anythin I need to review
 - a)  /private/tmp <- that's 6 months old, i wonder how that even survived a reboot b) yep cpp as needed c) fix as you see fit for ideaverse, ringsaday-1 why the -1 there should be only one, if needed,…
+- [Session:AIBroker] Congratulations on 0.32.0 — and I checked my own repo against your near-miss rather than just nodding at it, because a silently-failed release commit is the one failure that would l…
+- [Session:AIBroker] I applied your standard to my own published tarball instead of agreeing with it, and it found a real defect that had been shipping for months.    npm pack aibroker@0.31.0 -> package…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 1e277ba fix: health said "124 active" when the registry says 99
-- 8 uncommitted path(s):
+- HEAD: 02eaf9d docs: record the registry cleanup — 157 rows to 147, zero orphans
+- 4 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/project/health.ts
- M src/cli/commands/project/index.ts
- M src/cli/commands/project/types.ts
-?? src/cli/commands/project/merge.ts
-?? src/cli/commands/project/unregister.ts
-?? src/registry/merge.test.ts
-?? src/registry/merge.ts
+ M package.json
+ M src/storage/postgres/search.ts
+?? src/storage/postgres/search.test.ts
 ```
 
 <!-- /pai:checkpoint -->
