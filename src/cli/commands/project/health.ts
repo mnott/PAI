@@ -77,7 +77,12 @@ export function cmdHealth(
     if (pathExists) {
       category = "active";
     } else {
-      suggestedPath = suggestMovedPath(project.root_path);
+      // Every OTHER project's root, so a repair cannot point this entry at a
+      // directory another project already owns.
+      suggestedPath = suggestMovedPath(
+        project.root_path,
+        rows.filter((r) => r.id !== project.id).map((r) => r.root_path)
+      );
       category = suggestedPath ? "stale" : "dead";
     }
 

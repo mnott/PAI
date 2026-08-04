@@ -24,7 +24,7 @@
  * theirs.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join, sep, basename } from "node:path";
 import { homedir } from "node:os";
 
@@ -49,6 +49,63 @@ export function norm(s: string): string {
 /** Hidden by Unix convention — tool state rather than a project directory. */
 function isHidden(name: string): boolean {
   return name.startsWith(".");
+}
+
+/**
+ * Drop a leading ordering prefix: `20 - Webseiten` -> `Webseiten`.
+ *
+ * This vault numbers directories to force sort order — `04 - Ablage`,
+ * `08 - Others`, `01 - Base Setup`, `20 - Webseiten` — and adding or removing that
+ * prefix is a rename of exactly the same kind as adding an emoji. `norm()` alone
+ * cannot see it, because the digits survive normalisation: "webseiten" against
+ * "20webseiten".
+ *
+ * Found because `MDF.md` links to `Infrastruktur/20 - Webseiten` while the
+ * registry has a dead entry for plain `Infrastruktur/Webseiten`. The note files
+ * knew where it went.
+ *
+ * Deliberately NOT a general suffix match. Matching whenever one normalised name
+ * ends with another would make a wanted `Setup` match `01 - Base Setup`, which is
+ * a different directory entirely. Only a leading run of digits with optional
+ * separator comes off.
+ */
+function stripOrderingPrefix(name: string): string {
+  return name.replace(/^\d+\s*[-._)]?\s*/, "");
+}
+
+/**
+ * The names under which a directory can be recognised.
+ *
+ * Both spellings are offered from both sides, so the prefix can have been added
+ * OR removed since the path was registered.
+ */
+function matchKeys(name: string): Set<string> {
+  const keys = new Set<string>();
+  const bare = norm(name);
+  if (bare) keys.add(bare);
+  const stripped = norm(stripOrderingPrefix(name));
+  if (stripped) keys.add(stripped);
+  return keys;
+}
+
+function shareAKey(a: Set<string>, b: Set<string>): boolean {
+  for (const k of a) if (b.has(k)) return true;
+  return false;
+}
+
+/**
+ * Resolve symlinks so two spellings of one directory compare equal.
+ *
+ * Falls back to the input when it cannot resolve — a path that does not exist has
+ * no real path, and for the duplicate check below "unresolvable" must not
+ * accidentally equal some other unresolvable path.
+ */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function isDir(path: string): boolean {
@@ -90,8 +147,8 @@ export function relocateRenamedAncestor(rootPath: string): string | undefined {
   if (i === segments.length) return undefined;
 
   for (; i < segments.length; i++) {
-    const wanted = norm(segments[i]!);
-    if (!wanted) return undefined; // segment was punctuation only — nothing to match on
+    const wanted = matchKeys(segments[i]!);
+    if (wanted.size === 0) return undefined; // punctuation only — nothing to match on
 
     let children: string[];
     try {
@@ -103,7 +160,7 @@ export function relocateRenamedAncestor(rootPath: string): string | undefined {
     const hits = children.filter(
       (c) =>
         isDir(join(current, c)) &&
-        norm(c) === wanted &&
+        shareAKey(matchKeys(c), wanted) &&
         // A leading dot is not decoration, so it must not normalise away.
         //
         // Caught on the first real run: `~/PAI` was "relocated" to `~/.pai`,
@@ -156,8 +213,27 @@ function suggestByBasename(rootPath: string): string | undefined {
  *
  * Feeds the health check's `suggestedPath ? "stale" : "dead"` classification, so
  * an answer here moves an entry out of the dead list and into the one `--fix`
- * repairs. Nothing downstream needed changing.
+ * repairs.
+ *
+ * `otherRoots` is every OTHER registered project's root path, and it is what
+ * stops a repair from becoming a duplicate. Caught by the AIBroker session on the
+ * first version of this: `~/PAI` was "recovered" to `~/dev/ai/PAI`, which is a
+ * second spelling of `~/Daten/Cloud/Development/ai/PAI` — a path an ACTIVE project
+ * already owns. Two registry entries for one directory is the exact mess that was
+ * merged out of this registry earlier the same day.
+ *
+ * The comparison must be by realpath, not string. String equality is precisely
+ * what missed it: the two paths share not one character after `/Users/i052341/`.
  */
-export function suggestMovedPath(rootPath: string): string | undefined {
-  return relocateRenamedAncestor(rootPath) ?? suggestByBasename(rootPath);
+export function suggestMovedPath(
+  rootPath: string,
+  otherRoots: readonly string[] = []
+): string | undefined {
+  const candidate = relocateRenamedAncestor(rootPath) ?? suggestByBasename(rootPath);
+  if (!candidate) return undefined;
+
+  const taken = new Set(otherRoots.map(realOrSelf));
+  if (taken.has(realOrSelf(candidate))) return undefined;
+
+  return candidate;
 }
