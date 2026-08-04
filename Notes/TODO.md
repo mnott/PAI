@@ -1,36 +1,40 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:07:47.523Z" -->
+<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:16:36.597Z" -->
 
 > **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T14:07:47.523Z
+> **Paused at:** 2026-08-04T14:16:36.597Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:07:47.319Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:16:36.560Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- /Name PAI go
 - if you think these bits are good, then take them over
 - [Session:AIBroker] Accounting agrees on my side. `git status --short` here is exactly six entries — main-resolver.ts, goto.ts, launch.ts, session-scan.ts modified, launch.test.ts and session-scan.test…
+- idk what's open here, but can you justico[Session:AIBroker] Refutation accepted — I reproduced it before answering, same result:    b3462801  sessions/ only  -> "No conversation found with session ID"…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 790296d docs: record the orphaned scheduler diff as adopted
-- 9 uncommitted path(s):
+- HEAD: a4c1574 docs: a cleanly-stopped session cannot be resumed at all
+- 13 uncommitted path(s):
 
 ```
 M Notes/TODO.md
  M src/cli/commands/main-resolver.ts
  M src/cli/commands/session/goto.ts
- M src/cli/lib/dedup-sessions.ts
  M src/cli/lib/launch.ts
  M src/cli/lib/session-scan.ts
-?? src/cli/lib/dedup-sessions.test.ts
+ M src/daemon/work-queue-worker.ts
+ M src/hooks/ts/lib/project-utils.ts
+ M src/hooks/ts/lib/project-utils/index.ts
+ M src/hooks/ts/lib/project-utils/paths.ts
+ M src/hooks/ts/session-start/load-project-context.ts
+ M src/hooks/ts/stop/stop-hook.ts
 ?? src/cli/lib/launch.test.ts
 ?? src/cli/lib/session-scan.test.ts
 ```
@@ -136,9 +140,21 @@ edited, nothing was committed. The work above is investigation and verification 
 
 ## 🔴 A cleanly-stopped session cannot be resumed AT ALL (measured 2026-08-04)
 
-**`claude --resume` does not accept a transcript that lives only in `sessions/`.** The stop hook
-MOVES every finished session's transcript from `<project>/<uuid>.jsonl` to
-`<project>/sessions/<uuid>.jsonl`. So ending a session cleanly is what makes it unresumable.
+**`claude --resume` does not accept a transcript that lives only in `sessions/`,** and PAI moved
+them there. **Corrected twice** — the cause was worse than each first reading:
+
+- ❌ *"the stop hook moves them"* (mine) — wrong. Not the stop hook alone.
+- ❌ *"a SessionStart hook moves all but the newest"* (AIBroker's correction) — right about that
+  hook, but it does not explain 52 files, since SessionStart fires once per session.
+- ✅ **Four movers. Three share one helper, and the aggressive one runs on every prompt.**
+  `moveSessionFilesToSessionsDir` (`project-utils/paths.ts:143`) moved *every* transcript except
+  the single excluded one — no "keep the newest" — and `cleanup-session-files.ts` calls it from
+  **UserPromptSubmit**, excluding only the *current* session. So **every prompt anyone typed
+  unresumed every other session in that project.** Two live sessions in one project each strip the
+  other. That is the engine behind the 1-vs-52 ratio, not session start.
+
+  The four: `session-start/load-project-context.ts:247-278` (inline), `user-prompt/cleanup-session-files.ts`,
+  `stop/stop-hook.ts:673`, `daemon/work-queue-worker.ts:293`.
 
 Measured, not inferred — three probes, no tokens spent (no prompt sent, so no model call):
 
@@ -165,14 +181,36 @@ The scan's *visibility* fix is right and valuable — these sessions were vanish
 The *resumability* label is wrong: the measurements above are the counter-example. So `pai <Name>`
 now confidently hands an unresumable id to `claude --resume`, which is the failure Matthias hit.
 
-- [ ] **Decide where the fix belongs** (AIBroker's file + the stop hook, so not taken unilaterally):
-      (a) stop hook leaves the transcript at top level, or leaves a copy/hardlink there; or
-      (b) resume restores `sessions/<uuid>.jsonl` to top level just before invoking `claude --resume`;
-      or (c) Pass 1b classifies `sessions/`-only as `transcript-only`, which is honest but leaves
-      every finished session unresumable.
-      (b) looks right — it fixes resume without changing what the stop hook is for — but it is a
-      behaviour decision, not a cleanup.
-- [ ] **Then fix the handover text**, which promises a resume that cannot work.
+### Fixed — hardlink, and one archiver instead of four
+
+- [x] **Nothing moves any more** (`61655f7`, this session). The shared helper hardlinks instead of
+      renaming: one inode, two names, no copy, no window where the file is absent from either
+      place. Renamed to `archiveSessionFilesToSessionsDir`, because a function called "move" that
+      links is how this gets reintroduced. 9 tests, every one asserting the *source* survives;
+      reverting to `renameSync` fails 5.
+- [x] **Hardlink, not "just stop archiving"** — checked first, and the archive has real readers:
+      `daemon/session-summary-worker.ts:166`, `registry/moved.ts:44`, `session/autosave.ts:144`.
+      Stopping outright would have broken three things. Every caller of `transcriptFiles()` tests
+      emptiness and never counts, so the duplicate cannot skew project stats.
+- [x] **AIBroker proved the repair end-to-end**: `restoreTopLevel()` relinks
+      `sessions/<uuid>.jsonl` to the root before `probeResume` answers, and `b3462801` then gets
+      past session lookup — "No conversation found" is gone, 867 KB intact, same inode, no bytes
+      copied. Matthias's Paperfull work is recoverable.
+- [x] **AIBroker deletes its inline copy** and calls the shared helper, rather than leaving a
+      second archiver in a codebase that had just spent hours on a fix that landed in one of three
+      copies of `probeResume`.
+
+### Still open
+
+- [ ] **Restore the ~52 already-moved transcripts** — every checkpoint PAI has ever written names an
+      id that is currently unresumable. Worth a one-time explicit `pai session restore` with a dry
+      run rather than a lazy per-resume relink; silently relinking 52 files under the user is not
+      something a hook should do unasked. Offered to AIBroker; mine if they decline.
+- [ ] **`probeResume` traded a false negative for a confident false positive** (AIBroker's, in
+      flight): the probe counted `sessions/` as resumable, so it answered ok, launch spawned
+      `claude --resume`, and the caller exited on the failure instead of falling back to fresh.
+- [ ] Re-check the handover text once the restore lands — it promises a resume that only works if
+      the transcript is at the root.
 - [x] Dedup no longer prefers the empty artefact of a failed resume over the real transcript
       (`f9586ba`) — necessary, and on its own not sufficient: it selects a *better* id that is
       still unresumable for the reason above.
