@@ -20,6 +20,7 @@ import { cmdAutosave } from "./autosave.js";
 import { cmdRecent } from "./recent.js";
 import { cmdGoto } from "./goto.js";
 import { cmdPause } from "./pause.js";
+import { cmdRestore } from "./restore.js";
 
 export function registerSessionCommands(
   sessionCmd: Command,
@@ -41,6 +42,37 @@ export function registerSessionCommands(
     .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
       await cmdRecent(getDb(), opts);
     });
+
+  // pai session restore [--execute]
+  //
+  // Repair, not routine. PAI's old archiver moved transcripts out of the project
+  // root, and claude --resume reads only that root, so those sessions became
+  // unresumable while every checkpoint kept telling the user to resume them.
+  // Dry run by default: relinking dozens of a user's files unasked is the same
+  // class of mistake as moving them was.
+  sessionCmd
+    .command("restore")
+    .description(
+      "Restore transcripts PAI displaced into sessions/, so claude --resume can\n" +
+        "find them again. Lists what is unresumable and which checkpoints promise\n" +
+        "it. Dry run unless --execute is given."
+    )
+    .option("--execute", "Actually restore (hardlink back to the project root)")
+    .option("--promised", "Only sessions a checkpoint tells you to resume")
+    .option("--cwd <path>", "Only sessions belonging to this working directory")
+    .option("--all", "List every displaced session, not just the largest few")
+    .option("--json", "Output raw JSON instead of a formatted report")
+    .action(
+      (opts: {
+        execute?: boolean;
+        promised?: boolean;
+        cwd?: string;
+        all?: boolean;
+        json?: boolean;
+      }) => {
+        cmdRestore(opts);
+      }
+    );
 
   // pai session info <project-slug> <number>
   sessionCmd
