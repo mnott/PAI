@@ -26,6 +26,7 @@ import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
+import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -129,24 +130,17 @@ async function cmdStatus(): Promise<void> {
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
 
-    // Lead with the outage. Everything below it — index state, queue depth,
-    // totals — describes a system that is not moving, and printing those first
-    // is how "Index: idle" came to mean "all is well" during a two-day outage.
-    const outage = s["backendOutage"] as
-      | { backend: string; since: number; attempts: number; lastError: string }
-      | null
-      | undefined;
-    if (outage) {
-      const mins = Math.max(1, Math.round((Date.now() - outage.since) / 60_000));
-      const forHow = mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
+    // Lead with the outage and the backlog. Everything below them — index
+    // state, totals — describes a system that is not moving, and printing those
+    // first is how "Index: idle" came to mean "all is well" during a two-day
+    // outage.
+    const health = formatStorageHealth(s as StorageHealthStatus);
+    if (health.length > 0) {
       console.log();
-      console.log(
-        err(`    BACKEND DOWN: ${outage.backend} unreachable for ${forHow}`)
-      );
-      console.log(warn(`    ${outage.attempts} attempts — ${outage.lastError}`));
-      console.log(
-        dim(`    Indexing, session notes and the work queue are stalled until it returns.`)
-      );
+      for (const line of health) {
+        const paint = line.severity === "error" ? err : line.severity === "warn" ? warn : dim;
+        console.log(paint(`    ${line.text}`));
+      }
       console.log();
     }
     console.log(
