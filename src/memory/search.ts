@@ -70,6 +70,21 @@ export interface SearchOptions {
  *   → `"synchrotech" OR "interview" OR "follow" OR "gilles"`
  *   → chunks matching any term, ranked by how many terms match
  */
+/**
+ * Did SQLite reject the QUERY, or fail at the STORE?
+ *
+ * Only the first justifies an empty result. FTS5 reports a bad MATCH expression
+ * with a recognisable message; a missing table, a corrupt index or a locked
+ * database do not, and must not be reported as "nothing found".
+ *
+ * Matching on message text is unlovely, and the alternative — treating every
+ * failure as empty — is what produced a confidently wrong answer to a human.
+ */
+export function isQuerySyntaxError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /fts5|malformed MATCH|syntax error|unterminated string|no such column/i.test(msg);
+}
+
 export function buildFtsQuery(query: string): string {
   const tokens = query
     .toLowerCase()
@@ -181,8 +196,23 @@ export function searchMemory(
 
   try {
     rows = db.prepare(sql).all(...params) as typeof rows;
-  } catch {
-    // FTS5 MATCH throws when the query is invalid — return empty results
+  } catch (e) {
+    // FTS5 MATCH throws on a malformed query, and for THAT an empty result is the
+    // honest answer — nothing matches a query that cannot be parsed.
+    //
+    // Everything else is a failure of the store: a missing table, a corrupt
+    // index, a locked database. Those used to return [] as well, which made an
+    // unusable index byte-identical to a genuine miss. The Postgres path had the
+    // same defect and it cost a real wrong answer on 2026-08-04 — the backend was
+    // down for two hours, every search reported "No results found", and a sibling
+    // session told Matthias a DMARC note did not exist. See
+    // storage/postgres/search.ts.
+    if (!isQuerySyntaxError(e)) {
+      throw new Error(
+        `Memory keyword search failed — the index is unusable, so this is NOT an ` +
+          `empty result set. Cause: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
     return [];
   }
 

@@ -1,33 +1,32 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:51:48.896Z" -->
+<!-- pai:checkpoint authored="auto" session="0024 - 2026-08-04 - Memory Search Error Distinction And V0.32.1 Patch Release" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:55:54.123Z" -->
 
-> **Last session:** 0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix
-> **Paused at:** 2026-08-04T15:51:48.896Z
+> **Last session:** 0024 - 2026-08-04 - Memory Search Error Distinction And V0.32.1 Patch Release
+> **Paused at:** 2026-08-04T15:55:54.123Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:51:48.849Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:55:54.081Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - a)  /private/tmp <- that's 6 months old, i wonder how that even survived a reboot b) yep cpp as needed c) fix as you see fit for ideaverse, ringsaday-1 why the -1 there should be only one, if needed,…
 - [Session:AIBroker] Congratulations on 0.32.0 — and I checked my own repo against your near-miss rather than just nodding at it, because a silently-failed release commit is the one failure that would l…
 - [Session:AIBroker] I applied your standard to my own published tarball instead of agreeing with it, and it found a real defect that had been shipping for months.    npm pack aibroker@0.31.0 -> package…
+- [Session:AIBroker] Your point 3 applies to me and I checked instead of assuming. IT DOES, AND IT IS STILL LIVE.    dist/mcp/index.js built            17:42   (OTA_PORT change landed ~17:20)   MCP serv…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 02eaf9d docs: record the registry cleanup — 157 rows to 147, zero orphans
-- 4 uncommitted path(s):
+- HEAD: bec9edb fix: v0.32.1 — a failed memory search must not look like an empty one
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M package.json
- M src/storage/postgres/search.ts
-?? src/storage/postgres/search.test.ts
+ M src/memory/search.ts
 ```
 
 <!-- /pai:checkpoint -->
