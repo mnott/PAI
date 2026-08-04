@@ -1,15 +1,15 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0024 - 2026-08-04 - Memory Search Error Distinction And V0.32.1 Patch Release" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:55:54.123Z" -->
+<!-- pai:checkpoint authored="auto" session="0024 - 2026-08-04 - Transcript Archiving Implementation V0310" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T16:04:10.666Z" -->
 
-> **Last session:** 0024 - 2026-08-04 - Memory Search Error Distinction And V0.32.1 Patch Release
-> **Paused at:** 2026-08-04T15:55:54.123Z
+> **Last session:** 0024 - 2026-08-04 - Transcript Archiving Implementation V0310
+> **Paused at:** 2026-08-04T16:04:10.666Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:55:54.081Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T16:04:10.610Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
@@ -17,16 +17,16 @@ _Automatic checkpoint — 2026-08-04T15:55:54.081Z. Written without the model, f
 - [Session:AIBroker] Congratulations on 0.32.0 — and I checked my own repo against your near-miss rather than just nodding at it, because a silently-failed release commit is the one failure that would l…
 - [Session:AIBroker] I applied your standard to my own published tarball instead of agreeing with it, and it found a real defect that had been shipping for months.    npm pack aibroker@0.31.0 -> package…
 - [Session:AIBroker] Your point 3 applies to me and I checked instead of assuming. IT DOES, AND IT IS STILL LIVE.    dist/mcp/index.js built            17:42   (OTA_PORT change landed ~17:20)   MCP serv…
+- and there are these wird conteinaers too right searxng*
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: bec9edb fix: v0.32.1 — a failed memory search must not look like an empty one
-- 2 uncommitted path(s):
+- HEAD: b946e98 fix: v0.32.2 — close the swallow-and-return-empty class, and ship init.sql
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/memory/search.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -241,6 +241,44 @@ zero real sessions remain displaced". True only under the broken detector. Re-me
 importing AIBroker's `hasConversation`: **153 real sessions, 23.5 MB, had been written off as stubs.**
 Restored them. Final state — **782 real sessions recovered, 2086 genuine stubs left alone, zero
 transcripts holding a conversation displaced anywhere on the machine.**
+
+## searxng revived, and the question of whether it should be (2026-08-04)
+
+**What they are:** `searxng` is a self-hosted metasearch engine; the `redis` container is really
+valkey, its cache. They exist for exactly one consumer — the `webfetch` MCP server registered in
+`~/.claude.json`, whose `mcp__webfetch__web_search` calls `http://localhost:8080`.
+
+**They had been dead 11 days** (searxng exit 137, valkey exit 0), and `localhost:8080` refused
+connections outright — so that tool was not degraded, it was not answering at all. Nobody noticed.
+
+**Why they could not self-heal:** the compose project was deployed out of `/tmp`
+(`com.docker.compose.project.working_dir = /tmp/searxng-docker`, bind
+`/private/tmp/searxng-docker/searxng → /etc/searxng`). macOS cleans `/tmp`, so the config the
+containers mount no longer existed. `restart: unless-stopped` was set and could not help — Docker
+was willing, the config was gone. The purest form of the `/private/tmp` shape found the same day.
+
+**Revived** at `~/dev/ai/searxng-docker` — durable this time. Three things the documented recipe did
+not survive, each found by trying rather than assuming:
+
+- **The upstream repo is DEPRECATED.** `git clone searxng-docker` now yields only a LICENSE and a
+  deprecation notice, so the README's four commands cannot work. Restored from the pinned
+  pre-deprecation commit `0c7875a`, which reproduces the setup that existed and lets the surviving
+  data volumes (`searxng-docker_searxng-data`, `searxng-docker_valkey-data2`) reattach.
+- **`caddy` was deliberately NOT started.** That compose adds a caddy service with
+  `network_mode: host`, and port 443 on this machine carries a Tailscale Funnel serving the Todoist
+  webhook. The original deployment had no caddy; starting it would have taken the port.
+- **JSON had to be enabled.** Containers came up healthy and `/search?format=json` returned **403** —
+  SearxNG serves html only by default, and the MCP asks for json. Added `search.formats: [html, json]`.
+  Verified: 200, 20 results. "Up" was not "doing the thing it exists for".
+
+- [ ] **Decide whether this is worth keeping at all.** The webfetch-mcp README is explicit that it
+      exists for **LM Studio and local LLMs that cannot browse**. Claude Code has `WebSearch` and
+      `WebFetch` built in, so for these sessions it is redundant — and 11 dead days nobody noticed is
+      evidence it is not load-bearing. It *is* the piece that would give a local model search without
+      API keys, which is scoped further down this file (Ollama / Aider / Devstral). So: keep it if the
+      local-model plan is live, remove both containers and the `webfetch` MCP registration if not.
+
+---
 
 ## ✅ Registry cleanup DONE (2026-08-04, v0.32.0) — 157 rows → 147, zero orphans
 
