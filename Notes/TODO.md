@@ -1,30 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:57:51.077Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:01:51.253Z" -->
 
-> **Last session:** 0023 - 2026-08-04 - Transcript Archiving Implementation
-> **Paused at:** 2026-08-04T14:57:51.077Z
+> **Last session:** 0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0
+> **Paused at:** 2026-08-04T15:01:51.253Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:57:51.033Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:01:51.202Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- ok so if you guys now both agree we're good, then go ahead and commit everything both sides both of you
 - [Session:AIBroker] HEAD moved: dd5a751 — "fix: give `pai <name>` back a session it can actually find, open and resume". 7 files, +635/-170, staged by name, no add -A, no lock contention. Tree is now j…
 - [Session:AIBroker] PUBLISHED AND PUSHED — you are clear to work. @tekmidian/pai@0.31.0.    bump 0.31.0 -> npm run build -> 380 green -> npm publish -> ONE commit e3c5585 -> push   5864f61..e3c5585   1…
+- /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/MDF.md <- there are links in there
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: fa687ef fix: recover projects orphaned by a renamed ancestor, not just moved leaves
-- 1 uncommitted path(s):
+- HEAD: 961870d docs: record the ancestor-rename recovery and its two corrections
+- 4 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/project/health.ts
+ M src/cli/commands/project/relocate.test.ts
+ M src/cli/commands/project/relocate.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -271,9 +274,36 @@ mostly leaves that no longer exist beneath the renamed ancestor, which is the al
 No change to the `stale`/`dead` classification or to `--fix`; an answer just moves an entry into the
 list `--fix` already repairs.
 
-- [ ] Run `pai project health --fix` to actually apply the 3 relocations (not done — `--fix` mutates
-      `root_path` and `encoded_dir`, and that is Matthias's call to make, not a side effect of a
-      measurement).
+### Two more corrections (`e1a27aa`) — and the count of 3 is a *different* three
+
+- **Ordering prefixes are decoration too.** Matthias pointed at `08 - Others/MDF/MDF.md`: it links to
+  `Infrastruktur/20 - Webseiten` while the registry holds a dead entry for plain
+  `Infrastruktur/Webseiten`. **The note files knew where it went.** `norm()` could not see it because
+  the digits survive — `"webseiten"` vs `"20webseiten"`. This vault numbers directories everywhere
+  (`04 - Ablage`, `08 - Others`, `70 - Operational Procedures`), so this is a whole class.
+  Kept tight on purpose: *not* a suffix match, which would match a wanted `Setup` to
+  `01 - Base Setup`. Only a leading run of digits comes off, offered from both sides.
+- 🔴 **Never relocate onto a directory another project owns** (AIBroker's catch). `~/PAI` was
+  "recovered" to `~/dev/ai/PAI` — which resolves to `~/Daten/Cloud/Development/ai/PAI`, owned by the
+  **active** `pai` project. That is not a repair, it re-creates the duplicate-entry mess merged out of
+  this registry hours earlier. Compared by **realpath**, since string equality is exactly what missed
+  it: the two paths share nothing after `/Users/i052341/`.
+
+| | before | after |
+|---|---|---|
+| `pai-old-path` → `~/dev/ai/PAI` | "recovered" | **vetoed** — duplicate of active `pai` |
+| `operational-procedures` → `70 - Operational Procedures` | missed | **recovered** (prefix rule) |
+| `webseiten` → `20 - Webseiten` | missed | **vetoed** — owned by active `20-webseiten` |
+
+The two rules caught each other's blind spot in one run: without the prefix rule `webseiten` is never
+found, and without the duplicate guard it becomes a second entry for a directory that already has one.
+
+**157 projects, 33 missing, 3 recoverable, 30 genuinely dead.** 25 tests, suite 405 green.
+
+- [ ] Run `pai project health --fix` to apply the 3 relocations (not done — `--fix` mutates
+      `root_path` and `encoded_dir`, and that is Matthias's call, not a side effect of a measurement).
+- [ ] `webseiten` and `webseiten-1` are duplicates of the active `20-webseiten`, not repairables —
+      they want merging or deleting, which is the same cleanup done for Grazyna and PAI this morning.
 
 ---
 
