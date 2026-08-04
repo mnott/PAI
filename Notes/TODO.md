@@ -1,6 +1,51 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="046bb712-ab1f-429f-8f73-014f33f58f83" ts="2026-08-04T09:30:27.869Z" -->
+<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T13:54:59.544Z" -->
+
+> **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
+> **Paused at:** 2026-08-04T13:54:59.544Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
+
+_Automatic checkpoint — 2026-08-04T13:54:59.510Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- /Name PAI go
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 5864f61 docs: clear the stale STOP notice in TODO.md
+- 12 uncommitted path(s):
+
+```
+M Notes/TODO.md
+ M src/cli/commands/daemon.ts
+ M src/cli/commands/main-resolver.ts
+ M src/cli/commands/session/goto.ts
+ M src/cli/lib/launch.ts
+ M src/storage/outage.ts
+ M src/tasks/poller.test.ts
+ M src/tasks/poller.ts
+ M src/tasks/scheduler.ts
+?? src/cli/commands/daemon-status.test.ts
+?? src/cli/commands/daemon-status.ts
+?? src/cli/lib/launch.test.ts
+```
+
+<!-- /pai:checkpoint -->
+
+---
+## Previous handovers
+
+<!-- pai:archived-handover session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" ts="2026-08-04T09:30:27.869Z" -->
+
+### 0022 - 2026-08-04 - Checkpoint Authorship Investigation — checkpointed 2026-08-04T09:30:27.869Z
+
+
 
 > **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
 > **Paused at:** 2026-08-04T09:30:27.869Z
@@ -86,9 +131,10 @@ without colliding.
 Renamed this session to **PAI** via `aibroker_rename`. No code was written, no files were
 edited, nothing was committed. The work above is investigation and verification only.
 
-<!-- /pai:checkpoint -->
+<!-- /pai:archived-handover -->
 
 ---
+
 ## Infrastructure — Postgres Outage Failure Mode (found 2026-07-26)
 
 The `pai-pgvector` container had been down ~2 days (exited alongside several other
@@ -102,10 +148,18 @@ containers, likely a Docker/host restart). Consequences observed:
   it does not surface the Postgres block at all.
 Fixed for now by `docker start pai-pgvector`; daemon reconnected and drained the backlog.
 
-- [ ] **`pai daemon status` must surface storage-backend health** — report "waiting for Postgres,
-      N retries, queue depth M" instead of "idle"
-- [ ] **Escalate after N failed retries** — fire a notification (channels are already configured)
-      rather than looping silently forever
+- [x] **`pai daemon status` must surface storage-backend health** — report "waiting for Postgres,
+      N retries, queue depth M" instead of "idle". Backend + retries landed in v0.26.0 (`743ed3f`);
+      the **queue depth** half was still missing — the daemon sent `workQueue` in the status payload
+      and the command never printed it. Fixed in `7817d75`: health rendering extracted to a pure
+      `formatStorageHealth()` (`src/cli/commands/daemon-status.ts`), 11 tests pin it, and the queue
+      line also fires with the backend *up* (a non-draining queue is a wedged worker, its own bug)
+      and on exhausted-retry `failed` items, which nothing else surfaces and which never retry.
+      Verified against the live daemon payload, not just synthetic fixtures.
+- [x] **Escalate after N failed retries** — fire a notification (channels are already configured)
+      rather than looping silently forever. `src/storage/factory.ts:202` — once at
+      `ESCALATE_AFTER_ATTEMPTS`, plus a recovery notification; deliberately not per-retry, since a
+      notification every few seconds is filtered within a minute and stops being a signal.
 
 ### Separate bug: `pai memory status` hangs (NOT an outage symptom)
 
@@ -213,6 +267,24 @@ lock wait against the DB the daemon is actively writing.
 - [ ] Target Claude Code community: r/ClaudeAI, Claude Code Discord, Hacker News
 - [ ] First 100 users goal — track with GitHub stars + Stripe conversions
 - [ ] Collect feedback, iterate on tier boundaries
+
+---
+
+## Orphaned in the working tree — needs a decision (found 2026-08-04)
+
+`src/tasks/poller.ts`, `src/tasks/poller.test.ts`, `src/tasks/scheduler.ts` are uncommitted
+and belong to **neither** of the two sessions live today (PAI, AIBroker) — a third session
+left them before either arrived. Both sessions have explicitly disclaimed them.
+
+By AIBroker's reading they are a real, finished, tested fix: `triggeredSlotMs` — "every day at
+9am" was restored *after* 09:00 and then re-dispatched every two ticks for the rest of the day.
+
+**Neither session will commit them without a decision, and neither will blind-add them.**
+Deliberate choice: a `git add -A` in this checkout publishes another session's work-in-progress
+under the wrong commit message, and both sessions are naming their files explicitly instead.
+
+- [ ] Read the diff and either commit it or discard it — leaving it uncommitted is what lets a
+      blind add sweep it up later
 
 ---
 
