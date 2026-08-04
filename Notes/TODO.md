@@ -1,35 +1,45 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0019 - 2026-08-03 - Four Unrouted Recurring Tasks Fixed, Root Cause Expanded" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-04T00:21:15.064Z" -->
+<!-- pai:checkpoint authored="model" session="0019 - 2026-08-03 - Four Unrouted Recurring Tasks Fixed, Root Cause Expanded" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-04T00:27:05.777Z" -->
 
 > **Last session:** 0019 - 2026-08-03 - Four Unrouted Recurring Tasks Fixed, Root Cause Expanded
-> **Paused at:** 2026-08-04T00:21:15.064Z
+> **Paused at:** 2026-08-04T00:27:05.777Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-04T00:21:15.034Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+### Where this stopped
 
-### What was being asked
+Released **v0.27.0** and pushed (`78b6e3d`). Published to npm as `@tekmidian/pai@0.27.0`. Working tree clean.
 
-- [Session:Home] Quick question about the pai CLI — Matthias wants two things and says there's a command for it:  1. A listing of ALL open/named Claude sessions with their working directories, in the sa…
-- [Session:7552A02E-E322-4891-82E9-BCD6778B068D] Bug report — `pai pause all` is broken. Please fix it.  Matthias wants it fixed rather than worked around, so I have NOT routed around it.  What happens:…
+The pause arrived *through the thing that was just fixed* — Home ran `pai pause all` and the message reached this session, which is the live end-to-end proof the fix works across all 15 sessions.
 
-### Working tree
+### What shipped
 
-- Branch: `main`
-- HEAD: ae6df84 docs: stop gitignoring the design docs
-- 6 uncommitted path(s):
+**`pai pause all` never worked, for anyone, ever.** `src/cli/lib/aibroker-client.ts` sent `{ sessionId, text }`; the IPC takes `{ target, message }`. Both keys wrong — `target` was only the one validated first, so a partial fix would have delivered an *empty message to the right session* and looked correct. It survived because `pause all` is the sole caller and its `--dry-run` branch returns before sending, so the live path had never once executed.
 
-```
-M Notes/TODO.md
- M src/cli/commands/session/pause-all.ts
- M src/cli/lib/aibroker-client.ts
- M src/tasks/poller.test.ts
- M src/tasks/poller.ts
-?? src/cli/lib/aibroker-client.test.ts
-```
+The trap worth remembering: `sessionId` **is** a real field on the request envelope — it identifies the *caller*. The recipient is `params.target`. One word, two meanings, one layer apart.
+
+Also removed trailing `\n` from both sends: the transport uses `enter: true` and appends Enter itself, so every message submitted twice.
+
+**Added `pai pause all --only <name>`** — matches name, PAI name, or id prefix, case-insensitively, and reports `--only Home: 1 of 15 matched` so an empty filter is loud. It exists because Home asked to rehearse against one session before all fifteen and there was no way to do that.
+
+**Task poller: unrouted-at-dispatch returned `alarm: false`, hardcoded.** A task failing to dispatch three times alarmed; one that could *never* dispatch alarmed never. The daily check logged `unrouted — cannot dispatch` **151 times** over two days while reading as "every day at 9am". Underneath it, the poller had no notification path at all — `alarm: true` only bumped a counter shown in a CLI line nobody runs. Both alarms now go through `routeNotification`, once per task per 24h, cleared on success.
+
+The due date is the discriminator and is load-bearing both ways: undated tasks score `NEGATIVE_INFINITY` overdue and never reach dispatch, so the findings inbox stays silent.
+
+**Earlier the same session:** four unrouted tracker tasks moved to Home (daily check, plus two stranded in `Mail & Identity 📧`, a project with no session behind it that `pai task projects` was calling "not a fault"). Daily check then dispatched `delivered to Home (2930m late)`.
+
+Tests 255 → 267. Wire format pinned to actual bytes and **confirmed to fail against the old code** before being kept.
+
+### Open
+
+- **Google Chat as an ingress channel** — answered on PAILot, not yet scoped. Chat API is merely *disabled* in GCP project `1050084477170`, the one Coogle already authenticates through; the Coogle tools already exist. The argument for it over mail-as-ingress: Chat carries a Google-authenticated sender, mail does not, and mail ingress would rest on the DMARC work that is still mid-flight. Real ingress = a Chat app with an HTTPS endpoint; AIBroker already runs a webhook receiver for Todoist, so it is a new route rather than new infrastructure. Awaiting the word to scope it.
+- **The mailbox drain hook** — a `UserPromptSubmit` hook calling `aibroker_receive`. It now appears to be delivering (two messages arrived this way today), but this was never deliberately verified.
+- **Registry duplicates** — `i052341` shadows `Home` (same path), `paperfull` shadows `Paperfull`. Both appear in listings and each draws a pause attempt. `aibroker sessions forget` matches case-insensitively and once removed both `Clickr` and `clickr` in one call, so this needs care.
+- **`dist/` accumulates stale chunks** — three `main-resolver-*.mjs` remain, two orphaned. Harmless (the entrypoint pins the right hash) but it briefly made a correct fix look unbuilt.
+- **`.claude/session-init.sh` uses `ls -t`** to pick the latest SL session note — non-deterministic on a fresh clone. One-line fix, still unmade.
 
 <!-- /pai:checkpoint -->
 
