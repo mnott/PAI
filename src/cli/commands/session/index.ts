@@ -52,10 +52,13 @@ export function registerSessionCommands(
   // class of mistake as moving them was.
   sessionCmd
     .command("restore")
+    // One line, no embedded newlines: the docs generator turns them into
+    // paragraph breaks, which split this sentence mid-clause in
+    // docs/commands/session.md.
     .description(
-      "Restore transcripts PAI displaced into sessions/, so claude --resume can\n" +
-        "find them again. Lists what is unresumable and which checkpoints promise\n" +
-        "it. Dry run unless --execute is given."
+      "Restore transcripts PAI displaced into sessions/ so claude --resume can find them again. " +
+        "Reports what is unresumable, which checkpoints promise it, and which transcripts are empty. " +
+        "Dry run unless --execute is given."
     )
     .option("--execute", "Actually restore (hardlink back to the project root)")
     .option("--promised", "Only sessions a checkpoint tells you to resume")

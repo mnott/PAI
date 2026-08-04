@@ -156,6 +156,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai session pause` | Write a ## Continue checkpoint to the project's TODO.md. |
 | `pai session recent` | [Deprecated] Use `pai session list` or `pai sessions` instead. |
 | `pai session rename <project-slug> <number> <new-slug>` | Rename a session note — updates file on disk, H1 title, and registry |
+| `pai session restore` | Restore transcripts PAI displaced into sessions/ so claude --resume can find them again. Reports what is unresumable, which checkpoints promise it, and which transcripts are empty. Dry run unless --execute is given. |
 | `pai session route <project-slug> <number> <target-project>` | Create a cross-reference link from a session to a target project |
 | `pai session slug <project-slug> <number>` | Generate a descriptive slug from the session JSONL transcript |
 | `pai session tag <project-slug> <number> [tags...]` | Set or show tags on a session. Tags can be space-separated or comma-separated. |
