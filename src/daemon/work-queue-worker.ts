@@ -48,7 +48,7 @@ import {
   addWorkToSessionNote,
   finalizeSessionNote,
   updateTodoContinue, sessionIdFromTranscript,
-  moveSessionFilesToSessionsDir,
+  archiveSessionFilesToSessionsDir,
   type WorkItem as NoteWorkItem,
 } from "../hooks/ts/lib/project-utils/index.js";
 
@@ -287,10 +287,10 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
   // Move session .jsonl files to sessions/ subdirectory
   try {
     const transcriptDir = dirname(transcriptPath);
-    const movedCount = moveSessionFilesToSessionsDir(transcriptDir);
-    if (movedCount > 0) {
+    const archivedCount = archiveSessionFilesToSessionsDir(transcriptDir);
+    if (archivedCount > 0) {
       process.stderr.write(
-        `[work-queue-worker] Moved ${movedCount} session file(s) to sessions/.\n`
+        `[work-queue-worker] Archived ${archivedCount} session file(s) to sessions/.\n`
       );
     }
   } catch (moveError) {

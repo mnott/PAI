@@ -2,7 +2,7 @@
  * Path utilities — encoding, Notes/Sessions directory discovery and creation.
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, linkSync, copyFileSync } from 'fs';
 import { join, basename } from 'path';
 import { PAI_DIR } from '../pai-paths.js';
 
@@ -137,10 +137,36 @@ export function ensureSessionsDirFromProjectDir(projectDir: string): string {
 }
 
 /**
- * Move all .jsonl session files from project root to sessions/ subdirectory.
- * Returns the number of files moved.
+ * Publish every project-root .jsonl into sessions/ as well, WITHOUT removing it.
+ *
+ * This used to renameSync, and that is how PAI destroyed its users' sessions.
+ *
+ * `claude --resume <uuid>` finds a transcript only at the project root. Move it
+ * into sessions/ and the session becomes permanently unresumable — measured
+ * 2026-08-04: `claude --resume b3462801` (867 KB of real work, sessions/ only)
+ * answers "No conversation found with session ID", while a top-level id is found
+ * fine. Nothing warned; the id still looked valid everywhere PAI displayed it.
+ *
+ * The damage was not occasional. This ran from a UserPromptSubmit hook excluding
+ * only the CURRENT session, so every prompt anyone typed unresumed every other
+ * session in the project. One PAI project measured 1 transcript at top level
+ * against 52 underneath. Among the casualties was 046bb712 — the exact id PAI's
+ * own handover tells the user to resume.
+ *
+ * A hardlink satisfies both sides, which is why this is a two-line fix rather
+ * than a redesign: the archive genuinely has consumers that read sessions/
+ * (session-summary-worker, registry/moved, session/autosave), and `--resume`
+ * needs the root path. One inode, two names, no copy, no window where the file
+ * is missing from either place.
+ *
+ * Never unlink the source. Tidying up another tool's store was the whole
+ * mistake; a stale duplicate is free, a lost session is not. Every caller of
+ * `transcriptFiles()` was checked before choosing this — they all test emptiness
+ * (`.length > 0`), never count, so the duplicate cannot skew a project's stats.
+ *
+ * Returns the number of files newly archived.
  */
-export function moveSessionFilesToSessionsDir(
+export function archiveSessionFilesToSessionsDir(
   projectDir: string,
   excludeFile?: string,
   silent = false
@@ -150,24 +176,45 @@ export function moveSessionFilesToSessionsDir(
   if (!existsSync(projectDir)) return 0;
 
   const files = readdirSync(projectDir);
-  let movedCount = 0;
+  let archivedCount = 0;
 
   for (const file of files) {
-    if (file.endsWith('.jsonl') && file !== excludeFile) {
-      const sourcePath = join(projectDir, file);
-      const destPath = join(sessionsDir, file);
+    if (!file.endsWith('.jsonl') || file === excludeFile) continue;
+
+    const sourcePath = join(projectDir, file);
+    const destPath = join(sessionsDir, file);
+
+    // Already archived — including by an earlier rename, before this was a
+    // hardlink. Those are the sessions that need restoring to the root, which is
+    // a separate repair and not this function's job.
+    if (existsSync(destPath)) continue;
+
+    try {
+      linkSync(sourcePath, destPath);
+      if (!silent) console.error(`Archived ${file} → sessions/ (still resumable)`);
+      archivedCount++;
+    } catch (error) {
+      // Cross-device (EXDEV) is the realistic failure: sessions/ on another
+      // volume. Copy instead, and still leave the original alone.
       try {
-        renameSync(sourcePath, destPath);
-        if (!silent) console.error(`Moved ${file} → sessions/`);
-        movedCount++;
-      } catch (error) {
-        if (!silent) console.error(`Could not move ${file}: ${error}`);
+        copyFileSync(sourcePath, destPath);
+        if (!silent) console.error(`Copied ${file} → sessions/ (hardlink unavailable)`);
+        archivedCount++;
+      } catch {
+        if (!silent) console.error(`Could not archive ${file}: ${error}`);
       }
     }
   }
 
-  return movedCount;
+  return archivedCount;
 }
+
+/**
+ * @deprecated Renamed to `archiveSessionFilesToSessionsDir`, which is what it
+ * now does. Kept so an out-of-tree caller fails loudly at the type level rather
+ * than silently keeping the old destructive name for a non-destructive action.
+ */
+export const moveSessionFilesToSessionsDir = archiveSessionFilesToSessionsDir;
 
 // ---------------------------------------------------------------------------
 // CLAUDE.md / TODO.md discovery
