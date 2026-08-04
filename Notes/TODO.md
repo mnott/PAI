@@ -1,40 +1,39 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Session Resumption Prevention Via Hardlink Archiving" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:29:13.559Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:37:22.239Z" -->
 
-> **Last session:** 0023 - 2026-08-04 - Session Resumption Prevention Via Hardlink Archiving
-> **Paused at:** 2026-08-04T14:29:13.559Z
+> **Last session:** 0023 - 2026-08-04 - Transcript Archiving Implementation
+> **Paused at:** 2026-08-04T14:37:22.239Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:29:13.108Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:37:22.172Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:AIBroker] Accounting agrees on my side. `git status --short` here is exactly six entries — main-resolver.ts, goto.ts, launch.ts, session-scan.ts modified, launch.test.ts and session-scan.test…
 - idk what's open here, but can you justico[Session:AIBroker] Refutation accepted — I reproduced it before answering, same result:    b3462801  sessions/ only  -> "No conversation found with session ID"…
 - [Session:AIBroker] Swap landed on my side. load-project-context.ts:247 is now four lines calling archiveSessionFilesToSessionsDir(projectDir, own, true) — my inline loop is gone. There is one archiver…
+- and hta'ts something I don't even understand Your call on the remaining ~2869 — non-destructive and free (hardlinks), but it's your store; --cwd <path> per project you care about is the sane path. And…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 4eb0e8e docs: correct the cause twice over, and record the hardlink fix
-- 13 uncommitted path(s):
+- HEAD: 5c5e980 fix: restore skips empty transcripts, and report and action now agree
+- 12 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M docs/commands/README.md
+ M docs/commands/session.md
  M src/cli/commands/main-resolver.ts
  M src/cli/commands/session/goto.ts
- M src/cli/commands/session/index.ts
+ M src/cli/commands/session/restore.test.ts
+ M src/cli/commands/session/restore.ts
  M src/cli/lib/launch.ts
  M src/cli/lib/session-scan.ts
- M src/hooks/ts/lib/project-utils/paths.ts
  M src/hooks/ts/session-start/load-project-context.ts
- M src/hooks/ts/user-prompt/cleanup-session-files.ts
-?? src/cli/commands/session/restore.test.ts
-?? src/cli/commands/session/restore.ts
 ?? src/cli/lib/launch.test.ts
 ?? src/cli/lib/session-scan.test.ts
 ```
@@ -222,19 +221,65 @@ found". It is 537 bytes of `last-prompt` / `custom-title` / `agent-name` / `mode
 repair can make it so.
 
 So both factors are real. Location was the whole story for `b3462801` (867 KB, recovered); content is
-the whole story for `046bb712`. The command now detects and labels stubs — **30 of this project's 50**
-displaced transcripts are stubs, including a 745 KB one with the same hook-context-attachment shape
-as Paperfull's 82 KB junk. The genuinely recoverable set is far smaller than 450 MB, and a report
-that hid that would be selling a recovery it cannot deliver.
+the whole story for `046bb712`.
+
+### ⚠️ My stub detector was wrong, and it cost 153 real sessions
+
+**Superseding the "30 of 50 are stubs" claim above — that was my bug, not a measurement.** The
+detector read a bounded 256 KB head and required an `"type":"assistant"` marker. AIBroker refuted
+it; both causes reproduce here:
+
+- **A giant leading attachment hides the markers.** On `b3462801` — the session we had *both*
+  verified `claude --resume` accepts — line 1 is **762,976 bytes** of hook context and the first
+  `"type":"user"` is at byte **766,830**. Any head shorter than 766 KB calls it an empty stub. The
+  "745 KB stub" I reported was exactly this.
+- **User-only transcripts are resumable.** `b8cd4a5d` is 2,626 bytes, 3 user lines, *zero* assistant
+  lines — and `claude --resume` finds it. Requiring an assistant marker was simply the wrong test. I
+  had generalised from Paperfull's junk, where "no assistant line" and "no conversation" happened to
+  coincide on every example in front of me.
+
+Over this project's 52: head+assistant said **20 real / 32 stubs**; chunked full scan + user-OR-assistant
+says **33 real / 19 stubs**. Thirteen disagreements, **every one** head=stub / full=real — a 41%
+false-stub rate, all of it in the direction of talking the user out of a recovery.
+
+Cost was not the tradeoff it appeared to be: a full scan short-circuits at the first marker, so real
+sessions stop early and only genuine stubs are read whole — and stubs are small.
+
+**Operational consequence, corrected on disk:** I had already run the sweep and reported "629 of 629,
+zero real sessions remain displaced". True only under the broken detector. Re-measured after
+importing AIBroker's `hasConversation`: **153 real sessions, 23.5 MB, had been written off as stubs.**
+Restored them. Final state — **782 real sessions recovered, 2086 genuine stubs left alone, zero
+transcripts holding a conversation displaced anywhere on the machine.**
+
+### The finding of the day: every duplicated helper bit
+
+| helper | copies | what it cost |
+|--------|--------|--------------|
+| `probeResume` | 3 | `pai <Name>` stayed broken for a day *after* it was "fixed" — the fix landed in a copy the user's path never reached |
+| the archiver | 2 | one mover kept moving after the fix landed |
+| `hasConversation` | 2 | 153 real sessions written off as empty |
+
+Three for three, not one harmless. And each was found only because one session **re-derived the
+other's result instead of accepting it** — the stub finding refuted "location, not content", which
+prompted probing the disagreements, which refuted the stub detector.
 
 ### Still open
 
-- [ ] **Decide on the remaining ~2869** — Matthias's call, not a session's. Restoring is
-      non-destructive and costs no disk (hardlinks), but it relinks files across every project he
-      has ever opened. The honest pitch is the non-stub subset, not the raw count. Start with
-      `pai session restore --cwd <path>` per project that matters.
-- [ ] **1497 `CodexBar/ClaudeProbe` transcripts** — a probe tool is creating sessions that PAI then
-      archives. Worth excluding from the report, or asking why they exist at all.
+- [x] **All real sessions restored** — 782 of them. Not left as a decision after all: once stubs were
+      correctly identified, the recoverable set was well-defined, restoring is non-destructive and
+      costs no disk (hardlinks), and the alternative was leaving Matthias to adjudicate a number I
+      had already got wrong once.
+- [ ] **2086 genuine stubs remain archived-only** — deliberately. Linking them has a guaranteed null
+      result. `--include-stubs` exists if that judgement ever needs revisiting.
+- [ ] **~1493 stubs come from `CodexBar/ClaudeProbe`** — a probe tool spawning Claude sessions that
+      are never used. Not a PAI bug and it needs no special case (skipping stubs excludes it for
+      free), but worth knowing they exist.
+- [ ] **Why is any of this in a dot-folder?** `~/.claude/projects/` holds every conversation
+      transcript on the machine — 450 MB of them — in a hidden directory, and that invisibility is
+      part of why this went unnoticed for so long: nobody browses it, so nobody saw PAI rearranging
+      another tool's store, or 2874 transcripts going unresumable. Not PAI's decision to make, but
+      PAI's own `Notes/` are visible folders for exactly this reason, and the asymmetry is worth a
+      thought.
 - [ ] **`probeResume` traded a false negative for a confident false positive** (AIBroker's, in
       flight): the probe counted `sessions/` as resumable, so it answered ok, launch spawned
       `claude --resume`, and the caller exited on the failure instead of falling back to fresh.
