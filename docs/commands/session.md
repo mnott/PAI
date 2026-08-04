@@ -17,6 +17,7 @@ pai session <subcommand> [options]
 | Command | Description |
 |---------|-------------|
 | [`pai session list`](#pai-session-list) | Resumable sessions catalog — named sessions with resume status. |
+| [`pai session restore`](#pai-session-restore) | Restore transcripts PAI displaced into sessions/ so claude --resume can find them again. Reports what is unresumable, which checkpoints promise it, and which transcripts are empty. Dry run unless --execute is given. |
 | [`pai session info <project-slug> <number>`](#pai-session-info-project-slug-number) | Show full details for a specific session |
 | [`pai session rename <project-slug> <number> <new-slug>`](#pai-session-rename-project-slug-number-new-slug) | Rename a session note — updates file on disk, H1 title, and registry |
 | [`pai session slug <project-slug> <number>`](#pai-session-slug-project-slug-number) | Generate a descriptive slug from the session JSONL transcript |
@@ -47,6 +48,22 @@ Use --all to also show unnamed orphan sessions.
 | `-n <count>` | Maximum sessions to show (default: 20) | `20` |
 | `--all` | Include unnamed orphan sessions (not in clc registry) |  |
 | `--json` | Output raw JSON instead of formatted table |  |
+
+
+### pai session restore
+
+Restore transcripts PAI displaced into sessions/ so claude --resume can find them again. Reports what is unresumable, which checkpoints promise it, and which transcripts are empty. Dry run unless --execute is given.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--execute` | Actually restore (hardlink back to the project root) |  |
+| `--promised` | Only sessions a checkpoint tells you to resume |  |
+| `--cwd <path>` | Only sessions belonging to this working directory |  |
+| `--all` | List every displaced session, not just the largest few |  |
+| `--include-stubs` | Also restore transcripts that hold no conversation |  |
+| `--json` | Output raw JSON instead of a formatted report |  |
 
 
 ### pai session info <project-slug> <number>
