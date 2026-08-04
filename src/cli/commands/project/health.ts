@@ -182,7 +182,34 @@ export function cmdHealth(
     console.log();
   }
 
-  console.log(dim(`  ${rows.length} total: ${active.length} active, ${stale.length} stale, ${dead.length} dead`));
+  // "active" is the one word in this output that means something else elsewhere,
+  // so say which thing it is.
+  //
+  // This command's "active" is "the path exists on disk". The registry's `status`
+  // column also says active, meaning "not archived". They are different
+  // predicates over the same rows and they disagree by a lot: measured
+  // 2026-08-04, 124 paths present against 99 registry-active, because 29 ARCHIVED
+  // projects still have their directory. A careful reader took the 124 as a
+  // registry figure today and drew a wrong conclusion from it, which is a fair
+  // reading of a line that just said "124 active".
+  const archivedButPresent = results.filter(
+    (r) => r.category === "active" && r.project.status !== "active"
+  ).length;
+
+  console.log(
+    dim(
+      `  ${rows.length} total: ${active.length} with the path present, ` +
+        `${stale.length} stale, ${dead.length} dead`
+    )
+  );
+  if (archivedButPresent > 0) {
+    console.log(
+      dim(
+        `  ${archivedButPresent} of those ${active.length} are archived in the registry — ` +
+          `"present" here is about the directory, not the registry status.`
+      )
+    );
+  }
 
   if (!opts.fix && (stale.length > 0 || dead.length > 0)) {
     console.log();

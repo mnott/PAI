@@ -1,25 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:06:14.521Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:10:27.481Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix
-> **Paused at:** 2026-08-04T15:06:14.521Z
+> **Paused at:** 2026-08-04T15:10:27.481Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:06:14.455Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:10:27.456Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/MDF.md <- there are links in there
 - /Users/i052341/Daten/Cloud/08\ -\ Others/MDF literally contains all discussions on stadtoldendorf infra plus a Notes directory under /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/Infrastruktur so I gue…
+- [Session:AIBroker] Confirmed your duplicate reading against the rows, with two refinements and one new class.    pferde         archived  08 - Others/MDF                                    1 session…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: f7b05b0 docs: say why a suffix match is dangerous, not merely loose
+- HEAD: 919bda9 docs: four registry states, not two, and the ephemeral guard
 - 1 uncommitted path(s):
 
 ```
@@ -340,6 +340,32 @@ is what the command currently suggests for everything:
 | EPHEMERAL | path is a worktree or temp dir | never register; unregister |
 
 - [ ] Decide whether `health` should report these four. Not built — it changes what the command says.
+
+**A fifth collision, and this one was a plain mislabel — fixed.** `health` printed `124 active` while
+the registry says `99 active`. Both words, two predicates:
+
+- `health` "active" = **the path exists on disk** — and it spans archived rows
+- registry "active" = **the `status` column**, i.e. not archived
+
+Measured: 124 paths present, 99 registry-active, and **29 archived projects still have their
+directory**. AIBroker read the 124 as a registry figure and drew a wrong conclusion from it, which is
+a fair reading of a line that just said "124 active". The summary now says "124 with the path present"
+and names the 29 explicitly. Category keys and JSON are unchanged, so `--status active` still works —
+this was a label, not a reclassification.
+
+### Two live rows the guard would now refuse, both still in the registry
+
+| slug | status | path | on disk |
+|---|---|---|---|
+| `tmp` | **ACTIVE** | `/private/tmp` | **yes** |
+| `probe-project` | **ACTIVE** | `/private/tmp/claude-501/…/scratchpad/probe-project` | no |
+
+`tmp` is the one worth looking at: **an active registered project whose root is the system temp
+directory itself.** `pai tmp` routes there, and anything that treats a project root as ownable —
+notes scaffolding, indexing — is pointed at `/private/tmp`. 0 sessions, created 2026-02-24.
+
+- [ ] Unregister `tmp` and `probe-project` (plus `cool-haibt`, `strange-haibt`, `ops-webui`) — the
+      five rows the new guard would refuse. Registry writes, so Matthias's, same class as `--fix`.
 
 ### ✅ Ephemeral registrations are now refused (`3249af3`)
 
