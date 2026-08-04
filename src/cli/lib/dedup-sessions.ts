@@ -124,6 +124,62 @@ export interface RegisteredProject {
  *
  * @param showAll  When true, include cold / zero-session / archived projects.
  */
+/**
+ * Which of two sessions of equal status should represent a name.
+ *
+ * Recency alone was the rule, and recency is exactly the wrong instinct here.
+ * A resume that FAILS still creates a session file, and that file is newer than
+ * the transcript it failed to open. So the tie-break reliably handed back the
+ * artefact of a bug in preference to the work.
+ *
+ * Measured on Paperfull, 2026-08-04:
+ *
+ *   b3462801  867 KB  32 lines  3 user  15:41:57   <- the actual work
+ *   7fdbb9a8   82 KB  25 lines  2 user  15:41:59   <- empty, Ctrl-C'd, WON by 2s
+ *   a9ecdc1c   82 KB  25 lines  2 user  15:49:40   <- a second failed resume
+ *
+ * `pai Paperfull` therefore resolved to 7fdbb9a8 — 82 KB of hook context in
+ * `attachment` lines, with no assistant turn anywhere in it — while 867 KB of
+ * real work sat one second older and unchosen.
+ *
+ * WHAT THIS DOES NOT FIX, measured before claiming otherwise: the reported
+ * failure was `No conversation found with session ID: 7fdbb9a8`, and that error
+ * is about WHERE the transcript is, not what is in it. Both transcripts live
+ * only in sessions/, and `claude --resume b3462801` — the good one, the one this
+ * change now selects — fails with the identical message. Verified directly, and
+ * again on a second project. So this stops dedup preferring the artefact of a
+ * bug, which is worth doing on its own, and `pai <Name>` still cannot resume a
+ * cleanly-stopped session until the sessions/ relocation is addressed. That part
+ * is tracked in Notes/TODO.md and belongs to session-scan/the stop hook.
+ *
+ * Conversation volume comes first because an empty artefact is small BY
+ * CONSTRUCTION — nobody spoke into it — whereas an artefact can be newer by
+ * mere milliseconds. Recency only decides between transcripts that recorded the
+ * same amount, where it is a reasonable guess again.
+ *
+ * HONEST LIMIT: the exact signal is "did the assistant ever reply", and this is
+ * not that — it is a proxy that happens to separate the measured case by one
+ * user line and seven total lines, which is a thin margin. The real predicate
+ * belongs in `parseTranscript` (session-scan.ts) as an `assistantLines` count,
+ * which is free there since it already reads every line of the file. That file
+ * was mid-edit in another session when this landed, so this stays out of it.
+ * Move to the exact signal when it exists; the tests below should keep passing
+ * unchanged, since they assert the outcome and not the proxy.
+ */
+function winsTiebreak(candidate: UnifiedSession, incumbent: UnifiedSession): boolean {
+  const c = candidate.diskSession;
+  const i = incumbent.diskSession;
+
+  // A live entry has no transcript to weigh. It also never reaches here except
+  // against another live entry, where recency is all there is.
+  if (c && i) {
+    if (c.userLines !== i.userLines) return c.userLines > i.userLines;
+    if (c.msgCount !== i.msgCount) return c.msgCount > i.msgCount;
+  }
+
+  return candidate.lastActivity > incumbent.lastActivity;
+}
+
 export function buildDeduped(
   liveSessions: AiBrokerSessionMeta[],
   diskSessions: ScannedSession[],
@@ -200,7 +256,7 @@ export function buildDeduped(
     } else {
       const ep = STATUS_PRIORITY[existing.status];
       const np = STATUS_PRIORITY[status];
-      if (np < ep || (np === ep && entry.lastActivity > existing.lastActivity)) {
+      if (np < ep || (np === ep && winsTiebreak(entry, existing))) {
         byName.set(key, entry);
       }
     }
