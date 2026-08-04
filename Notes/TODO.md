@@ -1,40 +1,40 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:16:36.597Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Session Resumption Prevention Via Hardlink Archiving" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:29:13.559Z" -->
 
-> **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T14:16:36.597Z
+> **Last session:** 0023 - 2026-08-04 - Session Resumption Prevention Via Hardlink Archiving
+> **Paused at:** 2026-08-04T14:29:13.559Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:16:36.560Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:29:13.108Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- if you think these bits are good, then take them over
 - [Session:AIBroker] Accounting agrees on my side. `git status --short` here is exactly six entries — main-resolver.ts, goto.ts, launch.ts, session-scan.ts modified, launch.test.ts and session-scan.test…
 - idk what's open here, but can you justico[Session:AIBroker] Refutation accepted — I reproduced it before answering, same result:    b3462801  sessions/ only  -> "No conversation found with session ID"…
+- [Session:AIBroker] Swap landed on my side. load-project-context.ts:247 is now four lines calling archiveSessionFilesToSessionsDir(projectDir, own, true) — my inline loop is gone. There is one archiver…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: a4c1574 docs: a cleanly-stopped session cannot be resumed at all
+- HEAD: 4eb0e8e docs: correct the cause twice over, and record the hardlink fix
 - 13 uncommitted path(s):
 
 ```
 M Notes/TODO.md
  M src/cli/commands/main-resolver.ts
  M src/cli/commands/session/goto.ts
+ M src/cli/commands/session/index.ts
  M src/cli/lib/launch.ts
  M src/cli/lib/session-scan.ts
- M src/daemon/work-queue-worker.ts
- M src/hooks/ts/lib/project-utils.ts
- M src/hooks/ts/lib/project-utils/index.ts
  M src/hooks/ts/lib/project-utils/paths.ts
  M src/hooks/ts/session-start/load-project-context.ts
- M src/hooks/ts/stop/stop-hook.ts
+ M src/hooks/ts/user-prompt/cleanup-session-files.ts
+?? src/cli/commands/session/restore.test.ts
+?? src/cli/commands/session/restore.ts
 ?? src/cli/lib/launch.test.ts
 ?? src/cli/lib/session-scan.test.ts
 ```
@@ -200,12 +200,41 @@ now confidently hands an unresumable id to `claude --resume`, which is the failu
       second archiver in a codebase that had just spent hours on a fix that landed in one of three
       copies of `probeResume`.
 
+### The repair shipped, and the scale was 55× what we thought
+
+- [x] **`pai session restore`** (`4cd9d4c`) — dry run by default, `--promised` / `--cwd` / `--all`,
+      imports AIBroker's `restoreTopLevel` rather than reimplementing the link. 14 tests.
+- [x] **First real run: 5 of 5 promised ids restored.** Verified end to end — `560f6b32` (759 KB,
+      seriousletter) now gets past session lookup, returning the known-good "no deferred tool
+      marker" signature instead of "No conversation found". A real session handed back.
+
+**Scale correction: not ~52. `2874` transcripts, `450.6 MB`, across `112` project dirs.** The 52 was
+this project alone. 1497 come from `CodexBar/ClaudeProbe` (probe artifacts), 318 from the home
+directory, PAI 51, Paperfull 2. Scoping was added *because* of that number — an unscoped `--execute`
+over 2874 files is not something to do because someone typed a command once.
+
+### Correction: "location, not content" was right about one file and wrong as a rule
+
+`046bb712` — the id **this repo's own checkpoint** tells the user to resume — was restored,
+verified hardlinked to the same inode, and `claude --resume` **still** answers "No conversation
+found". It is 537 bytes of `last-prompt` / `custom-title` / `agent-name` / `mode` /
+`permission-mode`: no user line, no assistant line. A metadata stub. It was never resumable and no
+repair can make it so.
+
+So both factors are real. Location was the whole story for `b3462801` (867 KB, recovered); content is
+the whole story for `046bb712`. The command now detects and labels stubs — **30 of this project's 50**
+displaced transcripts are stubs, including a 745 KB one with the same hook-context-attachment shape
+as Paperfull's 82 KB junk. The genuinely recoverable set is far smaller than 450 MB, and a report
+that hid that would be selling a recovery it cannot deliver.
+
 ### Still open
 
-- [ ] **Restore the ~52 already-moved transcripts** — every checkpoint PAI has ever written names an
-      id that is currently unresumable. Worth a one-time explicit `pai session restore` with a dry
-      run rather than a lazy per-resume relink; silently relinking 52 files under the user is not
-      something a hook should do unasked. Offered to AIBroker; mine if they decline.
+- [ ] **Decide on the remaining ~2869** — Matthias's call, not a session's. Restoring is
+      non-destructive and costs no disk (hardlinks), but it relinks files across every project he
+      has ever opened. The honest pitch is the non-stub subset, not the raw count. Start with
+      `pai session restore --cwd <path>` per project that matters.
+- [ ] **1497 `CodexBar/ClaudeProbe` transcripts** — a probe tool is creating sessions that PAI then
+      archives. Worth excluding from the report, or asking why they exist at all.
 - [ ] **`probeResume` traded a false negative for a confident false positive** (AIBroker's, in
       flight): the probe counted `sessions/` as resumable, so it answered ok, launch spawned
       `claude --resume`, and the caller exited on the failure instead of falling back to fresh.
