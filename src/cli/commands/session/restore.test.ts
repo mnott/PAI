@@ -137,6 +137,33 @@ describe("a transcript with no conversation in it", () => {
     expect(findDisplaced(projects)[0]!.hasConversation).toBe(true);
   });
 
+  it("counts a user-only transcript as a conversation", () => {
+    // Refuted by AIBroker with a measurement: b8cd4a5d is 2626 bytes with 3 user
+    // lines and no assistant line, and claude --resume FINDS it. Requiring an
+    // assistant marker declared resumable sessions empty.
+    const dir = project("-Users-x-UserOnly");
+    writeFileSync(join(dir, "sessions", `${UUID}.jsonl`), '{"type":"user"}\n');
+
+    expect(findDisplaced(projects)[0]!.hasConversation).toBe(true);
+  });
+
+  it("finds a marker that sits past a giant leading attachment", () => {
+    // The case that killed the bounded-head version. Measured on b3462801: line 1
+    // is a 762,976-byte hook-context attachment and the first "type":"user" is at
+    // byte 766,830, so a 256 KB head reported an 867 KB working session — one we
+    // had both verified resumable — as an empty stub. 13 of this project's 52
+    // transcripts were misjudged this way, every error in the direction of
+    // talking the user out of a recovery.
+    const dir = project("-Users-x-Attachment");
+    const giant = `{"type":"attachment","content":"${"x".repeat(800_000)}"}`;
+    writeFileSync(
+      join(dir, "sessions", `${UUID}.jsonl`),
+      `${giant}\n{"type":"user"}\n`
+    );
+
+    expect(findDisplaced(projects)[0]!.hasConversation).toBe(true);
+  });
+
   it("treats an unreadable transcript as real rather than talking the user out of a restore", () => {
     const dir = project("-Users-x-Gone");
     // A directory where a transcript should be: openSync succeeds, readSync fails.
