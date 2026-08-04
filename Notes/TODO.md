@@ -1,35 +1,113 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0028 - 2026-08-04 - Searxng Downtime Impact Analysis" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T18:30:30.427Z" -->
+<!-- pai:checkpoint authored="model" session="0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T18:37:48.986Z" -->
 
-> **Last session:** 0028 - 2026-08-04 - Searxng Downtime Impact Analysis
-> **Paused at:** 2026-08-04T18:30:30.427Z
+> **Last session:** 0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging
+> **Paused at:** 2026-08-04T18:37:48.986Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T18:30:30.371Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+Long three-session day (PAI · AIBroker · Home) on session resumption, registry hygiene,
+and a class of bug we ended up cataloguing ~20 times: **a true observation licensing a
+false conclusion.** Everything below is measured unless marked otherwise.
 
-### What was being asked
+## Shipped — `@tekmidian/pai` 0.31.0 → 0.32.3, all published and pushed
 
-- [Session:AIBroker] Retraction accepted, and I read the four tool definitions myself rather than take it on your report. They say what you say they say:    WebSearch                  "Search the web. R…
-- [Session:AIBroker] Hypothesis disproven, accepted — 418 calls after the containers died settles it, and my "nobody called it" was a confident reading of a window I had not looked at either. Your measu…
-- sure fix it  but that still doesnt answer my question - do i need it, and why does it need those docker containers
-- thIf the hooks themselves are the annoyance rather than curiosity — they're PAI's, and the PAI session owns that code, so it's worth telling them the stop-hook chain has become slow enough to be visib…
-- [Session:AIBroker] Your 401 "from the public internet" is the trap you just warned me about, one level over. It went via the TAILNET, not the Funnel.    dig +short @8.8.8.8 macbook-mn.barking-barometr…
-- set that fix live and idk about obsidian sync
+| version | what |
+|---|---|
+| `0.31.0` | joint release with AIBroker's resume-path work (`dd5a751`) |
+| `0.32.0` | `pai project merge` + `pai project unregister`; `health` reports four states |
+| `0.32.1` | Postgres search **throws** instead of returning `[]` on an unreachable index |
+| `0.32.2` | same fix for the SQLite keyword path; `docker/init.sql` now actually ships |
+| `0.32.3` | **stop doing session-end work after every turn** — 19,840 ms → 304 ms |
 
-### Working tree
+Earlier in the day: `7817d75` queue depth in `pai daemon status`; `2efcb30` adopted a third
+session's orphaned `triggeredSlotMs` fix; `f9586ba` dedup stops preferring an empty session;
+`61655f7` **archive transcripts by hardlink instead of moving them**; `4cd9d4c` `pai session
+restore`; `fa687ef`/`e1a27aa` recover projects orphaned by a renamed ancestor.
 
-- Branch: `main`
-- HEAD: e02ffad docs: measure the 11 days instead of guessing, and say what stays unproven
-- 2 uncommitted path(s):
+HEAD == origin == `6b7cb6d`. 444 tests green. tsc 79 errors — unchanged pre-existing baseline,
+none in touched files.
 
-```
-M Notes/TODO.md
- M src/hooks/session-stop.sh
-```
+## Open decisions — all Matthias's, none blocked on code
+
+1. **Tailscale ingress is OFF at the control plane.** This is why Todoist ingress is dead. The
+   node holds `funnel` and `cap/funnel-ports?ports=443,8443,10000` but **not**
+   `https://tailscale.com/cap/ingress`, and `tailscaled` logs `peerapi: ingress: denied; no
+   ingress cap`. AIBroker's ACL `nodeAttrs` edit propagated (the control plane names the three
+   ports back), so policy is done — the remaining switch is in the **Tailscale admin console**.
+   No local remedy will fix it; AIBroker tried them all. Neither session should touch network config.
+2. **webfetch-mcp rate limiter** — patched locally (`web_search` exempted from `checkCallLimit`,
+   `web_fetch` still limited). It is a **vendored third-party file** with hardcoded constants, so
+   this is now a local fork that will conflict on the next upstream pull. Decide whether to keep it.
+3. **`obsidian sync` debounce interval** — currently 30 min. Session notes are unaffected (they
+   reach Obsidian through the existing project symlink); only generated index/topic/master pages
+   lag. Lower `PAI_HOUSEKEEPING_INTERVAL` if you read those aggregate pages right after a session.
+4. **searxng — keep or drop.** Kept and running. Buys three things nothing else does: non-US
+   search (`WebSearch` is US-only), verbatim page text (`WebFetch` returns a model's summary),
+   and no third party seeing queries. I said "probably redundant" earlier and **retracted it** —
+   see below.
+5. **`docker/init.sql` in `files`** — shipped as a whitelist entry rather than inlined, because
+   the container bind-mounts the file and inlining would create a second copy of the schema.
+
+## Watch items — effects that need observing
+
+- **`Stop` fires every assistant turn, not at session end.** That was the root of the ~25 s pause
+  between messages. Two whole-machine sweeps (`session cleanup --execute` 17.7 s, `obsidian sync`
+  2.8 s) now debounce behind `~/.config/pai/.last-housekeeping`. **Watch that cleanup still
+  actually runs** — the stamp is written *before* the work to prevent concurrent 20 s sweeps.
+- **A long-running daemon does not pick up a fix because the build succeeded.** The daemon ran
+  pre-fix code for 6 hours and re-displaced **757 transcripts (436 MB)**, undoing a restore I had
+  already reported as complete. Restarted it; re-restored; now **0 real transcripts displaced,
+  2086 genuine stubs deliberately left archived-only**. If transcripts go missing again, check the
+  daemon's vintage first (`Archived …` in the log = fixed, `Moved …` = stale).
+- **AIBroker's MCP servers still predate their fix.** One per session, vintage invisible; only a
+  session restart clears it. They shipped an `mcp` staleness block in `aibroker_status` for next time.
+
+## In flight / not done
+
+- **`registerProjectCommands` in `src/cli/commands/project/index.ts` is dead code** — exported,
+  re-exported, called by nobody. `program.ts` uses `registerProjectsCommands` (plural,
+  `projects-index.ts`) for both `pai project` and `pai projects`. It now carries a banner. Deleting
+  it is the real fix and wants doing when someone can watch the CLI surface after.
+- **`/hook/` and `/hook/test` return 404** locally and through the Funnel, while `tailscale serve`
+  proxies `/hook` and `HOOK_PREFIX = "/hook/"` exists in AIBroker's `todoist-webhook.ts:584` and
+  `inbound.ts:41`. Not Todoist's path (that is `/todoist`, healthy), so a separate defect. AIBroker
+  is not touching it.
+- **`mcp__webfetch__web_search` fix needs a new session** to take effect — the running MCP server
+  predates the edit.
+- **Re-run any `memory_search` from between 13:39Z and ~15:50Z today.** `pai-pgvector` was down and
+  every search returned cleanly empty. Home told Matthias a DMARC note did not exist on the strength
+  of one of those. Specifically worth redoing: the open DMARC point.
+
+## The finding worth keeping
+
+**Every duplicated helper bit — four for four:** `probeResume` ×3 (`pai <name>` broken a day *after*
+being fixed), the archiver ×2, `hasConversation` ×2 (153 real sessions written off as empty),
+and the project-command registration ×2 (two commands built successfully and did not exist).
+
+**And the meta-lesson, ~20 instances across three sessions and four repos:** a port answered, a
+name normalised alike, a transcript existed, `git commit` exited 0, a component was present but a
+stub, `grep` found the string, `npm view` reported a version from cache, a tool name appeared in
+2951 transcripts because it was *registered*, and my "public internet" curl resolved to the tailnet.
+Each observation was true; each licensed a false conclusion.
+
+**The rule:** the check has to *identify the thing*, not merely elicit a response from something.
+And its corollary, learned the hard way tonight: **before believing a negative, check the check** —
+a false negative makes you undo correct work, which is worse than a false positive that merely
+ships something broken.
+
+Both sessions independently recommended dropping searxng as "redundant with the built-ins", reasoning
+from *"a built-in exists"* without reading what it does. That is the only instance today that reached
+Matthias as advice, and it was wrong in the same direction from both of us — which is why agreement
+between two sessions is worth much less than it feels like.
+
+Memories saved: `exit-zero-is-not-done`, `two-project-registrations`,
+`duplicated-helpers-always-bit`, `rerun-the-measurement-not-the-conclusion`, `one-package-one-release`.
+Also corrected `MEMORY.md`, which had the cpp release order **backwards** (it said commit before
+publish).
 
 <!-- /pai:checkpoint -->
 
