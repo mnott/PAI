@@ -816,3 +816,98 @@ describe("an H1 terminates the Continue section", () => {
     expect(rest).toContain("keep me");
   });
 });
+
+/**
+ * The checkpoint-clobbering data loss.
+ *
+ * Case 2 deliberately lets an auto write replace an authored checkpoint from an
+ * EARLIER session, and that policy is right — TODO.md would otherwise freeze.
+ * The bug was that identity DEGRADES and healthy sessions fell into it:
+ * `sessionId` is optional on `pai pause`, so isSameSession falls back to
+ * comparing a display line containing the note TITLE, and pausing renames the
+ * note. A session wrote a checkpoint, its note was renamed, the hook fired
+ * seconds later and no longer recognised its own work.
+ *
+ * Three sessions reported this independently on 2026-08-03 from one
+ * `pai pause all`; one lost its checkpoint three times.
+ */
+describe("a fresh model checkpoint survives an auto write", () => {
+  const NOW = "2026-08-03T12:00:00.000Z";
+
+  function modelTodo(ts: string, session: string): string {
+    return [
+      "## Continue",
+      "",
+      `<!-- pai:checkpoint authored="model" session="${session}" ts="${ts}" -->`,
+      "",
+      "### Where this stopped",
+      "",
+      "Irreplaceable reasoning nobody wants flattened to a template.",
+      "",
+      "<!-- /pai:checkpoint -->",
+      "",
+      "# TODO",
+      "",
+      "- [ ] a real task",
+      "",
+    ].join("\n");
+  }
+
+  it("preserves it when the note was renamed out from under the hook", () => {
+    // 90 seconds old, and the session line no longer matches — precisely the
+    // reported race.
+    writeTodo(modelTodo("2026-08-03T11:58:30.000Z", "0007 - 2026-08-03 - Old Title"));
+    const r = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0007 - 2026-08-03 - Renamed By The Pause Itself",
+      cwd: "/tmp",
+      body: "mechanical digest",
+      timestamp: NOW,
+    });
+    expect(r.action).toBe("preserved");
+    expect(readTodo()).toContain("Irreplaceable reasoning");
+  });
+
+  it("keeps the H1 intact while doing so", () => {
+    writeTodo(modelTodo("2026-08-03T11:58:30.000Z", "0007 - old"));
+    applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0007 - renamed",
+      cwd: "/tmp",
+      body: "digest",
+      timestamp: NOW,
+    });
+    expect(readTodo()).toContain("# TODO");
+  });
+
+  it("still replaces a genuinely old authored checkpoint", () => {
+    // Two days old. This is the case 2 policy that stops TODO.md freezing, and
+    // it must keep working — the fix is a grace window, not a veto.
+    writeTodo(modelTodo("2026-08-01T12:00:00.000Z", "0003 - 2026-08-01 - Ancient"));
+    const r = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0007 - 2026-08-03 - Current",
+      cwd: "/tmp",
+      body: "mechanical digest",
+      timestamp: NOW,
+    });
+    expect(r.action).toBe("written");
+    expect(readTodo()).toContain("mechanical digest");
+  });
+
+  it("does not treat a clock-skewed future stamp as ancient", () => {
+    writeTodo(modelTodo("2026-08-03T12:05:00.000Z", "0007 - skewed"));
+    const r = applyContinue({
+      rootPath: root,
+      authored: "auto",
+      sessionLine: "0007 - renamed",
+      cwd: "/tmp",
+      body: "digest",
+      timestamp: NOW,
+    });
+    expect(r.action).toBe("preserved");
+  });
+});

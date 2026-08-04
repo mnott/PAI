@@ -10,9 +10,9 @@ import {
   writeFileSync,
   mkdirSync,
   renameSync,
-  unlinkSync,
+  statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header } from "../../utils.js";
 import type { CleanupPlan, SessionCandidate } from "./types.js";
@@ -119,10 +119,10 @@ export async function displayDryRun(plans: CleanupPlan[]): Promise<void> {
       console.log(dim(`  Notes: ${dirPlan.notesDir}`));
 
       if (dirPlan.toDelete.length > 0) {
-        console.log(bold("  DELETE (empty/template-only sessions):"));
+        console.log(bold("  ARCHIVE (empty/template-only sessions → .archive/):"));
         for (const c of dirPlan.toDelete) {
           console.log(
-            `    ${chalk.red("DEL")}  ${dim(padNum(c.number))} - ${c.date} - ${
+            `    ${chalk.yellow("ARCH")} ${dim(padNum(c.number))} - ${c.date} - ${
               c.filename.split(" - ").slice(2).join(" - ")
             } ${dim(`(${c.sizeBytes}b)`)}`
           );
@@ -183,7 +183,7 @@ export async function displayDryRun(plans: CleanupPlan[]): Promise<void> {
 
   console.log();
   console.log(bold("  Summary (dry-run):"));
-  console.log(`    ${chalk.red("DEL")}  ${totalDelete} empty sessions to delete`);
+  console.log(`    ${chalk.yellow("ARCH")} ${totalDelete} empty sessions to archive (moved, not deleted)`);
   console.log(`    ${chalk.yellow("REN")}  ${totalRename} unnamed sessions to rename`);
   console.log(`    ${chalk.blue("NUM")}  ${totalRenumber} sessions to renumber`);
   console.log(`    ${chalk.cyan("MOV")}  ${totalMove} sessions to move into YYYY/MM/ dirs`);
@@ -227,14 +227,37 @@ export async function executeCleanup(
       const { notesDir } = dirPlan;
       if (plan.notesDirs.length > 1) console.log(dim(`  Directory: ${notesDir}`));
 
-      // Step 1: Delete empty sessions
+      // Step 1: Retire "empty" sessions — by moving them, never by unlinking.
+      //
+      // This deleted four titled notes from Youdrill on 2026-08-03 ("Cocoapods
+      // Bootstrap", "Youdrill Tools Pipeline Review", and two more), and they
+      // were only recoverable because that session inspected the diff before
+      // committing. Anywhere this ran and was committed, the notes are gone.
+      //
+      // The classifier is the root problem: EMPTY is `sizeBytes < 400 ||
+      // isTemplateOnly`. Size is a proxy for worthlessness and a bad one — a
+      // real session that produced three lines and a good title is under 400
+      // bytes. But no threshold is worth trusting with an irreversible
+      // operation, so the fix is not a better number: it is that a cleanup tool
+      // has no business destroying anything a human might want back.
+      //
+      // Moving to .archive/ still achieves the actual goal (the note leaves the
+      // working listing and the numbering respreads) while keeping the file.
       for (const c of dirPlan.toDelete) {
         try {
-          unlinkSync(c.filepath);
-          console.log(ok(`  DEL  ${c.filename}`));
+          const archiveDir = join(dirname(c.filepath), ".archive");
+          mkdirSync(archiveDir, { recursive: true });
+          let dest = join(archiveDir, c.filename);
+          // Never clobber an earlier archived note with the same name.
+          if (existsSync(dest)) {
+            const stamp = statSync(c.filepath).mtimeMs.toString(36);
+            dest = join(archiveDir, `${c.filename.replace(/\.md$/, "")} (${stamp}).md`);
+          }
+          renameSync(c.filepath, dest);
+          console.log(ok(`  ARCH ${c.filename}`) + dim(" → .archive/"));
           deleted++;
         } catch (e) {
-          console.log(err(`  FAIL to delete ${c.filename}: ${e}`));
+          console.log(err(`  FAIL to archive ${c.filename}: ${e}`));
         }
         if (c.session) {
           try {
