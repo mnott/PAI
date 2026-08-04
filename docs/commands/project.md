@@ -20,6 +20,8 @@ pai project <subcommand> [options]
 | [`pai project add <path>`](#pai-project-add-path) | Register a project directory in the PAI registry |
 | [`pai project info <slug>`](#pai-project-info-slug) | Show full details for a project |
 | [`pai project archive <slug>`](#pai-project-archive-slug) | Archive a project |
+| [`pai project merge <from> <into>`](#pai-project-merge-from-into) | Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given. |
+| [`pai project unregister <slug>`](#pai-project-unregister-slug) | Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched. |
 | [`pai project unarchive <slug>`](#pai-project-unarchive-slug) | Restore an archived project to active status |
 | [`pai project move <slug> <new-path>`](#pai-project-move-slug-new-path) | Update the root path for a project |
 | [`pai project rebind <slug> <new-path>`](#pai-project-rebind-slug-new-path) | Manually update the root_path for a project (for when auto-detect found multiple matches). |
@@ -117,6 +119,42 @@ Archive a project
 | Argument | Kind |
 |----------|------|
 | `<slug>` | required |
+
+
+### pai project merge <from> <into>
+
+Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<from>` | required |
+| `<into>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--execute` | Actually perform the merge |  |
+
+
+### pai project unregister <slug>
+
+Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<slug>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--execute` | Actually remove the row |  |
+| `--force` | Remove even though sessions would be deleted with it |  |
 
 
 ### pai project unarchive <slug>

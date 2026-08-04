@@ -4,13 +4,20 @@
  */
 
 import type { Database } from "better-sqlite3";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header, shortenPath, now, renderTable, encodeDir } from "../../utils.js";
-import type { HealthRow, HealthCategory, ProjectHealth, ProjectRow } from "./types.js";
+import type {
+  HealthRow,
+  HealthCategory,
+  HealthReason,
+  ProjectHealth,
+  ProjectRow,
+} from "./types.js";
 import { suggestMovedPath } from "./relocate.js";
+import { unregistrableReason } from "../../../registry/registrable.js";
 
 function findOrphanedNotesDirs(project: ProjectRow): string[] {
   const claudeProjects = join(homedir(), ".claude", "projects");
@@ -54,6 +61,102 @@ function findOrphanedNotesDirs(project: ProjectRow): string[] {
  * The basename guess is kept, second, since it answers the other question.
  */
 
+/**
+ * Why a row is unhealthy, and what to do about it.
+ *
+ * `category` said only dead / stale / active, and "archive" was offered as the
+ * remedy for everything. Four different situations were collapsed into that, and
+ * archiving is right for exactly one of them:
+ *
+ *   EPHEMERAL   the path is a worktree or a temp dir — it should never have been
+ *               registered. Checked FIRST, deliberately: a temp path whose
+ *               directory has also vanished is both ephemeral and dead, and
+ *               "should never have been registered" is the stronger and more
+ *               actionable statement. Without a stated precedence the same row
+ *               gets different labels depending on evaluation order.
+ *   DUPLICATE   the path is gone and another project owns where it went. Its
+ *               sessions are the only thing of value on it, so the remedy is
+ *               merge — archiving strands them.
+ *   MISNAMED    the path EXISTS and another project owns a subtree of it, under a
+ *               slug that has nothing to do with it. `pferde` on `08 - Others/MDF`.
+ *               health never reported this at all, because existsSync says yes.
+ *   DEAD        the path is gone and nothing claims it. Archive is correct here.
+ *
+ * The action must never name a command that destroys a row holding sessions —
+ * a wrong command in an action field reads as vetted.
+ */
+function diagnose(
+  project: HealthRow,
+  pathExists: boolean,
+  others: HealthRow[]
+): { reason?: HealthReason; owner?: string; action?: string } {
+  const ephemeral = unregistrableReason(project.root_path);
+  if (ephemeral) {
+    return {
+      reason: "ephemeral",
+      action:
+        project.session_count > 0
+          ? `holds ${project.session_count} session(s) — pai project merge ${project.slug} <durable-project> --execute, then unregister`
+          : `pai project unregister ${project.slug} --execute  (${ephemeral})`,
+    };
+  }
+
+  if (pathExists) {
+    // A live directory that another project owns a piece of, under an unrelated
+    // slug. Only reported when the other project sits BENEATH this one, which is
+    // the shape actually observed; two unrelated roots are not each other's problem.
+    const nested = others.find(
+      (o) =>
+        o.status === "active" &&
+        o.root_path.startsWith(project.root_path + "/") &&
+        existsSync(o.root_path)
+    );
+    if (nested && project.status !== "active") {
+      return {
+        reason: "misnamed",
+        owner: nested.slug,
+        action: `live directory, but ${nested.slug} owns a subtree of it — rename, or pai project merge ${project.slug} ${nested.slug}`,
+      };
+    }
+    return {};
+  }
+
+  // Path is gone. Does an active project already own where this one would go?
+  const suggestion = suggestMovedPath(project.root_path, []);
+  if (suggestion) {
+    const owner = others.find(
+      (o) => o.root_path === suggestion || realpathEq(o.root_path, suggestion)
+    );
+    if (owner) {
+      return {
+        reason: "duplicate",
+        owner: owner.slug,
+        action:
+          project.session_count > 0
+            ? `pai project merge ${project.slug} ${owner.slug}  (moves ${project.session_count} session(s))`
+            : `pai project merge ${project.slug} ${owner.slug}  (no sessions — a plain drop)`,
+      };
+    }
+  }
+
+  return {
+    reason: "dead",
+    action:
+      project.session_count > 0
+        ? `holds ${project.session_count} session(s) — merge before archiving, or they become unreachable`
+        : `pai project archive ${project.slug}`,
+  };
+}
+
+/** Same directory under two spellings — symlinks, not string equality. */
+function realpathEq(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 export function cmdHealth(
   db: Database,
   opts: { fix?: boolean; json?: boolean; status?: string }
@@ -71,6 +174,8 @@ export function cmdHealth(
     const pathExists = existsSync(project.root_path);
     const orphaned = findOrphanedNotesDirs(project);
 
+    const others = rows.filter((r) => r.id !== project.id);
+
     let category: HealthCategory;
     let suggestedPath: string | undefined;
 
@@ -81,10 +186,12 @@ export function cmdHealth(
       // directory another project already owns.
       suggestedPath = suggestMovedPath(
         project.root_path,
-        rows.filter((r) => r.id !== project.id).map((r) => r.root_path)
+        others.map((r) => r.root_path)
       );
       category = suggestedPath ? "stale" : "dead";
     }
+
+    const { reason, owner, action } = diagnose(project, pathExists, others);
 
     return {
       project,
@@ -92,6 +199,9 @@ export function cmdHealth(
       suggestedPath,
       claudeNotesExists: orphaned.length > 0,
       orphanedNotesDirs: orphaned,
+      reason,
+      owner,
+      action,
     };
   });
 
@@ -108,6 +218,11 @@ export function cmdHealth(
         suggested_path: r.suggestedPath ?? null,
         claude_notes_exists: r.claudeNotesExists,
         orphaned_notes_dirs: r.orphanedNotesDirs,
+        // Added fields, not renamed ones: `health` keeps its old values so any
+        // existing consumer keeps working.
+        reason: r.reason ?? null,
+        owner: r.owner ?? null,
+        action: r.action ?? null,
       })),
       null,
       2
@@ -165,18 +280,22 @@ export function cmdHealth(
   }
 
   if (dead.length) {
-    console.log(err("  Dead projects (path missing, no match found):"));
+    console.log(err("  Unreachable projects (path missing):"));
     for (const r of dead) {
-      console.log(`    ${bold(r.project.slug)}   ${dim(r.project.root_path)}`);
+      const label = r.reason && r.reason !== "dead" ? warn(`  [${r.reason}]`) : "";
+      console.log(`    ${bold(r.project.slug)}   ${dim(r.project.root_path)}${label}`);
       if (r.claudeNotesExists) {
         console.log(chalk.yellow(`      Notes:  ${r.orphanedNotesDirs.join(", ")}`));
       }
-      if (r.project.session_count === 0 && opts.fix) {
+      // Only archive rows that are genuinely dead. A duplicate's sessions are the
+      // only thing of value on it, and an ephemeral row wants unregistering, not
+      // filing away — auto-archiving either was the bug behind this whole item.
+      if (r.project.session_count === 0 && opts.fix && r.reason === "dead") {
         db.prepare("UPDATE projects SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?")
           .run(now(), now(), r.project.id);
-        console.log(ok("      Auto-fixed: archived (0 sessions, path gone)"));
-      } else {
-        console.log(dim(`      Fix:    pai project archive ${r.project.slug}  (or  pai project move ...)`));
+        console.log(ok("      Auto-fixed: archived (0 sessions, path gone, nothing claims it)"));
+      } else if (r.action) {
+        console.log(dim(`      Do:     ${r.action}`));
       }
     }
     console.log();
