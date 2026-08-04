@@ -61,6 +61,7 @@ export function registerSessionCommands(
     .option("--promised", "Only sessions a checkpoint tells you to resume")
     .option("--cwd <path>", "Only sessions belonging to this working directory")
     .option("--all", "List every displaced session, not just the largest few")
+    .option("--include-stubs", "Also restore transcripts that hold no conversation")
     .option("--json", "Output raw JSON instead of a formatted report")
     .action(
       (opts: {
@@ -68,6 +69,7 @@ export function registerSessionCommands(
         promised?: boolean;
         cwd?: string;
         all?: boolean;
+        includeStubs?: boolean;
         json?: boolean;
       }) => {
         cmdRestore(opts);

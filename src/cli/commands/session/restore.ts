@@ -224,10 +224,48 @@ export interface RestoreOptions {
   cwd?: string;
   /** List every displaced session instead of the largest few. */
   all?: boolean;
+  /**
+   * Also restore transcripts with no conversation in them.
+   *
+   * Off by default because it is pointless work, and because the raw count
+   * misrepresents the damage: of 2869 displaced transcripts measured 2026-08-04,
+   * 2240 were stubs and only 629 held an actual conversation. 1493 of those stubs
+   * came from one probe tool spawning sessions that were never used. Skipping
+   * them is what turns "450 MB displaced" into the honest "417 MB recoverable"
+   * without a special case for anybody's tooling.
+   */
+  includeStubs?: boolean;
 }
 
 /** How many to list before the report stops being readable. */
 const LIST_LIMIT = 20;
+
+/**
+ * Which of the displaced sessions a run is about, and which of those to link.
+ *
+ * Pure, and separate from the printing, for two reasons. The obvious one is that
+ * it can be tested without pointing a test at the developer's real
+ * `~/.claude/projects` — an earlier draft of the test did exactly that and would
+ * have relinked live files. The other is that the report and the action must
+ * agree: `--json` originally restored everything in scope while the formatted
+ * path skipped stubs, so the two modes did different things with the same flags.
+ */
+export function selectTargets(
+  everything: DisplacedSession[],
+  opts: RestoreOptions
+): { inScope: DisplacedSession[]; toRestore: DisplacedSession[] } {
+  const inScope = everything.filter((d) => {
+    if (opts.promised && d.promisedBy.length === 0) return false;
+    if (opts.cwd && d.cwd !== opts.cwd) return false;
+    return true;
+  });
+
+  const toRestore = opts.includeStubs
+    ? inScope
+    : inScope.filter((d) => d.hasConversation);
+
+  return { inScope, toRestore };
+}
 
 export function cmdRestore(opts: RestoreOptions = {}): void {
   const everything = findDisplaced();
@@ -241,15 +279,23 @@ export function cmdRestore(opts: RestoreOptions = {}): void {
   // relinking 2874 files across every project a user has ever opened is not
   // something to do because they typed a command once, and an unscoped list of
   // 2874 lines is not a report anyone can act on.
-  const displaced = everything.filter((d) => {
-    if (opts.promised && d.promisedBy.length === 0) return false;
-    if (opts.cwd && d.cwd !== opts.cwd) return false;
-    return true;
-  });
+  const { inScope: displaced, toRestore } = selectTargets(everything, opts);
 
   if (opts.json) {
-    console.log(JSON.stringify({ displaced, executed: Boolean(opts.execute) }, null, 2));
-    if (opts.execute) for (const d of displaced) restoreTopLevel(d.uuid, d.projectDir);
+    console.log(
+      JSON.stringify(
+        {
+          displaced,
+          // Named so a script can see that stubs were held back, rather than
+          // inferring it from a count that does not match.
+          wouldRestore: toRestore.map((d) => d.uuid),
+          executed: Boolean(opts.execute),
+        },
+        null,
+        2
+      )
+    );
+    if (opts.execute) for (const d of toRestore) restoreTopLevel(d.uuid, d.projectDir);
     return;
   }
 
@@ -343,14 +389,25 @@ export function cmdRestore(opts: RestoreOptions = {}): void {
     return;
   }
 
+  // Report everything in scope, restore only what restoring can help. A stub is
+  // listed above with its label so the picture stays complete, but linking it
+  // would be work with a guaranteed null result.
+  const target = toRestore;
+  const skipped = displaced.length - target.length;
+
   let restored = 0;
   const failed: string[] = [];
-  for (const d of displaced) {
+  for (const d of target) {
     if (restoreTopLevel(d.uuid, d.projectDir)) restored++;
     else failed.push(d.uuid);
   }
 
-  console.log(ok(`  Restored ${restored} of ${displaced.length}.`));
+  console.log(ok(`  Restored ${restored} of ${target.length} recoverable.`));
+  if (skipped > 0) {
+    console.log(
+      dim(`  Skipped ${skipped} stub(s) — nothing in them to resume. --include-stubs overrides.`)
+    );
+  }
   if (failed.length > 0) {
     console.log(warn(`  Could not restore ${failed.length}:`));
     for (const uuid of failed) console.log(dim(`    ${uuid}`));
