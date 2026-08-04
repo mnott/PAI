@@ -9,7 +9,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { findDisplaced, findResumePromises } from "./restore.js";
+import { findDisplaced, findResumePromises, selectTargets } from "./restore.js";
+import type { DisplacedSession } from "./restore.js";
 
 /**
  * The repair for transcripts PAI displaced.
@@ -186,6 +187,65 @@ describe("naming the promise each restore makes true", () => {
     // Reporting is best-effort: an undecodable project still gets restored, it
     // just cannot name which note promised it.
     expect(findResumePromises(UUID, null)).toEqual([]);
+  });
+});
+
+describe("what --execute actually touches", () => {
+  /**
+   * Selection is tested as a pure function on purpose. The first draft of this
+   * suite called cmdRestore directly, which defaults to the real
+   * ~/.claude/projects — it would have relinked live files on any machine running
+   * the tests.
+   */
+  const session = (over: Partial<DisplacedSession> & { uuid: string }): DisplacedSession => ({
+    projectDir: "/p",
+    encodedDir: "-p",
+    cwd: "/p",
+    bytes: 1,
+    mtime: 0,
+    promisedBy: [],
+    hasConversation: true,
+    ...over,
+  });
+
+  const real = session({ uuid: "real" });
+  const stub = session({ uuid: "stub", hasConversation: false });
+  const promisedStub = session({ uuid: "promised-stub", hasConversation: false, promisedBy: ["/p/Notes/TODO.md"] });
+  const elsewhere = session({ uuid: "elsewhere", cwd: "/other" });
+
+  it("skips stubs by default — guaranteed-null work, and it inflates the damage", () => {
+    // Measured 2026-08-04: 2240 of 2869 displaced were stubs, 1493 of them from a
+    // single probe tool. Counting those made the loss look 4.5x worse than it is.
+    const { inScope, toRestore } = selectTargets([real, stub], {});
+    expect(inScope).toHaveLength(2); // still reported
+    expect(toRestore.map((d) => d.uuid)).toEqual(["real"]); // not linked
+  });
+
+  it("restores stubs when explicitly asked", () => {
+    const { toRestore } = selectTargets([real, stub], { includeStubs: true });
+    expect(toRestore).toHaveLength(2);
+  });
+
+  it("keeps stubs out even when a checkpoint promises them", () => {
+    // 046bb712 is exactly this: promised by a checkpoint, and empty. Linking it
+    // cannot make the promise true, so --promised must not imply --include-stubs.
+    const { inScope, toRestore } = selectTargets([promisedStub], { promised: true });
+    expect(inScope).toHaveLength(1);
+    expect(toRestore).toHaveLength(0);
+  });
+
+  it("honours --cwd", () => {
+    const { toRestore } = selectTargets([real, elsewhere], { cwd: "/p" });
+    expect(toRestore.map((d) => d.uuid)).toEqual(["real"]);
+  });
+
+  it("combines scopes rather than letting the last one win", () => {
+    const promisedReal = session({ uuid: "pr", promisedBy: ["/p/Notes/TODO.md"] });
+    const { toRestore } = selectTargets([promisedReal, real, elsewhere], {
+      promised: true,
+      cwd: "/p",
+    });
+    expect(toRestore.map((d) => d.uuid)).toEqual(["pr"]);
   });
 });
 
