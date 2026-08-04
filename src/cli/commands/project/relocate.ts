@@ -64,10 +64,19 @@ function isHidden(name: string): boolean {
  * registry has a dead entry for plain `Infrastruktur/Webseiten`. The note files
  * knew where it went.
  *
- * Deliberately NOT a general suffix match. Matching whenever one normalised name
- * ends with another would make a wanted `Setup` match `01 - Base Setup`, which is
- * a different directory entirely. Only a leading run of digits with optional
- * separator comes off.
+ * Deliberately NOT a general suffix match, and the reason is worth spelling out
+ * because "why not just match on the suffix" is the obvious next question.
+ *
+ * `MDF/Infrastruktur/` is wall-to-wall numbered: `00 - Migration Analysis`,
+ * `01 - Base Setup`, `02 - Storage Setup`, `03 - Network Setup`, and so on. A
+ * suffix rule on a wanted `Setup` hits eight of them at once — so the uniqueness
+ * rule below would veto it, and the danger would never show itself. The one that
+ * bites is a wanted `Analysis` against `00 - Migration Analysis`: a single hit,
+ * therefore silently relocated, therefore wrong, and uniqueness cannot save you
+ * because there is nothing ambiguous about it.
+ *
+ * That is a failure mode this file's own safety rule would have HIDDEN rather than
+ * caught. Only a leading run of digits with optional separator comes off.
  */
 function stripOrderingPrefix(name: string): string {
   return name.replace(/^\d+\s*[-._)]?\s*/, "");

@@ -1,34 +1,26 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:01:51.253Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:03:09.479Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0
-> **Paused at:** 2026-08-04T15:01:51.253Z
+> **Paused at:** 2026-08-04T15:03:09.479Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:01:51.202Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:03:09.403Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:AIBroker] HEAD moved: dd5a751 — "fix: give `pai <name>` back a session it can actually find, open and resume". 7 files, +635/-170, staged by name, no add -A, no lock contention. Tree is now j…
 - [Session:AIBroker] PUBLISHED AND PUSHED — you are clear to work. @tekmidian/pai@0.31.0.    bump 0.31.0 -> npm run build -> 380 green -> npm publish -> ONE commit e3c5585 -> push   5864f61..e3c5585   1…
 - /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/MDF.md <- there are links in there
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 961870d docs: record the ancestor-rename recovery and its two corrections
-- 4 uncommitted path(s):
-
-```
-M Notes/TODO.md
- M src/cli/commands/project/health.ts
- M src/cli/commands/project/relocate.test.ts
- M src/cli/commands/project/relocate.ts
-```
+- HEAD: 3bd0af2 docs: the links in MDF.md were the missing clue
+- Clean — nothing uncommitted.
 
 <!-- /pai:checkpoint -->
 
@@ -277,8 +269,10 @@ list `--fix` already repairs.
 ### Two more corrections (`e1a27aa`) — and the count of 3 is a *different* three
 
 - **Ordering prefixes are decoration too.** Matthias pointed at `08 - Others/MDF/MDF.md`: it links to
-  `Infrastruktur/20 - Webseiten` while the registry holds a dead entry for plain
-  `Infrastruktur/Webseiten`. **The note files knew where it went.** `norm()` could not see it because
+  `20 - Webseiten` while the registry holds a dead entry for plain `Webseiten`. **The note files knew
+  where it went.** *(Both rows live under `08 - Others/MDF/Infrastruktur/` — NOT under the vault. The
+  `Ideaverse/MDF/…` spelling in MDF.md is a vault-relative wikilink, and since the vault has its own
+  `MDF/Infrastruktur` subtree, conflating the two is how someone later repairs the wrong one.)* `norm()` could not see it because
   the digits survive — `"webseiten"` vs `"20webseiten"`. This vault numbers directories everywhere
   (`04 - Ablage`, `08 - Others`, `70 - Operational Procedures`), so this is a whole class.
   Kept tight on purpose: *not* a suffix match, which would match a wanted `Setup` to
@@ -302,8 +296,29 @@ found, and without the duplicate guard it becomes a second entry for a directory
 
 - [ ] Run `pai project health --fix` to apply the 3 relocations (not done — `--fix` mutates
       `root_path` and `encoded_dir`, and that is Matthias's call, not a side effect of a measurement).
-- [ ] `webseiten` and `webseiten-1` are duplicates of the active `20-webseiten`, not repairables —
-      they want merging or deleting, which is the same cleanup done for Grazyna and PAI this morning.
+### `stadtoldendorf` is a duplicate to merge, not a path to repair
+
+Matthias identified where the Stadtoldendorf infra content actually lives: `08 - Others/MDF`, with the
+discussions under `MDF/Infrastruktur` (confirmed — `Stadtoldendorf` appears in `Infrastruktur/TODO.md`,
+`Code/README.md`, `Docs/IoT Device Isolation.md`, `99 - Final Notes/04`, `/05`, and three files under
+`20 - Webseiten/Notes/`). But that path is **already owned by the ACTIVE `infrastruktur` project, which
+has 15 sessions.** Repointing `stadtoldendorf` there would create exactly the duplicate the new guard
+forbids — verified, the guard names `infrastruktur` as the owner.
+
+So these four are registry hygiene, not relocations:
+
+| slug | status | sessions | what it wants |
+|---|---|---|---|
+| `stadtoldendorf` | archived | 1 | merge its session into `infrastruktur`, then drop |
+| `pferde` | archived | 1 | at `08 - Others/MDF` — misnamed; merge or drop |
+| `webseiten` | archived | 0 | duplicate of active `20-webseiten` — drop |
+| `webseiten-1` | archived | 0 | nothing named `*ebseiten*` under `MDF/` at all — drop |
+
+- [ ] Merge those sessions and drop the four entries — same cleanup as Grazyna/PAI this morning,
+      backup already at `~/.pai/registry.db.bak-2026-08-04`.
+- [ ] Consider `pai project health` reporting "duplicate of <slug>" as its own category. Three of
+      these four are duplicates and the command currently calls them dead, which is the wrong verb:
+      dead invites archiving, duplicate invites merging.
 
 ---
 
