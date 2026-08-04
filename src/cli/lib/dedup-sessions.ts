@@ -91,7 +91,7 @@ export function normalizeName(s: string): string {
 
 /**
  * Normalize a slug (kebab-case) to a human-readable form for matching.
- * "jobs-user-b" → "jobs user-b"
+ * "jobs-beta" → "jobs beta"
  */
 function slugToWords(slug: string): string {
   return slug.replace(/-/g, " ");

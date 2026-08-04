@@ -29,7 +29,7 @@
  *      c. Check ALL sessions in that encodedDir (already in our Pass-1 results).
  *      d. Pick the MOST RECENT resumable session in that dir and attach the name to it.
  *         If no resumable session, fall through to transcript-only pass.
- *   4. This means the displayed uuid for "Jobs Matthias" is always today's active session,
+ *   4. This means the displayed uuid for "Jobs Alpha" is always today's active session,
  *      not the stale cached one.
  *
  * Used by: pai sessions, pai resume

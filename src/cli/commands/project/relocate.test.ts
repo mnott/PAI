@@ -150,7 +150,7 @@ describe("never relocating onto another project's directory", () => {
    * had been merged out of this registry hours earlier.
    *
    * String comparison is what missed it: the two paths share nothing after
-   * `/Users/i052341/`. It has to be realpath.
+   * `/Users/owner/`. It has to be realpath.
    */
   it("refuses a candidate another project owns under a different spelling", () => {
     const realDir = join(root, "cloud", "PAI");

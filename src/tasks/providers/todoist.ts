@@ -140,8 +140,8 @@ export interface OwnerContainer {
  *
  * Ownership belongs to the sub-projects directly under the root — they are the
  * ones mirroring PAI projects. Anything deeper is a FOLDER: a way to group work
- * inside one owner's inbox, not a new owner. So `Claude / Jobs Matthias /
- * Executive Search` is eighteen tasks belonging to Jobs Matthias, filed under a
+ * inside one owner's inbox, not a new owner. So `Claude / Jobs Alpha /
+ * Executive Search` is eighteen tasks belonging to Jobs Alpha, filed under a
  * heading.
  *
  * This used to take the root and its direct children only. A grandchild was not

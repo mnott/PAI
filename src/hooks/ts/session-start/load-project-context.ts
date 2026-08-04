@@ -121,7 +121,7 @@ function isGuardedPath(dir: string): boolean {
   if (resolved === home) return true;
 
   // Depth guard: require at least 3 path segments beyond root
-  // e.g. /Users/i052341/foo is depth 3 on macOS — reject it
+  // e.g. /Users/owner/foo is depth 3 on macOS — reject it
   const parts = resolved.split('/').filter(Boolean);
   if (parts.length < 3) return true;
 
@@ -432,7 +432,7 @@ Run "pai project add ." to register this project, or use /route to tag the sessi
         !isGuardedPath(cwd) &&
         hasProjectSignals(cwd)
       ) {
-        // The CWD is inside a broader registered parent (e.g. "i052341" or "apps"),
+        // The CWD is inside a broader registered parent (e.g. "owner" or "apps"),
         // but it has its own project signals — register it as a distinct project.
         console.error(
           `PAI detect: parent match to "${detected.slug}" via relative path "${detected.relative_path}" — CWD looks like its own project, attempting auto-registration`

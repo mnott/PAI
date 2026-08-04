@@ -111,7 +111,7 @@ export interface IdentityConfig {
    * a message sent from an account to itself — or to one of its own domain
    * aliases — under Sent only, and it never reaches the inbox. The send reports
    * success, so this fails silently and looks exactly like delivery. Observed
-   * 2026-08-01: mnott@mnott.ch → mnott@mnott.de, sent fine, invisible.
+   * 2026-08-01: owner@example.ch → owner@example.de, sent fine, invisible.
    *
    * Where a separate mailbox is not available, deliver by writing the message
    * and adding the INBOX label to it rather than relying on the send path.

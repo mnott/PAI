@@ -232,7 +232,7 @@ function suggestByBasename(rootPath: string): string | undefined {
  * merged out of this registry earlier the same day.
  *
  * The comparison must be by realpath, not string. String equality is precisely
- * what missed it: the two paths share not one character after `/Users/i052341/`.
+ * what missed it: the two paths share not one character after `/Users/owner/`.
  */
 export function suggestMovedPath(
   rootPath: string,

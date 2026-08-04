@@ -552,7 +552,7 @@ L0 and L1 fire automatically via the `memory_wakeup` MCP tool, which is called b
 Create `~/.pai/identity.txt` with a short description of yourself and your working style. Claude will see this at every session start. Example:
 
 ```
-Matthias. Principal engineer. Work across TypeScript, Dart, and shell scripting.
+Principal engineer. Work across TypeScript, Dart, and shell scripting.
 Projects: PAI (AI infrastructure), RingsADay (Flutter app), Scribe (MCP server).
 Prefer concise explanations, hate unnecessary hedging.
 ```
@@ -572,7 +572,7 @@ Four MCP tools cover the full lifecycle:
 - `kg_invalidate` — Mark a fact as no longer true (sets `valid_to`)
 - `kg_contradictions` — Surface facts that directly contradict each other, using predicate inversion rules
 
-Example: "Matthias uses PostgreSQL" added in March; "Matthias uses SQLite" added in April with the March fact invalidated. `kg_query` in April sees only the current fact; `kg_query` for March sees the historical one.
+Example: "the user prefers PostgreSQL" added in March; "the user prefers SQLite" added in April with the March fact invalidated. `kg_query` in April sees only the current fact; `kg_query` for March sees the historical one.
 
 ### Memory Taxonomy
 

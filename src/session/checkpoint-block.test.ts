@@ -968,7 +968,7 @@ describe("a do-nothing session cannot take the handover slot", () => {
    * What the session-stop hook sends when it found no work items and no
    * completion message: one line that the generated header already carries.
    */
-  const NOTHING_TO_SAY = "Working directory: /Users/i052341/Daten/Cloud/Development/ai/AIBroker";
+  const NOTHING_TO_SAY = "Working directory: /Users/owner/Daten/Cloud/Development/ai/AIBroker";
 
   it("preserves the previous handover against a body that only restates the header", () => {
     writeTodo(richAutoTodo());
@@ -976,7 +976,7 @@ describe("a do-nothing session cannot take the handover slot", () => {
       rootPath: root,
       authored: "auto",
       sessionLine: "0038 - 2026-08-04 - No Work Performed — User Exited Immediately",
-      cwd: "/Users/i052341/Daten/Cloud/Development/ai/AIBroker",
+      cwd: "/Users/owner/Daten/Cloud/Development/ai/AIBroker",
       body: NOTHING_TO_SAY,
       timestamp: NOW,
     });

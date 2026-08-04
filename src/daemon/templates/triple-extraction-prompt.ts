@@ -17,7 +17,7 @@ Output a single JSON object with two arrays: "entities" and "relations".
 Entity types: project | person | concept | tool | file | version | decision | technology | organization
 
 Rules:
-- Be SPECIFIC: entity names must be concrete (e.g., "FSRS", "Glidr", "Matthias")
+- Be SPECIFIC: entity names must be concrete (e.g., "FSRS", "Glidr", "the owner")
 - Use snake_case relation verb phrases (e.g., "uses_algorithm", "decided_to", "shipped_version")
 - Skip opinions, speculation, and "we should" statements
 - Skip entities obvious from project metadata unless they have a meaningful relation
@@ -30,14 +30,14 @@ Example output:
   "entities": [
     {"name": "Glidr", "type": "project", "description": "Flashcard app using FSRS spaced repetition"},
     {"name": "FSRS", "type": "concept", "description": "Free Spaced Repetition Scheduler algorithm"},
-    {"name": "Matthias", "type": "person", "description": "Developer of Glidr and Quassl"},
+    {"name": "the owner", "type": "person", "description": "Developer of Glidr and Quassl"},
     {"name": "Quassl", "type": "project", "description": "iOS app being rewritten in Flutter"},
     {"name": "Flutter", "type": "technology", "description": "Cross-platform mobile framework"}
   ],
   "relations": [
     {"source": "Glidr", "relation": "uses_algorithm", "target": "FSRS"},
     {"source": "Glidr", "relation": "shipped_version", "target": "1.0.5"},
-    {"source": "Matthias", "relation": "decided_to_rewrite", "target": "Quassl"},
+    {"source": "the owner", "relation": "decided_to_rewrite", "target": "Quassl"},
     {"source": "Quassl", "relation": "migrating_to", "target": "Flutter"}
   ]
 }

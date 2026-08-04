@@ -7,14 +7,14 @@ import {
 } from "./index.js";
 
 const IDENTITY = {
-  selfEmails: ["matthias.nott@gmail.com", "mnott@mnott.de", "mnott@mnott.ch"],
-  deliverTo: "matthias.nott@gmail.com",
-  sendingAccount: "mnott@mnott.de",
+  selfEmails: ["owner.name@example.com", "owner@example.de", "owner@example.ch"],
+  deliverTo: "owner.name@example.com",
+  sendingAccount: "owner@example.de",
 };
 
 describe("normalizeEmail", () => {
   it("unwraps a display-name form and lowercases", () => {
-    expect(normalizeEmail("Matthias Nott <MNott@Mnott.CH>")).toBe("mnott@mnott.ch");
+    expect(normalizeEmail("Owner Name <Owner@Example.CH>")).toBe("owner@example.ch");
   });
 
   it("rejects junk rather than passing it through", () => {
@@ -26,29 +26,29 @@ describe("normalizeEmail", () => {
 
 describe("isSelfAddress", () => {
   it("matches a listed address regardless of case or wrapping", () => {
-    expect(isSelfAddress("  MNott@mnott.de ", IDENTITY)).toBe(true);
-    expect(isSelfAddress("Matthias <matthias.nott@gmail.com>", IDENTITY)).toBe(true);
+    expect(isSelfAddress("  Owner@example.de ", IDENTITY)).toBe(true);
+    expect(isSelfAddress("the owner <owner.name@example.com>", IDENTITY)).toBe(true);
   });
 
   it("does NOT infer plus-aliases", () => {
     // Same Gmail mailbox in practice, but the general rule that would match it
     // also matches other people's addresses. It has to be listed.
-    expect(isSelfAddress("matthias.nott+claude@gmail.com", IDENTITY)).toBe(false);
+    expect(isSelfAddress("owner.name+tag@example.com", IDENTITY)).toBe(false);
   });
 
   it("does NOT treat a shared domain as ownership", () => {
-    expect(isSelfAddress("gina@mnott.ch", IDENTITY)).toBe(false);
+    expect(isSelfAddress("third.party@example.ch", IDENTITY)).toBe(false);
   });
 
   it("owns nothing when no identity is configured", () => {
-    expect(isSelfAddress("matthias.nott@gmail.com", undefined)).toBe(false);
-    expect(isSelfAddress("matthias.nott@gmail.com", { selfEmails: [] })).toBe(false);
+    expect(isSelfAddress("owner.name@example.com", undefined)).toBe(false);
+    expect(isSelfAddress("owner.name@example.com", { selfEmails: [] })).toBe(false);
   });
 });
 
 describe("maySendWithoutReview", () => {
   it("allows a mail addressed entirely to the user", () => {
-    const d = maySendWithoutReview(["mnott@mnott.de", "matthias.nott@gmail.com"], IDENTITY);
+    const d = maySendWithoutReview(["owner@example.de", "owner.name@example.com"], IDENTITY);
     expect(d.allowed).toBe(true);
     expect(d.foreign).toEqual([]);
   });
@@ -56,7 +56,7 @@ describe("maySendWithoutReview", () => {
   it("refuses when ONE recipient among many is not the user", () => {
     // The case the rule exists for: a bcc'd outsider on an otherwise self-addressed mail.
     const d = maySendWithoutReview(
-      ["mnott@mnott.de", "matthias.nott@gmail.com", "someone@example.com"],
+      ["owner@example.de", "owner.name@example.com", "someone@example.com"],
       IDENTITY
     );
     expect(d.allowed).toBe(false);
@@ -69,7 +69,7 @@ describe("maySendWithoutReview", () => {
   });
 
   it("fails closed when identity is unconfigured", () => {
-    const d = maySendWithoutReview(["matthias.nott@gmail.com"], { selfEmails: [] });
+    const d = maySendWithoutReview(["owner.name@example.com"], { selfEmails: [] });
     expect(d.allowed).toBe(false);
     expect(d.reason).toContain("pai identity add");
   });
@@ -77,19 +77,19 @@ describe("maySendWithoutReview", () => {
 
 describe("checkDeliveryReachability", () => {
   it("calls out delivery to the sending account itself", () => {
-    const v = checkDeliveryReachability("mnott@mnott.de", "mnott@mnott.de");
+    const v = checkDeliveryReachability("owner@example.de", "owner@example.de");
     expect(v.verdict).toBe("unreachable");
     expect(v.reason).toContain("Sent only");
   });
 
   it("catches the case that actually bit, via the declared alias list", () => {
-    // Observed 2026-08-01: sent cleanly from mnott@mnott.ch to mnott@mnott.de,
+    // Observed 2026-08-01: sent cleanly from owner@example.ch to owner@example.de,
     // reported success, never arrived. Two DIFFERENT domains on one Google
     // account — so nothing about the addresses reveals it and only the
     // declared alias list can.
-    const v = checkDeliveryReachability("mnott@mnott.de", "mnott@mnott.ch", [
-      "mnott@mnott.de",
-      "mnott@mnott.org",
+    const v = checkDeliveryReachability("owner@example.de", "owner@example.ch", [
+      "owner@example.de",
+      "owner@example.org",
     ]);
     expect(v.verdict).toBe("unreachable");
     expect(v.reason).toContain("INBOX label");
@@ -98,23 +98,23 @@ describe("checkDeliveryReachability", () => {
   it("without the alias list, that same pair is NOT detectable", () => {
     // Pinning the limitation rather than pretending it away: this is why
     // label-based delivery is the safe default even on an "unknown" verdict.
-    expect(checkDeliveryReachability("mnott@mnott.de", "mnott@mnott.ch").verdict).toBe("unknown");
+    expect(checkDeliveryReachability("owner@example.de", "owner@example.ch").verdict).toBe("unknown");
   });
 
   it("flags a shared domain as suspect", () => {
-    const v = checkDeliveryReachability("alias@mnott.ch", "mnott@mnott.ch");
+    const v = checkDeliveryReachability("alias@example.ch", "owner@example.ch");
     expect(v.verdict).toBe("suspect");
     expect(v.reason).toContain("INBOX label");
   });
 
   it("does not claim separate domains are fine, only that nothing is predictable", () => {
-    expect(checkDeliveryReachability("matthias.nott@gmail.com", "mnott@mnott.de").verdict).toBe(
+    expect(checkDeliveryReachability("owner.name@example.com", "owner@example.de").verdict).toBe(
       "unknown"
     );
   });
 
   it("is unknown when either side is missing", () => {
-    expect(checkDeliveryReachability(undefined, "mnott@mnott.de").verdict).toBe("unknown");
+    expect(checkDeliveryReachability(undefined, "owner@example.de").verdict).toBe("unknown");
     expect(checkDeliveryReachability("a@b.com", undefined).verdict).toBe("unknown");
   });
 });

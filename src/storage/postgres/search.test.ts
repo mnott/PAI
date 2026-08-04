@@ -8,7 +8,7 @@ import { searchKeyword, searchSemantic } from "./search.js";
  * Both functions used to catch, log to the daemon's stderr, and return []. On
  * 2026-08-04 `pai-pgvector` exited at 13:39Z with the index inside it, and for two
  * hours every memory_search returned cleanly empty. A sibling session searched for
- * an open DMARC point, got nothing, and told Matthias nothing was recorded — a
+ * an open DMARC point, got nothing, and told the owner nothing was recorded — a
  * wrong answer that nothing in the response could have exposed.
  */
 

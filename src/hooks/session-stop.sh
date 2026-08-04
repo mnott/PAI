@@ -99,7 +99,7 @@ fi
 #     detect + slug + checkpoint + handover   ~300 ms total
 #     stop-hook.mjs (separate hook)            4324 ms
 #
-# So roughly 25 SECONDS of work between one message and the next, and Matthias
+# So roughly 25 SECONDS of work between one message and the next, and the owner
 # could see it: "in the middle of the session I keep seeing running stop hooks".
 # Two of those calls are whole-machine passes over 112 project directories and
 # ~2900 transcripts. Doing that per turn is not a slow implementation, it is the

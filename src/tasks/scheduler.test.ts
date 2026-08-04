@@ -31,9 +31,9 @@ const NOW = Date.parse("2026-08-01T12:00:00Z");
 function task(over: Partial<Task> = {}): Task {
   return {
     id: "t1",
-    title: "Jobs Matthias sweep",
+    title: "Jobs Alpha sweep",
     body: "",
-    owner: { project: "jobs-matthias", rootPath: "/tmp", source: "label" },
+    owner: { project: "jobs-alpha", rootPath: "/tmp", source: "label" },
     due: "2026-08-01T09:00:00Z",
     priority: "p2",
     labels: [],

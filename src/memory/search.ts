@@ -205,7 +205,7 @@ export function searchMemory(
     // unusable index byte-identical to a genuine miss. The Postgres path had the
     // same defect and it cost a real wrong answer on 2026-08-04 — the backend was
     // down for two hours, every search reported "No results found", and a sibling
-    // session told Matthias a DMARC note did not exist. See
+    // session told the owner a DMARC note did not exist. See
     // storage/postgres/search.ts.
     if (!isQuerySyntaxError(e)) {
       throw new Error(
