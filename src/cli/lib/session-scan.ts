@@ -326,6 +326,9 @@ function resolveFilter(opts: ScanOptions): "named" | "all" | "resumable" {
  * Scan ~/.claude/projects/ for all Claude Code sessions.
  *
  * Pass 1: walk top-level <project>/<uuid>.jsonl files (the resumability source).
+ * Pass 1b: walk <project>/sessions/<uuid>.jsonl — where the stop hook moves a
+ *         session's transcript once it ends. These are resumable too, and
+ *         skipping them made every cleanly-stopped session unfindable by name.
  * Pass 2: handle clc registry entries whose cached UUID was not found in Pass 1.
  *         For each such entry, scan the entry's project dir for the FRESHEST session
  *         and attach the registry name to it. This fixes the stale-UUID bug where
@@ -462,6 +465,79 @@ export function scanSessions(
       if (passesFilter) {
         results.push(session);
       }
+    }
+
+    // ---- Pass 1b: finished sessions, which live only in sessions/ ----
+    //
+    // The stop hook MOVES a session's transcript from <project>/<uuid>.jsonl to
+    // <project>/sessions/<uuid>.jsonl. Pass 1 walks the top level only, so a
+    // session becomes invisible to this scan the moment it is cleanly stopped —
+    // and name resolution is built on this scan. That is why `pai Paperfull`
+    // stopped finding Paperfull: three resumable transcripts sat in sessions/
+    // while the scan reported zero sessions for the project, so `pai <name>`
+    // fell through to a prompt-history search over old messages.
+    //
+    // These are reported resumable, which needs justifying, because
+    // `claude --resume` does NOT read sessions/ — it reads the top-level path
+    // and only that. What makes the label true is that nothing resumes without
+    // going through probeResume first, and probeResume links the transcript back
+    // to the top level before answering (lib/launch.ts, restoreTopLevel). PAI's
+    // SessionStart hook displaced these files in the first place; it now links
+    // rather than moves, so this is a claim about repairable state, not a hope.
+    //
+    // Do not weaken that chain without demoting these to transcript-only. An
+    // earlier revision asserted plain "claude --resume accepts these", which is
+    // false, and it fed unresumable ids to launch with full confidence.
+    const sessionsDir = join(projectDir, "sessions");
+    let finished: string[] = [];
+    try {
+      finished = readdirSync(sessionsDir);
+    } catch {
+      finished = []; // no sessions/ subdir — nothing was ever stopped here
+    }
+
+    for (const file of finished) {
+      if (!file.endsWith(".jsonl")) continue;
+      const uuid = file.slice(0, -6);
+      if (!UUID_RE.test(uuid)) continue;
+      if (seenUuids.has(uuid)) continue; // Pass 1 already has it
+
+      const sessionJsonlPath = join(sessionsDir, file);
+      const transcript = parseTranscript(sessionJsonlPath);
+      const clcInfo = clcInfoMap.get(uuid);
+
+      const session: ScannedSession = {
+        uuid,
+        shortId: uuid.slice(0, 8),
+        encodedDir,
+        decodedPath,
+        // No top-level file — that is the whole point of this pass.
+        topLevelPath: "",
+        topLevelSystemLines: 0,
+        topLevelSize: 0,
+        resumable: true,
+        sessionStatus: "resumable",
+        sessionJsonlPath,
+        userLines: transcript.userLines,
+        lastUserPrompt: transcript.lastUserPrompt,
+        msgCount: transcript.msgCount,
+        aiTitle: transcript.aiTitle,
+        mtime: transcript.mtime,
+        friendlyName:
+          clcInfo?.name ?? transcript.aiTitle ?? projectBasename ?? undefined,
+        clcDirectory: clcInfo?.directory,
+        registryRootPath,
+      };
+
+      if (!sessionsByEncodedDir.has(encodedDir)) {
+        sessionsByEncodedDir.set(encodedDir, []);
+      }
+      sessionsByEncodedDir.get(encodedDir)!.push(session);
+
+      seenUuids.add(uuid);
+      if (clcInfo) attachedClcUuids.add(uuid);
+
+      results.push(session); // resumable — passes every filter mode
     }
   }
 

@@ -6,8 +6,9 @@
  *   1. Resolve name → (uuid?, projectDir, friendlyName)
  *   2. chdir(projectDir)
  *   3. If uuid is set:
- *        a. Probe: claude --resume <uuid> --print --output-format=json "_"
- *                  (timeout 5s; exits non-zero / logs "No conversation found" if invalid)
+ *        a. Probe: is a transcript for <uuid> on disk under this cwd?
+ *                  (see probeResume in lib/launch.ts — the filesystem answers,
+ *                   and only an unrecognised layout falls back to spawning claude)
  *        b. If probe succeeds:
  *             exec  claude --resume <uuid> --name "<friendlyName>" "/Name <friendlyName>\ngo"
  *        c. Else (probe failed):
@@ -22,8 +23,8 @@
  *                                  iTerm tab title, statusline, and AIBroker session registry;
  *                                  the \ngo on the next line triggers PAI's ## Continue resume
  *
- * The probe adds ~300ms on the happy path. On the fallback path, total latency is the same
- * as a fresh start.
+ * The probe is two `existsSync` calls on the happy path. On the fallback path, total latency
+ * is the same as a fresh start.
  */
 
 import type { Database } from "better-sqlite3";
@@ -38,56 +39,7 @@ import {
   type ScannedSession,
 } from "../../lib/session-scan.js";
 import { printExitDir } from "../../lib/exit-dir.js";
-
-// ---------------------------------------------------------------------------
-// Probe helper
-// ---------------------------------------------------------------------------
-
-interface ProbeResult {
-  ok: boolean;
-  reason?: string;
-}
-
-/**
- * Run  claude --resume <uuid> --print --output-format=json "_"  in the given cwd.
- * Returns ok=true if the session is resumable (exit 0 and no "No conversation found"
- * in stderr).  Timeout: 5 seconds.
- */
-function probeResume(uuid: string, cwd: string): ProbeResult {
-  const result = spawnSync(
-    "claude",
-    ["--resume", uuid, "--print", "--output-format=json", "_"],
-    {
-      cwd,
-      timeout: 5_000,
-      env: process.env,
-      // Capture stderr for inspection; suppress stdout (tty)
-      stdio: ["ignore", "ignore", "pipe"],
-    }
-  );
-
-  if (result.error) {
-    return { ok: false, reason: `spawn error: ${result.error.message}` };
-  }
-
-  const stderr = result.stderr?.toString("utf8") ?? "";
-
-  if (
-    stderr.toLowerCase().includes("no conversation found") ||
-    stderr.toLowerCase().includes("session not found")
-  ) {
-    return { ok: false, reason: "No conversation found for this UUID" };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      reason: `claude exited ${result.status ?? "signal"}${stderr ? `: ${stderr.slice(0, 120).trim()}` : ""}`,
-    };
-  }
-
-  return { ok: true };
-}
+import { probeResume } from "../../lib/launch.js";
 
 // ---------------------------------------------------------------------------
 // Command

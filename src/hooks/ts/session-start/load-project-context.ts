@@ -31,7 +31,8 @@ import {
   findTodoPath,
   findAllClaudeMdPaths,
   sendNtfyNotification,
-  isProbeSession
+  isProbeSession,
+  archiveSessionFilesToSessionsDir
 } from '../lib/project-utils';
 
 /**
@@ -244,40 +245,42 @@ async function main() {
     }
   }
 
-  // 3. Cleanup old .jsonl files from project root (move to sessions/)
-  // Keep the newest one for potential resume, move older ones to sessions/
+  // 3. Archive the project's transcripts into sessions/ — by LINKING, never moving.
+  //
+  // This used to renameSync every .jsonl except the newest out of the project
+  // root. `claude --resume <uuid>` reads ~/.claude/projects/<encoded>/<uuid>.jsonl
+  // and only that path, so moving the file is what makes a session unresumable —
+  // and because this is a SessionStart hook, the act of STARTING a session in a
+  // project destroyed the resumability of every earlier session in it. The old
+  // comment ("keep the newest one for potential resume") shows the dependency was
+  // known; keeping one file was not enough.
+  //
+  // Measured 2026-08-04: this repo had 1 transcript at the top level and 52 under
+  // sessions/, every one of the 52 unresumable. Among them was the id PAI prints
+  // in its own archived handovers as `claude --resume <uuid>`, so the instruction
+  // we ship in every checkpoint could not work.
+  //
+  // It also completes the incident of that morning: `pai Paperfull` failed to
+  // resume b3462801 because of a probe bug, started a fresh session instead, and
+  // THIS hook then moved b3462801 — 867 KB of real work — out of reach. The
+  // failed resume destroyed what it had failed to open.
+  //
+  // A hard link keeps both truths: the archive under sessions/ is populated for
+  // everything that reads it, and the file Claude Code owns stays where Claude
+  // Code put it. Same inode, so it costs nothing.
+  // This was the fourth mover, with its own inline loop. It now calls the one
+  // shared archiver instead: a second implementation is exactly how the earlier
+  // probeResume fix came to land in one of three copies and leave `pai <Name>`
+  // broken for a day.
   const projectDir = getProjectDir(cwd);
   if (existsSync(projectDir)) {
     try {
-      const files = readdirSync(projectDir);
-      const jsonlFiles = files
-        .filter(f => f.endsWith('.jsonl'))
-        .map(f => ({
-          name: f,
-          path: join(projectDir, f),
-          mtime: statSync(join(projectDir, f)).mtime.getTime()
-        }))
-        .sort((a, b) => b.mtime - a.mtime); // newest first
-
-      if (jsonlFiles.length > 1) {
-        const { mkdirSync, renameSync } = await import('fs');
-        const sessionsDir = join(projectDir, 'sessions');
-        if (!existsSync(sessionsDir)) {
-          mkdirSync(sessionsDir, { recursive: true });
-        }
-
-        // Move all except the newest
-        for (let i = 1; i < jsonlFiles.length; i++) {
-          const file = jsonlFiles[i];
-          const destPath = join(sessionsDir, file.name);
-          if (!existsSync(destPath)) {
-            renameSync(file.path, destPath);
-            console.error(`Moved old session: ${file.name} → sessions/`);
-          }
-        }
-      }
+      // Exclude this session's own transcript: it is being written right now,
+      // and the archive is meant to hold finished sessions.
+      const own = hookInput?.session_id ? `${hookInput.session_id}.jsonl` : undefined;
+      archiveSessionFilesToSessionsDir(projectDir, own, true);
     } catch (error) {
-      console.error(`Could not cleanup old .jsonl files: ${error}`);
+      console.error(`Could not archive session transcripts: ${error}`);
     }
   }
 

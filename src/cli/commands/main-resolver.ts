@@ -29,7 +29,9 @@ import {
 } from "../lib/session-scan.js";
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
 import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
+import { basename } from "node:path";
 import { printExitDir } from "../lib/exit-dir.js";
+import { probeResume, launchInDir } from "../lib/launch.js";
 import {
   buildDeduped,
   normalizeName,
@@ -39,50 +41,6 @@ import {
   type UnifiedSession,
   type RegisteredProject,
 } from "../lib/dedup-sessions.js";
-
-// ---------------------------------------------------------------------------
-// Probe helper
-// ---------------------------------------------------------------------------
-
-interface ProbeResult {
-  ok: boolean;
-  reason?: string;
-}
-
-function probeResume(uuid: string, cwd: string): ProbeResult {
-  const result = spawnSync(
-    "claude",
-    ["--resume", uuid, "--print", "--output-format=json", "_"],
-    {
-      cwd,
-      timeout: 5_000,
-      env: process.env,
-      stdio: ["ignore", "ignore", "pipe"],
-    }
-  );
-
-  if (result.error) {
-    return { ok: false, reason: `spawn error: ${result.error.message}` };
-  }
-
-  const stderr = result.stderr?.toString("utf8") ?? "";
-
-  if (
-    stderr.toLowerCase().includes("no conversation found") ||
-    stderr.toLowerCase().includes("session not found")
-  ) {
-    return { ok: false, reason: "No conversation found for this UUID" };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      reason: `claude exited ${result.status ?? "signal"}${stderr ? `: ${stderr.slice(0, 120).trim()}` : ""}`,
-    };
-  }
-
-  return { ok: true };
-}
 
 // ---------------------------------------------------------------------------
 // Launch session (disk-based)
@@ -127,14 +85,20 @@ function launchSession(
     return;
   }
 
-  const name = session.friendlyName ?? session.shortId;
+  // A session is named for a human to recognise, so a UUID prefix is never an
+  // acceptable answer. `friendlyName` is undefined for the sessions synthesized
+  // from a prompt-history match, and picking one of those used to open a tab
+  // called "7fdbb9a8" — for a project plainly called Paperfull, sitting right
+  // there in the path we already resolved. The directory is the better fallback
+  // in every case, so shortId is now only reached for a path with no basename.
+  const name = session.friendlyName ?? (basename(projectDir) || session.shortId);
   const promptArg = `/Name ${name}\ngo`;
 
   if (dryRun) {
     if (resumableUuid) {
       console.log("\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n");
       console.log(`  cwd:      ${chalk.cyan(projectDir)}`);
-      console.log(`  probe:    claude --resume ${resumableUuid} --print --output-format=json "_"`);
+      console.log(`  probe:    transcript on disk for ${resumableUuid.slice(0, 8)}?`);
       console.log(`  argv:     claude --resume ${resumableUuid} --name "${name}" "/Name ${name}\\ngo"`);
       console.log(`  fallback: claude --name "${name}" "/Name ${name}\\ngo"`);
     } else {
@@ -304,6 +268,40 @@ async function doSwitch(
   return false;
 }
 
+/**
+ * Act on a matched catalog entry: switch to it, resume it, or start it.
+ *
+ * The third case is the one that was missing. A registered project whose
+ * sessions have all ended matches by name perfectly well, but carries no
+ * `diskSession`, and the old code simply ran off the end of both the exact and
+ * the partial branch — past the picker, into a free-text search of prompt
+ * history. So `pai Paperfull` answered a request to open a project with a list
+ * of five old conversations that merely mentioned the word, while the project's
+ * own directory was sitting in `entry.project` the whole time.
+ *
+ * Returns false only when there is genuinely nothing to open, which is the one
+ * case where falling through to a history search is the right thing to do.
+ */
+async function openMatch(
+  entry: UnifiedSession,
+  allSessions: ScannedSession[],
+  dryRun: boolean
+): Promise<boolean> {
+  if (entry.status === "live") {
+    if (await doSwitch(entry, dryRun)) return true;
+    // Switch failed — fall through and try to open it from disk instead.
+  }
+  if (entry.diskSession) {
+    launchSession(entry.diskSession, allSessions, dryRun);
+    return true;
+  }
+  if (entry.project && existsSync(entry.project)) {
+    launchInDir(entry.project, entry.name, { dryRun });
+    return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Main command
 // ---------------------------------------------------------------------------
@@ -412,30 +410,14 @@ export async function cmdMain(
     // Exact normalized-name match first (display_name or slug)
     const exactMatch = deduped.find((e) => nameMatches(e, qNorm));
     if (exactMatch) {
-      if (exactMatch.status === "live") {
-        const switched = await doSwitch(exactMatch, opts.dryRun ?? false);
-        if (switched) return;
-        // Fallback: if switch failed and there's a disk session, launch it
-      }
-      if (exactMatch.diskSession) {
-        launchSession(exactMatch.diskSession, allSessions, opts.dryRun ?? false);
-        return;
-      }
+      if (await openMatch(exactMatch, allSessions, opts.dryRun ?? false)) return;
     }
 
     // Partial normalized-name match (display_name or slug)
     const partialMatches = deduped.filter((e) => nameIncludes(e, qNorm));
 
     if (partialMatches.length === 1) {
-      const match = partialMatches[0];
-      if (match.status === "live") {
-        const switched = await doSwitch(match, opts.dryRun ?? false);
-        if (switched) return;
-      }
-      if (match.diskSession) {
-        launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-        return;
-      }
+      if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false)) return;
     }
 
     if (partialMatches.length > 1) {
@@ -462,13 +444,9 @@ export async function cmdMain(
       console.log();
 
       const pickMatch = async (match: UnifiedSession) => {
-        if (match.status === "live") {
-          await doSwitch(match, opts.dryRun ?? false);
-          return;
-        }
-        if (match.diskSession) {
-          launchSession(match.diskSession, allSessions, opts.dryRun ?? false);
-        }
+        if (await openMatch(match, allSessions, opts.dryRun ?? false)) return;
+        console.error(err(`Nothing to open for "${match.name}" — no live session, no transcript, no directory.`));
+        process.exitCode = 1;
       };
 
       if (pickN !== undefined) {
