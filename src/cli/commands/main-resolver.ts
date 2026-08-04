@@ -46,6 +46,53 @@ import {
 // Launch session (disk-based)
 // ---------------------------------------------------------------------------
 
+/**
+ * Which directory should we open for this session?
+ *
+ * A session carries up to three ideas of where it lives, they disagree in
+ * practice, and the FIRST is the least trustworthy. `clcDirectory` and
+ * `decodedPath` are recorded per session and go stale the moment a project
+ * directory is renamed; `registryRootPath` is kept current by the registry.
+ *
+ * This used to take the preferred value and, if it did not resolve, print an
+ * error and exit — so a live project became unopenable by its own name. The
+ * session had been started when its directory had a different name, so the
+ * stale per-session value pointed at a path that no longer existed while the
+ * registry held the right one, untried.
+ *
+ * The order is unchanged, because the per-session value IS more specific when
+ * valid — it can name a subdirectory the session actually ran in. What changed
+ * is that a candidate which fails no longer ends the attempt.
+ *
+ * realpath, not resolve: a directory reached through a symlinked parent has
+ * several valid spellings, and comparing or storing the unresolved one is how
+ * the same directory ends up with two identities.
+ *
+ * Returns the resolved directory plus every candidate tried, so a total failure
+ * can report what it looked at instead of naming one path and leaving the user
+ * to guess whether the others were even considered.
+ */
+export function resolveSessionDir(session: {
+  clcDirectory?: string;
+  registryRootPath?: string;
+  decodedPath?: string;
+}): { dir: string | undefined; tried: string[] } {
+  const tried = [
+    session.clcDirectory,
+    session.registryRootPath,
+    session.decodedPath,
+  ].filter((d): d is string => typeof d === "string" && d.length > 0);
+
+  for (const candidate of tried) {
+    try {
+      return { dir: realpathSync(candidate), tried };
+    } catch {
+      // Stale, renamed or deleted — try the next one.
+    }
+  }
+  return { dir: undefined, tried };
+}
+
 function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
@@ -65,41 +112,13 @@ function launchSession(
     }
   }
 
-  // Try every directory we know of for this session, not just the first.
-  //
-  // These three disagree in practice, and the FIRST is the least trustworthy:
-  // `clcDirectory` and `decodedPath` are recorded per session and go stale the
-  // moment a project directory is renamed, while `registryRootPath` is kept
-  // current by `pai project move`. Committing to the preferred candidate and
-  // exiting made a live project unopenable by name — the session had been
-  // started when the directory had a different name, so the stale value pointed
-  // at a path that no longer existed while the registry held the right one.
-  //
-  // Order stays as it was, because the per-session value IS more specific when
-  // it is valid (it can point at a subdirectory the session actually ran in).
-  // What changed is that a candidate which does not resolve no longer ends the
-  // attempt.
-  const candidates = [
-    session.clcDirectory,
-    session.registryRootPath,
-    session.decodedPath,
-  ].filter((d): d is string => typeof d === "string" && d.length > 0);
-
-  let projectDir: string | undefined;
-  for (const candidate of candidates) {
-    try {
-      projectDir = realpathSync(candidate);
-      break;
-    } catch {
-      // Stale or deleted — try the next one.
-    }
-  }
+  const { dir: projectDir, tried } = resolveSessionDir(session);
 
   if (projectDir === undefined) {
     console.error(
       err(
         `Session directory does not exist or cannot be resolved.\n` +
-          candidates.map((c) => `  tried: ${c}\n`).join("") +
+          tried.map((c) => `  tried: ${c}\n`).join("") +
           `  The directory may have moved or been deleted.`
       )
     );

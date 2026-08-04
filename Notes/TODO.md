@@ -1,15 +1,15 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0032 - 2026-08-04 - Readme And Task Bus Documentation Cleanup" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:14:35.892Z" -->
+<!-- pai:checkpoint authored="auto" session="0032 - 2026-08-04 - V0.33.1 Release — `projects Here` Command And Personal Data Audit" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:40:33.518Z" -->
 
-> **Last session:** 0032 - 2026-08-04 - Readme And Task Bus Documentation Cleanup
-> **Paused at:** 2026-08-04T20:14:35.892Z
+> **Last session:** 0032 - 2026-08-04 - V0.33.1 Release — `projects Here` Command And Personal Data Audit
+> **Paused at:** 2026-08-04T20:40:33.518Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T20:14:35.844Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T20:40:33.408Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
@@ -23,30 +23,11 @@ _Automatic checkpoint — 2026-08-04T20:14:35.844Z. Written without the model, f
 ### Working tree
 
 - Branch: `main`
-- HEAD: 68ead63 docs: pause checkpoint for session 0028 — releases, open decisions, watch items
-- 20 uncommitted path(s) (+15 more):
+- HEAD: 832da3e feat: v0.33.1 — `projects here`, and get personal data out of the package
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M README.md
- M docs/commands/README.md
- M docs/commands/project.md
- M docs/commands/projects.md
- M docs/task-bus.md
- M package.json
- M src/cli/commands/main-resolver.ts
- M src/cli/commands/project/projects-index.ts
- M src/cli/commands/project/relocate.test.ts
- M src/cli/commands/project/relocate.ts
- M src/cli/commands/registry/scan.ts
- M src/cli/commands/task.ts
- M src/cli/lib/dedup-sessions.test.ts
- M src/cli/lib/dedup-sessions.ts
- M src/cli/lib/session-scan.ts
- M src/daemon/config.ts
- M src/daemon/templates/triple-extraction-prompt.ts
- M src/hooks/session-stop.sh
- M src/hooks/ts/session-start/load-project-context.ts
 ```
 
 <!-- /pai:checkpoint -->
