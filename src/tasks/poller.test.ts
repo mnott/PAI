@@ -671,5 +671,183 @@ describe("the alarm actually reaches the notification router", () => {
     const [payload] = notify.mock.calls[0];
     expect(payload.event).toBe("error");
     expect(payload.message).toContain("no owner");
+    // Asserting the tail of the sentence was not enough. The head of it was
+    // `"${task.content}"`, a field the Task type does not have, so every alarm
+    // v0.27.0 ever sent named the task `undefined` — and this test passed
+    // throughout. An alarm that cannot say which task it is about is barely an
+    // alarm, so the identity is now pinned separately from the explanation.
+    expect(payload.message).toContain("Daily check");
+    expect(payload.message).not.toContain("undefined");
+  });
+});
+
+/**
+ * Parking: the state between "failed" and "gave up".
+ *
+ * `failedDispatches` counted attempts and gated the alarm, but never gated the
+ * RETRY. On 2026-08-04 a task owned by a project whose directory had been
+ * renamed months earlier opened a fresh terminal window every fifteen minutes
+ * for nine hours: each attempt spawned a tab, failed its `cd`, waited out the
+ * full 90s readiness timeout, and changed nothing before the next one.
+ *
+ * These pin both halves of the bargain. A parked task stops being launched at
+ * something that cannot accept it — and keeps saying so, because a task that
+ * silently stops running is the failure this whole subsystem exists to prevent.
+ */
+describe("parking a task that cannot be dispatched", () => {
+  const notify = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    notify.mockClear();
+    vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
+  });
+
+  function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
+    return { dispatch: vi.fn().mockResolvedValue({ outcome, reason, session: "jobs-matthias" }) };
+  }
+
+  async function tickWith(transport: Transport | null, seed: Record<string, unknown> = {}, task = dueTask()) {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-parked-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, JSON.stringify(seed));
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([task]),
+      setLabels: vi.fn().mockResolvedValue(undefined),
+      setDue: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    try {
+      const report = await tick({
+        provider,
+        transport,
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+      return { report, state: JSON.parse(readFileSync(stateFile, "utf-8")), transport };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const MISSING_ROOT = "project_root_missing: /Users/x/old-name which does not exist";
+
+  it("parks a missing project root on the FIRST failure", async () => {
+    // Not on the third. Two further attempts buy nothing here and cost two
+    // terminal windows and three minutes of spawn timeout apiece.
+    const { report, state } = await tickWith(failingTransport("unlaunchable", MISSING_ROOT));
+    expect(state.parked.sweep).toBeDefined();
+    expect(report.decisions[0]!.note).toContain("PARKED");
+    expect(report.decisions[0]!.note).toContain("permanent failure");
+  });
+
+  it("does not launch anything for an already-parked task", async () => {
+    // The whole point: no tab, no 90s timeout, no fifteen-minute repeat.
+    const transport = failingTransport("unlaunchable", MISSING_ROOT);
+    await tickWith(transport, {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+    });
+    expect(transport.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps reporting a parked task as stuck", async () => {
+    // Parked must not mean forgotten. The 2026-08-01 daily check was invisible
+    // precisely because nothing counted it.
+    const { report } = await tickWith(failingTransport("unlaunchable", MISSING_ROOT), {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+    });
+    expect(report.stuck).toBe(1);
+  });
+
+  it("does not count a parked task as dispatched", async () => {
+    // `dispatched: 1, stuck: 1` would read as a launch that went wrong, when
+    // nothing was launched at all.
+    const { report } = await tickWith(failingTransport("unlaunchable", MISSING_ROOT), {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+    });
+    expect(report.dispatched).toBe(0);
+  });
+
+  it("keeps alarming daily while parked, rather than once and never again", async () => {
+    const { state } = await tickWith(failingTransport("unlaunchable", MISSING_ROOT), {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+      alarmedAt: { sweep: NOW - 25 * 60 * 60 * 1000 },
+    });
+    expect(state.alarmedAt.sweep).toBe(NOW);
+  });
+
+  it("stays quiet inside the 24h window even though it reports every tick", async () => {
+    const { report, state } = await tickWith(failingTransport("unlaunchable", MISSING_ROOT), {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+      alarmedAt: { sweep: NOW - 60_000 },
+    });
+    expect(report.stuck).toBe(1); // still counted...
+    expect(state.alarmedAt.sweep).toBe(NOW - 60_000); // ...not re-sent
+  });
+
+  it("unparks when the due date moves, because that is the user acting", async () => {
+    // Rescheduling is the release gesture: it needs no command to remember, and
+    // it is what a user does anyway once the cause is fixed. Without it,
+    // parking would be a one-way door that quietly retires a task.
+    const transport = failingTransport("delivered");
+    const { state } = await tickWith(transport, {
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: "2026-07-01T09:00:00Z" } },
+    });
+    expect(transport.dispatch).toHaveBeenCalled();
+    expect(state.parked.sweep).toBeUndefined();
+  });
+
+  it("still gives an ordinary failure its three attempts", async () => {
+    // Sessions that are briefly busy, an iTerm mid-launch, a loaded machine —
+    // all resolve on their own. Parking those on first contact would turn a
+    // transient blip into a task that stops running until a human notices.
+    const { report, state } = await tickWith(failingTransport("unreachable", "session is busy"));
+    expect(state.parked.sweep).toBeUndefined();
+    expect(report.decisions[0]!.note).toContain("not dispatched (1/3)");
+  });
+
+  it("parks a task whose project directory is gone, before spawning anything", async () => {
+    // The 2026-08-04 incident, in its real shape. AIBroker does not report the
+    // directory as missing — it opens the tab, the `cd` fails, Claude never
+    // starts, and 90 seconds later it says `unreachable — Launched a session in
+    // <path> but it did not become ready within 90s`. Nothing in that sentence
+    // can be matched for "missing", so the guard has to ask the disk instead.
+    //
+    // `transport.dispatch` not being called is the assertion that matters: the
+    // cost being avoided is the terminal window and the 90-second wait, and a
+    // guard that parked only AFTER the attempt would save neither.
+    const transport = failingTransport(
+      "unreachable",
+      "Launched a session in /nope/gone but it did not become ready within 90s."
+    );
+    const gone: Task = {
+      ...dueTask(),
+      owner: { project: "jobs-grazyna", rootPath: "/nope/gone", source: "label" },
+    };
+    const { report, state } = await tickWith(transport, {}, gone);
+    expect(transport.dispatch).not.toHaveBeenCalled();
+    expect(state.parked.sweep?.reason).toContain("/nope/gone");
+    expect(report.decisions[0]!.note).toContain("PARKED");
+    expect(report.stuck).toBe(1);
+  });
+
+  it("dispatches normally when the project directory is there", async () => {
+    // Guard for the test above: "did not dispatch" would pass just as happily
+    // if the check rejected every task, which would silently park everything.
+    const transport = failingTransport("delivered");
+    const { state } = await tickWith(transport); // fixture rootPath is /tmp
+    expect(transport.dispatch).toHaveBeenCalled();
+    expect(state.parked.sweep).toBeUndefined();
+  });
+
+  it("names the parked task in the alarm it sends", async () => {
+    await tickWith(failingTransport("unlaunchable", MISSING_ROOT));
+    expect(notify).toHaveBeenCalled();
+    const [payload] = notify.mock.calls[0]!;
+    expect(payload.message).toContain("Jobs Matthias sweep");
+    expect(payload.message).not.toContain("undefined");
   });
 });

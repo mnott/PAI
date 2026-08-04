@@ -288,7 +288,16 @@ async function doSwitch(
   }
   const result = await switchToSession(entry.liveSessionId);
   if (result.ok) {
-    console.log(ok(`Switched to live session: ${chalk.white(entry.name)}`));
+    // Name AND id. "Switched to live session: pai" was reported three times on
+    // 2026-08-04 by a user watching nothing happen, and the message gave no way
+    // to tell WHICH session had been revealed — so there was nothing to check
+    // against the tabs actually on screen. The id makes the claim falsifiable.
+    console.log(
+      ok(
+        `Switched to live session: ${chalk.white(entry.name)} ` +
+          chalk.dim(`(${entry.liveSessionId.slice(0, 8)})`),
+      ),
+    );
     return true;
   }
   console.error(warn(`Could not switch via AIBroker: ${result.error ?? "unknown error"}`));

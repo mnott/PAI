@@ -623,21 +623,33 @@ async function executeDirectly(
       finalizeSessionNote(currentNotePath, summary);
       console.error(`Session note finalized: ${basename(currentNotePath)}`);
 
-      try {
-        const stateLines: string[] = [];
-        stateLines.push(`Working directory: ${cwd}`);
-        if (workItems.length > 0) {
-          stateLines.push('', 'Work completed:');
-          for (const item of workItems.slice(0, 5)) {
-            stateLines.push(`- ${item.title}`);
+      // A session that produced neither work items nor a completion message has
+      // no handover to write. Claiming the slot anyway hands the next session a
+      // block naming a session that did nothing — this is exactly what happened
+      // on 2026-08-04, when a session opened and immediately exited took the
+      // "last session" line away from the previous day's real work across every
+      // project it touched. applyContinue now refuses such a write on its own;
+      // not building it here keeps the pointer on the last session that did
+      // something.
+      if (workItems.length === 0 && !message) {
+        console.error('Nothing to hand over — leaving TODO.md ## Continue intact');
+      } else {
+        try {
+          const stateLines: string[] = [];
+          stateLines.push(`Working directory: ${cwd}`);
+          if (workItems.length > 0) {
+            stateLines.push('', 'Work completed:');
+            for (const item of workItems.slice(0, 5)) {
+              stateLines.push(`- ${item.title}`);
+            }
           }
+          if (message) {
+            stateLines.push('', `Last completed: ${message}`);
+          }
+          updateTodoContinue(cwd, basename(currentNotePath), stateLines.join('\n'), 'session-end');
+        } catch (todoError) {
+          console.error(`Could not update TODO.md: ${todoError}`);
         }
-        if (message) {
-          stateLines.push('', `Last completed: ${message}`);
-        }
-        updateTodoContinue(cwd, basename(currentNotePath), stateLines.join('\n'), 'session-end');
-      } catch (todoError) {
-        console.error(`Could not update TODO.md: ${todoError}`);
       }
     }
   } catch (noteError) {

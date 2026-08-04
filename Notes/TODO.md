@@ -1,37 +1,58 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0021 - 2026-08-04 - Checkpoint Heading Parsing And Pause Delivery Bug Fixes" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-04T00:41:35.556Z" -->
+<!-- pai:checkpoint authored="model" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" ts="2026-08-04T08:50:00.000Z" -->
 
-> **Last session:** 0021 - 2026-08-04 - Checkpoint Heading Parsing And Pause Delivery Bug Fixes
-> **Paused at:** 2026-08-04T00:41:35.556Z
+> **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
+> **Paused at:** 2026-08-04T08:50:00.000Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-04T00:41:35.517Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+### STOP — the uncommitted changes in this repo are NOT yours
 
-### What was being asked
+As of 2026-08-04 ~10:50 the working tree has ~10 modified files:
+`src/tasks/poller.ts`, `poller.test.ts`, `src/session/checkpoint-block.ts` (+test),
+`src/hooks/ts/stop/stop-hook.ts`, `src/daemon/work-queue-worker.ts`,
+`src/cli/commands/session/pause.ts`, `src/cli/lib/dedup-sessions.ts`,
+`src/cli/commands/main-resolver.ts`.
 
-- [Session:Home] Fix confirmed working — but there is a second, separate bug in `pai pause all`: it reports false negatives.  Result of the full run: `6/15 session(s) paused. 9 failed.` — every failure…
-- fix it
+They are an IN-FLIGHT fix being made from the **AIBroker** session for the
+2026-08-04 session-continuity incident. Do not continue them, revert them,
+commit them, or "finish" them. Do not run `git checkout`/`restore` on this repo.
+If you need to change any of those files, say so first — two sessions editing one
+working copy is how work gets lost.
 
-### Working tree
+Full write-up:
+`/Users/i052341/Daten/Cloud/Development/ai/AIBroker/Notes/observation-2026-08-04-session-continuity-failure.md`
 
-- Branch: `main`
-- HEAD: d99dad4 fix: v0.27.1 - stop reporting delivered pauses as failures, stop eating the H1
-- 6 uncommitted path(s):
+What was fixed in PAI (already built, tests 220/220, NOT committed, NOT released):
+- `checkpoint-block.ts` — `hasSubstance()`; a checkpoint with nothing to say may
+  no longer overwrite one that has content.
+- `stop-hook.ts` / `work-queue-worker.ts` — a session that did no work no longer
+  writes a handover at all.
+- `pause.ts` — a pause is always `authored="model"`.
+- `poller.ts` — `parked` state, so a permanently-failing dispatch stops retrying;
+  progress marker now carries the agent mark so the Todoist comment mirror cannot
+  feed the scheduler's own status line back as a work order.
+- `dedup-sessions.ts` — a live session's identity no longer falls back to the
+  iTerm tab title (this is what made `pai PAI` "switch" to a tab instead of
+  launching the project).
+- `main-resolver.ts` — the switch message now prints the session id.
 
-```
-M Notes/TODO.md
- M src/cli/commands/session-cleanup/executor.ts
- M src/hooks/ts/lib/project-utils/todo.test.ts
- M src/session/checkpoint-block.test.ts
- M src/session/checkpoint-block.ts
-?? src/cli/commands/session-cleanup/executor.test.ts
-```
+### PAI's own prior state
+
+This session's real content is in its note, which is intact (8.6 KB):
+`Notes/2026/08/0022 - 2026-08-04 - Checkpoint Authorship Investigation.md`
+
+Open there: whether `authored: 'auto'` correctly protects model checkpoints
+(now answered — it did not, see `hasSubstance` above); `isSameSession` is still
+probabilistic and wants `--session-id` passed through by every caller.
+
+_This block was rewritten by hand from the AIBroker session on 2026-08-04. The
+autosave stub it replaced listed only the uncommitted files above, which reads
+as a work item and is not one._
 
 <!-- /pai:checkpoint -->
+
 
 ---
 ## Infrastructure — Postgres Outage Failure Mode (found 2026-07-26)
@@ -63,9 +84,16 @@ i.e. **it is hardwired to SQLite while `storageBackend` is `postgres`**. Suspect
 unindexed `COUNT(*)` / `GROUP BY` full scans over the federation DB, or a synchronous
 lock wait against the DB the daemon is actively writing.
 
-- [ ] **Route `memory status` through the same storage abstraction `memory search` uses**,
-      instead of assuming SQLite
-- [ ] **Add a busy timeout + fail-fast error path** so it can never hang silently
+- [x] **Resolved differently from the wording above** — `memory status` does NOT route through
+      the storage abstraction. `stats.ts:67-84` reads `storageBackend` and, when it is not
+      sqlite, stops and points at `pai daemon status` rather than reporting the near-empty
+      SQLite file's counts. That removes the harm (a small number reads as an answer, not as
+      an absence) without teaching this command a second backend. Routing it properly is
+      still the better end state if `memory status` ever needs to report real figures under
+      Postgres — reopen then.
+- [x] **Add a busy timeout + fail-fast error path** so it can never hang silently —
+      `stats.ts:50`, `pragma("busy_timeout = 4000")` inside a try/catch so an older driver
+      degrades instead of throwing.
 - [ ] Minor: the file is `stats.ts` and the command is `status` — `pai memory stats` errors
       with "unknown command". Either alias it or rename for consistency.
 - [ ] **Investigate why `restart: unless-stopped` did not revive `pai-pgvector`** — compose file
@@ -400,4 +428,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-04T00:34:20.826Z*
+*Last updated: 2026-08-04T00:45:40.610Z*

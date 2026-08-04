@@ -266,9 +266,16 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
   // ---- 4. Write the ## Continue block ----
   const timestamp = new Date().toISOString();
 
+  // `authored` records WHO initiated the checkpoint, not whether it turned out
+  // to have anything in it. A pause is model-initiated by definition, so a
+  // bodyless one used to mislabel itself "auto" and silently forfeit the
+  // preservation rules that exist for exactly this kind of write. Substance is
+  // a separate question and is now asked separately (`hasSubstance`); an empty
+  // model block is still boilerplate-only, so it cannot freeze TODO.md — the
+  // `isBoilerplateOnly` guards on cases 1b and 2b already see to that.
   const result = applyContinue({
     rootPath: project.root_path,
-    authored: body ? "model" : "auto",
+    authored: "model",
     sessionLine,
     sessionId: opts.sessionId,
     cwd,
