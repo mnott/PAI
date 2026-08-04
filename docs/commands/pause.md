@@ -28,6 +28,7 @@ pai pause [target] [options]
 | `--session-id <uuid>` | Claude Code session UUID — recorded as the `claude --resume` handle |  |
 | `--no-body` | Deliberately write a metadata-only checkpoint (no content) |  |
 | `--exit` | (pause all only) Also send /exit to each session after pausing |  |
+| `--only <name>` | (pause all only) Pause just the sessions whose name or id contains <name>. For rehearsing the real thing against one session before trusting it with every open tab — a dry run exercises enumeration but never sends anything, which is exactly how a broken send survived until it was needed. |  |
 | `--wait <ms>` | (pause all only) Max milliseconds to wait for a session to finish its checkpoint before /exit. Not a fixed delay — sessions are exited as soon as they return to the prompt, and any still busy at the deadline are left open rather than killed mid-write. (default: 180000) | `180000` |
 
 ## See also

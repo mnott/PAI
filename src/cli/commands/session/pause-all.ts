@@ -96,9 +96,18 @@ async function waitForSessionsIdle(
 // Command
 // ---------------------------------------------------------------------------
 
+/** Case-insensitive substring match on the session's name or id. */
+export function matchesOnly(s: AiBrokerSessionMeta, only: string): boolean {
+  const needle = only.trim().toLowerCase();
+  if (!needle) return true;
+  const name = (s.paiName ?? s.name ?? "").toLowerCase();
+  return name.includes(needle) || s.sessionId.toLowerCase().includes(needle);
+}
+
 export async function cmdPauseAll(opts: {
   exit?: boolean;
   dryRun?: boolean;
+  only?: string;
   wait?: number;
 }): Promise<void> {
   // Upper bound on how long to wait for a session to finish its checkpoint —
@@ -118,8 +127,26 @@ export async function cmdPauseAll(opts: {
   }
 
   // ── Filter: Claude sessions only (skip bare shells) ───────────────────────
-  const claudeSessions = liveSessions.filter((s) => s.kind === "claude");
-  const skipped = liveSessions.length - claudeSessions.length;
+  const allClaude = liveSessions.filter((s) => s.kind === "claude");
+  const claudeSessions = opts.only
+    ? allClaude.filter((s) => matchesOnly(s, opts.only!))
+    : allClaude;
+  const skipped = liveSessions.length - allClaude.length;
+
+  if (opts.only) {
+    // Said out loud, because a filter that silently matches nothing looks
+    // identical to a filter that matched and did its job quietly.
+    console.log(
+      dim(
+        `  --only ${opts.only}: ${claudeSessions.length} of ${allClaude.length} ` +
+          `Claude session(s) matched.`
+      )
+    );
+    if (claudeSessions.length === 0) {
+      console.log(warn(`No live Claude session matches "${opts.only}". Nothing to pause.`));
+      return;
+    }
+  }
 
   if (skipped > 0) {
     process.stderr.write(
@@ -161,7 +188,8 @@ export async function cmdPauseAll(opts: {
     process.stdout.write("  " + sessionLabel(s) + " … ");
 
     // Send "pause session" command
-    const pauseResult = await sendToSession(s.sessionId, "pause session\n");
+    // No trailing newline: the transport appends Enter itself.
+    const pauseResult = await sendToSession(s.sessionId, "pause session");
     if (!pauseResult.ok) {
       console.log(err("FAILED: " + (pauseResult.error ?? "unknown error")));
       results.push({ session: s, pauseOk: false, error: pauseResult.error });
@@ -203,7 +231,7 @@ export async function cmdPauseAll(opts: {
         }
 
         process.stdout.write("  " + sessionLabel(s) + " exiting … ");
-        const exitResult = await sendToSession(s.sessionId, "/exit\n");
+        const exitResult = await sendToSession(s.sessionId, "/exit");
         const rec = results.find((r) => r.session.sessionId === s.sessionId)!;
         rec.exitOk = exitResult.ok;
         if (!exitResult.ok) {

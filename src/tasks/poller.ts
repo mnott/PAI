@@ -53,6 +53,20 @@ interface PersistedState extends RunState {
    */
   failedDispatches: Record<string, number>;
   /**
+   * Task id → epoch ms of the last time an alarm about it reached the user.
+   *
+   * Every tick that raised an alarm before this existed raised it into
+   * /tmp/pai-scheduler.log and nowhere else. Measured 2026-08-03: the daily
+   * check had logged "unrouted — cannot dispatch" 151 times across two days,
+   * on a task whose whole purpose was to notice things failing silently.
+   *
+   * Kept per task, and honoured for a day, because the two wrong answers are
+   * symmetric: notify every tick and the alarm is muted as noise within the
+   * hour, notify once ever and a fault fixed-then-reintroduced is silent the
+   * second time.
+   */
+  alarmedAt: Record<string, number>;
+  /**
    * Task id → the due date this tick saw.
    *
    * Durable rather than transient, unlike the rest of this file: it is the only
@@ -101,6 +115,7 @@ function emptyState(): PersistedState {
     history: {},
     lastReported: {},
     failedDispatches: {},
+    alarmedAt: {},
     lastSeenDue: {},
     triggeredRestore: {},
     claimSeenAt: {},
@@ -109,6 +124,48 @@ function emptyState(): PersistedState {
 
 /** Consecutive failed dispatches before a task is reported as needing attention. */
 const DISPATCH_FAILURES_BEFORE_ALARM = 3;
+
+/** How long an alarm about one task stays quiet before it is repeated. */
+const ALARM_REPEAT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Tell the user about a task that is scheduled and not running.
+ *
+ * The counterpart of the storage-backend escalation: a subsystem whose entire
+ * job is noticing silent failure has to be the last thing that fails silently.
+ * `report.stuck` counted these accurately and showed the count in a CLI line
+ * that only appears if somebody runs a tick by hand — which, for a job launchd
+ * runs every 15 minutes, is nobody.
+ *
+ * Never allowed to throw: a notification that cannot be delivered must not take
+ * down the tick, because the tick is what dispatches everything else.
+ */
+async function escalate(
+  task: Task,
+  headline: string,
+  detail: string,
+  state: PersistedState,
+  now: number
+): Promise<void> {
+  const last = state.alarmedAt[task.id];
+  if (last !== undefined && now - last < ALARM_REPEAT_MS) return;
+  state.alarmedAt[task.id] = now;
+
+  try {
+    const { routeNotification } = await import("../notifications/router.js");
+    const { loadConfig } = await import("../daemon/config.js");
+    await routeNotification(
+      {
+        event: "error",
+        title: `PAI: ${headline}`,
+        message: `"${task.content}" ${detail}`,
+      },
+      loadConfig().notifications
+    );
+  } catch {
+    /* see above — the tick matters more than the notification */
+  }
+}
 
 /**
  * Run state is a rebuildable cache, so a damaged file must not block the
@@ -428,7 +485,29 @@ async function handleDispatch(
     return { note: `would dispatch to ${task.owner.project ?? "nobody"}${late}`, alarm: false };
   }
 
-  if (!task.owner.project) return { note: "unrouted — cannot dispatch", alarm: false };
+  // Reaching here at all means the task is DUE: an undated task scores
+  // NEGATIVE_INFINITY overdue and is decided as `wait`, so it never arrives.
+  // That is what separates this from the findings inbox, where UNROUTED is the
+  // normal resting state and alarming would be pure noise — a finding carries
+  // no date and makes no promise. A task with a due date does: it claims it
+  // will run, and unrouted means it never can, by itself, ever.
+  //
+  // So this is the one dispatch failure that retrying cannot fix, and it used
+  // to be the only one that did not alarm. The daily check sat here from
+  // 2026-08-01 to 2026-08-03 reading "recurring, every day at 9am" while doing
+  // nothing, and was found by a human reading the tracker, not by this code.
+  if (!task.owner.project) {
+    const hint = task.owner.rawHint ? ` (${task.owner.rawHint} matches no project)` : "";
+    await escalate(
+      task,
+      "scheduled task cannot run",
+      `is due${late} but has no owner${hint}, so nothing will ever pick it up. ` +
+        `Move it into a session's sub-project, or give that container an alias.`,
+      state,
+      now
+    );
+    return { note: `unrouted — cannot dispatch${hint}${late}`, alarm: true };
+  }
 
   // Claim the task BEFORE dispatching, not after.
   //
@@ -462,6 +541,10 @@ async function handleDispatch(
     state.startedAt[task.id] = now;
     delete state.failedProbes[task.id];
     delete state.failedDispatches[task.id];
+    // Dropped on success so the day-long quiet window never outlives the fault
+    // it described: a task fixed this morning and broken again tonight alarms
+    // tonight, rather than staying muted until tomorrow.
+    delete state.alarmedAt[task.id];
     await markRunning(task, opts, now);
     return { note: `${result.outcome} to ${result.session}${late}`, alarm: false };
   }
@@ -479,6 +562,13 @@ async function handleDispatch(
     // `unreachable` against a session that has exited to a shell will never
     // resolve on its own: aibroker correctly refuses to type into it, and
     // nothing here can close the tab. Retrying quietly forever is the failure.
+    await escalate(
+      task,
+      "task is not running",
+      `failed to dispatch ${fails} times (${detail}). It is scheduled and nothing is executing it.`,
+      state,
+      now
+    );
     return {
       note: `NOT RUNNING — ${fails} failed dispatches: ${detail}`,
       alarm: true,

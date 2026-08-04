@@ -366,6 +366,13 @@ Examples:
     )
     .option("--exit", "(pause all only) Also send /exit to each session after pausing")
     .option(
+      "--only <name>",
+      "(pause all only) Pause just the sessions whose name or id contains <name>.\n" +
+        "For rehearsing the real thing against one session before trusting it with\n" +
+        "every open tab — a dry run exercises enumeration but never sends anything,\n" +
+        "which is exactly how a broken send survived until it was needed."
+    )
+    .option(
       "--wait <ms>",
       "(pause all only) Max milliseconds to wait for a session to finish its\n" +
         "checkpoint before /exit. Not a fixed delay — sessions are exited as soon\n" +
@@ -373,11 +380,12 @@ Examples:
         "open rather than killed mid-write. (default: 180000)",
       "180000"
     )
-    .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string; bodyFile?: string; sessionId?: string; body?: boolean }) => {
+    .action(async (target: string | undefined, opts: { dryRun?: boolean; exit?: boolean; wait?: string; only?: string; bodyFile?: string; sessionId?: string; body?: boolean }) => {
       if (target === "all") {
         await cmdPauseAll({
           exit: opts.exit,
           dryRun: opts.dryRun,
+          only: opts.only,
           wait: opts.wait !== undefined ? parseInt(opts.wait, 10) : undefined,
         });
       } else {

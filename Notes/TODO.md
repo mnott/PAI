@@ -1,29 +1,34 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-02T22:06:37.840Z" -->
+<!-- pai:checkpoint authored="auto" session="0019 - 2026-08-03 - Four Unrouted Recurring Tasks Fixed, Root Cause Expanded" session-id="3de5e8f5-1df3-4945-ba9a-979ac38edd9c" ts="2026-08-04T00:21:15.064Z" -->
 
-> **Last session:** 0018 - 2026-08-02 - Previous Session Completion Refer To Earlier Summa
-> **Paused at:** 2026-08-02T22:06:37.840Z
+> **Last session:** 0019 - 2026-08-03 - Four Unrouted Recurring Tasks Fixed, Root Cause Expanded
+> **Paused at:** 2026-08-04T00:21:15.064Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3de5e8f5-1df3-4945-ba9a-979ac38edd9c`
 
-_Automatic checkpoint — 2026-08-02T22:06:37.807Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T00:21:15.034Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Task:comment] I've moved it to you does it make sense for you  (comment on "Daemon can stall silently when its storage backend is down")  [todoist:6h9mQRRMF6XcqrGh in:6h9pgQ53MWWmf67Q]
-- [Task:comment] I do not understand on that level what needs to be fixed. why don't you jsut fix instead of leaving stuff open that I have no idea what it is about  (comment on "Daemon can stall silent…
+- [Session:Home] Quick question about the pai CLI — Matthias wants two things and says there's a command for it:  1. A listing of ALL open/named Claude sessions with their working directories, in the sa…
+- [Session:7552A02E-E322-4891-82E9-BCD6778B068D] Bug report — `pai pause all` is broken. Please fix it.  Matthias wants it fixed rather than worked around, so I have NOT routed around it.  What happens:…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 743ed3f feat: v0.26.0 - say when the storage backend is down, instead of reporting idle
-- 1 uncommitted path(s):
+- HEAD: ae6df84 docs: stop gitignoring the design docs
+- 6 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/session/pause-all.ts
+ M src/cli/lib/aibroker-client.ts
+ M src/tasks/poller.test.ts
+ M src/tasks/poller.ts
+?? src/cli/lib/aibroker-client.test.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -395,4 +400,4 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 
 ---
 
-*Last updated: 2026-08-02T22:06:06.258Z*
+*Last updated: 2026-08-04T00:15:19.655Z*
