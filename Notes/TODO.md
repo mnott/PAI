@@ -1,27 +1,31 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:49:25.864Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:57:51.077Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Implementation
-> **Paused at:** 2026-08-04T14:49:25.864Z
+> **Paused at:** 2026-08-04T14:57:51.077Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:49:25.805Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:57:51.033Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- and hta'ts something I don't even understand Your call on the remaining ~2869 — non-destructive and free (hardlinks), but it's your store; --cwd <path> per project you care about is the sane path. And…
 - ok so if you guys now both agree we're good, then go ahead and commit everything both sides both of you
 - [Session:AIBroker] HEAD moved: dd5a751 — "fix: give `pai <name>` back a session it can actually find, open and resume". 7 files, +635/-170, staged by name, no add -A, no lock contention. Tree is now j…
+- [Session:AIBroker] PUBLISHED AND PUSHED — you are clear to work. @tekmidian/pai@0.31.0.    bump 0.31.0 -> npm run build -> 380 green -> npm publish -> ONE commit e3c5585 -> push   5864f61..e3c5585   1…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 0f43bd2 docs: close the day — both sessions landed, and what to keep from it
-- Clean — nothing uncommitted.
+- HEAD: fa687ef fix: recover projects orphaned by a renamed ancestor, not just moved leaves
+- 1 uncommitted path(s):
+
+```
+M Notes/TODO.md
+```
 
 <!-- /pai:checkpoint -->
 
@@ -235,6 +239,43 @@ zero real sessions remain displaced". True only under the broken detector. Re-me
 importing AIBroker's `hasConversation`: **153 real sessions, 23.5 MB, had been written off as stubs.**
 Restored them. Final state — **782 real sessions recovered, 2086 genuine stubs left alone, zero
 transcripts holding a conversation displaced anywhere on the machine.**
+
+## Dead registry paths — recovered (`fa687ef`, 2026-08-04)
+
+Renaming a directory **above** a project makes every project underneath it go missing at once.
+`Ideaverse` → `🧠 Ideaverse` orphaned a subtree: entries still on disk, none findable, all reported
+dead and offered up for archiving. The old `suggestMovedPath` matched the project's *basename*
+against four hardcoded directories, so it only recognised "the leaf moved somewhere I know about" —
+a renamed ancestor leaves the leaf exactly where it was.
+
+Now `relocate.ts` walks down to the deepest surviving ancestor (where the rename happened) and
+re-matches the remaining segments by normalised name (NFC → lowercase → strip non-alphanumerics), so
+`🧠 Ideaverse` and `Ideaverse` both reduce to `ideaverse`. **Ambiguity is not a relocation:** two
+siblings normalising alike returns undefined, because repointing a slug at the wrong project attaches
+it to another project's notes and *looks fixed*.
+
+Algorithm came from the AIBroker session, which probed it and handed it over rather than editing a
+file that was not theirs. **Running it against the real registry found two things the probe did not:**
+
+- 🔴 **A visible directory must never relocate into a hidden one.** First real run:
+  `~/PAI` → `~/.pai` — PAI's own registry and state directory. `norm()` strips the leading dot, so
+  both reduce to `pai`, and the uniqueness rule could not help because there was exactly *one* match.
+  Fixed by requiring hidden/visible symmetry, so `.config` → `.🧠 config` still works.
+- **`Raspi/Stadtoldendorf` does not recover, and should not.** The probe predicted it would. That name
+  is a symlink to `08 - Others/MDF/Stadtoldendorf`, whose target is gone. Relocating onto a dangling
+  link yields a path `existsSync` denies, so health would re-flag it dead next run. Pinned both ways:
+  dangling no, symlink-to-real-directory yes (PAI symlinks note dirs into the vault).
+
+Measured: **157 projects, 33 missing, 1 recoverable before, 3 now.** The other 30 are genuinely gone —
+mostly leaves that no longer exist beneath the renamed ancestor, which is the algorithm working.
+No change to the `stale`/`dead` classification or to `--fix`; an answer just moves an entry into the
+list `--fix` already repairs.
+
+- [ ] Run `pai project health --fix` to actually apply the 3 relocations (not done — `--fix` mutates
+      `root_path` and `encoded_dir`, and that is Matthias's call to make, not a side effect of a
+      measurement).
+
+---
 
 ### Landed — both sessions, 2026-08-04
 
