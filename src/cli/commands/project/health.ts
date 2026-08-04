@@ -5,11 +5,12 @@
 
 import type { Database } from "better-sqlite3";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header, shortenPath, now, renderTable, encodeDir } from "../../utils.js";
 import type { HealthRow, HealthCategory, ProjectHealth, ProjectRow } from "./types.js";
+import { suggestMovedPath } from "./relocate.js";
 
 function findOrphanedNotesDirs(project: ProjectRow): string[] {
   const claudeProjects = join(homedir(), ".claude", "projects");
@@ -39,19 +40,19 @@ function findOrphanedNotesDirs(project: ProjectRow): string[] {
   return results;
 }
 
-function suggestMovedPath(project: ProjectRow): string | undefined {
-  const name = basename(project.root_path);
-  const candidates = [
-    join(homedir(), "dev", name),
-    join(homedir(), "dev", "ai", name),
-    join(homedir(), "Desktop", name),
-    join(homedir(), "Projects", name),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return undefined;
-}
+/*
+ * suggestMovedPath now lives in relocate.ts, which walks to the deepest surviving
+ * ancestor and re-matches the rest by normalised name.
+ *
+ * What was here looked for the project's BASENAME in four hardcoded directories,
+ * so it could only recognise "the leaf moved somewhere I already know about". It
+ * could not see the failure that actually happened: renaming `Ideaverse` to
+ * `🧠 Ideaverse` left 32 registered projects exactly where they were and made
+ * every one of them unreachable, and this function reported them dead and offered
+ * to archive them.
+ *
+ * The basename guess is kept, second, since it answers the other question.
+ */
 
 export function cmdHealth(
   db: Database,
@@ -76,7 +77,7 @@ export function cmdHealth(
     if (pathExists) {
       category = "active";
     } else {
-      suggestedPath = suggestMovedPath(project);
+      suggestedPath = suggestMovedPath(project.root_path);
       category = suggestedPath ? "stale" : "dead";
     }
 
