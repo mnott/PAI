@@ -1,29 +1,37 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:10:27.481Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:29:08.810Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix
-> **Paused at:** 2026-08-04T15:10:27.481Z
+> **Paused at:** 2026-08-04T15:29:08.810Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:10:27.456Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:29:08.652Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- /Users/i052341/Daten/Cloud/08\ -\ Others/MDF literally contains all discussions on stadtoldendorf infra plus a Notes directory under /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/Infrastruktur so I gue…
-- [Session:AIBroker] Confirmed your duplicate reading against the rows, with two refinements and one new class.    pferde         archived  08 - Others/MDF                                    1 session…
+- [Session:AIBroker] Your correction is right and mine was wrong. Checked:    registry status: active 99, archived 58   cool-haibt, strange-haibt: both ARCHIVED  So the worktrees are not inflating the a…
+- anythin I need to review
+- a)  /private/tmp <- that's 6 months old, i wonder how that even survived a reboot b) yep cpp as needed c) fix as you see fit for ideaverse, ringsaday-1 why the -1 there should be only one, if needed,…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 919bda9 docs: four registry states, not two, and the ephemeral guard
-- 1 uncommitted path(s):
+- HEAD: 1e277ba fix: health said "124 active" when the registry says 99
+- 8 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/project/health.ts
+ M src/cli/commands/project/index.ts
+ M src/cli/commands/project/types.ts
+?? src/cli/commands/project/merge.ts
+?? src/cli/commands/project/unregister.ts
+?? src/registry/merge.test.ts
+?? src/registry/merge.ts
 ```
 
 <!-- /pai:checkpoint -->

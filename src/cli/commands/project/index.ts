@@ -1,6 +1,20 @@
 /**
- * Commander registration for all `pai project` sub-commands.
- * Imports from focused sub-modules and wires up CLI options.
+ * ⚠️ THIS REGISTRATION IS NOT WIRED TO ANYTHING. See projects-index.ts.
+ *
+ * `program.ts` calls `registerProjectsCommands` (plural, from projects-index.ts)
+ * for both `pai projects` and `pai project`. The `registerProjectCommands`
+ * (singular) below is exported, re-exported by ../project.ts, and called by
+ * nobody.
+ *
+ * This cost real time on 2026-08-04: `pai project merge` and
+ * `pai project unregister` were added HERE, built, and did not exist at the
+ * command line — the same failure as `probeResume` in three copies earlier the
+ * same day, where a fix landed in a file the user's path never reached. Two
+ * registration functions for one command set, and no way to tell which is live
+ * except by following program.ts.
+ *
+ * Add commands to projects-index.ts. Deleting this one is the real fix and wants
+ * doing when someone can watch the CLI surface afterwards.
  */
 
 import type { Command } from "commander";
@@ -78,6 +92,10 @@ export function registerProjectCommands(
     .action((slug: string) => {
       cmdArchive(getDb(), slug);
     });
+
+  // merge / unregister are registered in projects-index.ts, the live file. They
+  // were added here first and did not exist at the command line — see the banner
+  // at the top of this file.
 
   // pai project unarchive <slug>
   projectCmd

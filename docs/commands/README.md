@@ -104,6 +104,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project info <slug>` | Show full details for a project |
 | `pai project list` | Show the unified deduped listing (same as `pai`). |
 | `pai project list-raw` | Raw registry listing with slug, path, status, last_active columns |
+| `pai project merge <from> <into>` | Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given. |
 | `pai project move <slug> <new-path>` | Update the root path for a project |
 | `pai project name <identifier> <shortname>` | Give a project a short name for quick access |
 | `pai project names` | List named projects (your curated shortlist) |
@@ -112,6 +113,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project tag <slug> <tags...>` | Add one or more tags to a project |
 | `pai project unarchive <slug>` | Restore an archived project to active status |
 | `pai project unname <shortname>` | Remove a project's short name |
+| `pai project unregister <slug>` | Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched. |
 | `pai projects` | Manage registered projects (list, cd, add, info, ...) |
 | `pai projects add <path>` | Register a project directory in the PAI registry |
 | `pai projects alias <slug> <alias>` | Register an alternative slug for a project |
@@ -126,6 +128,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects info <slug>` | Show full details for a project |
 | `pai projects list` | Show the unified deduped listing (same as `pai`). |
 | `pai projects list-raw` | Raw registry listing with slug, path, status, last_active columns |
+| `pai projects merge <from> <into>` | Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given. |
 | `pai projects move <slug> <new-path>` | Update the root path for a project |
 | `pai projects name <identifier> <shortname>` | Give a project a short name for quick access |
 | `pai projects names` | List named projects (your curated shortlist) |
@@ -134,6 +137,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects tag <slug> <tags...>` | Add one or more tags to a project |
 | `pai projects unarchive <slug>` | Restore an archived project to active status |
 | `pai projects unname <shortname>` | Remove a project's short name |
+| `pai projects unregister <slug>` | Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched. |
 | `pai registry` | Registry maintenance: scan, migrate, stats, rebuild |
 | `pai registry dedupe` | Merge registry rows that describe the same project. |
 | `pai registry lookup` | Find the project slug for a filesystem path (for use in scripts) |

@@ -29,6 +29,8 @@ import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../uti
 import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig } from "./session-config.js";
 import { cmdHealth } from "./health.js";
+import { cmdMerge } from "./merge.js";
+import { cmdUnregister } from "./unregister.js";
 import { resolveIdentifier } from "./helpers.js";
 
 export { cmdGo };
@@ -164,6 +166,41 @@ export function registerProjectsCommands(
     .description("Archive a project")
     .action((slug: string) => {
       cmdArchive(getDb(), slug);
+    });
+
+  // pai projects merge <from> <into> [--execute]
+  //
+  // The remedy for a DUPLICATE row, which archiving does not serve: archiving a
+  // duplicate strands its sessions on a row nobody opens again. Preview by
+  // default — this deletes a registry row and repoints five tables.
+  projectsCmd
+    .command("merge <from> <into>")
+    .description(
+      "Fold a duplicate project into another: move its sessions (renumbered), repoint its " +
+        "tags, aliases, compaction records and links, keep the old slug as an alias, then " +
+        "delete the row. Preview unless --execute is given."
+    )
+    .option("--execute", "Actually perform the merge")
+    .action((from: string, into: string, opts: { execute?: boolean }) => {
+      cmdMerge(getDb(), from, into, opts);
+    });
+
+  // pai projects unregister <slug> [--execute] [--force]
+  //
+  // The remedy for an EPHEMERAL row — a worktree or temp path that should never
+  // have been registered. Archiving claims "this was real and is finished", which
+  // is the wrong thing to say about a directory designed to be deleted.
+  projectsCmd
+    .command("unregister <slug>")
+    .description(
+      "Remove a project row entirely, for paths that should never have been registered " +
+        "(worktrees, temp dirs). Refuses when the row holds sessions — merge those first. " +
+        "Preview unless --execute is given. The directory itself is never touched."
+    )
+    .option("--execute", "Actually remove the row")
+    .option("--force", "Remove even though sessions would be deleted with it")
+    .action((slug: string, opts: { execute?: boolean; force?: boolean }) => {
+      cmdUnregister(getDb(), slug, opts);
     });
 
   // pai projects unarchive <slug>
