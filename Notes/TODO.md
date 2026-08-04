@@ -1,39 +1,39 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T13:54:59.544Z" -->
+<!-- pai:checkpoint authored="auto" session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T13:59:13.878Z" -->
 
 > **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T13:54:59.544Z
+> **Paused at:** 2026-08-04T13:59:13.878Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T13:54:59.510Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T13:59:13.851Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - /Name PAI go
+- if you think these bits are good, then take them over
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 5864f61 docs: clear the stale STOP notice in TODO.md
-- 12 uncommitted path(s):
+- HEAD: 2d25cb6 docs: close the daemon storage-health items, flag the orphaned src/tasks diff
+- 11 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/daemon.ts
  M src/cli/commands/main-resolver.ts
  M src/cli/commands/session/goto.ts
  M src/cli/lib/launch.ts
- M src/storage/outage.ts
+ M src/cli/lib/session-scan.ts
  M src/tasks/poller.test.ts
  M src/tasks/poller.ts
+ M src/tasks/scheduler.test.ts
  M src/tasks/scheduler.ts
-?? src/cli/commands/daemon-status.test.ts
-?? src/cli/commands/daemon-status.ts
 ?? src/cli/lib/launch.test.ts
+?? src/cli/lib/session-scan.test.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -267,6 +267,27 @@ lock wait against the DB the daemon is actively writing.
 - [ ] Target Claude Code community: r/ClaudeAI, Claude Code Discord, Hacker News
 - [ ] First 100 users goal — track with GitHub stars + Stripe conversions
 - [ ] Collect feedback, iterate on tier boundaries
+
+---
+
+## ~~Orphaned in the working tree~~ — ADOPTED AND COMMITTED (`2efcb30`, 2026-08-04)
+
+Matthias said take it over if it is good. It is good, and it is now committed by this session
+after review — not on trust:
+
+- **Verified load-bearing.** Reverting the one-line guard in `poller.ts` while keeping everything
+  else makes the new poller test fail. So the fix is real and the test is a real regression test,
+  not a test written to pass.
+- **Filled the gap it left.** `src/tasks/scheduler.test.ts` already existed and covered *none* of
+  `triggeredSlotMs`'s branches — and each branch is a branch of "does this task re-dispatch every
+  tick all day". Added am/pm, the 12am/12pm pair where both naive rules are wrong, minutes, a
+  weekday name containing "at", the end-of-day fallback (the one case the old guard had right),
+  and a round-trip proving `triggeredSlotMs` reads everything `restoreDueString` emits.
+  52 → 59 tests in that file.
+- Author unknown — a third session, gone before either live session arrived. Both PAI and AIBroker
+  had disclaimed it, which is what left it exposed to the next blind `git add -A`.
+
+Original record kept below, since the *process* finding outlives this diff.
 
 ---
 
