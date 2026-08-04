@@ -15,6 +15,7 @@ import {
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
+import { unregistrableReason } from "../../../registry/registrable.js";
 import {
   ok,
   warn,
@@ -277,6 +278,18 @@ export function cmdAdd(
   const validTypes = ["local", "central", "obsidian-linked", "external"];
   if (!validTypes.includes(type)) {
     console.error(err(`Invalid type "${type}". Valid: ${validTypes.join(", ")}`));
+    process.exit(1);
+  }
+
+  // Disposable directories must not become projects. Two agent worktrees and two
+  // /private/tmp paths got in this way and between them carried 8 sessions
+  // attributed to locations with no future — and `pai <name>` will happily route
+  // someone into a worktree a cleanup can delete underneath them.
+  const ephemeral = unregistrableReason(rootPath);
+  if (ephemeral) {
+    console.error(err(`Refusing to register ${shortenPath(rootPath, 60)}`));
+    console.error(dim(`  That is ${ephemeral}.`));
+    console.error(dim(`  A project needs a durable location — move it, then register.`));
     process.exit(1);
   }
 

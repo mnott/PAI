@@ -31,6 +31,7 @@ import {
   scaffoldProjectDirs,
   now,
 } from "../cli/utils.js";
+import { unregistrableReason } from "../registry/registrable.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,6 +110,18 @@ export function cmdPromote(db: Database, opts: PromoteOptions): void {
 
   if (!slug) {
     console.error(err(`Could not derive a valid slug from name: "${displayName}"`));
+    process.exit(1);
+  }
+
+  // ---- Refuse disposable locations ----
+  //
+  // Same guard as `pai project add`. Promoting a session INTO a worktree or a
+  // temp directory would create a project whose home is designed to be deleted.
+  const ephemeral = unregistrableReason(targetPath);
+  if (ephemeral) {
+    console.error(err(`Refusing to promote into ${targetPath}`));
+    console.error(dim(`  That is ${ephemeral}.`));
+    console.error(dim(`  Pick a durable location for the new project.`));
     process.exit(1);
   }
 
