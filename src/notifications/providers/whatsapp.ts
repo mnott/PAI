@@ -1,13 +1,23 @@
 /**
- * whatsapp.ts — WhatsApp notification provider (via Whazaa MCP)
+ * whatsapp.ts — WhatsApp notification provider (via the AIBroker hub)
  *
- * Sends notifications via the Whazaa Unix Domain Socket IPC protocol.
- * Falls back gracefully if Whazaa is not running.
+ * Sends through AIBroker's hub socket, which proxies to the whazaa adapter.
  *
- * Whazaa IPC socket: /tmp/whazaa.sock (standard Whazaa path)
+ * It used to dial /tmp/whazaa.sock and call a method named `whatsapp_send`.
+ * Both were wrong, and had been since AIBroker became the runtime hub and
+ * adapters became thin transports: Whazaa no longer owns an IPC socket of its
+ * own (it registers with the hub, currently at /tmp/whazaa-watcher.sock, which
+ * is the hub's business and not ours), and `whatsapp_send` is an MCP TOOL name
+ * — the adapter itself takes `send` and `tts`.
  *
- * We use the same connect-per-call pattern as PaiClient to avoid
- * requiring any persistent connection state.
+ * So every WhatsApp notification failed. Silently, because a failed channel
+ * writes one line to stderr and the router has no fallback: on 2026-08-04 four
+ * task-bus escalations about a job that had not run for nine hours reached
+ * /tmp/pai-scheduler.log and nowhere else, while the user had no idea.
+ *
+ * Routing through the hub rather than at the adapter directly is deliberate:
+ * the hub knows where its adapters are, and that is exactly the knowledge whose
+ * absence broke this. Connect-per-call, no persistent state.
  */
 
 import { connect } from "node:net";
@@ -18,14 +28,20 @@ import type {
   NotificationConfig,
 } from "../types.js";
 
-const WHAZAA_SOCKET = "/tmp/whazaa.sock";
-const WHAZAA_TIMEOUT_MS = 10_000;
+/**
+ * AIBroker's hub socket.
+ *
+ * Hardcoded rather than imported: PAI must not depend on AIBroker. This is a
+ * protocol constant between them, like the agent mark in tasks/poller.ts.
+ */
+const HUB_SOCKET = "/tmp/aibroker.sock";
+const HUB_TIMEOUT_MS = 10_000;
 
 /**
- * Send a single IPC call to the Whazaa socket.
- * Returns true on success, false if Whazaa is not available or errors.
+ * Send a single IPC call to the hub.
+ * Returns true on success, false if the hub is not available or errors.
  */
-function callWhazaa(
+function callHub(
   method: string,
   params: Record<string, unknown>
 ): Promise<boolean> {
@@ -42,7 +58,7 @@ function callWhazaa(
       resolve(ok);
     }
 
-    const socket = connect(WHAZAA_SOCKET, () => {
+    const socket = connect(HUB_SOCKET, () => {
       const request = {
         jsonrpc: "2.0",
         id: randomUUID(),
@@ -57,8 +73,11 @@ function callWhazaa(
       const nl = buffer.indexOf("\n");
       if (nl === -1) return;
       try {
-        const resp = JSON.parse(buffer.slice(0, nl)) as { error?: unknown };
-        finish(!resp.error);
+        const resp = JSON.parse(buffer.slice(0, nl)) as { error?: unknown; ok?: boolean };
+        // The hub reports failure as {ok:false,error}; JSON-RPC reports {error}.
+        // Checking only `error` counted an {ok:false} reply as a delivered
+        // notification, which is the one mistake this file must never make.
+        finish(!resp.error && resp.ok !== false);
       } catch {
         finish(false);
       }
@@ -67,7 +86,7 @@ function callWhazaa(
     socket.on("error", () => finish(false));
     socket.on("end", () => finish(false));
 
-    timer = setTimeout(() => finish(false), WHAZAA_TIMEOUT_MS);
+    timer = setTimeout(() => finish(false), HUB_TIMEOUT_MS);
   });
 }
 
@@ -82,20 +101,27 @@ export class WhatsAppProvider implements NotificationProvider {
     if (!cfg.enabled) return false;
 
     const isVoiceMode = config.mode === "voice" || config.channels.voice.enabled;
+    const asVoice = isVoiceMode && config.mode === "voice";
 
-    const params: Record<string, unknown> = {
-      message: payload.message,
-    };
+    // The adapter's own vocabulary is `send` and `tts`, reached through the
+    // hub's `adapter_call`. `whatsapp_send` — what this used to ask for — is the
+    // name of the MCP TOOL that wraps it, and the adapter has never answered to
+    // it. The two vocabularies are easy to confuse because the MCP tool exists
+    // and works; it just is not this interface.
+    const inner: Record<string, unknown> = asVoice
+      ? { text: payload.message, voice: config.channels.voice.voiceName ?? "bm_george" }
+      : { message: payload.message };
 
     if (cfg.recipient) {
-      params.recipient = cfg.recipient;
+      // `send` addresses by `recipient`, `tts` by `jid` — same destination,
+      // different key, per the adapter's interface.
+      inner[asVoice ? "jid" : "recipient"] = cfg.recipient;
     }
 
-    if (isVoiceMode && config.mode === "voice") {
-      const voiceName = config.channels.voice.voiceName ?? "bm_george";
-      params.voice = voiceName;
-    }
-
-    return callWhazaa("whatsapp_send", params);
+    return callHub("adapter_call", {
+      adapter: "whazaa",
+      method: asVoice ? "tts" : "send",
+      params: inner,
+    });
   }
 }

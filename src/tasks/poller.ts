@@ -166,16 +166,18 @@ async function escalate(
   headline: string,
   detail: string,
   state: PersistedState,
-  now: number
+  now: number,
+  opts?: TickOptions
 ): Promise<void> {
   const last = state.alarmedAt[task.id];
   if (last !== undefined && now - last < ALARM_REPEAT_MS) return;
   state.alarmedAt[task.id] = now;
 
+  let delivered = false;
   try {
     const { routeNotification } = await import("../notifications/router.js");
     const { loadConfig } = await import("../daemon/config.js");
-    await routeNotification(
+    const result = await routeNotification(
       {
         event: "error",
         title: `PAI: ${headline}`,
@@ -189,8 +191,34 @@ async function escalate(
       },
       loadConfig().notifications
     );
+    delivered = result.channelsSucceeded.length > 0;
   } catch {
     /* see above — the tick matters more than the notification */
+  }
+
+  // Last resort: say it on the task itself.
+  //
+  // routeNotification returns which channels worked, and this used to throw
+  // that away. On 2026-08-04 the WhatsApp provider was dialling a socket that
+  // had stopped existing when Whazaa became a thin adapter, so `error` events
+  // silently failed — four escalations about a job that had not run in nine
+  // hours reached /tmp/pai-scheduler.log and nowhere else, and the user found
+  // out by looking.
+  //
+  // The tracker is the one channel that cannot be misconfigured out of
+  // existence, because it is where the task already lives and where the user
+  // already looks. A comment is durable, reaches the phone, and survives every
+  // notification channel being down at once.
+  if (delivered || !opts?.provider.comment) return;
+  try {
+    await opts.provider.comment(
+      task.id,
+      `${AGENT_MARK} **${headline}** — ${detail}\n\n` +
+        `_Posted here because no notification channel accepted this alert. ` +
+        `Check \`pai notify status\`._`
+    );
+  } catch {
+    /* nothing left to try; the tick still matters more */
   }
 }
 
@@ -560,7 +588,8 @@ async function handleDispatch(
         `is still parked (${parked.reason}) and is not being retried. ` +
           `Fix the cause and move its due date to release it.`,
         state,
-        now
+        now,
+        opts
       );
       return {
         note: `PARKED since ${new Date(parked.at).toISOString().slice(0, 16).replace("T", " ")} — ${parked.reason}`,
@@ -592,7 +621,8 @@ async function handleDispatch(
       `is due${late} but has no owner${hint}, so nothing will ever pick it up. ` +
         `Move it into a session's sub-project, or give that container an alias.`,
       state,
-      now
+      now,
+      opts
     );
     return { note: `unrouted — cannot dispatch${hint}${late}`, alarm: true };
   }
@@ -622,7 +652,8 @@ async function handleDispatch(
         `(renamed or moved?). It is now PARKED and will not be retried. Repoint the ` +
         `project with \`pai project\` and move the task's due date to release it.`,
       state,
-      now
+      now,
+      opts
     );
     return { note: `PARKED — ${reason}`, alarm: true, parked: true };
   }
@@ -700,7 +731,8 @@ async function handleDispatch(
         `It is scheduled and nothing is executing it. It is now PARKED and will not ` +
         `be retried until its due date moves — reschedule it once the cause is fixed.`,
       state,
-      now
+      now,
+      opts
     );
     return {
       note: `PARKED — ${permanent ? "permanent failure" : `${fails} failed dispatches`}: ${detail}`,

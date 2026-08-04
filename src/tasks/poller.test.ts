@@ -851,3 +851,94 @@ describe("parking a task that cannot be dispatched", () => {
     expect(payload.message).not.toContain("undefined");
   });
 });
+
+/**
+ * The alarm's own last resort.
+ *
+ * routeNotification reports which channels worked, and escalate() used to throw
+ * that away. On 2026-08-04 the WhatsApp provider was dialling /tmp/whazaa.sock,
+ * a socket that stopped existing when Whazaa became a thin adapter, so `error`
+ * events failed silently: four escalations about a sweep that had not run in
+ * nine hours reached /tmp/pai-scheduler.log and nowhere else.
+ *
+ * The tracker is the one channel that cannot be misconfigured out of existence,
+ * because it is where the task already lives.
+ */
+describe("an alarm nobody could deliver falls back to the tracker", () => {
+  const dueUnrouted = [
+    {
+      id: "daily",
+      title: "Daily check",
+      body: "",
+      owner: { project: null, rootPath: null, source: "none" },
+      due: "2026-08-01T09:00:00Z",
+      priority: "p2",
+      labels: [],
+    },
+  ];
+
+  async function runWith(routeResult: unknown) {
+    vi.resetModules();
+    vi.doMock("../notifications/router.js", () => ({
+      routeNotification: vi.fn().mockResolvedValue(routeResult),
+    }));
+    vi.doMock("../daemon/config.js", () => ({ loadConfig: () => ({ notifications: {} }) }));
+
+    const { tick: freshTick } = await import("./poller.js");
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-fallback-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, "{}");
+    const comment = vi.fn().mockResolvedValue(undefined);
+    try {
+      await freshTick({
+        provider: {
+          listOpen: vi.fn().mockResolvedValue(dueUnrouted),
+          setLabels: vi.fn().mockResolvedValue(undefined),
+          setDue: vi.fn().mockResolvedValue(undefined),
+          comment,
+        } as never,
+        transport: null,
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.doUnmock("../notifications/router.js");
+      vi.doUnmock("../daemon/config.js");
+    }
+    return comment;
+  }
+
+  it("comments on the task when every channel failed", async () => {
+    const comment = await runWith({
+      channelsAttempted: ["whatsapp"],
+      channelsSucceeded: [],
+      channelsFailed: ["whatsapp"],
+      mode: "auto",
+    });
+    expect(comment).toHaveBeenCalled();
+    const [taskId, text] = comment.mock.calls[0];
+    // The task is named by WHERE the comment lands, not by repeating its title
+    // into the body — this is posted on the task itself.
+    expect(taskId).toBe("daily");
+    expect(text).toContain("scheduled task cannot run");
+    expect(text).toContain("no notification channel accepted");
+  });
+
+  it("stays quiet when a channel did deliver", async () => {
+    const comment = await runWith({
+      channelsAttempted: ["whatsapp"],
+      channelsSucceeded: ["whatsapp"],
+      channelsFailed: [],
+      mode: "auto",
+    });
+    const fallback = comment.mock.calls.find((c) =>
+      String(c[1]).includes("no notification channel accepted")
+    );
+    expect(fallback).toBeUndefined();
+  });
+});
