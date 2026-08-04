@@ -1,41 +1,29 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:37:22.239Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Implementation" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T14:47:25.229Z" -->
 
 > **Last session:** 0023 - 2026-08-04 - Transcript Archiving Implementation
-> **Paused at:** 2026-08-04T14:37:22.239Z
+> **Paused at:** 2026-08-04T14:47:25.229Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T14:37:22.172Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T14:47:25.204Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- idk what's open here, but can you justico[Session:AIBroker] Refutation accepted — I reproduced it before answering, same result:    b3462801  sessions/ only  -> "No conversation found with session ID"…
-- [Session:AIBroker] Swap landed on my side. load-project-context.ts:247 is now four lines calling archiveSessionFilesToSessionsDir(projectDir, own, true) — my inline loop is gone. There is one archiver…
 - and hta'ts something I don't even understand Your call on the remaining ~2869 — non-destructive and free (hardlinks), but it's your store; --cwd <path> per project you care about is the sane path. And…
+- ok so if you guys now both agree we're good, then go ahead and commit everything both sides both of you
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 5c5e980 fix: restore skips empty transcripts, and report and action now agree
-- 12 uncommitted path(s):
+- HEAD: dd5a751 fix: give `pai <name>` back a session it can actually find, open and resume
+- 1 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M docs/commands/README.md
- M docs/commands/session.md
- M src/cli/commands/main-resolver.ts
- M src/cli/commands/session/goto.ts
- M src/cli/commands/session/restore.test.ts
- M src/cli/commands/session/restore.ts
- M src/cli/lib/launch.ts
- M src/cli/lib/session-scan.ts
- M src/hooks/ts/session-start/load-project-context.ts
-?? src/cli/lib/launch.test.ts
-?? src/cli/lib/session-scan.test.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -251,6 +239,23 @@ importing AIBroker's `hasConversation`: **153 real sessions, 23.5 MB, had been w
 Restored them. Final state — **782 real sessions recovered, 2086 genuine stubs left alone, zero
 transcripts holding a conversation displaced anywhere on the machine.**
 
+### Landed — both sessions, 2026-08-04
+
+| | |
+|---|---|
+| `dd5a751` | **AIBroker**: `pai <name>` can find, open and resume a session again — Pass 1b reads `sessions/`, `openMatch()` routes a name to resume instead of a history picker, tab named from the project rather than a uuid prefix, `restoreTopLevel()`, and `probeResume` now answers missing / stub / resumable instead of a bare ok. 7 files, +635/-170. |
+| `61655f7` | **PAI**: the archiver hardlinks instead of moving — the fix that stops this recurring. |
+| `4cd9d4c` `5c5e980` `5dc32a2` | **PAI**: `pai session restore`, plus the two corrections it needed. |
+| `f9586ba` | **PAI**: dedup stops preferring an empty session over the work it shadowed. |
+| `7817d75` | **PAI**: queue depth in `pai daemon status`. |
+| `2efcb30` | **PAI**: adopted a third session's orphaned `triggeredSlotMs` fix, with the parser tests it lacked. |
+
+**380 tests green, measured by both sessions independently. Neither pushed — that is Matthias's call.**
+
+Six defects, one working command: found by name, routed to resume, named `Paperfull`, pointed at the
+real 867 KB session rather than the 82 KB artefact, on a transcript that exists at the top level only
+because it was relinked, confirmed to hold an actual conversation.
+
 ### The finding of the day: every duplicated helper bit
 
 | helper | copies | what it cost |
@@ -259,9 +264,20 @@ transcripts holding a conversation displaced anywhere on the machine.**
 | the archiver | 2 | one mover kept moving after the fix landed |
 | `hasConversation` | 2 | 153 real sessions written off as empty |
 
-Three for three, not one harmless. And each was found only because one session **re-derived the
-other's result instead of accepting it** — the stub finding refuted "location, not content", which
-prompted probing the disagreements, which refuted the stub detector.
+Three for three, not one harmless.
+
+**The narrower lesson, which is the one worth keeping:** every one of those three was caught because
+one session **re-ran the other's measurement instead of reading the other's conclusion.** Every
+conclusion in this thread was reasonable — reproduced, tested, believed by its author, and in two
+cases already written into a code comment or reported to Matthias. Only the re-runs were
+load-bearing:
+
+- PAI refuted "`claude --resume` accepts `sessions/`" — a premise AIBroker had reproduced, believed,
+  and built Pass 1b on top of.
+- AIBroker refuted PAI's stub detector — after PAI's stub finding had prompted it to re-probe the
+  disagreements rather than trust its own count.
+
+Neither session caught its own error. Both errors had already shipped.
 
 ### Still open
 
