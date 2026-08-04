@@ -120,9 +120,19 @@ describe("an ordering prefix was added or removed", () => {
   it("does NOT treat a shared suffix as a match", () => {
     // The loose version of this rule — "one normalised name ends with the other"
     // — would match a wanted `Setup` to `01 - Base Setup`, a different directory.
-    // Only a leading run of digits comes off.
     mkdirSync(join(root, "Infra", "01 - Base Setup"), { recursive: true });
     expect(relocateRenamedAncestor(join(root, "Infra", "Setup"))).toBeUndefined();
+  });
+
+  it("does NOT match a suffix even when the match would be unique", () => {
+    // The case that would actually bite, and the reason the suffix rule is not
+    // merely inelegant. The real `MDF/Infrastruktur/` is wall-to-wall numbered, so
+    // a suffix rule on `Setup` hits eight candidates and the uniqueness rule
+    // vetoes it — the danger stays invisible. `Analysis` against
+    // `00 - Migration Analysis` hits exactly ONE, so it would be relocated
+    // silently and wrongly. Uniqueness cannot catch what is not ambiguous.
+    mkdirSync(join(root, "Infra", "00 - Migration Analysis"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infra", "Analysis"))).toBeUndefined();
   });
 
   it("still refuses when the prefix rule creates ambiguity", () => {
