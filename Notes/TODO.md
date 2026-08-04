@@ -1,26 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:03:09.479Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T15:06:14.521Z" -->
 
-> **Last session:** 0023 - 2026-08-04 - Transcript Archiving And Pai Release 0.31.0
-> **Paused at:** 2026-08-04T15:03:09.479Z
+> **Last session:** 0023 - 2026-08-04 - Transcript Archiving Via Hardlinks And Session Resumption Fix
+> **Paused at:** 2026-08-04T15:06:14.521Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T15:03:09.403Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-04T15:06:14.455Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- [Session:AIBroker] PUBLISHED AND PUSHED — you are clear to work. @tekmidian/pai@0.31.0.    bump 0.31.0 -> npm run build -> 380 green -> npm publish -> ONE commit e3c5585 -> push   5864f61..e3c5585   1…
 - /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/MDF.md <- there are links in there
+- /Users/i052341/Daten/Cloud/08\ -\ Others/MDF literally contains all discussions on stadtoldendorf infra plus a Notes directory under /Users/i052341/Daten/Cloud/08\ -\ Others/MDF/Infrastruktur so I gue…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 3bd0af2 docs: the links in MDF.md were the missing clue
-- Clean — nothing uncommitted.
+- HEAD: f7b05b0 docs: say why a suffix match is dangerous, not merely loose
+- 1 uncommitted path(s):
+
+```
+M Notes/TODO.md
+```
 
 <!-- /pai:checkpoint -->
 
@@ -305,20 +309,55 @@ discussions under `MDF/Infrastruktur` (confirmed — `Stadtoldendorf` appears in
 has 15 sessions.** Repointing `stadtoldendorf` there would create exactly the duplicate the new guard
 forbids — verified, the guard names `infrastruktur` as the owner.
 
-So these four are registry hygiene, not relocations:
+So these are registry hygiene, not relocations. **Only two carry a session** — the webseiten rows are
+pure deletions with nothing to merge (AIBroker's refinement; my first version said "merge four"):
 
-| slug | status | sessions | what it wants |
-|---|---|---|---|
-| `stadtoldendorf` | archived | 1 | merge its session into `infrastruktur`, then drop |
-| `pferde` | archived | 1 | at `08 - Others/MDF` — misnamed; merge or drop |
-| `webseiten` | archived | 0 | duplicate of active `20-webseiten` — drop |
-| `webseiten-1` | archived | 0 | nothing named `*ebseiten*` under `MDF/` at all — drop |
+| slug | status | sessions | path state | what it wants |
+|---|---|---|---|---|
+| `stadtoldendorf` | archived | 1 | gone | merge session into `infrastruktur`, then drop |
+| `pferde` | archived | 1 | **EXISTS** | misnamed, not dead — see below |
+| `webseiten` | archived | 0 | gone | duplicate of active `20-webseiten` — drop |
+| `webseiten-1` | archived | 0 | gone | nothing named `*ebseiten*` under `MDF/` — drop |
 
-- [ ] Merge those sessions and drop the four entries — same cleanup as Grazyna/PAI this morning,
+**`pferde` is a different defect and `health` will never report it.** Its path `08 - Others/MDF`
+*exists*, so `existsSync` says active and health has no further opinion. It is a live directory
+registered under a slug that has nothing to do with it, overlapping a subtree `infrastruktur` already
+owns. A bad **name**, not a bad path.
+
+- [ ] Merge the two sessions, drop the four entries — same cleanup as Grazyna/PAI this morning,
       backup already at `~/.pai/registry.db.bak-2026-08-04`.
-- [ ] Consider `pai project health` reporting "duplicate of <slug>" as its own category. Three of
-      these four are duplicates and the command currently calls them dead, which is the wrong verb:
-      dead invites archiving, duplicate invites merging.
+
+### `health` has four states collapsed into two
+
+AIBroker's framing, and the evidence above supports it. Only the first is served by "archive", which
+is what the command currently suggests for everything:
+
+| state | condition | right action |
+|---|---|---|
+| DEAD | path gone, nothing owns it | archive |
+| DUPLICATE OF `<slug>` | path gone, an active slug owns it | merge, then drop |
+| MISNAMED | path fine, slug wrong, overlaps another project | rename or merge |
+| EPHEMERAL | path is a worktree or temp dir | never register; unregister |
+
+- [ ] Decide whether `health` should report these four. Not built — it changes what the command says.
+
+### ✅ Ephemeral registrations are now refused (`3249af3`)
+
+Treated as a bug rather than a vocabulary item, since a guard stops the set growing while the rest is
+decided. `unregistrableReason()` in `src/registry/registrable.ts`, wired into **both** insert sites
+(`project add` and session `promote`) — one rule, not two, applying today's duplicated-helper lesson
+in advance for once.
+
+Caught more than the worktrees: `/private/tmp/ops-webui` and
+`/private/tmp/claude-501/…/aae854c6-…` are also in the registry and also dead. Same cause — a session
+started somewhere that was never going to survive.
+
+*Correction to AIBroker's report:* the two worktrees are **archived**, not active, and the active count
+is **99**, not 124 — so they are not inflating the active count. What stands on its own: 8 sessions
+attributed to directories designed to be deleted, and `pai <name>` able to route into one.
+
+- [ ] Unregister the two existing worktree rows (`cool-haibt`, `strange-haibt`, 8 sessions). Not done
+      — that is data deletion on a live registry, same class as `--fix`. The guard only stops new ones.
 
 ---
 
