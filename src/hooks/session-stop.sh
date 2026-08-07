@@ -122,8 +122,19 @@ housekeeping_due() {
   [ "$HOUSEKEEP_INTERVAL" = "0" ] && return 0
   [ -f "$HOUSEKEEP_STAMP" ] || return 0
   local last now
-  last=$(cat "$HOUSEKEEP_STAMP" 2>/dev/null || echo 0)
-  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  # Read the FIRST line and keep only digits.
+  #
+  # This was `cat` piped into a numeric check that reset to 0 on anything
+  # non-numeric — and a stamp file with a stray second value makes the whole
+  # read non-numeric, so `last` became 0, every turn looked overdue, and the
+  # debounce never once took effect. The guard meant to make this cheap was
+  # itself the reason it stayed expensive.
+  #
+  # Concurrent turns can both write here, so a malformed file is a state to
+  # tolerate rather than an impossibility. Taking the first line and stripping
+  # to digits cannot be defeated by extra values or trailing whitespace.
+  last=$(head -n 1 "$HOUSEKEEP_STAMP" 2>/dev/null | tr -dc '0-9')
+  [ -z "$last" ] && last=0
   now=$(date +%s)
   [ $((now - last)) -ge "$HOUSEKEEP_INTERVAL" ]
 }

@@ -1,36 +1,34 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0036 - 2026-08-07 - Obsidian Vault Inventory And Symlink Verification" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-07T14:17:14.253Z" -->
+<!-- pai:checkpoint authored="auto" session="0037 - 2026-08-07 - Vault Inventory and Symlink Verification" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-07T14:45:37.687Z" -->
 
-> **Last session:** 0036 - 2026-08-07 - Obsidian Vault Inventory And Symlink Verification
-> **Paused at:** 2026-08-07T14:17:14.253Z
+> **Last session:** 0037 - 2026-08-07 - Vault Inventory and Symlink Verification
+> **Paused at:** 2026-08-07T14:45:37.687Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-07T14:17:14.168Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-07T14:45:37.639Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- so the right directory I am in it what do I do
 - I do not understand. seriously. I just want that if I say pai "Jobs Grazyna" it starts a claude session with /Name Jobs Grazyna in this directory  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/G…
 - Pick in that watchdog into your service anyway.
 - /Name PAI
 - Since a long while we have an embedder running. Check it out if it's a runaway.
 - /Name PAI go
+- this is completely ridiculous   Nucleating… (running stop hooks… 4/4 · 22s · still thinking with high effort)  I am by now waiting /forever/ for whatever is happening there. like in the middle of disc…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: ec44de8 fix: v0.33.3 — naming a project opens it, even when a transcript went stale
-- 4 uncommitted path(s):
+- HEAD: d6c8b23 feat: v0.34.0 — `memory sources`, so the index can be inspected
+- 2 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/memory/index.ts
-?? src/cli/commands/memory/sources-cmd.ts
-?? src/cli/commands/memory/sources.ts
+ M src/hooks/session-stop.sh
 ```
 
 <!-- /pai:checkpoint -->
