@@ -1,34 +1,36 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0034 - 2026-08-04 - New Session" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-04T20:53:05.548Z" -->
+<!-- pai:checkpoint authored="auto" session="0036 - 2026-08-07 - Obsidian Vault Inventory And Symlink Verification" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-07T14:17:14.253Z" -->
 
-> **Last session:** 0034 - 2026-08-04 - New Session
-> **Paused at:** 2026-08-04T20:53:05.548Z
+> **Last session:** 0036 - 2026-08-07 - Obsidian Vault Inventory And Symlink Verification
+> **Paused at:** 2026-08-07T14:17:14.253Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
 
-_Automatic checkpoint — 2026-08-04T20:53:05.488Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-07T14:17:14.168Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- so it has to be possible that I simply say "This is this project." in any directory. directories may move around over time.
-- ah that was just docs, keep going
-- ok yeah can you fix it
-- ok is that part done then?
 - so the right directory I am in it what do I do
 - I do not understand. seriously. I just want that if I say pai "Jobs Grazyna" it starts a claude session with /Name Jobs Grazyna in this directory  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/G…
+- Pick in that watchdog into your service anyway.
+- /Name PAI
+- Since a long while we have an embedder running. Check it out if it's a runaway.
+- /Name PAI go
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 24606da fix: v0.33.2 — test the stale-path fall-through, and correct the last message
-- 2 uncommitted path(s):
+- HEAD: ec44de8 fix: v0.33.3 — naming a project opens it, even when a transcript went stale
+- 4 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/main-resolver.ts
+ M src/cli/commands/memory/index.ts
+?? src/cli/commands/memory/sources-cmd.ts
+?? src/cli/commands/memory/sources.ts
 ```
 
 <!-- /pai:checkpoint -->

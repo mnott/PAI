@@ -19,6 +19,7 @@ pai memory <subcommand> [options]
 | [`pai memory search <query>`](#pai-memory-search-query) | Search indexed memory (BM25 keyword, semantic, or hybrid) |
 | [`pai memory status [project-slug]`](#pai-memory-status-project-slug) | Show memory index statistics |
 | [`pai memory settings [key] [value]`](#pai-memory-settings-key-value) | View or modify search settings in ~/.config/pai/config.json |
+| [`pai memory sources`](#pai-memory-sources) | Show what the indexer has taken in: composition by source, which roots |
 
 ### pai memory index [project-slug]
 
@@ -99,6 +100,20 @@ View or modify search settings in ~/.config/pai/config.json
 |----------|------|
 | `[key]` | optional |
 | `[value]` | optional |
+
+
+### pai memory sources
+
+Show what the indexer has taken in: composition by source, which roots
+
+content enters from, the heaviest single files, and how many chunks are
+rewritten per day (which distinguishes a finite backlog from a treadmill).
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--limit <n>` | Rows per section (default 8) | `8` |
 
 
 ## Examples
