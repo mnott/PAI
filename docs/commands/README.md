@@ -74,6 +74,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai memory index [project-slug]` | Index memory files for one project or all projects |
 | `pai memory search <query>` | Search indexed memory (BM25 keyword, semantic, or hybrid) |
 | `pai memory settings [key] [value]` | View or modify search settings in ~/.config/pai/config.json |
+| `pai memory sources` | Show what the indexer has taken in: composition by source, which roots |
 | `pai memory status [project-slug]` | Show memory index statistics |
 | `pai notify` | Notification config: status, get, set, test, send |
 | `pai notify get` | Show current notification config (alias for status) |

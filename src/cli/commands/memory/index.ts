@@ -6,6 +6,7 @@ import { registerIndexCommand } from "./index-cmd.js";
 import { registerEmbedCommand } from "./embed.js";
 import { registerSearchCommand } from "./search.js";
 import { registerStatsCommands } from "./stats.js";
+import { registerSourcesCommand } from "./sources-cmd.js";
 
 export function registerMemoryCommands(
   memoryCmd: Command,
@@ -15,4 +16,5 @@ export function registerMemoryCommands(
   registerEmbedCommand(memoryCmd, getDb);
   registerSearchCommand(memoryCmd, getDb);
   registerStatsCommands(memoryCmd, getDb);
+  registerSourcesCommand(memoryCmd);
 }
