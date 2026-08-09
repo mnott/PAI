@@ -13,7 +13,9 @@ services:
       # Bind to localhost only — not exposed to the network
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgvector_data:/var/lib/postgresql/data
+      # Data lives on the host, not in a Docker-managed volume, so it is
+      # visible, browsable and covered by normal host backups.
+      - ~/.pai/pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pai -d pai"]
@@ -26,7 +28,3 @@ services:
       resources:
         limits:
           memory: 512M
-
-volumes:
-  pgvector_data:
-    driver: local
