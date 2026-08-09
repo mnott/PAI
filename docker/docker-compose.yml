@@ -5,6 +5,16 @@ services:
     image: pgvector/pgvector:pg17
     container_name: pai-pgvector
     restart: unless-stopped
+    # Postgres ships with shared_buffers=128MB, which is far too small once the
+    # vector index runs to a gigabyte or more — the index can never stay cached
+    # and every similarity search hits disk. 25% of available RAM is the usual
+    # rule. Override these if your Docker VM is smaller or larger:
+    # shared_buffers must fit inside the VM or Postgres will not start.
+    command: >
+      postgres
+      -c shared_buffers=${PAI_PG_SHARED_BUFFERS:-1GB}
+      -c effective_cache_size=${PAI_PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      -c maintenance_work_mem=${PAI_PG_MAINTENANCE_WORK_MEM:-256MB}
     environment:
       POSTGRES_USER: pai
       POSTGRES_PASSWORD: pai
