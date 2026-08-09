@@ -23,8 +23,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    # Resource limits — pgvector for a personal AI assistant does not need much
-    deploy:
-      resources:
-        limits:
-          memory: 512M
+    # No memory limit here on purpose. Postgres is bounded by its own
+    # shared_buffers and work_mem, and Docker Desktop already caps the VM this
+    # container runs in — a second, lower ceiling only stops the vector index
+    # being cached. Tune the VM allocation in Docker Desktop instead.
