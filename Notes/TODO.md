@@ -1,34 +1,43 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0037 - 2026-08-07 - Vault Inventory and Symlink Verification" session-id="e5070a2f-b6ba-4713-aeb5-0ca20d711dc7" ts="2026-08-07T14:45:37.687Z" -->
+<!-- pai:checkpoint authored="auto" session="0073 - 2026-08-22 - Metrics Analysis Earlier" session-id="64e81975-4458-4871-8159-1a42bc3cb1f9" ts="2026-08-24T17:23:45.276Z" -->
 
-> **Last session:** 0037 - 2026-08-07 - Vault Inventory and Symlink Verification
-> **Paused at:** 2026-08-07T14:45:37.687Z
+> **Last session:** 0073 - 2026-08-22 - Metrics Analysis Earlier
+> **Paused at:** 2026-08-24T17:23:45.276Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
+> Resume with: `claude --resume 64e81975-4458-4871-8159-1a42bc3cb1f9`
 
-_Automatic checkpoint — 2026-08-07T14:45:37.639Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-24T17:23:45.097Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- I do not understand. seriously. I just want that if I say pai "Jobs Grazyna" it starts a claude session with /Name Jobs Grazyna in this directory  /Users/i052341/Cloud/04 - Ablage/Ablage 2020 - 2029/G…
-- Pick in that watchdog into your service anyway.
-- /Name PAI
-- Since a long while we have an embedder running. Check it out if it's a runaway.
-- /Name PAI go
-- this is completely ridiculous   Nucleating… (running stop hooks… 4/4 · 22s · still thinking with high effort)  I am by now waiting /forever/ for whatever is happening there. like in the middle of disc…
+- Running Containers:  CONTAINER ID   IMAGE                    COMMAND                  CREATED       STATUS                            PORTS                      NAMES 77165a32590b   pgvector/pgvector:…
+- what are you doing? It is again running berserk. I mean how on earth can you let that happen
+- too much of text. you write too much. is there a problem now?
+- do it
+- [Session:CaseLeaf Partner] The operator has asked me to bring this to you. It is about the `Consolidate` skill and the session-note churn in the CaseLeaf repository, and I have measured it rather than…
+- [Session:w11t0p0:066504E1-BB16-48D3-9A74-C1F8BA45B7F3] The operator has asked me to bring this back to you and to ask you to fix it and restart your daemon. Measured, not guessed.  **Something is stil…
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: d6c8b23 feat: v0.34.0 — `memory sources`, so the index can be inspected
-- 2 uncommitted path(s):
+- HEAD: 31b4880 feat(docker): tune postgres memory for vector workloads
+- 11 uncommitted path(s):
 
 ```
 M Notes/TODO.md
+ M src/cli/commands/session-cleanup/scanner.ts
+ M src/daemon-mcp/prompts/consolidate.ts
+ M src/daemon/config.ts
+ M src/daemon/daemon/scheduler.ts
+ M src/daemon/session-summary-worker.ts
  M src/hooks/session-stop.sh
+ M src/hooks/ts/stop/stop-hook.ts
+ M statusline-command.sh
+?? docs/vm-bootstrap.md
+?? src/cli/commands/session-cleanup/scanner.test.ts
 ```
 
 <!-- /pai:checkpoint -->
@@ -1117,6 +1126,55 @@ Shipped after the v0.9.7 block below. Reconstructed from git history 2026-07-26.
 | Whazaa source | `~/dev/ai/Whazaa/` |
 | Coogle source | `~/dev/ai/coogle/` |
 | DEVONthink MCP | `~/dev/ai/Devon/` |
+
+---
+
+## Backlog — auto session notes are logging tool calls, not findings (2026-08-13)
+
+Reported from another project with a worked example: a six-day production mail
+outage, root-caused and fixed on a server, summarised as *"No implementation
+work completed (no commits made) — this was a verification session only."*
+Three server files had been changed and a container rebuilt.
+
+Traced to the summariser's **input scope**, which explains four of the five
+symptoms at once. `session-summary-prompt.ts:55` feeds the model exactly two
+things: user messages, and `gitLog.trim() || "(No git commits during this
+session)"`. Tool calls, file edits and command output are never shown to it. So:
+
+- **"No commits" becomes "no implementation".** Correct premise, wrong
+  conclusion, and systematically wrong for infrastructure work, where nothing
+  lands in git by design.
+- **The actual root cause is invisible.** It was found by reading command
+  output, so the note lists observations ("catalogued network subnets in use")
+  and omits the conclusion that solved the case.
+- **A transient error in the operator's own command** was recorded as a standing
+  defect of the target system. From messages alone the two are indistinguishable.
+- **Figures came from mid-session state** — "three orders" and "same product"
+  where the settled answer was four orders and three products. Nothing
+  reconciles earlier statements against the final one, so superseded numbers
+  are preserved as fact.
+
+Separately, and mechanical: three near-identical `AI Summary` blocks appended in
+sequence (each a superset of the last), a `Session 0030` header inside the 0031
+file, and two `Tags:` lines. The update-vs-create path in
+`session-summary-worker.ts` (topic overlap >= 30%, ~line 559) appends where it
+should replace, and picked a note whose header does not match its filename.
+
+What the reporting project asked for, and it is a better spec than the current
+`## Work Done / ## Key Decisions / ## Known Issues`:
+
+    Trigger -> Symptom -> Cause -> Change -> Verification -> Open
+
+Fixes, in dependency order:
+
+- [ ] Widen the summariser's input beyond messages+commits: include file edits
+      and the effects of tool calls, so work outside git is visible at all.
+      Everything else is cosmetic until this is done.
+- [ ] Reconcile against final state before writing — a figure contradicted later
+      in the session must not survive into the note.
+- [ ] Restructure the prompt to Trigger/Symptom/Cause/Change/Verification/Open.
+- [ ] Make the note write idempotent: replace the `AI Summary` block rather than
+      appending, one `Tags:` line, and assert the header matches the filename.
 
 ---
 *Links:* [[Ideaverse/AI/PAI/Notes/Notes|Notes]]

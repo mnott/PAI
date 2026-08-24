@@ -242,16 +242,35 @@ export function scanNotesDir(
   return candidates;
 }
 
+/**
+ * Renumbering is disabled. This always returns an empty map.
+ *
+ * It used to reassign every surviving note to its position in the sorted list
+ * (`newNum = idx + 1`), which treats the number as a position. The number is
+ * also the note's identity — handovers and other notes cite notes by number —
+ * and a value that is both a position and an identity parts company with
+ * itself the moment the set changes.
+ *
+ * What that cost, measured on a real corpus: deleting or adding one note
+ * shifted the whole series, and because the number is also written into the H1
+ * (`# Session 0006: ...`), the rewrite changed file *contents* as well as
+ * names. Git could not pair them as renames — 0 of 262 rewritten notes were
+ * byte-identical to anything in HEAD — so a single shift produced 261 deletions
+ * plus 262 additions. The operator changed one source file and their prompt
+ * reported 262 changes, which hides any real uncommitted work in the noise.
+ *
+ * Numbers are now minted once, at creation, and never reassigned. Gaps are
+ * expected and harmless: a gap is information (a note was removed) and costs
+ * nothing, whereas a renumber invalidates every existing reference silently.
+ *
+ * Kept as a function rather than deleted so the call site and the CleanupPlan
+ * shape stay intact; collisions should be reported by the caller, never
+ * resolved by shifting.
+ */
 function buildRenumberMap(
-  survivors: SessionCandidate[]
+  _survivors: SessionCandidate[]
 ): Map<number, number> {
-  const map = new Map<number, number>();
-  const sorted = [...survivors].sort((a, b) => a.number - b.number);
-  sorted.forEach((s, idx) => {
-    const newNum = idx + 1;
-    if (s.number !== newNum) map.set(s.number, newNum);
-  });
-  return map;
+  return new Map();
 }
 
 export function analyzeProject(

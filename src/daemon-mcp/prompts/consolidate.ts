@@ -1,6 +1,6 @@
 export const consolidate = {
   description:
-    "Consolidate and clean up session notes — merge duplicates, fix titles, renumber sequentially",
+    "Report duplicate session notes and fix bad titles. Collapses a group ONLY when one note provably contains the others; never deletes otherwise, and never renumbers",
   content: `## Consolidate Skill
 
 USE WHEN user says 'consolidate notes', 'clean up notes', 'merge duplicate notes', 'fix session notes', 'deduplicate notes', '/consolidate', OR notes directory has duplicates or bad titles.
@@ -11,7 +11,7 @@ Cleans up a project's session notes directory by:
 1. Finding duplicate/superseded notes (same topic, different compaction snapshots)
 2. Keeping the most complete version of each topic
 3. Fixing garbage titles (renaming files and H1 headings)
-4. Renumbering sequentially (0001, 0002, 0003...)
+4. Reporting number collisions — never reassigning numbers
 5. Optionally committing the cleanup
 
 ### Arguments
@@ -39,12 +39,25 @@ Group notes that cover the same topic. Two notes are "same topic" if:
 - OR one is a strict subset of the other (shorter note's content is contained in the longer one)
 
 **Step 4: For each group, keep the best**
-- Keep the note with the most lines (most complete)
-- Delete the others
+Sort the group by length and test containment: if every shorter file's full
+text appears inside the next longer one, the group nests — keep the longest.
+
+If it does NOT nest, keep every file and report the group for a human decision.
+Do not merge, do not pick, do not delete.
+
+This step used to say "keep the note with the most lines (most complete), delete
+the others". Longest and most-complete are different properties. Measured on a
+real corpus of 407 notes: of the 31 multi-file groups, ZERO nested and 17
+differed in body text — "keep the longest" would have deleted material existing
+nowhere else. Title matches are not evidence either: 48 files there shared one
+generated title, all distinct sessions.
 - If the kept note has a bad title (garbage from user messages, too long, generic), rename it based on the H1 or the Focus/Work Done section
 
-**Step 5: Renumber sequentially**
-After deduplication, renumber all remaining notes: 0001, 0002, 0003...
+**Step 5: Do NOT renumber**
+Numbers are identities, not positions — notes and handovers cite each other by
+number, so reassigning silently repoints every reference. It is also the whole
+of the diff churn: 407 files rewritten because the set changed by one. Mint a
+number at creation and leave it. Gaps are fine. Report collisions; never shift.
 Preserve the date and title in the filename.
 
 **Step 6: Fix H1 headings**
@@ -52,9 +65,10 @@ Ensure each note's H1 matches its filename title and number.
 
 **Step 7: Report and optionally commit**
 Show what was done:
-- Notes deleted (with reason)
+- Groups reported and left alone (the common case)
+- Notes deleted (rare — only where containment was verified; name the file that
+  now contains the deleted one)
 - Notes renamed (old → new)
-- Notes renumbered
 Then ask if the user wants to commit: \`git add Notes/ && git commit -m "docs: consolidate session notes"\`
 
 ### Title Quality Rules

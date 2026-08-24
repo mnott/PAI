@@ -377,11 +377,17 @@ if [ -f "$usage_cache" ]; then
     seven_reset_fmt=""
     seven_reset_epoch=0
     if [ -n "$five_reset" ]; then
-        five_reset_fmt=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$five_reset" | cut -c1-19)" "+%H:%M" 2>/dev/null || date -d "$five_reset" "+%H:%M" 2>/dev/null || echo "")
+        # The API states these in UTC ("...T06:00:00+00:00"). Parsing without -u
+        # reads 06:00 UTC as 06:00 local and prints a reset time that is out by
+        # the offset — two hours here, which is long enough to plan around and
+        # be wrong. Parse as UTC to get the epoch, then let date render it in
+        # local time, which is the only form worth showing a person.
+        five_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$five_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$five_reset" "+%s" 2>/dev/null || echo 0)
+        five_reset_fmt=$([ "$five_reset_epoch" -gt 0 ] 2>/dev/null && date -r "$five_reset_epoch" "+%H:%M" 2>/dev/null || echo "")
     fi
     if [ -n "$seven_reset" ]; then
-        seven_reset_fmt=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%a %H:%M" 2>/dev/null || date -d "$seven_reset" "+%a %H:%M" 2>/dev/null || echo "")
-        seven_reset_epoch=$(date -jf "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$seven_reset" "+%s" 2>/dev/null || echo 0)
+        seven_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$seven_reset" "+%s" 2>/dev/null || echo 0)
+        seven_reset_fmt=$([ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && date -r "$seven_reset_epoch" "+%a %H:%M" 2>/dev/null || echo "")
     fi
 
     # Color based on utilization: green < 50%, yellow 50-75%, red > 75%
