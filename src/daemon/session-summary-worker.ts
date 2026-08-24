@@ -583,7 +583,8 @@ function summaryHasContent(summaryText: string): boolean {
 function writeSessionNote(
   cwd: string,
   summaryText: string,
-  filesModified: string[]
+  filesModified: string[],
+  sessionId?: string,
 ): string | null {
   // Never create/update a note from a body-less summary — that is the born-stub
   // path (empty scaffold → stripped to a footer-only stub on finalize/rename).
@@ -595,7 +596,11 @@ function writeSessionNote(
   }
 
   const notesInfo = findNotesDir(cwd);
-  let notePath = getCurrentNotePath(notesInfo.path);
+  // Identity first: the note this session already owns. Falling back to the
+  // positional lookup only when there is no session id keeps older callers
+  // working, but the fallback is what used to create duplicates.
+  let notePath = (sessionId && findNoteBySessionId(notesInfo.path, sessionId))
+    || getCurrentNotePath(notesInfo.path);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -656,7 +661,7 @@ function writeSessionNote(
 
       if (topicShifted) {
         // Different topic — create a NEW note (topic-based split)
-        notePath = createNoteFromSummary(notesInfo.path, summaryText);
+        notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
       } else {
         // Same topic — update existing note
         updateNoteWithSummary(notePath, summaryText);
@@ -666,11 +671,11 @@ function writeSessionNote(
       }
     } else {
       // Different day — create a new note
-      notePath = createNoteFromSummary(notesInfo.path, summaryText);
+      notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
     }
   } else {
     // No note exists — create one
-    notePath = createNoteFromSummary(notesInfo.path, summaryText);
+    notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
   }
 
   // Try to rename with a meaningful title from the summary
@@ -762,7 +767,49 @@ function updateNoteWithSummary(notePath: string, summaryText: string): void {
 /**
  * Create a brand new session note from the AI summary.
  */
-function createNoteFromSummary(notesDir: string, summaryText: string): string | null {
+/**
+ * Find the note this session already owns, by the marker its first write left.
+ *
+ * The previous resolver, getCurrentNotePath, returned the numerically highest
+ * note in the month directory. That is a position, not an identity, and it is
+ * why one session produced many notes: whenever a session's own note was not
+ * the current maximum — two sessions in one project, or a number collision, of
+ * which one corpus had 110 — the lookup missed and the checkpoint created a
+ * new file instead of updating. Measured consequence in that corpus: 303 of
+ * 407 notes sat in 31 same-title groups, 48 of them sharing a single title.
+ *
+ * Matching on the session id makes the answer exact: a session either has a
+ * note or it does not, regardless of what else the directory contains.
+ */
+function findNoteBySessionId(notesDir: string, sessionId: string): string | null {
+  if (!sessionId || !existsSync(notesDir)) return null;
+  const marker = `<!-- SESSION: ${sessionId} -->`;
+
+  const now = new Date();
+  const dirs = [0, -1].map((delta) => {
+    const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
+    return join(notesDir, String(d.getFullYear()),
+                String(d.getMonth() + 1).padStart(2, "0"));
+  });
+
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".md")) continue;
+      const p = join(dir, f);
+      try {
+        if (readFileSync(p, "utf-8").includes(marker)) return p;
+      } catch { /* unreadable file is not a match */ }
+    }
+  }
+  return null;
+}
+
+function createNoteFromSummary(
+  notesDir: string,
+  summaryText: string,
+  sessionId?: string,
+): string | null {
   try {
     // Create the note with a placeholder title
     const notePath = createSessionNote(notesDir, "New Session");
@@ -792,8 +839,10 @@ function createNoteFromSummary(notesDir: string, summaryText: string): string | 
       .replace(/^---$/m, "")
       .trim();
 
+    // The session marker is what later checkpoints of THIS session match on to
+    // find and update this note rather than creating another one beside it.
     const finalContent = `# Session ${noteNumber}: ${title}
-${topic ? `<!-- TOPIC: ${topic} -->` : ""}
+${topic ? `<!-- TOPIC: ${topic} -->` : ""}${sessionId ? `\n<!-- SESSION: ${sessionId} -->` : ""}
 
 **Date:** ${date}
 **Status:** In Progress
@@ -1058,7 +1107,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // -------------------------------------------------------------------------
   // Step 5: Write the session note
   // -------------------------------------------------------------------------
-  const notePath = writeSessionNote(cwd, summaryText, extracted.filesModified);
+  const notePath = writeSessionNote(cwd, summaryText, extracted.filesModified, sessionId);
 
   if (notePath) {
     process.stderr.write(

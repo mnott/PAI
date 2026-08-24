@@ -60,6 +60,9 @@ export interface PaiDaemonConfig {
 
   /** Embedding schedule interval in seconds (default: 600 = 10 minutes) */
   embedIntervalSecs: number;
+  /** Run an embed pass 60s after daemon start. Off by default: with a large
+   *  backlog it makes every restart a CPU storm, and it ignores the interval. */
+  embedOnStartup: boolean;
 
   /** Storage backend: "sqlite" (default) or "postgres" */
   storageBackend: "sqlite" | "postgres";
@@ -160,6 +163,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   socketPath: paiSocketPath(),
   indexIntervalSecs: 300,
   embedIntervalSecs: 600,
+  embedOnStartup: false,
   storageBackend: "sqlite",
   postgres: {
     connectionString: perUserConnectionString(),

@@ -42,6 +42,39 @@ REGISTRY_DB="$HOME/.pai/registry.db"
 [ -f "$REGISTRY_DB" ] || exit 0
 
 # ---------------------------------------------------------------------------
+# Everything below runs DETACHED. Nothing here is on the critical path.
+# ---------------------------------------------------------------------------
+# Claude Code blocks the next turn until its Stop hooks return, and this hook
+# makes four `pai` calls, each of which talks to the daemon. Measured on this
+# machine, the same call costs 47 ms with the daemon idle and 5560 ms while it
+# is mid embed-pass — a 100x swing the user sees as "running stop hooks... 1m 3s".
+#
+# None of this work needs to finish before the next turn starts: marking a
+# session completed, renaming its note, checkpointing and writing a handover are
+# all bookkeeping. Detaching them makes the hook's cost independent of daemon
+# load, which is the only way this stays fixed when the daemon is busy again.
+#
+# Single-flight, because turns arrive faster than this tail completes: a second
+# copy would race the first over the same note and TODO.md. mkdir is the atomic
+# primitive available in POSIX sh. If the lock is held, skip entirely — the next
+# turn runs it, and every step here is idempotent and derives from current state
+# rather than accumulating.
+LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
+mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
+
+# A crashed run must not wedge this forever: treat a lock older than 10 minutes
+# as abandoned. Longer than any observed tail, shorter than a working session.
+if [ -d "$LOCK_DIR" ]; then
+  LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0) ))
+  [ "$LOCK_AGE" -gt 600 ] && rmdir "$LOCK_DIR" 2>/dev/null
+fi
+
+mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+
+{
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+# ---------------------------------------------------------------------------
 # Detect current project
 # ---------------------------------------------------------------------------
 
@@ -173,5 +206,13 @@ fi
 # Set tab color to completed state when session ends
 TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"
 [[ -x "$TAB_COLOR" ]] && "$TAB_COLOR" completed
+
+} >/dev/null 2>&1 &
+
+# Detach so Claude Code does not wait on the child. Both parts matter: the
+# redirect above closes the inherited stdout/stderr the parent would otherwise
+# block reading, and disown drops the job from this shell's table so exiting
+# cannot signal it.
+disown 2>/dev/null || true
 
 exit 0

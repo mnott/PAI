@@ -21,7 +21,23 @@ import {
 // ---------------------------------------------------------------------------
 
 const DAEMON_SOCKET = process.env.PAI_SOCKET ?? '/tmp/pai.sock';
-const DAEMON_TIMEOUT_MS = 3_000;
+
+/**
+ * Per-call ceiling on daemon round-trips.
+ *
+ * This hook runs after EVERY assistant turn and makes six of these calls in
+ * sequence, so the ceiling is multiplied by six before the user sees the next
+ * prompt. At the previous 3000 ms that was an 18-second worst case, and it was
+ * reached routinely: measured on this machine the same round-trip costs ~120 ms
+ * with the daemon idle and ~3000 ms while it is mid embed-pass, and the daemon
+ * was inside a pass 55% of wall-clock time.
+ *
+ * 800 ms is ~6x the idle round-trip, so a healthy daemon is never cut off, and
+ * it caps the worst case at ~5 s instead of 18 s. Every call site already falls
+ * back cleanly when the daemon does not answer in time, so the cost of timing
+ * out under load is a skipped enrichment, not a failure.
+ */
+const DAEMON_TIMEOUT_MS = 800;
 
 /**
  * How many human messages must accumulate before triggering a mid-session

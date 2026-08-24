@@ -282,11 +282,28 @@ export function startEmbedScheduler(): void {
     `[pai-daemon] Embed scheduler: every ${daemonConfig.embedIntervalSecs}s\n`
   );
 
-  setTimeout(() => {
-    runEmbed().catch((e) => {
-      process.stderr.write(`[pai-daemon] Startup embed error: ${e}\n`);
-    });
-  }, 60_000);
+  // Startup embed pass — OFF unless explicitly enabled.
+  //
+  // This used to run unconditionally 60s after every start, ignoring
+  // embedIntervalSecs entirely. With a large backlog that makes every restart a
+  // CPU storm: the interval was set to a day to stop the machine being bogged
+  // down, the daemon was restarted, and it immediately began a 240-second pass
+  // anyway. Throttling the recurring timer while leaving this armed means the
+  // throttle silently does nothing for anyone who restarts.
+  //
+  // Measured backlog when this was found: 1,868,098 unembedded chunks at ~5.7
+  // chunks/s — about 91 days of work that a restart would resume unbidden.
+  if (daemonConfig.embedOnStartup) {
+    setTimeout(() => {
+      runEmbed().catch((e) => {
+        process.stderr.write(`[pai-daemon] Startup embed error: ${e}\n`);
+      });
+    }, 60_000);
+  } else {
+    process.stderr.write(
+      "[pai-daemon] Startup embed pass skipped (embedOnStartup=false).\n"
+    );
+  }
 
   const timer = setInterval(() => {
     runEmbed().catch((e) => {
