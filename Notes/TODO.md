@@ -1,15 +1,15 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0001 - 2026-09-02 - Vault Link Types And Confidence Classification" session-id="1e9ef707-89ca-495a-bef0-f4de796403ea" ts="2026-09-02T09:58:54.879Z" -->
+<!-- pai:checkpoint authored="auto" session="0002 - 2026-09-02 - Vault Link Confidence, Scheduler Fix, Link Boost Module" session-id="a6a0aef2-cf6e-458d-97e1-9e7696b2779f" ts="2026-09-02T18:54:41.976Z" -->
 
-> **Last session:** 0001 - 2026-09-02 - Vault Link Types And Confidence Classification
-> **Paused at:** 2026-09-02T09:58:54.879Z
+> **Last session:** 0002 - 2026-09-02 - Vault Link Confidence, Scheduler Fix, Link Boost Module
+> **Paused at:** 2026-09-02T18:54:41.976Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 1e9ef707-89ca-495a-bef0-f4de796403ea`
+> Resume with: `claude --resume a6a0aef2-cf6e-458d-97e1-9e7696b2779f`
 
-_Automatic checkpoint — 2026-09-02T09:58:54.739Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-09-02T18:54:41.896Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
@@ -23,16 +23,15 @@ _Automatic checkpoint — 2026-09-02T09:58:54.739Z. Written without the model, f
 ### Working tree
 
 - Branch: `main`
-- HEAD: dccc7b7 fix: v0.35.0 — stop renumbering session notes, and stop the daemon burning a core
-- 6 uncommitted path(s):
+- HEAD: 890fd5e fix: stop the index scheduler bypassing embedOnStartup, anchor maintenance to a clock hour
+- 5 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/daemon/config.ts
  M src/daemon/daemon/scheduler.ts
- M src/mcp/tools/memory.ts
-?? src/memory/link-boost.test.ts
-?? src/memory/link-boost.ts
+ M src/hooks/ts/user-prompt/whisper-rules.ts
+ M src/storage/postgres/vault.ts
+?? src/hooks/ts/post-tool-use/whisper-reinject.ts
 ```
 
 <!-- /pai:checkpoint -->

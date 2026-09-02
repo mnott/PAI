@@ -207,8 +207,21 @@ export async function replaceLinksForSources(pool: Pool, sourcePaths: string[], 
         [sourcePaths]
       );
     }
-    for (let i = 0; i < links.length; i += 500) {
-      const batch = links.slice(i, i + 500);
+    // Collapse duplicates on the conflict key before batching. One line can
+    // legitimately carry the same target twice ("see [[X]] and [[X]] again"),
+    // which yields two rows with the same (source_path, target_raw,
+    // line_number). Postgres refuses a multi-row INSERT that would touch one
+    // row twice — "ON CONFLICT DO UPDATE command cannot affect row a second
+    // time" — and the whole vault index pass rolls back on it. Last occurrence
+    // wins, which is what DO UPDATE would have left behind anyway.
+    const deduped = new Map<string, VaultLinkRow>();
+    for (const l of links) {
+      deduped.set(`${l.sourcePath}\u0000${l.targetRaw}\u0000${l.lineNumber}`, l);
+    }
+    const uniqueLinks = [...deduped.values()];
+
+    for (let i = 0; i < uniqueLinks.length; i += 500) {
+      const batch = uniqueLinks.slice(i, i + 500);
       const values: string[] = [];
       const params: (string | number | null)[] = [];
       let idx = 1;

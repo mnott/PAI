@@ -17,21 +17,38 @@
  * If the file doesn't exist, no advisor guidance is injected.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 const WHISPER_FILE = join(homedir(), ".claude", "whisper-rules.md");
 const ADVISOR_FILE = join(homedir(), ".claude", "advisor-mode.json");
 
+/**
+ * Read the rule file, dropping everything that is there for the author rather
+ * than for the reader: "#" comment lines and blank lines.
+ *
+ * The rules are injected on every single prompt, so each line is paid for on
+ * every turn — which is the standing argument against letting the file grow
+ * headings and explanations. Stripping them here settles that: the file may be
+ * organised into sections with as much commentary as it takes to keep it
+ * maintainable, and none of it reaches the prompt. Only the rules do.
+ *
+ * A line whose rule text legitimately starts with "#" can be escaped as "\\#".
+ */
 function getWhisperRules(): string {
-  if (existsSync(WHISPER_FILE)) {
-    try {
-      const content = readFileSync(WHISPER_FILE, "utf-8").trim();
-      if (content) return content;
-    } catch { /* ignore */ }
+  if (!existsSync(WHISPER_FILE)) return "";
+  try {
+    return readFileSync(WHISPER_FILE, "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#"))
+      .map((l) => (l.startsWith("\\#") ? l.slice(1) : l))
+      .join("\n")
+      .trim();
+  } catch {
+    return "";
   }
-  return "";
 }
 
 interface AdvisorConfig {
@@ -113,8 +130,45 @@ function getAdvisorGuidance(): string {
   }
 }
 
+/**
+ * Local wall-clock time, as data rather than as an instruction to go and look.
+ *
+ * A rule that says "use the local timestamp" is only ever as reliable as the
+ * model's willingness to stop and fetch one; the cheap substitute is a guess,
+ * and a guessed clock is worse than none — it reads as a measurement. Putting
+ * the real value in front of the model removes the choice.
+ */
+function currentLocalTime(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * Reset the mid-turn tool-call counter that whisper-reinject increments.
+ *
+ * This hook fires exactly once per user message, which is the only place that
+ * knows where one turn ends and the next begins. Without the reset the counter
+ * is a session total, and "you are N tool calls into this turn" stops being
+ * true after the first turn — a reminder that misstates its own trigger is one
+ * the reader learns to discount.
+ */
+function resetReinjectCounter(): void {
+  try {
+    const raw = readFileSync(0, "utf-8");
+    const sessionId = raw.trim() ? (JSON.parse(raw) as { session_id?: string }).session_id ?? "" : "";
+    const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "nosession";
+    const f = join(tmpdir(), "pai-whisper-reinject", `${safe}.count`);
+    if (existsSync(f)) unlinkSync(f);
+  } catch { /* best effort — a stale count is not worth failing the hook over */ }
+}
+
 function main() {
+  resetReinjectCounter();
+
   const parts: string[] = [];
+
+  parts.push(`CURRENT LOCAL TIME: ${currentLocalTime()} — use this verbatim for any [YYYY-MM-DD HH:MM] stamp; never estimate or increment it.`);
 
   const rules = getWhisperRules();
   if (rules) parts.push(rules);
