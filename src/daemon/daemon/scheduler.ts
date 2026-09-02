@@ -173,7 +173,18 @@ export function startIndexScheduler(): void {
   // (embedOnStartup=false)" in the log, and minutes later the same boot running
   // a 5000-chunk pass at ~450% CPU. A guard one scheduler honours and another
   // walks around is not a guard.
-  setTimeout(() => void cycle("Startup", daemonConfig.embedOnStartup), 2_000);
+  // With a maintenance hour configured there is no startup pass at all. Every
+  // restart otherwise buys itself a full index run, so on a machine that is
+  // rebooted or has the daemon reloaded during the day the "maintenance runs at
+  // night" guarantee is worth nothing: the heavy work simply follows the
+  // restarts around. Indexing waits for the window like everything else.
+  if (daemonConfig.maintenanceHour === undefined) {
+    setTimeout(() => void cycle("Startup", daemonConfig.embedOnStartup), 2_000);
+  } else {
+    process.stderr.write(
+      "[pai-daemon] Startup index pass skipped (maintenanceHour is set).\n"
+    );
+  }
 
   // Anchor the recurring cycle to a wall-clock hour when one is configured.
   // setInterval alone counts from daemon start, so a machine rebooted at noon
@@ -346,6 +357,20 @@ export function startEmbedScheduler(): void {
     process.stderr.write(
       "[pai-daemon] Startup embed pass skipped (embedOnStartup=false).\n"
     );
+  }
+
+  // With a maintenance hour configured the index cycle already chains an embed
+  // pass onto every anchored run, so this timer would only add a second pass
+  // that counts from daemon start — observed as "every 86400s" armed at a
+  // 20:08 boot, i.e. a daily daytime pass on a machine configured for 03:00.
+  // The interval says how often, never when; without an anchor it cannot
+  // deliver a night-only pass, so it is not armed at all.
+  if (daemonConfig.maintenanceHour !== undefined) {
+    process.stderr.write(
+      "[pai-daemon] Standalone embed timer not armed (maintenanceHour is set; " +
+        "embed runs at the end of each anchored index cycle).\n"
+    );
+    return;
   }
 
   const timer = setInterval(() => {
