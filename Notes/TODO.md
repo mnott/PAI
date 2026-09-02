@@ -1,43 +1,38 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0073 - 2026-08-22 - Metrics Analysis Earlier" session-id="64e81975-4458-4871-8159-1a42bc3cb1f9" ts="2026-08-24T17:23:45.276Z" -->
+<!-- pai:checkpoint authored="auto" session="0001 - 2026-09-02 - Vault Link Types And Confidence Classification" session-id="1e9ef707-89ca-495a-bef0-f4de796403ea" ts="2026-09-02T09:58:54.879Z" -->
 
-> **Last session:** 0073 - 2026-08-22 - Metrics Analysis Earlier
-> **Paused at:** 2026-08-24T17:23:45.276Z
+> **Last session:** 0001 - 2026-09-02 - Vault Link Types And Confidence Classification
+> **Paused at:** 2026-09-02T09:58:54.879Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 64e81975-4458-4871-8159-1a42bc3cb1f9`
+> Resume with: `claude --resume 1e9ef707-89ca-495a-bef0-f4de796403ea`
 
-_Automatic checkpoint — 2026-08-24T17:23:45.097Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-09-02T09:58:54.739Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
-- Running Containers:  CONTAINER ID   IMAGE                    COMMAND                  CREATED       STATUS                            PORTS                      NAMES 77165a32590b   pgvector/pgvector:…
-- what are you doing? It is again running berserk. I mean how on earth can you let that happen
-- too much of text. you write too much. is there a problem now?
 - do it
 - [Session:CaseLeaf Partner] The operator has asked me to bring this to you. It is about the `Consolidate` skill and the session-note churn in the CaseLeaf repository, and I have measured it rather than…
 - [Session:w11t0p0:066504E1-BB16-48D3-9A74-C1F8BA45B7F3] The operator has asked me to bring this back to you and to ask you to fix it and restart your daemon. Measured, not guessed.  **Something is stil…
+- ILot] can this help us https://github.com/colbymchenry/codegraph
+- yea I meant what can we learn for it. graph is all the rage atm I feel, and maybe that's for us to add to pai as you said
+- ok go do that and then also check this then https://github.com/thedotmack/claude-mem also
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: 31b4880 feat(docker): tune postgres memory for vector workloads
-- 11 uncommitted path(s):
+- HEAD: dccc7b7 fix: v0.35.0 — stop renumbering session notes, and stop the daemon burning a core
+- 6 uncommitted path(s):
 
 ```
 M Notes/TODO.md
- M src/cli/commands/session-cleanup/scanner.ts
- M src/daemon-mcp/prompts/consolidate.ts
  M src/daemon/config.ts
  M src/daemon/daemon/scheduler.ts
- M src/daemon/session-summary-worker.ts
- M src/hooks/session-stop.sh
- M src/hooks/ts/stop/stop-hook.ts
- M statusline-command.sh
-?? docs/vm-bootstrap.md
-?? src/cli/commands/session-cleanup/scanner.test.ts
+ M src/mcp/tools/memory.ts
+?? src/memory/link-boost.test.ts
+?? src/memory/link-boost.ts
 ```
 
 <!-- /pai:checkpoint -->

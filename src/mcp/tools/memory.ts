@@ -126,6 +126,35 @@ export async function toolMemorySearch(
       }
     }
 
+    // Re-rank by the corpus's own links before returning.
+    //
+    // Similarity answers "what reads like the query"; it cannot answer "which
+    // of these is the one the others refer back to", which is usually the note
+    // to read first. The wikilinks are facts a person wrote, they cost nothing
+    // to maintain, and they are correct for chunks that have no embedding yet —
+    // which matters while a large embedding backlog drains.
+    //
+    // Only EXTRACTED links count: INFERRED ones are themselves derived by
+    // similarity, so folding them in would feed the ranking its own output.
+    try {
+      const { applyLinkBoost } = await import("../../memory/link-boost.js");
+      const paths = [...new Set(results.map((r) => r.path))];
+      // Bounded: one lookup per distinct result path, not per chunk, and the
+      // result set is already capped by maxResults.
+      if (isBackend(federation) && paths.length > 1) {
+        const edges: Array<{ sourcePath: string; targetPath: string }> = [];
+        for (const p of paths) {
+          for (const l of await federation.getLinksToTarget(p)) {
+            if (l.confidence && l.confidence !== "EXTRACTED") continue;
+            edges.push({ sourcePath: l.sourcePath, targetPath: p });
+          }
+        }
+        if (edges.length > 0) results = applyLinkBoost(results, edges);
+      }
+    } catch {
+      // A ranking aid, never a reason to fail a search.
+    }
+
     // QW2: Update last_accessed_at for returned chunks (best-effort, non-blocking)
     try {
       const chunkIds = results

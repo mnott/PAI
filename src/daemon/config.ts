@@ -64,6 +64,13 @@ export interface PaiDaemonConfig {
    *  backlog it makes every restart a CPU storm, and it ignores the interval. */
   embedOnStartup: boolean;
 
+  /** Local hour (0-23) to anchor the recurring index/embed cycle to. When unset,
+   *  the cycle is anchored to daemon start, so a daytime restart pins every
+   *  later pass to daytime too — a 24h interval does not by itself mean "at
+   *  night". Set this to run maintenance in a fixed window regardless of when
+   *  the machine last booted. */
+  maintenanceHour?: number;
+
   /** Storage backend: "sqlite" (default) or "postgres" */
   storageBackend: "sqlite" | "postgres";
 
