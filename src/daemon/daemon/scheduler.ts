@@ -158,20 +158,63 @@ export function startIndexScheduler(): void {
   // index passes with no embed pass at all, and a 143k-chunk embedding backlog.
   // Chaining embed onto the end of every index pass makes the alternation
   // guaranteed rather than a race: index, then vault, then embed, every cycle.
-  const cycle = (label: string) =>
+  const cycle = (label: string, withEmbed: boolean) =>
     runIndex()
       .then(() => runVaultIndex())
-      .then(() => runEmbed())
+      .then(() => (withEmbed ? runEmbed() : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });
 
-  setTimeout(() => void cycle("Startup"), 2_000);
+  // The startup pass indexes but must NOT embed unless embedOnStartup says so.
+  // startEmbedScheduler already refuses a startup embed for exactly that reason;
+  // chaining runEmbed onto this pass reinstated the same CPU storm through the
+  // back door. Seen live after a reboot: "Startup embed pass skipped
+  // (embedOnStartup=false)" in the log, and minutes later the same boot running
+  // a 5000-chunk pass at ~450% CPU. A guard one scheduler honours and another
+  // walks around is not a guard.
+  setTimeout(() => void cycle("Startup", daemonConfig.embedOnStartup), 2_000);
 
-  const timer = setInterval(() => void cycle("Scheduled"), intervalMs);
+  // Anchor the recurring cycle to a wall-clock hour when one is configured.
+  // setInterval alone counts from daemon start, so a machine rebooted at noon
+  // gets its "daily" maintenance at noon every day thereafter — the interval
+  // says how often, never when. Without an anchor there is no such thing as a
+  // night-only pass, however long the interval.
+  const firstDelayMs = msUntilNextAnchor(daemonConfig.maintenanceHour, intervalMs);
+  if (daemonConfig.maintenanceHour !== undefined) {
+    process.stderr.write(
+      `[pai-daemon] Index scheduler anchored to ${String(daemonConfig.maintenanceHour).padStart(2, "0")}:00 local ` +
+        `(next pass in ${Math.round(firstDelayMs / 60_000)} min)\n`
+    );
+  }
 
-  if (timer.unref) timer.unref();
-  setIndexSchedulerTimer(timer);
+  let timer: ReturnType<typeof setInterval>;
+  const startTimer = () => {
+    timer = setInterval(() => void cycle("Scheduled", true), intervalMs);
+    if (timer.unref) timer.unref();
+    setIndexSchedulerTimer(timer);
+  };
+
+  const first = setTimeout(() => {
+    void cycle("Scheduled", true);
+    startTimer();
+  }, firstDelayMs);
+  if (first.unref) first.unref();
+}
+
+/**
+ * Milliseconds until the next occurrence of `hour`:00 local time.
+ * Falls back to the plain interval when no anchor hour is configured.
+ */
+function msUntilNextAnchor(hour: number | undefined, intervalMs: number): number {
+  if (hour === undefined || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return intervalMs;
+  }
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hour, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.getTime() - now.getTime();
 }
 
 // ---------------------------------------------------------------------------
