@@ -311,42 +311,80 @@ export interface DigestInput {
  * nothing asked". The handover survives in the session note either way, but
  * `## Continue` is what the next session is shown, so what sits there matters.
  */
+/** Cap on `@n=` file-declaration lines, so the whole message stays ≤25 lines. */
+const MAX_AT_LINES = 17;
+
+/** Flatten a prompt (or any field value) to a single trimmed line. */
+function flattenField(text: string): string {
+  return text.replace(/\s*\n\s*/g, " ").trim();
+}
+
+/**
+ * Strip a git-porcelain status prefix off a `changes` entry, leaving the path.
+ *
+ * Porcelain lines are a 1-2 char status field, a space, then the path (e.g.
+ * `"M src/foo.ts"`, `" M src/foo.ts"`, `"?? x.ts"`). The stripped result falls
+ * back to the trimmed original whenever the pattern does not match, so a
+ * surprising entry still produces a usable `@n=` line instead of an empty one.
+ */
+function pathOf(entry: string): string {
+  const stripped = entry.replace(/^\s*\S{1,2}\s+/, "").trim();
+  return stripped || entry.trim();
+}
+
+/**
+ * Build the auto-checkpoint body as a single AG2 (Agentish v2) message of kind
+ * `T` (task/handover). Pure function of its inputs so it can be unit-tested
+ * without touching the filesystem or git.
+ *
+ * Field layout — see the AG2 validator for the authoritative rules:
+ *   i = ckpt-<sanitised timestamp>
+ *   g = the most recent prompt (goal)
+ *   d = the earlier prompts, joined by " | " ("?" when there are none)
+ *   t = "?" always — a mechanical handover runs no tests
+ *   @n = one declaration per changed file, capped at MAX_AT_LINES so the
+ *        whole message stays within AG2's 25-line limit
+ *   z = a note summarising the working tree, capped at 200 chars
+ */
+export function ag2Checkpoint(
+  prompts: string[],
+  tree: WorkingTree | null,
+  ts: string
+): string {
+  const id = `ckpt-${ts.replace(/[^A-Za-z0-9._-]/g, "-")}`;
+  const g = flattenField(prompts[0]);
+  const d =
+    prompts.length > 1 ? prompts.slice(1).map(flattenField).join(" | ") : "?";
+
+  const lines: string[] = ["T", `i=${id}`, `g=${g}`, `d=${d}`, "t=?"];
+
+  let extra = 0;
+  if (tree) {
+    const shown = tree.changes.slice(0, MAX_AT_LINES);
+    extra = Math.max(0, tree.changes.length - MAX_AT_LINES) + tree.overflow;
+    shown.forEach((entry, i) => lines.push(`@${i + 1}=${pathOf(entry)}`));
+  }
+
+  let z: string;
+  if (!tree) {
+    z = "auto ckpt (no model)";
+  } else {
+    const dirty = tree.changes.length;
+    const head = tree.head ?? "nohead";
+    z = `auto ckpt (no model); ${tree.branch}@${head}; ${dirty} dirty`;
+    if (extra > 0) z += `; +${extra} paths`;
+    z += "; git status for detail";
+  }
+  lines.push(`z=${z.length > 200 ? z.slice(0, 200) : z}`);
+
+  return lines.join("\n");
+}
+
 export function buildAutosaveBody(input: DigestInput): string {
   const ts = input.timestamp ?? new Date().toISOString();
   const prompts = recentPrompts(input.transcriptPaths ?? []);
   if (prompts.length === 0) return "";
 
   const tree = readWorkingTree(input.cwd);
-  const dirty = tree?.changes.length ?? 0;
-
-  const out: string[] = [
-    `_Automatic checkpoint — ${ts}. Written without the model, from the` +
-      ` transcript and the working tree. A model-authored checkpoint replaces` +
-      ` this; it is here so an interrupted session still leaves something._`,
-  ];
-
-  if (prompts.length > 0) {
-    out.push("", "### What was being asked", "");
-    for (const p of prompts) {
-      // Quote as a list item, flattening newlines so the list stays a list.
-      out.push(`- ${p.replace(/\s*\n\s*/g, " ")}`);
-    }
-  }
-
-  if (tree) {
-    out.push("", "### Working tree", "");
-    out.push(`- Branch: \`${tree.branch}\``);
-    if (tree.head) out.push(`- HEAD: ${tree.head}`);
-    if (dirty === 0) {
-      out.push("- Clean — nothing uncommitted.");
-    } else {
-      out.push(`- ${dirty} uncommitted path(s)${tree.overflow > 0 ? ` (+${tree.overflow} more)` : ""}:`);
-      out.push("");
-      out.push("```");
-      out.push(...tree.changes);
-      out.push("```");
-    }
-  }
-
-  return out.join("\n");
+  return ag2Checkpoint(prompts, tree, ts);
 }

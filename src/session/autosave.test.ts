@@ -165,7 +165,7 @@ describe("buildAutosaveBody", () => {
     expect(buildAutosaveBody({ cwd: process.cwd(), transcriptPaths: [p] })).toBe("");
   });
 
-  it("labels itself as automatic so it is never mistaken for authored state", () => {
+  it("emits an AG2 T message labelled automatic so it is never mistaken for authored state", () => {
     const p = join(root, "t.jsonl");
     writeJsonl(p, [lastPrompt("do the thing")]);
 
@@ -175,17 +175,21 @@ describe("buildAutosaveBody", () => {
       timestamp: "2026-08-01T13:00:00.000Z",
     });
 
-    expect(body).toContain("Automatic checkpoint");
-    expect(body).toContain("Written without the model");
-    expect(body).toContain("### What was being asked");
-    expect(body).toContain("- do the thing");
+    // Kind line, then the required T fields; the automatic label rides the z
+    // note (AG2 has no prose room for the "written without the model" caveat).
+    expect(body.split("\n")[0]).toBe("T");
+    expect(body).toContain("i=ckpt-2026-08-01T13-00-00.000Z");
+    expect(body).toContain("\nd=");
+    expect(body).toContain("\nt=?");
+    expect(body).toContain("auto ckpt (no model)");
+    expect(body).toContain("g=do the thing");
   });
 
-  it("flattens a multi-line prompt so the list stays a list", () => {
+  it("flattens a multi-line prompt so the goal stays one line", () => {
     const p = join(root, "t.jsonl");
     writeJsonl(p, [lastPrompt("line one\nline two")]);
 
     const body = buildAutosaveBody({ cwd: root, transcriptPaths: [p] });
-    expect(body).toContain("- line one line two");
+    expect(body).toContain("g=line one line two");
   });
 });
