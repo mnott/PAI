@@ -19,7 +19,7 @@ import { loadAliasMap } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";
 import { dispatchAll } from "../../tasks/dispatch.js";
 import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js";
-import { tick } from "../../tasks/poller.js";
+import { tick, releaseClaim, loadState, saveState, STATE_FILE } from "../../tasks/poller.js";
 import { installSchedule, uninstallSchedule, scheduleStatus, DEFAULT_INTERVAL_SECS } from "../../tasks/schedule-install.js";
 import type { DispatchResult, Task, TaskProvider } from "../../tasks/types.js";
 import { writeArchive } from "../../tasks/archive.js";
@@ -117,7 +117,7 @@ const ok = chalk.green;
 // Wiring
 // ---------------------------------------------------------------------------
 
-function buildProvider(): TaskProvider | null {
+function buildProvider(): TodoistProvider | null {
   const config = loadConfig();
   const tasks = config.tasks;
   if (!tasks?.enabled) return null;
@@ -620,6 +620,36 @@ export function registerTaskCommands(taskCmd: Command): void {
 
       await provider.complete(id);
       console.log(chalk.green(`  Completed ${id}.`));
+
+      // Release the claim left behind by whichever run finished this task.
+      // For a recurring task, `complete` above only advanced the due date to
+      // the next occurrence — the `pai-running` label, the progress-marker
+      // comment, and this poller's transient run state (`startedAt` /
+      // `claimSeenAt` / `failedProbes`) all outlive it unless something
+      // clears them. Left alone, the next occurrence looks already claimed,
+      // and the scheduler classifies it as overrunning and starts probing a
+      // session that finished hours ago.
+      //
+      // Best-effort throughout: closing the task above is the action that
+      // has to succeed, and this cleanup must never turn a completed task
+      // into a failed command.
+      try {
+        const task = await provider.getTask(id);
+        if (task) {
+          const state = loadState(STATE_FILE);
+          await releaseClaim(task, provider, state);
+          // Record the due date this advanced to, the same way `tick()`
+          // records it every cycle. Without this, the next `pai task poll`
+          // has no way to tell this advance apart from a human dragging the
+          // task forward by hand — both look like "due moved exactly one
+          // recurrence period, unclaimed" — and would dispatch the task a
+          // second time for a run that just finished.
+          if (task.due) state.lastSeenDue[id] = task.due;
+          saveState(state, STATE_FILE);
+        }
+      } catch {
+        // Cleanup is best-effort — see comment above.
+      }
 
       if (archived) {
         const what = `${archived.commentCount} comment${archived.commentCount === 1 ? "" : "s"}`;

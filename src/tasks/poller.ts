@@ -36,12 +36,12 @@ import {
 } from "./scheduler.js";
 import type { Task } from "./types.js";
 
-const STATE_FILE = join(homedir(), ".pai", "scheduler-state.json");
+export const STATE_FILE = join(homedir(), ".pai", "scheduler-state.json");
 
 /** How many past durations to keep per task. */
 const HISTORY_LIMIT = 5;
 
-interface PersistedState extends RunState {
+export interface PersistedState extends RunState {
   /** Task id → observed durations in minutes, most recent last. */
   history: Record<string, number[]>;
   /** Task id → epoch ms of the last completion we reported. */
@@ -228,7 +228,7 @@ async function escalate(
  * scheduler forever — starting fresh is the correct recovery here, which is
  * exactly the case json-store's guard is NOT for.
  */
-function loadState(file: string): PersistedState {
+export function loadState(file: string): PersistedState {
   try {
     const raw = readJsonStrict(file, "~/.pai/scheduler-state.json");
     return { ...emptyState(), ...(raw as unknown as PersistedState) };
@@ -237,8 +237,54 @@ function loadState(file: string): PersistedState {
   }
 }
 
-function saveState(state: PersistedState, file: string): void {
+export function saveState(state: PersistedState, file: string): void {
   writeJsonAtomic(file, state as unknown as Record<string, unknown>, { backup: false });
+}
+
+/**
+ * Fold in any completion a concurrent `pai task done` wrote while this tick
+ * was busy with the rest of the list.
+ *
+ * A tick holds one in-memory `state` for its whole run and saves it exactly
+ * once, at the end. For a morning routine with several due tasks that run is
+ * not instantaneous — each dispatch waits out AIBroker's spawn-readiness
+ * window in turn, so the tick can still be working through task 4 minutes
+ * after task 1 was launched. `pai task done` has no such window: it loads,
+ * releases the claim, stamps `lastSeenDue` to the next occurrence, and saves,
+ * all in well under a second. If the session for task 1 finishes and closes
+ * it while the tick is still on task 4, the CLI's write lands on disk first —
+ * and the tick's blind save at the end, built from the snapshot it took
+ * before any of this happened, overwrites it: `lastSeenDue` reverts to the
+ * occurrence that was just completed, and `startedAt`/`claimSeenAt` come back
+ * because this tick never learned they had been released. The next tick then
+ * reads that reverted date as "due advanced by one period, unclaimed" — which
+ * is `wasTicked`'s exact definition of a hand-tick — and redispatches a task
+ * that already finished. Reproduced against a live poller run; see the
+ * negative control referenced in Notes/TODO.md.
+ *
+ * `lastSeenDue` only ever moves forward in normal operation, so a disk value
+ * strictly ahead of what this tick computed can only mean a concurrent writer
+ * — there is exactly one, `pai task done` — saw a later completion than this
+ * tick's stale snapshot knew about. Whenever that happens, this tick's own
+ * value is the stale one: defer to disk for that task's date, and carry the
+ * claim release forward too, since a more-advanced date with no such release
+ * is not a state `pai task done` ever produces.
+ *
+ * Scoped to exactly the fields `pai task done` touches (`releaseClaim` plus
+ * the `lastSeenDue` stamp) — the two writers race over nothing else, so a
+ * broader merge would only add risk without removing any.
+ */
+function reconcileWithDisk(state: PersistedState, stateFile: string): void {
+  const onDisk = loadState(stateFile);
+  for (const [id, oursDue] of Object.entries(state.lastSeenDue)) {
+    const diskDue = onDisk.lastSeenDue[id];
+    if (diskDue !== undefined && diskDue > oursDue) {
+      state.lastSeenDue[id] = diskDue;
+      delete state.startedAt[id];
+      delete state.claimSeenAt[id];
+      delete state.failedProbes[id];
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -492,14 +538,7 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
       case "abandoned": {
         note = `claimed ${d.elapsedMinutes}m ago, past the ${d.thresholdMinutes}m limit — releasing the claim`;
         if (!opts.dryRun) {
-          await opts.provider.setLabels(
-            task.id,
-            task.labels.filter((l) => l.toLowerCase() !== RUNNING_LABEL)
-          );
-          delete state.startedAt[task.id];
-          delete state.failedProbes[task.id];
-          delete state.claimSeenAt[task.id];
-          await clearRunningMark(task, opts);
+          await releaseClaim(task, opts.provider, state);
           // Reported as needing attention: a run that had to be released this
           // way did not finish, and the next tick re-dispatching it is a repair,
           // not business as usual.
@@ -524,7 +563,10 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
     report.decisions.push({ decision: d, note });
   }
 
-  if (!opts.dryRun) saveState(state, stateFile);
+  if (!opts.dryRun) {
+    reconcileWithDisk(state, stateFile);
+    saveState(state, stateFile);
+  }
   return report;
 }
 
@@ -702,8 +744,11 @@ async function handleDispatch(
 
   // Nothing is running, so release the claim — otherwise the task looks in
   // flight forever and the next tick reports it orphaned rather than retrying.
+  // Not `releaseClaim`: the claim never made it into `state` on this path (it
+  // is undone before `startedAt` would have been set), so there is nothing
+  // there to clear, and `task.labels` is already the pre-claim array.
   await opts.provider.setLabels(task.id, task.labels);
-  await clearRunningMark(task, opts);
+  await clearRunningMark(task, opts.provider);
 
   const fails = (state.failedDispatches[task.id] ?? 0) + 1;
   state.failedDispatches[task.id] = fails;
@@ -811,23 +856,60 @@ async function markRunning(task: Task, opts: TickOptions, startedAt: number): Pr
  * exactly the stale-state problem this whole subsystem keeps producing, so the
  * cleanup is attached to the release rather than to the happy path.
  */
-async function clearRunningMark(task: Task, opts: TickOptions): Promise<void> {
-  const { listComments, deleteComment } = opts.provider;
+async function clearRunningMark(task: Task, provider: TodoistProvider): Promise<void> {
+  const { listComments, deleteComment } = provider;
   if (!listComments || !deleteComment) return;
   try {
-    const comments = await listComments.call(opts.provider, task.id);
+    const comments = await listComments.call(provider, task.id);
     for (const c of comments) {
       // `includes`, not `startsWith`: the marker gained an AGENT_MARK prefix,
       // and markers posted before that change must still be found and cleared.
       // The sentinel is meant to be self-healing — a matcher that only knows
       // the current spelling orphans every comment written by the last one.
       if (c.content.includes(RUNNING_COMMENT_MARK)) {
-        await deleteComment.call(opts.provider, c.id);
+        await deleteComment.call(provider, c.id);
       }
     }
   } catch {
     // Same reasoning as posting it: never let the annotation break the run.
   }
+}
+
+/**
+ * Release a claim on a task: strip the interlock label, remove the progress
+ * marker, and forget the transient run state that made this poller believe
+ * something was still working on it.
+ *
+ * This is every effect of ending a run except the tracker-side completion
+ * itself — factored out so `handleComplete` and the "abandoned" release below
+ * cannot drift apart, and so anything else that ends a claim (`pai task done`
+ * included) gets the identical cleanup rather than a hand-rolled subset of it.
+ * A partial version of this — closing the task but skipping this call — is
+ * exactly what left `pai-running` and the transient state behind on every
+ * `pai task done` before this existed: the next occurrence of a recurring task
+ * inherited a live-looking claim it never made, and the poller spent the
+ * morning asking a session whether it was still working on a task it had
+ * already finished.
+ *
+ * Only ever removes `RUNNING_LABEL` from the label array — never replaces it —
+ * so any other label the user put on the task survives. Only ever deletes this
+ * task's own entries from `startedAt` / `claimSeenAt` / `failedProbes` —
+ * `lastSeenDue` and `history` are untouched, exactly as `handleComplete` always
+ * left them.
+ */
+export async function releaseClaim(
+  task: Task,
+  provider: TodoistProvider,
+  state: Pick<PersistedState, "startedAt" | "claimSeenAt" | "failedProbes">
+): Promise<void> {
+  await provider.setLabels(
+    task.id,
+    task.labels.filter((l) => l.toLowerCase() !== RUNNING_LABEL)
+  );
+  await clearRunningMark(task, provider);
+  delete state.startedAt[task.id];
+  delete state.failedProbes[task.id];
+  delete state.claimSeenAt[task.id];
 }
 
 /**
@@ -868,17 +950,8 @@ async function handleComplete(
 ): Promise<string> {
   if (opts.dryRun) return `would clear ${RUNNING_LABEL}, ${durationMinutes ?? "?"}m`;
 
-  await opts.provider.setLabels(
-    task.id,
-    task.labels.filter((l) => l.toLowerCase() !== RUNNING_LABEL)
-  );
-
-  await clearRunningMark(task, opts);
-
   const wasStuck = (state.failedProbes[task.id] ?? 0) > 0;
-  delete state.startedAt[task.id];
-  delete state.failedProbes[task.id];
-  delete state.claimSeenAt[task.id];
+  await releaseClaim(task, opts.provider, state);
 
   // A run that needed probing may have been stalled for most of its wall time.
   // Feeding that into the average would inflate every later threshold.
