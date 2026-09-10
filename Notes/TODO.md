@@ -1,38 +1,30 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0002 - 2026-09-02 - Vault Link Confidence, Scheduler Fix, Link Boost Module" session-id="a6a0aef2-cf6e-458d-97e1-9e7696b2779f" ts="2026-09-02T18:54:41.976Z" -->
+<!-- pai:checkpoint authored="model" session="0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)" session-id="01b8b0de-c33d-423f-8323-b822e406cfc4" ts="2026-09-10T16:46:49.901Z" -->
 
-> **Last session:** 0002 - 2026-09-02 - Vault Link Confidence, Scheduler Fix, Link Boost Module
-> **Paused at:** 2026-09-02T18:54:41.976Z
+> **Last session:** 0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)
+> **Paused at:** 2026-09-10T16:46:49.901Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume a6a0aef2-cf6e-458d-97e1-9e7696b2779f`
+> Resume with: `claude --resume 01b8b0de-c33d-423f-8323-b822e406cfc4`
 
-_Automatic checkpoint — 2026-09-02T18:54:41.896Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+### Accomplished
 
-### What was being asked
+- Session renamed to "PAI" via aibroker_rename (`/Name PAI`).
+- Verified that `claude --name <name> "/Name <name>\ngo"` is already what PAI's launchers do. All three spawn sites pass `--name` plus the `/Name … / go` prompt, with `--resume <uuid>` prepended when the transcript probe succeeds:
+  - `src/cli/lib/launch.ts` (`launchInDir`)
+  - `src/cli/commands/main-resolver.ts`
+  - `src/cli/commands/session/goto.ts`
+- Verified the output style setting: `~/.claude/settings.json` holds `"outputStyle": "Concise"` (capitalised, correct). Neither PAI nor AIBroker source, hooks or skills write `outputStyle` anywhere. The lowercase `/config outputStyle=concise` exists only in typed prompts in the 2026-08-24 event history, so nothing needed fixing.
 
-- do it
-- [Session:CaseLeaf Partner] The operator has asked me to bring this to you. It is about the `Consolidate` skill and the session-note churn in the CaseLeaf repository, and I have measured it rather than…
-- [Session:w11t0p0:066504E1-BB16-48D3-9A74-C1F8BA45B7F3] The operator has asked me to bring this back to you and to ask you to fix it and restart your daemon. Measured, not guessed.  **Something is stil…
-- ILot] can this help us https://github.com/colbymchenry/codegraph
-- yea I meant what can we learn for it. graph is all the rage atm I feel, and maybe that's for us to add to pai as you said
-- ok go do that and then also check this then https://github.com/thedotmack/claude-mem also
+### Left for next session
 
-### Working tree
+- `main-resolver.ts` and `session/goto.ts` carry a verbatim copy of `launchInDir` instead of calling it. Behaviour is identical today; collapsing them onto `launchInDir` would remove the triplication that has bitten before (see memory: duplicated helpers always bit). Not done this session.
 
-- Branch: `main`
-- HEAD: 890fd5e fix: stop the index scheduler bypassing embedOnStartup, anchor maintenance to a clock hour
-- 5 uncommitted path(s):
+### Uncommitted
 
-```
-M Notes/TODO.md
- M src/daemon/daemon/scheduler.ts
- M src/hooks/ts/user-prompt/whisper-rules.ts
- M src/storage/postgres/vault.ts
-?? src/hooks/ts/post-tool-use/whisper-reinject.ts
-```
+- `Notes/TODO.md` was already modified at session start (from a previous session); no code was changed in this session.
 
 <!-- /pai:checkpoint -->
 
