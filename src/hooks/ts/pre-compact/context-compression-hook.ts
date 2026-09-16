@@ -700,25 +700,44 @@ async function main() {
       // generated after this session's PREVIOUS compaction: a handover
       // cached before that point describes state the last compaction
       // already accounted for, not what has happened since.
+      //
+      // BUG (live): a production digest was found with NO "HANDOVER SOURCE:"
+      // line at all — its cause was never pinned down for certain (the
+      // deployed hook is a compiled dist/ artifact reached through
+      // ${PAI_DIR}/Hooks/..., a separate build step from editing this
+      // source, which is itself a plausible way for "works when I run the
+      // .ts source" and "missing in production" to diverge). Regardless of
+      // cause: sourceLabel and handoverBlock are now computed in their own
+      // try/catch, so ANY failure in the cache read or the freshness
+      // comparison degrades to an explicit error label rather than being
+      // capable of preventing the line from existing at all.
       // -------------------------------------------------------------------
-      const cachedHandover = readContextHandoverCache(hookInput.session_id);
-      const handoverIsFresh =
-        cachedHandover !== null &&
-        (!previousCompactionAt || new Date(cachedHandover.generatedAt) > new Date(previousCompactionAt));
+      let sourceLabel: string;
+      let handoverBlock: string;
+      try {
+        const cachedHandover = readContextHandoverCache(hookInput.session_id);
+        const handoverIsFresh =
+          cachedHandover !== null &&
+          (!previousCompactionAt || new Date(cachedHandover.generatedAt) > new Date(previousCompactionAt));
 
-      const sourceLabel = handoverIsFresh
-        ? `model-written handover (${cachedHandover!.model}, generated ${cachedHandover!.generatedAt}, ` +
-          `threshold=${cachedHandover!.threshold}) + mechanical scrape`
-        : 'mechanical scrape only (no fresh model-written handover was available)';
+        sourceLabel = handoverIsFresh
+          ? `model-written handover (${cachedHandover!.model}, generated ${cachedHandover!.generatedAt}, ` +
+            `threshold=${cachedHandover!.threshold}) + mechanical scrape`
+          : 'mechanical scrape only (no fresh model-written handover was available)';
 
-      const handoverBlock = handoverIsFresh
-        ? [
-            '',
-            '--- MODEL-WRITTEN HANDOVER (decisions, reasoning, open threads — not in the scrape above) ---',
-            cachedHandover!.summary,
-            '--- end model-written handover ---',
-          ].join('\n')
-        : '';
+        handoverBlock = handoverIsFresh
+          ? [
+              '',
+              '--- MODEL-WRITTEN HANDOVER (decisions, reasoning, open threads — not in the scrape above) ---',
+              cachedHandover!.summary,
+              '--- end model-written handover ---',
+            ].join('\n')
+          : '';
+      } catch (err) {
+        console.error(`Failed to resolve handover cache — falling back to scrape-only: ${err}`);
+        sourceLabel = `mechanical scrape only (error resolving handover cache: ${err})`;
+        handoverBlock = '';
+      }
 
       const injection = [
         '<system-reminder>',
