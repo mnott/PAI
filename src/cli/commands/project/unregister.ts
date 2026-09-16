@@ -38,7 +38,8 @@ export function cmdUnregister(
 
   if (!row) {
     console.error(err(`  No project with slug "${slug}".`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log();
@@ -55,7 +56,8 @@ export function cmdUnregister(
     console.log(dim(`      pai project merge ${row.slug} <into> --execute`));
     console.log(dim(`  Or pass --force if the sessions are genuinely worthless.`));
     console.log();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (!opts.execute) {

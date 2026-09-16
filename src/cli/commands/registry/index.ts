@@ -83,7 +83,8 @@ function cmdLookup(db: Database, fsPath: string): void {
     .get(resolved) as { slug: string } | undefined;
 
   if (!row) {
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   process.stdout.write(row.slug + "\n");
@@ -124,7 +125,8 @@ export function registerRegistryCommands(
         const resolved = resolveHome(opts.addDir);
         if (!existsSync(resolved)) {
           console.error(err(`Directory not found: ${resolved}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         const display = resolved.startsWith(homedir())
           ? "~" + resolved.slice(homedir().length)

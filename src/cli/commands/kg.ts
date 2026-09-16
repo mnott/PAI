@@ -55,7 +55,8 @@ async function cmdBackfill(opts: {
   const limit = opts.limit ? parseInt(opts.limit, 10) : undefined;
   if (limit !== undefined && (isNaN(limit) || limit < 1)) {
     console.error(err("  --limit must be a positive integer"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log();
@@ -90,7 +91,8 @@ async function cmdBackfill(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -124,7 +126,8 @@ async function cmdQuery(opts: {
     const asOf = opts.asOf ? new Date(opts.asOf) : undefined;
     if (asOf && isNaN(asOf.getTime())) {
       console.error(err(`  Invalid --as-of date: ${opts.asOf}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     const triples = await kgQuery(pool, {

@@ -5,7 +5,6 @@
 
 import type { Database } from "better-sqlite3";
 import type { ProjectRow } from "./types.js";
-import { err } from "../../utils.js";
 
 /**
  * Find a project by slug or alias, case-insensitively.
@@ -52,8 +51,11 @@ export function getProject(db: Database, slug: string): ProjectRow | undefined {
 export function requireProject(db: Database, slug: string): ProjectRow {
   const project = getProject(db, slug);
   if (!project) {
-    console.error(err(`Project not found: ${slug}`));
-    process.exit(1);
+    // Throw rather than process.exit(1): it propagates to the top-level
+    // catch in cli/index.ts, which prints the message and sets
+    // process.exitCode, letting the process exit naturally so piped
+    // stdout/stderr is flushed (process.exit() does not guarantee that).
+    throw new Error(`Project not found: ${slug}`);
   }
   return project;
 }

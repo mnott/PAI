@@ -267,7 +267,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
           `  The folder may have moved or been deleted.`
       )
     );
-    process.exit(1);
+    process.exitCode = 1;
     return;
   }
 
@@ -298,10 +298,11 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     });
     if (result.error) {
       console.error(err(`Failed to launch claude: ${result.error.message}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     printExitDir(cwd);
-    process.exit(result.status ?? 0);
+    process.exitCode = result.status ?? 0;
   };
 
   if (wantResume) {
@@ -314,10 +315,12 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       );
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       printExitDir(cwd);
-      process.exit(result.status ?? 0);
+      process.exitCode = result.status ?? 0;
+      return;
     }
     process.stderr.write(
       chalk.yellow(

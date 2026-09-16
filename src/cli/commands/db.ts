@@ -258,7 +258,8 @@ async function cmdQuery(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -298,7 +299,8 @@ async function cmdTables(opts: CommonOpts): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -326,7 +328,8 @@ async function cmdSchema(table: string, opts: CommonOpts): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 

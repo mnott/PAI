@@ -38,7 +38,8 @@ const SESSION_REGISTRY_PATH = join(homedir(), ".claude", "session-registry.json"
 export function cmdMigrate(db: Database): void {
   if (!existsSync(SESSION_REGISTRY_PATH)) {
     console.error(err(`session-registry.json not found: ${SESSION_REGISTRY_PATH}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   let registry: LegacyJsonRegistry;
@@ -47,7 +48,8 @@ export function cmdMigrate(db: Database): void {
     registry = JSON.parse(raw) as LegacyJsonRegistry;
   } catch (e) {
     console.error(err(`Failed to parse session-registry.json: ${e}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const projects = registry.projects ?? [];

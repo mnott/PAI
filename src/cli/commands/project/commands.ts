@@ -278,7 +278,8 @@ export function cmdAdd(
   const validTypes = ["local", "central", "obsidian-linked", "external"];
   if (!validTypes.includes(type)) {
     console.error(err(`Invalid type "${type}". Valid: ${validTypes.join(", ")}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Disposable directories must not become projects. Two agent worktrees and two
@@ -290,7 +291,8 @@ export function cmdAdd(
     console.error(err(`Refusing to register ${shortenPath(rootPath, 60)}`));
     console.error(dim(`  That is ${ephemeral}.`));
     console.error(dim(`  A project needs a durable location — move it, then register.`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const existing = db
@@ -300,7 +302,8 @@ export function cmdAdd(
     console.error(
       err(`Project already registered (slug: ${slug} or path: ${rootPath})`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const dirName = basename(rootPath).toLowerCase();
@@ -585,7 +588,8 @@ export function cmdAlias(
     console.error(
       err(`"${alias}" is already a project slug — cannot use as alias.`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const project = getProject(db, slug)!;
@@ -596,7 +600,7 @@ export function cmdAlias(
     console.log(ok(`Alias added: ${bold(alias)} → ${slug}`));
   } catch {
     console.error(err(`Alias "${alias}" is already registered.`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
@@ -617,7 +621,8 @@ export function cmdEdit(
     console.error(
       err(`Invalid type "${opts.type}". Valid: ${validTypes.join(", ")}`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const ts = now();
@@ -650,7 +655,6 @@ export function cmdDetect(
       console.log(warn(`No registered project found for: ${cwd}`));
       console.log(dim("  Run 'pai project add .' to register this directory."));
     }
-    process.exit(0);
     return;
   }
 
@@ -819,7 +823,8 @@ export function cmdGo(db: Database, query: string): void {
     console.error(
       err("No active projects registered. Run: pai project add <path>")
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const q = query.trim().toLowerCase();
@@ -870,7 +875,8 @@ export function cmdGo(db: Database, query: string): void {
     });
     console.error();
     console.error(dim("  Use a more specific name or the exact slug."));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // 3. No match — Levenshtein suggestions
@@ -901,7 +907,7 @@ export function cmdGo(db: Database, query: string): void {
     console.error();
     console.error(dim("  Run: pai project list  (to see all projects)"));
   }
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 export function cmdRebind(
@@ -914,7 +920,8 @@ export function cmdRebind(
 
   if (!existsSync(resolved)) {
     console.error(err(`Path does not exist: ${resolved}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   let isDir = false;
@@ -925,7 +932,8 @@ export function cmdRebind(
   }
   if (!isDir) {
     console.error(err(`Path is not a directory: ${resolved}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const newEncoded = encodeDir(resolved);
@@ -940,7 +948,8 @@ export function cmdRebind(
       dim(`  ${resolved}\n`) +
       dim(`  Archive or move that project first, or choose a different path.`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const ts = now();

@@ -78,8 +78,13 @@ function getDb(): Database {
     try {
       _db = openRegistry();
     } catch (e) {
-      console.error(err(`Failed to open PAI registry: ${e}`));
-      process.exit(1);
+      // Throw instead of process.exit(1): the throw propagates up through
+      // the calling action and parseAsync() to the top-level catch in
+      // cli/index.ts, which prints the message and sets process.exitCode.
+      // That lets the process exit naturally, which flushes stdout/stderr
+      // even when either is a pipe (process.exit() does not — see
+      // src/cli/lib/exit.ts).
+      throw new Error(`Failed to open PAI registry: ${e}`);
     }
   }
   return _db;
@@ -467,7 +472,7 @@ Examples:
       const project = resolveIdentifier(db, identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
-        process.exit(1);
+        process.exitCode = 1;
         return;
       }
 
@@ -672,20 +677,15 @@ claude() {
     writeErr: (str) => process.stderr.write(err(str)),
   });
 
-  program.exitOverride((error) => {
-    if (error.code === "commander.helpDisplayed" || error.code === "commander.version") {
-      process.exit(0);
-    }
-    if (
-      error.code === "commander.missingArgument" ||
-      error.code === "commander.unknownOption" ||
-      error.code === "commander.unknownCommand"
-    ) {
-      process.exit(1);
-    }
-    console.error(err(error.message));
-    process.exit(1);
-  });
+  // Throw (the default exitOverride behaviour) instead of calling
+  // process.exit() directly. Commander has already written the help text
+  // or the formatted error message via configureOutput/writeErr above by
+  // the time this runs; throwing lets that CommanderError propagate up
+  // through parseAsync() to the top-level catch in cli/index.ts, which
+  // sets process.exitCode and returns instead of exiting immediately.
+  // A natural process exit always flushes stdout/stderr, even when either
+  // is a pipe — process.exit() does not (see src/cli/lib/exit.ts).
+  program.exitOverride();
 
   return program;
 }

@@ -643,7 +643,8 @@ export function cmdDedupe(
       console.error(
         err("Could not back up the registry — refusing to merge without one.")
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -686,7 +687,8 @@ export function cmdDedupe(
     run();
   } catch (e) {
     console.error(err(`Merge failed and was rolled back: ${String(e)}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log();

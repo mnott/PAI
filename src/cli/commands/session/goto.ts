@@ -63,7 +63,8 @@ export function cmdGoto(
       msg += `\n\nTip: pai find "${query}"  — search prompt history by keywords`;
     }
     console.error(err(msg));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const { session: matchedSession, friendlyName } = resolved;
@@ -104,7 +105,8 @@ export function cmdGoto(
           `  The directory may have moved or been deleted.`
       )
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // ---- 4. Build argv components ----
@@ -160,10 +162,12 @@ export function cmdGoto(
       );
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       printExitDir(projectDir);
-      process.exit(result.status ?? 0);
+      process.exitCode = result.status ?? 0;
+      return;
     } else {
       // Fallback path
       process.stderr.write(
@@ -183,10 +187,12 @@ export function cmdGoto(
       );
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       printExitDir(projectDir);
-      process.exit(result.status ?? 0);
+      process.exitCode = result.status ?? 0;
+      return;
     }
   } else {
     // No UUID at all — fresh start
@@ -201,9 +207,10 @@ export function cmdGoto(
     );
     if (result.error) {
       console.error(err(`Failed to launch claude: ${result.error.message}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     printExitDir(projectDir);
-    process.exit(result.status ?? 0);
+    process.exitCode = result.status ?? 0;
   }
 }

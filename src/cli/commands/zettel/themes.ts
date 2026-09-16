@@ -14,7 +14,8 @@ async function cmdThemes(opts: {
 }): Promise<void> {
   if (!opts.vaultProjectId) {
     console.error(err("  --vault-project-id is required"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const vaultProjectId = parseInt(opts.vaultProjectId, 10);
@@ -90,7 +91,8 @@ export function registerThemesCommand(parent: Command): void {
         await cmdThemes(opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

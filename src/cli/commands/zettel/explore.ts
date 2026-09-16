@@ -82,7 +82,8 @@ export function registerExploreCommand(parent: Command): void {
         await cmdExplore(note, opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

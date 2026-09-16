@@ -217,7 +217,8 @@ function cmdOpen(opts: { vault?: string }): void {
   if (!existsSync(vaultPath)) {
     console.error(err(`Vault not found at: ${vaultPath}`));
     console.error(dim("  Run: pai obsidian sync"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
@@ -228,7 +229,8 @@ function cmdOpen(opts: { vault?: string }): void {
   } catch (e) {
     console.error(err(`  Failed to open Obsidian: ${e}`));
     console.error(dim("  Ensure Obsidian is installed and the vault is registered in Obsidian."));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 

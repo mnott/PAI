@@ -11,6 +11,7 @@ import { readJsonStrict, writeJsonAtomic } from "../../../config/json-store.js";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { CONFIG_DIR, CONFIG_FILE } from "../../../daemon/config.js";
+import { exitAfterFlush } from "../../lib/exit.js";
 
 // ---------------------------------------------------------------------------
 // Chalk colour helpers
@@ -53,7 +54,10 @@ export function createRl() {
     line();
     line(c.dim("  Setup cancelled. Run `pai setup` again to restart."));
     line();
-    process.exit(0);
+    // Control can't return here — readline is still blocking on input, so
+    // there is no natural exit to fall through to. exitAfterFlush() waits
+    // for the lines above to actually reach the OS before terminating.
+    void exitAfterFlush(0);
   });
 
   return rl;

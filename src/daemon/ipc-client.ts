@@ -63,9 +63,15 @@ export class PaiClient {
   /**
    * Call a PAI tool by name with the given params.
    * Returns the tool result or throws on error.
+   *
+   * `timeoutMs` overrides the default 60s wait — for a caller on a hook's
+   * critical path (e.g. the threshold-triggered handover enqueue in
+   * `cli/commands/session/autosave.ts`) where the actual work happens later,
+   * asynchronously, in the daemon's worker loop, and only the cheap
+   * enqueue handshake itself should ever be waited on.
    */
-  async call(method: string, params: Record<string, unknown>): Promise<unknown> {
-    return this.send(method, params);
+  async call(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+    return this.send(method, params, timeoutMs);
   }
 
   /**
@@ -171,7 +177,8 @@ export class PaiClient {
    */
   private send(
     method: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    timeoutMs: number = IPC_TIMEOUT_MS
   ): Promise<unknown> {
     const socketPath = this.socketPath;
 
@@ -251,8 +258,8 @@ export class PaiClient {
       });
 
       timer = setTimeout(() => {
-        finish(new Error("IPC call timed out after 60s"));
-      }, IPC_TIMEOUT_MS);
+        finish(new Error(`IPC call timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
     });
   }
 }

@@ -452,7 +452,8 @@ export function cmdScan(db: Database, opts: { quick?: boolean } = {}): void {
     result = performScan(db);
   } catch (e) {
     console.error(err(String(e)));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (!opts.quick) {

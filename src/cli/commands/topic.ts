@@ -102,7 +102,8 @@ async function cmdCheck(
 
   if (threshold !== undefined && (isNaN(threshold) || threshold < 0 || threshold > 1)) {
     console.error(err("  --threshold must be a number between 0 and 1"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {
@@ -121,7 +122,8 @@ async function cmdCheck(
 
     // Exit with code 1 if a shift was detected (useful for scripting / hooks)
     if (result.shifted) {
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -130,7 +132,8 @@ async function cmdCheck(
     console.log(dim(`  ${msg}`));
     console.log(dim("  Start it with: pai daemon serve"));
     console.log();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 

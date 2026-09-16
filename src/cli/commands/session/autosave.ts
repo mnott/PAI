@@ -25,6 +25,7 @@ import {
   findTranscripts,
   resolveTranscriptDir,
 } from "../../../session/autosave.js";
+import { checkAndEnqueueContextHandover } from "../../../session/context-handover-trigger.js";
 import { resolveSessionLine, resolveNotePath, resolveProjectByCwd } from "./pause.js";
 import type { ProjectRow, SessionRow } from "./types.js";
 
@@ -76,14 +77,14 @@ function touchSentinel(rootPath: string): void {
 // Command
 // ---------------------------------------------------------------------------
 
-export function cmdAutosave(db: Database, opts: AutosaveOptions): void {
+export async function cmdAutosave(db: Database, opts: AutosaveOptions): Promise<void> {
   const minGap = parseInt(opts.minGap ?? String(DEFAULT_MIN_GAP), 10);
   const cwd = process.cwd();
 
   const project = resolveProjectByCwd(db, cwd) as ProjectRow | undefined;
-  if (!project) process.exit(0);
+  if (!project) return;
 
-  if (!opts.dryRun && tooRecent(project.root_path, minGap)) process.exit(0);
+  if (!opts.dryRun && tooRecent(project.root_path, minGap)) return;
 
   // The transcript lives in the Claude Code project directory, which the
   // registry already records as encoded_dir. Passing the session id matters:
@@ -96,9 +97,30 @@ export function cmdAutosave(db: Database, opts: AutosaveOptions): void {
     opts.sessionId
   );
 
+  // Threshold-triggered pre-compaction handover — runs on the same cadence
+  // as the rolling checkpoint below (same rate-limit gate above), but is
+  // otherwise independent of it: it must still check even on a tick where
+  // there is no new autosave body to write, because a session can sit idle
+  // on the CLI side while its token count keeps climbing from tool output.
+  // Best-effort and bounded (see context-handover-trigger.ts) — never lets a
+  // daemon hiccup slow this hook down or throw out of it.
+  if (opts.sessionId && !opts.dryRun) {
+    const liveTranscript = transcriptPaths[transcriptPaths.length - 1];
+    try {
+      await checkAndEnqueueContextHandover({
+        sessionId: opts.sessionId,
+        cwd,
+        transcriptPath: liveTranscript,
+      });
+    } catch {
+      // checkAndEnqueueContextHandover already catches its own errors; this
+      // is only a backstop against a bug in that catching.
+    }
+  }
+
   const body = buildAutosaveBody({ cwd, transcriptPaths });
   // Nothing worth recording — leave whatever is already there alone.
-  if (!body) process.exit(0);
+  if (!body) return;
 
   const session = db
     .prepare(
@@ -119,9 +141,8 @@ export function cmdAutosave(db: Database, opts: AutosaveOptions): void {
   if (opts.dryRun) {
     console.log(result.block);
     console.log(`\n[dry-run] action would be: ${result.action}`);
-    process.exit(0);
+    return;
   }
 
   touchSentinel(project.root_path);
-  process.exit(0);
 }

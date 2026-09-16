@@ -169,7 +169,7 @@ async function cmdStatus(): Promise<void> {
     console.log(dim("    Start with: pai daemon serve"));
     console.log(dim("    Or install as service: pai daemon install"));
     console.log();
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
@@ -213,7 +213,7 @@ function cmdRestart(): void {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`restart error: ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
@@ -236,7 +236,8 @@ function cmdInstall(): void {
     console.log(ok(`  Wrote launchd plist: ${PLIST_PATH}`));
   } catch (e) {
     console.error(err(`  Failed to write plist: ${e}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // 2. Load the plist (unload first in case it was already there)
@@ -288,7 +289,8 @@ function cmdInstall(): void {
       console.log(ok("  Updated ~/.claude.json to use daemon shim."));
     } catch (e) {
       console.error(err(`  Failed to write ~/.claude.json: ${e}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -390,7 +392,7 @@ async function cmdMigrate(connectionString?: string): Promise<void> {
 
   if (result.status !== 0) {
     console.error(err("  Migration failed. Check output above."));
-    process.exit(result.status ?? 1);
+    process.exitCode = result.status ?? 1;
   }
 }
 
@@ -416,7 +418,7 @@ function cmdLogs(opts: { lines?: string; follow?: boolean }): void {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(err(`Could not read log: ${msg}`));
-      process.exit(1);
+      process.exitCode = 1;
     }
   }
 }

@@ -88,7 +88,7 @@ export function cmdHere(
     target = realpathSync(opts.cwd ?? process.cwd());
   } catch {
     console.error(err(`Cannot resolve the current directory.`));
-    process.exit(1);
+    process.exitCode = 1;
     return;
   }
 
@@ -100,7 +100,7 @@ export function cmdHere(
       err(`"${name}" matches ${matches.length} projects — name one exactly:\n`) +
         matches.map((m) => dim(`  ${m.slug}  (${m.display_name})\n`)).join("")
     );
-    process.exit(1);
+    process.exitCode = 1;
     return;
   }
 
@@ -119,7 +119,7 @@ export function cmdHere(
           dim(`  ${target}\n`) +
           dim(`  Merge them: pai project merge ${owner.slug} ${p.slug} --execute`)
       );
-      process.exit(1);
+      process.exitCode = 1;
       return;
     }
 
@@ -160,7 +160,7 @@ export function cmdHere(
       err(`This directory is already registered as ${bold(owner.slug)} (${owner.display_name}).\n`) +
         dim(`  Rename it instead: pai project edit ${owner.slug} --display-name "${name}"`)
     );
-    process.exit(1);
+    process.exitCode = 1;
     return;
   }
 

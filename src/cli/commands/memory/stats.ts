@@ -38,7 +38,8 @@ export function registerStatsCommands(
         federation = openFederation();
       } catch (e) {
         console.error(err(`Failed to open federation database: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       // Never wait indefinitely on a lock. These are unbounded COUNT(*) scans
@@ -92,7 +93,8 @@ export function registerStatsCommands(
 
         if (!project) {
           console.error(err(`Project not found: ${projectSlug}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         const fileStats = federation
@@ -205,7 +207,8 @@ export function registerStatsCommands(
         if (val === undefined) {
           console.error(err(`Unknown setting: ${key}`));
           console.log(dim(`  Valid keys: mode, rerank, recencyBoostDays, defaultLimit, snippetLength`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         console.log(String(val));
         return;
@@ -215,7 +218,8 @@ export function registerStatsCommands(
       if (!validKeys.has(key)) {
         console.error(err(`Unknown setting: ${key}`));
         console.log(dim(`  Valid keys: ${[...validKeys].join(", ")}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       let fileConfig: Record<string, unknown> = {};
@@ -224,7 +228,8 @@ export function registerStatsCommands(
           fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;
         } catch {
           console.error(err(`Could not parse ${CONFIG_FILE}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       }
 
@@ -236,7 +241,8 @@ export function registerStatsCommands(
       if (key === "mode") {
         if (!["keyword", "semantic", "hybrid"].includes(value)) {
           console.error(err(`Invalid mode: ${value}. Must be keyword, semantic, or hybrid.`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         parsed = value;
       } else if (key === "rerank") {
@@ -245,7 +251,8 @@ export function registerStatsCommands(
         parsed = parseInt(value, 10);
         if (isNaN(parsed)) {
           console.error(err(`Invalid number: ${value}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       }
 
@@ -258,7 +265,7 @@ export function registerStatsCommands(
         console.log(dim(`  Restart daemon to apply: pai daemon restart`));
       } catch (e) {
         console.error(err(`Could not write config: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 }

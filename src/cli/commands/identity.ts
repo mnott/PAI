@@ -106,7 +106,8 @@ export function registerIdentityCommands(identityCmd: Command): void {
       const normalized = normalizeEmail(email);
       if (!normalized) {
         console.error(err("pai identity: ") + `Not a usable email address: ${email}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       const config = readConfig();
@@ -153,7 +154,8 @@ export function registerIdentityCommands(identityCmd: Command): void {
       const normalized = normalizeEmail(email);
       if (!normalized) {
         console.error(err("pai identity: ") + `Not a usable email address: ${email}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       const config = readConfig();

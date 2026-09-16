@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 export type WorkItemType =
   | "session-end"
   | "session-summary"
+  | "context-handover"
   | "note-update"
   | "todo-update"
   | "topic-detect"

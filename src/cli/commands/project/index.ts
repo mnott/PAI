@@ -152,7 +152,8 @@ export function registerProjectCommands(
       const project = resolveIdentifier(getDb(), identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       process.stdout.write(project.root_path + "\n");
     });

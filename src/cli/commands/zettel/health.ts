@@ -101,7 +101,8 @@ export function registerHealthCommand(parent: Command): void {
         await cmdHealth(opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

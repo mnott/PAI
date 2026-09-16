@@ -105,12 +105,12 @@ export function cmdCheckpoint(
   const minGapSeconds = parseInt(opts.minGap ?? "300", 10);
 
   const notesDir = findNotesDirForCwd();
-  if (!notesDir) process.exit(0);
+  if (!notesDir) return;
 
-  if (checkpointTooRecent(notesDir, minGapSeconds)) process.exit(0);
+  if (checkpointTooRecent(notesDir, minGapSeconds)) return;
 
   const notePath = findLatestNoteFile(notesDir);
-  if (!notePath) process.exit(0);
+  if (!notePath) return;
 
   const timestamp = new Date().toISOString();
   const block = `\n## Checkpoint — ${timestamp}\n${message}\n`;
@@ -126,9 +126,8 @@ export function cmdCheckpoint(
     } catch {
       /* ignore */
     }
-    process.exit(0);
+    return;
   }
 
   touchCheckpointSentinel(notesDir);
-  process.exit(0);
 }

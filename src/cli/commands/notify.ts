@@ -84,7 +84,8 @@ async function cmdStatus(): Promise<void> {
     console.log(dim(`  ${msg}`));
     console.log(dim("  Start it with: pai daemon serve"));
     console.log();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -110,7 +111,8 @@ async function cmdSet(opts: {
     ];
     if (!validModes.includes(opts.mode as NotificationMode)) {
       console.error(err(`Invalid mode: ${opts.mode}. Valid: ${validModes.join(", ")}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     patch.mode = opts.mode as NotificationMode;
   }
@@ -159,7 +161,8 @@ async function cmdSet(opts: {
     console.error(err("No changes specified. Use --mode, --enable, --disable, etc."));
     console.log(dim("  Example: pai notify set --mode voice"));
     console.log(dim("  Example: pai notify set --mode auto --enable macos --disable ntfy"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {
@@ -173,7 +176,8 @@ async function cmdSet(opts: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -208,7 +212,8 @@ async function cmdTest(opts: { event?: string }): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 
@@ -226,7 +231,8 @@ async function cmdSend(
     console.error(
       err(`Invalid event: ${event}. Valid: ${validEvents.join(", ")}`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {
@@ -248,7 +254,8 @@ async function cmdSend(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 }
 

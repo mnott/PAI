@@ -411,7 +411,8 @@ async function runUpdate(): Promise<void> {
   const repoDir = stepVerifyRepo();
   if (!repoDir) {
     line();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Step 2: Stash local changes
@@ -435,7 +436,8 @@ async function runUpdate(): Promise<void> {
     line();
     error("Update failed at build step. Check errors above.");
     line();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Step 6: Restart daemon
