@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,7 @@ import {
   contextFillThresholds,
   resolveAutocompactPct,
   measureCompactionTrigger,
+  selectedCompactionSamples,
   crossedThresholds,
   isImmediate,
   DEFAULT_CONTEXT_WINDOW,
@@ -336,7 +337,7 @@ describe("resolveAutocompactPct", () => {
 // ---------------------------------------------------------------------------
 
 describe("crossedThresholds", () => {
-  const thresholds = { warmupTokens: 900_000, refreshTokens: 960_000, immediateTokens: 985_000, effectiveTriggerTokens: 1_000_000, autocompactPct: 100, triggerSource: "configured" as const, windowConfirmed: true };
+  const thresholds = { warmupTokens: 900_000, refreshTokens: 960_000, immediateTokens: 985_000, effectiveTriggerTokens: 1_000_000, measuredTriggerTokens: null, configuredTriggerTokens: 1_000_000, autocompactPct: 100, triggerSource: "configured" as const, windowConfirmed: true };
 
   it("fires warmup only on a clean crossing", () => {
     expect(crossedThresholds(910_000, thresholds, [])).toEqual(["warmup"]);
@@ -360,7 +361,7 @@ describe("crossedThresholds", () => {
 });
 
 describe("isImmediate", () => {
-  const thresholds = { warmupTokens: 900_000, refreshTokens: 960_000, immediateTokens: 985_000, effectiveTriggerTokens: 1_000_000, autocompactPct: 100, triggerSource: "configured" as const, windowConfirmed: true };
+  const thresholds = { warmupTokens: 900_000, refreshTokens: 960_000, immediateTokens: 985_000, effectiveTriggerTokens: 1_000_000, measuredTriggerTokens: null, configuredTriggerTokens: 1_000_000, autocompactPct: 100, triggerSource: "configured" as const, windowConfirmed: true };
 
   it("is false below the immediate floor", () => {
     expect(isImmediate(950_000, thresholds)).toBe(false);
@@ -385,12 +386,13 @@ function encodeForFixture(cwd: string): string {
   return cwd.replace(/[/\s.-]/g, "-");
 }
 
-function compactBoundaryLine(preTokens: number, timestamp: string): string {
+function compactBoundaryLine(preTokens: number, timestamp: string, uuid?: string): string {
   return JSON.stringify({
     type: "system",
     subtype: "compact_boundary",
     compactMetadata: { trigger: "auto", preTokens },
     timestamp,
+    ...(uuid ? { uuid } : {}),
   });
 }
 
@@ -426,6 +428,75 @@ describe("measureCompactionTrigger", () => {
     try {
       const trigger = measureCompactionTrigger(cwd, projectsDir);
       expect(trigger).toBe(784_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("BUG FIX: orders by the EVENT'S OWN timestamp, not by file mtime — a stale file with a recent event beats a fresh file with an old one", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/mtime-bug";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+
+    // "old.jsonl" has an OLD file mtime but a RECENT event inside it (e.g. a
+    // conversation started long ago, archived, and never touched again on
+    // disk since). "new.jsonl" has a FRESH file mtime (touched just now) but
+    // an OLD event inside it. The old bug picked files by mtime first, so it
+    // would have scanned new.jsonl (mtime-fresh, event-old) and possibly
+    // missed old.jsonl (mtime-stale, event-recent) entirely if enough other
+    // fresh-mtime files crowded the file-selection cap.
+    const oldFile = join(projectDir, "old.jsonl");
+    const newFile = join(projectDir, "new.jsonl");
+    writeFileSync(oldFile, compactBoundaryLine(784_500, "2026-09-14T00:00:00.000Z") + "\n");
+    writeFileSync(newFile, compactBoundaryLine(998_000, "2026-08-16T00:00:00.000Z") + "\n");
+
+    const longAgo = new Date("2020-01-01T00:00:00.000Z");
+    utimesSync(oldFile, longAgo, longAgo); // file mtime: ancient
+    // newFile keeps its just-written (fresh) mtime.
+
+    try {
+      const trigger = measureCompactionTrigger(cwd, projectsDir);
+      // The correct answer is the minimum of the (only) two DISTINCT events
+      // by their own timestamps: 784,500 and 998,000 -> 784,500. A
+      // mtime-ordered implementation that dropped the mtime-ancient file
+      // would instead find only 998,000.
+      expect(trigger).toBe(784_500);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("BUG FIX: deduplicates an event mirrored into sessions/ — three copies of one old event must not masquerade as three distinct samples", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/dedup-bug";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(join(projectDir, "sessions"), { recursive: true });
+
+    // The SAME event (same uuid), once in the live top-level file and once
+    // in the sessions/ archive that mirrors it — this is the exact
+    // structure Claude Code produces when a session is archived. Without
+    // dedup, "most recent three" becomes three readings of this one old
+    // event, which is a stale trigger wearing a plausible sample count.
+    writeFileSync(
+      join(projectDir, "live.jsonl"),
+      compactBoundaryLine(998_267, "2026-09-10T00:00:00.000Z", "same-event-uuid") + "\n"
+    );
+    writeFileSync(
+      join(projectDir, "sessions", "archived.jsonl"),
+      compactBoundaryLine(998_267, "2026-09-10T00:00:00.000Z", "same-event-uuid") + "\n"
+    );
+    // One genuinely distinct, more recent event.
+    writeFileSync(
+      join(projectDir, "sessions", "recent.jsonl"),
+      compactBoundaryLine(786_000, "2026-09-13T00:00:00.000Z", "a-different-uuid") + "\n"
+    );
+
+    try {
+      const samples = selectedCompactionSamples(cwd, projectsDir);
+      // Two DISTINCT events, not three — the mirrored one counted once.
+      expect(samples).toHaveLength(2);
+      expect(measureCompactionTrigger(cwd, projectsDir)).toBe(786_000);
     } finally {
       rmSync(projectsDir, { recursive: true, force: true });
     }
@@ -511,5 +582,47 @@ describe("contextFillThresholds — trigger source", () => {
     } finally {
       rmSync(projectsDir, { recursive: true, force: true });
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // The clamp: effectiveTrigger = min(measured, configured). A measured
+  // value from a stale (pre-regime-change) history is honest but unsafe if
+  // used directly — real case: a project measured 998,267 while its actual
+  // current boundary (per a different, fresher project's history) is
+  // ~784,000. Using 998,267 outright would compute a warm-up of 898,267,
+  // above the real boundary, so the handover would never fire.
+  // ---------------------------------------------------------------------
+
+  it("CLAMPS a stale-HIGH measured value down to the configured one — the real CaseLeaf case", () => {
+    // measured=998,267 (this project's real, but stale, most-recent trigger)
+    // configured=800,000 (80% of a 1,000,000 window)
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 998_267 });
+    expect(t.measuredTriggerTokens).toBe(998_267);
+    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.triggerSource).toBe("measured-clamped");
+    expect(t.effectiveTriggerTokens).toBe(800_000); // min(998267, 800000)
+    expect(t.warmupTokens).toBe(700_000); // fires well before the real ~784,000 boundary
+  });
+
+  it("uses the measured value directly when it is LOWER than configured — no clamp needed", () => {
+    // measured=784,000, configured=800,000 -> measured wins, tighter warm-up.
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 784_000 });
+    expect(t.triggerSource).toBe("measured");
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+    expect(t.warmupTokens).toBe(684_000);
+  });
+
+  it("uses measured directly when it exactly equals configured (boundary case, not clamped)", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 800_000 });
+    expect(t.triggerSource).toBe("measured");
+    expect(t.effectiveTriggerTokens).toBe(800_000);
+  });
+
+  it("reports both raw values on the result even when one of them wasn't used, so the clamp is visible", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 998_267 });
+    // Both numbers are on the object — a caller can see what was measured
+    // AND what was configured, not just the winner.
+    expect(t.measuredTriggerTokens).toBe(998_267);
+    expect(t.configuredTriggerTokens).toBe(800_000);
   });
 });

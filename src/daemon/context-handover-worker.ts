@@ -117,18 +117,28 @@ function extractTurns(jsonlPath: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Process a `context-handover` work item. Best-effort throughout: a failed
- * or empty summarizer run logs and returns without writing a cache file —
- * never overwrites a previously good cache with nothing, and never throws
- * (the work queue would otherwise retry a job whose only cost is an LLM
- * call nobody is waiting on).
+ * Process a `context-handover` work item.
+ *
+ * THROWS on every failure path (missing input, no transcript, no turns, an
+ * empty/failed summarizer run) rather than logging and returning silently.
+ * That used to be a deliberate choice — avoid the work queue's own retry
+ * piling up redundant LLM calls — but it made a real failure invisible: a
+ * daemon restart mid-spawn (session 77084e72-...) left no cache, no error
+ * anywhere the work queue's own stats could show, and a trigger-side marker
+ * that (at the time) had already been set to "done". Throwing here makes
+ * work-queue-worker.ts call markFailed(), which logs prominently AND is
+ * visible via `work_queue_stats` / `pai daemon status` — not just a stderr
+ * line that can scroll away. It is a second, faster (seconds-to-minutes
+ * backoff) retry path alongside the primary one in context-handover-
+ * trigger.ts (which retries on its own ~5-minute cadence based on whether a
+ * cache actually appeared); the two are complementary, not redundant — a
+ * failed cache write costs nothing to retry twice.
  */
 export async function handleContextHandover(payload: ContextHandoverPayload): Promise<void> {
   const { cwd, sessionId, transcriptPath, threshold, urgent } = payload;
 
   if (!cwd || !sessionId) {
-    process.stderr.write("[context-handover] payload missing cwd or sessionId — skipping.\n");
-    return;
+    throw new Error("[context-handover] payload missing cwd or sessionId");
   }
 
   process.stderr.write(
@@ -139,14 +149,12 @@ export async function handleContextHandover(payload: ContextHandoverPayload): Pr
   let jsonlPath: string | null = transcriptPath && existsSync(transcriptPath) ? transcriptPath : null;
   if (!jsonlPath) jsonlPath = findLatestJsonl(cwd);
   if (!jsonlPath) {
-    process.stderr.write("[context-handover] No transcript found — skipping.\n");
-    return;
+    throw new Error(`[context-handover] No transcript found for ${cwd} (session=${sessionId})`);
   }
 
   const turns = extractTurns(jsonlPath);
   if (turns.length === 0) {
-    process.stderr.write("[context-handover] No turns extracted — skipping.\n");
-    return;
+    throw new Error(`[context-handover] No turns extracted from ${jsonlPath} (session=${sessionId})`);
   }
 
   const gitLog = await getGitContext(cwd);
@@ -166,8 +174,9 @@ export async function handleContextHandover(payload: ContextHandoverPayload): Pr
 
   const summary = await spawnSummarizer(prompt, "sonnet");
   if (!summary || !summary.trim()) {
-    process.stderr.write("[context-handover] sonnet produced no output — leaving any existing cache untouched.\n");
-    return;
+    // No cache write on this path — an existing cache from an earlier
+    // successful run is left untouched rather than clobbered with nothing.
+    throw new Error(`[context-handover] sonnet produced no output (session=${sessionId})`);
   }
 
   writeContextHandoverCache({

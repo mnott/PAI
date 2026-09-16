@@ -29,7 +29,7 @@
  * them) for the entire session.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -291,13 +291,6 @@ export const DEFAULT_AUTOCOMPACT_PCT = 80;
  *  take the minimum of. */
 const MEASURED_TRIGGER_SAMPLE_SIZE = 3;
 
-/** How many of a project's most-recently-modified transcripts to scan for
- *  compact_boundary events. compact_boundary events cluster in whichever
- *  files were touched most recently — a full-history scan would cost a lot
- *  for a long-lived project and buy nothing this doesn't already get from
- *  the last handful of files. */
-const MEASURED_TRIGGER_MAX_FILES = 8;
-
 export const THRESHOLD_MARGIN_TOKENS = {
   warmup: 100_000,
   refresh: 40_000,
@@ -328,16 +321,33 @@ function encodeProjectPath(cwd: string): string {
   return cwd.replace(/[/\s.-]/g, "-");
 }
 
-interface CompactBoundarySample {
+export interface CompactBoundarySample {
   preTokens: number;
   timestampMs: number;
+  /** ISO string, kept alongside timestampMs so callers can print it. */
+  timestamp: string;
+  /** The event's own uuid when present — the dedup key. Claude Code's
+   *  `sessions/` archive directory mirrors the live project transcript, so
+   *  the SAME compact_boundary event can legitimately appear in two files;
+   *  without deduping by identity, "most recent three" can silently become
+   *  three copies of one event, which is a stale reading wearing a
+   *  plausible-looking sample size. */
+  uuid?: string;
 }
 
+/** Every `.jsonl` transcript belonging to a project — top-level (the live
+ *  file) and `sessions/` (Claude Code's archive, which mirrors it). No file
+ *  is excluded and no ordering is applied here: ordering by EVENT
+ *  timestamp, not by file mtime, is the whole point (see
+ *  readCompactBoundarySamples) — a file's mtime does not reliably track
+ *  which events inside it are recent, and pre-filtering by mtime is exactly
+ *  what caused this function to return a stale, pre-regime-change trigger
+ *  on real data. */
 function listProjectTranscripts(cwd: string, projectsDir: string): string[] {
   const projectDir = join(projectsDir, encodeProjectPath(cwd));
   if (!existsSync(projectDir)) return [];
 
-  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  const paths: string[] = [];
   const collect = (dir: string): void => {
     if (!existsSync(dir)) return;
     let entries: string[];
@@ -347,28 +357,23 @@ function listProjectTranscripts(cwd: string, projectsDir: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (!entry.endsWith(".jsonl")) continue;
-      const full = join(dir, entry);
-      try {
-        candidates.push({ path: full, mtimeMs: statSync(full).mtimeMs });
-      } catch {
-        // Unreadable — skip.
-      }
+      if (entry.endsWith(".jsonl")) paths.push(join(dir, entry));
     }
   };
   collect(projectDir);
   collect(join(projectDir, "sessions"));
-
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return candidates.slice(0, MEASURED_TRIGGER_MAX_FILES).map((c) => c.path);
+  return paths;
 }
 
 /**
- * Every compact_boundary sample found in a project's most-recently-modified
- * transcripts, newest first.
+ * Every DISTINCT compact_boundary sample found across ALL of a project's
+ * transcripts (live + archived), newest first by the event's OWN timestamp
+ * — never by which file it came from or that file's mtime. Deduplicated by
+ * the event's uuid (falling back to a timestamp+preTokens key for the rare
+ * line with no uuid) so an event mirrored into `sessions/` is counted once.
  */
 function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBoundarySample[] {
-  const samples: CompactBoundarySample[] = [];
+  const byKey = new Map<string, CompactBoundarySample>();
 
   for (const path of listProjectTranscripts(cwd, projectsDir)) {
     let raw: string;
@@ -384,6 +389,7 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
         type?: string;
         subtype?: string;
         timestamp?: string;
+        uuid?: string;
         compactMetadata?: { preTokens?: number };
       };
       try {
@@ -396,29 +402,55 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
       if (typeof preTokens !== "number" || !Number.isFinite(preTokens)) continue;
       const timestampMs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
       if (!Number.isFinite(timestampMs)) continue;
-      samples.push({ preTokens, timestampMs });
+
+      const key = entry.uuid ?? `${timestampMs}:${preTokens}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, { preTokens, timestampMs, timestamp: entry.timestamp!, uuid: entry.uuid });
+      }
     }
   }
 
-  samples.sort((a, b) => b.timestampMs - a.timestampMs);
-  return samples;
+  return [...byKey.values()].sort((a, b) => b.timestampMs - a.timestampMs);
+}
+
+/**
+ * The most recent MEASURED_TRIGGER_SAMPLE_SIZE distinct compact_boundary
+ * events for a project, newest first — exposed on its own (not just the
+ * derived minimum) so the number `measureCompactionTrigger` returns is
+ * checkable: print these and the timestamps prove which three events
+ * produced it, rather than asking for trust.
+ */
+export function selectedCompactionSamples(
+  cwd: string,
+  projectsDir: string = CLAUDE_PROJECTS_DIR
+): CompactBoundarySample[] {
+  if (!cwd) return [];
+  return readCompactBoundarySamples(cwd, projectsDir).slice(0, MEASURED_TRIGGER_SAMPLE_SIZE);
 }
 
 /**
  * The measured compaction trigger for a project, or null when it has no
  * compaction history yet (a brand-new project, or one whose transcripts
  * this process cannot read). Minimum of the most recent
- * MEASURED_TRIGGER_SAMPLE_SIZE compact_boundary events — see the module
- * comment above for why minimum, not mean.
+ * MEASURED_TRIGGER_SAMPLE_SIZE DISTINCT compact_boundary events, ordered by
+ * the events' own timestamps across every transcript the project has
+ * (live and archived) — see the module comment above for why minimum, not
+ * mean, and readCompactBoundarySamples for why "distinct" and "own
+ * timestamp" both matter (a file-mtime-ordered, non-deduplicated version of
+ * this returned a stale pre-regime-change trigger on real project data).
  */
 export function measureCompactionTrigger(
   cwd: string,
   projectsDir: string = CLAUDE_PROJECTS_DIR
 ): number | null {
-  if (!cwd) return null;
-  const samples = readCompactBoundarySamples(cwd, projectsDir).slice(0, MEASURED_TRIGGER_SAMPLE_SIZE);
+  const samples = selectedCompactionSamples(cwd, projectsDir);
   if (samples.length === 0) return null;
-  return Math.min(...samples.map((s) => s.preTokens));
+  const trigger = Math.min(...samples.map((s) => s.preTokens));
+  console.error(
+    `[context-fill] measured trigger for ${cwd}: ${trigger} (minimum of ` +
+    samples.map((s) => `${s.preTokens}@${s.timestamp}`).join(", ") + ")"
+  );
+  return trigger;
 }
 
 /**
@@ -453,20 +485,36 @@ export type ThresholdName = "warmup" | "refresh";
 
 /** Which basis actually produced effectiveTriggerTokens — reported so the
  *  number is checkable rather than trusted. */
-export type TriggerSource = "measured" | "configured";
+export type TriggerSource = "measured" | "configured" | "measured-clamped";
 
 export interface ContextFillThresholds {
   warmupTokens: number;
   refreshTokens: number;
   immediateTokens: number;
-  /** The derived compaction trigger these were measured back from. */
+  /** The derived compaction trigger these were measured back from —
+   *  min(measured, configured) when a measured value exists. */
   effectiveTriggerTokens: number;
-  /** The autocompact percentage from the configured chain — computed and
-   *  reported even when `triggerSource` is "measured" (in which case it
-   *  describes what the fallback WOULD have used, not what was used). */
+  /** The raw measured value from this project's own compact_boundary
+   *  history, before any clamping — null when the project has no history.
+   *  Kept alongside effectiveTriggerTokens so a clamp is visible rather
+   *  than silent: a caller can see both what was measured and what was
+   *  actually used. */
+  measuredTriggerTokens: number | null;
+  /** The raw configured-chain value (env override or default, as a
+   *  fraction of the window) — always computed and reported, even when it
+   *  wasn't what ended up being used. */
+  configuredTriggerTokens: number;
+  /** The autocompact percentage from the configured chain. */
   autocompactPct: number;
-  /** "measured" when this project has compact_boundary history and that was
-   *  used; "configured" when it fell back to the env-override/default chain. */
+  /** "measured": a measured value existed and was <= configured, so it was
+   *  used directly — the better estimate, since it reflects reality the
+   *  configured percentage cannot know.
+   *  "measured-clamped": a measured value existed but was HIGHER than
+   *  configured — it reflects a regime that may no longer apply (this
+   *  project's last compaction predates a since-changed trigger), so the
+   *  lower, safer configured value was used instead.
+   *  "configured": no measured value exists yet (no compaction history for
+   *  this project) — the configured chain is all there is. */
   triggerSource: TriggerSource;
   /** True when these were computed against a window size Claude Code itself
    *  reported (the statusline source). False when the window is only an
@@ -489,12 +537,32 @@ export interface ContextFillThresholdOpts {
 }
 
 /**
- * Derive warmup/refresh/immediate thresholds from a fill reading, preferring
- * this project's own measured compaction history over the configured
- * override chain — see the module comment above for why. Margins are
- * clamped at 0 (and logged) for a window small enough that a margin would
- * otherwise go negative — a pathological input should degrade to "fire
- * immediately", never to a threshold below zero.
+ * Derive warmup/refresh/immediate thresholds from a fill reading.
+ *
+ * effectiveTrigger = min(measured, configuredChainValue) when a measured
+ * value exists — NOT the measured value outright. A project whose newest
+ * compaction predates a regime change measures a stale-HIGH trigger: a real
+ * case on this machine measured 998,267 for a project whose ACTUAL current
+ * boundary (from a different project's fresher history, cross-checked
+ * independently) is ~784,000 — using 998,267 directly would compute a
+ * warm-up of 898,267, above the real boundary, so the handover would never
+ * fire there. The measurement is honest; it is just old.
+ *
+ * The minimum is correct in both directions: the measured value is the
+ * better estimate when it is LOWER than configured (it reflects reality the
+ * configured percentage cannot know — see the module comment above, the
+ * 100%-to-78% regime change this project itself lived through); it is
+ * unsafe when it is HIGHER (it reflects a regime that no longer applies).
+ * Taking the minimum costs nothing in the safe direction — one wasted
+ * summary if the project's regime actually did move up — and prevents the
+ * unsafe direction, where a stale-high measurement suppresses the handover
+ * past the real boundary. That asymmetry is the same one the 80-not-100
+ * default was chosen for.
+ *
+ * Margins below effectiveTrigger are clamped at 0 (and logged) for a window
+ * small enough that a margin would otherwise go negative — a pathological
+ * input should degrade to "fire immediately", never to a threshold below
+ * zero.
  */
 export function contextFillThresholds(
   reading: ContextFillReading,
@@ -505,25 +573,38 @@ export function contextFillThresholds(
   const autocompactPct = resolveAutocompactPct(env);
   const configuredTriggerTokens = Math.round(reading.windowSize * (autocompactPct / 100));
 
-  const measured = opts.measuredTrigger !== undefined
+  const measuredTriggerTokens = opts.measuredTrigger !== undefined
     ? opts.measuredTrigger
     : opts.cwd
       ? measureCompactionTrigger(opts.cwd)
       : null;
 
-  const triggerSource: TriggerSource = measured !== null ? "measured" : "configured";
-  const effectiveTriggerTokens = measured !== null ? measured : configuredTriggerTokens;
+  let effectiveTriggerTokens: number;
+  let triggerSource: TriggerSource;
 
-  if (triggerSource === "measured") {
+  if (measuredTriggerTokens === null) {
+    effectiveTriggerTokens = configuredTriggerTokens;
+    triggerSource = "configured";
     console.error(
-      `[context-fill] trigger source: MEASURED — ${effectiveTriggerTokens} tokens ` +
-      `(minimum of the most recent ${MEASURED_TRIGGER_SAMPLE_SIZE} compact_boundary events for ` +
-      `this project; the configured chain would have given ${configuredTriggerTokens}).`
+      `[context-fill] trigger source: CONFIGURED — no compaction history for this project yet. ` +
+      `measured=none, configured=${configuredTriggerTokens} (${autocompactPct}% of a ${reading.windowSize}-token ` +
+      `window) -> using ${effectiveTriggerTokens}.`
+    );
+  } else if (measuredTriggerTokens <= configuredTriggerTokens) {
+    effectiveTriggerTokens = measuredTriggerTokens;
+    triggerSource = "measured";
+    console.error(
+      `[context-fill] trigger source: MEASURED — measured=${measuredTriggerTokens} ` +
+      `(minimum of the most recent ${MEASURED_TRIGGER_SAMPLE_SIZE} compact_boundary events), ` +
+      `configured=${configuredTriggerTokens} -> using ${effectiveTriggerTokens} (measured, ≤ configured).`
     );
   } else {
+    effectiveTriggerTokens = configuredTriggerTokens;
+    triggerSource = "measured-clamped";
     console.error(
-      `[context-fill] trigger source: CONFIGURED — no compaction history for this project yet, ` +
-      `using ${effectiveTriggerTokens} tokens (${autocompactPct}% of a ${reading.windowSize}-token window).`
+      `[context-fill] trigger source: MEASURED-CLAMPED — measured=${measuredTriggerTokens} is HIGHER than ` +
+      `configured=${configuredTriggerTokens} (a stale regime this project's history predates) -> ` +
+      `using ${effectiveTriggerTokens} (configured, the safer bound).`
     );
   }
 
@@ -541,6 +622,8 @@ export function contextFillThresholds(
     refreshTokens: clamp("refresh", effectiveTriggerTokens - THRESHOLD_MARGIN_TOKENS.refresh),
     immediateTokens: clamp("immediate", effectiveTriggerTokens - THRESHOLD_MARGIN_TOKENS.immediate),
     effectiveTriggerTokens,
+    measuredTriggerTokens,
+    configuredTriggerTokens,
     autocompactPct,
     triggerSource,
     windowConfirmed,
