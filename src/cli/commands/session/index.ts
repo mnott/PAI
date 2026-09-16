@@ -201,8 +201,8 @@ export function registerSessionCommands(
       "240"
     )
     .option("--dry-run", "Print the block that would be written and exit")
-    .action((opts: { sessionId?: string; minGap?: string; dryRun?: boolean }) => {
-      cmdAutosave(getDb(), opts);
+    .action(async (opts: { sessionId?: string; minGap?: string; dryRun?: boolean }) => {
+      await cmdAutosave(getDb(), opts);
     });
 
   // pai session active [--minutes N] [--json]

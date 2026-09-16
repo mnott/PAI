@@ -104,7 +104,8 @@ export function cmdName(
 
   if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(shortname)) {
     console.error(err(`Invalid name "${shortname}". Use letters, digits, hyphens, underscores. Must start with a letter.`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const conflictProject = db
@@ -112,7 +113,8 @@ export function cmdName(
     .get(shortname, project.id) as { id: number } | undefined;
   if (conflictProject) {
     console.error(err(`"${shortname}" is already a project slug.`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const conflictAlias = db
@@ -120,7 +122,8 @@ export function cmdName(
     .get(shortname) as { project_id: number } | undefined;
   if (conflictAlias && conflictAlias.project_id !== project.id) {
     console.error(err(`"${shortname}" is already used by another project.`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (!conflictAlias) {
@@ -147,7 +150,8 @@ export function cmdUnname(db: Database, shortname: string): void {
 
   if (!alias) {
     console.error(err(`No named project found: "${shortname}"`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   db.prepare("DELETE FROM aliases WHERE alias = ?").run(shortname);
@@ -349,7 +353,8 @@ export function cmdConfig(
   if (!identifier) {
     console.error(err("Specify a project: pai project config <name-or-slug>"));
     console.error(dim("  Or use --defaults for global defaults, --options for available keys."));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const project = resolveIdentifier(db, identifier) ?? requireProject(db, identifier);

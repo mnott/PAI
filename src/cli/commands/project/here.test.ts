@@ -165,13 +165,14 @@ describe("refusing rather than duplicating", () => {
     seed("owner-proj", "Owner Proj", realpathSync(dest), encoded);
     seed("other-proj", "Other Proj", join(tmp, "other"));
 
-    const exit = vi.spyOn(process, "exit").mockImplementation(((): never => {
-      throw new Error("exit");
-    }) as never);
-
-    expect(() => cmdHere(db, "Other Proj", { cwd: dest })).toThrow("exit");
+    // cmdHere sets process.exitCode and returns normally on refusal — it no
+    // longer calls process.exit() (see src/cli/lib/exit.ts for why: exit()
+    // can truncate output still in flight to a pipe).
+    process.exitCode = undefined;
+    cmdHere(db, "Other Proj", { cwd: dest });
+    expect(process.exitCode).toBe(1);
     expect(rowFor("other-proj")?.root_path).toBe(join(tmp, "other")); // unchanged
-    exit.mockRestore();
+    process.exitCode = undefined;
   });
 
   it("refuses an ambiguous name instead of guessing", () => {
@@ -180,12 +181,10 @@ describe("refusing rather than duplicating", () => {
     seed("alpha-one", "Alpha One", join(tmp, "a1"));
     seed("alpha-two", "Alpha Two", join(tmp, "a2"));
 
-    const exit = vi.spyOn(process, "exit").mockImplementation(((): never => {
-      throw new Error("exit");
-    }) as never);
-
-    expect(() => cmdHere(db, "Alpha", { cwd: dest })).toThrow("exit");
-    exit.mockRestore();
+    process.exitCode = undefined;
+    cmdHere(db, "Alpha", { cwd: dest });
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 });
 

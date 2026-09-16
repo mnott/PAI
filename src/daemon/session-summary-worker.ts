@@ -148,7 +148,7 @@ function encodeProjectPath(cwd: string): string {
  *   ~/.claude/projects/<encoded-path>/sessions/*.jsonl
  *   ~/.claude/projects/<encoded-path>/<uuid>.jsonl (legacy)
  */
-function findLatestJsonl(cwd: string): string | null {
+export function findLatestJsonl(cwd: string): string | null {
   const encoded = encodeProjectPath(cwd);
   const projectDir = join(CLAUDE_PROJECTS_DIR, encoded);
 
@@ -295,7 +295,7 @@ function extractFromJsonl(jsonlPath: string, model: string = "sonnet"): Extracte
 }
 
 /** Convert Claude content (string or content block array) to plain text. */
-function contentToText(content: unknown): string {
+export function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -332,7 +332,7 @@ function isNoise(text: string): boolean {
  * Get git log for the session period.
  * Falls back gracefully if git is not available or the dir is not a repo.
  */
-async function getGitContext(cwd: string, sinceTime?: string): Promise<string> {
+export async function getGitContext(cwd: string, sinceTime?: string): Promise<string> {
   let since = "6 hours ago";
   if (sinceTime) {
     // sinceTime may be a Unix epoch (seconds as string) or already ISO 8601
@@ -400,7 +400,7 @@ function findClaudeBinary(): string | null {
  *   - haiku: fallback / budget mode
  * Returns the generated text, or null if spawning fails.
  */
-async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promise<string | null> {
+export async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
     process.stderr.write(

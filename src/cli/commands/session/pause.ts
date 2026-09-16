@@ -178,18 +178,21 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
         chalk.red("pai pause: ") +
           `Could not read checkpoint body from ${opts.bodyFile}: ${String(err)}`
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     if (!body) {
       console.error(
         chalk.red("pai pause: ") +
           `Checkpoint body at ${opts.bodyFile} is empty.`
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   } else if (!opts.noBody) {
     printMissingBodyError();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // ---- 2. Resolve project by cwd ----
@@ -202,7 +205,8 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
         "Current directory is not within a registered PAI project.\n" +
         `  cwd: ${cwd}`
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // ---- 3. Resolve latest session ----
@@ -288,7 +292,8 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
     console.error(
       chalk.red("pai pause: ") + `Failed to write TODO.md: ${result.error}`
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (opts.dryRun) {

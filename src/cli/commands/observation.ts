@@ -135,7 +135,8 @@ async function cmdList(opts: {
   } catch (e) {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log();
@@ -218,7 +219,8 @@ async function cmdSearch(
   } catch (e) {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Client-side text filter (observation_query doesn't support text search)
@@ -276,7 +278,8 @@ async function cmdStats(): Promise<void> {
   } catch (e) {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log();
@@ -345,7 +348,8 @@ export function registerObservationCommands(parent: Command): void {
         await cmdList(opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 
@@ -361,7 +365,8 @@ export function registerObservationCommands(parent: Command): void {
         await cmdSearch(query, opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 
@@ -374,7 +379,8 @@ export function registerObservationCommands(parent: Command): void {
         await cmdStats();
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

@@ -1,6 +1,48 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)" session-id="01b8b0de-c33d-423f-8323-b822e406cfc4" ts="2026-09-10T16:46:49.901Z" -->
+<!-- pai:checkpoint authored="auto" session="0023 - 2026-09-16 - Memanto Architectural Review And Pai Configuration Verification" session-id="3793827d-3fdc-445d-98aa-ad767220faa6" ts="2026-09-16T09:08:13.144Z" -->
+
+> **Last session:** 0023 - 2026-09-16 - Memanto Architectural Review And Pai Configuration Verification
+> **Paused at:** 2026-09-16T09:08:13.144Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 3793827d-3fdc-445d-98aa-ad767220faa6`
+
+T
+i=ckpt-2026-09-16T09-08-13.072Z
+g=what's this do you happen to know "knowledgeconstructiond has been using more than 95% CPU for over 30 seconds. What would you like to do about it?"
+d=look at this and see what we can steal https://github.com/moorcheh-ai/memanto | well one of the things we should actually evaluate is the context change / discussion observer. I've noticed, recently, that when a session runs into a compaction, it's later self starts very much lob… | so can you do that for me | [Session:◑ AIBroker (claude)] R i=ctx-observer-20260916 @m=src/daemon/manage.ts (pre-edit, via git show HEAD) r=+ q6 answered from the code and the state files. The root cause is neither the constant… | retry
+t=?
+@1=Notes/TODO.md
+@2=src/cli/commands/daemon.ts
+@3=src/cli/commands/db.ts
+@4=src/cli/commands/identity.ts
+@5=src/cli/commands/kg.ts
+@6=src/cli/commands/mcp.ts
+@7=src/cli/commands/memory/embed.ts
+@8=src/cli/commands/memory/index-cmd.ts
+@9=src/cli/commands/memory/search.ts
+@10=src/cli/commands/memory/stats.ts
+@11=src/cli/commands/notify.ts
+@12=src/cli/commands/observation.ts
+@13=src/cli/commands/obsidian.ts
+@14=src/cli/commands/project/commands.ts
+@15=src/cli/commands/project/helpers.ts
+@16=src/cli/commands/project/here.test.ts
+@17=src/cli/commands/project/here.ts
+z=auto ckpt (no model); main@a2699d0 Session rollover.; 20 dirty; +48 paths; git status for detail
+
+<!-- /pai:checkpoint -->
+
+---
+## Previous handovers
+
+<!-- pai:archived-handover session="0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)" ts="2026-09-10T16:46:49.901Z" -->
+
+### 0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format) — checkpointed 2026-09-10T16:46:49.901Z
+
+
 
 > **Last session:** 0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)
 > **Paused at:** 2026-09-10T16:46:49.901Z
@@ -26,10 +68,7 @@
 
 - `Notes/TODO.md` was already modified at session start (from a previous session); no code was changed in this session.
 
-<!-- /pai:checkpoint -->
-
----
-## Previous handovers
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging" ts="2026-08-04T18:37:48.986Z" -->
 
@@ -1167,4 +1206,4 @@ Fixes, in dependency order:
 
 ---
 
-*Last updated: 2026-08-04T00:45:40.610Z*
+*Last updated: 2026-09-16T09:04:11.243Z*

@@ -26,7 +26,8 @@ export function cmdMerge(
   } catch (e) {
     if (e instanceof MergeError) {
       console.error(err(`  ${e.message}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     throw e;
   }

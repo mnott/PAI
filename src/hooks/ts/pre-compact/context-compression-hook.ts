@@ -28,10 +28,12 @@ import {
   findNotesDir,
   renameSessionNote,
   updateTodoContinue,
-  calculateSessionTokens,
   isProbeSession,
   WorkItem,
 } from '../lib/project-utils';
+import { getContextFill, formatContextFill } from '../lib/context-fill.js';
+import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
+import { readContextHandoverCache } from '../lib/context-handover-cache.js';
 
 interface HookInput {
   session_id: string;
@@ -40,6 +42,10 @@ interface HookInput {
   hook_event_name: string;
   compact_type?: string;
   trigger?: string;
+  /** Session's scratchpad directory, when the harness provides one — used to
+   *  exclude scratch files from the "Files modified" list (see
+   *  isNoiseFilePath). */
+  scratchpad_dir?: string;
 }
 
 const DAEMON_SOCKET = process.env.PAI_SOCKET ?? '/tmp/pai.sock';
@@ -52,29 +58,21 @@ interface TranscriptData {
   captures: string[];
   lastCompleted: string;
   filesModified: string[];
+  /** Count of modified-file paths dropped as noise (tmp/jobs/scratchpad). */
+  filesExcluded: number;
   workItems: WorkItem[];
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Turn Claude content (string or content block array) into plain text. */
-function contentToText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) => {
-        if (typeof c === 'string') return c;
-        if (c?.text) return c.text;
-        if (c?.content) return String(c.content);
-        return '';
-      })
-      .join(' ')
-      .trim();
-  }
-  return '';
-}
+//
+// contentToText, isNoiseFilePath, and preferCwdFiles live in
+// ../lib/transcript-text.ts, not here — this file calls `main()` and
+// `process.exit()` at import time, which makes it unsafe to import from a
+// test. Splitting the pure, bug-fixed logic out is what lets those two bugs
+// (the "[object Object]" content bug and the tmp/jobs noise-crowding bug)
+// carry a real regression test instead of only a manual before/after digest.
 
 function getTranscriptStats(transcriptPath: string): { messageCount: number; isLarge: boolean } {
   try {
@@ -101,13 +99,14 @@ function getTranscriptStats(transcriptPath: string): { messageCount: number; isL
 // Unified transcript parser — single pass extracts everything
 // ---------------------------------------------------------------------------
 
-function parseTranscript(transcriptPath: string): TranscriptData {
+function parseTranscript(transcriptPath: string, scratchpadDir?: string): TranscriptData {
   const data: TranscriptData = {
     userMessages: [],
     summaries: [],
     captures: [],
     lastCompleted: '',
     filesModified: [],
+    filesExcluded: 0,
     workItems: [],
   };
 
@@ -175,8 +174,11 @@ function parseTranscript(transcriptPath: string): TranscriptData {
             if (block.type === 'tool_use') {
               const tool = block.name;
               if ((tool === 'Edit' || tool === 'Write') && block.input?.file_path) {
-                if (!data.filesModified.includes(block.input.file_path)) {
-                  data.filesModified.push(block.input.file_path);
+                const fp = block.input.file_path;
+                if (isNoiseFilePath(fp, scratchpadDir)) {
+                  data.filesExcluded++;
+                } else if (!data.filesModified.includes(fp)) {
+                  data.filesModified.push(fp);
                 }
               }
             }
@@ -220,10 +222,19 @@ function formatSessionState(data: TranscriptData, cwd?: string): string | null {
     for (const c of recentCaptures) parts.push(`- ${c.slice(0, 150)}`);
   }
 
-  const files = data.filesModified.slice(-10);
+  // Noise (tmp/jobs/scratchpad) is already excluded at collection time — see
+  // isNoiseFilePath. Here, prefer files inside the session's own working
+  // directory when there are more than fit in the slice, so an unrelated
+  // repo touched in passing doesn't crowd out the files that matter.
+  const files = preferCwdFiles(data.filesModified, cwd).slice(-10);
   if (files.length > 0) {
     parts.push('\nFiles modified this session:');
     for (const f of files) parts.push(`- ${f}`);
+  } else if (data.filesExcluded > 0) {
+    parts.push(
+      `\nFiles modified this session: none in the working directory ` +
+      `(excluded ${data.filesExcluded} noise path(s) under tmp/jobs/scratchpad)`
+    );
   }
 
   if (data.lastCompleted) {
@@ -315,8 +326,29 @@ function loadCumulativeState(notesDir: string): TranscriptData | null {
       captures: raw.captures || [],
       lastCompleted: raw.lastCompleted || '',
       filesModified: raw.filesModified || [],
+      filesExcluded: raw.filesExcluded || 0,
       workItems: raw.workItems || [],
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Peek at `.compact-state.json`'s `lastUpdated` — the timestamp of THIS
+ * session's previous compaction — without pulling it into TranscriptData's
+ * contract. Read before `saveCumulativeState` overwrites the file for the
+ * current compaction, so callers can tell "a cached handover generated
+ * since the last compaction" from "a cached handover left over from before
+ * it, now stale". Returns null when there is no previous compaction (the
+ * first one this session) — treated as "any cached handover is fresh".
+ */
+function readPreviousCompactionTimestamp(notesDir: string): string | null {
+  try {
+    const filePath = join(notesDir, CUMULATIVE_STATE_FILE);
+    if (!existsSync(filePath)) return null;
+    const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+    return typeof raw.lastUpdated === 'string' ? raw.lastUpdated : null;
   } catch {
     return null;
   }
@@ -339,6 +371,7 @@ function mergeTranscriptData(accumulated: TranscriptData | null, current: Transc
     captures: mergeArrays(accumulated.captures, current.captures),
     lastCompleted: current.lastCompleted || accumulated.lastCompleted,
     filesModified: mergeArrays(accumulated.filesModified, current.filesModified),
+    filesExcluded: accumulated.filesExcluded + current.filesExcluded,
     workItems: [...accumulated.workItems, ...newWorkItems],
   };
 }
@@ -507,19 +540,33 @@ async function main() {
   }
 
   const compactType = hookInput?.compact_type || hookInput?.trigger || 'auto';
-  let tokenCount = 0;
+  let ntfyTokenDisplay: string | null = null;
 
   if (hookInput?.transcript_path) {
     const stats = getTranscriptStats(hookInput.transcript_path);
-    tokenCount = calculateSessionTokens(hookInput.transcript_path);
-    const tokenDisplay = tokenCount > 1000
-      ? `${Math.round(tokenCount / 1000)}k`
-      : String(tokenCount);
+
+    // BUG (real headers pulled from this machine's history): "~995073k
+    // tokens", "~2135399k tokens" — 995 million and 2.1 billion. The old
+    // source, calculateSessionTokens, sums usage across EVERY line in the
+    // transcript, which is a lifetime token-spend counter, not a context
+    // fill reading — it necessarily exceeds the window on any long session
+    // and is not what "context compression triggered at ~X tokens" means.
+    // getContextFill reads the most recent usage entry only (or the
+    // statusline's own reading), which is the actual current fill and can
+    // never legitimately exceed the window. formatContextFill still
+    // clamps-and-flags rather than trust that, and reports "unknown"
+    // instead of guessing when neither source has an answer.
+    const fill = getContextFill({
+      sessionId: hookInput.session_id,
+      transcriptPath: hookInput.transcript_path,
+    });
+    const tokenDisplay = formatContextFill(fill).text;
+    ntfyTokenDisplay = tokenDisplay;
 
     // -----------------------------------------------------------------
     // Single-pass transcript parsing + cumulative state merge
     // -----------------------------------------------------------------
-    const data = parseTranscript(hookInput.transcript_path);
+    const data = parseTranscript(hookInput.transcript_path, hookInput.scratchpad_dir);
 
     // Find notes directory early — needed for cumulative state
     let notesInfo: { path: string; isLocal: boolean };
@@ -533,6 +580,10 @@ async function main() {
 
     // Load accumulated state from previous compactions and merge
     const accumulated = loadCumulativeState(notesInfo.path);
+    // Read BEFORE saveCumulativeState (below) overwrites this file for the
+    // CURRENT compaction — this is the previous one's timestamp, the
+    // freshness line a cached handover has to clear (see the injection step).
+    const previousCompactionAt = readPreviousCompactionTimestamp(notesInfo.path);
     const merged = mergeTranscriptData(accumulated, data);
     const state = formatSessionState(merged, hookInput.cwd);
 
@@ -640,12 +691,43 @@ async function main() {
         ? `\nSESSION NOTE: ${notePath}\nIf this note still has a generic title (e.g. "New Session", "Context Compression"),\nrename it based on actual work done and add a rich summary.`
         : '';
 
+      // -------------------------------------------------------------------
+      // ADDITIVE: a model-written handover (decisions/reasoning/open threads
+      // — see the threshold-triggered context-handover-worker) sits ALONGSIDE
+      // the mechanical scrape above, never replaces it. The scrape is the
+      // floor and stays intact on every path, so this is never worse than
+      // the pre-existing behaviour — only sometimes better. "Fresh" means
+      // generated after this session's PREVIOUS compaction: a handover
+      // cached before that point describes state the last compaction
+      // already accounted for, not what has happened since.
+      // -------------------------------------------------------------------
+      const cachedHandover = readContextHandoverCache(hookInput.session_id);
+      const handoverIsFresh =
+        cachedHandover !== null &&
+        (!previousCompactionAt || new Date(cachedHandover.generatedAt) > new Date(previousCompactionAt));
+
+      const sourceLabel = handoverIsFresh
+        ? `model-written handover (${cachedHandover!.model}, generated ${cachedHandover!.generatedAt}, ` +
+          `threshold=${cachedHandover!.threshold}) + mechanical scrape`
+        : 'mechanical scrape only (no fresh model-written handover was available)';
+
+      const handoverBlock = handoverIsFresh
+        ? [
+            '',
+            '--- MODEL-WRITTEN HANDOVER (decisions, reasoning, open threads — not in the scrape above) ---',
+            cachedHandover!.summary,
+            '--- end model-written handover ---',
+          ].join('\n')
+        : '';
+
       const injection = [
         '<system-reminder>',
         `SESSION STATE RECOVERED AFTER COMPACTION (${compactType}, ~${tokenDisplay} tokens)`,
+        `HANDOVER SOURCE: ${sourceLabel}`,
         '',
         stateText,
         noteInfo,
+        handoverBlock,
         '',
         'IMPORTANT: This session state was captured before context compaction.',
         'Use it to maintain continuity. Continue the conversation from where',
@@ -687,8 +769,8 @@ async function main() {
   } catch { /* non-fatal */ }
 
   // Send ntfy.sh notification
-  const ntfyMessage = tokenCount > 0
-    ? `Auto-pause: ~${Math.round(tokenCount / 1000)}k tokens`
+  const ntfyMessage = ntfyTokenDisplay && ntfyTokenDisplay !== 'unknown'
+    ? `Auto-pause: ~${ntfyTokenDisplay} tokens`
     : 'Context compressing';
   await sendNtfyNotification(ntfyMessage);
 

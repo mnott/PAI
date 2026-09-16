@@ -73,7 +73,8 @@ function cmdInstall(): void {
     writeClaudeJson(config);
   } catch (e) {
     console.error(err(`Failed to write ~/.claude.json: ${e}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log(ok("PAI MCP server registered in ~/.claude.json."));

@@ -19,7 +19,6 @@ import { cmdUnregister } from "./unregister.js";
 let dir: string;
 let db: Database;
 let out: string[];
-let exited: number | undefined;
 
 function project(slug: string, path: string): number {
   return Number(
@@ -37,27 +36,23 @@ beforeEach(() => {
   db = new DatabaseCtor(join(dir, "r.db"));
   initializeSchema(db);
   out = [];
-  exited = undefined;
+  process.exitCode = undefined;
   vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
   vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
-  vi.spyOn(process, "exit").mockImplementation(((c?: number) => {
-    exited = c ?? 0;
-    throw new Error("exit");
-  }) as never);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   db.close();
   rmSync(dir, { recursive: true, force: true });
+  process.exitCode = undefined;
 });
 
+// cmdUnregister sets process.exitCode and returns normally on refusal — it no
+// longer calls process.exit() (see src/cli/lib/exit.ts for why: exit() can
+// truncate output still in flight to a pipe).
 const call = (slug: string, opts: Parameters<typeof cmdUnregister>[2]) => {
-  try {
-    cmdUnregister(db, slug, opts);
-  } catch (e) {
-    if ((e as Error).message !== "exit") throw e;
-  }
+  cmdUnregister(db, slug, opts);
 };
 
 describe("refusing", () => {
@@ -70,7 +65,7 @@ describe("refusing", () => {
 
     call("wt", { execute: true });
 
-    expect(exited).toBe(1);
+    expect(process.exitCode).toBe(1);
     expect(out.join("\n")).toContain("pai project merge");
     // The row must still be there — refusing has to mean refusing.
     expect(db.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 1 });
@@ -78,7 +73,7 @@ describe("refusing", () => {
 
   it("exits non-zero for an unknown slug", () => {
     call("ghost", { execute: true });
-    expect(exited).toBe(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it("changes nothing without --execute", () => {

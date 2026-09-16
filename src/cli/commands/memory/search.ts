@@ -52,7 +52,8 @@ export function registerSearchCommand(
           federation = openFederation();
         } catch (e) {
           console.error(err(`Failed to open federation database: ${e}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         const config = loadConfig();
@@ -63,7 +64,8 @@ export function registerSearchCommand(
 
         if (!["keyword", "semantic", "hybrid"].includes(mode)) {
           console.error(err(`Invalid mode: ${mode}. Use keyword, semantic, or hybrid.`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         let projectIds: number[] | undefined;

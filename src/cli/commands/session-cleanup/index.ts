@@ -34,7 +34,8 @@ export function registerSessionCleanupCommand(
           const p = getProject(db, projectSlug);
           if (!p) {
             console.error(err(`Project not found: ${projectSlug}`));
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           projects = [p];
         } else {

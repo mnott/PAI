@@ -62,13 +62,13 @@ export function cmdHandover(
         "SELECT id, slug, display_name, root_path, encoded_dir FROM projects WHERE slug = ?"
       )
       .get(projectSlug) as ProjectRow | undefined;
-    if (!project) process.exit(0);
+    if (!project) return;
   } else {
     // Same resolver as `pai pause` — including the realpath fallback, so a
     // session started via a symlinked path prefix resolves to the same project
     // rather than silently finding nothing.
     const row = resolveProjectByCwd(db, process.cwd());
-    if (!row) process.exit(0);
+    if (!row) return;
     project = row;
   }
 
@@ -116,6 +116,4 @@ export function cmdHandover(
     cwd: process.cwd(),
     body: buildStopBody(project!, sessionId),
   });
-
-  process.exit(0);
 }

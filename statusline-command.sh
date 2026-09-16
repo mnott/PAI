@@ -116,6 +116,22 @@ context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200
 context_used_k=$(( (context_pct * context_size / 100) / 1000 ))
 context_max_k=$((context_size / 1000))
 
+# Persist the authoritative context reading so hooks (which never receive
+# context_window on their own stdin) can read it instead of re-deriving an
+# estimate from the transcript. Best-effort only — a failure here must never
+# affect the status line itself.
+statusline_session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
+if [ -n "$statusline_session_id" ]; then
+    context_state_file="${TMPDIR:-/tmp}/pai-context-${statusline_session_id}.json"
+    jq -n \
+        --argjson used_percentage "${context_pct:-0}" \
+        --argjson context_window_size "${context_size:-200000}" \
+        --arg session_id "$statusline_session_id" \
+        --argjson timestamp "$(date +%s000)" \
+        '{used_percentage: $used_percentage, context_window_size: $context_window_size, session_id: $session_id, timestamp: $timestamp}' \
+        > "$context_state_file" 2>/dev/null || true
+fi
+
 # Tokyo Night Storm Color Scheme
 BACKGROUND='\033[48;2;36;40;59m'
 BRIGHT_PURPLE='\033[38;2;187;154;247m'

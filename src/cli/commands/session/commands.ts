@@ -64,7 +64,8 @@ export function cmdList(
     const project = getProject(db, projectSlug);
     if (!project) {
       console.error(err(`Project not found: ${projectSlug}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     where.push("s.project_id = ?");
     params.push(project.id);
@@ -133,7 +134,8 @@ export function cmdInfo(
   const project = getProject(db, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const session = resolveSession(db, project, sessionNumber);
@@ -178,7 +180,8 @@ export function cmdRename(
   const project = getProject(db, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const session = resolveSession(db, project, numberOrLatest);
@@ -186,7 +189,8 @@ export function cmdRename(
 
   if (!existsSync(notesDir)) {
     console.error(err(`Notes directory not found: ${notesDir}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const titleSlug = toTitleCase(newSlug);
@@ -200,7 +204,8 @@ export function cmdRename(
         renameSync(oldPath, newPath);
       } catch (e) {
         console.error(err(`Failed to rename file: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     }
   } else {
@@ -260,7 +265,8 @@ export function cmdSlug(
   const project = getProject(db, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const session = resolveSession(db, project, numberOrLatest);
@@ -305,7 +311,8 @@ export function cmdTag(
   const project = getProject(db, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const session = resolveSession(db, project, sessionNumber);
@@ -389,7 +396,8 @@ export function cmdRoute(
   const project = getProject(db, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const session = resolveSession(db, project, sessionNumber);
@@ -402,7 +410,8 @@ export function cmdRoute(
 
   if (!targetProject) {
     console.error(err(`Target project not found: ${targetProjectSlug}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const validTypes = ["related", "follow-up", "reference"];
@@ -411,7 +420,8 @@ export function cmdRoute(
     console.error(
       err(`Invalid link type "${linkType}". Valid: ${validTypes.join(", ")}`)
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {

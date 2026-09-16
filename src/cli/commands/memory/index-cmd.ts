@@ -41,7 +41,8 @@ export function registerIndexCommand(
         federation = openFederation();
       } catch (e) {
         console.error(err(`Failed to open federation database: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       if (projectSlug) {
@@ -53,7 +54,8 @@ export function registerIndexCommand(
 
         if (!project) {
           console.error(err(`Project not found or not active: ${projectSlug}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));

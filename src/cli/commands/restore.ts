@@ -103,7 +103,8 @@ export function registerRestoreCommands(program: Command): void {
 
         if (!existsSync(resolvedDir)) {
           console.error(err(`Backup directory not found: ${resolvedDir}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       } else {
         // No path given — pick from available backups
@@ -111,7 +112,8 @@ export function registerRestoreCommands(program: Command): void {
         if (backups.length === 0) {
           console.error(err(`No backups found in ${BACKUPS_DIR}`));
           console.log(dim("  Run 'pai backup' to create one."));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         console.log(`\n${bold("Available backups")} (newest first):\n`);
@@ -158,7 +160,7 @@ export function registerRestoreCommands(program: Command): void {
       const proceed = opts.yes || await confirm("Proceed with restore?");
       if (!proceed) {
         console.log(dim("Restore cancelled."));
-        process.exit(0);
+        return;
       }
 
       console.log();
@@ -266,7 +268,8 @@ export function registerRestoreCommands(program: Command): void {
         console.log(`  ${dim("Restart:")} pai daemon restart\n`);
       } else {
         console.log(`\n  ${warn("Some items failed — check output above.")}\n`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

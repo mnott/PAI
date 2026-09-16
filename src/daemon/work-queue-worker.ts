@@ -5,6 +5,9 @@
  * Handles 'session-end' work items by reading the transcript, extracting
  * work summaries, updating the session note, and updating TODO.md.
  * Handles 'session-summary' items by spawning Haiku for AI-powered note generation.
+ * Handles 'context-handover' items by spawning Sonnet to write the
+ * threshold-triggered pre-compaction reasoning handover (see
+ * context-handover-worker.ts and hooks/ts/lib/context-fill.ts).
  * Handles 'registry-scan' items by running performScan() against the registry DB.
  *
  * Handles 'topic-detect' items by running BM25-based topic shift detection.
@@ -30,6 +33,11 @@ import {
   handleSessionSummary,
   type SessionSummaryPayload,
 } from "./session-summary-worker.js";
+
+import {
+  handleContextHandover,
+  type ContextHandoverPayload,
+} from "./context-handover-worker.js";
 
 import {
   handleTopicDetect,
@@ -136,6 +144,10 @@ async function processNextItem(): Promise<void> {
 
       case "session-summary":
         await handleSessionSummary(item.payload as SessionSummaryPayload);
+        break;
+
+      case "context-handover":
+        await handleContextHandover(item.payload as unknown as ContextHandoverPayload);
         break;
 
       case "topic-detect":

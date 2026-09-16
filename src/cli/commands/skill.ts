@@ -115,7 +115,8 @@ async function cmdTelemetry(opts: {
   } catch (e) {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (opts.json) {
@@ -185,7 +186,8 @@ export function registerSkillCommands(parent: Command): void {
         await cmdTelemetry(opts);
       } catch (e) {
         console.error(err(`  Error: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     });
 }

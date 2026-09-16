@@ -52,7 +52,8 @@ export function registerEmbedCommand(
         federation = openFederation();
       } catch (e) {
         console.error(err(`Failed to open federation database: ${e}`));
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       if (projectSlug) {
@@ -62,7 +63,8 @@ export function registerEmbedCommand(
 
         if (!project) {
           console.error(err(`Project not found: ${projectSlug}`));
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
 
         await runEmbed(federation, project.id, project.slug, parseInt(opts.batchSize ?? "50", 10));
