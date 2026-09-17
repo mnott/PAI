@@ -1,27 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0024 - 2026-09-16 - Memanto Repository Exploration Completed" session-id="3793827d-3fdc-445d-98aa-ad767220faa6" ts="2026-09-16T09:51:50.406Z" -->
+<!-- pai:checkpoint authored="auto" session="0027 - 2026-09-17 - X" session-id="3793827d-3fdc-445d-98aa-ad767220faa6" ts="2026-09-17T07:33:02.592Z" -->
 
-> **Last session:** 0024 - 2026-09-16 - Memanto Repository Exploration Completed
-> **Paused at:** 2026-09-16T09:51:50.406Z
+> **Last session:** 0027 - 2026-09-17 - X
+> **Paused at:** 2026-09-17T07:33:02.592Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3793827d-3fdc-445d-98aa-ad767220faa6`
 
-T
-i=ckpt-2026-09-16T09-51-50.269Z
-g=[Session:◑ AIBroker (claude)] R i=ctx-observer-20260916 @m=src/daemon/manage.ts (pre-edit, via git show HEAD) r=+ q6 answered from the code and the state files. The root cause is neither the constant…
-d=retry | so what's happened after 13 minutes | ok do I need to restart those sessions | [Session:AIBroker] T i=ctx-observer-20260916 s=ready-to-cpp-yes-clamp-folded-in a=YES. State re-checked after compaction, not assumed: implementation complete — measuredCompactK min-of-last-3 (never 0… | [Session:AIBroker] T i=ctx-observer-20260916 s=released-0.56.0-daemon-restarted a=aibroker@0.56.0 published, one commit 8943d72 pushed (main in sync with origin), daemon restarted via launchctl kickst…
-t=?
-@1=Notes/TODO.md
-@2=src/daemon/context-handover-worker.ts
-@3=src/hooks/ts/lib/context-fill.test.ts
-@4=src/hooks/ts/lib/context-fill.ts
-@5=src/hooks/ts/pre-compact/context-compression-hook.ts
-@6=src/session/context-handover-trigger.test.ts
-@7=src/session/context-handover-trigger.ts
-z=auto ckpt (no model); main@08ef492 feat(session): warm a model-written handover before compaction; 7 dirty; git status for detail
+Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+
+Work completed:
+- `, `ACTIONS:`, `CAPTURE:`, `COMPLETED:` — plus raw user messages and Edit/Write paths, hard-truncated to 3 user messages at 200 chars, 3 summaries at 150, 5 captures at 150, 10 files. No model is called at compact time. The AG2 autosave is explicitly the floor, and says so in its own docstring: *"strictly worse than what the model would write, and that is the point: it is the floor, not the ceiling."*
+- ` in other transcripts sits in a `hook_success` attachment — the CORE skill text echoed at startup, not model output. Zero model-emitted markers anywhere.
+
+Last completed: ` — plus raw user messages and Edit/Write paths, hard-truncated to 3 user messages at 200 chars, 3 summaries at 150, 5 captures at 150, 10 files. No model is called at compact time. The AG2 autosave is explicitly the floor, and says so in its own docstring: "strictly worse than what the model would write, and that is the point: it is the floor, not the ceiling."
 
 <!-- /pai:checkpoint -->
 
@@ -1196,4 +1190,4 @@ Fixes, in dependency order:
 
 ---
 
-*Last updated: 2026-09-16T09:48:54.284Z*
+*Last updated: 2026-09-17T07:33:02.593Z*
