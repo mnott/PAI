@@ -70,7 +70,7 @@ import {
   type WorktreeInfo,
 } from "./worktree.js";
 import { OPERATOR_MARK, WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
-import { expandMcpNames, writeMcpConfig } from "./mcp.js";
+import { expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { createOperatorServer } from "./operator.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
@@ -424,13 +424,15 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     void openPaneForWorker(logDir, config, wid, term).catch(() => {});
   }
 
-  // MCP: caller config > allowlist (--mcp flag / --mcp args / role) > the strict empty set.
+  // MCP: caller config > allowlist (--mcp flag / --mcp args / role / mcp__
+  // grants in --allowedTools) > the strict empty set.
   let mcpArgs: string[] = [];
   if (headless && !parsed.callerMcpConfig) {
     const wanted = [
       ...(a.mcpFlag ? [a.mcpFlag] : []),
       ...parsed.mcp,
       ...(target.classMcp ?? []),
+      ...mcpServersFromToolGrants(parsed.allowedTools),
     ];
     if (wanted.length) {
       const names = expandMcpNames(wanted, config); // unknown names fail fast

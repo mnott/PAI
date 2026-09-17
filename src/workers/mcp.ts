@@ -4,9 +4,11 @@
  * Headless workers start with NO MCP servers: every server definition is a
  * prompt-time tool inventory the model pays to know, and a worker that only
  * reads and edits files needs none of it. A run may opt in with `--mcp
- * name[,name…]` (or a role carrying `"mcp": [...]`); names may be single
- * servers from ~/.claude.json's `mcpServers` or `workers.mcpSets` set names,
- * which expand to their member list. The filtered config lands in
+ * name[,name…]`, a role carrying `"mcp": [...]`, or implicitly by naming
+ * `mcp__server__tool` in --allowedTools (a grant without its server loaded is
+ * a dead letter). Names may be single servers from ~/.claude.json's
+ * `mcpServers` or `workers.mcpSets` set names, which expand to their member
+ * list. The filtered config lands in
  * `<logDir>/<id>.mcp.json` and is passed with `--strict-mcp-config
  * --mcp-config` so exactly those servers load. MCP servers are chosen at
  * launch only — a mid-run `say` cannot add any.
@@ -61,6 +63,25 @@ export function expandMcpNames(
         );
       }
       if (!out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Derive server names from tool grants: every `mcp__<server>__<tool>` (or bare
+ * `mcp__<server>`, or `mcp__<server>__*`) in an --allowedTools list names a
+ * server the run expects to be loaded. A grant is a dead letter unless its
+ * server is in the filtered config, so the runner treats these as implicit
+ * --mcp names — and only these; non-mcp grants load nothing.
+ */
+export function mcpServersFromToolGrants(tools: string[]): string[] {
+  const out: string[] = [];
+  for (const entry of tools) {
+    for (const name of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (!name.startsWith("mcp__")) continue;
+      const server = name.slice("mcp__".length).split("__")[0];
+      if (server && !out.includes(server)) out.push(server);
     }
   }
   return out;
