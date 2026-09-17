@@ -9,6 +9,23 @@
 import { readFileSync as readKey } from "node:fs";
 import { providerKeyPath, resolveModelCapability, type WorkerProvider } from "./config.js";
 
+/**
+ * Session-identity variables the SPAWNING session leaves in the environment.
+ * Inherited, they make a headless child attach to the spawner's messaging
+ * socket instead of standing on its own — and a worktree-mode child then
+ * starts with its core tools (Bash/Read/…) deferred out of its reach, left
+ * with nothing but the tool-registry search (2026-09-18). The child is its
+ * own session, so none of these may cross the spawn boundary.
+ */
+const SESSION_IDENTITY_VARS = [
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_PID",
+  "CLAUDECODE",
+] as const;
+
 /** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
 export function buildRunEnv(
   provider: WorkerProvider,
@@ -17,6 +34,7 @@ export function buildRunEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
+  if (headless) for (const k of SESSION_IDENTITY_VARS) delete env[k];
 
   let token = "local";
   if (proxyUrl) {

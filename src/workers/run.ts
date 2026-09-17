@@ -6,9 +6,12 @@
  *   - env: ANTHROPIC_BASE_URL/AUTH_TOKEN from the provider (token from its
  *     key file, never from the environment), the three DEFAULT_*_MODEL vars,
  *     the provider's extra env, nonessential traffic off, and ANTHROPIC_API_KEY
- *     stripped so nothing can fall back to Anthropic billing. OpenAI-protocol
- *     providers point at the PAI proxy instead (started on demand, the
- *     provider name in the URL path); codex-engine providers run the Codex CLI.
+ *     stripped so nothing can fall back to Anthropic billing. Headless runs
+ *     also drop the spawner's session identity (messaging socket, session id,
+ *     nesting markers) — inherited, a worktree child starts tool-blind.
+ *     OpenAI-protocol providers point at the PAI proxy instead (started on
+ *     demand, the provider name in the URL path); codex-engine providers run
+ *     the Codex CLI.
  *   - headless (-p): strict empty MCP config unless the caller brings one or
  *     names servers via --mcp / a role (then a filtered <id>.mcp.json),
  *     PAI_WORKER=1 so PAI's per-session hooks leave it alone, the worker
@@ -532,6 +535,15 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       killed: 1,
       label,
     });
+    // a killed worktree run leaves nothing to merge — drop its worktree and
+    // branch too, or every kill strands them for hand-pruning (2026-09-18)
+    if (worktree) {
+      try {
+        recordWorktree(logDir, status, worktree, false);
+      } catch {
+        /* best effort: the status already says killed */
+      }
+    }
     cleanup();
     try {
       proc.kill();
@@ -542,6 +554,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   };
   process.once("SIGTERM", () => onSignal("SIGTERM"));
   process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGHUP", () => onSignal("SIGHUP"));
 
   // Holder for the last result event + its parsed report: assigned inside the
   // readline callback below, read after the await.
@@ -826,6 +839,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   let killed = false;
   process.once("SIGTERM", onCodexSignal("SIGTERM"));
   process.once("SIGINT", onCodexSignal("SIGINT"));
+  process.once("SIGHUP", onCodexSignal("SIGHUP"));
   function onCodexSignal(sig: string) {
     return () => {
       killed = true;
@@ -834,6 +848,14 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       status.secs = Math.floor((Date.now() - t0) / 1000);
       status.last = `killed by signal ${sig}`;
       saveStatus(logDir, status);
+      // same as the claude path: a killed run's worktree and branch go now
+      if (worktree) {
+        try {
+          recordWorktree(logDir, status, worktree, false);
+        } catch {
+          /* best effort: the status already says killed */
+        }
+      }
       try {
         proc.kill();
       } catch {
