@@ -16,8 +16,6 @@
     "templates",
     "plugins",
     "user-extensions",
-    "extensions/browser-bridge",
-    "src/browser-bridge",
     ".claude-plugin",
     "pai-plugin.json",
     "gemini-extension.json",
@@ -56,8 +54,7 @@
   "bin": {
     "pai": "dist/cli/index.mjs",
     "pai-daemon": "dist/daemon/index.mjs",
-    "pai-daemon-mcp": "dist/daemon-mcp/index.mjs",
-    "pai-browser-mcp": "dist/browser-mcp/index.mjs"
+    "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
   "scripts": {
     "build": "tsdown && node scripts/prune-dist.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
