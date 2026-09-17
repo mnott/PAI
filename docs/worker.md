@@ -265,6 +265,49 @@ A quota failure before the first tool call is re-run on the next provider and
 logged as `WORKER-REROUTE`. `pai worker providers enable <name>` clears a
 cooldown by hand.
 
+## When the Anthropic plan runs out
+
+`pai worker fallback on [provider]` switches the whole machine: every NEW
+Claude Code process — interactive sessions, task-bus sessions, the daemon's
+headless summarizer — runs on that worker provider instead of the Anthropic
+login, until `pai worker fallback off`. Use it when the plan budget is gone
+but work must continue.
+
+What `on` does:
+
+- Writes the provider into the `env` block of `~/.claude/settings.json`:
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, the three
+  `ANTHROPIC_DEFAULT_*_MODEL` pins (fast model as haiku, default as sonnet
+  and opus), the provider's own env (`API_TIMEOUT_MS` …), plus
+  `ENABLE_TOOL_SEARCH=true` and
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+- Pins the top-level `model` key to the provider's default model.
+- Saves the replaced values under `workers.fallback.saved` in
+  `~/.config/pai/config.json` and writes a `FALLBACK-ACTIVE.md` note into the
+  workers log dir telling running sessions what to do.
+
+Notes:
+
+- **The token sits in settings.json.** `on` reads it from the provider's key
+  file at switch time; `off` removes it again. That is the price of switching
+  every process without touching each one's environment.
+- `off` restores settings.json exactly — only the keys `on` touched change.
+  Both files are written atomically; `CLAUDE_SETTINGS_PATH` points `on`/`off`
+  at a copy for dry runs.
+- **Running sessions are not switched.** A Claude Code process keeps the
+  provider it started with until restarted. `pai worker fallback status`
+  lists running sessions (AIBroker registry when populated, else `ps`) and
+  the note path; its one-line instruction for each of them: restart the
+  session in its project directory, keep the same AIBroker name.
+- The Agent hook is unchanged: subagents keep routing to `pai worker run`
+  workers, which set their own per-provider env.
+- `on` is idempotent (re-applying heals an interrupted switch), and switching
+  providers while on restores the first switch's savings before saving fresh.
+- MCP: `worker_fallback` (action `on`/`off`/`status`, optional `provider`);
+  chat phrases "switch everything to glm", "fallback on", "back to
+  anthropic", "fallback off", "is fallback on" are mapped in the Worker
+  skill.
+
 ## What a worker is
 
 - One `claude -p … --output-format stream-json --verbose` process per call,

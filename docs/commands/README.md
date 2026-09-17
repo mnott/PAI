@@ -194,6 +194,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker classes list` | List classes and their targets (default action) |
 | `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |
 | `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
+| `pai worker fallback [action] [provider]` | Machine-wide fallback: every NEW Claude Code process runs on a worker |
 | `pai worker follow [id]` | Live transcript of one worker, or of this session's running workers |
 | `pai worker install` | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | `pai worker log [what]` | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
