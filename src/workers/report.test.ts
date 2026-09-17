@@ -99,4 +99,14 @@ describe("WORKER_CONTRACT_PROMPT", () => {
     expect(WORKER_CONTRACT_PROMPT).toContain("Write tool");
     expect(WORKER_CONTRACT_PROMPT).toMatch(/write the script to a file/);
   });
+
+  it("bans inline interpreter one-liners: permission layer denies them, write a script file or use jq", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/python3 -c/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/node -e/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/ruby -e/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/permission layer\s+denies/i);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/command denied by permission rules/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/python3 script\.py/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/use jq/);
+  });
 });
