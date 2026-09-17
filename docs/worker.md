@@ -383,8 +383,8 @@ behaviour — no prompt row, no ticker, stdin still the operator channel.
 Any worker may start its own workers: the runner exports `PAI_WORKER_ID` in
 every worker's environment, and a `pai worker run` launched from inside one
 records `parent` in its status — so the forest is visible in `ps` (children
-indented under their parent, `├`/`└` connectors), the status line (`↳` under
-the parent) and each child gets its own follow pane. Handoffs travel **up
+indented under their parent, `├`/`└` connectors) and each child gets its own
+follow pane. Handoffs travel **up
 only**, from a child to its parent:
 
 ```
@@ -395,8 +395,8 @@ pai worker handoff '{"kind":"proposal","text":"run this on a cheap provider","da
 `result` is sent automatically when a child finishes). The handoff is appended
 to `<logDir>/<parent>.inbox.jsonl` (durable, ordered) and, when the parent is
 running, also delivered as an operator message `[handoff from <child id>]`. The
-parent sees it in its pane (`◆ from <id> · kind: text`, magenta), `ps` and the
-status line show `◆N` for an inbox with N handoffs, and `replay`/`follow`
+parent sees it in its pane (`◆ from <id> · kind: text`, magenta), `ps` shows
+`◆N` for an inbox with N handoffs, and `replay`/`follow`
 merge them into the transcript by timestamp. There is no sideways channel:
 siblings never see each other, everything goes up.
 
@@ -468,9 +468,9 @@ drive the desktop until it is handed over.
 
 Status files carry `contextTokens` (input + cache read + cache creation +
 output of the last assistant turn) and `contextWindow` (from the init event,
-else the provider's `contextWindow`, else 200 000). The `ps` table and the
-status line show `ctx 84k/200k (42%)` once it passes 60 % — yellow past
-70 %, red past 85 % — and the pane's liveness line always shows it.
+else the provider's `contextWindow`, else 200 000). The `ps` table shows
+`ctx 84k/200k (42%)` once it passes 60 % — yellow past 70 %, red past
+85 % — and the pane's liveness line always shows it.
 
 ### MCP for workers
 
@@ -559,28 +559,25 @@ the CLI calls.
 
 ## Status line
 
-Line 4 of the statusline lists this session's running workers (provider,
-label, age, current tool, context meter past 60 %) plus today's ✓/✗ tally.
-It prefers the standalone `~/.claude/worker-status-line.mjs` (plain node,
-built by `bun run build`) and falls back to `pai worker status-line`.
+Line 4 of the statusline is the worker bar: the provider and running-worker
+count, one row per running spawned worker, and today's ✓/✗ tally. It prefers
+the standalone `~/.claude/worker-status-line.mjs` (plain node, built by
+`bun run build`) and falls back to `pai worker status-line`.
 
-The first segment is the chat pane itself (the interactive `pai worker run`
-that owns the terminal, status `origin: "chat"`): its provider, `▶N` counting
-only its running spawned workers (nothing at zero), its own age when none
-run, and `· <last activity>` — never its id or label, it is not a worker.
-
-Example: `glm ▶2 · interactive | #4969 fix black buttons 6m · Edit: button.ts | #2924 spotcheck login 1m · Bash: npm test   ✓75 ✗4 today`
+Example: `glm ▶2 | fix black buttons · 6m · grep … | spotcheck login · 1m · Edit: button.ts   ✓75 ✗4 today`
 
 Segment by segment:
 
 - provider tag (`glm`) — the chat pane's provider; `workers` when there is no tracked chat pane and the running workers are mixed
-- `▶2` — this terminal's running SPAWNED workers: `state=running` **and** a live pid **and** not the chat-pane tracker; omitted entirely at zero (the pane's own age takes the slot)
-- `· interactive` — the chat pane's last activity (`interactive` until it ends)
-- `#4969` — short worker id (last 4 chars, same short form `pai worker ps` shows), on spawned workers only
-- label (`fix black buttons`) — `--label`, else the first 70 chars of the prompt; `unlabeled` when the run had neither
-- age (`6m`) — time since the worker started
-- last activity (`Edit: button.ts`) — most recent event line (current tool, or what the worker last said)
-- `◆N` — unread handoffs waiting in that worker's inbox
-- `ctx 150k/200k (75%)` — worker context load, joined once it passes 60 %
-- `↳ ` — a sub-worker, indented under its parent
+- `▶2` — this terminal's running spawned workers: `state=running` **and** a live pid **and** not the chat pane; nothing at zero, so an idle terminal shows just `glm`
+- row `name · age · step` — the worker's `--label` (else the first 70 chars of the prompt, `unlabeled` when the run had neither), time since it started, and the verb of what it is doing; `#id` (the short form `pai worker ps` shows) joins the name only when two running workers share a label
+- step (`grep …`) — the current tool trimmed to its verb: no `Bash:` prefix, no flags, no quotes, ≤24 chars; file tools keep their `Edit: button.ts` shape
 - `✓75 ✗4 today` — today's finished workers: done vs failed
+
+The chat pane itself contributes only its provider — its age, state and
+inbox live in `pai worker ps`, never in the bar. Rows are flat and
+oldest-first; the worker forest (`↳` depth) and `◆N` inbox marks are `ps`
+territory too. A status file from before the `origin` flag (a running entry
+with no origin, the unlabeled placeholder and zero turns) is treated as the
+chat pane so it does not render as a phantom worker — that shim goes away
+once every pane runs code that writes `origin`.
