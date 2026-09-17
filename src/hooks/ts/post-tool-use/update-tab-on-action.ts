@@ -7,6 +7,7 @@
  * PAI-safe: No sensitive data, just tool descriptions
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { execSync } from 'child_process';
 
 // Action tools that warrant a tab title update
@@ -122,6 +123,7 @@ function generateTitle(toolName: string, input: HookInput['tool_input']): string
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     const input = await readStdinWithTimeout();
     const data: HookInput = JSON.parse(input);

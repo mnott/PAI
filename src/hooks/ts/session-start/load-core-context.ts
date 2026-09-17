@@ -25,12 +25,14 @@
  * - Gives your AI immediate access to your complete personal context
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { PAI_DIR, SKILLS_DIR } from '../lib/pai-paths';
 import { isProbeSession } from '../lib/project-utils';
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     // Check if this is a subagent session - if so, exit silently
     const claudeProjectDir = process.env.CLAUDE_PROJECT_DIR || '';

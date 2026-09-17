@@ -1,0 +1,877 @@
+/**
+ * run.ts — the worker runner (port of the glm / glm-run pair, provider-neutral).
+ *
+ * One claude-code process per call, pointed at the chosen provider:
+ *
+ *   - env: ANTHROPIC_BASE_URL/AUTH_TOKEN from the provider (token from its
+ *     key file, never from the environment), the three DEFAULT_*_MODEL vars,
+ *     the provider's extra env, nonessential traffic off, and ANTHROPIC_API_KEY
+ *     stripped so nothing can fall back to Anthropic billing. OpenAI-protocol
+ *     providers point at the PAI proxy instead (started on demand, the
+ *     provider name in the URL path); codex-engine providers run the Codex CLI.
+ *   - headless (-p): strict empty MCP config unless the caller brings one or
+ *     names servers via --mcp / a role (then a filtered <id>.mcp.json),
+ *     PAI_WORKER=1 so PAI's per-session hooks leave it alone, the worker
+ *     contract appended to the system prompt, `--input-format stream-json`
+ *     with the prompt as the first stdin user message (the operator socket
+ *     can add more mid-run), stream-json mirroring (every line stamped `_ts`)
+ *     into <logDir>/<id>.jsonl, a live <id>.status for ps/follow/status line
+ *     (context meter included), ledger lines, result printed in the caller's
+ *     --output-format (json adds the parsed `report`), and the follow pane
+ *     (unless --no-pane).
+ *   - interactive: no MCP restriction, no pane, ENABLE_TOOL_SEARCH=true.
+ *
+ * Auto-routed runs that die of a quota error before the first tool call are
+ * restarted on the next provider in routing order (WORKER-REROUTE ledger line).
+ */
+
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync as readKey,
+  writeFileSync,
+  closeSync,
+  writeSync,
+} from "node:fs";
+import { parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
+import {
+  assertProviderRunnable,
+  providerContextWindow,
+  providerKeyPath,
+  readWorkersSection,
+  type WorkerProvider,
+} from "./config.js";
+import { appendLedger } from "./ledger.js";
+import { eventsPath, ledgerPath, noMcpConfigPath, workersLogDir } from "./paths.js";
+import {
+  type WorkerStatus,
+  newWorkerId,
+  saveStatus,
+  describeTool,
+  nowStamp,
+} from "./status.js";
+import { resolveSession } from "./scope.js";
+import { isQuotaFailure, nextAutoProvider, resolveTarget, setCooldown } from "./routing.js";
+import { openPaneForWorker } from "./pane.js";
+import { WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
+import { expandMcpNames, writeMcpConfig } from "./mcp.js";
+import { createOperatorServer } from "./operator.js";
+import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
+import {
+  buildCodexArgs,
+  buildCodexEnv,
+  codexDroppedFlags,
+  codexInstalled,
+  emptyCodexResult,
+  foldCodexLine,
+  parseCodexLine,
+} from "./codex.js";
+
+export interface RunOptions {
+  providerFlag?: string;
+  role?: string;
+  modelFlag?: string;
+  label?: string;
+  noPane?: boolean;
+  /** --mcp value: server/set names, comma-separated. */
+  mcpFlag?: string;
+  /** Everything after `--` (the claude args). */
+  claudeArgs: string[];
+  /** Internal: notified with the worker id once it exists (resume uses it). */
+  onWorkerStart?: (wid: string) => void;
+  /** Internal: suppress recursion depth on reroute. */
+  _reroutes?: number;
+}
+
+/** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
+export function buildRunEnv(
+  provider: WorkerProvider,
+  headless: boolean,
+  proxyUrl?: string
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+
+  let token = "local";
+  if (proxyUrl) {
+    // openai-protocol provider: the proxy holds the real key; the runner only
+    // needs a placeholder so Claude Code sends an auth header at all
+    env.ANTHROPIC_BASE_URL = proxyUrl;
+  } else {
+    const keyPath = providerKeyPath(provider);
+    if (keyPath) {
+      try {
+        token = readKey(keyPath, "utf8").trim();
+      } catch {
+        // the caller turns this into a clear error before spawning
+        throw new Error(`key file not readable: ${keyPath}`);
+      }
+      if (!token) throw new Error(`key file is empty: ${keyPath}`);
+    }
+    env.ANTHROPIC_BASE_URL = provider.baseUrl;
+  }
+
+  env.ANTHROPIC_AUTH_TOKEN = token;
+  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.models.fast ?? provider.models.default;
+  env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.models.default;
+  env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
+  for (const [k, v] of Object.entries(provider.env)) env[k] = v;
+  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+  if (headless) {
+    env.PAI_WORKER = "1";
+  } else {
+    env.ENABLE_TOOL_SEARCH = "true";
+  }
+  return env;
+}
+
+/** The strict empty MCP config for headless workers, written on demand. */
+export function ensureNoMcpConfig(logDir: string): string {
+  const path = noMcpConfigPath(logDir);
+  if (!existsSync(path)) {
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(path, '{ "mcpServers": {} }\n', "utf8");
+  }
+  return path;
+}
+
+/** A stream-json user message for the child's stdin. */
+export function stdinUserMessage(text: string): string {
+  return JSON.stringify({ type: "user", message: { role: "user", content: text } });
+}
+
+/** ISO stamp with seconds, attached to every mirrored event (2g). */
+function isoStamp(d = new Date()): string {
+  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+export interface UsageBlock {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+// a type alias (not an interface): it must stay assignable to
+// Record<string, unknown> when written into the event transcript
+export type StreamEvent = {
+  type?: string;
+  subtype?: string;
+  session_id?: string;
+  model?: string;
+  cwd?: string;
+  context_window?: number;
+  model_info?: { context_window?: number } | null;
+  message?: {
+    content?: Array<{ type?: string; text?: string; name?: string; id?: string; input?: unknown }>;
+    usage?: UsageBlock;
+  };
+  usage?: UsageBlock;
+  result?: string;
+  is_error?: boolean;
+  num_turns?: number;
+  duration_ms?: number;
+};
+
+/** Context tokens of an assistant/result usage block (input+cache+output). */
+export function usageContextTokens(u: UsageBlock | undefined): number | null {
+  if (!u) return null;
+  const t =
+    (u.input_tokens ?? 0) +
+    (u.cache_read_input_tokens ?? 0) +
+    (u.cache_creation_input_tokens ?? 0) +
+    (u.output_tokens ?? 0);
+  return t > 0 ? t : null;
+}
+
+/** Context window announced by the init event, when the endpoint sends one. */
+export function initContextWindow(e: StreamEvent): number | null {
+  if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
+  if (e.model_info && typeof e.model_info.context_window === "number" && e.model_info.context_window > 0) {
+    return e.model_info.context_window;
+  }
+  return null;
+}
+
+/**
+ * Run one worker. Returns the process exit code to pass through.
+ * Throws WorkersConfigError-shaped Errors for configuration problems.
+ */
+export async function runWorker(opts: RunOptions): Promise<number> {
+  const { raw: _raw, workers: config } = readWorkersSection();
+  void _raw;
+  if (!config.enabled) {
+    throw new Error(
+      `workers are off. Turn them on with: pai worker on` +
+        `\n(then the Agent-tool hook stops denying Anthropic subagents only when you do)`
+    );
+  }
+  const logDir = workersLogDir(config);
+  mkdirSync(logDir, { recursive: true });
+
+  const target = resolveTarget(config, logDir, {
+    flagProvider: opts.providerFlag,
+    role: opts.role,
+  });
+  assertProviderRunnable(target.providerName, target.provider);
+
+  const parsed = parseRunnerArgs(opts.claudeArgs);
+  const label =
+    opts.label ??
+    shortText(parsed.prompt ?? "(no prompt)", 70);
+
+  const model =
+    opts.modelFlag ??
+    (target.modelAlias === "fast"
+      ? target.provider.models.fast ?? target.provider.models.default
+      : target.provider.models.default);
+
+  try {
+    if (target.provider.engine === "codex") {
+      return await executeCodexRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        claudeArgs: opts.claudeArgs,
+        noPane: opts.noPane ?? false,
+        onWorkerStart: opts.onWorkerStart,
+      });
+    }
+    return await executeRun({
+      config,
+      logDir,
+      target,
+      model,
+      label,
+      parsed,
+      claudeArgs: opts.claudeArgs,
+      noPane: opts.noPane ?? false,
+      mcpFlag: opts.mcpFlag,
+      onWorkerStart: opts.onWorkerStart,
+      reroutes: opts._reroutes ?? 0,
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("key file")) {
+      throw new Error(
+        `provider "${target.providerName}": ${e.message}` +
+          `\nPut the token in that file (chmod 600) or point keyFile elsewhere.`
+      );
+    }
+    throw e;
+  }
+}
+
+interface ExecuteArgs {
+  config: ReturnType<typeof readWorkersSection>["workers"];
+  logDir: string;
+  target: ReturnType<typeof resolveTarget>;
+  model: string;
+  label: string;
+  parsed: ReturnType<typeof parseRunnerArgs>;
+  claudeArgs: string[];
+  noPane: boolean;
+  mcpFlag?: string;
+  onWorkerStart?: (wid: string) => void;
+  reroutes: number;
+}
+
+async function executeRun(a: ExecuteArgs): Promise<number> {
+  const { config, logDir, target, model, label, parsed, noPane } = a;
+  const headless = parsed.headless;
+
+  // openai-protocol providers run through the local proxy (started on demand)
+  let proxyUrl: string | undefined;
+  if (target.provider.protocol === "openai") {
+    const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
+    proxyUrl = `${base}/${target.providerName}`;
+  }
+  const env = buildRunEnv(target.provider, headless, proxyUrl);
+
+  const wid = newWorkerId();
+  const cwd = process.cwd();
+  const term = process.env.ITERM_SESSION_ID ?? "";
+  const session = resolveSession(term);
+
+  const status: WorkerStatus = {
+    id: wid,
+    pid: process.pid,
+    label,
+    cwd,
+    term,
+    provider: target.providerName,
+    model,
+    state: "running",
+    started: nowStamp(),
+    updated: nowStamp(),
+    turns: 0,
+    tools: 0,
+    last: headless ? "starting" : "interactive",
+    rc: null,
+    secs: null,
+    ...(session ? { session } : {}),
+    contextWindow: providerContextWindow(target.provider),
+  };
+  saveStatus(logDir, status);
+  a.onWorkerStart?.(wid);
+  const ledger = ledgerPath(logDir);
+  appendLedger(ledger, "WORKER-START", {
+    id: wid,
+    provider: target.providerName,
+    mode: headless ? "headless" : "interactive",
+    model,
+    cwd,
+    label,
+  });
+
+  // Follow pane: headless only, best effort, never blocking the worker.
+  if (headless && !noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
+    void openPaneForWorker(logDir, config, wid, term).catch(() => {});
+  }
+
+  // MCP: caller config > allowlist (--mcp flag / --mcp args / role) > the strict empty set.
+  let mcpArgs: string[] = [];
+  if (headless && !parsed.callerMcpConfig) {
+    const wanted = [
+      ...(a.mcpFlag ? [a.mcpFlag] : []),
+      ...parsed.mcp,
+      ...(target.roleMcp ?? []),
+    ];
+    if (wanted.length) {
+      const names = expandMcpNames(wanted, config); // unknown names fail fast
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
+    } else {
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir)];
+    }
+  }
+
+  // In stdin mode the prompt moves to the first user message on stdin, so it
+  // must come off the command line (bare -p stays: stream-json needs --print).
+  const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
+  const cmd: string[] = ["claude"];
+  if (!parsed.callerModel) cmd.push("--model", model);
+  cmd.push(...mcpArgs, ...restArgs);
+  if (headless) {
+    cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
+    if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
+  }
+
+  const t0 = Date.now();
+  const proc = spawn(cmd[0], cmd.slice(1), {
+    env,
+    cwd,
+    stdio: headless ? ["pipe", "pipe", "inherit"] : "inherit",
+  });
+
+  // --- stdin lifecycle (2i): prompt in, socket forwards, close 2 s after result
+  let operatorInFlight = 0;
+  let closeTimer: NodeJS.Timeout | null = null;
+  const armStdinClose = () => {
+    if (closeTimer) clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      if (operatorInFlight === 0) {
+        try {
+          proc.stdin?.end();
+        } catch {
+          /* already closed */
+        }
+      }
+    }, 2_000);
+  };
+
+  let eventsFd: number | null = null;
+  const writeEvent = (obj: Record<string, unknown>): void => {
+    if (eventsFd === null) return;
+    try {
+      writeSync(eventsFd, JSON.stringify({ ...obj, _ts: isoStamp() }) + "\n");
+    } catch {
+      // a full disk must not take the worker transcript's process down
+    }
+  };
+
+  const operatorServer = headless
+    ? createOperatorServer(logDir, wid, (text) => {
+        operatorInFlight += 1;
+        if (closeTimer) {
+          clearTimeout(closeTimer);
+          closeTimer = null;
+        }
+        writeEvent({ type: "operator", text });
+        try {
+          proc.stdin?.write(stdinUserMessage(text) + "\n");
+        } catch {
+          /* child gone; the socket is closed by the run's cleanup */
+        }
+      })
+    : null;
+
+  let killed = false;
+  const cleanup = () => {
+    if (closeTimer) clearTimeout(closeTimer);
+    operatorServer?.close();
+  };
+  const onSignal = (sig: string) => {
+    killed = true;
+    status.state = "killed";
+    status.rc = 143;
+    status.secs = Math.floor((Date.now() - t0) / 1000);
+    status.last = `killed by signal ${sig}`;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-END", {
+      id: wid,
+      provider: target.providerName,
+      mode: "headless",
+      model,
+      rc: 143,
+      secs: status.secs,
+      killed: 1,
+      label,
+    });
+    cleanup();
+    try {
+      proc.kill();
+    } catch {
+      /* already gone */
+    }
+    process.exit(143);
+  };
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+  process.once("SIGINT", () => onSignal("SIGINT"));
+
+  // Holder for the last result event + its parsed report: assigned inside the
+  // readline callback below, read after the await.
+  const ctx: { resultEvent: StreamEvent | null; resultReport: WorkerReport | null } = {
+    resultEvent: null,
+    resultReport: null,
+  };
+
+  if (headless) {
+    // the first user message carries the prompt (the -p value was stripped)
+    if (parsed.prompt !== null) {
+      try {
+        proc.stdin!.write(stdinUserMessage(parsed.prompt) + "\n");
+      } catch {
+        /* child died instantly; the close handler reports it */
+      }
+    }
+    eventsFd = openSync(eventsPath(logDir, wid), "a");
+    const rl = createInterface({ input: proc.stdout! });
+    rl.on("line", (line) => {
+      if (parsed.outputFormat === "stream-json") {
+        process.stdout.write(line + "\n");
+      }
+      if (!line.startsWith("{")) return;
+      let e: StreamEvent;
+      try {
+        e = JSON.parse(line) as StreamEvent;
+      } catch {
+        return;
+      }
+      writeEvent(e as Record<string, unknown>);
+      if (e.type === "system" && e.subtype === "init") {
+        if (e.session_id) status.claudeSession = e.session_id;
+        const cw = initContextWindow(e);
+        if (cw) status.contextWindow = cw;
+        saveStatus(logDir, status);
+      } else if (e.type === "assistant") {
+        status.turns += 1;
+        const tokens = usageContextTokens(e.message?.usage);
+        if (tokens) status.contextTokens = tokens;
+        for (const block of e.message?.content ?? []) {
+          if (block.type === "tool_use") {
+            status.tools += 1;
+            status.last = describeTool(block.name ?? "?", block.input);
+          } else if (block.type === "text" && (block.text ?? "").trim()) {
+            status.last = "says: " + shortText(block.text, 70);
+          }
+        }
+        saveStatus(logDir, status);
+      } else if (e.type === "result") {
+        const tokens = usageContextTokens(e.usage);
+        if (tokens) status.contextTokens = tokens;
+        const report = parseWorkerReport(e.result ?? "");
+        if (report?.notes) status.last = shortText(report.notes, 90);
+        else if (e.result) status.last = shortText(e.result, 90);
+        saveStatus(logDir, status);
+        operatorInFlight = 0;
+        armStdinClose();
+        ctx.resultEvent = e;
+        ctx.resultReport = report;
+      }
+    });
+  }
+
+  const rc = await new Promise<number>((resolve, reject) => {
+    proc.on("error", reject);
+    proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
+  });
+  if (eventsFd !== null) closeSync(eventsFd);
+  cleanup();
+
+  const secs = Math.floor((Date.now() - t0) / 1000);
+  const resultEvent = ctx.resultEvent;
+  const ok = rc === 0 && resultEvent !== null && !resultEvent.is_error;
+  status.state = ok ? "done" : "failed";
+  status.rc = rc;
+  status.secs = secs;
+  if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
+  if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
+  saveStatus(logDir, status);
+  appendLedger(ledger, "WORKER-END", {
+    id: wid,
+    provider: target.providerName,
+    mode: headless ? "headless" : "interactive",
+    model,
+    rc,
+    secs,
+    turns: status.turns,
+    tools: status.tools,
+    label,
+  });
+
+  if (headless) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport);
+
+  // Quota reroute: only auto-routed runs, dead before the first tool call.
+  const resultText = resultEvent?.result ?? "";
+  if (
+    !ok &&
+    headless &&
+    a.target.via === "auto" &&
+    config.routing.retryOnQuota &&
+    status.turns <= 1 &&
+    status.tools === 0 &&
+    isQuotaFailure(resultText)
+  ) {
+    setCooldown(logDir, target.providerName, config.routing.cooldownMinutes);
+    const next = nextAutoProvider(config, logDir, target.providerName);
+    if (next && a.reroutes < config.routing.order.length) {
+      appendLedger(ledger, "WORKER-REROUTE", {
+        from: target.providerName,
+        to: next,
+        reason: "quota",
+      });
+      return runWorker({
+        providerFlag: next,
+        label,
+        noPane: a.noPane,
+        mcpFlag: a.mcpFlag,
+        claudeArgs: a.claudeArgs,
+        onWorkerStart: a.onWorkerStart,
+        _reroutes: a.reroutes + 1,
+      });
+    }
+  }
+
+  return rc !== 0 ? rc : ok ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// codex engine (2d)
+// ---------------------------------------------------------------------------
+
+interface CodexArgs extends Omit<ExecuteArgs, "reroutes" | "mcpFlag"> {}
+
+async function executeCodexRun(a: CodexArgs): Promise<number> {
+  const { config, logDir, target, model, label, parsed, noPane } = a;
+  if (!parsed.headless || parsed.prompt === null) {
+    throw new Error(
+      `provider "${target.providerName}" (engine codex) supports headless runs only: ` +
+        `pass the task with -p '<prompt>'`
+    );
+  }
+  const env = buildCodexEnv(target.provider);
+  const wid = newWorkerId();
+  const cwd = process.cwd();
+  const term = process.env.ITERM_SESSION_ID ?? "";
+  const session = resolveSession(term);
+
+  const status: WorkerStatus = {
+    id: wid,
+    pid: process.pid,
+    label,
+    cwd,
+    term,
+    provider: target.providerName,
+    model,
+    state: "running",
+    started: nowStamp(),
+    updated: nowStamp(),
+    turns: 0,
+    tools: 0,
+    last: "starting",
+    rc: null,
+    secs: null,
+    ...(session ? { session } : {}),
+    contextWindow: providerContextWindow(target.provider),
+  };
+  saveStatus(logDir, status);
+  a.onWorkerStart?.(wid);
+  const ledger = ledgerPath(logDir);
+  appendLedger(ledger, "WORKER-START", {
+    id: wid,
+    provider: target.providerName,
+    mode: "headless",
+    engine: "codex",
+    model,
+    cwd,
+    label,
+  });
+  const dropped = codexDroppedFlags(a.claudeArgs);
+  if (dropped.length) {
+    appendLedger(ledger, "WORKER-NOTE", {
+      id: wid,
+      note: `dropped for codex: ${dropped.join(", ")}`,
+    });
+  }
+
+  if (!noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
+    void openPaneForWorker(logDir, config, wid, term).catch(() => {});
+  }
+
+  const t0 = Date.now();
+  const proc = spawn("codex", buildCodexArgs(parsed.prompt, parsed.callerModel ? undefined : model), {
+    env,
+    cwd,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+
+  const fold = emptyCodexResult();
+  const eventsFd = openSync(eventsPath(logDir, wid), "a");
+  const writeEvent = (obj: Record<string, unknown>) => {
+    try {
+      writeSync(eventsFd, JSON.stringify({ ...obj, _ts: isoStamp() }) + "\n");
+    } catch {
+      // best effort transcript
+    }
+  };
+  writeEvent({ type: "system", subtype: "init", model, cwd });
+
+  let killed = false;
+  process.once("SIGTERM", onCodexSignal("SIGTERM"));
+  process.once("SIGINT", onCodexSignal("SIGINT"));
+  function onCodexSignal(sig: string) {
+    return () => {
+      killed = true;
+      status.state = "killed";
+      status.rc = 143;
+      status.secs = Math.floor((Date.now() - t0) / 1000);
+      status.last = `killed by signal ${sig}`;
+      saveStatus(logDir, status);
+      try {
+        proc.kill();
+      } catch {
+        /* already gone */
+      }
+      process.exit(143);
+    };
+  }
+
+  const rl = createInterface({ input: proc.stdout! });
+  rl.on("line", (line) => {
+    if (parsed.outputFormat === "stream-json") process.stdout.write(line + "\n");
+    const parsedLine = parseCodexLine(line);
+    if (parsedLine === null) return;
+    foldCodexLine(parsedLine, fold);
+    if (fold.threadId && !status.claudeSession) status.claudeSession = fold.threadId;
+    status.turns = fold.turns;
+    status.tools = fold.tools;
+    if (fold.last) status.last = shortText(fold.last, 90);
+    if (fold.contextTokens) status.contextTokens = fold.contextTokens;
+    saveStatus(logDir, status);
+    for (const ev of fold.events.splice(0)) writeEvent(ev);
+  });
+
+  const rc = await new Promise<number>((resolve, reject) => {
+    proc.on("error", reject);
+    proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
+  });
+  closeSync(eventsFd);
+
+  const secs = Math.floor((Date.now() - t0) / 1000);
+  const finalText = fold.finalText ?? "";
+  const report = parseWorkerReport(finalText);
+  const resultEvent: StreamEvent = {
+    type: "result",
+    result: finalText,
+    is_error: fold.isError || rc !== 0,
+    num_turns: fold.turns,
+    duration_ms: secs * 1000,
+  };
+  writeEvent(resultEvent);
+
+  const ok = rc === 0 && !fold.isError;
+  status.state = ok ? "done" : "failed";
+  status.rc = rc;
+  status.secs = secs;
+  status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
+  saveStatus(logDir, status);
+  appendLedger(ledger, "WORKER-END", {
+    id: wid,
+    provider: target.providerName,
+    mode: "headless",
+    engine: "codex",
+    model,
+    rc,
+    secs,
+    turns: status.turns,
+    tools: status.tools,
+    label,
+  });
+
+  printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report);
+  return rc !== 0 ? rc : ok ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// result printing
+// ---------------------------------------------------------------------------
+
+function printResult(
+  fmt: "text" | "json" | "stream-json",
+  resultEvent: StreamEvent | null,
+  rc: number,
+  logDir: string,
+  wid: string,
+  report?: WorkerReport | null
+): void {
+  if (fmt === "stream-json") return; // already mirrored live
+  if (fmt === "json") {
+    const payload = report
+      ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report }
+      : resultEvent ?? { is_error: true, result: "no result event", rc };
+    console.log(JSON.stringify(payload));
+    return;
+  }
+  if (resultEvent) {
+    console.log(resultEvent.result ?? "");
+  } else {
+    process.stderr.write(
+      `pai worker: run produced no result (rc=${rc}); see ${eventsPath(logDir, wid)}\n`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// providers test: the 90-second pong probe
+// ---------------------------------------------------------------------------
+
+export interface ProviderTestResult {
+  provider: string;
+  model: string;
+  latencyMs: number;
+  result: string;
+  ok: boolean;
+  /** Set when the probe could not run (e.g. "codex not installed"). */
+  skipped?: string;
+}
+
+/**
+ * Run a one-word pong probe through the provider (headless, no pane) and
+ * report provider, model, latency and the reply. ok is false unless the reply
+ * was exactly "pong" (case-insensitive, whitespace-trimmed).
+ */
+export async function testProvider(
+  providerName: string,
+  provider: WorkerProvider,
+  logDir: string,
+  timeoutMs = 90_000
+): Promise<ProviderTestResult> {
+  assertProviderRunnable(providerName, provider);
+  const model = provider.models.default;
+
+  if (provider.engine === "codex") {
+    const skipped = codexInstalled() ? undefined : "codex not installed";
+    return {
+      provider: providerName,
+      model,
+      latencyMs: 0,
+      result: skipped ?? "codex engine: pong probe through codex exec not implemented",
+      ok: false,
+      ...(skipped ? { skipped } : {}),
+    };
+  }
+
+  let proxyUrl: string | undefined;
+  if (provider.protocol === "openai") {
+    const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
+    proxyUrl = `${base}/${providerName}`;
+  }
+  const env = buildRunEnv(provider, true, proxyUrl);
+  const t0 = Date.now();
+  const proc = spawn(
+    "claude",
+    [
+      "--model", model,
+      "--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir),
+      "-p", "Reply with exactly one word: pong",
+      "--output-format", "json",
+    ],
+    { env, stdio: ["ignore", "pipe", "inherit"] }
+  );
+  const timer = setTimeout(() => {
+    try { proc.kill("SIGKILL"); } catch { /* already gone */ }
+  }, timeoutMs);
+
+  let out = "";
+  proc.stdout.on("data", (chunk: Buffer) => {
+    out += chunk.toString("utf8");
+  });
+  const rc = await new Promise<number>((resolve) => {
+    proc.on("error", () => resolve(1));
+    proc.on("close", (code) => resolve(code ?? 1));
+  });
+  clearTimeout(timer);
+
+  return {
+    provider: providerName,
+    model,
+    latencyMs: Date.now() - t0,
+    result: resultFromOutput(out),
+    ok: rc === 0 && resultFromOutput(out).trim().toLowerCase() === "pong",
+  };
+}
+
+/**
+ * Pull the reply out of claude's stdout. With --verbose, `--output-format
+ * json` dumps a JSON array of stream events and the reply sits in the last
+ * "result" event; without it, stdout is the single result object. Accept
+ * either shape, plus a bare-text fallback for error output.
+ */
+export function resultFromOutput(out: string): string {
+  const trimmed = out.trim();
+  if (!trimmed) return "";
+  const parse = (s: string): unknown => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  };
+  const fromValue = (v: unknown): string | null => {
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) {
+        const r = fromValue(v[i]);
+        if (r !== null) return r;
+      }
+      return null;
+    }
+    if (typeof v === "object" && v !== null) {
+      const o = v as StreamEvent;
+      if (o.type === "result" && typeof o.result === "string") return o.result;
+    }
+    return null;
+  };
+  const direct = fromValue(parse(trimmed));
+  if (direct !== null) return direct;
+  const lines = trimmed.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const r = fromValue(parse(lines[i]));
+    if (r !== null) return r;
+  }
+  return trimmed.slice(0, 200);
+}

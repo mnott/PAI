@@ -20,6 +20,7 @@
  *    initialize-session.ts, load-core-context.ts, load-project-context.ts
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, statSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -99,6 +100,7 @@ async function testStopHook() {
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     // Check if this is a subagent session - if so, exit silently
     const claudeProjectDir = process.env.CLAUDE_PROJECT_DIR || '';

@@ -45,6 +45,7 @@ Fetch the full skill instructions with: prompts/get { name: "<skill-name>" }
 | what's emerging, find patterns in vault | vault-emerge |
 | find orphans, orphaned notes | vault-orphans |
 | trace idea, how did X evolve | vault-trace |
+| run a worker, check workers, worker providers | worker |
 
 ### Reference Resources
 

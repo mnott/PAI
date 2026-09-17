@@ -99,6 +99,47 @@ rmSync(STAGING, { recursive: true, force: true });
 console.log(`✔ ${entryPoints.length} hooks built to ${HOOKS_OUT}/`);
 
 // ---------------------------------------------------------------------------
+// Standalone worker status-line: src/workers/standalone/status-line.ts →
+// dist/worker-status-line.mjs (same atomic-staging rules; it runs on every
+// statusline refresh of every live session).
+// ---------------------------------------------------------------------------
+
+// [entry, output name in dist/hooks/]
+const STANDALONE_ENTRIES = [
+  ["src/workers/standalone/status-line.ts", "worker-status-line.mjs"],
+  // detached proxy for openai-protocol providers; spawned from dist, not
+  // symlinked into ~/.claude, so it is NOT in the --sync list below
+  ["src/workers/standalone/proxy.ts", "worker-proxy.mjs"],
+];
+
+mkdirSync(STAGING, { recursive: true });
+for (const [entry, name] of STANDALONE_ENTRIES) {
+  const staged = join(STAGING, name);
+  buildSync({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outfile: staged,
+    sourcemap: true,
+  });
+  chmodSync(staged, 0o755);
+  const stagedMap = `${staged}.map`;
+  if (existsSync(stagedMap)) {
+    renameSync(stagedMap, join(HOOKS_OUT, `${name}.map`));
+  }
+  mkdirSync(HOOKS_OUT, { recursive: true });
+  renameSync(staged, join(HOOKS_OUT, name));
+}
+
+rmSync(STAGING, { recursive: true, force: true });
+
+console.log(
+  `✔ ${STANDALONE_ENTRIES.length} standalone script(s) built to ${HOOKS_OUT}/ (${STANDALONE_ENTRIES.map(([, n]) => n).join(", ")})`
+);
+
+// ---------------------------------------------------------------------------
 // --sync: Symlink (or copy on Windows) all deployable files to ~/.claude/
 // ---------------------------------------------------------------------------
 
@@ -161,7 +202,8 @@ if (doSync) {
   }
 
   // 1. TypeScript hooks: dist/hooks/*.mjs → ~/.claude/Hooks/*.mjs
-  const mjsFiles = readdirSync(HOOKS_OUT).filter((f) => f.endsWith(".mjs"));
+  // (worker-proxy.mjs is spawned from dist, not a hook — skip it)
+  const mjsFiles = readdirSync(HOOKS_OUT).filter((f) => f.endsWith(".mjs") && f !== "worker-proxy.mjs");
   for (const filename of mjsFiles) {
     syncFile(join(HOOKS_OUT, filename), join(hooksTarget, filename));
   }
@@ -185,6 +227,9 @@ if (doSync) {
       syncFile(script, join(claudeDir, script));
     }
   }
+
+  // 4. Standalone worker status-line: dist/worker-status-line.mjs → ~/.claude/
+  syncFile(join(HOOKS_OUT, "worker-status-line.mjs"), join(claudeDir, "worker-status-line.mjs"));
 
   const parts = [];
   if (created > 0) parts.push(`${created} created`);

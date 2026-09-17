@@ -13,7 +13,9 @@ import {
   contextFillThresholds,
   resolveAutocompactPct,
   measureCompactionTrigger,
+  modelFamily,
   selectedCompactionSamples,
+  transcriptModelFamily,
   crossedThresholds,
   isImmediate,
   DEFAULT_CONTEXT_WINDOW,
@@ -624,5 +626,107 @@ describe("contextFillThresholds — trigger source", () => {
     // AND what was configured, not just the winner.
     expect(t.measuredTriggerTokens).toBe(998_267);
     expect(t.configuredTriggerTokens).toBe(800_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Foreign-model transcripts — a headless worker on another provider (a
+// different context window) shares the project folder; its compactions must
+// not shape THIS project's measured trigger. Observed 2026-09-17: two such
+// workers compacting at ~151k pulled a real trigger from ~784k to ~151k.
+// ---------------------------------------------------------------------------
+
+function assistantLine(model: string): string {
+  return JSON.stringify({
+    type: "assistant",
+    message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] },
+  });
+}
+
+describe("measureCompactionTrigger — foreign-model transcripts are ignored", () => {
+  it("drops compact_boundary samples governed by a non-claude assistant model", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/foreign";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "real.jsonl"),
+      [assistantLine("claude-x-1"), compactBoundaryLine(784_000, "2026-09-17T09:00:00.000Z", "u1")].join("\n") + "\n"
+    );
+    writeFileSync(
+      join(projectDir, "worker.jsonl"),
+      [
+        assistantLine("other-model-1"),
+        compactBoundaryLine(151_000, "2026-09-17T09:30:00.000Z", "u2"),
+        compactBoundaryLine(152_000, "2026-09-17T09:35:00.000Z", "u3"),
+      ].join("\n") + "\n"
+    );
+    try {
+      expect(selectedCompactionSamples(cwd, projectsDir).map((s) => s.preTokens)).toEqual([784_000]);
+      expect(measureCompactionTrigger(cwd, projectsDir)).toBe(784_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps samples from a transcript with no model field at all", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/nomodel";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "old.jsonl"), compactBoundaryLine(790_000, "2026-09-17T09:00:00.000Z", "u1") + "\n");
+    try {
+      expect(measureCompactionTrigger(cwd, projectsDir)).toBe(790_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("judges each sample by the model seen BEFORE it in its own file", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/order";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "mixed.jsonl"),
+      [
+        assistantLine("claude-x-1"),
+        compactBoundaryLine(780_000, "2026-09-17T09:00:00.000Z", "u1"),
+        assistantLine("other-model-1"),
+        compactBoundaryLine(150_000, "2026-09-17T09:30:00.000Z", "u2"),
+      ].join("\n") + "\n"
+    );
+    try {
+      expect(selectedCompactionSamples(cwd, projectsDir).map((s) => s.preTokens)).toEqual([780_000]);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("modelFamily / transcriptModelFamily", () => {
+  it("classifies claude-, foreign, synthetic and missing models", () => {
+    expect(modelFamily("claude-opus-5")).toBe("claude");
+    expect(modelFamily("other-model-1")).toBe("foreign");
+    expect(modelFamily("<synthetic>")).toBe("unknown");
+    expect(modelFamily(null)).toBe("unknown");
+    expect(modelFamily("")).toBe("unknown");
+  });
+
+  it("reads the LAST assistant model, skips synthetic turns, and is unknown for an unreadable file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-model-family-test-"));
+    const path = join(dir, "t.jsonl");
+    try {
+      writeFileSync(
+        path,
+        [assistantLine("other-model-1"), compactBoundaryLine(1, "2026-09-17T09:00:00.000Z"), assistantLine("claude-x-1")].join("\n") + "\n"
+      );
+      expect(transcriptModelFamily(path)).toBe("claude");
+      writeFileSync(path, [assistantLine("claude-x-1"), assistantLine("other-model-1"), assistantLine("<synthetic>")].join("\n") + "\n");
+      expect(transcriptModelFamily(path)).toBe("foreign");
+      expect(transcriptModelFamily(join(dir, "missing.jsonl"))).toBe("unknown");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

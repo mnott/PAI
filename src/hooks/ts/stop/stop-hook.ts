@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
 import { connect } from 'net';
@@ -704,6 +705,7 @@ function debug(msg: string): void {
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   if (isProbeSession()) {
     process.exit(0);
   }

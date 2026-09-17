@@ -533,3 +533,20 @@ if [ "$context_pct" -gt 0 ] 2>/dev/null; then
 else
     printf "${LINE3_PRIMARY}${EMOJI_GEM} Context${RESET}${LINE3_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${LINE3_ACCENT}...${ac_suffix}${usage_suffix}${RESET}\n"
 fi
+
+# Line 4: workers launched from this session (running ones with their current
+# step, plus today's finished count). Empty when this session has none.
+# Prefers the standalone built script (plain node, no CLI startup); falls back
+# to the pai CLI.
+worker_status_cmd=""
+if [ -x "${claude_dir}/worker-status-line.mjs" ]; then
+    worker_status_cmd="${claude_dir}/worker-status-line.mjs"
+elif command -v pai >/dev/null 2>&1; then
+    worker_status_cmd="pai worker status-line"
+fi
+if [ -n "$worker_status_cmd" ]; then
+    worker_line="$("$worker_status_cmd" "${ITERM_SESSION_ID:-}" "${PWD:-}" 2>/dev/null)"
+    if [ -n "$worker_line" ]; then
+        printf "${LINE3_PRIMARY}🐝 ${RESET}${LINE3_ACCENT}%s${RESET}\n" "$worker_line"
+    fi
+fi

@@ -16,6 +16,7 @@
  *   SessionStart(compact) → THIS HOOK reads that file → stdout → context
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -30,6 +31,7 @@ interface HookInput {
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   let hookInput: HookInput | null = null;
 
   try {

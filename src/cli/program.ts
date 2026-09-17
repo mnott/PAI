@@ -39,6 +39,7 @@ import { registerKgCommands } from "./commands/kg.js";
 import { registerDbCommands } from "./commands/db.js";
 import { registerHelpCommand } from "./commands/help.js";
 import { registerSessionCommands } from "./commands/session/index.js";
+import { registerWorkerCommands } from "./commands/worker/index.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup/index.js";
 import { err, warn, ok, dim, shortenPath, encodeDir, now } from "./utils.js";
 import { cmdPause } from "./commands/session/pause.js";
@@ -173,6 +174,19 @@ Examples:
 
   registerSessionCommands(sessionCmd, getDb);
   registerSessionCleanupCommand(sessionCmd, getDb);
+
+  // -------------------------------------------------------------------------
+  // pai worker — subagent runs on configured providers (glm et al.)
+  // -------------------------------------------------------------------------
+
+  const workerCmd = program
+    .command("worker")
+    .description(
+      "Run subagents on configured worker providers: run, ps, follow, replay,\n" +
+        "pane, log, status-line, providers, roles, on, off, install"
+    );
+
+  registerWorkerCommands(workerCmd);
 
   program
     .command("sessions")

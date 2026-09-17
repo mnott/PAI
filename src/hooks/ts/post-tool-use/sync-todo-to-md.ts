@@ -10,6 +10,7 @@
  * IMPORTANT: This hook PRESERVES user content. It only updates "Current Session".
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import {
@@ -131,6 +132,7 @@ ${formatSessionTodos(todos)}`;
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
