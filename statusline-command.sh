@@ -11,7 +11,7 @@
 #
 # LINES DISPLAYED:
 #   1. Greeting: DA name, model, directory
-#   2. MCPs: Active MCP servers (wraps on narrow terminals)
+#   2. MCPs: server count, then names that fit the width (rest shown as +N)
 #   3. Context: Current session context window usage (K / 200K)
 #
 # ENVIRONMENT VARIABLES (set in settings.json env section):
@@ -86,27 +86,26 @@ fi
 # Config directory
 claude_dir="${PAI_DIR:-$HOME/.claude}"
 
-# Count MCPs from all config sources (settings.json, .mcp.json, ~/.claude.json)
-mcp_names_raw=""
-mcps_count=0
+# Collect MCP server names from all config sources (settings.json, .mcp.json,
+# ~/.claude.json). Only entries that define a server (object with a command,
+# type or url field) count: Claude Code also stores per-tool usage stats in
+# mcpServers under tool-name keys ("Read", "mcp__pai__memory_search", …), and
+# those must never reach the status line. Keys are newline-separated so names
+# containing spaces survive.
+mcp_names=""
 
-# Helper: merge MCP names from a jq-compatible JSON file
 _merge_mcps() {
     local file="$1"
     [ -f "$file" ] || return
-    local data
-    data=$(jq -r '.mcpServers | keys | join(" "), length' "$file" 2>/dev/null)
-    [ -n "$data" ] && [ "$data" != "null" ] || return
-    local names count
-    names=$(echo "$data" | head -1)
-    count=$(echo "$data" | tail -1)
+    local names
+    names=$(jq -r '.mcpServers // {} | to_entries[] | select(((.value | type) == "object") and (.value | (has("command") or has("type") or has("url")))) | .key' "$file" 2>/dev/null)
     [ -n "$names" ] || return
-    if [ -n "$mcp_names_raw" ]; then
-        mcp_names_raw="$mcp_names_raw $names"
+    if [ -n "$mcp_names" ]; then
+        mcp_names="${mcp_names}
+${names}"
     else
-        mcp_names_raw="$names"
+        mcp_names="$names"
     fi
-    mcps_count=$((mcps_count + count))
 }
 
 # Read from all three MCP config locations
@@ -114,11 +113,12 @@ _merge_mcps "$claude_dir/settings.json"    # legacy
 _merge_mcps "$claude_dir/.mcp.json"        # project-level
 _merge_mcps "$HOME/.claude.json"           # user-level (e.g. Coogle, DEVONthink)
 
-# Deduplicate MCP names (preserving order)
-if [ -n "$mcp_names_raw" ]; then
-    mcp_names_raw=$(echo "$mcp_names_raw" | tr ' ' '\n' | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')
-    mcps_count=$(echo "$mcp_names_raw" | wc -w | tr -d ' ')
-fi
+# Deduplicate (case-insensitive — macOS config keys drift in case), first
+# spelling wins, order preserved
+mcp_list=()
+while IFS= read -r mcp_line; do
+    mcp_list+=("$mcp_line")
+done < <(printf '%s\n' "$mcp_names" | awk 'NF && !seen[tolower($0)]++')
 
 # Extract context window usage from Claude Code's JSON input (no JSONL parsing needed)
 context_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0' 2>/dev/null)
@@ -247,8 +247,7 @@ if [ "${PAI_SIMPLE_COLORS:-0}" = "1" ]; then
     MCP_DEFAULT='\033[34m'
 fi
 
-# Format MCP names with terminal-width-aware wrapping
-# Debug: log available width info (remove after testing)
+# Format the MCP segment (see the render block below)
 # Terminal width for line truncation
 # Claude Code's statusline subprocess can't detect resize (stty returns stale values).
 # To set your width:  echo 105 > ~/.claude/.statusline_width
@@ -258,8 +257,7 @@ term_width=80
 [ "$term_width" -gt 0 ] 2>/dev/null || term_width=80
 mcp_prefix_width=10  # visual width of "🔌 MCPs: " (emoji=2 + space + "MCPs: " = 10)
 
-# Build MCP output — proactively split into two lines when there are many MCPs.
-# No width detection needed: if total display chars > 60, split at the midpoint.
+# Display-name mapping for known servers
 _mcp_display_name() {
     case "$1" in
         "daemon") echo "Daemon" ;;
@@ -275,7 +273,9 @@ _mcp_display_name() {
         "macos_automator") echo "macOS" ;;
         "claude_ai_Gmail") echo "Gmail" ;;
         "claude_ai_Google_Calendar") echo "GCal" ;;
-        *) local n="$1"; echo "${n^}" ;;
+        # capitalize without bash-4 ${n^} so /bin/bash 3.2 renders names too
+        *) local n="$1"
+           printf '%s%s' "$(printf '%s' "$n" | cut -c1 | tr '[:lower:]' '[:upper:]')" "$(printf '%s' "$n" | cut -c2-)" ;;
     esac
 }
 
@@ -288,57 +288,53 @@ _mcp_formatted() {
     esac
 }
 
-# Collect all display names and calculate total width
-mcp_display_names=()
-mcp_formatted_strs=()
-total_display_width=$mcp_prefix_width  # start with "🔌 MCPs: " prefix
-total_mcps=0
-
-for mcp in $mcp_names_raw; do
-    dn=$(_mcp_display_name "$mcp")
-    fm=$(_mcp_formatted "$dn")
-    mcp_display_names+=("$dn")
-    mcp_formatted_strs+=("$fm")
-    if [ $total_mcps -gt 0 ]; then
-        total_display_width=$((total_display_width + 2))  # ", "
-    fi
-    total_display_width=$((total_display_width + ${#dn}))
-    total_mcps=$((total_mcps + 1))
-done
-
-# Decide: one line or two lines?
-# If total display width > 60 chars, split at the midpoint
+# Build the MCP segment: "N: name1, name2, … +K" — total server count first,
+# then as many display names as fit the width (hard cap regardless of width),
+# the rest collapsed into "+K". Always a single line: what doesn't fit is
+# counted, never printed.
+mcp_total=${#mcp_list[@]}
 mcp_line1=""
-mcp_line2=""
 
-if [ $total_mcps -eq 0 ]; then
+if [ "$mcp_total" -eq 0 ]; then
     mcp_line1="none"
-elif [ $total_display_width -le $term_width ]; then
-    # Single line — everything fits
-    for ((i=0; i<total_mcps; i++)); do
-        if [ $i -eq 0 ]; then
-            mcp_line1="${mcp_formatted_strs[$i]}"
-        else
-            mcp_line1="${mcp_line1}${SEPARATOR_COLOR}, ${mcp_formatted_strs[$i]}"
-        fi
-    done
 else
-    # Two lines — split at midpoint
-    split_at=$(( (total_mcps + 1) / 2 ))
-    for ((i=0; i<split_at; i++)); do
-        if [ $i -eq 0 ]; then
-            mcp_line1="${mcp_formatted_strs[$i]}"
-        else
-            mcp_line1="${mcp_line1}${SEPARATOR_COLOR}, ${mcp_formatted_strs[$i]}"
+    mcp_max_names=6
+    # Width budget for the name list: terminal minus prefix, minus the leading
+    # "N: " and a reserve for the trailing " +K" overflow marker
+    mcp_budget=$(( term_width - mcp_prefix_width - ${#mcp_total} - 2 - 6 ))
+    [ "$mcp_budget" -lt 12 ] && mcp_budget=12
+    mcp_width=0
+    mcp_shown=0
+    mcp_overflow=0
+    for mcp in "${mcp_list[@]}"; do
+        dn=$(_mcp_display_name "$mcp")
+        w_add=${#dn}
+        [ "$mcp_shown" -gt 0 ] && w_add=$(( w_add + 2 ))  # ", " separator
+        if [ "$mcp_shown" -ge "$mcp_max_names" ] || [ $(( mcp_width + w_add )) -gt "$mcp_budget" ]; then
+            mcp_overflow=$(( mcp_overflow + 1 ))
+            continue
         fi
-    done
-    for ((i=split_at; i<total_mcps; i++)); do
-        if [ $i -eq $split_at ]; then
-            mcp_line2="${mcp_formatted_strs[$i]}"
+        fm=$(_mcp_formatted "$dn")
+        if [ "$mcp_shown" -eq 0 ]; then
+            mcp_line1="${mcp_total}${SEPARATOR_COLOR}: ${RESET}${fm}"
+            mcp_width=${#mcp_total}
         else
-            mcp_line2="${mcp_line2}${SEPARATOR_COLOR}, ${mcp_formatted_strs[$i]}"
+            mcp_line1="${mcp_line1}${SEPARATOR_COLOR}, ${fm}"
+            mcp_width=$(( mcp_width + 2 ))
         fi
+        mcp_width=$(( mcp_width + ${#dn} ))
+        mcp_shown=$(( mcp_shown + 1 ))
     done
+    if [ "$mcp_shown" -eq 0 ]; then
+        # Even the first name exceeds the budget — truncate that one name
+        dn=$(_mcp_display_name "${mcp_list[0]}")
+        avail=$(( mcp_budget - 1 ))
+        [ "$avail" -lt 3 ] && avail=3
+        dn="${dn:0:$((avail - 1))}…"
+        mcp_line1="${mcp_total}${SEPARATOR_COLOR}: ${RESET}$(_mcp_formatted "$dn")"
+        mcp_overflow=$(( mcp_total - 1 ))
+    fi
+    [ "$mcp_overflow" -gt 0 ] && mcp_line1="${mcp_line1}${SEPARATOR_COLOR} +${RESET}${LINE2_ACCENT}${mcp_overflow}${RESET}"
 fi
 
 # Output the statusline
@@ -356,12 +352,8 @@ else
     printf "${line1_short}\n"
 fi
 
-# LINE 2 - MCPs (with optional wrap to second line)
+# LINE 2 - MCPs (single line, capped by width; overflow shown as +N)
 printf "${LINE2_PRIMARY}${EMOJI_PLUG} MCPs${RESET}${LINE2_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${mcp_line1}${RESET}\n"
-if [ -n "$mcp_line2" ]; then
-    # Continuation line — indent to align with MCP names after "🔌 MCPs: "
-    printf "${LINE2_PRIMARY}          ${RESET}${mcp_line2}${RESET}\n"
-fi
 
 
 # Usage suffix: provider-aware. glm sessions read the Z.ai plan quota
