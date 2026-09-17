@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   PROFILE_NAME,
+  SPLIT_SCRIPT,
   WINDOW_BOUNDS_SCRIPT,
   WORKER_SPLIT_SCRIPT,
   checkPaneForWorker,
@@ -233,5 +234,26 @@ describe("WORKER_SPLIT_SCRIPT window size", () => {
 
   it("passes arguments as argv items, never interpolated", () => {
     expect(WORKER_SPLIT_SCRIPT).toMatch(/on run\(argv\)/);
+  });
+});
+
+describe("split scripts never steal input focus", () => {
+  it("re-selects the launching session after the split (a split makes the new session active)", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
+      const split = script.indexOf("split");
+      const select = script.indexOf("select s");
+      expect(split).toBeGreaterThan(-1);
+      expect(select).toBeGreaterThan(script.lastIndexOf("write text followCmd"));
+    }
+  });
+
+  it("never activates and never selects the new session", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
+      expect(script).toMatch(/select s\b/);
+      expect(script).not.toMatch(/select newS/);
+      expect(script).not.toMatch(/activate/);
+    }
+    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/select/);
+    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/activate/);
   });
 });
