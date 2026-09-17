@@ -10,7 +10,7 @@ At 9am I was above 90%, and there was no way I would make it through to Saturday
 
 So I decided to solve this problem. At 10pm I am at 97% — and that number has not changed since noon.
 
-This post shows how to become provider-independent. How to free yourself from Claude, so a maxed-out subscription stops being your problem. How to use any cloud model and any local model inside your Claude Code (or OpenCode) harness. How to run models in parallel, each for what it is good at — all purely local, without resorting to yet another Hermes-or-whatever harness. How to have workers run by default, visibly — and how to interact with each of them in its own chat.
+This page shows how to become provider-independent. How to free yourself from Claude, so a maxed-out subscription stops being your problem. How to use any cloud model and any local model inside your Claude Code (or OpenCode) harness. How to run models in parallel, each for what it is good at — all purely local, without resorting to yet another Hermes-or-whatever harness. How to have workers run by default, visibly — and how to interact with each of them in its own chat.
 
 My whole journey into PAI and AIBroker started nine months ago, when I used OpenClawd for four hours and had burned through all my credits. I decided then and there that there had to be a better way: instead of API tokens, use the Claude Max subscription I was paying for anyway.
 
@@ -33,16 +33,7 @@ So the requirements were:
 
 The whole implementation cost 7 of my last 10 percentage points of Claude Max 200. Then I switched to GLM for everything else. And what can I say — it works beautifully.
 
----
 
-> My AI budget hit 91% before lunch. So I changed one rule: the expensive
-> assistant keeps the thinking, a cheaper crew does the building. The feature
-> shipped anyway.
->
-> Your AI bill is not a fact of nature. It is a design decision.
-
-Your assistant runs its helper crew on whichever AI provider you choose —
-and so can the session itself.
 
 ## Switching
 
