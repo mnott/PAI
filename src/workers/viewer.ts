@@ -915,5 +915,5 @@ export function statusLineOutput(
     const sameDir = cwd && s.cwd.startsWith(cwd);
     return sameScope || (!term && sameDir);
   });
-  return renderStatusLine(mine, now, makeColor(false), statuses, inboxCounts(logDir, mine));
+  return renderStatusLine(mine, now);
 }
