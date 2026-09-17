@@ -1,23 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T20:07:40.366Z" -->
+<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence, Statusline R2, And Worker Hooks" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T20:26:47.667Z" -->
 
-> **Last session:** 0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup
-> **Paused at:** 2026-09-17T20:07:40.366Z
+> **Last session:** 0058 - 2026-09-17 - Glm Provider Independence, Statusline R2, And Worker Hooks
+> **Paused at:** 2026-09-17T20:26:47.667Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
 
 T
-i=ckpt-2026-09-17T20-07-40.326Z
-g=he doesn't care  21:30:42 │ $ bunx vitest run 2>&1 | tail -6 21:30:44 │ » Path discipline: stop typing absolute worktree paths entirely. Your cwd is already the worktree root, so use ONLY relative pat…
-d=ok kill it and restart that thing anew I'd say | I think you've got it. now start another worker that will consolidate the readme into something useful for those pvoider independence. like why, how, what | not good: it still names "glm"  The crew. Once, at the start: "Add a worker provider named glm — here is the key." Then: "Use glm for the workers from now on." The session itself. Start it with the gl… | improve this as the intro for provider independence, I'll then also use it for linked in.   # Provider Independence  This post shows you how to become provide independent. How to free yourself from Cl… | yet put it in provider independence at the top. like provider-independence.md where you have a small teaser up top. then link that prominently into readme.md. then cpp
+i=ckpt-2026-09-17T20-26-47.610Z
+g=not good: it still names "glm"  The crew. Once, at the start: "Add a worker provider named glm — here is the key." Then: "Use glm for the workers from now on." The session itself. Start it with the gl…
+d=improve this as the intro for provider independence, I'll then also use it for linked in.   # Provider Independence  This post shows you how to become provide independent. How to free yourself from Cl… | yet put it in provider independence at the top. like provider-independence.md where you have a small teaser up top. then link that prominently into readme.md. then cpp | can you read this with its follow-up comments, so you can reword that intro (I basically just reordered it):  https://www.linkedin.com/feed/update/urn:li:activity:7506444930198749185/ | you can use claude-in-chrome | your controls
 t=?
 @1=Notes/TODO.md
-@2=docs/commands/README.md
-@3=docs/commands/worker.md
-z=auto ckpt (no model); main@2e58bbb merge worker 20260917-214849-35330 (capability model preferences); 3 dirty; git status for detail
+z=auto ckpt (no model); main@9109d5a merge worker 20260917-221800-87827 (reorder story intro); 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
