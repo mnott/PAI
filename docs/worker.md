@@ -563,3 +563,24 @@ Line 4 of the statusline lists this session's running workers (provider,
 label, age, current tool, context meter past 60 %) plus today's ✓/✗ tally.
 It prefers the standalone `~/.claude/worker-status-line.mjs` (plain node,
 built by `bun run build`) and falls back to `pai worker status-line`.
+
+The first segment is the chat pane itself (the interactive `pai worker run`
+that owns the terminal, status `origin: "chat"`): its provider, `▶N` counting
+only its running spawned workers (nothing at zero), its own age when none
+run, and `· <last activity>` — never its id or label, it is not a worker.
+
+Example: `glm ▶2 · interactive | #4969 fix black buttons 6m · Edit: button.ts | #2924 spotcheck login 1m · Bash: npm test   ✓75 ✗4 today`
+
+Segment by segment:
+
+- provider tag (`glm`) — the chat pane's provider; `workers` when there is no tracked chat pane and the running workers are mixed
+- `▶2` — this terminal's running SPAWNED workers: `state=running` **and** a live pid **and** not the chat-pane tracker; omitted entirely at zero (the pane's own age takes the slot)
+- `· interactive` — the chat pane's last activity (`interactive` until it ends)
+- `#4969` — short worker id (last 4 chars, same short form `pai worker ps` shows), on spawned workers only
+- label (`fix black buttons`) — `--label`, else the first 70 chars of the prompt; `unlabeled` when the run had neither
+- age (`6m`) — time since the worker started
+- last activity (`Edit: button.ts`) — most recent event line (current tool, or what the worker last said)
+- `◆N` — unread handoffs waiting in that worker's inbox
+- `ctx 150k/200k (75%)` — worker context load, joined once it passes 60 %
+- `↳ ` — a sub-worker, indented under its parent
+- `✓75 ✗4 today` — today's finished workers: done vs failed

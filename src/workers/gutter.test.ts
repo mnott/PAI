@@ -19,6 +19,7 @@ import {
   tickerText,
   tickerTool,
 } from "./render.js";
+import { agentLabel } from "./agents.js";
 import type { WorkerStatus } from "./status.js";
 
 const plain = makeColor(false);
@@ -270,7 +271,7 @@ describe("renderEvent", () => {
   });
 });
 
-describe("renderStatusLine meter", () => {
+describe("renderStatusLine", () => {
   const base = {
     pid: process.pid,
     label: "task",
@@ -287,6 +288,15 @@ describe("renderStatusLine meter", () => {
     secs: null,
   } as WorkerStatus;
   const now = new Date("2026-09-17T10:00:45");
+  const chat: WorkerStatus = {
+    ...base,
+    id: "20260917-100000-3390",
+    state: "running",
+    origin: "chat",
+    provider: "glm",
+    label: "unlabeled",
+    last: "interactive",
+  };
 
   it("shows the meter once context passes 60%", () => {
     const s: WorkerStatus = { ...base, id: "20260917-100000-1234", state: "running", contextTokens: 150000, contextWindow: 200000 };
@@ -296,5 +306,62 @@ describe("renderStatusLine meter", () => {
   it("hides the meter below 60%", () => {
     const s: WorkerStatus = { ...base, id: "20260917-100000-1235", state: "running", contextTokens: 20000, contextWindow: 200000 };
     expect(renderStatusLine([s], now, plain)).not.toContain("ctx ");
+  });
+
+  it("marks the id short form with # so it cannot read as a number", () => {
+    const s: WorkerStatus = { ...base, id: "20260917-100000-1234", state: "running" };
+    expect(renderStatusLine([s], now, plain)).toContain("#1234 task");
+    expect(renderStatusLine([s], now, plain)).not.toMatch(/ 1234 task/);
+  });
+
+  it("renders the label verbatim, including the unlabeled placeholder", () => {
+    const s: WorkerStatus = { ...base, id: "20260917-100000-1236", state: "running", label: "unlabeled" };
+    expect(renderStatusLine([s], now, plain)).toContain("#1236 unlabeled");
+  });
+
+  it("counts only running workers with a live pid in ▶N", () => {
+    const live: WorkerStatus = { ...base, id: "20260917-100000-1237", state: "running" };
+    const dead: WorkerStatus = { ...base, id: "20260917-100000-1238", state: "running", pid: 999999 };
+    const out = renderStatusLine([live, dead], now, plain);
+    expect(out).toContain("▶1");
+    expect(out).not.toContain("1238");
+  });
+
+  it("agentLabel falls back to the unlabeled placeholder without a prompt", () => {
+    expect(agentLabel("Explore", null)).toBe("Explore: unlabeled");
+    expect(agentLabel("Explore", "fix the thing")).toContain("fix the thing");
+  });
+
+  it("renders no ▶N and no id/label when only the chat pane runs", () => {
+    const out = renderStatusLine([chat], now, plain);
+    expect(out).toBe("glm 45s · interactive");
+  });
+
+  it("excludes the chat pane from ▶N; spawned workers keep id and label", () => {
+    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons" };
+    const w2: WorkerStatus = { ...base, id: "20260917-100000-2924", state: "running", origin: "spawn", provider: "glm", label: "spotcheck login" };
+    const out = renderStatusLine([chat, w1, w2], now, plain);
+    expect(out).toContain("glm ▶2 · interactive | #4969 fix black buttons");
+    expect(out).toContain("#2924 spotcheck login");
+    expect(out).not.toContain("▶3");
+    expect(out).not.toContain("3390");
+    expect(out).not.toContain("unlabeled");
+  });
+
+  it("counts a dead chat pane's workers without it claiming the first segment", () => {
+    const stale: WorkerStatus = { ...chat, pid: 999999 };
+    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons" };
+    const out = renderStatusLine([stale, w1], now, plain);
+    expect(out).toContain("glm ▶1 | #4969 fix black buttons");
+    expect(out).not.toContain("3390");
+    expect(out).not.toContain("interactive");
+  });
+
+  it("treats the chat pane as the bar's root: its spawns are not ↳-indented", () => {
+    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons", parent: chat.id };
+    const w2: WorkerStatus = { ...base, id: "20260917-100000-2924", state: "running", origin: "spawn", provider: "glm", label: "spotcheck login", parent: w1.id };
+    const out = renderStatusLine([chat, w1, w2], now, plain);
+    expect(out).toContain("| #4969 fix black buttons");
+    expect(out).toContain("| ↳ #2924 spotcheck login");
   });
 });

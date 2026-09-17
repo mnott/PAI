@@ -33,9 +33,15 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): string | nu
  * Depth of `id` in the worker forest: 0 for a top-level worker, 1 + the
  * parent's depth for a sub-worker. Parents without a status file (chain ids,
  * unknown ids) count as roots; a cycle reads as its own depth and is cut off
- * after the statuses it walked.
+ * after the statuses it walked. `chatIsRoot` stops one level short of the
+ * chat-pane tracker (origin "chat"): the status line treats the pane as the
+ * bar itself, so the workers it spawned are its top level.
  */
-export function workerDepth(statuses: WorkerStatus[], id: string): number {
+export function workerDepth(
+  statuses: WorkerStatus[],
+  id: string,
+  opts?: { chatIsRoot?: boolean }
+): number {
   const byId = new Map(statuses.map((s) => [s.id, s]));
   let depth = 0;
   let cur = byId.get(id);
@@ -44,7 +50,7 @@ export function workerDepth(statuses: WorkerStatus[], id: string): number {
     seen.add(cur.parent);
     const next = byId.get(cur.parent);
     if (!next) break; // chain id or stale parent: a root, not a level
-    depth += 1;
+    if (!(opts?.chatIsRoot && next.origin === "chat")) depth += 1;
     cur = next;
   }
   return depth;

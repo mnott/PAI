@@ -58,7 +58,16 @@ export interface WorkerStatus {
   commits?: number | null;
   /** Set by `pai worker merge` once the branch landed in the original checkout. */
   merged?: boolean;
+  /**
+   * How the run came to be: "spawn" (a `pai worker run` subagent) or "chat"
+   * (the terminal's interactive pane itself, tracked like a worker). Absent
+   * on statuses written before the flag existed — read as a spawn.
+   */
+  origin?: "spawn" | "chat";
 }
+
+/** Label a worker gets when launched with neither --label nor a prompt. */
+export const UNLABELED = "unlabeled";
 
 /** Context-meter percentage 0–100, null when the numbers are missing. */
 export function contextPercent(s: Pick<WorkerStatus, "contextTokens" | "contextWindow">): number | null {
