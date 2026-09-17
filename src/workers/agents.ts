@@ -17,6 +17,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { UNLABELED } from "./status.js";
+
 export interface AgentDef {
   name: string;
   /** Front-matter `model`, when present (any string; mapped via modelToClass). */
@@ -124,5 +126,5 @@ export function agentClaudeArgs(def: AgentDef): string[] {
 
 /** `<agent>: <first 50 chars of prompt>` — the default label for a run. */
 export function agentLabel(name: string, prompt: string | null | undefined): string {
-  return `${name}: ${prompt ?? "(no prompt)"}`.slice(0, name.length + 2 + 50);
+  return `${name}: ${prompt ?? UNLABELED}`.slice(0, name.length + 2 + 50);
 }
