@@ -1,7 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkAndEnqueueContextHandover, type HandoverTriggerDeps, type HandoverTriggerState } from "./context-handover-trigger.js";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  checkAndEnqueueContextHandover,
+  loadTriggerState,
+  resetHandoverTriggerState,
+  triggerStatePath,
+  type HandoverTriggerDeps,
+  type HandoverTriggerState,
+} from "./context-handover-trigger.js";
 import type { ContextFillReading, ThresholdName } from "../hooks/ts/lib/context-fill.js";
-import type { ContextHandoverCache } from "../hooks/ts/lib/context-handover-cache.js";
+import { contextHandoverCachePath, writeContextHandoverCache, type ContextHandoverCache } from "../hooks/ts/lib/context-handover-cache.js";
 
 function readingAt(usedTokens: number, windowSize = 1_000_000): ContextFillReading {
   return { status: "ok", usedTokens, windowSize, fraction: usedTokens / windowSize, source: "statusline" };
@@ -184,5 +192,97 @@ describe("checkAndEnqueueContextHandover — enqueue attempt vs confirmed outcom
       },
     });
     await expect(checkAndEnqueueContextHandover(input, deps)).resolves.toEqual({ attempted: [], confirmed: [] });
+  });
+});
+
+describe("resetHandoverTriggerState — compaction reset (the one-handover-per-session-life bug)", () => {
+  it("clears a fully-confirmed marker so a POST-RESET threshold crossing enqueues a NEW handover", async () => {
+    const sessionId = "compaction-reset-repro-session";
+    const path = triggerStatePath(sessionId);
+
+    try {
+      // Both thresholds already confirmed — exactly the state a session is
+      // left in after its first model-written handover, and exactly the
+      // state that used to persist for the session's entire remaining life.
+      writeFileSync(path, JSON.stringify({ confirmed: ["warmup", "refresh"], pending: null }), "utf-8");
+
+      // Sanity check on the bug itself: before any reset, the real loader
+      // sees both confirmed and checkAndEnqueueContextHandover short-circuits.
+      const beforeReset = await checkAndEnqueueContextHandover(
+        { sessionId, cwd: "/proj" },
+        {
+          getReading: () => readingAt(999_000),
+          loadState: loadTriggerState,
+          saveState: () => {},
+          readCache: () => null,
+          enqueue: async () => {
+            throw new Error("must not be called before reset");
+          },
+          now: () => Date.now(),
+        }
+      );
+      expect(beforeReset).toEqual({ attempted: [], confirmed: [] });
+
+      // The fix under test: a compaction happened. Reset the marker.
+      resetHandoverTriggerState(sessionId);
+
+      // Now a fresh threshold crossing (post-compaction refill) must enqueue
+      // a brand-new handover — NOT return NOTHING as the old code did.
+      const enqueuedThresholds: ThresholdName[] = [];
+      const afterReset = await checkAndEnqueueContextHandover(
+        { sessionId, cwd: "/proj" },
+        {
+          getReading: () => readingAt(999_000),
+          loadState: loadTriggerState,
+          saveState: () => {},
+          readCache: () => null,
+          enqueue: async (payload) => {
+            enqueuedThresholds.push(payload.threshold);
+          },
+          now: () => Date.now(),
+        }
+      );
+
+      expect(afterReset).not.toEqual({ attempted: [], confirmed: [] });
+      expect(afterReset.attempted.length).toBeGreaterThan(0);
+      expect(enqueuedThresholds.length).toBeGreaterThan(0);
+    } finally {
+      if (existsSync(path)) unlinkSync(path);
+    }
+  });
+
+  it("is a no-op when no marker file exists (fresh session, or already reset)", () => {
+    const sessionId = "reset-noop-session-with-no-marker-file";
+    const path = triggerStatePath(sessionId);
+    expect(existsSync(path)).toBe(false);
+    expect(() => resetHandoverTriggerState(sessionId)).not.toThrow();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("does NOT delete the handover cache file — only the fired/confirmed marker", () => {
+    const sessionId = "reset-preserves-cache-session";
+    const markerPath = triggerStatePath(sessionId);
+    const cachePath = contextHandoverCachePath(sessionId);
+
+    try {
+      writeFileSync(markerPath, JSON.stringify({ confirmed: ["warmup", "refresh"], pending: null }), "utf-8");
+      writeContextHandoverCache({
+        sessionId,
+        cwd: "/proj",
+        threshold: "refresh",
+        generatedAt: new Date().toISOString(),
+        model: "sonnet",
+        summary: "this cache must survive the reset",
+      });
+      expect(existsSync(cachePath)).toBe(true);
+
+      resetHandoverTriggerState(sessionId);
+
+      expect(existsSync(markerPath)).toBe(false); // marker: gone
+      expect(existsSync(cachePath)).toBe(true); // cache: untouched
+    } finally {
+      if (existsSync(markerPath)) unlinkSync(markerPath);
+      if (existsSync(cachePath)) unlinkSync(cachePath);
+    }
   });
 });

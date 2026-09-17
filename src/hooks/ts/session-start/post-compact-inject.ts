@@ -19,6 +19,7 @@
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { resetHandoverTriggerState } from '../../../session/context-handover-trigger.js';
 
 interface HookInput {
   session_id: string;
@@ -52,6 +53,16 @@ async function main() {
     console.error('post-compact-inject: no session_id, exiting');
     process.exit(0);
   }
+
+  // This hook fires exactly once per compaction for this session — the
+  // right moment to reset the handover-trigger marker (confirmed/pending
+  // thresholds) so the NEXT context-fill cycle gets its own handover
+  // instead of being judged "already done" forever. Unconditional: it must
+  // run even when no compact-state digest file was found below, since a
+  // compaction still happened. Never touches the separate handover CACHE
+  // file — that is what gets injected below and must survive this call.
+  // See resetHandoverTriggerState() for the full rationale.
+  resetHandoverTriggerState(hookInput.session_id);
 
   // Look for the state file saved by context-compression-hook during PreCompact
   const stateFile = join(tmpdir(), `pai-compact-state-${hookInput.session_id}.txt`);

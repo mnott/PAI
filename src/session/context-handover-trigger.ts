@@ -24,7 +24,7 @@
  * again next time, not a reason to interrupt the hook that called this.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -106,6 +106,55 @@ function saveTriggerState(sessionId: string, state: HandoverTriggerState): void 
     writeFileSync(triggerStatePath(sessionId), JSON.stringify(state), "utf-8");
   } catch {
     // Best-effort — a missing write only costs a possible re-attempt later.
+  }
+}
+
+/**
+ * Reset a session's fired/confirmed marker after a compaction, so the next
+ * fill cycle gets its own handover instead of being judged against
+ * thresholds this session already used up. Deliberately touches ONLY the
+ * marker file (`triggerStatePath`) — never the handover cache
+ * (`context-handover-cache.ts`), which is what actually gets injected at
+ * the compaction boundary and must survive until that injection reads it.
+ *
+ * WHY THIS EXISTS (do not "simplify" it away): without this reset,
+ * `confirmed` was permanent for the lifetime of a session id — nothing
+ * anywhere ever cleared it. A session observed live on 2026-09-17
+ * compacted once, both thresholds got confirmed, and every check for the
+ * rest of that session's life then hit the `confirmed` short-circuit at
+ * the top of `checkAndEnqueueContextHandover` and returned immediately —
+ * even after a SECOND compaction, ~15 hours and a full context refill
+ * later, whose injected "handover" was still the first one, generated
+ * long before, and which said in its own text that nothing had changed
+ * since it. A long-lived session compacts more than once; each compaction
+ * starts a new fill cycle and deserves its own handover attempt.
+ *
+ * Call this exactly once per compaction, from the post-compact SessionStart
+ * hook that already runs at that moment for other cleanup — see
+ * post-compact-inject.ts.
+ *
+ * If a `pending` enqueue was outstanding at reset time, it is simply
+ * dropped along with the rest of the marker — the in-flight daemon job
+ * itself is NOT cancelled and will still write its cache entry when it
+ * finishes (harmless: cache files are read by generation time, not by
+ * whether a marker was watching for them). Because the marker is gone,
+ * the next check has no pending entry to resolve, so it does not confirm
+ * against that stray cache — it simply runs a fresh crossing check. So
+ * this cannot double-enqueue: the only thing that ever calls `enqueue`
+ * again is a genuinely fresh threshold crossing after the reset, of which
+ * there is exactly one code path.
+ *
+ * Never throws: a session with no marker file (fresh session, or one
+ * already reset) is a plain no-op, not an error.
+ */
+export function resetHandoverTriggerState(sessionId: string): void {
+  const path = triggerStatePath(sessionId);
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // Best-effort — see saveTriggerState above. Worst case on failure: the
+    // next compaction re-serves one stale handover, exactly the bug this
+    // function fixes, not a corrupted or crashed session.
   }
 }
 
