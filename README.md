@@ -82,6 +82,16 @@ Browse the same pages on GitHub under [`docs/commands/`](docs/commands/README.md
 
 ---
 
+## Worker Providers — Run the Fleet Anywhere
+
+**Parallel workers are a commodity: route them anywhere.** Every subagent PAI spawns — research, drafting, implementation, review — can run on any provider that speaks the Anthropic Messages protocol. Providers are registry entries with their own models, keys and price tiers, so there is no vendor lock-in, parallel work runs at commodity pricing instead of on one premium seat, and `pai worker providers use <name>` swaps the whole fleet in one command.
+
+![Workers in the statusline](docs/images/workers.png)
+
+Activate, configure and use in three copy-paste steps: **[docs/provider-independence.md](docs/provider-independence.md)**.
+
+---
+
 ## Automatic Session Notes — by Topic
 
 PAI's headline feature: **every session is automatically documented.** No manual note-taking, no "pause session" commands, no forgetting to save what you did.

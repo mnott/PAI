@@ -203,6 +203,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker log [what]` | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | `pai worker mcp [list]` | MCP servers workers may load via --mcp / roles, and the configured sets |
 | `pai worker merge <id>` | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree |
+| `pai worker model [what] [model]` | Model ids per provider: no args lists them, |
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
 | `pai worker pane [id]` | Open the follow pane for a worker (or one shared pane for this session) |

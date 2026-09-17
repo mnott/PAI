@@ -29,6 +29,7 @@ import {
 } from "fs";
 import { join, resolve, basename } from "path";
 import { homedir, platform } from "os";
+import { isInsideWorkerWorktree } from "./lib/sync-guard.mjs";
 
 const HOOKS_SRC = "src/hooks/ts";
 const HOOKS_OUT = "dist/hooks";
@@ -143,7 +144,11 @@ console.log(
 // --sync: Symlink (or copy on Windows) all deployable files to ~/.claude/
 // ---------------------------------------------------------------------------
 
-if (doSync) {
+if (doSync && isInsideWorkerWorktree(process.cwd())) {
+  // Never repoint the live ~/.claude symlinks at a worktree that `pai worker
+  // merge` will delete — see scripts/lib/sync-guard.mjs.
+  console.log("✔ Hook symlinks skipped: build runs inside a worker worktree");
+} else if (doSync) {
   const useSymlinks = platform() !== "win32";
   const claudeDir = join(homedir(), ".claude");
   const hooksTarget = join(claudeDir, "Hooks");

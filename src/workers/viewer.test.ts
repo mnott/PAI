@@ -87,19 +87,25 @@ describe("applyEvent spacing", () => {
     expect(st.lastDay).toBe("2026-09-17");
   });
 
-  it("puts exactly one blank line before the next assistant turn", () => {
+  it("puts exactly one turn separator before the next assistant turn: the bar-only gutter, not \"\"", () => {
     const st = applyEvent(plain, initialFollowState(""), toolResult("done"), "", undefined, OFF).state;
     const next = applyEvent(plain, st, text("all good", ts(12, 1)), "", undefined, OFF);
-    expect(next.lines[0]).toBe("");
+    expect(next.lines[0]).toBe(" ".repeat(8) + " │ "); // the bar-only prefix
     expect(next.lines[1]).toContain("all good");
-    expect(next.lines.filter((l) => l === "")).toHaveLength(1);
+    expect(next.lines.filter((l) => l === " ".repeat(8) + " │ ")).toHaveLength(1);
   });
 
-  it("one blank before the assistant reply that follows an operator message", () => {
+  it("gutterless (no stamp): the turn separator stays \"\"", () => {
+    const st = applyEvent(plain, initialFollowState(""), { ...toolResult("done"), _ts: undefined }, "", undefined, OFF).state;
+    const next = applyEvent(plain, st, { ...text("all good"), _ts: undefined }, "", undefined, OFF);
+    expect(next.lines).toEqual(["", "all good"]);
+  });
+
+  it("one bar separator before the assistant reply that follows an operator message", () => {
     const op = { type: "operator", _ts: ts(12, 2), text: "run the tests" };
     const st = applyEvent(plain, initialFollowState(""), op, "", undefined, OFF).state;
     const reply = applyEvent(plain, st, text("running them", ts(12, 2, 5)), "", undefined, OFF);
-    expect(reply.lines[0]).toBe("");
+    expect(reply.lines[0]).toBe(" ".repeat(8) + " │ ");
   });
 });
 
@@ -444,6 +450,68 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(buf).toContain(PLACEHOLDER);
   });
 
+  it("entering chat mode draws the separator rule between the scroll region and the prompt", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    const io: FollowIO = {
+      stdin: input,
+      stdout: {
+        write: (s: string) => {
+          buf += s;
+          return true;
+        },
+        rows: 24,
+        columns: 80,
+      },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(200);
+    input.write("/quit\n");
+    await done;
+    // one enter write: clear, region (1–21), the ─ rule on row 22 filling
+    // the pane width, then the cursor parks on the prompt row (23) — colors
+    // are off here, so the rule is bare box-drawing characters
+    expect(buf).toContain(
+      "\x1b[2J\x1b[1;21r\x1b[22;1H\x1b[K" + "─".repeat(80) + "\x1b[23;3H"
+    );
+  });
+
+  it("a resize clears the pane before refilling, so the timeline does not interleave", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    let resizer: (() => void) | undefined;
+    const stdout = {
+      write: (s: string) => {
+        buf += s;
+        return true;
+      },
+      rows: 24,
+      columns: 80,
+      on: (ev: "resize", fn: () => void) => {
+        resizer = fn;
+      },
+    };
+    const io: FollowIO = {
+      stdin: input,
+      stdout,
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(200); // attach + backfill under the 24-row geometry
+    buf = ""; // drop the enter sequence; only post-resize writes matter
+    stdout.rows = 30;
+    resizer?.();
+    await sleep(100);
+    // the region rebuild starts with a clear, so the refill from the top
+    // lands on an empty pane instead of overwriting the old transcript rows
+    expect(buf).toContain("\x1b[2J\x1b[1;27r");
+    input.write("/quit\n");
+    await done;
+  });
+
   it("a draft in the prompt holds the auto-exit countdown", async () => {
     const { dir, id } = chatFixture();
     const input = new PassThrough();
@@ -486,5 +554,60 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     });
     await done; // resolves only by the countdown: nothing was typed
     expect(buf).toContain("closing");
+  }, 8000);
+  it("a resize clears the pane and replays the retained transcript", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    const resizeCbs: Array<() => void> = [];
+    const stdout = {
+      write: (s: string) => {
+        buf += s;
+        return true;
+      },
+      rows: 24,
+      columns: 80,
+      on: (ev: string, fn: () => void) => {
+        if (ev === "resize") resizeCbs.push(fn);
+        return undefined;
+      },
+      removeListener: () => undefined,
+    };
+    const io: FollowIO = {
+      stdin: input,
+      stdout,
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(200); // attach + backfill
+    for (const word of ["first", "second", "third"]) {
+      input.write(word + "\n");
+      await sleep(150); // the » echo, then the failed say becomes » resuming
+    }
+    expect(buf).toContain("» first"); // rendered before any resize
+    expect(buf).toContain("» third");
+    // shrink 24 → 12 rows (region 21 → 9): clear, then the lines back
+    stdout.rows = 12;
+    const at = buf.length;
+    resizeCbs.forEach((cb) => cb());
+    await sleep(50);
+    const after = buf.slice(at);
+    const clearAt = after.indexOf("\x1b[2J");
+    expect(clearAt).toBeGreaterThanOrEqual(0); // the pane was cleared …
+    expect(after.indexOf("» second")).toBeGreaterThan(clearAt); // … the transcript
+    expect(after.indexOf("» third")).toBeGreaterThan(clearAt); // replayed after it
+    expect(after.indexOf("» second")).toBeLessThan(after.indexOf("» third")); // in order
+    // shrink 12 → 5 rows (region 2): only the newest two lines survive
+    stdout.rows = 5;
+    const at2 = buf.length;
+    resizeCbs.forEach((cb) => cb());
+    await sleep(50);
+    const after2 = buf.slice(at2);
+    expect(after2).toContain("\x1b[2J");
+    expect(after2).toContain("» third");
+    expect(after2).not.toContain("» second");
+    expect(after2).not.toContain("» first");
+    input.write("/quit\n");
+    await done;
   }, 8000);
 });

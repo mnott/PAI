@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { CONFIG_FILE } from "../daemon/config.js";
+import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,6 +47,12 @@ export interface WorkerProvider {
     /** Alias used for cheap/fast work (spotcheck, research). */
     fast?: string;
   };
+  /**
+   * Model id → tier alias, overriding the built-in mapping (models.fast →
+   * haiku tier, models.default → sonnet tier). Lets a provider pin an extra
+   * model id to a tier, e.g. a heavyweight default to the opus tier.
+   */
+  modelTiers?: Record<string, ModelTier>;
   /** Extra environment variables for runs through this provider (string values). */
   env: Record<string, string>;
   note?: string;
@@ -99,6 +106,12 @@ export interface WorkersTreeConfig {
 
 /** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
 export type CostTier = 1 | 2 | 3 | 4 | 5;
+
+/** The tier aliases the CLI and daemon tables understand — class proxies, not
+ *  Anthropic model names: any provider's model maps onto one of these. */
+export type ModelTier = "haiku" | "sonnet" | "opus";
+
+const MODEL_TIERS: readonly ModelTier[] = ["haiku", "sonnet", "opus"];
 
 export const DEFAULT_COST_TIER = 3;
 
@@ -284,6 +297,23 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
   if (!defaultModel) bad(`.providers.${name}.models.default`, "is required");
   const fast = m.fast === undefined ? undefined : str(m.fast);
 
+  let modelTiers: Record<string, ModelTier> | undefined;
+  if (p.modelTiers !== undefined) {
+    if (typeof p.modelTiers !== "object" || p.modelTiers === null || Array.isArray(p.modelTiers)) {
+      bad(`.providers.${name}.modelTiers`, "must be an object of model id → haiku | sonnet | opus");
+    }
+    modelTiers = {};
+    for (const [id, tier] of Object.entries(p.modelTiers as Record<string, unknown>)) {
+      if (typeof tier !== "string" || !MODEL_TIERS.includes(tier as ModelTier)) {
+        bad(
+          `.providers.${name}.modelTiers.${id}`,
+          `must be "haiku", "sonnet" or "opus" (got ${JSON.stringify(tier)})`
+        );
+      }
+      modelTiers[id] = tier as ModelTier;
+    }
+  }
+
   const env: Record<string, string> = {};
   if (p.env !== undefined) {
     if (typeof p.env !== "object" || p.env === null || Array.isArray(p.env)) {
@@ -340,6 +370,7 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     baseUrl,
     keyFile,
     models: fast ? { default: defaultModel, fast } : { default: defaultModel },
+    ...(modelTiers ? { modelTiers } : {}),
     env,
     ...(str(p.note) ? { note: str(p.note) } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
@@ -631,11 +662,24 @@ export function providerKeyPath(p: WorkerProvider): string | null {
   return p.keyFile ? expandHome(p.keyFile) : null;
 }
 
-export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export { DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 
 /** Cost tier of a provider for class filtering (unset = 3, the middle). */
 export function providerCostTier(p: WorkerProvider): number {
   return p.costTier ?? DEFAULT_COST_TIER;
+}
+
+/**
+ * Context window used by the meter when the run reports none: an explicit
+ * `contextWindow` first, then whatever the default model's id declares
+ * ("[1m]" → 1,000,000), then the last-resort default.
+ */
+export function providerContextWindow(p: WorkerProvider): number {
+  return (
+    p.contextWindow ??
+    contextWindowFromModelId(p.models.default) ??
+    DEFAULT_CONTEXT_WINDOW
+  );
 }
 
 /** Directory under which inline keys (MCP `key` field) are stored, 0600. */

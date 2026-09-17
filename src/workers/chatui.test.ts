@@ -12,6 +12,7 @@ import {
   CHAT_HINT,
   CHAT_PROMPT,
   chatEnter,
+  chatBlankRow,
   chatInsertLine,
   chatLeave,
   chatPromptRow,
@@ -112,6 +113,40 @@ describe("scroll region layout", () => {
   it("degenerate heights clamp instead of going negative", () => {
     expect(chatScrollRegion(2)).toBe("\x1b[1;1r");
     expect(chatEnter(3)).toBe("\x1b[2J\x1b[1;1r\x1b[1;1H\x1b[K\x1b[2;3H");
+    expect(chatEnter(3, 10)).toBe("\x1b[2J\x1b[1;1r\x1b[1;1H\x1b[K" + "─".repeat(10) + "\x1b[2;3H");
+  });
+
+  it("the separator row is a rule of ─ filling the pane width, no ANSI with colours off", () => {
+    // plain row: position + erase, then the rule and nothing else — no escapes
+    expect(chatBlankRow(24, 80)).toBe("\x1b[22;1H\x1b[K" + "─".repeat(80));
+    expect(chatBlankRow(24, 80).includes("\x1b", 8)).toBe(false); // past the \x1b[K
+    expect(chatBlankRow(30, 12)).toBe("\x1b[28;1H\x1b[K" + "─".repeat(12));
+    // exactly the width, never wider
+    expect(visibleWidth(chatBlankRow(24, 42))).toBe(42);
+    // box-drawing ─ (U+2500), not an ASCII hyphen
+    expect(chatBlankRow(24, 5)).not.toContain("-");
+  });
+
+  it("the rule takes the pane's dim colour when one is given", () => {
+    const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
+    expect(chatBlankRow(24, 7, dim)).toBe("\x1b[22;1H\x1b[K" + dim("─".repeat(7)));
+    expect(visibleWidth(chatBlankRow(24, 7, dim))).toBe(7);
+  });
+
+  it("an unknown width (cols 0) keeps the row blank — the pre-rule behaviour", () => {
+    expect(chatBlankRow(24, 0)).toBe("\x1b[22;1H\x1b[K");
+    expect(chatBlankRow(24)).toBe("\x1b[22;1H\x1b[K");
+  });
+
+  it("the rule changes only the row's content — geometry and cursor math hold", () => {
+    // whatever the width or colour, the cursor still parks at rows-1, col 3
+    for (const seq of [chatEnter(24), chatEnter(24, 80), chatEnter(24, 80, (s) => `«${s}»`)])
+      expect(seq.endsWith("\x1b[23;3H")).toBe(true);
+    // and the separator stays on row rows-2 at column 1 in every variant
+    expect(chatEnter(30, 80)).toContain("\x1b[28;1H\x1b[K");
+    expect(chatEnter(24, 80)).toBe(
+      "\x1b[2J\x1b[1;21r" + chatBlankRow(24, 80) + "\x1b[23;3H"
+    );
   });
 
   it("the ticker redraws its own row and parks the cursor back on the prompt row", () => {

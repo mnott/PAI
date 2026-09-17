@@ -147,6 +147,36 @@ describe("mergeWorker", () => {
     expect(mergeWorker(logDir, "w4")).toMatch(/already merged/);
   });
 
+  it("carries a worker's uncommitted edits and untracked files into the main tree", () => {
+    const info = addWorktree(logDir, "w7", repo);
+    writeFileSync(join(info.dir, "base.txt"), "edited by worker\n", "utf8"); // tracked, uncommitted
+    writeFileSync(join(info.dir, "carried.txt"), "untracked\n", "utf8"); // never added
+    const st = status("w7");
+    recordWorktree(logDir, st, info, true);
+
+    const msg = mergeWorker(logDir, "w7");
+    expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("edited by worker\n");
+    expect(readFileSync(join(repo, "carried.txt"), "utf8")).toBe("untracked\n");
+    expect(existsSync(info.dir)).toBe(false);
+    expect(msg).toMatch(/carried 2 uncommitted change\(s\): base\.txt, carried\.txt/);
+    expect(loadStatus(logDir, "w7")?.merged).toBe(true);
+  });
+
+  it("keeps the worktree when uncommitted changes cannot be carried", () => {
+    const info = addWorktree(logDir, "w8", repo);
+    writeFileSync(join(info.dir, "base.txt"), "worker edit\n", "utf8");
+    const st = status("w8");
+    recordWorktree(logDir, st, info, true);
+    // conflicting edit in the main tree: the carry must refuse, not overwrite
+    writeFileSync(join(repo, "base.txt"), "operator edit\n", "utf8");
+
+    expect(() => mergeWorker(logDir, "w8")).toThrow(/worktree .* was kept/);
+    expect(existsSync(info.dir)).toBe(true);
+    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("worker edit\n");
+    expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("operator edit\n");
+    expect(loadStatus(logDir, "w8")?.merged).toBeFalsy();
+  });
+
   it("refuses workers without a worktree branch", () => {
     status("inplace");
     expect(() => mergeWorker(logDir, "inplace")).toThrow(/no worktree branch/);
