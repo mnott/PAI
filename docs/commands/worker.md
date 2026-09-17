@@ -192,6 +192,8 @@ Merge a worker's worktree branch (worker/<id>) into the original checkout, then 
 
 Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout
 
+Never busy-wait for a worker: no sleep loops, no sleep-then-`pai worker ps` polling, no manual retry loops. Two sanctioned waits: run workers as background Bash tasks (the harness notifies on completion), or call `pai worker wait`, which blocks until they finish and prints each result. If you catch yourself sleeping to re-check a worker, stop — you already get notified.
+
 **Arguments**
 
 | Argument | Kind |
