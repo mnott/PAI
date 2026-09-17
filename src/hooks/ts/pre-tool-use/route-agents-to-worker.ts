@@ -112,10 +112,10 @@ async function main(): Promise<void> {
     deny(
       "Agent tool is disabled: subagents run on the configured worker provider, not Anthropic. " +
         "Delegate with Bash instead, in the background:\n\n" +
-        `pai worker run --label "${label || "task"}" --role research -p '<full, self-contained task spec>' ` +
+        `pai worker run --label "${label || "task"}" --class research -p '<full, self-contained task spec>' ` +
         "--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json\n\n" +
         "- Run it with run_in_background: true and always with a timeout.\n" +
-        "- Use --role spotcheck (or implement) as the task demands.\n" +
+        "- Use --class spotcheck (or implement) as the task demands.\n" +
         "- Web research: add WebSearch,WebFetch to --allowedTools.\n" +
         "- The answer is in the `result` field of the JSON it prints. Review the diff yourself.\n" +
         "- pai worker ps lists running workers; pai worker follow <id> shows one live.\n" +

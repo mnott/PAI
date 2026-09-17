@@ -194,10 +194,14 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker classes list` | List classes and their targets (default action) |
 | `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |
 | `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
+| `pai worker controls <id> <who>` | Hand the desktop controls (clickr) to a worker or take them back. |
+| `pai worker discard <id>` | Drop a worker's worktree and branch, keeping nothing |
 | `pai worker follow [id]` | Live transcript of one worker, or of this session's running workers |
+| `pai worker handoff <json>` | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
 | `pai worker install` | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | `pai worker log [what]` | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | `pai worker mcp [list]` | MCP servers workers may load via --mcp / roles, and the configured sets |
+| `pai worker merge <id>` | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree |
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
 | `pai worker pane [id]` | Open the follow pane for a worker (or one shared pane for this session) |

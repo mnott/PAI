@@ -85,6 +85,14 @@ export interface WorkersRoutingConfig {
   retryOnQuota: boolean;
 }
 
+/** Sub-worker caps: how deep the worker tree may grow, how wide per parent. */
+export interface WorkersTreeConfig {
+  /** Maximum nesting depth of sub-workers (top-level = 0). */
+  maxDepth: number;
+  /** Maximum concurrently running children per parent. */
+  maxChildren: number;
+}
+
 /** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
 export type CostTier = 1 | 2 | 3 | 4 | 5;
 
@@ -147,6 +155,8 @@ export interface WorkersConfig {
   pane: WorkersPaneConfig;
   logDir: string;
   routing: WorkersRoutingConfig;
+  /** Sub-worker caps (workers.tree). */
+  tree: WorkersTreeConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,16 +177,33 @@ export const DEFAULT_ROUTING: WorkersRoutingConfig = {
   retryOnQuota: true,
 };
 
+export const DEFAULT_TREE: WorkersTreeConfig = {
+  maxDepth: 2,
+  maxChildren: 4,
+};
+
+/**
+ * The default MCP sets every config starts from. `desktop` names the clickr
+ * server so `--mcp desktop` hands a worker the machine controls (read-only
+ * tools always; actuating ones after the operator hands the controls over,
+ * see `pai worker controls`). A user's mcpSets section is merged over this,
+ * so `desktop: []` removes the set deliberately.
+ */
+export const DEFAULT_MCP_SETS: Record<string, string[]> = {
+  desktop: ["clickr"],
+};
+
 export function defaultWorkersConfig(): WorkersConfig {
   return {
     enabled: false,
     active: null,
     providers: {},
     classes: {},
-    mcpSets: {},
+    mcpSets: { ...DEFAULT_MCP_SETS },
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
+    tree: { ...DEFAULT_TREE },
   };
 }
 
@@ -385,7 +412,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
   }
 
-  const mcpSets: Record<string, string[]> = {};
+  const mcpSets: Record<string, string[]> = { ...DEFAULT_MCP_SETS };
   if (w.mcpSets !== undefined) {
     if (typeof w.mcpSets !== "object" || w.mcpSets === null || Array.isArray(w.mcpSets)) {
       bad(".mcpSets", "must be an object of set name → [server names]");
@@ -440,6 +467,28 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
+  let tree = { ...DEFAULT_TREE };
+  if (w.tree !== undefined) {
+    if (typeof w.tree !== "object" || w.tree === null || Array.isArray(w.tree)) {
+      bad(".tree", "must be an object");
+    }
+    const t = w.tree as Record<string, unknown>;
+    if (t.maxDepth !== undefined) {
+      if (typeof t.maxDepth !== "number" || !Number.isInteger(t.maxDepth) || t.maxDepth < 0) {
+        bad(".tree.maxDepth", "must be a non-negative integer");
+      }
+    }
+    if (t.maxChildren !== undefined) {
+      if (typeof t.maxChildren !== "number" || !Number.isInteger(t.maxChildren) || t.maxChildren < 1) {
+        bad(".tree.maxChildren", "must be a positive integer");
+      }
+    }
+    tree = {
+      maxDepth: t.maxDepth === undefined ? DEFAULT_TREE.maxDepth : t.maxDepth,
+      maxChildren: t.maxChildren === undefined ? DEFAULT_TREE.maxChildren : t.maxChildren,
+    };
+  }
+
   const active = w.active === undefined || w.active === null ? null : str(w.active);
   if (active !== null && active !== "auto" && !(active in providers)) {
     // Tolerated at parse time (a provider may have been removed while active
@@ -455,6 +504,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     pane,
     logDir: str(w.logDir) || d.logDir,
     routing,
+    tree,
   };
 }
 

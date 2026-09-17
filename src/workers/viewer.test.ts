@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeColor } from "./render.js";
+import { CHAT_HINT } from "./chatui.js";
 import {
   applyEvent,
   backfillLines,
@@ -299,8 +300,8 @@ describe("applyEvent wrapping", () => {
 // the chat pane over injected pipes (FORCE_TTY emits the TTY layout)
 // ---------------------------------------------------------------------------
 
-/** A finished worker in a temp logDir: status file + init/result events. */
-const chatFixture = (): { dir: string; id: string } => {
+/** A worker in a temp logDir: status file + init event (+ result when done). */
+const chatFixture = (state: "running" | "done" = "done"): { dir: string; id: string } => {
   const dir = mkdtempSync(join(tmpdir(), "pai-chat-"));
   const id = "20260917-150000-4242";
   writeFileSync(
@@ -313,25 +314,30 @@ const chatFixture = (): { dir: string; id: string } => {
       term: "",
       provider: "prov",
       model: "m",
-      state: "done",
+      state,
       started: "2026-09-17 15:00:00",
       updated: "2026-09-17 15:00:02",
       turns: 1,
       tools: 0,
-      last: "done",
-      rc: 0,
-      secs: 2,
+      last: state === "done" ? "done" : "starting",
+      rc: state === "done" ? 0 : null,
+      secs: state === "done" ? 2 : null,
     })
   );
-  writeFileSync(
-    join(dir, `${id}.jsonl`),
-    [
-      JSON.stringify({ type: "system", subtype: "init", model: "m", cwd: dir, _ts: "2026-09-17T15:00:00Z" }),
-      JSON.stringify({ type: "result", result: "fine", is_error: false, num_turns: 1, duration_ms: 2000, _ts: "2026-09-17T15:00:02Z" }),
-    ].join("\n") + "\n"
-  );
+  const events = [
+    JSON.stringify({ type: "system", subtype: "init", model: "m", cwd: dir, _ts: "2026-09-17T15:00:00Z" }),
+  ];
+  if (state === "done") {
+    events.push(
+      JSON.stringify({ type: "result", result: "fine", is_error: false, num_turns: 1, duration_ms: 2000, _ts: "2026-09-17T15:00:02Z" })
+    );
+  }
+  writeFileSync(join(dir, `${id}.jsonl`), events.join("\n") + "\n");
   return { dir, id };
 };
+
+/** The prompt-row redraw with the placeholder back (color off in tests). */
+const PLACEHOLDER = `\x1b[23;1H\x1b[K› ${CHAT_HINT}\x1b[23;3H`;
 
 describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -361,15 +367,81 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     await sleep(200); // attach + backfill
     input.write("hello\n");
     await sleep(200); // say rejects (done) → resume
-    expect(buf).toContain("\x1b[1;22r"); // the scroll region (rows 24)
+    expect(buf).toContain("\x1b[1;21r"); // the scroll region (rows 24, 3 fixed rows)
     expect(buf).toContain("\x1b[2J"); // pane cleared on enter
     expect(buf).toContain("› "); // the prompt marker
+    expect(buf).toContain(PLACEHOLDER); // the placeholder behind the empty prompt
     expect(buf).toMatch(/\d\d:\d\d:\d\d │ » hello/); // echoed with its gutter
     expect(buf).toContain(`» resuming ${id}`);
     expect(resumes).toEqual([[id, "hello"]]); // the resume spawn, mocked
     input.write("/quit\n");
     await done;
     expect(buf).toContain("\x1b[r"); // the region reset on leave
+  });
+
+  it("a submitted line clears the prompt row (placeholder back) before the » echo", async () => {
+    const { dir, id } = chatFixture();
+    const input = new PassThrough();
+    let buf = "";
+    const io: FollowIO = {
+      stdin: input,
+      stdout: {
+        write: (s: string) => {
+          buf += s;
+          return true;
+        },
+        rows: 24,
+        columns: 80,
+      },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(200);
+    const before = buf.split(PLACEHOLDER).length - 1; // placeholders drawn so far
+    input.write("hello\n");
+    await sleep(200);
+    // the row was redrawn with the placeholder after the send …
+    expect(buf.split(PLACEHOLDER).length - 1).toBeGreaterThan(before);
+    // … and that redraw precedes the » echo of the submitted text
+    expect(buf.lastIndexOf(PLACEHOLDER)).toBeLessThan(buf.indexOf("» hello"));
+    input.write("/quit\n");
+    await done;
+  });
+
+  it("a ticker refresh followed by typing parks the cursor on the prompt row, off the ticker", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    const io: FollowIO = {
+      stdin: input,
+      stdout: {
+        write: (s: string) => {
+          buf += s;
+          return true;
+        },
+        rows: 24,
+        columns: 80,
+      },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(700); // at least one ticker refresh while the worker runs
+    input.write("ab\n"); // typed after the ticker refresh
+    await sleep(300);
+    input.write("/quit\n");
+    await done;
+    // every ticker write parks the cursor on the prompt row (23) right after
+    // drawing its own row (24) — the last one included
+    const tickers = [...buf.matchAll(/\x1b7\x1b\[24;1H\x1b\[K([^\x1b]*)(\x1b\[(\d+);(\d+)H)/g)];
+    expect(tickers.length).toBeGreaterThan(0);
+    const last = tickers[tickers.length - 1]!;
+    expect(last[3]).toBe("23"); // parked on the prompt row …
+    expect(last[4]).toBe("3"); // … right after ›
+    // the two rows are independent: no buffer text or placeholder on the ticker
+    expect(last[1]).not.toContain("ab");
+    expect(last[1]).not.toContain(CHAT_HINT);
+    // and after the submit the prompt row came back with the placeholder
+    expect(buf).toContain(PLACEHOLDER);
   });
 
   it("a draft in the prompt holds the auto-exit countdown", async () => {

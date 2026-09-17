@@ -6,9 +6,11 @@
 import { describe, it, expect } from "vitest";
 import {
   blankBetween,
+  chatStatusRow,
   clockOf,
   contextMeter,
   dayOf,
+  fmtElapsed,
   gutterFor,
   intentOf,
   makeColor,
@@ -167,6 +169,58 @@ describe("contextMeter", () => {
   });
 });
 
+describe("chatStatusRow", () => {
+  const running = {
+    provider: "glm",
+    model: "glm-5.3",
+    contextTokens: 84000,
+    contextWindow: 200000,
+    turns: 12,
+    tools: 7,
+    elapsed: 252,
+    idle: 7,
+    intent: "count the .ts files",
+    tool: "$ find src -name '*.ts'",
+  };
+
+  it("composes the running row: provider/model, ctx, turns, tools, runtime, ticker", () => {
+    expect(chatStatusRow(plain, running)).toBe(
+      "[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m12s · ⋯ 7s · count the .ts files · $ find src -name '*.ts'"
+    );
+  });
+
+  it("drops the ctx part when the numbers are missing, and empty intent/tool", () => {
+    expect(chatStatusRow(plain, { ...running, contextTokens: null, intent: "", tool: "" })).toBe(
+      "[glm/glm-5.3] turns 12 · tools 7 · 4m12s · ⋯ 7s"
+    );
+  });
+
+  it("colours the ctx part yellow past 70 and red past 85 percent", () => {
+    expect(chatStatusRow(color, { ...running, contextTokens: 150000 })).toContain(
+      "\x1b[33mctx 150k/200k 75%\x1b[0m"
+    );
+    expect(chatStatusRow(color, { ...running, contextTokens: 180000 })).toContain(
+      "\x1b[31mctx 180k/200k 90%\x1b[0m"
+    );
+  });
+
+  it("a finished row freezes the numbers and shows ✓/✗ instead of the ticker part", () => {
+    expect(chatStatusRow(plain, { ...running, state: "done", elapsed: 260 })).toBe(
+      "[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m20s · ✓ done"
+    );
+    const failed = chatStatusRow(color, { ...running, state: "failed" });
+    expect(failed).not.toContain("⋯");
+    expect(failed).not.toContain("count the .ts files");
+    expect(failed).toContain("\x1b[31m✗ failed\x1b[0m");
+  });
+
+  it("fmtElapsed renders m+s with zero-padded seconds", () => {
+    expect(fmtElapsed(252)).toBe("4m12s");
+    expect(fmtElapsed(65)).toBe("1m05s");
+    expect(fmtElapsed(8)).toBe("0m08s");
+  });
+});
+
 describe("renderEvent", () => {
   const tools: Record<string, string> = {};
 
@@ -174,6 +228,16 @@ describe("renderEvent", () => {
     expect(renderEvent(plain, "", { type: "operator", text: "run the tests" }, "", tools)).toEqual([
       "» run the tests",
     ]);
+  });
+
+  it("a handoff delivery's operator mirror renders nothing — the ◆ inbox line is the copy", () => {
+    expect(
+      renderEvent(plain, "", { type: "operator", text: "[handoff from c1] (result) done", handoff: true }, "", tools)
+    ).toEqual([]);
+    const g = gutterFor(plain, { _ts: "2026-09-17T14:03:09Z" }, undefined, 0)!;
+    expect(
+      renderEvent(plain, "", { type: "operator", text: "[handoff from c1] (result) done", handoff: true }, "", tools, g)
+    ).toEqual([]);
   });
 
   it("a contract final message renders as the report block", () => {

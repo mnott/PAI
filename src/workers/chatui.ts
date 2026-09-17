@@ -2,13 +2,13 @@
  * chatui.ts — the chat line of a `follow` pane.
  *
  * A follow pane with a target behaves like a small chat, Claude Code style:
- * the transcript lives in a terminal scroll region that ends two rows above
- * the pane's bottom; the last two rows are fixed — the prompt row (`› `,
- * readline line editing) and the ticker row. A transcript line is inserted
- * above the fixed rows with a save-cursor / scroll-region / restore-cursor
- * write that never touches them; the scroll region makes the transcript roll
- * inside itself. Everything here builds strings (or parses one line), so the
- * tests assert exact byte sequences — no terminal needed.
+ * the transcript lives in a terminal scroll region that ends three rows above
+ * the pane's bottom; below it a blank separator row, then the two fixed rows —
+ * the prompt row (`› `, readline line editing) and the ticker row. A transcript
+ * line is inserted above the fixed rows with a save-cursor / scroll-region /
+ * restore-cursor write that never touches them; the scroll region makes the
+ * transcript roll inside itself. Everything here builds strings (or parses one
+ * line), so the tests assert exact byte sequences — no terminal needed.
  */
 
 /** The prompt marker of the chat row. */
@@ -188,17 +188,26 @@ export function wrapText(text: string, width: number): string[] {
 // the layout: scroll region + two fixed rows
 // ---------------------------------------------------------------------------
 
-/** Restrict scrolling to the transcript region (rows 1 … rows-2). */
+/** Restrict scrolling to the transcript region (rows 1 … rows-3). */
 export function chatScrollRegion(rows: number): string {
-  return `\x1b[1;${Math.max(1, rows - 2)}r`;
+  return `\x1b[1;${Math.max(1, rows - 3)}r`;
+}
+
+/** Clear the blank separator row between the transcript and the prompt. */
+export function chatBlankRow(rows: number): string {
+  return `\x1b[${Math.max(1, rows - 2)};1H\x1b[K`;
 }
 
 /**
- * Enter the chat layout: clear the pane, set the scroll region, park the
- * cursor at column 1 of the prompt row (rows-1). The ticker owns row `rows`.
+ * Enter the chat layout: clear the pane, set the scroll region, blank the
+ * separator row and park the cursor at column 3 of the prompt row (rows-1,
+ * right after `› `). The ticker owns row `rows`.
  */
 export function chatEnter(rows: number): string {
-  return "\x1b[2J" + chatScrollRegion(rows) + `\x1b[${Math.max(1, rows - 1)};1H`;
+  return (
+    "\x1b[2J" + chatScrollRegion(rows) + chatBlankRow(rows) +
+    `\x1b[${Math.max(1, rows - 1)};3H`
+  );
 }
 
 /** Leave it: reset the scroll region, show the cursor, drop to the last row. */
@@ -206,14 +215,36 @@ export function chatLeave(rows: number): string {
   return "\x1b[r\x1b[?25h" + `\x1b[${Math.max(1, rows)};1H`;
 }
 
-/** Redraw the ticker on its own row without moving the user's cursor. */
-export function chatTickerRow(text: string, rows: number): string {
-  return "\x1b7" + `\x1b[${Math.max(1, rows)};1H\x1b[K` + text + "\x1b8";
+/**
+ * Redraw the ticker on its own row and park the cursor back on the prompt
+ * row at `parkCol` (default right after `› `): a ticker refresh never leaves
+ * the cursor on the bottom row.
+ */
+export function chatTickerRow(text: string, rows: number, parkCol = 3): string {
+  return (
+    "\x1b7" +
+    `\x1b[${Math.max(1, rows)};1H\x1b[K` + text +
+    `\x1b[${Math.max(1, rows - 1)};${Math.max(1, parkCol)}H`
+  );
 }
 
-/** Move to column 1 of the prompt row and draw prompt (and hint). */
-export function chatPromptRow(rows: number, prompt = CHAT_PROMPT, hint?: string): string {
-  return `\x1b[${Math.max(1, rows - 1)};1H` + prompt + (hint ?? "");
+/**
+ * The prompt row: the fixed `› ` prefix, then the input buffer — or, while
+ * the buffer is empty, the dim placeholder behind the same prefix. The
+ * cursor parks right after the buffer (`cursorAt` chars in, for a cursor
+ * mid-draft), so typed text always starts at the column the placeholder
+ * occupied, never glued to a hint.
+ */
+export function chatPromptRow(
+  rows: number,
+  buffer = "",
+  dim: (s: string) => string = (s) => s,
+  cursorAt?: number
+): string {
+  const rowN = Math.max(1, rows - 1);
+  const body = buffer !== "" ? buffer : dim(CHAT_HINT);
+  const col = 3 + Math.max(0, Math.min(cursorAt ?? buffer.length, buffer.length));
+  return `\x1b[${rowN};1H\x1b[K` + CHAT_PROMPT + body + `\x1b[${rowN};${col}H`;
 }
 
 export interface ChatInsert {

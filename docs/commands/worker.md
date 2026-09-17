@@ -24,6 +24,10 @@ pai worker <subcommand> [options]
 | [`pai worker pane [id]`](#pai-worker-pane-id) | Open the follow pane for a worker (or one shared pane for this session) |
 | [`pai worker log [what]`](#pai-worker-log-what) | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | [`pai worker say <id> <text>`](#pai-worker-say-id-text) | Send one message to a running worker (forwarded to its open stdin) |
+| [`pai worker handoff <json>`](#pai-worker-handoff-json) | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
+| [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree |
+| [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
+| [`pai worker controls <id> <who>`](#pai-worker-controls-id-who) | Hand the desktop controls (clickr) to a worker or take them back. |
 | [`pai worker resume <id> <text>`](#pai-worker-resume-id-text) | Continue a finished worker on the same provider: claude --resume <session> |
 | [`pai worker proxy [stop]`](#pai-worker-proxy-stop) | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
 | [`pai worker mcp [list]`](#pai-worker-mcp-list) | MCP servers workers may load via --mcp / roles, and the configured sets |
@@ -62,6 +66,8 @@ Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);
 | `--label <text>` | Short task label shown in ps / follow / status line |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
 | `--no-pane` | Do not open a follow pane for this worker |  |
+| `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
+| `--no-worktree` | Run in place, no worktree |  |
 
 
 ### pai worker ps
@@ -153,6 +159,56 @@ Send one message to a running worker (forwarded to its open stdin)
 |----------|------|
 | `<id>` | required |
 | `<text>` | required |
+
+
+### pai worker handoff <json>
+
+From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent.
+
+Payload: {"kind":"proposal|question|blocker","text":"…","data":{…}} — from/to come from the environment.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<json>` | required |
+
+
+### pai worker merge <id>
+
+Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+
+### pai worker discard <id>
+
+Drop a worker's worktree and branch, keeping nothing
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+
+### pai worker controls <id> <who>
+
+Hand the desktop controls (clickr) to a worker or take them back.
+
+<who> is `you` (the worker may actuate) or `me` (the operator keeps them);
+inside a worker's pane, typing "your controls" does the same.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+| `<who>` | required |
 
 
 ### pai worker resume <id> <text>

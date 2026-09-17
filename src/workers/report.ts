@@ -11,6 +11,9 @@ import { relative } from "node:path";
 import { shortText } from "./args.js";
 import type { Paint } from "./render.js";
 
+/** The marker the runner puts on operator messages the worker must answer. */
+export const OPERATOR_MARK = "[operator]";
+
 /** Appended to the caller's system prompt on every headless run (2h). */
 export const WORKER_CONTRACT_PROMPT = [
   "You are a headless implementation worker, run non-interactively by an orchestrating session.",
@@ -20,6 +23,19 @@ export const WORKER_CONTRACT_PROMPT = [
   "changed: files you touched (path + one-line summary). commands: the commands that verify the work.",
   "checks: each with ok true/false and the evidence in detail. open: what you could not finish, if anything.",
   "notes: one line, the headline a reviewer reads first.",
+  "",
+  `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,
+  "run (the prompt of a resumed run is the operator's too). Answer it FIRST, in one or two plain lines —",
+  "a question gets its answer, an instruction gets one line naming what will change — then continue the",
+  "task you were on.",
+  "",
+  "Sub-workers: you may start your own workers with `pai worker run --class <class> -p '<prompt>'`",
+  "(Bash tool). Your children run on their own provider and report back to you automatically when",
+  "they finish. Send a handoff UP instead of doing work yourself when a cheaper provider would",
+  "suffice, the task is out of your scope, or a decision is needed:",
+  "`pai worker handoff '{\"kind\":\"proposal\",\"text\":\"…\",\"data\":{…}}'` (kinds: proposal,",
+  "question, blocker; results are sent for you when you finish). Sibling workers are not a",
+  "coordination path — there is no sideways channel; everything goes up to your parent.",
 ].join("\n");
 
 export interface WorkerReport {

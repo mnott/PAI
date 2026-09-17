@@ -34,6 +34,8 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { loadStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
+import { handoffFromInside } from "../../../workers/handoff.js";
+import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../../workers/proxy/server.js";
 import { err, dim } from "../../utils.js";
@@ -69,6 +71,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--label <text>", "Short task label shown in ps / follow / status line")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
     .option("--no-pane", "Do not open a follow pane for this worker")
+    .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
+    .option("--no-worktree", "Run in place, no worktree")
     .argument("[args...]", "claude arguments, e.g. -p '<task>' --allowedTools 'Read,Edit,Bash'")
     .action(
       async (
@@ -83,6 +87,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
           label?: string;
           mcp?: string;
           pane?: boolean;
+          worktree?: boolean;
         }
       ) => {
         try {
@@ -124,6 +129,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
             label,
             mcpFlag: opts.mcp,
             noPane: opts.pane === false,
+            worktreeFlag: opts.worktree,
             claudeArgs,
           });
           process.exitCode = rc;
@@ -261,6 +267,80 @@ export function registerWorkerCommands(workerCmd: Command): void {
       try {
         await sayToWorker(currentLogDir(), id, text);
         console.log("ok");
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("handoff <json>")
+    .description(
+      "From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent.\n" +
+        'Payload: {"kind":"proposal|question|blocker","text":"…","data":{…}} — from/to come from the environment.'
+    )
+    .action(async (json: string) => {
+      try {
+        let payload: unknown;
+        try {
+          payload = JSON.parse(json);
+        } catch {
+          fail(new Error(`payload is not JSON: ${json}`));
+          return;
+        }
+        const h = await handoffFromInside(currentLogDir(), process.env, payload);
+        console.log(`ok → ${h.to} (${h.kind}); inbox ${h.to}.inbox.jsonl`);
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("merge <id>")
+    .description("Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree")
+    .action((id: string) => {
+      try {
+        console.log(mergeWorker(currentLogDir(), id));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("discard <id>")
+    .description("Drop a worker's worktree and branch, keeping nothing")
+    .action((id: string) => {
+      try {
+        console.log(discardWorker(currentLogDir(), id));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("controls <id> <who>")
+    .description(
+      "Hand the desktop controls (clickr) to a worker or take them back.\n" +
+        "<who> is `you` (the worker may actuate) or `me` (the operator keeps them);\n" +
+        "inside a worker's pane, typing \"your controls\" does the same."
+    )
+    .action((id: string, who: string) => {
+      try {
+        if (who !== "you" && who !== "me") {
+          fail(new Error(`<who> must be "you" or "me"`));
+          return;
+        }
+        if (!loadStatus(currentLogDir(), id)) {
+          fail(new Error(`no worker named "${id}"`));
+          return;
+        }
+        const proc = spawn("clickr", ["controls", who], { stdio: "inherit" });
+        proc.on("error", (e) =>
+          fail(new Error(`cannot run clickr controls: ${e.message} (is clickr installed?)`))
+        );
+        proc.on("close", (code) => {
+          if (code === 0) console.log(`controls → ${who === "you" ? id : "operator"}`);
+          process.exitCode = code ?? 1;
+        });
       } catch (e) {
         fail(e);
       }

@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import { makeColor } from "./render.js";
-import { parseWorkerReport, renderReport, WORKER_CONTRACT_PROMPT } from "./report.js";
+import { OPERATOR_MARK, parseWorkerReport, renderReport, WORKER_CONTRACT_PROMPT } from "./report.js";
 
 const sample = {
   changed: [{ path: "src/a.ts", summary: "added the guard" }],
@@ -86,5 +86,11 @@ describe("WORKER_CONTRACT_PROMPT", () => {
     expect(WORKER_CONTRACT_PROMPT).toContain('"checks"');
     expect(WORKER_CONTRACT_PROMPT).toContain('"notes"');
     expect(WORKER_CONTRACT_PROMPT).toContain("final message");
+  });
+
+  it("tells the worker to answer [operator] messages first, then continue", () => {
+    expect(WORKER_CONTRACT_PROMPT).toContain(OPERATOR_MARK);
+    expect(WORKER_CONTRACT_PROMPT).toContain("Answer it FIRST");
+    expect(WORKER_CONTRACT_PROMPT).toContain("then continue the");
   });
 });
