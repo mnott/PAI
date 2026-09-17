@@ -128,7 +128,7 @@ describe("addWorktree / commitsSince / recordWorktree", () => {
 });
 
 describe("mergeWorker", () => {
-  it("merges --no-ff into the original checkout and removes the worktree", () => {
+  it("merges --no-ff into the original checkout, removes the worktree, deletes the branch", () => {
     const info = addWorktree(logDir, "w4", repo);
     writeFileSync(join(info.dir, "merged.txt"), "from worker\n", "utf8");
     git(info.dir, ["add", "."]);
@@ -138,8 +138,10 @@ describe("mergeWorker", () => {
 
     const msg = mergeWorker(logDir, "w4");
     expect(msg).toMatch(/merged worker\/w4/);
+    expect(msg).toMatch(/branch deleted/);
     expect(readFileSync(join(repo, "merged.txt"), "utf8")).toBe("from worker\n");
     expect(existsSync(info.dir)).toBe(false);
+    expect(git(repo, ["branch", "--list", "worker/w4"])).toBe("");
     expect(git(repo, ["log", "-1", "--format=%s"])).toMatch(/merge worker w4/);
     expect(loadStatus(logDir, "w4")?.merged).toBe(true);
 
@@ -147,8 +149,28 @@ describe("mergeWorker", () => {
     expect(mergeWorker(logDir, "w4")).toMatch(/already merged/);
   });
 
+  it("refuses a branch with no commits and keeps the worktree (uncommitted work survives)", () => {
+    const info = addWorktree(logDir, "w9", repo);
+    // uncommitted work in the worktree, zero commits on the branch
+    writeFileSync(join(info.dir, "precious.txt"), "uncommitted\n", "utf8");
+    const st = status("w9");
+    recordWorktree(logDir, st, info, true);
+
+    expect(() => mergeWorker(logDir, "w9")).toThrow(/no commits to merge/);
+    expect(() => mergeWorker(logDir, "w9")).toThrow(/NOT removed/);
+    expect(existsSync(info.dir)).toBe(true);
+    expect(readFileSync(join(info.dir, "precious.txt"), "utf8")).toBe("uncommitted\n");
+    expect(loadStatus(logDir, "w9")?.merged ?? false).toBeFalsy();
+
+    // cleanup for the next tests: discard is the documented way out
+    discardWorker(logDir, "w9");
+  });
+
   it("carries a worker's uncommitted edits and untracked files into the main tree", () => {
     const info = addWorktree(logDir, "w7", repo);
+    writeFileSync(join(info.dir, "carried-commit.txt"), "committed\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
     writeFileSync(join(info.dir, "base.txt"), "edited by worker\n", "utf8"); // tracked, uncommitted
     writeFileSync(join(info.dir, "carried.txt"), "untracked\n", "utf8"); // never added
     const st = status("w7");
@@ -164,6 +186,9 @@ describe("mergeWorker", () => {
 
   it("keeps the worktree when uncommitted changes cannot be carried", () => {
     const info = addWorktree(logDir, "w8", repo);
+    writeFileSync(join(info.dir, "w8-commit.txt"), "committed\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
     writeFileSync(join(info.dir, "base.txt"), "worker edit\n", "utf8");
     const st = status("w8");
     recordWorktree(logDir, st, info, true);

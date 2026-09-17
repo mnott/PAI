@@ -12,12 +12,18 @@
  *      matches (AIBroker absent, unnamed session, non-iTerm terminal).
  *
  * If neither is available, viewers fall back to "all workers".
+ *
+ * A third case: workers spawned from a Claude Code Bash tool (the
+ * orchestrator pattern) have neither — Claude Code exports no terminal or
+ * session identity to its Bash children. Those record `spawnerSession`, the
+ * orchestrator's claude session id bridged through the status line's
+ * session map (see below), so their tab still claims them.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { WorkerStatus } from "./status.js";
+import { loadStatus, type WorkerStatus } from "./status.js";
 
 export const AIBROKER_REGISTRY = join(homedir(), ".aibroker", "session-names.json");
 
@@ -100,4 +106,96 @@ export function scopeKey(term: string): string {
 /** `[Name]` when the worker has an AIBroker session name, else "". */
 export function sessionTag(worker: { session?: { name?: string } | null }): string {
   return worker.session?.name ? `[${worker.session.name}]` : "";
+}
+
+// ---------------------------------------------------------------------------
+// spawner sessions — attribution for workers launched from a Claude Code Bash
+// ---------------------------------------------------------------------------
+
+/**
+ * Claude Code exports neither ITERM_SESSION_ID nor its own session id to the
+ * Bash tool, so a `pai worker run` from an orchestrator has no terminal to
+ * record and its status would be unattributable. The status line is the one
+ * process that sees both identities at once — the payload's session_id and
+ * the tab's ITERM_SESSION_ID — so it bridges them: every refresh writes this
+ * cwd-keyed map, and the runner reads it back at spawn time.
+ */
+export interface SessionMapEntry {
+  session: string;
+  ts: number;
+}
+
+/** How old a map entry may be for a spawn to adopt it (status lines refresh constantly while a session lives). */
+export const SPAWNER_SESSION_TTL_MS = 10 * 60_000;
+
+/** Map entries not refreshed within this window are pruned on write. */
+const SESSION_MAP_PRUNE_MS = 60 * 60_000;
+
+export function sessionMapPath(logDir: string): string {
+  return join(logDir, "claude-session-map.json");
+}
+
+/**
+ * Record that the claude session `session` renders its status line in `cwd`.
+ * Never throws — a broken map must not break the bar. Prunes stale entries;
+ * skips the write when the entry is unchanged and fresh.
+ */
+export function recordSessionMapEntry(
+  logDir: string,
+  cwd: string,
+  session: string,
+  now: number = Date.now()
+): void {
+  if (!cwd || !session) return;
+  const path = sessionMapPath(logDir);
+  let map: Record<string, SessionMapEntry> = {};
+  try {
+    if (existsSync(path)) {
+      map = JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>;
+    }
+  } catch {
+    map = {}; // a damaged map is rewritten, never fatal
+  }
+  const prev = map[cwd];
+  if (prev && prev.session === session && now - prev.ts < 60_000) return;
+  const pruned: Record<string, SessionMapEntry> = {};
+  for (const [dir, e] of Object.entries(map)) {
+    if (now - e.ts < SESSION_MAP_PRUNE_MS) pruned[dir] = e;
+  }
+  pruned[cwd] = { session, ts: now };
+  try {
+    mkdirSync(logDir, { recursive: true });
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(pruned), "utf8");
+    renameSync(tmp, path);
+  } catch {
+    // unwritable log dir: no attribution this round, nothing else breaks
+  }
+}
+
+/**
+ * The claude session a new run was spawned by, when it can be known: a run
+ * inside another worker inherits its spawner (chain stages keep the
+ * orchestrator's tab that way); otherwise a fresh map entry for `cwd`.
+ */
+export function resolveSpawnerSession(
+  logDir: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  now: number = Date.now()
+): string | null {
+  const parentId = env.PAI_WORKER_ID;
+  if (parentId) {
+    const inherited = loadStatus(logDir, parentId)?.spawnerSession;
+    if (inherited) return inherited;
+  }
+  const path = sessionMapPath(logDir);
+  if (!existsSync(path) || !cwd) return null;
+  try {
+    const entry = (JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>)[cwd];
+    if (entry && entry.session && now - entry.ts < SPAWNER_SESSION_TTL_MS) return entry.session;
+  } catch {
+    // a damaged map simply attributes nothing
+  }
+  return null;
 }
