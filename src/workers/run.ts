@@ -39,7 +39,6 @@ import {
 import { parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
   assertProviderRunnable,
-  providerContextWindow,
   providerKeyPath,
   readWorkersSection,
   type WorkerProvider,
@@ -212,6 +211,7 @@ export type StreamEvent = {
   usage?: UsageBlock;
   result?: string;
   is_error?: boolean;
+  is_compact?: boolean;
   num_turns?: number;
   duration_ms?: number;
 };
@@ -227,12 +227,41 @@ export function usageContextTokens(u: UsageBlock | undefined): number | null {
   return t > 0 ? t : null;
 }
 
+/**
+ * Context never shrinks mid-segment, so the status keeps the high-water
+ * mark of the usage it has seen: a smaller later reading (short reply,
+ * sidechain answer) must not drag the meter down. Compaction is the one
+ * legitimate drop — see `resetContextTokensOnCompact`.
+ */
+export function bumpContextTokens(status: Pick<WorkerStatus, "contextTokens">, tokens: number | null): void {
+  if (tokens === null || tokens <= 0) return;
+  status.contextTokens = Math.max(status.contextTokens ?? 0, tokens);
+}
+
+/**
+ * A compact boundary (`system`/`compact_boundary`, the shape Claude Code
+ * writes with `compactMetadata.preTokens`; `compact` kept as the older
+ * spelling) legitimately restarts the context at a lower size: the floor
+ * drops to the event's own usage — usually none — so the next usage
+ * reading re-seeds the meter at the fresh, smaller context.
+ */
+export function resetContextTokensOnCompact(status: Pick<WorkerStatus, "contextTokens">, e: StreamEvent): void {
+  status.contextTokens = usageContextTokens(e.usage) ?? null;
+}
+
+/** A compact boundary in a worker's stream, in either event spelling. */
+export function isCompactBoundary(e: StreamEvent): boolean {
+  return e.type === "system" && (e.subtype === "compact_boundary" || e.subtype === "compact");
+}
+
 /** Context window announced by the init event, when the endpoint sends one. */
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
   if (e.model_info && typeof e.model_info.context_window === "number" && e.model_info.context_window > 0) {
     return e.model_info.context_window;
   }
+  // the `[1m]` model variant announces a 1M-token window by suffix
+  if (/\[1m\]$/.test((e.model ?? "").trim())) return 1_000_000;
   return null;
 }
 
@@ -406,7 +435,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
     ...(session ? { session } : {}),
-    contextWindow: providerContextWindow(target.provider),
+    // no window seed: contextWindow comes from the init event only, and the
+    // meter stays hidden until one is announced (never a guessed default)
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
   };
@@ -579,10 +609,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         const cw = initContextWindow(e);
         if (cw) status.contextWindow = cw;
         saveStatus(logDir, status);
+      } else if (isCompactBoundary(e)) {
+        resetContextTokensOnCompact(status, e);
+        saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
-        const tokens = usageContextTokens(e.message?.usage);
-        if (tokens) status.contextTokens = tokens;
+        bumpContextTokens(status, usageContextTokens(e.message?.usage));
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
             status.tools += 1;
@@ -594,7 +626,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (e.type === "result") {
         const tokens = usageContextTokens(e.usage);
-        if (tokens) status.contextTokens = tokens;
+        // a compact result legitimately restarts the context lower
+        if (e.is_compact) status.contextTokens = tokens ?? status.contextTokens;
+        else bumpContextTokens(status, tokens);
         const report = parseWorkerReport(e.result ?? "");
         if (report?.notes) status.last = shortText(report.notes, 90);
         else if (e.result) status.last = shortText(e.result, 90);
@@ -764,7 +798,9 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     secs: null,
     origin: "spawn",
     ...(session ? { session } : {}),
-    contextWindow: providerContextWindow(target.provider),
+    // codex has no init event of its own: the synthetic one below announces
+    // an explicitly configured window (never a guessed default)
+    ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
   };
@@ -808,7 +844,13 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       // best effort transcript
     }
   };
-  writeEvent({ type: "system", subtype: "init", model, cwd });
+  writeEvent({
+    type: "system",
+    subtype: "init",
+    model,
+    cwd,
+    ...(target.provider.contextWindow ? { context_window: target.provider.contextWindow } : {}),
+  });
 
   let killed = false;
   process.once("SIGTERM", onCodexSignal("SIGTERM"));
@@ -840,7 +882,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     status.turns = fold.turns;
     status.tools = fold.tools;
     if (fold.last) status.last = shortText(fold.last, 90);
-    if (fold.contextTokens) status.contextTokens = fold.contextTokens;
+    bumpContextTokens(status, fold.contextTokens);
     saveStatus(logDir, status);
     for (const ev of fold.events.splice(0)) writeEvent(ev);
   });

@@ -60,7 +60,11 @@ export interface WorkerProvider {
   quotaProbe?: string;
   /** Auto-routing skips the provider at or above this percentage. Default 95. */
   quotaSkipAt?: number;
-  /** Context window of the provider's model, for the context meter. Default 200000. */
+  /**
+   * Context window of the provider's model, for the context meter. No
+   * default: the meter only shows a window the init event announced (or
+   * this explicit value, for engines without one, e.g. codex).
+   */
   contextWindow?: number;
   /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
   costTier?: number;
@@ -632,11 +636,6 @@ export const DEFAULT_CONTEXT_WINDOW = 200_000;
 /** Cost tier of a provider for class filtering (unset = 3, the middle). */
 export function providerCostTier(p: WorkerProvider): number {
   return p.costTier ?? DEFAULT_COST_TIER;
-}
-
-/** Context window used by the meter when the init event carries none. */
-export function providerContextWindow(p: WorkerProvider): number {
-  return p.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 }
 
 /** Directory under which inline keys (MCP `key` field) are stored, 0600. */

@@ -75,6 +75,24 @@ export function contextPercent(s: Pick<WorkerStatus, "contextTokens" | "contextW
   return Math.round((s.contextTokens / s.contextWindow) * 100);
 }
 
+/** Compact token count: 84k, 200k, 900. */
+export function fmtContextK(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/**
+ * The one context-meter label, shared by every renderer so identical
+ * numbers always render identically: `ctx 84k/200k (42%)` — used-style
+ * percent. Empty when the numbers are missing (callers drop the part).
+ */
+export function contextLabel(
+  s: Pick<WorkerStatus, "contextTokens" | "contextWindow">
+): string {
+  const pct = contextPercent(s);
+  if (pct === null) return "";
+  return `ctx ${fmtContextK(s.contextTokens ?? 0)}/${fmtContextK(s.contextWindow ?? 0)} (${pct}%)`;
+}
+
 /** Timestamp format shared by status files and the ledger. */
 export function nowStamp(d: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
