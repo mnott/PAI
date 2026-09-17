@@ -9,7 +9,14 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expandMcpNames, readMcpServers, writeMcpConfig, describeMcp, runMcpConfigPath } from "./mcp.js";
+import {
+  expandMcpNames,
+  readMcpServers,
+  writeMcpConfig,
+  describeMcp,
+  mcpServersFromToolGrants,
+  runMcpConfigPath,
+} from "./mcp.js";
 import { DEFAULT_MCP_SETS, type WorkersConfig } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-mcp-test-"));
@@ -78,6 +85,53 @@ describe("expandMcpNames — desktop set", () => {
     const bare = { mcpSets: { ...DEFAULT_MCP_SETS } } as unknown as WorkersConfig;
     expect(expandMcpNames(["desktop"], bare, desktopJson)).toEqual(["clickr"]);
     expect(expandMcpNames(["desktop,memory"], bare, desktopJson)).toEqual(["clickr", "memory"]);
+  });
+});
+
+describe("mcpServersFromToolGrants", () => {
+  it("derives the server from mcp__server__tool grants", () => {
+    expect(mcpServersFromToolGrants(["mcp__clickr__check_permissions", "mcp__github__get_issue"])).toEqual([
+      "clickr",
+      "github",
+    ]);
+  });
+
+  it("accepts bare server grants and wildcards", () => {
+    expect(mcpServersFromToolGrants(["mcp__clickr", "mcp__github__*"])).toEqual(["clickr", "github"]);
+  });
+
+  it("splits commas, dedupes and ignores non-mcp grants", () => {
+    expect(mcpServersFromToolGrants(["Bash,Read", "mcp__clickr__check_permissions,mcp__clickr__screenshot"])).toEqual([
+      "clickr",
+    ]);
+  });
+
+  it("is empty when no grant names an mcp tool", () => {
+    expect(mcpServersFromToolGrants(["Bash", "Read,Edit", ""])).toEqual([]);
+    expect(mcpServersFromToolGrants([])).toEqual([]);
+  });
+
+  it("never surfaces a bare mcp__ prefix", () => {
+    expect(mcpServersFromToolGrants(["mcp__", "mcp____odd"])).toEqual([]);
+  });
+
+  it("flows through expandMcpNames: exactly the granted servers load", () => {
+    const names = expandMcpNames(
+      mcpServersFromToolGrants(["mcp__github__get_issue,mcp__memory__search"]),
+      workers,
+      claudeJson
+    );
+    expect(names).toEqual(["github", "memory"]);
+    const path = writeMcpConfig(dir, "20260918-004500-grants", names, claudeJson);
+    const written = JSON.parse(readFileSync(path, "utf8")) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(written.mcpServers)).toEqual(["github", "memory"]); // fetcher stays out
+  });
+
+  it("fails fast when a granted server is not registered", () => {
+    const names = mcpServersFromToolGrants(["mcp__nosuch__tool"]);
+    expect(() => expandMcpNames(names, workers, claudeJson)).toThrow(
+      /unknown MCP server "nosuch".*Available servers:/s
+    );
   });
 });
 

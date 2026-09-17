@@ -47,6 +47,7 @@ Run one claude-code worker through the configured provider.
 
 Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);
 --output-format/--verbose are handled here.
+Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically);
 --chain draft,implement[,review] runs a spec-first pipeline;
 --agent <name> runs an agent definition from ~/.claude/agents.
 

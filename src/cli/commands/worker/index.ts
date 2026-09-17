@@ -61,6 +61,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
       "Run one claude-code worker through the configured provider.\n" +
         "Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);\n" +
         "--output-format/--verbose are handled here.\n" +
+        "Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically);\n" +
         "--chain draft,implement[,review] runs a spec-first pipeline;\n" +
         "--agent <name> runs an agent definition from ~/.claude/agents."
     )
