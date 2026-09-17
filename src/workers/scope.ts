@@ -123,6 +123,13 @@ export function sessionTag(worker: { session?: { name?: string } | null }): stri
 export interface SessionMapEntry {
   session: string;
   ts: number;
+  /**
+   * The tab's ITERM_SESSION_ID, when the status line could see one — the
+   * bridge back from a claude session id to the terminal it runs in
+   * (supervision uses it to push worker events into that terminal).
+   * Absent on entries written before the field existed.
+   */
+  term?: string;
 }
 
 /** How old a map entry may be for a spawn to adopt it (status lines refresh constantly while a session lives). */
@@ -136,14 +143,16 @@ export function sessionMapPath(logDir: string): string {
 }
 
 /**
- * Record that the claude session `session` renders its status line in `cwd`.
- * Never throws — a broken map must not break the bar. Prunes stale entries;
- * skips the write when the entry is unchanged and fresh.
+ * Record that the claude session `session` renders its status line in `cwd`
+ * (and, when known, in iTerm session `term`). Never throws — a broken map
+ * must not break the bar. Prunes stale entries; skips the write when the
+ * entry is unchanged and fresh.
  */
 export function recordSessionMapEntry(
   logDir: string,
   cwd: string,
   session: string,
+  term?: string,
   now: number = Date.now()
 ): void {
   if (!cwd || !session) return;
@@ -157,12 +166,19 @@ export function recordSessionMapEntry(
     map = {}; // a damaged map is rewritten, never fatal
   }
   const prev = map[cwd];
-  if (prev && prev.session === session && now - prev.ts < 60_000) return;
+  if (
+    prev &&
+    prev.session === session &&
+    (prev.term ?? "") === (term ?? "") &&
+    now - prev.ts < 60_000
+  ) {
+    return;
+  }
   const pruned: Record<string, SessionMapEntry> = {};
   for (const [dir, e] of Object.entries(map)) {
     if (now - e.ts < SESSION_MAP_PRUNE_MS) pruned[dir] = e;
   }
-  pruned[cwd] = { session, ts: now };
+  pruned[cwd] = { session, ts: now, ...(term ? { term } : {}) };
   try {
     mkdirSync(logDir, { recursive: true });
     const tmp = `${path}.tmp`;
@@ -198,4 +214,35 @@ export function resolveSpawnerSession(
     // a damaged map simply attributes nothing
   }
   return null;
+}
+
+/**
+ * The iTerm UUID a claude session last rendered its status line in, when the
+ * map knows one: the freshest entry naming that session. This is the reverse
+ * of resolveSpawnerSession — worker → orchestrator there, orchestrator →
+ * terminal here — and it exists so daemon-side pushes (supervision) can reach
+ * a session that has no iTerm identity of its own in any worker status.
+ */
+export function itermForClaudeSession(
+  logDir: string,
+  claudeSession: string,
+  now: number = Date.now()
+): string | null {
+  const path = sessionMapPath(logDir);
+  if (!existsSync(path) || !claudeSession) return null;
+  let map: Record<string, SessionMapEntry>;
+  try {
+    map = JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>;
+  } catch {
+    return null;
+  }
+  let best: SessionMapEntry | null = null;
+  for (const e of Object.values(map)) {
+    if (e.session !== claudeSession || !e.term) continue;
+    // a stale entry names a tab the session left; freshness orders them
+    if (now - e.ts >= SESSION_MAP_PRUNE_MS) continue;
+    if (!best || e.ts > best.ts) best = e;
+  }
+  const term = best?.term;
+  return term ? itermUuid(term) : null;
 }

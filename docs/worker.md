@@ -7,6 +7,46 @@ on the Anthropic account of the main session. This replaces the earlier
 hard-wired `glm` wrapper with something provider-neutral, and keeps the same
 daily commands.
 
+## Supervision
+
+An orchestrating session must keep an eye on its workers without sleeping —
+the Worker skill forbids busy-waiting — the same way the AIBroker daemon
+keeps an eye on sessions. So the PAI daemon does the watching: one tick every
+30 s over the workers ledger (`src/workers/supervision.ts`, daemon-side code
+only, no model calls ever) detects three conditions per worker — chain
+stages included, each with its own status file — and pushes one line to the
+owning session:
+
+| Event | Condition |
+|-------|-----------|
+| `worker <id> <label> finished rc=0` | the run ended clean (state `done`, rc 0) |
+| `worker <id> <label> failed rc=N` / `failed runner gone` | non-zero rc or error state, or the runner pid vanished while state was still `running` |
+| `worker <id> <label> stalled Nm no turns` | state `running` but no new turn for the stall threshold |
+
+The stall threshold defaults to 10 minutes and is configurable via
+`PAI_WORKER_STALL_MINUTES`. Every line ends with `- see pai worker replay <id>`.
+
+Delivery is a push, in order of preference:
+
+1. **AIBroker `send_to_session`** — the one-liner typed into the
+   orchestrator's terminal, arriving as a user turn without the orchestrator
+   asking for it. The iTerm identity comes from the worker's own status
+   (`session.id`) or from the status line's session map, which bridges a
+   claude session id back to its terminal (`scope.ts`).
+2. **Event file + hook — the fallback, always written** — one JSON line per
+   event, append-only, in `<workers.logDir>/supervision/<claude-session-id>.events`
+   (default `~/.claude/logs/workers/supervision/`). The `worker-supervision`
+   UserPromptSubmit hook (`src/hooks/ts/user-prompt/`, registered in
+   `plugins/productivity/hooks/hooks.json`) surfaces the lines a session has
+   not yet seen as context on its next prompt, skipping any AIBroker already
+   pushed (receipts in `<session>.pushed`).
+
+Exactly-once holds across daemon restarts: delivered event ids persist per
+worker in `<workers.logDir>/supervision/state.json`; a first run adopts
+already-terminal workers instead of replaying history; a stall re-arms only
+when a new turn arrives. The daemon log mirrors every event
+(`[pai-daemon] Supervision: …`).
+
 ```
 main session (Anthropic)          workers (configured provider)
 ┌──────────────────────┐          ┌──────────────────────────┐

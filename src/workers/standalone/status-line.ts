@@ -23,7 +23,7 @@ const claudeSession = process.argv[4] ?? "";
 
 try {
   const logDir = workersLogDir(readWorkersSection().workers);
-  if (claudeSession) recordSessionMapEntry(logDir, cwd, claudeSession);
+  if (claudeSession) recordSessionMapEntry(logDir, cwd, claudeSession, term);
   const out = statusLineOutput(logDir, term, cwd, claudeSession);
   if (out) process.stdout.write(out + "\n");
 } catch {
