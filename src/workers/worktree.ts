@@ -7,7 +7,7 @@
  * commits its own work on that branch — the no-commit rule applies to the
  * main branch only — and the parent (or the operator) merges the result back:
  *
- *   pai worker merge <id>     git merge --no-ff worker/<id> + remove worktree
+ *   pai worker merge <id>     git merge --no-ff worker/<id> + remove worktree + delete branch
  *   pai worker discard <id>   remove worktree and branch, keep nothing
  *
  * `ps` marks a worker with an unmerged branch `⎇`. Draft and review run in
@@ -175,16 +175,32 @@ function removeWorktree(cwd: string, dir: string, force: boolean): void {
 /**
  * `pai worker merge <id>`: merge the worker's branch into the original
  * checkout with --no-ff (the merge commit names the worker), then remove the
- * worktree. The branch stays for the record; the status gains `merged: true`.
+ * worktree and delete the branch; the status gains `merged: true`. A branch
+ * with nothing to merge is refused loudly — its worktree may hold
+ * uncommitted work, and reporting success there would destroy it.
  */
 export function mergeWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
+  const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
+  if (incoming <= 0) {
+    throw new Error(
+      `worker ${id}: branch ${st.branch} has no commits to merge. ` +
+        `The worktree ${st.worktreeDir} was NOT removed — uncommitted work there would be destroyed. ` +
+        `Commit it yourself, or drop everything with: pai worker discard ${id}`
+    );
+  }
   git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   removeWorktree(st.cwd, st.worktreeDir!, false);
+  let branchGone = true;
+  try {
+    git(st.cwd, ["branch", "-d", st.branch!]);
+  } catch {
+    branchGone = false; // -d refuses anything not fully merged; keep the branch, say so
+  }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
-  return `merged ${st.branch} into ${st.cwd} (worktree removed)`;
+  return `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
 }
 
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */

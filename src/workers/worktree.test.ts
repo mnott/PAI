@@ -128,7 +128,7 @@ describe("addWorktree / commitsSince / recordWorktree", () => {
 });
 
 describe("mergeWorker", () => {
-  it("merges --no-ff into the original checkout and removes the worktree", () => {
+  it("merges --no-ff into the original checkout, removes the worktree, deletes the branch", () => {
     const info = addWorktree(logDir, "w4", repo);
     writeFileSync(join(info.dir, "merged.txt"), "from worker\n", "utf8");
     git(info.dir, ["add", "."]);
@@ -138,13 +138,32 @@ describe("mergeWorker", () => {
 
     const msg = mergeWorker(logDir, "w4");
     expect(msg).toMatch(/merged worker\/w4/);
+    expect(msg).toMatch(/branch deleted/);
     expect(readFileSync(join(repo, "merged.txt"), "utf8")).toBe("from worker\n");
     expect(existsSync(info.dir)).toBe(false);
+    expect(git(repo, ["branch", "--list", "worker/w4"])).toBe("");
     expect(git(repo, ["log", "-1", "--format=%s"])).toMatch(/merge worker w4/);
     expect(loadStatus(logDir, "w4")?.merged).toBe(true);
 
     // a second merge is a no-op that says so
     expect(mergeWorker(logDir, "w4")).toMatch(/already merged/);
+  });
+
+  it("refuses a branch with no commits and keeps the worktree (uncommitted work survives)", () => {
+    const info = addWorktree(logDir, "w7", repo);
+    // uncommitted work in the worktree, zero commits on the branch
+    writeFileSync(join(info.dir, "precious.txt"), "uncommitted\n", "utf8");
+    const st = status("w7");
+    recordWorktree(logDir, st, info, true);
+
+    expect(() => mergeWorker(logDir, "w7")).toThrow(/no commits to merge/);
+    expect(() => mergeWorker(logDir, "w7")).toThrow(/NOT removed/);
+    expect(existsSync(info.dir)).toBe(true);
+    expect(readFileSync(join(info.dir, "precious.txt"), "utf8")).toBe("uncommitted\n");
+    expect(loadStatus(logDir, "w7")?.merged ?? false).toBeFalsy();
+
+    // cleanup for the next tests: discard is the documented way out
+    discardWorker(logDir, "w7");
   });
 
   it("refuses workers without a worktree branch", () => {
