@@ -22,6 +22,7 @@ pai worker run --label "short task label" --class research \\
   \`pai worker run --chain draft,implement …\` — the draft stage turns the brief
   into a spec file, implement runs with it, \`--chain draft,implement,review\`
   adds a review pass. \`--class spotcheck\` for verification runs.
+- Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically).
 - The answer is in the \`result\` field of the JSON it prints. Review the diff yourself.
 - \`--no-pane\` suppresses the iTerm follow pane; panes open automatically otherwise.
 - \`--agent <name>\` runs a definition from ~/.claude/agents/<name>.md (the agent
