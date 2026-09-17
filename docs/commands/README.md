@@ -202,7 +202,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker install` | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | `pai worker log [what]` | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | `pai worker mcp [list]` | MCP servers workers may load via --mcp / roles, and the configured sets |
-| `pai worker merge <id>` | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree |
+| `pai worker merge <id>` | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
 | `pai worker model [what] [model]` | Model ids per provider: no args lists them, |
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
@@ -221,7 +221,8 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker resume <id> <text>` | Continue a finished worker on the same provider: claude --resume <session> |
 | `pai worker run [args...]` | Run one claude-code worker through the configured provider. |
 | `pai worker say <id> <text>` | Send one message to a running worker (forwarded to its open stdin) |
-| `pai worker status-line [term] [cwd]` | One-line worker summary for a status bar (empty when none in scope). |
+| `pai worker status-line [term] [cwd] [session]` | One-line worker summary for a status bar (empty when none in scope). |
+| `pai worker wait <ids...>` | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | `pai worker watch` | ps refreshed every 2 seconds (plain `watch`, colors kept) |
 | `pai zettel` | Zettelkasten intelligence: explore, surprise, converse, themes, health, suggest |
 | `pai zettel converse <question>` | Ask the vault a question and get a synthesis prompt with relevant notes |
