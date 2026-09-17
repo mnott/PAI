@@ -38,6 +38,7 @@ pai worker <subcommand> [options]
 | [`pai worker install`](#pai-worker-install) | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
+| [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
 
 ### pai worker run [args...]
 
@@ -462,6 +463,27 @@ Remove a class (runs then use the active provider)
 | Argument | Kind |
 |----------|------|
 | `<class>` | required |
+
+
+### pai worker model [what] [model]
+
+Model ids per provider: no args lists them,
+
+`model <model-id>` sets the active provider's default model,
+`model fast <model-id>` its fast model. --provider targets another provider.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[what]` | optional |
+| `[model]` | optional |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--provider <name>` | Provider to read or change (default: the active one) |  |
 
 
 ## See also

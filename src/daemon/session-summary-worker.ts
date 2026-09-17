@@ -42,6 +42,7 @@ import {
 } from "../memory/kg-extraction.js";
 import { openFederation } from "../memory/db.js";
 import { registryDb, storageBackend, daemonConfig } from "./daemon/state.js";
+import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -61,13 +62,6 @@ const MAX_JSONL_CHARS: Record<string, number> = {
 /** Maximum user messages to include in the prompt. */
 const MAX_USER_MESSAGES = 30;
 
-/** Timeout for the claude CLI process (ms). */
-const CLAUDE_TIMEOUT_MS: Record<string, number> = {
-  haiku: 60_000,    // 60 seconds
-  sonnet: 120_000,  // 2 minutes
-  opus: 300_000,    // 5 minutes — opus is thorough
-};
-
 /** File tracking last summary timestamps per project. */
 const COOLDOWN_FILE = join(homedir(), ".config", "pai", "summary-cooldowns.json");
 
@@ -85,11 +79,12 @@ export interface SessionSummaryPayload {
   transcriptPath?: string;
   /** If true, bypass the cooldown check (e.g. triggered by stop-hook at session end). */
   force?: boolean;
-  /** Model to use for summarization. Defaults based on trigger:
+  /** Model tier to use for summarization (resolved to the configured
+   *  provider's model id). Defaults based on trigger:
    *  - forced (mid-session auto-save, every N messages): "haiku" — runs often
    *  - everything else (manual, reconstruct, batch): "sonnet"
    *  Session end does not summarise via an LLM at all; it is mechanical. */
-  model?: "haiku" | "sonnet" | "opus";
+  model?: ModelTier;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +210,7 @@ interface ExtractedContent {
  * Parse a JSONL transcript and extract relevant content.
  * Filters noise, truncates to model-appropriate size from the end of the file.
  */
-function extractFromJsonl(jsonlPath: string, model: string = "sonnet"): ExtractedContent {
+function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet"): ExtractedContent {
   const result: ExtractedContent = {
     userMessages: [],
     filesModified: [],
@@ -230,7 +225,7 @@ function extractFromJsonl(jsonlPath: string, model: string = "sonnet"): Extracte
   }
 
   // Truncate from the start if too large (keep the most recent content)
-  const maxChars = MAX_JSONL_CHARS[model] ?? 200_000;
+  const maxChars = MAX_JSONL_CHARS[tier] ?? 200_000;
   if (raw.length > maxChars) {
     const truncPoint = raw.indexOf("\n", raw.length - maxChars);
     raw = truncPoint >= 0 ? raw.slice(truncPoint + 1) : raw.slice(-MAX_JSONL_CHARS);
@@ -394,13 +389,15 @@ function findClaudeBinary(): string | null {
 
 /**
  * Spawn a Claude model via the CLI to generate a session summary.
- * Pipes the prompt via stdin. Model selection:
+ * Pipes the prompt via stdin. Tier selection (resolved to the configured
+ * provider's model id, falling back to the tier alias when no provider is
+ * configured — see planLlmSpawn):
  *   - opus: session end (best quality for final summary, runs once)
  *   - sonnet: auto-compaction (good quality for incremental checkpoints, runs often)
  *   - haiku: fallback / budget mode
  * Returns the generated text, or null if spawning fails.
  */
-export async function spawnSummarizer(prompt: string, model: string = "sonnet"): Promise<string | null> {
+export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet"): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
     process.stderr.write(
@@ -409,16 +406,21 @@ export async function spawnSummarizer(prompt: string, model: string = "sonnet"):
     return null;
   }
 
+  let plan;
+  try {
+    plan = await planLlmSpawn(tier);
+  } catch (e) {
+    process.stderr.write(`[session-summary] could not plan ${tier} spawn: ${e}\n`);
+    return null;
+  }
+
   const { spawn } = await import("node:child_process");
 
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    // Strip ANTHROPIC_API_KEY so claude CLI uses the Max plan (free)
-    // instead of billing against the API key
-    const { ANTHROPIC_API_KEY: _, ...envWithoutApiKey } = process.env;
-    const child = spawn(claudeBin, ["--model", model, "-p", "--no-session-persistence"], {
-      env: envWithoutApiKey,
+    const child = spawn(claudeBin, plan.args, {
+      env: plan.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -435,7 +437,7 @@ export async function spawnSummarizer(prompt: string, model: string = "sonnet"):
 
     child.on("error", (err: Error) => {
       if (timer) { clearTimeout(timer); timer = null; }
-      process.stderr.write(`[session-summary] ${model} spawn error: ${err.message}\n`);
+      process.stderr.write(`[session-summary] ${plan.model} spawn error: ${err.message}\n`);
       resolve(null);
     });
 
@@ -443,7 +445,7 @@ export async function spawnSummarizer(prompt: string, model: string = "sonnet"):
       if (timer) { clearTimeout(timer); timer = null; }
       if (code !== 0) {
         process.stderr.write(
-          `[session-summary] ${model} exited with code ${code}: ${stderr.slice(0, 300)}\n`
+          `[session-summary] ${plan.model} exited with code ${code}: ${stderr.slice(0, 300)}\n`
         );
         resolve(null);
       } else {
@@ -453,10 +455,10 @@ export async function spawnSummarizer(prompt: string, model: string = "sonnet"):
 
     // Timeout protection
     timer = setTimeout(() => {
-      process.stderr.write(`[session-summary] ${model} timed out — killing process.\n`);
+      process.stderr.write(`[session-summary] ${plan.model} timed out — killing process.\n`);
       child.kill("SIGTERM");
       resolve(null);
-    }, CLAUDE_TIMEOUT_MS[model] ?? 120_000);
+    }, plan.timeoutMs);
 
     // Write prompt to stdin and close
     child.stdin.write(prompt);

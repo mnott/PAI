@@ -32,6 +32,7 @@ import {
 } from "fs";
 import { join, resolve } from "path";
 import { homedir, platform } from "os";
+import { isInsideWorkerWorktree } from "./lib/sync-guard.mjs";
 
 const PROMPTS_DIR = "src/daemon-mcp/prompts";
 const CUSTOM_DIR = join(PROMPTS_DIR, "custom");
@@ -107,13 +108,21 @@ function syncSymlinks(generatedNames) {
     const source = resolve(join(STUBS_OUT, name));
     const target = join(skillsDir, name);
 
+    // lstat once: dangling links must count as symlinks (existsSync misses them)
+    let entry;
+    try {
+      entry = lstatSync(target);
+    } catch {
+      // absent — fresh install
+    }
+
     // Never overwrite non-symlink directories (user's own skills)
-    if (existsSync(target) && !lstatSync(target).isSymbolicLink()) {
+    if (entry && !entry.isSymbolicLink()) {
       continue;
     }
 
-    // Check existing symlink
-    if (existsSync(target) && lstatSync(target).isSymbolicLink()) {
+    // Check existing symlink (may be dangling)
+    if (entry) {
       if (resolve(readlinkSync(target)) === source) {
         current++;
         continue;
@@ -197,6 +206,10 @@ for (const [fileName, dir] of [
 const customLabel = customNames.length > 0 ? ` (${builtinNames.length} built-in + ${customNames.length} custom)` : "";
 console.log(`✔ ${generated} skill stubs generated in ${STUBS_OUT}/${customLabel}`);
 
-if (doSync) {
+if (doSync && isInsideWorkerWorktree(process.cwd())) {
+  // Never repoint the live ~/.claude/skills symlinks at a worktree that
+  // `pai worker merge` will delete — see scripts/lib/sync-guard.mjs.
+  console.log("✔ Skill symlinks skipped: build runs inside a worker worktree");
+} else if (doSync) {
   syncSymlinks(generatedDirNames);
 }

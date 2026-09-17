@@ -88,6 +88,7 @@ import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus, loadStatuses, alive } from "../workers/status.js";
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
+import { workerModel } from "./tools/worker-model.js";
 
 // ---------------------------------------------------------------------------
 // IPC client singleton
@@ -1062,6 +1063,24 @@ async function startShim(): Promise<void> {
         return workerError(e);
       }
     }
+  );
+
+  server.tool(
+    "worker_model",
+    [
+      "Show or set a provider's model ids (the config behind `pai worker model`).",
+      "",
+      "action=get (default): the model ids of one provider (provider given,",
+      "default: the active one) or of every provider when provider is omitted.",
+      "action=set needs model; slot picks default (default) or fast.",
+    ].join("\n"),
+    {
+      action: z.enum(["get", "set"]).optional().describe("Default: get."),
+      provider: z.string().optional().describe("Provider to read or change (default: the active one)."),
+      slot: z.enum(["default", "fast"]).optional().describe("Which model slot (set). Default: default."),
+      model: z.string().optional().describe("The new model id (required for set)."),
+    },
+    async (args) => workerModel(args)
   );
 
   server.tool(

@@ -1,37 +1,37 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0031 - 2026-09-17 - Pai Infrastructure Investigation And Task Notification System" session-id="dab1eaf7-66ce-4e61-a9a1-1e3f2563d89f" ts="2026-09-17T10:04:57.478Z" -->
+<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T19:17:58.071Z" -->
 
-> **Last session:** 0031 - 2026-09-17 - Pai Infrastructure Investigation And Task Notification System
-> **Paused at:** 2026-09-17T10:04:57.478Z
+> **Last session:** 0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup
+> **Paused at:** 2026-09-17T19:17:58.071Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume dab1eaf7-66ce-4e61-a9a1-1e3f2563d89f`
+> Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
 
 T
-i=ckpt-2026-09-17T10-04-57.452Z
+i=ckpt-2026-09-17T19-17-58.026Z
 g=/Name PAI
-d=go | what are you doing? | no you just started running a precompression hook here in that session! it is at 260K. nothing was happening in this session here really
+d=ok your predecessor got completely confused, and in frustration I just CtrlCd. there was no sense in that session anymore.  here's what we need to do.  a) merge the open branches b) make sure the pai… | /Name PAI | ok your predecessor got completely confused, and in frustration I just CtrlCd. there was no sense in that session anymore.  here's what we need to do.  a) merge the open branches b) make sure the pai…
 t=?
 @1=Notes/TODO.md
-@2=src/hooks/pre-compact.sh
-@3=src/hooks/session-autosave.sh
-@4=src/hooks/session-stop.sh
-@5=src/hooks/ts/lib/context-fill.test.ts
-@6=src/hooks/ts/lib/context-fill.ts
-@7=src/hooks/ts/post-tool-use/sync-todo-to-md.ts
-@8=src/hooks/ts/post-tool-use/update-tab-on-action.ts
-@9=src/hooks/ts/pre-compact/context-compression-hook.ts
-@10=src/hooks/ts/session-start/initialize-session.ts
-@11=src/hooks/ts/session-start/load-core-context.ts
-@12=src/hooks/ts/session-start/load-project-context.ts
-@13=src/hooks/ts/session-start/post-compact-inject.ts
-@14=src/hooks/ts/stop/stop-hook.ts
-@15=src/hooks/ts/subagent-stop/subagent-stop-hook.ts
-@16=src/hooks/ts/user-prompt/update-tab-titles.ts
-@17=src/session/context-handover-trigger.test.ts
-z=auto ckpt (no model); main@791c0ab fix(session): clear the handover marker at compaction; 20 dirty; +5 paths; git status for detail
+@2=README.md
+@3=docs/commands/README.md
+@4=docs/commands/worker.md
+@5=scripts/build-hooks.mjs
+@6=scripts/build-skill-stubs.mjs
+@7=src/cli/commands/worker/index.ts
+@8=src/daemon-mcp/index.ts
+@9=src/daemon-mcp/prompts/worker.ts
+@10=src/daemon/session-summary-worker.ts
+@11=src/hooks/ts/lib/context-fill.test.ts
+@12=src/hooks/ts/lib/context-fill.ts
+@13=src/memory/kg-extraction.ts
+@14=src/session/context-handover-trigger.ts
+@15=src/workers/agents.ts
+@16=src/workers/chatui.test.ts
+@17=src/workers/chatui.ts
+z=auto ckpt (no model); main@1dc85b3 merge worker 20260917-205433-17819-01 (picker provider independence · draft); 20 dirty; +20 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

@@ -3,7 +3,7 @@
  *
  * A follow pane with a target behaves like a small chat, Claude Code style:
  * the transcript lives in a terminal scroll region that ends three rows above
- * the pane's bottom; below it a blank separator row, then the two fixed rows —
+ * the pane's bottom; below it a separator rule row, then the two fixed rows —
  * the prompt row (`› `, readline line editing) and the ticker row. A transcript
  * line is inserted above the fixed rows with a save-cursor / scroll-region /
  * restore-cursor write that never touches them; the scroll region makes the
@@ -193,19 +193,33 @@ export function chatScrollRegion(rows: number): string {
   return `\x1b[1;${Math.max(1, rows - 3)}r`;
 }
 
-/** Clear the blank separator row between the transcript and the prompt. */
-export function chatBlankRow(rows: number): string {
-  return `\x1b[${Math.max(1, rows - 2)};1H\x1b[K`;
+/**
+ * The separator row between the transcript and the prompt: cleared, then —
+ * when the pane's width is known — a dim rule of `cols` box-drawing `─`
+ * filling the row. `cols` 0 (unknown) keeps the row blank; `dim` is the
+ * pane's colour helper, identity when colours are off.
+ */
+export function chatBlankRow(
+  rows: number,
+  cols = 0,
+  dim: (s: string) => string = (s) => s
+): string {
+  const rule = cols > 0 ? dim("─".repeat(cols)) : "";
+  return `\x1b[${Math.max(1, rows - 2)};1H\x1b[K` + rule;
 }
 
 /**
- * Enter the chat layout: clear the pane, set the scroll region, blank the
+ * Enter the chat layout: clear the pane, set the scroll region, draw the
  * separator row and park the cursor at column 3 of the prompt row (rows-1,
  * right after `› `). The ticker owns row `rows`.
  */
-export function chatEnter(rows: number): string {
+export function chatEnter(
+  rows: number,
+  cols = 0,
+  dim: (s: string) => string = (s) => s
+): string {
   return (
-    "\x1b[2J" + chatScrollRegion(rows) + chatBlankRow(rows) +
+    "\x1b[2J" + chatScrollRegion(rows) + chatBlankRow(rows, cols, dim) +
     `\x1b[${Math.max(1, rows - 1)};3H`
   );
 }

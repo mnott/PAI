@@ -179,6 +179,47 @@ export function useProvider(name: string): WorkersConfig {
   return workers;
 }
 
+/** Which model slot of a provider a set touches ("default" or "fast"). */
+export type ModelSlot = "default" | "fast";
+
+/**
+ * The provider a model command targets: the named one, else the active one.
+ * "auto" and an unset active both ask for an explicit name.
+ */
+export function resolveProviderName(workers: WorkersConfig, name?: string): string {
+  const target = name ?? workers.active ?? "";
+  if (workers.providers[target]) return target;
+  if (!target) throw new WorkersConfigError("no active provider — name one explicitly");
+  if (target === "auto") {
+    throw new WorkersConfigError('active is "auto" — name a provider explicitly');
+  }
+  throw new WorkersConfigError(
+    `no provider named "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+  );
+}
+
+/** Set a provider's default or fast model id (`pai worker model`, MCP worker_model). */
+export function setProviderModel(
+  name: string,
+  slot: ModelSlot,
+  model: string,
+  configPath?: string
+): WorkersConfig {
+  const id = model.trim();
+  if (!id) throw new WorkersConfigError(`a ${slot} model id must not be empty`);
+  const { raw, workers } = readWorkersSection(configPath);
+  const p = workers.providers[name];
+  if (!p) {
+    throw new WorkersConfigError(
+      `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+    );
+  }
+  if (slot === "fast") p.models.fast = id;
+  else p.models.default = id;
+  writeWorkersSection(raw, workers, configPath);
+  return workers;
+}
+
 export function setProviderEnabled(name: string, enabled: boolean): WorkersConfig {
   const { raw, workers } = readWorkersSection();
   const p = workers.providers[name];
@@ -253,6 +294,26 @@ export function classTargetText(target: ClassTarget): string {
     ...(target.order?.length ? [`order [${target.order.join(",")}]`] : []),
   ];
   return bits.join(" ");
+}
+
+/**
+ * Compact model listing for `pai worker model` / worker_model get: the active
+ * provider, then one line per provider with its default and fast model ids.
+ */
+export function describeModels(workers: WorkersConfig): string[] {
+  const names = Object.keys(workers.providers);
+  if (!names.length) {
+    return ["no providers configured — add one with `pai worker providers add <name> …`"];
+  }
+  const lines = [`active provider: ${workers.active ?? "(none)"}`];
+  for (const name of names) {
+    const p = workers.providers[name];
+    const active = workers.active === name ? "  [active]" : "";
+    lines.push(
+      `${name}${active}  default ${p.models.default}  fast ${p.models.fast ?? "(none)"}`
+    );
+  }
+  return lines;
 }
 
 /** Human-readable provider listing (quota probe included when configured). */

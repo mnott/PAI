@@ -32,10 +32,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  contextWindowFromModelId,
+  stripModelVariant,
+} from "../../../utils/model-window.js";
+import { readWorkersSection } from "../../../workers/config.js";
 
-/** Fallback window size when nothing on hand reports one. Matches the
- *  default statusline-command.sh already falls back to. */
-export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export { DEFAULT_CONTEXT_WINDOW };
 
 /** How many trailing lines of the transcript to scan for a usage entry.
  *  A single turn is rarely more than a handful of JSONL lines (assistant
@@ -147,44 +151,60 @@ function usageTotal(usage: UsageEntry): number {
  * `message.usage` entry, read from the end backwards so a trailing line with
  * no usage field (a plain text turn, a tool_result) doesn't hide one just
  * before it.
+ *
+ * The window size, when the caller has none, is derived from the transcript's
+ * own last assistant model id ("glm-5.3[1m]" → 1,000,000) before falling back
+ * to the assumed default — a session whose model declares its window should
+ * not be measured against a guess.
  */
 export function contextFillFromTranscript(
   transcriptPath: string,
-  windowSize = DEFAULT_CONTEXT_WINDOW
+  windowSize?: number
 ): ContextFillReading {
-  if (!transcriptPath || !existsSync(transcriptPath)) return unknownReading(windowSize);
+  if (!transcriptPath || !existsSync(transcriptPath)) {
+    return unknownReading(windowSize ?? DEFAULT_CONTEXT_WINDOW);
+  }
 
   let raw: string;
   try {
     raw = readFileSync(transcriptPath, "utf-8");
   } catch {
-    return unknownReading(windowSize);
+    return unknownReading(windowSize ?? DEFAULT_CONTEXT_WINDOW);
   }
 
   const lines = raw.trim().split("\n").filter((l) => l.trim());
   const tail = lines.slice(-TRANSCRIPT_TAIL_LINES);
 
+  // one pass from the end: the first usage entry is the fill reading, and the
+  // last assistant model seen (before or at that point) declares the window
+  let lastModel: string | null = null;
   for (let i = tail.length - 1; i >= 0; i--) {
-    let entry: { message?: { usage?: UsageEntry } };
+    let entry: { type?: string; message?: { usage?: UsageEntry; model?: unknown } };
     try {
       entry = JSON.parse(tail[i]);
     } catch {
       continue;
     }
+    if (entry?.type === "assistant" && lastModel === null) {
+      const model = entry.message?.model;
+      if (typeof model === "string" && model !== "") lastModel = model;
+    }
     const usage = entry?.message?.usage;
     if (usage && typeof usage === "object") {
+      const window = windowSize ?? contextWindowFromModelId(lastModel) ?? DEFAULT_CONTEXT_WINDOW;
       const usedTokens = usageTotal(usage);
       return {
         status: "ok",
         usedTokens,
-        windowSize,
-        fraction: usedTokens / windowSize,
+        windowSize: window,
+        fraction: usedTokens / window,
         source: "transcript",
       };
     }
   }
 
-  return unknownReading(windowSize);
+  const window = windowSize ?? contextWindowFromModelId(lastModel) ?? DEFAULT_CONTEXT_WINDOW;
+  return unknownReading(window);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,18 +215,18 @@ export function getContextFill(
   input: { sessionId?: string; transcriptPath?: string; windowSize?: number },
   now = Date.now()
 ): ContextFillReading {
-  const windowSize = input.windowSize ?? DEFAULT_CONTEXT_WINDOW;
-
   if (input.sessionId) {
     const fromStatusline = readStatuslineFill(input.sessionId, now);
     if (fromStatusline) return fromStatusline;
   }
 
   if (input.transcriptPath) {
-    return contextFillFromTranscript(input.transcriptPath, windowSize);
+    // windowSize passes through only when the caller knows it; otherwise the
+    // transcript's own model id is asked first (see contextFillFromTranscript)
+    return contextFillFromTranscript(input.transcriptPath, input.windowSize);
   }
 
-  return unknownReading(windowSize);
+  return unknownReading(input.windowSize ?? DEFAULT_CONTEXT_WINDOW);
 }
 
 // ---------------------------------------------------------------------------
@@ -369,23 +389,61 @@ function listProjectTranscripts(cwd: string, projectsDir: string): string[] {
 const SYNTHETIC_MODEL = "<synthetic>";
 
 /**
- * Which family of model wrote a transcript. "claude" is the platform's own;
- * "foreign" is any other provider routed through the same CLI (a different
- * context window, so its compactions say nothing about ours); "unknown" is
- * no usable model field at all.
+ * Which family of model wrote a transcript: a stable key derived from the id
+ * itself, never from an Anthropic allowlist. "claude" is the platform's own;
+ * any other id reduces to its base form before any bracketed variant suffix
+ * ("glm-5.3[1m]" → "glm-5.3"), so the same model family always produces the
+ * same key; "unknown" is no usable model field at all. Whether a family is
+ * foreign is decided by comparison (see isForeignModelFamily), not by the
+ * key — keying "foreign" here is what made non-Anthropic primary models lose
+ * their own compaction history.
  */
-export type TranscriptModelFamily = "claude" | "foreign" | "unknown";
+export type TranscriptModelFamily = "claude" | "unknown" | (string & {});
 
 export function modelFamily(model: string | null | undefined): TranscriptModelFamily {
   if (typeof model !== "string" || model === "" || model === SYNTHETIC_MODEL) return "unknown";
-  return model.startsWith("claude-") ? "claude" : "foreign";
+  const base = stripModelVariant(model);
+  return base.startsWith("claude-") ? "claude" : base;
+}
+
+/**
+ * Is a model id foreign to this machine's sessions? A model is native when it
+ * is a Claude model or one the worker registry configures (any provider's
+ * default or fast alias — the models this stack actually runs on). Anything
+ * else, with a readable model id, is foreign. Doubt (no id, unreadable
+ * registry) reads as native: the callers that skip work on "foreign" must not
+ * skip it on doubt.
+ */
+export function isForeignModelFamily(
+  family: TranscriptModelFamily,
+  nativeFamilies?: Set<string>
+): boolean {
+  if (family === "unknown" || family === "claude") return false;
+  return !(nativeFamilies ?? nativeModelFamilies()).has(family);
+}
+
+/** Families of every model id the worker registry configures. Never throws:
+ *  an unreadable or missing registry means "nothing configured", which leaves
+ *  every non-Claude family foreign — the historical behaviour. */
+export function nativeModelFamilies(configPath?: string): Set<string> {
+  const families = new Set<string>();
+  try {
+    for (const p of Object.values(readWorkersSection(configPath).workers.providers)) {
+      families.add(modelFamily(p.models.default));
+      if (p.models.fast) families.add(modelFamily(p.models.fast));
+    }
+  } catch {
+    return families;
+  }
+  return families;
 }
 
 /**
  * The family of the LAST assistant model in a transcript — scanned from the
  * end so a long transcript costs one read and a few lines of parsing.
- * Unreadable or model-less transcripts are "unknown", never "foreign":
- * the callers that skip work on "foreign" must not skip it on doubt.
+ * Unreadable or model-less transcripts are "unknown", never foreign:
+ * the callers that skip work on foreign models must not skip it on doubt.
+ * Pair with isForeignModelFamily to judge the key.
  */
 export function transcriptModelFamily(path: string): TranscriptModelFamily {
   let raw: string;
@@ -417,7 +475,11 @@ export function transcriptModelFamily(path: string): TranscriptModelFamily {
  * the event's uuid (falling back to a timestamp+preTokens key for the rare
  * line with no uuid) so an event mirrored into `sessions/` is counted once.
  */
-function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBoundarySample[] {
+function readCompactBoundarySamples(
+  cwd: string,
+  projectsDir: string,
+  nativeFamilies: Set<string>
+): CompactBoundarySample[] {
   const byKey = new Map<string, CompactBoundarySample>();
 
   for (const path of listProjectTranscripts(cwd, projectsDir)) {
@@ -430,12 +492,14 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
 
     // The model governing each sample: the most recent assistant
     // `message.model` seen in this file before the compact_boundary. A
-    // transcript written by a non-Claude model (a headless worker on another
-    // provider, with a different context window) compacts at a different
-    // size and must not shape THIS project's trigger — two such workers
-    // compacting at ~151k pulled a real project's trigger from ~784k to
-    // ~151k. Samples with no model seen yet are kept: older transcripts
-    // may lack the field.
+    // transcript written by a model foreign to this machine (a headless
+    // worker on another provider, with a different context window) compacts
+    // at a different size and must not shape THIS project's trigger — two
+    // such workers compacting at ~151k pulled a real project's trigger from
+    // ~784k to ~151k. Native is Claude plus every model the registry
+    // configures, so a non-Anthropic PRIMARY model keeps its own history.
+    // Samples with no model seen yet are kept: older transcripts may lack
+    // the field.
     let lastModel: string | null = null;
     let foreignDiscards = 0;
 
@@ -464,7 +528,7 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
       if (typeof preTokens !== "number" || !Number.isFinite(preTokens)) continue;
       const timestampMs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
       if (!Number.isFinite(timestampMs)) continue;
-      if (modelFamily(lastModel) === "foreign") {
+      if (isForeignModelFamily(modelFamily(lastModel), nativeFamilies)) {
         foreignDiscards++;
         continue;
       }
@@ -478,7 +542,7 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
     if (foreignDiscards > 0) {
       console.error(
         `[context-fill] ignored ${foreignDiscards} compaction sample(s) from a ` +
-        `non-Claude transcript (model=${lastModel}): ${path}`
+        `foreign-model transcript (model=${lastModel}): ${path}`
       );
     }
   }
@@ -495,10 +559,12 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
  */
 export function selectedCompactionSamples(
   cwd: string,
-  projectsDir: string = CLAUDE_PROJECTS_DIR
+  projectsDir: string = CLAUDE_PROJECTS_DIR,
+  configPath?: string
 ): CompactBoundarySample[] {
   if (!cwd) return [];
-  return readCompactBoundarySamples(cwd, projectsDir).slice(0, MEASURED_TRIGGER_SAMPLE_SIZE);
+  return readCompactBoundarySamples(cwd, projectsDir, nativeModelFamilies(configPath))
+    .slice(0, MEASURED_TRIGGER_SAMPLE_SIZE);
 }
 
 /**
@@ -514,9 +580,10 @@ export function selectedCompactionSamples(
  */
 export function measureCompactionTrigger(
   cwd: string,
-  projectsDir: string = CLAUDE_PROJECTS_DIR
+  projectsDir: string = CLAUDE_PROJECTS_DIR,
+  configPath?: string
 ): number | null {
-  const samples = selectedCompactionSamples(cwd, projectsDir);
+  const samples = selectedCompactionSamples(cwd, projectsDir, configPath);
   if (samples.length === 0) return null;
   const trigger = Math.min(...samples.map((s) => s.preTokens));
   console.error(

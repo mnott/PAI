@@ -9,13 +9,19 @@
  *   - body    → --append-system-prompt (prepended, so an explicit caller
  *               flag still wins);
  *   - tools   → --allowedTools;
- *   - model   → a task class (haiku→simple, sonnet→implement, opus→complex),
- *               unless --class is given.
+ *   - model   → a task class via its tier (haiku→simple, sonnet→implement,
+ *               opus→complex). Non-Anthropic ids map through the provider
+ *               registry (models.fast → haiku tier, models.default → sonnet
+ *               tier, a provider's modelTiers override if set), unless
+ *               --class is given.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import type { ModelTier, WorkerProvider } from "./config.js";
+
+export type { ModelTier } from "./config.js";
 
 import { UNLABELED } from "./status.js";
 
@@ -106,14 +112,57 @@ export function loadAgent(name: string): AgentDef {
   return parseAgentFile(name, text, path);
 }
 
-/** Map an agent's front-matter model to a worker class. */
-export function modelToClass(model: string | undefined): string | undefined {
-  if (!model) return undefined;
+/** Tier → task class: the cheap tier runs as simple, the middle as
+ *  implement, the top as complex. */
+const TIER_CLASS: Record<ModelTier, string> = {
+  haiku: "simple",
+  sonnet: "implement",
+  opus: "complex",
+};
+
+/** Which tier a model id belongs to: one of the CLI's tier aliases, or an
+ *  exact match against a configured provider's models (a modelTiers override
+ *  first, then fast → haiku tier, default → sonnet tier). null = no match. */
+export function modelTier(
+  model: string,
+  providers?: Record<string, WorkerProvider>
+): ModelTier | null {
   const m = model.toLowerCase();
-  if (m.includes("haiku")) return "simple";
-  if (m.includes("sonnet")) return "implement";
-  if (m.includes("opus")) return "complex";
-  return undefined;
+  if (m.includes("haiku")) return "haiku";
+  if (m.includes("sonnet")) return "sonnet";
+  if (m.includes("opus")) return "opus";
+  if (providers) {
+    for (const p of Object.values(providers)) {
+      const override = p.modelTiers?.[model];
+      if (override) return override;
+      if (p.models.fast === model) return "haiku";
+      if (p.models.default === model) return "sonnet";
+    }
+  }
+  return null;
+}
+
+/** Model ids already warned about — one line per id, not one per run. */
+const unmatchedTierLogged = new Set<string>();
+
+/** Map an agent's front-matter model to a worker class. An id that matches
+ *  no tier is logged once and falls back to the middle tier's class rather
+ *  than dropping the hint silently. */
+export function modelToClass(
+  model: string | undefined,
+  providers?: Record<string, WorkerProvider>
+): string | undefined {
+  if (!model) return undefined;
+  const tier = modelTier(model, providers);
+  if (tier) return TIER_CLASS[tier];
+  if (!unmatchedTierLogged.has(model)) {
+    unmatchedTierLogged.add(model);
+    console.error(
+      `[agents] model "${model}" matches no known tier — ` +
+        `falling back to the ${TIER_CLASS.sonnet} class.`
+    );
+  }
+  return TIER_CLASS.sonnet;
 }
 
 /** Extra claude args the definition contributes (before the caller's own). */

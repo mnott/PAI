@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseWorkersConfig,
   assertProviderRunnable,
+  providerContextWindow,
   WorkersConfigError,
 } from "./config.js";
 
@@ -153,5 +154,43 @@ describe("assertProviderRunnable", () => {
 
   it("accepts a plain anthropic provider", () => {
     expect(() => assertProviderRunnable("glm", GLM as never)).not.toThrow();
+  });
+});
+
+describe("modelTiers", () => {
+  it("parses model id → tier overrides", () => {
+    const c = parseWorkersConfig({
+      providers: { glm: { ...GLM, modelTiers: { "example-4.7-max": "opus" } } },
+    });
+    expect(c.providers.glm.modelTiers).toEqual({ "example-4.7-max": "opus" });
+  });
+
+  it("names the field on a bad tier value", () => {
+    expect(() =>
+      parseWorkersConfig({
+        providers: { glm: { ...GLM, modelTiers: { "example-4.7-max": "ultra" } } },
+      })
+    ).toThrow(/providers\.glm\.modelTiers\.example-4\.7-max/);
+  });
+});
+
+describe("providerContextWindow", () => {
+  it("prefers an explicit contextWindow over anything derivable", () => {
+    const c = parseWorkersConfig({
+      providers: { glm: { ...GLM, models: { ...GLM.models, default: "example-5.3[1m]" }, contextWindow: 128_000 } },
+    });
+    expect(providerContextWindow(c.providers.glm)).toBe(128_000);
+  });
+
+  it("derives the window from the default model's id ([1m] → 1M)", () => {
+    const c = parseWorkersConfig({
+      providers: { glm: { ...GLM, models: { ...GLM.models, default: "example-5.3[1m]" } } },
+    });
+    expect(providerContextWindow(c.providers.glm)).toBe(1_000_000);
+  });
+
+  it("falls back to the last-resort default for an id with no window information", () => {
+    const c = parseWorkersConfig({ providers: { glm: GLM } });
+    expect(providerContextWindow(c.providers.glm)).toBe(200_000);
   });
 });
