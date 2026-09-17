@@ -31,6 +31,7 @@ import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../.
 import { openFollowPane, openPaneForWorker, checkPaneForWorker } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
+import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { loadStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
@@ -465,6 +466,45 @@ export function registerWorkerCommands(workerCmd: Command): void {
       try {
         setWorkersEnabled(false);
         console.log("workers off — Agent-tool subagents run on Anthropic");
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("fallback [action] [provider]")
+    .description(
+      "Machine-wide fallback: every NEW Claude Code process runs on a worker\n" +
+        "provider (settings.json env + model pin) until switched back.\n" +
+        "on [provider] switches (default: active), off restores settings.json\n" +
+        "exactly, status shows state and running sessions. CLAUDE_SETTINGS_PATH\n" +
+        "points at another settings.json for dry runs."
+    )
+    .action((action: string | undefined, provider: string | undefined) => {
+      try {
+        if (action === undefined || action === "status") {
+          console.log(fallbackStatusText(fallbackStatus()).join("\n"));
+          return;
+        }
+        if (action === "on") {
+          const r = fallbackOn(provider);
+          console.log(
+            r.alreadyOn
+              ? `fallback already on — provider ${r.provider}, env re-applied`
+              : `fallback on — provider ${r.provider}; every new Claude Code process uses it`
+          );
+          console.log(`  settings.json env: ${r.envKeys.join(", ")}`);
+          console.log(`  model pin: ${r.model}`);
+          console.log("running sessions keep their current provider until restarted (see: pai worker fallback status)");
+          return;
+        }
+        if (action === "off") {
+          const r = fallbackOff();
+          console.log(`fallback off — provider ${r.provider} released, settings.json restored`);
+          console.log(`  restored keys: ${r.envKeys.join(", ")}`);
+          return;
+        }
+        fail(new Error(`unknown fallback action "${action}" (expected: on, off, status)`));
       } catch (e) {
         fail(e);
       }

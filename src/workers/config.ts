@@ -143,6 +143,30 @@ export type ClassTarget =
       order?: string[];
     };
 
+/**
+ * State of the machine-wide Claude Code fallback (`pai worker fallback on`):
+ * every new Claude Code process runs on `provider` until `fallback off`.
+ * `saved` holds what ~/.claude/settings.json carried before the switch so
+ * `off` can restore it exactly.
+ */
+export interface WorkersFallback {
+  /** Provider every new Claude Code process is pointed at. */
+  provider: string;
+  /**
+   * settings.json before the switch. `env` records the previous value of
+   * every env key fallback touched (null = the key was absent), `model` the
+   * previous top-level model pin (null = none), `envExisted` whether an env
+   * block existed at all.
+   */
+  saved: {
+    env: Record<string, string | null>;
+    model: string | null;
+    envExisted: boolean;
+  };
+  /** ISO stamp of the switch (shown by `fallback status`). */
+  on: string;
+}
+
 export interface WorkersConfig {
   enabled: boolean;
   /** Provider name, or "auto" for routing.order resolution. */
@@ -157,6 +181,8 @@ export interface WorkersConfig {
   routing: WorkersRoutingConfig;
   /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
+  /** Machine-wide Claude Code fallback; null = off. */
+  fallback: WorkersFallback | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +230,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
+    fallback: null,
   };
 }
 
@@ -495,6 +522,40 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     // still names it) but every consumer resolves it to a clear error.
   }
 
+  let fallback: WorkersFallback | null = null;
+  if (w.fallback !== undefined && w.fallback !== null) {
+    if (typeof w.fallback !== "object" || Array.isArray(w.fallback)) {
+      bad(".fallback", "must be an object (written by `pai worker fallback on`)");
+    }
+    const f = w.fallback as Record<string, unknown>;
+    const provider = str(f.provider);
+    if (!provider) bad(".fallback.provider", "is required");
+    const savedRaw = f.saved;
+    if (typeof savedRaw !== "object" || savedRaw === null || Array.isArray(savedRaw)) {
+      bad(".fallback.saved", "must be an object");
+    }
+    const s = savedRaw as Record<string, unknown>;
+    if (typeof s.env !== "object" || s.env === null || Array.isArray(s.env)) {
+      bad(".fallback.saved.env", "must be an object of env key → previous value or null");
+    }
+    const env: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(s.env as Record<string, unknown>)) {
+      env[k] = v === null || typeof v === "string" ? (v as string | null) : null;
+    }
+    if (s.model !== null && s.model !== undefined && typeof s.model !== "string") {
+      bad(".fallback.saved.model", "must be a string or null");
+    }
+    fallback = {
+      provider,
+      saved: {
+        env,
+        model: typeof s.model === "string" ? s.model : null,
+        envExisted: s.envExisted === true,
+      },
+      on: str(f.on) || new Date(0).toISOString(),
+    };
+  }
+
   return {
     enabled: w.enabled === undefined ? d.enabled : w.enabled === true,
     active,
@@ -505,6 +566,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     logDir: str(w.logDir) || d.logDir,
     routing,
     tree,
+    fallback,
   };
 }
 
@@ -516,22 +578,28 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
  * Read the whole config file and return (raw, workers) — the raw record so
  * callers can rewrite it preserving every other section, the parsed+validated
  * workers section. Unreadable config throws (readJsonStrict), missing is fine.
+ * `path` overrides the config location (tests, CLAUDE_SETTINGS_PATH-style
+ * dry runs); default ~/.config/pai/config.json.
  */
-export function readWorkersSection(): {
+export function readWorkersSection(path: string = CONFIG_FILE): {
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
-  const raw = readJsonStrict(CONFIG_FILE, "~/.config/pai/config.json");
+  const raw = readJsonStrict(path, "~/.config/pai/config.json");
   return { raw, workers: parseWorkersConfig(raw.workers) };
 }
 
 /** Write the workers section back into the config file, atomically. */
 export function writeWorkersSection(
   raw: Record<string, unknown>,
-  workers: WorkersConfig
+  workers: WorkersConfig,
+  path: string = CONFIG_FILE
 ): void {
-  raw.workers = workers;
-  writeJsonAtomic(CONFIG_FILE, raw, { label: "~/.config/pai/config.json" });
+  // null fallback (off) is omitted rather than written, so a config that
+  // never used it does not gain a `"fallback": null` line from an unrelated
+  // worker mutation.
+  raw.workers = workers.fallback ? workers : { ...workers, fallback: undefined };
+  writeJsonAtomic(path, raw, { label: "~/.config/pai/config.json" });
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */

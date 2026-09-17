@@ -196,6 +196,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
 | `pai worker controls <id> <who>` | Hand the desktop controls (clickr) to a worker or take them back. |
 | `pai worker discard <id>` | Drop a worker's worktree and branch, keeping nothing |
+| `pai worker fallback [action] [provider]` | Machine-wide fallback: every NEW Claude Code process runs on a worker |
 | `pai worker follow [id]` | Live transcript of one worker, or of this session's running workers |
 | `pai worker handoff <json>` | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
 | `pai worker install` | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |

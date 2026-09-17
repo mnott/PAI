@@ -34,8 +34,24 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Clickr controls** — default `mcpSets` gained `desktop = ["clickr"]`;
   `pai worker run --mcp desktop` gives a worker screen control following the
   session handover, and `pai worker controls <id> you|me` flips it.
-
----
+- **Machine-wide fallback** — `pai worker fallback on [provider]` switches
+  every NEW Claude Code process on the machine (interactive sessions,
+  task-bus sessions, the daemon's headless summarizer) to a worker provider
+  when the Anthropic plan runs out, until `pai worker fallback off`. `on`
+  writes the provider's base URL, token (read from its key file at switch
+  time — it then sits in settings.json until `off`), the three
+  `ANTHROPIC_DEFAULT_*_MODEL` pins, its extra env, `ENABLE_TOOL_SEARCH` and
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` into the `env` block of
+  `~/.claude/settings.json` and pins the top-level `model`; the replaced
+  values are saved under `workers.fallback.saved` in the pai config and
+  `off` restores settings.json exactly. `fallback status` reports the state,
+  lists running Claude Code sessions (AIBroker registry when populated, else
+  `ps` — running sessions keep their provider until restarted) and the
+  `FALLBACK-ACTIVE.md` note `on` leaves in the workers log dir. The settings
+  path is overridable via `CLAUDE_SETTINGS_PATH` for dry runs; the Agent
+  hook keeps routing subagents to workers while on. MCP `worker_fallback`
+  (on/off/status) and the Worker skill phrases ("switch everything to glm",
+  "fallback on", "back to anthropic", "fallback off", "is fallback on").
 
 ## [0.38.0] — 2026-09-17
 

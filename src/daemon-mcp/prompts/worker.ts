@@ -46,6 +46,11 @@ pai worker run --label "short task label" --class research \\
   only (max_cost_tier, require_tags) so auto-routing picks a qualifying provider.
 - \`worker_run\` — start a worker or chain from chat; returns the id immediately.
 - \`worker_toggle\` — off makes Agent subagents run on Anthropic again.
+- \`worker_fallback\` — machine-wide switch: every NEW Claude Code process
+  (interactive, task-bus, daemon summarizer) runs on a worker provider until
+  switched back. on writes the provider env + model pin into the Claude
+  settings file (the token sits there until off), off restores it exactly,
+  status lists running sessions and the note. Subagent routing is unchanged.
 
 ### Preferences from chat (map the phrase, use the tool, never mention files)
 
@@ -57,5 +62,13 @@ pai worker run --label "short task label" --class research \\
   require_tags ["reasoning"] (drop the pin if one exists). One line.
 - "what handles reviews" / "show the routing table" → worker_classes list
   (plus worker_status for providers). One or two lines.
+- "switch everything to <provider>" / "fallback on" (plan exhausted, every
+  new session must run on the worker provider) → worker_fallback on. Confirm
+  with one line: provider, that running sessions keep their provider until
+  restarted, and how to switch back.
+- "back to anthropic" / "fallback off" → worker_fallback off. One line: what
+  was restored.
+- "is fallback on" / "are we on <provider>" → worker_fallback status. One or
+  two lines.
 - Never tell the user to edit a config file — the tools do it.`,
 };
