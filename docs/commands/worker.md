@@ -25,13 +25,14 @@ pai worker <subcommand> [options]
 | [`pai worker log [what]`](#pai-worker-log-what) | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | [`pai worker say <id> <text>`](#pai-worker-say-id-text) | Send one message to a running worker (forwarded to its open stdin) |
 | [`pai worker handoff <json>`](#pai-worker-handoff-json) | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
-| [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree |
+| [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
+| [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
 | [`pai worker controls <id> <who>`](#pai-worker-controls-id-who) | Hand the desktop controls (clickr) to a worker or take them back. |
 | [`pai worker resume <id> <text>`](#pai-worker-resume-id-text) | Continue a finished worker on the same provider: claude --resume <session> |
 | [`pai worker proxy [stop]`](#pai-worker-proxy-stop) | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
 | [`pai worker mcp [list]`](#pai-worker-mcp-list) | MCP servers workers may load via --mcp / roles, and the configured sets |
-| [`pai worker status-line [term] [cwd]`](#pai-worker-status-line-term-cwd) | One-line worker summary for a status bar (empty when none in scope). |
+| [`pai worker status-line [term] [cwd] [session]`](#pai-worker-status-line-term-cwd-session) | One-line worker summary for a status bar (empty when none in scope). |
 | [`pai worker on`](#pai-worker-on) | Route Agent-tool subagents to workers (default when a provider exists) |
 | [`pai worker off`](#pai-worker-off) | Stop routing: Agent tool runs on Anthropic again |
 | [`pai worker fallback [action] [provider]`](#pai-worker-fallback-action-provider) | Machine-wide fallback: every NEW Claude Code process runs on a worker |
@@ -178,13 +179,30 @@ Payload: {"kind":"proposal|question|blocker","text":"…","data":{…}} — from
 
 ### pai worker merge <id>
 
-Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree
+Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch
 
 **Arguments**
 
 | Argument | Kind |
 |----------|------|
 | `<id>` | required |
+
+
+### pai worker wait <ids...>
+
+Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<ids...>` | variadic |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--timeout <secs>` | Give up after this many seconds (default 900) |  |
 
 
 ### pai worker discard <id>
@@ -262,11 +280,12 @@ MCP servers workers may load via --mcp / roles, and the configured sets
 | `[list]` | optional |
 
 
-### pai worker status-line [term] [cwd]
+### pai worker status-line [term] [cwd] [session]
 
 One-line worker summary for a status bar (empty when none in scope).
 
-Called by statusline-command.sh with ITERM_SESSION_ID and the pane cwd.
+Called by statusline-command.sh with ITERM_SESSION_ID, the pane cwd and
+the claude session id (claims workers spawned by that session's Bash).
 
 **Arguments**
 
@@ -274,6 +293,7 @@ Called by statusline-command.sh with ITERM_SESSION_ID and the pane cwd.
 |----------|------|
 | `[term]` | optional |
 | `[cwd]` | optional |
+| `[session]` | optional |
 
 
 ### pai worker on
@@ -469,8 +489,9 @@ Remove a class (runs then use the active provider)
 
 Model ids per provider: no args lists them,
 
-`model <model-id>` sets the active provider's default model,
-`model fast <model-id>` its fast model. --provider targets another provider.
+`model <model-id>` sets the active provider's default model (back-compat),
+`model <capability>` shows one capability, `model <capability> <model-id>` sets it.
+Capabilities: default, fast, image. --provider targets another provider.
 
 **Arguments**
 

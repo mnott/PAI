@@ -1,37 +1,23 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T19:17:58.071Z" -->
+<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T20:07:40.366Z" -->
 
 > **Last session:** 0058 - 2026-09-17 - Glm Provider Independence Doc, Statusline, And Cleanup
-> **Paused at:** 2026-09-17T19:17:58.071Z
+> **Paused at:** 2026-09-17T20:07:40.366Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
 
 T
-i=ckpt-2026-09-17T19-17-58.026Z
-g=/Name PAI
-d=ok your predecessor got completely confused, and in frustration I just CtrlCd. there was no sense in that session anymore.  here's what we need to do.  a) merge the open branches b) make sure the pai… | /Name PAI | ok your predecessor got completely confused, and in frustration I just CtrlCd. there was no sense in that session anymore.  here's what we need to do.  a) merge the open branches b) make sure the pai…
+i=ckpt-2026-09-17T20-07-40.326Z
+g=he doesn't care  21:30:42 │ $ bunx vitest run 2>&1 | tail -6 21:30:44 │ » Path discipline: stop typing absolute worktree paths entirely. Your cwd is already the worktree root, so use ONLY relative pat…
+d=ok kill it and restart that thing anew I'd say | I think you've got it. now start another worker that will consolidate the readme into something useful for those pvoider independence. like why, how, what | not good: it still names "glm"  The crew. Once, at the start: "Add a worker provider named glm — here is the key." Then: "Use glm for the workers from now on." The session itself. Start it with the gl… | improve this as the intro for provider independence, I'll then also use it for linked in.   # Provider Independence  This post shows you how to become provide independent. How to free yourself from Cl… | yet put it in provider independence at the top. like provider-independence.md where you have a small teaser up top. then link that prominently into readme.md. then cpp
 t=?
 @1=Notes/TODO.md
-@2=README.md
-@3=docs/commands/README.md
-@4=docs/commands/worker.md
-@5=scripts/build-hooks.mjs
-@6=scripts/build-skill-stubs.mjs
-@7=src/cli/commands/worker/index.ts
-@8=src/daemon-mcp/index.ts
-@9=src/daemon-mcp/prompts/worker.ts
-@10=src/daemon/session-summary-worker.ts
-@11=src/hooks/ts/lib/context-fill.test.ts
-@12=src/hooks/ts/lib/context-fill.ts
-@13=src/memory/kg-extraction.ts
-@14=src/session/context-handover-trigger.ts
-@15=src/workers/agents.ts
-@16=src/workers/chatui.test.ts
-@17=src/workers/chatui.ts
-z=auto ckpt (no model); main@1dc85b3 merge worker 20260917-205433-17819-01 (picker provider independence · draft); 20 dirty; +20 paths; git status for detail
+@2=docs/commands/README.md
+@3=docs/commands/worker.md
+z=auto ckpt (no model); main@2e58bbb merge worker 20260917-214849-35330 (capability model preferences); 3 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
