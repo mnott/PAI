@@ -15,15 +15,18 @@
 import { existsSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import {
   DEFAULT_LOG_DIR,
+  MODEL_CAPABILITIES,
   PROVIDER_TAGS,
   WorkersConfigError,
   expandHome,
+  isModelCapability,
   keysDir,
   parseWorkersConfig,
   providerCostTier,
   readWorkersSection,
   writeWorkersSection,
   type ClassTarget,
+  type ModelCapability,
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
@@ -179,8 +182,8 @@ export function useProvider(name: string): WorkersConfig {
   return workers;
 }
 
-/** Which model slot of a provider a set touches ("default" or "fast"). */
-export type ModelSlot = "default" | "fast";
+/** Which model capability of a provider a set touches (MODEL_CAPABILITIES). */
+export type ModelSlot = ModelCapability;
 
 /**
  * The provider a model command targets: the named one, else the active one.
@@ -198,15 +201,23 @@ export function resolveProviderName(workers: WorkersConfig, name?: string): stri
   );
 }
 
-/** Set a provider's default or fast model id (`pai worker model`, MCP worker_model). */
+/**
+ * Set a provider's model id for a capability — default, fast, image, …
+ * (`pai worker model`, MCP worker_model).
+ */
 export function setProviderModel(
   name: string,
-  slot: ModelSlot,
+  capability: ModelCapability,
   model: string,
   configPath?: string
 ): WorkersConfig {
+  if (!isModelCapability(capability)) {
+    throw new WorkersConfigError(
+      `"${capability}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`
+    );
+  }
   const id = model.trim();
-  if (!id) throw new WorkersConfigError(`a ${slot} model id must not be empty`);
+  if (!id) throw new WorkersConfigError(`a ${capability} model id must not be empty`);
   const { raw, workers } = readWorkersSection(configPath);
   const p = workers.providers[name];
   if (!p) {
@@ -214,8 +225,7 @@ export function setProviderModel(
       `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
     );
   }
-  if (slot === "fast") p.models.fast = id;
-  else p.models.default = id;
+  p.models[capability] = id;
   writeWorkersSection(raw, workers, configPath);
   return workers;
 }
@@ -246,13 +256,15 @@ export function setClass(name: string, target: ClassTarget): WorkersConfig {
         `no provider named "${provider}" in "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
       );
     }
-    if (alias && alias !== "default" && alias !== "fast") {
-      throw new WorkersConfigError(
-        `unknown model alias "${alias}" — providers expose "default" and "fast"`
-      );
-    }
-    if (alias === "fast" && !p.models.fast) {
-      throw new WorkersConfigError(`provider "${provider}" has no fast model configured`);
+    if (alias) {
+      if (!isModelCapability(alias)) {
+        throw new WorkersConfigError(
+          `unknown model alias "${alias}" — providers expose: ${MODEL_CAPABILITIES.join(", ")}`
+        );
+      }
+      if (alias !== "default" && !p.models[alias]) {
+        throw new WorkersConfigError(`provider "${provider}" has no ${alias} model configured`);
+      }
     }
   } else if (target.provider) {
     if (!workers.providers[target.provider]) {
@@ -297,8 +309,16 @@ export function classTargetText(target: ClassTarget): string {
 }
 
 /**
+ * `default X  fast Y  image Z` — every model capability on one line, unset
+ * ones shown as "(none)" (they resolve to the default model).
+ */
+export function modelPrefsText(p: WorkerProvider): string {
+  return MODEL_CAPABILITIES.map((c) => `${c} ${p.models[c] ?? "(none)"}`).join("  ");
+}
+
+/**
  * Compact model listing for `pai worker model` / worker_model get: the active
- * provider, then one line per provider with its default and fast model ids.
+ * provider, then one line per provider with all its capability preferences.
  */
 export function describeModels(workers: WorkersConfig): string[] {
   const names = Object.keys(workers.providers);
@@ -309,9 +329,7 @@ export function describeModels(workers: WorkersConfig): string[] {
   for (const name of names) {
     const p = workers.providers[name];
     const active = workers.active === name ? "  [active]" : "";
-    lines.push(
-      `${name}${active}  default ${p.models.default}  fast ${p.models.fast ?? "(none)"}`
-    );
+    lines.push(`${name}${active}  ${modelPrefsText(p)}`);
   }
   return lines;
 }
@@ -337,9 +355,7 @@ export function describeProviders(workers: WorkersConfig): string[] {
     const quotaNote = quota === null ? "" : `  quota ${quota}% (skip at ${quotaSkipThreshold(p)})`;
     const tierTags = [`tier ${providerCostTier(p)}`, ...(p.tags ?? [])].join(", ");
     lines.push(`${name}  [${flags.join(", ")}]  ${p.baseUrl}`);
-    lines.push(
-      `    model ${p.models.default}${p.models.fast ? ` (fast: ${p.models.fast})` : ""}${quotaNote}`
-    );
+    lines.push(`    ${modelPrefsText(p)}${quotaNote}`);
     lines.push(`    ${tierTags}`);
     if (p.keyFile) lines.push(`    key file ${expandHome(p.keyFile)}`);
     else lines.push(`    no key file (token "local")`);

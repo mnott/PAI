@@ -15,6 +15,7 @@
 import { mkdirSync } from "node:fs";
 import {
   readWorkersSection,
+  resolveModelCapability,
   type ModelTier,
   type WorkerProvider,
   type WorkersConfig,
@@ -45,11 +46,10 @@ export interface LlmSpawnPlan {
   provider: string | null;
 }
 
-/** Resolve a tier to the provider's concrete model id: the fast alias for the
- *  cheap tier, the default model for the middle and top tiers. */
+/** Resolve a tier to the provider's concrete model id: the fast capability
+ *  for the cheap tier, the default model for the middle and top tiers. */
 function tierModel(provider: WorkerProvider, tier: ModelTier): string {
-  if (tier === "haiku") return provider.models.fast ?? provider.models.default;
-  return provider.models.default;
+  return resolveModelCapability(provider, tier === "haiku" ? "fast" : "default");
 }
 
 /** The historical fallback: tier alias as the model id, ambient env with the
