@@ -54,7 +54,7 @@ import {
   nowStamp,
   UNLABELED,
 } from "./status.js";
-import { resolveSession } from "./scope.js";
+import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { isQuotaFailure, nextAutoProvider, resolveTarget, setCooldown } from "./routing.js";
 import { openPaneForWorker } from "./pane.js";
 import { assertChildAllowed, isWorkerId, launchParent } from "./tree.js";
@@ -358,6 +358,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
+  // orchestrator Bash children have no terminal identity (see scope.ts) — the
+  // session map supplies the claude session they were spawned by instead
+  const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
   // One worktree per writing run (implement/complex/plan, a git cwd, a prompt
   // that is not read-only; --worktree/--no-worktree override). A git refusal
@@ -394,6 +397,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
     ...(session ? { session } : {}),
+    ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
     // meter stays hidden until one is announced (never a guessed default)
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
@@ -724,6 +728,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
+  const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
   let worktree: WorktreeInfo | null = null;
   if (worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })) {
@@ -757,6 +762,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     secs: null,
     origin: "spawn",
     ...(session ? { session } : {}),
+    ...(spawnerSession ? { spawnerSession } : {}),
     // codex has no init event of its own: the synthetic one below announces
     // an explicitly configured window (never a guessed default)
     ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),

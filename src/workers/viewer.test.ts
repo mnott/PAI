@@ -375,6 +375,7 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     await sleep(200); // say rejects (done) → resume
     expect(buf).toContain("\x1b[1;21r"); // the scroll region (rows 24, 3 fixed rows)
     expect(buf).toContain("\x1b[2J"); // pane cleared on enter
+    expect(buf).toContain("\x1b[22;1H\x1b[K" + "─".repeat(80)); // the separator rule above the prompt
     expect(buf).toContain("› "); // the prompt marker
     expect(buf).toContain(PLACEHOLDER); // the placeholder behind the empty prompt
     expect(buf).toMatch(/\d\d:\d\d:\d\d │ » hello/); // echoed with its gutter
