@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextPercent, type WorkerStatus, alive } from "./status.js";
+import { ageOf, contextLabel, contextPercent, type WorkerStatus, alive } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -214,7 +214,7 @@ export function fmtElapsed(secs: number): string {
 
 /**
  * The chat pane's status row (always visible while following):
- * `[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m12s · ⋯ 7s · <intent> · <tool>`
+ * `[glm/glm-5.3] ctx 84k/200k (42%) · turns 12 · tools 7 · 4m12s · ⋯ 7s · <intent> · <tool>`
  * — context yellow past 70 %, red past 85 %, dropped when unknown; once the
  * worker finished, the ticker part is replaced by `✓ done` / `✗ failed`.
  */
@@ -222,7 +222,7 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
   const parts: string[] = [];
   const pct = contextPercent(s);
   if (pct !== null) {
-    const label = `ctx ${fmtK(s.contextTokens ?? 0)}/${fmtK(s.contextWindow ?? 0)} ${pct}%`;
+    const label = contextLabel(s);
     parts.push(pct > 85 ? c("red", label) : pct > 70 ? c("yellow", label) : label);
   }
   parts.push(`turns ${s.turns}`, `tools ${s.tools}`, fmtElapsed(s.elapsed));
@@ -253,15 +253,11 @@ export function intentOf(text: string): string {
   return shortText(first.trim().replace(/\s+/g, " "), 60);
 }
 
-/** Compact token count: 84k, 200k, 900. */
-function fmtK(n: number): string {
-  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
-}
-
 /**
- * The context meter `ctx 84k/200k (42%)`, yellow from 70 %, red from 85 %.
- * null when the numbers are missing or below `minPct` (the table only shows
- * it past 60; the pane liveness line always shows it).
+ * The context meter `ctx 84k/200k (42%)` (contextLabel, shared with the
+ * chat status row), yellow from 70 %, red from 85 %. null when the numbers
+ * are missing or below `minPct` (the table only shows it past 60; the pane
+ * liveness line always shows it).
  */
 export function contextMeter(
   c: Paint,
@@ -270,7 +266,7 @@ export function contextMeter(
 ): string | null {
   const pct = contextPercent(s);
   if (pct === null || pct <= minPct) return null;
-  const label = `ctx ${fmtK(s.contextTokens ?? 0)}/${fmtK(s.contextWindow ?? 0)} (${pct}%)`;
+  const label = contextLabel(s);
   if (pct > 85) return c("red", label);
   if (pct > 70) return c("yellow", label);
   return label;
