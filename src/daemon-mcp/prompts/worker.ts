@@ -28,6 +28,15 @@ pai worker run --label "short task label" --class research \\
   library runs on workers: body becomes the system prompt, tools the allowlist,
   model the class).
 
+### Waiting
+
+- NEVER busy-wait for a worker. No sleep loops, no \`sleep N; pai worker ps\`
+  polling, no manual retry loops. Two sanctioned waits: run workers as
+  background Bash tasks (the harness fires a completion notification), or
+  call \`pai worker wait <id...>\` which blocks until they finish and prints
+  each result as one JSON line. If you catch yourself sleeping to re-check a
+  worker, stop — you already get notified.
+
 ### Watching
 
 - \`worker_ps\` — running + last finished workers (chains show as trees).

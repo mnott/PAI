@@ -318,7 +318,10 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   workerCmd
     .command("wait <ids...>")
-    .description("Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout")
+    .description(
+      "Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout\n" +
+        "Never busy-wait for a worker: no sleep loops, no sleep-then-`pai worker ps` polling, no manual retry loops. Two sanctioned waits: run workers as background Bash tasks (the harness notifies on completion), or call `pai worker wait`, which blocks until they finish and prints each result. If you catch yourself sleeping to re-check a worker, stop — you already get notified."
+    )
     .option("--timeout <secs>", "Give up after this many seconds (default 900)", parseIntArg)
     .action(async (ids: string[], opts: { timeout?: number }) => {
       try {

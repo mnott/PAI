@@ -112,6 +112,7 @@ pai worker replay <id>                         # transcript of a finished or run
 pai worker say <id> <text>                     # message a running worker mid-run
 pai worker handoff '<json>'                    # from inside a worker: report to the parent
 pai worker merge <id>                          # merge the worker's branch back, drop the worktree
+pai worker wait <id>...                        # block until workers finish (never sleep-loop)
 pai worker watch                               # ps refreshed every 2 seconds
 ```
 
