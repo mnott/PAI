@@ -86,7 +86,7 @@ export function parseFrames(buffer) {
  * @param {object} opts
  * @param {number} [opts.port=PAI_BROWSER_BRIDGE_PORT] 0 picks an ephemeral port
  * @param {(text: string) => void} opts.onClientMessage text frame from any client
- * @param {() => void} [opts.onClientState] client connected/closed (optional)
+ * @param {(connected: boolean, count: number) => void} [opts.onClientState] client connected/closed (optional)
  * @returns {Promise<{server: import("node:net").Server, port: number, broadcast: (text: string) => void, close: () => Promise<void>}>}
  */
 export function startBridgeServer({ port = PAI_BROWSER_BRIDGE_PORT, onClientMessage, onClientState }) {
@@ -122,7 +122,7 @@ export function startBridgeServer({ port = PAI_BROWSER_BRIDGE_PORT, onClientMess
         buffer = buffer.subarray(end + 4);
         handshakeDone = true;
         sockets.add(socket);
-        onClientState?.();
+        onClientState?.(true, sockets.size);
         // fall through: the first frame may have arrived in the same packet
       }
       let frames;
@@ -138,7 +138,7 @@ export function startBridgeServer({ port = PAI_BROWSER_BRIDGE_PORT, onClientMess
           socket.write(Buffer.from([0x88, 0x00])); // echo close
           sockets.delete(socket);
           socket.end();
-          onClientState?.();
+          onClientState?.(false, sockets.size);
         } else if (f.opcode === 0x9) {
           // ping → pong (0x8A) with the same payload
           socket.write(Buffer.concat([Buffer.from([0x8a, f.payload.length]), f.payload]));
@@ -148,8 +148,7 @@ export function startBridgeServer({ port = PAI_BROWSER_BRIDGE_PORT, onClientMess
 
     socket.on("error", () => {});
     socket.on("close", () => {
-      sockets.delete(socket);
-      onClientState?.();
+      if (sockets.delete(socket)) onClientState?.(false, sockets.size);
     });
   });
 

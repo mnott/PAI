@@ -21,5 +21,5 @@ export interface BridgeServer {
 export declare function startBridgeServer(opts: {
   port?: number;
   onClientMessage?: (text: string) => void;
-  onClientState?: () => void;
+  onClientState?: (connected: boolean, count: number) => void;
 }): Promise<BridgeServer>;
