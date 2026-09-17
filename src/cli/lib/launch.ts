@@ -7,6 +7,10 @@
  * a session right here, in the chosen directory.
  *
  * Behaviour:
+ *   engine           → fresh launches follow the workers config: routing on
+ *                      starts an interactive `pai worker run` (the glm-shim
+ *                      shape) instead of claude. `engine` in opts forces one;
+ *                      resume always stays claude.
  *   resume-or-fresh  → if a resumable UUID is given, probe it; on success
  *                      `claude --resume`, otherwise fall back to a fresh session
  *                      in the same dir. With no UUID, start fresh.
@@ -29,6 +33,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { err } from "../utils.js";
+import { readWorkersSection, type WorkersConfig } from "../../workers/config.js";
 import { printExitDir } from "./exit-dir.js";
 
 export interface ProbeResult {
@@ -249,6 +254,50 @@ export interface LaunchOpts {
   forceFresh?: boolean;
   /** Print what would happen, then return without launching. */
   dryRun?: boolean;
+  /** "auto" follows the workers config; "worker"/"claude" force one engine. */
+  engine?: "auto" | "worker" | "claude";
+}
+
+/** Which engine a launch runs on, and whether it resumes. */
+export interface LaunchRoute {
+  engine: "worker" | "claude";
+  resume: boolean;
+}
+
+/**
+ * Decide the engine for a launch. "auto" mirrors the gate the Agent-routing
+ * hook uses, so picker and hook never disagree about whether routing is on.
+ * An explicit engine wins outright — the picker w/a keys rely on that.
+ *
+ * Resume stays claude even under a provider: `pai worker run` always starts
+ * fresh, so a claude transcript has nothing to resume on. The provider
+ * default therefore applies to fresh launches only — a wanted resume pins
+ * the engine to claude unless engine "worker" is forced, which drops the
+ * resume outright.
+ */
+export function resolveLaunchRoute(
+  workers: Pick<WorkersConfig, "enabled" | "active" | "providers">,
+  opts: LaunchOpts
+): LaunchRoute {
+  const routingOn =
+    workers.enabled &&
+    workers.active !== null &&
+    Object.keys(workers.providers).length > 0;
+  const wantsResume = !opts.forceFresh && !!opts.resumableUuid;
+  const engine: "worker" | "claude" =
+    opts.engine === "worker" ||
+    (opts.engine !== "claude" && routingOn && !wantsResume)
+      ? "worker"
+      : "claude";
+  return { engine, resume: engine === "claude" && wantsResume };
+}
+
+/**
+ * Interactive worker run, same shape as the ~/.local/bin/glm shim: a label,
+ * the directory, and no prompt — the run names itself from the label/dir.
+ */
+export function workerRunArgv(label: string, cwd: string): string[] {
+  return ["worker", "run", "--label", label, "--cwd", cwd];
 }
 
 /**
@@ -272,9 +321,29 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   }
 
   const promptArg = `/Name ${name}\ngo`;
-  const wantResume = !opts.forceFresh && !!opts.resumableUuid;
+
+  // A broken workers config must degrade to claude, never crash the picker.
+  let workers: Pick<WorkersConfig, "enabled" | "active" | "providers"> = {
+    enabled: false,
+    active: null,
+    providers: {},
+  };
+  try {
+    workers = readWorkersSection().workers;
+  } catch {
+    /* routing stays off for this launch */
+  }
+  const route = resolveLaunchRoute(workers, opts);
+  const wantResume = route.resume;
 
   if (opts.dryRun) {
+    if (route.engine === "worker") {
+      console.log("\n" + chalk.bold("Dry run — would exec (WORKER path):") + "\n");
+      console.log(`  cwd:  ${chalk.cyan(cwd)}`);
+      console.log(`  argv: pai worker run --label "${name}" --cwd ${cwd}`);
+      console.log();
+      return;
+    }
     if (wantResume) {
       console.log("\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n");
       console.log(`  cwd:      ${chalk.cyan(cwd)}`);
@@ -287,6 +356,23 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       console.log(`  argv: claude --name "${name}" "/Name ${name}\\ngo"`);
     }
     console.log();
+    return;
+  }
+
+  // Worker path: interactive `pai worker run`, fresh by design — no resume.
+  if (route.engine === "worker") {
+    const result = spawnSync("pai", workerRunArgv(name, cwd), {
+      cwd,
+      stdio: "inherit",
+      env: process.env,
+    });
+    if (result.error) {
+      console.error(err(`Failed to launch pai worker run: ${result.error.message}`));
+      process.exitCode = 1;
+      return;
+    }
+    printExitDir(cwd);
+    process.exitCode = result.status ?? 0;
     return;
   }
 
