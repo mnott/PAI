@@ -1,25 +1,48 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Glm Provider Independence, Statusline R2, And Worker Hooks" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T20:26:47.667Z" -->
+<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Provider Independence Doc, Worker Panes, Clickr Check" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T22:56:07.134Z" -->
 
-> **Last session:** 0058 - 2026-09-17 - Glm Provider Independence, Statusline R2, And Worker Hooks
-> **Paused at:** 2026-09-17T20:26:47.667Z
+> **Last session:** 0058 - 2026-09-17 - Provider Independence Doc, Worker Panes, Clickr Check
+> **Paused at:** 2026-09-17T22:56:07.134Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
 
 T
-i=ckpt-2026-09-17T20-26-47.610Z
-g=not good: it still names "glm"  The crew. Once, at the start: "Add a worker provider named glm — here is the key." Then: "Use glm for the workers from now on." The session itself. Start it with the gl…
-d=improve this as the intro for provider independence, I'll then also use it for linked in.   # Provider Independence  This post shows you how to become provide independent. How to free yourself from Cl… | yet put it in provider independence at the top. like provider-independence.md where you have a small teaser up top. then link that prominently into readme.md. then cpp | can you read this with its follow-up comments, so you can reword that intro (I basically just reordered it):  https://www.linkedin.com/feed/update/urn:li:activity:7506444930198749185/ | you can use claude-in-chrome | your controls
+i=ckpt-2026-09-17T22-56-07.007Z
+g=you can remove your bridge, the controls are with Browsr, and you can then step back as Browsr can take over everything, with its own bridge.
+d=[Session:Browsr] Ack — standing down the channel. Decision: Browsr stays on 8757, 8756 remains free. Will flag you only for a PAI-side worker or a cross-check. Good night. | I think your time gating does not make sense. why do you busy wait? you'd be getting the result from your worker.     Waiting for fix worker to finish · 2m 6s     ⎿  $ sleep 180; pai worker ps (2m 5s)… | [Session:Browsr] Fix request for the PAI worker system (operator wants this): workers cannot use MCP tools. Repro just now: pai worker run --class spotcheck --allowedTools "Bash,mcp__clickr__check_per… | [Session:Browsr] Good scope — subset loading is the right call. Standing by to rerun the exact probe (spotcheck, allowedTools with mcp__clickr__check_permissions + screenshot, ToolSearch → live call)… | ok then while thre's one more worker open saying hi on your end, I'd suggest a) remove the browsr work that still may live here, then commit all publish all (cpp)
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@9109d5a merge worker 20260917-221800-87827 (reorder story intro); 1 dirty; git status for detail
+@2=.aibroker/
+z=auto ckpt (no model); main@01029f5 merge worker 20260918-004255-12877 (worker mcp loading); 2 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
 ---
+## Overnight Goal (2026-09-17 23:10 -> 08:00): chrome-bridge MCP from scratch
+
+Operator armed: clickr controls until 08:09, goal = build our own claude-in-chrome
+replacement (extension + native messaging host + MCP server), no Anthropic relay.
+
+- [x] Chain `20260917-230803-24989` landed (c8f2300): extension + host + 11-tool MCP server + 34 tests + docs
+- [x] Merged + built + 34/34 bridge tests green
+- [x] Extension loaded into real Chrome (id foepejnojkmegfeegobddfamkkglimfc), host installed, Chrome restarted, host auto-spawned
+- [x] (covered above)
+- [x] E2E PROVEN 23:41-23:47: list_tabs real tabs; open_tab example.com; snapshot reads DOM with refs; click dispatches with coordinates; LinkedIn opened in the REAL logged-in profile, post read, comments section snapshotted (3 comments). Wire key is command not cmd - unknown commands used to drop silently (fix in flight)
+- [x] Scripting rework landed 0d6cf51 (merge 183829c): no chrome.debugger, no banner, loud errors, 1056 tests green. LIVE-VERIFIED: list_tabs + snapshot through chrome.scripting against the real Chrome. One open bug handed to Browsr: element.click() path reports success but anchor does not navigate (suspect ref->path resolution in injected.js)
+- [x] HANDOFF COMPLETE 2026-09-18 00:01: Browsr session (repo github.com/mnott/Browsr, dir ~/dev/ai/browsr) owns the build; PAI session is the re-arming controller (dispatches workers/clickr/verification on request). Browsr stack: port 8757, com.browsr.bridge host, own extension id.
+
+## Morning summary (2026-09-18)
+- Chrome bridge MCP: BUILT AND PROVEN (tabs, DOM snapshot, logged-in LinkedIn read, glm agent drove it solo). No debugger banner. PAI internal stack live on 8756.
+- Browsr product: independent build running in the Browsr session; open item = click-path navigation bug (repro handed over).
+- PAI released 0.40.0 + 0.40.1 tonight; provider story in docs/provider-independence.md; ~997+ tests green at release.
+- Uncommitted in PAI: Notes/TODO.md only (plus .aibroker/ scratch). No publish pending.
+
+Note: agent-browser uninstalled + deregistered (its install ALSO clobbers
+~/.claude.json; memory entry exists). Claude-in-chrome itself: auth-bound, dead
+under token auth - we build instead.
 ## Previous handovers
 
 <!-- pai:archived-handover session="0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)" ts="2026-09-10T16:46:49.901Z" -->
