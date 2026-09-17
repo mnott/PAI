@@ -5,11 +5,12 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   addWorktree,
+  assertWorktreeClean,
   commitsSince,
   discardWorker,
   git,
@@ -17,6 +18,8 @@ import {
   mergeWorker,
   promptLooksReadonly,
   recordWorktree,
+  salvageUncommitted,
+  uncommittedPaths,
   worktreeBranch,
   worktreePath,
   worktreeWanted,
@@ -127,6 +130,43 @@ describe("addWorktree / commitsSince / recordWorktree", () => {
   });
 });
 
+describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
+  it("lists tracked edits and untracked files, and salvage commits them under the label", () => {
+    const info = addWorktree(logDir, "s1", repo);
+    status("s1", { branch: worktreeBranch("s1"), worktreeDir: info.dir });
+    writeFileSync(join(info.dir, "s1.txt"), "committed\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
+    writeFileSync(join(info.dir, "base.txt"), "salvage edit\n", "utf8"); // tracked, uncommitted
+    writeFileSync(join(info.dir, "salvaged.txt"), "untracked\n", "utf8"); // never added
+    expect(uncommittedPaths(info.dir).sort()).toEqual(["base.txt", "salvaged.txt"]);
+
+    const salvaged = salvageUncommitted(info.dir, "label s1");
+    expect(salvaged.sort()).toEqual(["base.txt", "salvaged.txt"]);
+    expect(git(info.dir, ["log", "-1", "--format=%s"])).toBe("salvaged: label s1");
+    expect(uncommittedPaths(info.dir)).toEqual([]);
+
+    discardWorker(logDir, "s1");
+  });
+
+  it("salvages nothing from a clean worktree", () => {
+    const info = addWorktree(logDir, "s2", repo);
+    status("s2", { branch: worktreeBranch("s2"), worktreeDir: info.dir });
+    expect(salvageUncommitted(info.dir, "label s2")).toEqual([]);
+    discardWorker(logDir, "s2");
+  });
+
+  it("assertWorktreeClean throws on dirt, passes on a clean worktree", () => {
+    const info = addWorktree(logDir, "s3", repo);
+    status("s3", { branch: worktreeBranch("s3"), worktreeDir: info.dir });
+    assertWorktreeClean(info.dir, "s3"); // clean: no throw
+    writeFileSync(join(info.dir, "dirt.txt"), "dirt\n", "utf8");
+    expect(() => assertWorktreeClean(info.dir, "s3")).toThrow(/dirt\.txt/);
+    expect(() => assertWorktreeClean(info.dir, "s3")).toThrow(/NOT removed/);
+    discardWorker(logDir, "s3");
+  });
+});
+
 describe("mergeWorker", () => {
   it("merges --no-ff into the original checkout, removes the worktree, deletes the branch", () => {
     const info = addWorktree(logDir, "w4", repo);
@@ -149,24 +189,7 @@ describe("mergeWorker", () => {
     expect(mergeWorker(logDir, "w4")).toMatch(/already merged/);
   });
 
-  it("refuses a branch with no commits and keeps the worktree (uncommitted work survives)", () => {
-    const info = addWorktree(logDir, "w9", repo);
-    // uncommitted work in the worktree, zero commits on the branch
-    writeFileSync(join(info.dir, "precious.txt"), "uncommitted\n", "utf8");
-    const st = status("w9");
-    recordWorktree(logDir, st, info, true);
-
-    expect(() => mergeWorker(logDir, "w9")).toThrow(/no commits to merge/);
-    expect(() => mergeWorker(logDir, "w9")).toThrow(/NOT removed/);
-    expect(existsSync(info.dir)).toBe(true);
-    expect(readFileSync(join(info.dir, "precious.txt"), "utf8")).toBe("uncommitted\n");
-    expect(loadStatus(logDir, "w9")?.merged ?? false).toBeFalsy();
-
-    // cleanup for the next tests: discard is the documented way out
-    discardWorker(logDir, "w9");
-  });
-
-  it("carries a worker's uncommitted edits and untracked files into the main tree", () => {
+  it("salvages uncommitted edits and untracked files onto the branch before merging", () => {
     const info = addWorktree(logDir, "w7", repo);
     writeFileSync(join(info.dir, "carried-commit.txt"), "committed\n", "utf8");
     git(info.dir, ["add", "."]);
@@ -180,26 +203,85 @@ describe("mergeWorker", () => {
     expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("edited by worker\n");
     expect(readFileSync(join(repo, "carried.txt"), "utf8")).toBe("untracked\n");
     expect(existsSync(info.dir)).toBe(false);
-    expect(msg).toMatch(/carried 2 uncommitted change\(s\): base\.txt, carried\.txt/);
+    expect(git(repo, ["branch", "--list", "worker/w7"])).toBe("");
+    expect(msg).toMatch(/salvaged 2 uncommitted change\(s\): base\.txt, carried\.txt/);
+    // the branch history carries the salvage commit as an ancestor of the merge
+    expect(git(repo, ["log", "--format=%s"])).toContain("salvaged: label w7");
     expect(loadStatus(logDir, "w7")?.merged).toBe(true);
   });
 
-  it("keeps the worktree when uncommitted changes cannot be carried", () => {
+  it("refuses a clean branch with no commits and keeps the worktree", () => {
+    const info = addWorktree(logDir, "w9", repo);
+    const st = status("w9");
+    recordWorktree(logDir, st, info, true);
+
+    expect(() => mergeWorker(logDir, "w9")).toThrow(/no commits to merge/);
+    expect(() => mergeWorker(logDir, "w9")).toThrow(/NOT removed/);
+    expect(existsSync(info.dir)).toBe(true);
+    expect(loadStatus(logDir, "w9")?.merged ?? false).toBeFalsy();
+
+    // cleanup for the next tests: discard is the documented way out
+    discardWorker(logDir, "w9");
+  });
+
+  it("refuses the merge when the checkout is dirty in a path the branch touches (tracked edit)", () => {
     const info = addWorktree(logDir, "w8", repo);
     writeFileSync(join(info.dir, "w8-commit.txt"), "committed\n", "utf8");
     git(info.dir, ["add", "."]);
     git(info.dir, ["commit", "-q", "-m", "work"]);
-    writeFileSync(join(info.dir, "base.txt"), "worker edit\n", "utf8");
+    writeFileSync(join(info.dir, "base.txt"), "worker edit\n", "utf8"); // salvage lands it on the branch
     const st = status("w8");
     recordWorktree(logDir, st, info, true);
-    // conflicting edit in the main tree: the carry must refuse, not overwrite
-    writeFileSync(join(repo, "base.txt"), "operator edit\n", "utf8");
+    const before = readFileSync(join(repo, "base.txt"), "utf8");
+    writeFileSync(join(repo, "base.txt"), "operator edit\n", "utf8"); // dirty in the checkout
 
-    expect(() => mergeWorker(logDir, "w8")).toThrow(/worktree .* was kept/);
-    expect(existsSync(info.dir)).toBe(true);
-    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("worker edit\n");
-    expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("operator edit\n");
+    expect(() => mergeWorker(logDir, "w8")).toThrow(/base\.txt/);
+    expect(() => mergeWorker(logDir, "w8")).toThrow(/Commit or stash/);
+    expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("operator edit\n"); // untouched
+    expect(git(repo, ["log", "-1", "--format=%s"])).not.toMatch(/merge worker w8/); // no merge commit
+    expect(existsSync(info.dir)).toBe(true); // worktree kept
+    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("worker edit\n"); // work intact
     expect(loadStatus(logDir, "w8")?.merged).toBeFalsy();
+
+    // cleanup: restore the checkout to its committed content, then merge
+    writeFileSync(join(repo, "base.txt"), before, "utf8");
+    const msg = mergeWorker(logDir, "w8");
+    expect(msg).toMatch(/merged worker\/w8/);
+    expect(readFileSync(join(repo, "base.txt"), "utf8")).toBe("worker edit\n");
+  });
+
+  it("refuses the merge when the checkout holds an untracked file the branch adds", () => {
+    const info = addWorktree(logDir, "w10", repo);
+    writeFileSync(join(info.dir, "new-file.txt"), "from worker\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
+    const st = status("w10");
+    recordWorktree(logDir, st, info, true);
+    writeFileSync(join(repo, "new-file.txt"), "operator version\n", "utf8"); // untracked dirt
+
+    expect(() => mergeWorker(logDir, "w10")).toThrow(/new-file\.txt/);
+    expect(readFileSync(join(repo, "new-file.txt"), "utf8")).toBe("operator version\n");
+    expect(existsSync(info.dir)).toBe(true);
+    expect(loadStatus(logDir, "w10")?.merged).toBeFalsy();
+
+    // cleanup: drop the untracked file, then merge
+    rmSync(join(repo, "new-file.txt"));
+    expect(mergeWorker(logDir, "w10")).toMatch(/merged worker\/w10/);
+  });
+
+  it("lets non-overlapping dirt in the checkout pass", () => {
+    const info = addWorktree(logDir, "w11", repo);
+    writeFileSync(join(info.dir, "w11.txt"), "from worker\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
+    const st = status("w11");
+    recordWorktree(logDir, st, info, true);
+    writeFileSync(join(repo, "unrelated-dirt.txt"), "operator scratch\n", "utf8"); // untouched by the branch
+
+    const msg = mergeWorker(logDir, "w11");
+    expect(msg).toMatch(/merged worker\/w11/);
+    expect(readFileSync(join(repo, "w11.txt"), "utf8")).toBe("from worker\n");
+    expect(readFileSync(join(repo, "unrelated-dirt.txt"), "utf8")).toBe("operator scratch\n");
   });
 
   it("refuses workers without a worktree branch", () => {
@@ -235,6 +317,12 @@ describe("worktreeSystemPrompt", () => {
     expect(p).toMatch(/committing here is expected/);
     expect(p).toMatch(/Do not merge, rebase or push/);
     expect(p).toMatch(/pai worker merge/);
+  });
+
+  it("demands relative paths only inside the worktree", () => {
+    const p = worktreeSystemPrompt("w6", "worker/w6", "/tmp/dir");
+    expect(p).toMatch(/ONLY relative paths/);
+    expect(p).toMatch(/never absolute worktree paths/);
   });
 });
 

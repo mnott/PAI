@@ -15,10 +15,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { loadStatus, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 
 export function worktreesDir(logDir: string): string {
   return join(logDir, "worktrees");
@@ -174,71 +173,122 @@ function removeWorktree(cwd: string, dir: string, force: boolean): void {
 }
 
 /**
- * Carry a worktree's uncommitted changes over to `cwd` before the worktree is
- * removed. `git merge` only moves committed work, so a worker that stopped
- * without committing would otherwise lose its edits to `worktree remove` —
- * exactly what happened live on 2026-09-17. Tracked edits (staged or not)
- * travel as a binary patch applied in `cwd`; untracked files are copied.
- * Returns the carried paths. On any conflict it throws with the worktree
- * still in place, so the operator decides instead of data being lost.
+ * Tracked changes (staged or not) plus untracked files — everything a
+ * `git add -A` in `wtDir` would commit. The same two calls the old patch
+ * carry used; name-only, not porcelain: a worktree-only change renders as
+ * " M path" and the shared git() helper trims that leading space away.
  */
-export function carryUncommitted(wtDir: string, cwd: string): string[] {
-  // name-only, not porcelain: a worktree-only change renders as " M path" and
-  // the shared git() helper trims that leading space away
+export function uncommittedPaths(wtDir: string): string[] {
   const tracked = git(wtDir, ["diff", "--name-only", "HEAD"]).split("\n").filter(Boolean);
   const untracked = git(wtDir, ["ls-files", "--others", "--exclude-standard"])
     .split("\n")
     .filter(Boolean);
-  if (!tracked.length && !untracked.length) return [];
-
-  if (tracked.length) {
-    // raw buffer, not utf8: --binary patches carry arbitrary bytes
-    const patch = execFileSync("git", ["-C", wtDir, "diff", "--binary", "HEAD"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
-      maxBuffer: 256 * 1024 * 1024,
-    }) as Buffer;
-    const tmp = join(tmpdir(), `pai-carry-${process.pid}-${Date.now()}.patch`);
-    writeFileSync(tmp, patch);
-    try {
-      git(cwd, ["apply", "--whitespace=nowarn", tmp]);
-    } catch (e) {
-      throw new Error(
-        `cannot carry the worker's uncommitted changes into ${cwd} — ${(e as Error).message}; ` +
-          `the worktree at ${wtDir} was kept: resolve by hand, then re-run merge`
-      );
-    } finally {
-      rmSync(tmp, { force: true });
-    }
-  }
-
-  for (const rel of untracked) {
-    const from = join(wtDir, rel);
-    const to = join(cwd, rel);
-    if (existsSync(to) && readFileSync(to, "utf8") !== readFileSync(from, "utf8")) {
-      throw new Error(
-        `cannot carry untracked ${rel}: ${cwd} already has a different file there; ` +
-          `the worktree at ${wtDir} was kept: resolve by hand, then re-run merge`
-      );
-    }
-    mkdirSync(dirname(to), { recursive: true });
-    copyFileSync(from, to);
-  }
-
   return [...tracked, ...untracked];
 }
 
 /**
- * `pai worker merge <id>`: merge the worker's branch into the original
- * checkout with --no-ff (the merge commit names the worker), carry any
- * changes the worker left uncommitted, then remove the worktree and delete
- * the branch; the status gains `merged: true`. A branch with nothing to
- * merge is refused loudly — its worktree may hold uncommitted work, and
- * reporting success there would destroy it.
+ * Commit a worktree's uncommitted changes to its branch so the merge carries
+ * them. `git merge` only moves committed work, so a worker that stopped
+ * without committing would lose its edits to `worktree remove` — exactly
+ * what happened live on 2026-09-17. Returns the salvaged paths, [] when the
+ * worktree is clean. A failed commit throws with the worktree untouched:
+ * its edits are still on disk, so nothing is lost.
+ */
+export function salvageUncommitted(wtDir: string, label: string): string[] {
+  const paths = uncommittedPaths(wtDir);
+  if (!paths.length) return [];
+  try {
+    git(wtDir, ["add", "-A"]);
+    git(wtDir, ["commit", "-m", `salvaged: ${label}`]);
+  } catch (e) {
+    throw new Error(
+      `cannot salvage the uncommitted changes in ${wtDir} — ${(e as Error).message}; ` +
+        `nothing was lost: commit them there by hand, then re-run merge`
+    );
+  }
+  return paths;
+}
+
+/**
+ * The dirty paths of a checkout, parsed from `git status --porcelain -z`:
+ * NUL-separated (a path with a newline in it cannot corrupt the parse),
+ * rename entries contribute both sides, and any quoting is stripped.
+ */
+function dirtyPaths(cwd: string): string[] {
+  // raw execFileSync, not the shared git(): it trims stdout, which eats the
+  // leading space of a worktree-only " M path" record and breaks the parse
+  const raw = execFileSync("git", ["-C", cwd, "status", "--porcelain", "-z"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const fields = raw.split("\0");
+  const strip = (p: string) => (p.startsWith('"') && p.endsWith('"') ? p.slice(1, -1) : p);
+  const out: string[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i];
+    if (!f || f.length < 4 || f.charAt(2) !== " ") continue; // not an "XY path" record
+    out.push(strip(f.slice(3)));
+    const xy = f.slice(0, 2);
+    if (xy.includes("R") || xy.includes("C")) {
+      const orig = fields[i + 1]; // rename/copy records carry the source path next
+      if (orig && orig.charAt(2) !== " ") {
+        out.push(strip(orig));
+        i += 1;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Refuse the merge when the original checkout is dirty in paths the branch
+ * touches: the merge would overwrite those edits or fail on them, either way
+ * leaving a half-state. No merge is made, the worktree stays.
+ */
+function assertNoDirtyOverlap(
+  cwd: string,
+  incoming: string[],
+  id: string,
+  branch: string
+): void {
+  const dirty = new Set(dirtyPaths(cwd));
+  const overlap = [...new Set(incoming)].filter((p) => dirty.has(p)).sort();
+  if (!overlap.length) return;
+  throw new Error(
+    `worker ${id}: the checkout ${cwd} has uncommitted changes in paths ${branch} touches: ` +
+      `${overlap.join(", ")}. Commit or stash them in the checkout, then re-run: pai worker merge ${id}. ` +
+      `No merge was made; the worktree was kept.`
+  );
+}
+
+/** Never remove a worktree that still holds uncommitted changes. */
+export function assertWorktreeClean(wtDir: string, id: string): void {
+  const leftover = uncommittedPaths(wtDir);
+  if (leftover.length) {
+    throw new Error(
+      `worker ${id}: the worktree ${wtDir} still holds uncommitted changes ` +
+        `(${leftover.join(", ")}) — it was NOT removed; commit or copy them by hand, then re-run merge`
+    );
+  }
+}
+
+/**
+ * `pai worker merge <id>`: salvage whatever the worker left uncommitted onto
+ * its branch, refuse when the original checkout is dirty in paths the branch
+ * touches, merge with --no-ff (the merge commit names the worker), then
+ * remove the worktree and delete the branch; the status gains `merged: true`.
+ * A branch with nothing to merge is refused loudly — after salvage that
+ * genuinely means it holds nothing, and reporting success there would
+ * destroy the worktree for no gain.
  */
 export function mergeWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
+  // salvage first: only a commit can carry uncommitted work through the merge
+  const salvaged = existsSync(st.worktreeDir!)
+    ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
+    : [];
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
   if (incoming <= 0) {
     throw new Error(
@@ -247,8 +297,20 @@ export function mergeWorker(logDir: string, id: string): string {
         `Commit it yourself, or drop everything with: pai worker discard ${id}`
     );
   }
-  git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
-  const carried = existsSync(st.worktreeDir!) ? carryUncommitted(st.worktreeDir!, st.cwd) : [];
+  const mergeBase = git(st.cwd, ["merge-base", "HEAD", st.branch!]);
+  const incomingPaths = git(st.cwd, ["diff", "--name-only", mergeBase, st.branch!])
+    .split("\n")
+    .filter(Boolean);
+  assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
+  try {
+    git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
+  } catch (e) {
+    throw new Error(
+      `worker ${id}: git refused the merge of ${st.branch} — ${(e as Error).message}. ` +
+        `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
+    );
+  }
+  if (existsSync(st.worktreeDir!)) assertWorktreeClean(st.worktreeDir!, id);
   removeWorktree(st.cwd, st.worktreeDir!, false);
   let branchGone = true;
   try {
@@ -259,8 +321,8 @@ export function mergeWorker(logDir: string, id: string): string {
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   const base = `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
-  return carried.length
-    ? `${base}; carried ${carried.length} uncommitted change(s): ${carried.join(", ")}`
+  return salvaged.length
+    ? `${base}; salvaged ${salvaged.length} uncommitted change(s): ${salvaged.join(", ")}`
     : base;
 }
 
@@ -304,5 +366,6 @@ export function worktreeSystemPrompt(id: string, branch: string, dir: string): s
     "Commit your work on that branch as you go (git add / git commit) — committing here is expected;",
     "the no-commit rule applies to the main branch only, and this is not it.",
     "Do not merge, rebase or push; the operator merges your branch back with `pai worker merge`.",
+    "Use ONLY relative paths inside the worktree, never absolute worktree paths — absolute paths break after merge and leak machine layout.",
   ].join("\n");
 }

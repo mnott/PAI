@@ -23,6 +23,8 @@ export const WORKER_CONTRACT_PROMPT = [
   "changed: files you touched (path + one-line summary). commands: the commands that verify the work.",
   "checks: each with ok true/false and the evidence in detail. open: what you could not finish, if anything.",
   "notes: one line, the headline a reviewer reads first.",
+  "Never write shell heredocs — write the script to a file with the Write tool, then run it",
+  "(heredocs fail silently or get swallowed).",
   "",
   `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,
   "run (the prompt of a resumed run is the operator's too). Answer it FIRST, in one or two plain lines —",
