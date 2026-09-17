@@ -52,6 +52,7 @@ import {
   saveStatus,
   describeTool,
   nowStamp,
+  UNLABELED,
 } from "./status.js";
 import { resolveSession } from "./scope.js";
 import { isQuotaFailure, nextAutoProvider, resolveTarget, setCooldown } from "./routing.js";
@@ -272,7 +273,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const parsed = parseRunnerArgs(opts.claudeArgs);
   const label =
     opts.label ??
-    shortText(parsed.prompt ?? "(no prompt)", 70);
+    shortText(parsed.prompt ?? UNLABELED, 70);
 
   const model =
     opts.modelFlag ??
@@ -402,6 +403,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     last: headless ? "starting" : "interactive",
     rc: null,
     secs: null,
+    // interactive runs ARE the chat pane, not a spawned subagent of it
+    origin: headless ? "spawn" : "chat",
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
@@ -759,6 +762,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     last: "starting",
     rc: null,
     secs: null,
+    origin: "spawn",
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
