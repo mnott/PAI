@@ -16,6 +16,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   PROFILE_NAME,
+  WINDOW_BOUNDS_SCRIPT,
+  WORKER_SPLIT_SCRIPT,
   checkPaneForWorker,
   dynamicProfilePath,
   followProfile,
@@ -183,10 +185,53 @@ describe("followProfile", () => {
 
 describe("checkPaneForWorker", () => {
   it("reports the profile path, its existence and the font it contains", async () => {
-    const out = await checkPaneForWorker("no-such-worker-id", 13);
+    const out = await checkPaneForWorker("no-such-worker-id", 13, "");
     expect(out).toContain("no pane for no-such-worker-id");
     expect(out).toContain(dynamicProfilePath());
     expect(out).toContain("(exists)");
     expect(out).toContain("Menlo-Regular 13");
+  });
+
+  it("reports the hosting window's bounds, saying why when it cannot", async () => {
+    const out = await checkPaneForWorker("no-such-worker-id", 13, "");
+    expect(out).toContain("window bounds: (not in iTerm2)");
+  });
+});
+
+describe("WINDOW_BOUNDS_SCRIPT", () => {
+  it("reads the hosting window's bounds and never writes anything", () => {
+    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/on run\(argv\)/); // argv-only arguments
+    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/bounds of w/);
+    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/set bounds/); // read-only, never moves a window
+  });
+});
+
+describe("WORKER_SPLIT_SCRIPT window size", () => {
+  it("never sizes the new session (columns/rows grow the whole window)", () => {
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set columns/);
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set rows/);
+  });
+
+  it("captures the bounds as a list value before the split and restores them verbatim after", () => {
+    const pin = WORKER_SPLIT_SCRIPT.indexOf("copy bounds of w to winBounds");
+    const split = WORKER_SPLIT_SCRIPT.indexOf("split vertically");
+    const restore = WORKER_SPLIT_SCRIPT.indexOf("set bounds of w to winBounds");
+    expect(pin).toBeGreaterThan(-1);
+    expect(split).toBeGreaterThan(pin); // captured before the split
+    expect(restore).toBeGreaterThan(split); // restored after it
+    expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.indexOf("write text followCmd"));
+    // `set winBounds to bounds of w` stores the property reference lazily —
+    // the restore then re-reads the post-split bounds and iTerm clamps the
+    // window onto the main display. copy forces the plain list value.
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set winBounds to bounds/);
+    // bounds never travel as a string: nothing coerces them to text
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/winBounds as text/);
+    // capture and restore live in the same script (one osascript invocation)
+    expect(WORKER_SPLIT_SCRIPT.indexOf("on run")).toBeLessThan(pin);
+    expect(WORKER_SPLIT_SCRIPT.trimEnd().lastIndexOf("end run")).toBeGreaterThan(restore);
+  });
+
+  it("passes arguments as argv items, never interpolated", () => {
+    expect(WORKER_SPLIT_SCRIPT).toMatch(/on run\(argv\)/);
   });
 });

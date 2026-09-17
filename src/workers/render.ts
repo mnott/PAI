@@ -72,6 +72,10 @@ export interface ToolUseBlock {
   name?: string;
   id?: string;
   input?: unknown;
+  /** tool_result blocks only: the call this answers. */
+  tool_use_id?: string;
+  is_error?: boolean;
+  content?: unknown;
 }
 
 export interface StreamEventLike {
@@ -91,24 +95,109 @@ export interface StreamEventLike {
 }
 
 /**
+ * `HH:MM:SS` at an offset east of UTC in minutes (Date.getTimezoneOffset()
+ * negated), from any ISO stamp the runner wrote — `Z` or a local `+HH:MM`.
+ * null when the stamp cannot be parsed. Offsets make this testable without
+ * depending on the machine's zone; the default is this machine's.
+ */
+export function clockOf(ts: string, offMin = -new Date().getTimezoneOffset()): string | null {
+  const t = Date.parse(ts);
+  if (Number.isNaN(t)) return null;
+  return new Date(t + offMin * 60_000).toISOString().slice(11, 19);
+}
+
+/** `YYYY-MM-DD` at the same offset — the local day a date separator shows. */
+export function dayOf(ts: string, offMin = -new Date().getTimezoneOffset()): string | null {
+  const t = Date.parse(ts);
+  if (Number.isNaN(t)) return null;
+  return new Date(t + offMin * 60_000).toISOString().slice(0, 10);
+}
+
+/** The gutter of one rendered event: its three shapes and its width. */
+export interface Gutter {
+  /** first row: `HH:MM:SS │ ` (dim). */
+  first: string;
+  /** later rows of one event, no wrapping: blanks of the same width. */
+  cont: string;
+  /** wrapped continuation rows: blank time, the `│` bar kept (dim). */
+  barCont: string;
+  /** printable columns first/cont/barCont occupy. */
+  width: number;
+}
+
+/**
  * The transcript gutter (2g): `HH:MM:SS │ ` from the event's `_ts`, dim, with
  * the worker tag in front when several run at once. Continuation lines get
- * blanks of the same width so wrapped text stays aligned. null when the event
- * carries no stamp (logs from before 2g render with the plain prefix).
+ * blanks of the same width so wrapped text stays aligned; when the viewer
+ * wraps lines itself, continuation rows carry the `│` bar instead (barCont)
+ * so the bar runs unbroken down the pane. null when the event carries no
+ * stamp (logs from before 2g render with the plain prefix). The time is the
+ * stamp's wall clock at `offMin` — the default renders local time, whatever
+ * zone stamped the log (old logs were stamped in UTC).
  */
 export function gutterFor(
   c: Paint,
   e: { _ts?: string },
-  tag?: string
-): { first: string; cont: string } | null {
+  tag?: string,
+  offMin?: number
+): Gutter | null {
   if (!e._ts) return null;
-  const time = e._ts.length >= 19 ? e._ts.slice(11, 19) : e._ts;
+  const time = clockOf(e._ts, offMin) ?? (e._ts.length >= 19 ? e._ts.slice(11, 19) : e._ts);
   const head = tag ? `${tag} ${time}` : time;
   const width = head.length + 3; // + " │ "
   return {
     first: c("dim", `${head} │ `),
     cont: " ".repeat(width),
+    barCont: c("dim", `${" ".repeat(head.length)} │ `),
+    width,
   };
+}
+
+/**
+ * The ticker's tool part: `$ <command>` for Bash (first 60 chars), the file
+ * basename for the file tools, the bare name for everything else.
+ */
+export function tickerTool(name: string, inp: unknown): string {
+  const i = (typeof inp === "object" && inp !== null ? inp : {}) as Record<string, unknown>;
+  const get = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
+  if (name === "Bash") return `$ ${shortText(get("command").replace(/\s+/g, " ").trim(), 60)}`;
+  if (name === "Read" || name === "Edit" || name === "Write" || name === "MultiEdit") {
+    const base = get("file_path").split("/").pop() ?? "";
+    return base || name;
+  }
+  return name;
+}
+
+/**
+ * The liveness line: `⋯ 12s · run tests before the fix · $ bun run test` —
+ * seconds since the last *rendered* event, the worker's last stated intent
+ * (its last assistant text, ≤60 chars) and the tool it is currently running.
+ * Parts that are empty drop out.
+ */
+export function tickerText(secs: number, intent: string, tool: string, meter?: string | null): string {
+  const head = `⋯ ${secs}s`;
+  const parts = [intent, tool].map((p) => p.trim()).filter(Boolean);
+  const tail = parts.join(" · ");
+  const line = tail ? `${head} · ${tail}` : head;
+  return meter ? `${line} · ${meter}` : line;
+}
+
+/**
+ * One blank line between turns, none inside one: a blank goes before an
+ * assistant message that follows a tool result or an operator message (the
+ * worker starting to speak again after its tools were answered / it was told
+ * something), not between the text, tool calls and results of one turn.
+ */
+export function blankBetween(prev: { type?: string } | null, e: { type?: string }): boolean {
+  if (!prev) return false;
+  if (e.type !== "assistant") return false;
+  return prev.type === "user" || prev.type === "operator";
+}
+
+/** The worker's last stated intent: the first line of its last text, ≤60. */
+export function intentOf(text: string): string {
+  const first = text.trim().split("\n").find((l) => l.trim()) ?? "";
+  return shortText(first.trim().replace(/\s+/g, " "), 60);
 }
 
 /** Compact token count: 84k, 200k, 900. */
@@ -253,7 +342,21 @@ export function headerLine(
   return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})`);
 }
 
-/** The ps table (RUNNING + FINISHED last 8). */
+/** The chain label behind a stage label: strip the trailing " · <stage>". */
+function chainLabelOf(stages: WorkerStatus[]): string {
+  const first = stages[0];
+  if (!first) return "";
+  const suffix = first.stage ? ` · ${first.stage}` : "";
+  return first.label.endsWith(suffix) && suffix
+    ? first.label.slice(0, first.label.length - suffix.length)
+    : first.label;
+}
+
+/**
+ * The ps table (RUNNING + FINISHED last 8). Chain stages carry `parent` and
+ * render as a tree under one `chain <id>` header; plain workers render as
+ * before.
+ */
 export function renderTable(
   c: Paint,
   statuses: WorkerStatus[],
@@ -269,25 +372,72 @@ export function renderTable(
       done.push(s);
     }
   }
+  // group stages by their chain id, keeping first-seen order
+  const group = (list: WorkerStatus[]): { s: WorkerStatus; chain: string | null }[] => {
+    const out: { s: WorkerStatus; chain: string | null }[] = [];
+    for (const s of list) {
+      out.push({ s, chain: s.parent ?? null });
+    }
+    return out;
+  };
+  const treeLine = (line: string, chain: string | null, last: boolean): string => {
+    if (chain === null) return line;
+    const mark = last ? "└" : "├";
+    const bar = last ? " " : "│";
+    return line.startsWith("      ")
+      ? `  ${bar}   ${line.slice(6)}`
+      : `  ${mark} ${line.slice(2)}`;
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   lines.push(c("bold", `RUNNING (${running.length})`));
   if (!running.length) lines.push("  none");
-  for (const s of running) {
+  const runEntries = group(running);
+  for (let i = 0; i < runEntries.length; i++) {
+    const { s, chain } = runEntries[i];
+    if (chain) {
+      const prev = runEntries[i - 1];
+      if (!prev || prev.chain !== chain) {
+        const stages = runEntries.filter((e) => e.chain === chain).map((e) => e.s);
+        lines.push(`  ${c("bold", `chain ${chain}`)}  ${chainLabelOf(stages)}`);
+      }
+    }
+    const last = !chain || !runEntries[i + 1] || runEntries[i + 1].chain !== chain;
     const meter = contextMeter(c, s, 60);
     lines.push(
-      `  ${c("cyan", s.id)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${meter ? "  " + meter : ""}`
+      treeLine(
+        `  ${c("cyan", s.id)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${meter ? "  " + meter : ""}`,
+        chain,
+        last
+      )
     );
-    lines.push(`      task: ${s.label}`);
-    lines.push(`      now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`);
+    lines.push(treeLine(`      task: ${s.label}`, chain, last));
+    lines.push(
+      treeLine(`      now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`, chain, last)
+    );
   }
   lines.push("");
   lines.push(c("bold", "FINISHED (last 8)"));
-  for (const s of done.slice(-8)) {
+  const doneEntries = group(done.slice(-8));
+  for (let i = 0; i < doneEntries.length; i++) {
+    const { s, chain } = doneEntries[i];
+    if (chain) {
+      const prev = doneEntries[i - 1];
+      if (!prev || prev.chain !== chain) {
+        const stages = doneEntries.filter((e) => e.chain === chain).map((e) => e.s);
+        lines.push(`  ${c("bold", `chain ${chain}`)}  ${chainLabelOf(stages)}`);
+      }
+    }
+    const last = !chain || !doneEntries[i + 1] || doneEntries[i + 1].chain !== chain;
     const col = s.state === "done" ? "green" : "red";
     const tag = sessionTag(s);
     lines.push(
-      `  ${s.id} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}  ${s.label}`
+      treeLine(
+        `  ${s.id} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}  ${s.label}`,
+        chain,
+        last
+      )
     );
   }
   lines.push("");

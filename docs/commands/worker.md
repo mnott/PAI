@@ -32,7 +32,7 @@ pai worker <subcommand> [options]
 | [`pai worker off`](#pai-worker-off) | Stop routing: Agent tool runs on Anthropic again |
 | [`pai worker install`](#pai-worker-install) | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
-| [`pai worker roles`](#pai-worker-roles) | Roles: which provider serves implement / research / spotcheck |
+| [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
 
 ### pai worker run [args...]
 
@@ -40,6 +40,8 @@ Run one claude-code worker through the configured provider.
 
 Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);
 --output-format/--verbose are handled here.
+--chain draft,implement[,review] runs a spec-first pipeline;
+--agent <name> runs an agent definition from ~/.claude/agents.
 
 **Arguments**
 
@@ -52,7 +54,10 @@ Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--provider <name>` | Provider to run on (default: active, else routing order) |  |
-| `--role <role>` | Use the provider of this role (implement, research, spotcheck, …) |  |
+| `--class <name>` | Use the provider of this class (draft, implement, review, research, spotcheck, simple, complex, image) |  |
+| `--role <name>` | Alias of --class (roles were renamed to classes) |  |
+| `--chain <stages>` | Comma-separated stage classes, e.g. draft,implement or draft,implement,review |  |
+| `--agent <name>` | Run the agent definition ~/.claude/agents/<name>.md on a worker |  |
 | `--model <model>` | Override the provider's model for this run |  |
 | `--label <text>` | Short task label shown in ps / follow / status line |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
@@ -124,7 +129,7 @@ Open the follow pane for a worker (or one shared pane for this session)
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--check` | Only report whether the pane is open, plus the profile file's path and font |  |
+| `--check` | Only report whether the pane is open, plus the profile file's path, font, and the hosting window's bounds |  |
 
 
 ### pai worker log [what]
@@ -235,7 +240,7 @@ Providers: list (default), add, remove, use, enable, disable, test
 
 ### pai worker providers add <name>
 
-Add a provider; the first one also turns workers on and seeds roles.
+Add a provider; the first one also turns workers on and seeds classes.
 
 Example: pai worker providers add glm --base-url https://…/anthropic \
            --key-file ~/.config/zai/api_key --model glm-5.3 --fast-model glm-5.3-flash
@@ -263,11 +268,31 @@ Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.
 | `--engine <engine>` | claude (default) or codex — codex runs `codex exec --json` |  |
 | `--context-window <tokens>` | Context window for the meter (default 200000; init event overrides) |  |
 | `--quota-probe <url>` | URL whose JSON first number is the quota percent (0-100) |  |
+| `--cost-tier <1-5>` | Cost tier 1 (cheapest) … 5 (most expensive; default 3) |  |
+| `--tags <tags>` | Capability tags, comma-separated (from: code, vision, image-gen, long-context, fast, reasoning) | `` |
+
+
+### pai worker providers update <name>
+
+Change cost tier and tags of a provider (routing constraints use these)
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<name>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--cost-tier <1-5>` | Cost tier 1 (cheapest) … 5 (most expensive) |  |
+| `--tags <tags>` | Capability tags, comma-separated (from: code, vision, image-gen, long-context, fast, reasoning); --tags '' clears | `` |
 
 
 ### pai worker providers remove <name>
 
-Remove a provider and any roles pointing at it
+Remove a provider and any classes pointing at it
 
 **Arguments**
 
@@ -278,7 +303,7 @@ Remove a provider and any roles pointing at it
 
 ### pai worker providers use <name>
 
-Make this provider the active one for runs without --provider/--role
+Make this provider the active one for runs without --provider/--class
 
 **Arguments**
 
@@ -320,37 +345,49 @@ One-word pong probe through a provider (default: the active one)
 | `[name]` | optional |
 
 
-### pai worker roles
+### pai worker classes
 
-Roles: which provider serves implement / research / spotcheck
-
-
-### pai worker roles list
-
-List roles and their providers (default action)
+Classes: which provider serves draft / implement / review / …
 
 
-### pai worker roles set <role> <provider[/alias]>
+### pai worker classes list
 
-Point a role at a provider, optionally its fast model (e.g. glm/fast)
-
-**Arguments**
-
-| Argument | Kind |
-|----------|------|
-| `<role>` | required |
-| `<provider[/alias]>` | required |
+List classes and their targets (default action)
 
 
-### pai worker roles unset <role>
+### pai worker classes set <class> [target]
 
-Remove a role (runs then use the active provider)
+Point a class at a provider (or provider/fast), or give only constraints:
+
+classes set research --max-cost-tier 2 --require-tags long-context,reasoning
 
 **Arguments**
 
 | Argument | Kind |
 |----------|------|
-| `<role>` | required |
+| `<class>` | required |
+| `[target]` | optional |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--provider <name>` | Pin the class to this provider (object form) |  |
+| `--mcp <names>` | MCP servers/sets for runs of this class (comma-separated) |  |
+| `--max-cost-tier <1-5>` | Auto-routing considers only providers up to this cost tier |  |
+| `--require-tags <tags>` | Auto-routing needs these tags (comma-separated) |  |
+| `--order <providers>` | Per-class routing order overriding workers.routing.order (comma-separated) |  |
+
+
+### pai worker classes unset <class>
+
+Remove a class (runs then use the active provider)
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<class>` | required |
 
 
 ## See also

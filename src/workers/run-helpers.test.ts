@@ -6,7 +6,27 @@
 
 import { describe, it, expect } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
-import { initContextWindow, stdinUserMessage, usageContextTokens } from "./run.js";
+import { initContextWindow, isoStamp, stdinUserMessage, usageContextTokens } from "./run.js";
+
+describe("isoStamp", () => {
+  const d = new Date("2026-09-17T12:19:23Z");
+
+  it("stamps local wall time with the offset, not UTC Z", () => {
+    // UTC+2: the 12:19 stamp the pane wrongly showed at local 14:19
+    expect(isoStamp(d, 120)).toBe("2026-09-17T14:19:23+02:00");
+    expect(isoStamp(d, -300)).toBe("2026-09-17T07:19:23-05:00");
+    expect(isoStamp(d, 0)).toBe("2026-09-17T12:19:23+00:00");
+  });
+
+  it("rounds half-hour zones correctly", () => {
+    expect(isoStamp(d, 330)).toBe("2026-09-17T17:49:23+05:30");
+  });
+
+  it("parses back to the same instant (what the viewer's clockOf reads)", () => {
+    expect(Date.parse(isoStamp(d, 120))).toBe(d.getTime());
+    expect(Date.parse(isoStamp(d, -300))).toBe(d.getTime());
+  });
+});
 
 describe("stdinUserMessage", () => {
   it("frames text as a stream-json user message", () => {

@@ -6,32 +6,63 @@
  * Outside iTerm, everything degrades to "all workers" — the Python behaviour.
  *
  * Transcripts render with a `HH:MM:SS │ ` gutter (2g): dim, taken from the
- * `_ts` stamp on every mirrored event, the worker tag in front when several
- * run at once, a date separator when the day changes, and — on a TTY — a
- * liveness line (`⋯ 12s since last event · Bash: npm test · ctx 84k/200k (42%)`)
- * that is rewritten in place between events. Following one worker also wires
- * this pane's stdin: every typed line is said to the worker while it runs and
- * resumes it (same Claude session) once it has finished.
+ * `_ts` stamp on every mirrored event (local wall clock — stamps carry a local
+ * offset and old UTC stamps are converted), the worker tag in front when
+ * several run at once, a date separator when the day changes, and — on a TTY —
+ * a liveness line (`⋯ 12s · run tests before the fix · $ bun run test`) that
+ * is rewritten in place between events. Attaching to a worker that is already
+ * running first replays its last events (backfill), then continues live.
+ *
+ * Following one worker turns the pane into a small chat (see chatui.ts): the
+ * transcript scrolls in a region that ends two rows above the bottom, the
+ * prompt row (`› `, readline editing) and the ticker row stay fixed, and every
+ * submitted line is said to the worker while it runs and resumes it (same
+ * Claude session) once it has finished. Lines the pane wraps itself keep the
+ * `│` bar on continuation rows, so no content ever lands left of the bar.
+ * Non-TTY output keeps the plain scrolling behaviour.
  */
 
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath } from "./paths.js";
 import { alive, loadStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { sayToWorker } from "./operator.js";
 import {
+  CHAT_HELP,
+  CHAT_HINT,
+  CHAT_PROMPT,
+  chatEnter,
+  chatInsertLine,
+  chatLeave,
+  chatPromptRow,
+  chatScrollRegion,
+  chatTickerRow,
+  holdAutoExit,
+  parseChatLine,
+  wrapText,
+} from "./chatui.js";
+import {
+  blankBetween,
   contextMeter,
+  dayOf,
   gutterFor,
   headerLine,
+  intentOf,
   makeColor,
   renderEvent,
   renderStatusLine,
   renderTable,
+  tickerText,
+  tickerTool,
+  type Gutter,
+  type Paint,
   type StreamEventLike,
-  type ToolUseBlock,
 } from "./render.js";
+
+/** How many existing events a fresh follow pane replays before going live. */
+export const BACKFILL_EVENTS = 200;
 
 // ---------------------------------------------------------------------------
 // ps
@@ -57,6 +88,129 @@ export function psOutput(
 }
 
 // ---------------------------------------------------------------------------
+// one event → rendered lines (shared by replay, backfill and the live tail)
+// ---------------------------------------------------------------------------
+
+/** What applyEvent() carries between the events of one transcript. */
+export interface FollowState {
+  /** day separator already printed ("" before the first stamped event). */
+  lastDay: string;
+  /** tool_use id → tool name (Edit previews and Read trimming need it). */
+  tools: Record<string, string>;
+  /** the worker's last stated intent — its last assistant text, ≤60 chars. */
+  intent: string;
+  /** the ticker's tool part of the last tool_use ("$ bun run test"). */
+  tool: string;
+  /** the last event seen, for the blank line between turns. */
+  prev: StreamEventLike | null;
+}
+
+export function initialFollowState(intent = "waiting for first event"): FollowState {
+  return { lastDay: "", tools: {}, intent, tool: "", prev: null };
+}
+
+/** One applied event: what to print, and how the ticker changes. */
+export interface FollowStep {
+  /** rendered lines ("" among them marks the blank line between turns). */
+  lines: string[];
+  /** day separator to print first, when the stamp's local day changed. */
+  day: string | null;
+  /** the event produced visible output — the ticker clock restarts. */
+  activity: boolean;
+  state: FollowState;
+}
+
+/**
+ * Gutter the rendered body of one event, wrapping when the pane width is
+ * known. Unwrapped (null `wrapWidth`, e.g. piped output): the first row gets
+ * the stamped gutter, later rows of the event blanks — exactly the pre-chat
+ * rendering. Wrapped: every row is folded at `wrapWidth` columns and each
+ * continuation row carries the blank gutter with the `│` bar, so the bar runs
+ * unbroken down the pane and no content ever lands left of it.
+ */
+export function gutterBody(
+  body: string[],
+  gutter: Gutter | null,
+  wrapWidth: number | null
+): string[] {
+  if (!gutter) return body;
+  if (wrapWidth === null || wrapWidth <= gutter.width) {
+    return body.map((ln, i) => (i === 0 ? gutter.first : gutter.cont) + ln);
+  }
+  const out: string[] = [];
+  for (const ln of body) {
+    for (const piece of wrapText(ln, wrapWidth - gutter.width)) {
+      out.push((out.length === 0 ? gutter.first : gutter.barCont) + piece);
+    }
+  }
+  return out;
+}
+
+/**
+ * Render one event and advance the follow state. Everything the viewer shows
+ * between events of one worker comes from here: replay, the backfill on
+ * attach and the live tail all use it, so they space identically — events
+ * back to back, one blank line between turns. `activity` is false for events
+ * that render nothing (stream noise, empty tool results): they leave the
+ * ticker's "since last event" clock running. `wrapWidth` (the pane's column
+ * count, re-read on resize) makes the viewer wrap rows itself; null keeps
+ * the terminal's own wrapping.
+ */
+export function applyEvent(
+  c: Paint,
+  s: FollowState,
+  e: StreamEventLike,
+  cwd: string,
+  tag?: string,
+  offMin?: number,
+  wrapWidth?: number | null
+): FollowStep {
+  const tools = { ...s.tools };
+  if (e.type === "assistant") {
+    for (const b of e.message?.content ?? []) {
+      if (b.type === "tool_use" && b.id) tools[b.id] = b.name ?? "?";
+    }
+  }
+  const day = typeof e._ts === "string" ? (dayOf(e._ts, offMin) ?? rawDay(e._ts)) : "";
+  const state: FollowState = {
+    lastDay: day && day !== s.lastDay ? day : s.lastDay,
+    tools,
+    intent: s.intent,
+    tool: s.tool,
+    prev: e,
+  };
+  if (e.type === "assistant") {
+    for (const b of e.message?.content ?? []) {
+      if (b.type === "text" && (b.text ?? "").trim()) state.intent = intentOf(b.text ?? "");
+      else if (b.type === "tool_use") state.tool = tickerTool(b.name ?? "?", b.input);
+    }
+  }
+  const gutter = gutterFor(c, e, tag, offMin);
+  const prefix = "";
+  const body = gutterBody(renderEvent(c, prefix, e, cwd, tools), gutter, wrapWidth ?? null);
+  const lines = blankBetween(s.prev, e) ? ["", ...body] : body;
+  return {
+    lines,
+    day: day && day !== s.lastDay ? day : null,
+    activity: lines.some((ln) => ln !== ""),
+    state,
+  };
+}
+
+/** `YYYY-MM-DD` straight out of an unparsable stamp, "" when it has none. */
+function rawDay(ts: string): string {
+  return /^\d{4}-\d{2}-\d{2}/.test(ts) ? ts.slice(0, 10) : "";
+}
+
+/**
+ * The events a fresh follow replays before going live: the last `cap`
+ * non-empty log lines, oldest first.
+ */
+export function backfillLines(raw: string, cap = BACKFILL_EVENTS): string[] {
+  return raw.split("\n").filter((l) => l.trim()).slice(-cap);
+}
+
+// ---------------------------------------------------------------------------
 // replay
 // ---------------------------------------------------------------------------
 
@@ -75,11 +229,12 @@ export function replayOutput(
   const st =
     loadStatuses(logDir).find((s) => s.id === wid) ??
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-  const tools: Record<string, string> = {};
+  const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : null;
   const out: string[] = [headerLine(c, st)];
-  const lines = readFileSync(path, "utf8").split("\n");
-  let lastDay = "";
-  for (const line of tailLines !== undefined ? lines.slice(-tailLines) : lines) {
+  const raw = readFileSync(path, "utf8");
+  const lines = tailLines !== undefined ? raw.split("\n").slice(-tailLines) : raw.split("\n");
+  let state = initialFollowState("");
+  for (const line of lines) {
     if (!line.trim()) continue;
     let e: StreamEventLike;
     try {
@@ -87,22 +242,12 @@ export function replayOutput(
     } catch {
       continue;
     }
-    if (typeof e._ts === "string" && e._ts.slice(0, 10) !== lastDay) {
-      lastDay = e._ts.slice(0, 10);
-      out.push(c("dim", `── ${lastDay} ──`));
-    }
-    const g = gutterFor(c, e);
-    collectTools(e, tools);
-    out.push(...renderEvent(c, g ? "" : "  ", e, st.cwd ?? "", tools, g));
+    const step = applyEvent(c, state, e, st.cwd ?? "", undefined, undefined, wrapWidth);
+    if (step.day) out.push(c("dim", `── ${step.day} ──`));
+    out.push(...step.lines);
+    state = step.state;
   }
   return out.join("\n");
-}
-
-function collectTools(e: StreamEventLike, tools: Record<string, string>): void {
-  if (e.type !== "assistant") return;
-  for (const b of e.message?.content ?? []) {
-    if (b.type === "tool_use" && b.id) tools[b.id] = b.name ?? "?";
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,12 +273,86 @@ export function workerEnded(
   return resultRendered || (state !== undefined && state !== "running" && !pidAlive);
 }
 
+// ---------------------------------------------------------------------------
+// operator input (2i): this pane's stdin drives say / resume
+// ---------------------------------------------------------------------------
+
+/** What makeOperatorInput() needs from the follow around it. */
+export interface OperatorInputDeps {
+  /** the worker typed lines go to right now (null: none, lines are ignored). */
+  target: () => string | null;
+  /** forwards one message to a running worker. */
+  say: (id: string, text: string) => Promise<string>;
+  /** whether a status file exists for the id (say failed → resume, or note). */
+  workerKnown: (id: string) => boolean;
+  /** continues a finished worker (same Claude session). */
+  resume: (text: string, id: string) => void;
+  /** one line of feedback in the pane. */
+  note: (s: string) => void;
+  paint: Paint;
+  /** chat mode only: the echoed line replaces the "» sent" note. */
+  sent?: (id: string) => void;
+}
+
+/**
+ * One typed stdin line → say (worker running) or resume (worker finished):
+ * the operator channel of a `follow <id>` pane. Trimmed; empty lines and a
+ * missing target are ignored.
+ */
+export function makeOperatorInput(d: OperatorInputDeps): (raw: string) => void {
+  return (raw: string) => {
+    const text = raw.trim();
+    if (!text) return;
+    const id = d.target();
+    if (id === null) return;
+    d.say(id, text).then(
+      () => (d.sent ? d.sent(id) : d.note(d.paint("dim", `» sent to ${id}`))),
+      (e: Error) => {
+        if (d.workerKnown(id)) d.resume(text, id);
+        else d.note(d.paint("red", `» ${e.message}`));
+      }
+    );
+  };
+}
+
+/** What followWorkers writes to (process.stdout, or a fake in tests). */
+export interface FollowStream {
+  write(s: string): boolean;
+  isTTY?: boolean;
+  columns?: number;
+  rows?: number;
+  on?(event: "resize", fn: () => void): unknown;
+  removeListener?(event: "resize", fn: () => void): unknown;
+}
+
+/** The child of a `pai worker resume` spawn (tests inject a fake). */
+export interface ResumeChild {
+  stdout?: { on(event: "data", cb: (chunk: Buffer) => void): unknown };
+  on(event: "close", cb: (code: number | null) => void): unknown;
+}
+
+/** Test seams for followWorkers: the streams, the resume spawn, the prompt. */
+export interface FollowIO {
+  stdin?: NodeJS.ReadableStream;
+  stdout?: FollowStream;
+  /** replaces the `pai worker resume` spawn (tests record instead of run). */
+  spawnResume?: (id: string, text: string) => ResumeChild;
+  /** current unsent prompt text (tests force a draft to hold the countdown). */
+  promptLine?: () => string;
+}
+
 /**
  * Tail one worker (target) or the running workers of this scope, live.
- * Auto-exit: with a target, wait `autoExit` seconds after its end; without
- * one, exit once no worker in scope has run for that many seconds in a row,
- * never within the first 30 s. With a target on a TTY, typed stdin lines are
- * said to the worker (or resume it after it finished).
+ * Workers whose event log already exists are first replayed (last
+ * BACKFILL_EVENTS events), then tailed. Auto-exit: with a target, wait
+ * `autoExit` seconds after its end; without one, exit once no worker in
+ * scope has run for that many seconds in a row, never within the first 30 s.
+ *
+ * With a target on a TTY the pane becomes a chat (chatui.ts): transcript in
+ * a scroll region, fixed prompt and ticker rows, submitted lines said to the
+ * worker (or resuming it after it finished) and echoed as `»` rows. A draft
+ * in the prompt holds the auto-exit countdown. Non-TTY output keeps the
+ * plain scrolling behaviour; FORCE_TTY=1 emits the chat layout over a pipe.
  */
 export async function followWorkers(
   logDir: string,
@@ -141,46 +360,71 @@ export async function followWorkers(
   showAll: boolean,
   autoExit: number,
   env: NodeJS.ProcessEnv = process.env,
-  color = process.stdout.isTTY === true
+  color = process.stdout.isTTY === true,
+  io?: FollowIO
 ): Promise<void> {
   const c = makeColor(color);
-  const tty = process.stdout.isTTY === true;
+  const out_ = io?.stdout ?? process.stdout;
+  const in_ = io?.stdin ?? process.stdin;
+  // FORCE_TTY=1: the TTY layout over a pipe (tests, recorded panes)
+  const tty = out_.isTTY === true || env.FORCE_TTY === "1";
   const term = env.ITERM_SESSION_ID ?? "";
   const scopeTab = target || showAll ? "" : currentTabKey(env);
-  const tools: Record<string, string> = {};
   const handles = new Map<string, FollowHandle>();
   const seenHeader = new Set<string>();
   const finished = new Set<string>();
-  const lastDayBy = new Map<string, string>();
+  const states = new Map<string, FollowState>();
   const started = Date.now();
   let idleSince: number | null = null;
   let aborted = false;
-  // liveness state (2g): rewritten in place between events, TTY only
+  // liveness state: rewritten in place between events, TTY only
   let lastEventAt = Date.now();
-  let lastAction = "waiting for first event";
   let meterStatus: WorkerStatus | null = null;
-  let livenessLen = 0;
   const onInt = () => {
     aborted = true;
   };
   process.once("SIGINT", onInt);
 
-  // the plain-length twin of a coloured string (liveness must be erased by width)
-  const plainOf = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
-  const eraseLiveness = () => {
-    if (livenessLen > 0) {
-      process.stdout.write("\r" + " ".repeat(livenessLen) + "\r");
-      livenessLen = 0;
+  // --- the chat layout (target + TTY): transcript region + two fixed rows
+  const chat = tty && target !== null;
+  let rows = out_.rows ?? 24;
+  const columns = (): number | null => (typeof out_.columns === "number" ? out_.columns : null);
+  let fill = 0; // transcript rows filled since the region was (re)set
+  const regionRows = () => Math.max(1, rows - 2);
+  /** Every line the pane shows goes through here: plain newline, or a row
+   *  inserted above the fixed prompt/ticker rows (chatui.chatInsertLine). */
+  const out = (line: string) => {
+    if (!chat) {
+      out_.write(line + "\n");
+      return;
     }
+    const r = chatInsertLine(line, fill, regionRows());
+    out_.write(r.seq);
+    fill = r.fill;
   };
+
+  // The ticker redraws its line in place: in the chat layout that is its own
+  // bottom row (save-cursor, draw, restore-cursor); the plain mode writes
+  // CR + erase-to-end-of-line, never a newline. The control bytes live in
+  // their own string literals — bundling them onto a template literal makes
+  // the bundler fold them in as raw chars, and a raw CR inside a template
+  // literal is normalised to LF by the language, which is how the ticker
+  // once scrolled a blank line per tick.
+  const eraseLiveness = () => {
+    if (chat) return;
+    if (tty) out_.write("\r\x1b[K");
+  };
+  let ticker = initialFollowState();
   const writeLiveness = () => {
     if (!tty) return;
-    eraseLiveness();
     const secs = Math.max(0, Math.floor((Date.now() - lastEventAt) / 1000));
     const meter = meterStatus ? contextMeter(c, meterStatus) : null;
-    const plain = `⋯ ${secs}s since last event · ${lastAction}${meter ? ` · ${plainOf(meter)}` : ""}`;
-    process.stdout.write("\r" + `⋯ ${c("dim", `${secs}s since last event`)} · ${lastAction}${meter ? ` · ${meter}` : ""}`);
-    livenessLen = plain.length;
+    const text = tickerText(secs, ticker.intent, ticker.tool, meter);
+    if (chat) out_.write(chatTickerRow(text, rows));
+    else {
+      out_.write("\r\x1b[K");
+      out_.write(text);
+    }
   };
 
   const runningIds = (): string[] =>
@@ -193,74 +437,263 @@ export async function followWorkers(
       )
       .map((s) => s.id);
 
-  // --- operator input (2i): this pane's stdin drives say/resume
+  // --- one rendered event, shared by the backfill and the live tail
+  const emitEvent = (e: StreamEventLike, wid: string, st: WorkerStatus, multi: boolean) => {
+    if (e.type === "operator" && chat && suppressMirror(String(e.text ?? ""))) return;
+    if (!seenHeader.has(wid)) {
+      eraseLiveness();
+      out(headerLine(c, st));
+      seenHeader.add(wid);
+    }
+    const state = states.get(wid) ?? initialFollowState();
+    const step = applyEvent(
+      c,
+      state,
+      e,
+      st.cwd ?? "",
+      multi ? c("cyan", wid.slice(-4)) : undefined,
+      undefined,
+      columns()
+    );
+    if (step.day) {
+      out(c("dim", `── ${step.day} ──`));
+    }
+    states.set(wid, step.state);
+    if (wid === target) ticker = step.state;
+    eraseLiveness();
+    for (const ln of step.lines) {
+      out(ln);
+    }
+    if (step.activity) lastEventAt = Date.now();
+    if (e.type === "result") {
+      meterStatus = st;
+      finished.add(wid);
+    } else if (wid === target || target === null) {
+      meterStatus = st;
+    }
+  };
+
+  // --- attach: replay what is already in the log, then tail from its end
+  const attachHandle = (wid: string, path: string, st: WorkerStatus, multi: boolean): FollowHandle => {
+    const handle = { fd: openSync(path, "r"), buf: "" };
+    try {
+      const existing = readFileSync(path, "utf8");
+      if (existing.trim()) {
+        for (const line of backfillLines(existing)) {
+          let e: StreamEventLike;
+          try {
+            e = JSON.parse(line) as StreamEventLike;
+          } catch {
+            continue;
+          }
+          emitEvent(e, wid, st, multi);
+        }
+      } else {
+        // no event yet: show the header now, not at the first event
+        if (!seenHeader.has(wid)) {
+          out(headerLine(c, st));
+          seenHeader.add(wid);
+        }
+      }
+      // the backfill already rendered the file; the live tail starts at EOF
+      const sink = Buffer.alloc(65536);
+      for (;;) {
+        let n: number;
+        try {
+          n = readSync(handle.fd, sink, 0, sink.length, null);
+        } catch {
+          break;
+        }
+        if (n <= 0) break;
+      }
+    } catch {
+      // unreadable log: tail from wherever the fd happens to be
+    }
+    return handle;
+  };
+
+  // --- say / resume from this pane's stdin
   const noteLine = (s: string) => {
     eraseLiveness();
-    process.stdout.write(s + "\n");
+    out(s);
   };
+  // SpawnOptions (not the stdio-tuple overload): we only read stdout and
+  // want the plain ChildProcess shape; tests inject a fake that records
+  const spawnResume =
+    io?.spawnResume ??
+    ((id: string, text: string): ResumeChild =>
+      spawn("pai", ["worker", "resume", id, text, "--print-id", "--no-pane"], {
+        stdio: ["ignore", "pipe", "inherit"],
+      } as SpawnOptions) as unknown as ResumeChild);
   const resumeTarget = (text: string, id: string) => {
     noteLine(c("dim", `» resuming ${id} …`));
-    // SpawnOptions (not the stdio-tuple overload): we only read stdout and
-    // want the plain ChildProcess shape
-    const child = spawn(
-      "pai",
-      ["worker", "resume", id, text, "--print-id", "--no-pane"],
-      { stdio: ["ignore", "pipe", "inherit"] } as import("node:child_process").SpawnOptions
-    );
+    const child = spawnResume(id, text);
     let idOut = "";
     child.stdout?.on("data", (chunk: Buffer) => {
       idOut += chunk.toString("utf8");
     });
     child.on("close", (rc: number | null) => {
       const newId = idOut.trim().split("\n").pop() ?? "";
-      if (rc === 0 && /^[0-9]{8}-[0-9]{6}-[0-9]+$/.test(newId)) {
+      if (rc === 0 && /^\d{8}-\d{6}-\d+$/.test(newId)) {
         noteLine(c("dim", `» resumed as ${newId}`));
         target = newId;
         finished.delete(newId);
         seenHeader.delete(newId);
+        states.delete(newId);
+        ticker = initialFollowState("resumed");
         lastEventAt = Date.now();
-        lastAction = "resumed";
       } else {
         noteLine(c("red", `» resume failed (rc=${rc})`));
       }
     });
   };
-  const handleOperatorLine = (raw: string) => {
-    const text = raw.trim();
-    if (!text || target === null) return;
-    const id = target; // narrowed copy for the async callbacks below
-    sayToWorker(logDir, id, text).then(
-      () => noteLine(c("dim", `» sent to ${id}`)),
-      (e: Error) => {
-        if (loadStatuses(logDir).some((s) => s.id === id)) resumeTarget(text, id);
-        else noteLine(c("red", `» ${e.message}`));
-      }
-    );
-  };
+  const handleOperatorLine = makeOperatorInput({
+    target: () => target,
+    say: (id, text) => sayToWorker(logDir, id, text),
+    workerKnown: (id) => loadStatuses(logDir).some((s) => s.id === id),
+    resume: resumeTarget,
+    note: noteLine,
+    paint: c,
+    ...(chat ? { sent: () => undefined } : {}), // the echo replaces the note
+  });
+
+  // --- the chat line: readline editing on the prompt row
   // the readline interface keeps stdin flowing — without a close, the process
   // outlives follow itself (a pane then never closes, however long ago the
   // worker ended), so it is closed in the finally block below
+  const terminalIn = (in_ as { isTTY?: boolean }).isTTY === true;
+  let hintUp = true;
   let rlIn: ReturnType<typeof createInterface> | null = null;
-  if (target !== null && process.stdin.isTTY) {
-    rlIn = createInterface({ input: process.stdin });
+  let onResize: (() => void) | null = null;
+  // an echoed line comes back as a mirrored operator event within moments —
+  // remember what was echoed and swallow the twin, so the pane shows what
+  // was typed exactly once
+  const echoed = new Map<string, { n: number; until: number }>();
+  const suppressMirror = (text: string): boolean => {
+    const g = echoed.get(text);
+    if (!g || Date.now() > g.until) return false;
+    g.n -= 1;
+    if (g.n <= 0) echoed.delete(text);
+    return true;
+  };
+  const drawPrompt = () => {
+    if (!chat || terminalIn) return;
+    out_.write(chatPromptRow(rows, CHAT_PROMPT, hintUp ? c("dim", CHAT_HINT) : undefined));
+  };
+  if (chat) {
+    const echoOperator = (text: string) => {
+      const id = target;
+      if (id === null) return;
+      echoed.set(text, { n: 1, until: Date.now() + 10_000 });
+      const st = states.get(id) ?? initialFollowState();
+      const step = applyEvent(
+        c,
+        st,
+        { type: "operator", _ts: new Date().toISOString(), text },
+        "",
+        undefined,
+        undefined,
+        columns()
+      );
+      if (step.day) out(c("dim", `── ${step.day} ──`));
+      for (const ln of step.lines) out(ln);
+      states.set(id, step.state);
+    };
+    const handleChatLine = (raw: string) => {
+      hintUp = false;
+      const act = parseChatLine(raw);
+      switch (act.kind) {
+        case "message":
+          if (!act.text) break;
+          echoOperator(act.text);
+          handleOperatorLine(act.text);
+          break;
+        case "resume":
+          if (!act.text) {
+            out(c("dim", "usage: /resume <text>"));
+            break;
+          }
+          echoOperator(act.text);
+          if (target !== null) resumeTarget(act.text, target);
+          break;
+        case "help":
+          for (const ln of CHAT_HELP) out(c("dim", ln));
+          break;
+        case "status": {
+          const s =
+            target !== null ? loadStatuses(logDir).find((x) => x.id === target) : undefined;
+          out(c("dim", s ? `${s.id} · ${s.state} · ${s.last}` : `${target ?? "?"} · no status`));
+          break;
+        }
+        case "quit":
+          aborted = true;
+          break;
+      }
+      drawPrompt(); // on a pipe readline does not repaint the prompt itself
+    };
+    rlIn = createInterface({
+      input: in_,
+      output: out_ as unknown as NodeJS.WriteStream,
+      terminal: terminalIn,
+    });
+    rlIn.on("line", handleChatLine);
+    // Ctrl-C: an empty prompt leaves, a draft clears; Ctrl-D (close) leaves
+    rlIn.on("SIGINT", () => {
+      if ((rlIn?.line ?? "").trim() === "") aborted = true;
+      else rlIn?.write(null, { ctrl: true, name: "u" });
+    });
+    rlIn.on("close", () => {
+      aborted = true;
+    });
+    out_.write(chatEnter(rows));
+    if (terminalIn) {
+      rlIn.setPrompt(CHAT_PROMPT);
+      rlIn.prompt();
+      out_.write(c("dim", CHAT_HINT));
+    } else {
+      drawPrompt();
+    }
+    // resize: re-read the geometry, rebuild the region, fill it afresh
+    onResize = () => {
+      if (typeof out_.rows === "number") rows = out_.rows;
+      fill = 0;
+      out_.write(chatScrollRegion(rows));
+      drawPrompt();
+    };
+    out_.on?.("resize", onResize);
+  } else if (target !== null && (in_ as { isTTY?: boolean }).isTTY) {
+    // plain operator channel: TTY stdin, non-TTY stdout
+    rlIn = createInterface({ input: in_ });
     rlIn.on("line", handleOperatorLine);
   }
+
+  /** The prompt's unsent text — a draft holds the auto-exit countdown. */
+  const promptText = () => (io?.promptLine ? io.promptLine() : (rlIn?.line ?? ""));
 
   try {
     for (;;) {
       if (aborted) return;
-      for (const wid of target ? [target] : runningIds()) {
+      const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
+      const wanted = target ? [target] : runningIds();
+      for (const wid of wanted) {
         if (handles.has(wid) || finished.has(wid)) continue;
         const path = eventsPath(logDir, wid);
-        if (existsSync(path)) handles.set(wid, { fd: openSync(path, "r"), buf: "" });
+        const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
+        if (existsSync(path)) {
+          const multi = target === null || handles.size > 0;
+          handles.set(wid, attachHandle(wid, path, st, multi));
+          states.set(wid, states.get(wid) ?? initialFollowState());
+        } else if (!seenHeader.has(wid)) {
+          // worker just started, no event yet: name it instead of a blank pane
+          out(headerLine(c, st));
+          seenHeader.add(wid);
+        }
       }
-      const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
       const multi = handles.size > 1 || target === null;
       let progressed = false;
 
       for (const [wid, h] of [...handles.entries()]) {
         const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-        const prefix = multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  ";
         // read everything appended since the last poll (fd position advances)
         const buffer = Buffer.alloc(65536);
         for (;;) {
@@ -276,48 +709,23 @@ export async function followWorkers(
         const lines = h.buf.split("\n");
         h.buf = lines.pop() ?? "";
         for (const line of lines) {
-          progressed = true;
-          if (!seenHeader.has(wid)) {
-            eraseLiveness();
-            process.stdout.write(headerLine(c, st) + "\n");
-            seenHeader.add(wid);
-          }
           if (!line.trim()) continue;
+          progressed = true;
           let e: StreamEventLike;
           try {
             e = JSON.parse(line) as StreamEventLike;
           } catch {
             continue;
           }
-          const day = typeof e._ts === "string" ? e._ts.slice(0, 10) : "";
-          if (day && day !== lastDayBy.get(wid)) {
-            eraseLiveness();
-            process.stdout.write(`${multi ? prefix : ""}${c("dim", `── ${day} ──`)}\n`);
-            lastDayBy.set(wid, day);
-          }
-          collectTools(e, tools);
-          const g = gutterFor(c, e, multi ? c("cyan", wid.slice(-4)) : undefined);
-          eraseLiveness();
-          for (const ln of renderEvent(c, g ? "" : prefix, e, st.cwd ?? "", tools, g)) {
-            process.stdout.write(ln + "\n");
-          }
-          lastEventAt = Date.now();
-          if (e.type === "operator") {
-            lastAction = "operator message";
-          } else if (e.type === "assistant") {
-            const tool = (e.message?.content ?? []).find((b) => b.type === "tool_use");
-            lastAction = tool ? `${tool.name ?? "?"} running` : "thinking";
-          } else if (e.type === "result") {
-            lastAction = "finished";
-          }
-          meterStatus = st;
-          if (e.type === "result") finished.add(wid);
+          emitEvent(e, wid, st, multi);
         }
         const ended = workerEnded(finished.has(wid), st.state, alive(st.pid));
         if (ended) {
           if (!finished.has(wid)) {
             eraseLiveness();
-            process.stdout.write(`${prefix}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}\n`);
+            out(
+              `${multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  "}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`
+            );
             finished.add(wid);
           }
           closeSync(h.fd);
@@ -328,15 +736,27 @@ export async function followWorkers(
       const lingerOn = target; // resume swaps `target` under us (see above)
       if (lingerOn !== null && finished.has(lingerOn)) {
         if (autoExit) {
+          // a draft in the prompt holds the countdown: the operator may be
+          // about to say or resume something
+          if (holdAutoExit(promptText())) {
+            writeLiveness();
+            await sleep(250);
+            continue;
+          }
           const until = Date.now() + autoExit * 1000;
-          while (Date.now() < until && !aborted && target === lingerOn) {
+          while (
+            Date.now() < until &&
+            !aborted &&
+            target === lingerOn &&
+            !holdAutoExit(promptText())
+          ) {
             writeLiveness();
             await sleep(250);
           }
-          // interrupted, or the worker was resumed inside the window: follow on
-          if (aborted || target !== lingerOn) continue;
+          // interrupted, resumed inside the window, or a draft appeared: follow on
+          if (aborted || target !== lingerOn || holdAutoExit(promptText())) continue;
           eraseLiveness();
-          process.stdout.write(c("dim", "closing") + "\n");
+          out(c("dim", "closing"));
           return;
         }
         // no auto-exit: only a terminal follow with no wired stdin is done —
@@ -350,7 +770,7 @@ export async function followWorkers(
           idleSince = Date.now();
         } else if (Date.now() - started >= 30_000 && Date.now() - idleSince >= autoExit * 1000) {
           eraseLiveness();
-          process.stdout.write(c("dim", "closing") + "\n");
+          out(c("dim", "closing"));
           return;
         }
       }
@@ -364,6 +784,8 @@ export async function followWorkers(
     // iTerm pane running it) alive long after follow has decided to end
     rlIn?.close();
     process.removeListener("SIGINT", onInt);
+    if (onResize) out_.removeListener?.("resize", onResize);
+    if (chat) out_.write(chatLeave(rows));
     for (const h of handles.values()) {
       try {
         closeSync(h.fd);

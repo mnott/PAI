@@ -4,6 +4,62 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [0.38.0] — 2026-09-17
+
+### Added
+
+- **Task classes** — roles became classes: `workers.classes` maps the nine
+  standard task classes (draft, plan, implement, review, research, spotcheck,
+  simple, complex, image) to a provider, `provider/fast`, or an object with
+  routing constraints. Providers carry `costTier` (1 cheapest … 5, default 3)
+  and `tags` (code, vision, image-gen, long-context, fast, reasoning); a class
+  may set `maxCostTier`, `requireTags` and its own `order`, and auto-routing
+  fails with the exclusion reason of every provider when nothing qualifies.
+  `--class` replaces `--role` (kept as alias); `pai worker classes
+  list/set/unset` manages them; old `roles` configs keep parsing and migrate
+  to `classes` on first write.
+- **Chains** — `pai worker run --chain draft,implement[,review]`: the draft
+  stage turns the brief into a spec file under `<logDir>/specs/<chain id>.md`
+  (goal, constraints, files likely touched, acceptance checks, verification
+  commands), implement runs with that spec plus the original brief, review
+  reads the diff against the spec and produces the structured report. Each
+  stage is its own worker (own id and pane, `parent` set to the chain id);
+  `ps` shows chains as trees; a failed stage (or a draft without a spec)
+  stops the chain.
+- **Agent definitions as workers** — `pai worker run --agent <name>` loads
+  `~/.claude/agents/<name>.md`: the body becomes `--append-system-prompt`,
+  `tools` the allowlist, `model` maps to a class (haiku→simple, sonnet→
+  implement, opus→complex) unless `--class` is given; the label defaults to
+  `<agent>: <first 50 chars of prompt>`.
+- **MCP `worker_classes`** (list/set/unset, with `max_cost_tier`/
+  `require_tags`) and **MCP `worker_run`** — start a worker or chain from
+  chat, returning the id immediately. `worker_providers` gained `cost_tier`/
+  `tags` on add and an `update` action. The Worker skill maps preference
+  phrases ("route research to X", "cheap only for drafts", "show the routing
+  table") onto these tools and never sends the user to a config file.
+
+- **Chat line in the follow pane** — `pai worker follow <id>` on a TTY is a
+  chat, not a tail: the transcript scrolls in an ANSI scroll region, the
+  prompt row (`› `, readline editing) and the ticker row stay fixed, and
+  Enter says the line to the running worker or resumes the finished one
+  (the pane follows the fresh run). Commands `/help`, `/quit`,
+  `/resume <text>`, `/status`; Ctrl-C leaves on an empty prompt and clears a
+  draft, Ctrl-D leaves; the echoed `»` row appears once (the mirrored
+  operator event is swallowed); the auto-exit countdown holds while the
+  prompt has unsent text. Non-TTY output keeps the plain behaviour.
+
+### Changed
+
+- **Worker ids no longer collide** — two workers or chains starting in the
+  same second of one process get a monotonic `-01`, `-02` suffix instead of
+  overwriting each other's status and transcript files.
+- **Viewer-side wrapping with an unbroken gutter bar** — `follow`/`replay`
+  wrap rows at the terminal width (whitespace-preferred, hard-wrap fallback,
+  ANSI escapes never split, diff colours carried onto continuation rows),
+  and every continuation row carries a blank-time gutter that keeps the `│`
+  bar, so no content lands left of it. Piped output keeps the terminal's own
+  wrapping.
+
 ## [0.37.0] — 2026-09-17
 
 ### Added

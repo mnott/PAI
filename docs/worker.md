@@ -32,22 +32,26 @@ main session (Anthropic)          workers (configured provider)
         "keyFile": "~/.config/zai/api_key",
         "models": { "default": "glm-5.3", "fast": "glm-5.3-flash" },
         "env": { "API_TIMEOUT_MS": "3000000" },
-        "contextWindow": 200000
+        "contextWindow": 200000,
+        "costTier": 2,
+        "tags": ["code", "long-context"]
       },
       "oai": {
         "protocol": "openai",
         "upstreamUrl": "https://api.openai.com/v1",
         "keyFile": "~/.config/pai/keys/oai",
-        "models": { "default": "gpt-5.2", "fast": "gpt-5.2-mini" }
+        "models": { "default": "gpt-5.2", "fast": "gpt-5.2-mini" },
+        "costTier": 4,
+        "tags": ["reasoning", "vision"]
       },
       "codexprov": {
         "engine": "codex",
         "models": { "default": "gpt-5.2-codex" }
       }
     },
-    "roles": {
+    "classes": {
       "implement": "glm",
-      "research": "glm",
+      "research": { "maxCostTier": 2, "requireTags": ["long-context"] },
       "spotcheck": "glm/fast",
       "docs": { "provider": "glm", "mcp": ["office"] }
     },
@@ -70,8 +74,12 @@ main session (Anthropic)          workers (configured provider)
   Code (see below).
 - `contextWindow` overrides the context-meter window when the endpoint's
   init event does not announce one (default 200 000).
-- A role target is `"provider[/model]"` or an object with `provider` and a
-  `mcp` allowlist applied on top of `--mcp`.
+- `costTier` (1 cheapest … 5 most expensive, default 3) and `tags` (from:
+  `code`, `vision`, `image-gen`, `long-context`, `fast`, `reasoning`) describe
+  a provider; classes use them to constrain routing (next section).
+- A class target is `"provider[/model]"` or an object with `provider` and a
+  `mcp` allowlist applied on top of `--mcp`, or an object with only routing
+  constraints (`maxCostTier`, `requireTags`, `order`).
 
 Or add one from the CLI:
 
@@ -80,18 +88,63 @@ pai worker providers add glm \
   --base-url https://api.z.ai/api/anthropic \
   --key-file ~/.config/zai/api_key \
   --model glm-5.3 --fast-model glm-5.3-flash \
-  --env API_TIMEOUT_MS=3000000
+  --env API_TIMEOUT_MS=3000000 \
+  --cost-tier 2 --tags code,long-context
 pai worker providers add oai \
   --upstream-url https://api.openai.com/v1 \
   --key-file ~/.config/pai/keys/oai --model gpt-5.2
+pai worker providers update glm --cost-tier 1   # tiers/tags change later
 ```
 
 The first provider also sets `enabled: true`, makes itself active and seeds
-the three roles. Then:
+the nine classes. Then:
 
 ```
 pai worker install     # Agent hook in settings.json + glm* shims + cleanup
 ```
+
+## Task classes
+
+Roles were renamed to **classes** — task classes pick the provider for a kind
+of work. The nine standard classes: `draft`, `plan`, `implement`, `review`,
+`research`, `spotcheck`, `simple`, `complex`, `image` (any other name can be
+defined too). Configs with the old `roles` key keep parsing; the key migrates
+to `classes` on the first write.
+
+```
+pai worker classes                          # list
+pai worker classes set implement glm        # pin a provider
+pai worker classes set spotcheck glm/fast   # …its fast model
+pai worker classes set research --max-cost-tier 2 --require-tags long-context
+pai worker classes unset research
+```
+
+Every provider carries a **cost tier** (1 cheapest … 5 most expensive,
+default 3) and **tags** (`code`, `vision`, `image-gen`, `long-context`,
+`fast`, `reasoning`). A class resolves its provider as:
+
+1. `--provider` (explicit flag) wins;
+2. else the class mapping when it pins a provider;
+3. else auto-routing (see below) restricted to providers within the class's
+   `maxCostTier` and carrying all its `requireTags`;
+4. nothing qualifies → the run fails with a message listing why every
+   provider was excluded.
+
+`classes.<name>.order` overrides `routing.order` for that class. Cooldown and
+quota logic is unchanged.
+
+### Preferences from chat
+
+The Worker skill maps phrases onto the MCP tools — the answer is one or two
+lines, and the user is never told to edit a file:
+
+- "use X for image generation" / "route research to kimi" →
+  `worker_classes set <class>=<provider>`
+- "prefer the flash model for simple tasks" / "cheap only for drafts" →
+  `worker_classes set simple|draft=<provider>/fast` (or `max_cost_tier`)
+- "reviews should use a reasoning model" → `worker_classes set review` with
+  `require_tags: ["reasoning"]`
+- "what handles reviews" / "show the routing table" → `worker_classes list`
 
 ## The proxy (OpenAI-protocol providers)
 
@@ -135,6 +188,8 @@ so it is unavailable for codex workers (their thread id is kept, but
 pai worker run --label "fix black buttons" -p '<task spec>' \
   --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json \
   --mcp office
+pai worker run --chain draft,implement -p '<brief>'   # spec-first (below)
+pai worker run --agent engineer -p '<task>'           # agent library (below)
 pai worker ps                    # this session's workers
 pai worker follow [id]           # live transcript (type to talk to it)
 pai worker replay <id>           # transcript of one worker
@@ -145,10 +200,46 @@ pai worker proxy [--port N|stop] # the translating proxy, by hand
 pai worker log [all|tail|<id>]   # raw streams + routing ledger
 ```
 
-Roles pick the provider for a task class: `--role implement|research|spotcheck`.
-`--no-pane` suppresses the iTerm follow pane; `--provider <name>` bypasses
-roles entirely. If you bring your own `--append-system-prompt`, the worker
-contract below is added alongside it, not instead.
+Classes pick the provider for a task class: `--class implement|research|spotcheck|…`
+(`--role` still works as its alias). `--no-pane` suppresses the iTerm follow
+pane; `--provider <name>` bypasses classes entirely. If you bring your own
+`--append-system-prompt`, the worker contract below is added alongside it, not
+instead.
+
+## Chains (draft → implement → review)
+
+```
+pai worker run --chain draft,implement -p '<brief>'
+pai worker run --chain draft,implement,review -p '<brief>'   # + review pass
+```
+
+- The **draft** class turns the brief into a full spec file under
+  `<logDir>/specs/<chain id>.md` — goal, constraints, files likely touched,
+  acceptance checks, verification commands. It reads the repository first and
+  implements nothing.
+- **implement** (or any other stage class) runs with that spec as its prompt
+  and the original brief attached.
+- **review** reads the spec and the working-tree diff and produces the
+  structured report.
+- Each stage is its own worker: own id, own pane, `parent` set to the chain
+  id — `ps` shows the chain as a tree.
+- A stage that fails stops the chain (the exit code is the first failing
+  stage's); a draft that produces no spec stops it with a message telling the
+  caller to write the spec and re-run without the draft stage.
+- `--class` alongside `--chain` overrides the class of every stage; `--label`
+  names the chain (stages render as `<label> · <stage>`).
+
+## Agent definitions as workers
+
+`pai worker run --agent <name>` loads `~/.claude/agents/<name>.md` and runs it
+on a worker: the front matter's `model` maps to a class (haiku→simple,
+sonnet→implement, opus→complex — `--class` overrides), `tools` becomes
+`--allowedTools`, and the body is passed via `--append-system-prompt` (your
+own flags on the command line still win). The label defaults to
+`<agent>: <first 50 chars of prompt>`.
+
+The agent library therefore runs on workers, not on the orchestrator's
+Anthropic account — same hooks, same classes, same `ps`/`follow`/`replay`.
 
 The old habits keep working: `glm`, `glm-run`, `glm-ps`, `glm-log` are shims
 to the pai commands (`pai worker install` moves any previous versions to
@@ -156,13 +247,19 @@ to the pai commands (`pai worker install` moves any previous versions to
 
 ## Routing
 
-A run resolves its provider as: `--provider` > `--role` > `active`.
+A run resolves its provider as: `--provider` > `--class` > `active`.
 
-With `active: "auto"`, providers are tried in `routing.order`, skipping:
+With `active: "auto"`, providers are tried in `routing.order` (or the class's
+own `order`), skipping:
 
 - disabled providers,
 - providers in a cooldown (set for `cooldownMinutes` after a quota failure),
-- providers whose `quotaProbe` URL reports ≥ `quotaSkipAt` (default 95).
+- providers whose `quotaProbe` URL reports ≥ `quotaSkipAt` (default 95),
+- providers above the class's `maxCostTier` or missing one of its
+  `requireTags`.
+
+Nothing qualifying fails the run with the exclusion reason of every provider
+in the order.
 
 A quota failure before the first tool call is re-run on the next provider and
 logged as `WORKER-REROUTE`. `pai worker providers enable <name>` clears a
@@ -213,9 +310,30 @@ stdin closes two seconds later unless another message arrives — after that
 
 `pai worker resume <id> "<text>"` continues the same Claude session (the id
 recorded from the init event) on the same provider, labelled `↩ <original>`,
-and prints a fresh worker id with `--print-id`. A pane running `follow` reads
-its own stdin the same way: type to say while it runs, or to resume after it
-finished.
+and prints a fresh worker id with `--print-id`.
+
+A `follow <id>` pane on a TTY is a chat, not a tail: the transcript lives in
+a scroll region that ends two rows above the pane's bottom, the last two rows
+are fixed — the prompt row (`› `, full readline editing: arrows, backspace,
+Ctrl-A/E, Ctrl-U) and the ticker row — and every transcript line is inserted
+above them with a save-cursor / restore-cursor write, so the cursor never
+leaves the prompt. Enter sends the line: said to the worker while it runs,
+`resume`d into the same session once it has finished (the pane follows the
+fresh run id and keeps the chat). The sent line is echoed into the transcript
+as a `»` row with its time gutter, exactly once — the mirrored `operator`
+event is swallowed. `/help` lists the commands:
+
+| key | action |
+| --- | --- |
+| `/quit` | close the pane |
+| `/resume <text>` | resume the finished worker with `<text>` |
+| `/status` | one-line worker status |
+| anything else | a message — said, or resumed |
+
+Ctrl-C on an empty prompt leaves the pane, on a draft it clears the prompt;
+Ctrl-D leaves. The auto-exit countdown never fires while the prompt holds
+unsent text. Without a TTY (piped output) the pane keeps the plain scrolling
+behaviour — no prompt row, no ticker, stdin still the operator channel.
 
 ### Context meter
 
@@ -239,7 +357,7 @@ pai worker run --mcp office …      # a set, or names: --mcp memory,github
 `--mcp` takes server names and/or `mcpSets` names (comma-separated,
 repeatable); the filtered config is written from `~/.claude.json`'s
 `mcpServers` to `<logDir>/<id>.mcp.json` and passed with
-`--strict-mcp-config --mcp-config`. Role targets may add `"mcp": ["office"]`
+`--strict-mcp-config --mcp-config`. Class targets may add `"mcp": ["office"]`
 on top. An unknown name fails fast, listing what exists;
 `pai worker mcp list` shows servers and sets. A caller-provided
 `--mcp-config` always wins; MCP is chosen at launch, not mid-run.
@@ -262,6 +380,17 @@ separator when the day changes) and, on a TTY, a liveness line
 `⋯ 12s since last event · Bash: npm test` that is overwritten in place and
 erased before the next event. `replay` shows a finished transcript with the
 same gutter.
+
+The pane wraps rows itself at the terminal width (re-read on resize, so a
+narrower pane re-wraps what arrives after the resize): breaks on whitespace
+where it can, hard-wraps a long token otherwise, never splits an ANSI escape
+(it measures printable columns, not string length), and carries diff colours
+onto every continuation row. Each continuation row carries a blank-time
+gutter with the `│` bar kept — the bar runs unbroken down the pane and no
+content ever lands left of it. In the chat layout the transcript scrolls
+inside an ANSI scroll region (`ESC[1;rows-2r`, reset on exit and re-set on
+resize) so the prompt and ticker rows stay fixed; piped output keeps the
+terminal's own wrapping instead.
 
 The pane command is `exec pai worker follow …` so the pane holds exactly one
 process — signals reach the follow directly, and when the worker finishes
@@ -288,12 +417,14 @@ background instead. Decisions are ledgered (`DENIED-ANTHROPIC-AGENT`,
 
 ## MCP tools
 
-`worker_status`, `worker_providers` (list/add/remove/use/enable/disable/test),
-`worker_roles`, `worker_toggle`, `worker_ps`, `worker_replay`,
-`worker_say` (message a running worker), `worker_resume` (continue a
-finished one) — the same library the CLI calls. `worker_providers add`
-accepts a raw `key`, parks it in `~/.config/pai/keys/<name>` (mode 0600) and
-stores only the path.
+`worker_status`, `worker_providers`
+(list/add/update/remove/use/enable/disable/test — `update` changes
+`cost_tier`/`tags`), `worker_classes` (list/set/unset), `worker_run` (start a
+worker or chain from chat, returns the id immediately), `worker_toggle`,
+`worker_ps`, `worker_replay`, `worker_say` (message a running worker),
+`worker_resume` (continue a finished one) — the same library the CLI calls.
+`worker_providers add` accepts a raw `key`, parks it in
+`~/.config/pai/keys/<name>` (mode 0600) and stores only the path.
 
 ## Status line
 

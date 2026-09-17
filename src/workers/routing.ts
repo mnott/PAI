@@ -1,14 +1,17 @@
 /**
- * routing.ts — provider selection: flag > role > active (possibly "auto").
+ * routing.ts — provider selection: flag > class > active (possibly "auto").
  *
- * Auto-routing walks `workers.routing.order` and takes the first provider
- * that is enabled, out of cooldown, and (when it defines a quotaProbe) under
- * its quotaSkipAt threshold. A run that dies of a quota/rate error puts its
- * provider in cooldown for cooldownMinutes; when that happens before the
- * first tool call and retryOnQuota is set, the runner restarts the same task
- * on the next provider (ledger: WORKER-REROUTE).
+ * Auto-routing walks `workers.routing.order` — or the class's own `order` —
+ * and takes the first provider that is enabled, out of cooldown, (when it
+ * defines a quotaProbe) under its quotaSkipAt threshold, and — when the class
+ * constrains it — within `maxCostTier` and carrying all `requireTags`. A run
+ * that dies of a quota/rate error puts its provider in cooldown for
+ * cooldownMinutes; when that happens before the first tool call and
+ * retryOnQuota is set, the runner restarts the same task on the next provider
+ * (ledger: WORKER-REROUTE).
  *
- * An explicit --provider or --role always bypasses all of this.
+ * An explicit --provider or a class mapping that pins a provider always
+ * bypasses all of this.
  */
 
 import { execFileSync } from "node:child_process";
@@ -17,7 +20,10 @@ import { dirname } from "node:path";
 import {
   type WorkerProvider,
   type WorkersConfig,
+  type ProviderTag,
+  WORKER_CLASSES,
   WorkersConfigError,
+  providerCostTier,
 } from "./config.js";
 import { routingStatePath } from "./paths.js";
 
@@ -112,12 +118,12 @@ export function quotaExceeded(provider: WorkerProvider): boolean {
 export interface ResolvedTarget {
   providerName: string;
   provider: WorkerProvider;
-  /** Model alias from the role ("glm/fast" → "fast"), null = provider default. */
+  /** Model alias from the class ("glm/fast" → "fast"), null = provider default. */
   modelAlias: string | null;
-  /** MCP servers (or set names) from the role target, null when it sets none. */
-  roleMcp: string[] | null;
+  /** MCP servers (or set names) from the class target, null when it sets none. */
+  classMcp: string[] | null;
   /** How the provider was chosen — names the bypass rule for rerouting. */
-  via: "flag" | "role" | "active" | "auto";
+  via: "flag" | "class" | "active" | "auto";
 }
 
 export class NoProviderError extends WorkersConfigError {}
@@ -143,45 +149,86 @@ function mustBeRunnable(name: string, p: WorkerProvider): WorkerProvider {
   return p;
 }
 
+/** Why one provider of a routing order did not qualify (message fragment). */
+function exclusionReason(
+  config: WorkersConfig,
+  state: RoutingState,
+  name: string,
+  cls?: { maxCostTier?: number; requireTags?: string[] }
+): string | null {
+  const p = config.providers[name];
+  if (!p) return "not configured";
+  if (!p.enabled) return "disabled";
+  if (cooldownRemaining(state, name) > 0) return "cooldown";
+  if (quotaExceeded(p)) return "quota";
+  const tier = providerCostTier(p);
+  if (cls?.maxCostTier !== undefined && tier > cls.maxCostTier) {
+    return `cost tier ${tier} > max ${cls.maxCostTier}`;
+  }
+  if (cls?.requireTags?.length) {
+    const have = p.tags ?? [];
+    const missing = cls.requireTags.filter((t) => !have.includes(t as ProviderTag));
+    if (missing.length) return `missing tags: ${missing.join(", ")}`;
+  }
+  return null;
+}
+
 /**
  * Resolve which provider (and model alias) a run uses.
  *
  * @param flagProvider --provider value, highest precedence
- * @param role         --role value, looked up in workers.roles
+ * @param className    --class value (the old --role), looked up in workers.classes
  */
 export function resolveTarget(
   config: WorkersConfig,
   logDir: string,
-  opts: { flagProvider?: string; role?: string } = {}
+  opts: { flagProvider?: string; className?: string } = {}
 ): ResolvedTarget {
   if (opts.flagProvider) {
     return {
       providerName: opts.flagProvider,
       provider: mustBeRunnable(opts.flagProvider, mustExist(config, opts.flagProvider)),
       modelAlias: null,
-      roleMcp: null,
+      classMcp: null,
       via: "flag",
     };
   }
 
-  if (opts.role) {
-    const target = config.roles[opts.role];
-    if (!target) {
-      throw new NoProviderError(
-        `no role named "${opts.role}". Defined: ${Object.keys(config.roles).join(", ") || "(none)"}.` +
-          `\nSet one with: pai worker roles set ${opts.role}=<provider[/alias]>`
-      );
-    }
-    const name = typeof target === "string" ? target.split("/")[0] : target.provider;
-    const alias = typeof target === "string" ? target.split("/")[1] : undefined;
-    const roleMcp = typeof target === "string" ? null : target.mcp ?? null;
+  // class constraints (present whether or not the target pins a provider)
+  const clsTarget = opts.className ? config.classes[opts.className] : undefined;
+  const cls =
+    typeof clsTarget === "object" && clsTarget !== null ? clsTarget : undefined;
+
+  if (opts.className && clsTarget !== undefined && typeof clsTarget !== "object") {
+    const [name, alias] = clsTarget.split("/");
     return {
       providerName: name,
       provider: mustBeRunnable(name, mustExist(config, name)),
       modelAlias: alias ?? null,
-      roleMcp,
-      via: "role",
+      classMcp: null,
+      via: "class",
     };
+  }
+  if (opts.className && cls?.provider) {
+    const provider = mustBeRunnable(cls.provider, mustExist(config, cls.provider));
+    return {
+      providerName: cls.provider,
+      provider,
+      modelAlias: null,
+      classMcp: cls.mcp ?? null,
+      via: "class",
+    };
+  }
+  if (opts.className && clsTarget === undefined) {
+    // a standard class may simply be unconfigured (it then routes like a run
+    // without a class); anything else is a typo and must not pass silently
+    if (!(WORKER_CLASSES as readonly string[]).includes(opts.className)) {
+      throw new NoProviderError(
+        `no class named "${opts.className}". Standard classes: ${WORKER_CLASSES.join(", ")}.` +
+          `Defined: ${Object.keys(config.classes).join(", ") || "(none)"}.` +
+          `\nSet one with: pai worker classes set ${opts.className}=<provider[/alias]>`
+      );
+    }
   }
 
   if (config.active !== "auto") {
@@ -197,31 +244,30 @@ export function resolveTarget(
       providerName: name,
       provider: mustBeRunnable(name, mustExist(config, name)),
       modelAlias: null,
-      roleMcp: null,
+      classMcp: null,
       via: "active",
     };
   }
 
-  // auto: first provider in order that is enabled, cooled-down-free, under quota
+  // auto: first provider in (class or global) order that is enabled,
+  // cooled-down-free, under quota and within the class constraints
   const state = readRoutingState(logDir);
-  const skipped: string[] = [];
-  for (const name of config.routing.order) {
+  const order = cls?.order ?? config.routing.order;
+  const excluded: string[] = [];
+  for (const name of order) {
     const p = config.providers[name];
-    if (!p || !p.enabled) continue;
-    if (cooldownRemaining(state, name) > 0) {
-      skipped.push(`${name}(cooldown)`);
+    const why = exclusionReason(config, state, name, cls);
+    if (why) {
+      excluded.push(`${name}: ${why}`);
       continue;
     }
-    if (quotaExceeded(p)) {
-      skipped.push(`${name}(quota)`);
-      continue;
-    }
-    return { providerName: name, provider: p, modelAlias: null, roleMcp: null, via: "auto" };
+    return { providerName: name, provider: p, modelAlias: null, classMcp: cls?.mcp ?? null, via: "auto" };
   }
   throw new NoProviderError(
-    `auto-routing found no usable provider (order: [${config.routing.order.join(", ")}]` +
-      `${skipped.length ? `; skipped: ${skipped.join(", ")}` : ""}).` +
-      `\nClear a cooldown with: pai worker providers enable <name>`
+    `auto-routing found no usable provider${opts.className ? ` for class "${opts.className}"` : ""} ` +
+      `(order: [${order.join(", ")}]).` +
+      `${excluded.length ? `\nExcluded: ${excluded.join("; ")}.` : ""}` +
+      `\nClear a cooldown with: pai worker providers enable <name>; widen the class with: pai worker classes set ${opts.className ?? "<class>"}=<target>`
   );
 }
 

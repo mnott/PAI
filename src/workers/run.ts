@@ -72,7 +72,8 @@ import {
 
 export interface RunOptions {
   providerFlag?: string;
-  role?: string;
+  /** --class value (the old --role): a task class from workers.classes. */
+  className?: string;
   modelFlag?: string;
   label?: string;
   noPane?: boolean;
@@ -80,6 +81,14 @@ export interface RunOptions {
   mcpFlag?: string;
   /** Everything after `--` (the claude args). */
   claudeArgs: string[];
+  /** Working directory for the run (default: this process's cwd). */
+  cwd?: string;
+  /** Chain stage bookkeeping: the chain id this stage belongs to. */
+  parent?: string;
+  /** Chain stage bookkeeping: the class name of this stage. */
+  stage?: string;
+  /** Suppress result printing (MCP worker_run: its stdout is the RPC channel). */
+  quiet?: boolean;
   /** Internal: notified with the worker id once it exists (resume uses it). */
   onWorkerStart?: (wid: string) => void;
   /** Internal: suppress recursion depth on reroute. */
@@ -143,9 +152,19 @@ export function stdinUserMessage(text: string): string {
   return JSON.stringify({ type: "user", message: { role: "user", content: text } });
 }
 
-/** ISO stamp with seconds, attached to every mirrored event (2g). */
-function isoStamp(d = new Date()): string {
-  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+/**
+ * ISO stamp with seconds, attached to every mirrored event (2g): local time
+ * with its offset (`2026-09-17T14:19:23+02:00`), so the viewer can render the
+ * wall clock the operator lives in. `offMin` is east-positive minutes —
+ * injectable so tests do not depend on the machine's zone.
+ */
+export function isoStamp(d = new Date(), offMin = -d.getTimezoneOffset()): string {
+  const t = new Date(d.getTime() + offMin * 60_000);
+  const sign = offMin < 0 ? "-" : "+";
+  const abs = Math.abs(offMin);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+  return `${t.toISOString().slice(0, 19)}${sign}${hh}:${mm}`;
 }
 
 export interface UsageBlock {
@@ -214,7 +233,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
 
   const target = resolveTarget(config, logDir, {
     flagProvider: opts.providerFlag,
-    role: opts.role,
+    className: opts.className,
   });
   assertProviderRunnable(target.providerName, target.provider);
 
@@ -240,6 +259,10 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         noPane: opts.noPane ?? false,
+        cwd: opts.cwd,
+        parent: opts.parent,
+        stage: opts.stage,
+        quiet: opts.quiet,
         onWorkerStart: opts.onWorkerStart,
       });
     }
@@ -253,6 +276,10 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       claudeArgs: opts.claudeArgs,
       noPane: opts.noPane ?? false,
       mcpFlag: opts.mcpFlag,
+      cwd: opts.cwd,
+      parent: opts.parent,
+      stage: opts.stage,
+      quiet: opts.quiet,
       onWorkerStart: opts.onWorkerStart,
       reroutes: opts._reroutes ?? 0,
     });
@@ -277,6 +304,10 @@ interface ExecuteArgs {
   claudeArgs: string[];
   noPane: boolean;
   mcpFlag?: string;
+  cwd?: string;
+  parent?: string;
+  stage?: string;
+  quiet?: boolean;
   onWorkerStart?: (wid: string) => void;
   reroutes: number;
 }
@@ -294,7 +325,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const env = buildRunEnv(target.provider, headless, proxyUrl);
 
   const wid = newWorkerId();
-  const cwd = process.cwd();
+  const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
 
@@ -316,6 +347,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     secs: null,
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
+    ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -340,7 +372,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     const wanted = [
       ...(a.mcpFlag ? [a.mcpFlag] : []),
       ...parsed.mcp,
-      ...(target.roleMcp ?? []),
+      ...(target.classMcp ?? []),
     ];
     if (wanted.length) {
       const names = expandMcpNames(wanted, config); // unknown names fail fast
@@ -534,7 +566,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     label,
   });
 
-  if (headless) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport);
+  if (headless && !a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport);
 
   // Quota reroute: only auto-routed runs, dead before the first tool call.
   const resultText = resultEvent?.result ?? "";
@@ -560,6 +592,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         label,
         noPane: a.noPane,
         mcpFlag: a.mcpFlag,
+        cwd: a.cwd,
+        parent: a.parent,
+        stage: a.stage,
         claudeArgs: a.claudeArgs,
         onWorkerStart: a.onWorkerStart,
         _reroutes: a.reroutes + 1,
@@ -586,7 +621,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
   const env = buildCodexEnv(target.provider);
   const wid = newWorkerId();
-  const cwd = process.cwd();
+  const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
 
@@ -608,6 +643,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     secs: null,
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
+    ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -723,7 +759,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     label,
   });
 
-  printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report);
+  if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report);
   return rc !== 0 ? rc : ok ? 0 : 1;
 }
 
