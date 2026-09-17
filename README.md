@@ -84,6 +84,8 @@ Browse the same pages on GitHub under [`docs/commands/`](docs/commands/README.md
 
 ## Worker Providers — Run the Fleet Anywhere
 
+**Read the story: [Provider Independence — how I freed my stack from a single vendor in one day](docs/provider-independence.md).**
+
 Only the outer orchestrator session runs on Anthropic. Every worker PAI spawns — research, drafting, implementation, review, spotchecks — runs on a managed provider you choose. The same provider layer carries the daemon's background calls and the session picker, so the whole stack moves together.
 
 ### Why
