@@ -5,6 +5,9 @@
  */
 
 import { indexAll } from "../../memory/indexer.js";
+import { readWorkersSection } from "../../workers/config.js";
+import { workersLogDir } from "../../workers/paths.js";
+import { runSupervisionTick, stallMinutesFromEnv } from "../../workers/supervision.js";
 import type { SQLiteBackendWithDb } from "./types.js";
 import {
   registryDb,
@@ -418,4 +421,62 @@ export function startRegistryScanScheduler(): void {
   }, REGISTRY_SCAN_INTERVAL_MS);
 
   if (timer.unref) timer.unref();
+}
+
+// ---------------------------------------------------------------------------
+// Worker supervision scheduler
+// ---------------------------------------------------------------------------
+
+/** How often the daemon looks at the worker ledger for supervision events. */
+const SUPERVISION_TICK_MS = 30_000;
+
+/** First supervision pass waits for the first statuses to exist at all. */
+const SUPERVISION_STARTUP_DELAY_MS = 15_000;
+
+/**
+ * Start the worker supervisor: one tick every 30 s over the workers ledger
+ * (src/workers/supervision.ts) that pushes finished/failed/stalled events to
+ * the owning session — the daemon-side replacement for orchestrator polling.
+ * Daemon code only: no model call has any business being here, and none is
+ * made. Disabled workers disable the supervisor with it.
+ */
+export function startWorkerSupervisor(): void {
+  let enabled = false;
+  try {
+    enabled = readWorkersSection().workers.enabled;
+  } catch (e) {
+    process.stderr.write(
+      `[pai-daemon] Worker supervisor: not started (${e instanceof Error ? e.message : String(e)})\n`
+    );
+    return;
+  }
+  if (!enabled) {
+    process.stderr.write("[pai-daemon] Worker supervisor: disabled (workers are off)\n");
+    return;
+  }
+
+  const tick = () => {
+    runSupervisionTick(workersLogDir(readWorkersSection().workers), {
+      stallMs: stallMinutesFromEnv() * 60_000,
+    })
+      .then((r) => {
+        for (const ev of r.events) {
+          process.stderr.write(`[pai-daemon] Supervision: ${ev.text}\n`);
+        }
+      })
+      .catch((e) => {
+        // a broken tick must never take the daemon down with it
+        process.stderr.write(
+          `[pai-daemon] Supervision tick error: ${e instanceof Error ? e.message : String(e)}\n`
+        );
+      });
+  };
+
+  const first = setTimeout(tick, SUPERVISION_STARTUP_DELAY_MS);
+  if (first.unref) first.unref();
+  const timer = setInterval(tick, SUPERVISION_TICK_MS);
+  if (timer.unref) timer.unref();
+  process.stderr.write(
+    `[pai-daemon] Worker supervisor: every ${Math.round(SUPERVISION_TICK_MS / 1000)}s\n`
+  );
 }

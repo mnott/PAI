@@ -37,6 +37,9 @@ pai worker run --label "short task label" --class research \\
   call \`pai worker wait <id...>\` which blocks until they finish and prints
   each result as one JSON line. If you catch yourself sleeping to re-check a
   worker, stop — you already get notified.
+- Supervision events arrive automatically — no polling, no sleeps: the PAI
+  daemon watches your workers and tells you when one finishes, fails or
+  stalls (details: docs/worker.md, "Supervision").
 
 ### Watching
 

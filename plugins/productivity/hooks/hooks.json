@@ -12,6 +12,11 @@
       "event": "UserPromptSubmit",
       "command": "${PAI_DIR}/Hooks/cleanup-session-files.mjs",
       "description": "Clean up stale temp files between user prompts"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "${PAI_DIR}/Hooks/worker-supervision.mjs",
+      "description": "Surface daemon worker supervision events (finished/failed/stalled) for this session's workers"
     }
   ]
 }
