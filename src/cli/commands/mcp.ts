@@ -4,9 +4,8 @@
  * install  — Register the PAI MCP servers in ~/.claude.json
  * status   — Show whether the PAI MCP servers are registered and the binaries exist
  *
- * Two servers are managed: `pai` (memory/project tools, dist/mcp/index.mjs)
- * and `pai-browser` (real-Chrome bridge tools, dist/browser-mcp/index.mjs).
- * Registration is idempotent per server: an already-present entry is skipped
+ * One server is managed: `pai` (memory/project tools, dist/mcp/index.mjs).
+ * Registration is idempotent: an already-present entry is skipped
  * with a note, a missing one is added.
  */
 
@@ -50,12 +49,6 @@ const SERVERS: McpServerSpec[] = [
     entry: "mcp/index.mjs",
     label: "PAI MCP server",
     tools: "memory_search, memory_get, project_info, project_list, session_list, registry_search",
-  },
-  {
-    name: "pai-browser",
-    entry: "browser-mcp/index.mjs",
-    label: "PAI browser MCP server",
-    tools: "tabs_list, tab_open, tab_select, tab_close, dom_snapshot, dom_click, dom_type, page_text, eval_js, tab_screenshot, console_logs",
   },
 ];
 
@@ -174,7 +167,7 @@ export function registerMcpCommands(mcpCmd: Command): void {
   mcpCmd
     .command("install")
     .description(
-      "Register the PAI MCP servers (pai, pai-browser) in ~/.claude.json (restart Claude Code to activate)"
+      "Register the PAI MCP server (pai) in ~/.claude.json (restart Claude Code to activate)"
     )
     .action(() => {
       cmdInstall();
@@ -183,7 +176,7 @@ export function registerMcpCommands(mcpCmd: Command): void {
   mcpCmd
     .command("status")
     .description(
-      "Show whether the PAI MCP servers (pai, pai-browser) are registered and the binaries exist"
+      "Show whether the PAI MCP server (pai) is registered and the binary exists"
     )
     .action(() => {
       cmdStatus();
