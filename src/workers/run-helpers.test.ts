@@ -176,6 +176,19 @@ describe("parseRunnerArgs", () => {
     ]);
   });
 
+  it("collects --allowedTools grants without dropping them from the tail", () => {
+    const p = parseRunnerArgs([
+      "--allowedTools",
+      "Bash,mcp__clickr__check_permissions",
+      "--allowedTools=mcp__memory",
+      "-p",
+      "t",
+    ]);
+    expect(p.allowedTools).toEqual(["Bash,mcp__clickr__check_permissions", "mcp__memory"]);
+    expect(p.rest).toContain("--allowedTools");
+    expect(p.rest).toContain("Bash,mcp__clickr__check_permissions");
+  });
+
   it("notes caller overrides it must not clobber", () => {
     const p = parseRunnerArgs([
       "--model",
@@ -199,6 +212,7 @@ describe("parseRunnerArgs", () => {
     expect(p.callerMcpConfig).toBe(false);
     expect(p.callerSystemPrompt).toBe(false);
     expect(p.mcp).toEqual([]);
+    expect(p.allowedTools).toEqual([]);
   });
 });
 

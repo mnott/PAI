@@ -5,10 +5,11 @@
  * prompt (for the default label), the requested --output-format (so the final
  * print matches what plain `claude -p` would have produced), whether the
  * caller already chose a --model or an --mcp-config (both suppress the
- * defaults the runner would otherwise force), any --mcp allowlist names, and
- * whether they appended their own system prompt (the worker contract is then
- * added alongside, not instead). Everything is passed through untouched — the
- * runner never rewrites the caller's task.
+ * defaults the runner would otherwise force), any --mcp allowlist names, any
+ * --allowedTools grants (their mcp__server__… entries decide which servers
+ * load), and whether they appended their own system prompt (the worker
+ * contract is then added alongside, not instead). Everything is passed
+ * through untouched — the runner never rewrites the caller's task.
  */
 
 export interface ParsedRunnerArgs {
@@ -28,6 +29,8 @@ export interface ParsedRunnerArgs {
   callerSystemPrompt: boolean;
   /** --mcp values (repeatable, comma-separated inside one flag). */
   mcp: string[];
+  /** --allowedTools values (repeatable, comma-separated inside one flag). */
+  allowedTools: string[];
 }
 
 export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
@@ -39,6 +42,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
   let callerMcpConfig = false;
   let callerSystemPrompt = false;
   const mcp: string[] = [];
+  const allowedTools: string[] = [];
 
   let i = 0;
   while (i < argv.length) {
@@ -68,6 +72,18 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
       }
     } else if (a.startsWith("--mcp=")) {
       mcp.push(a.slice("--mcp=".length));
+    } else if (a === "--allowedTools") {
+      // captured for the MCP derivation, but still claude's flag: it passes through
+      rest.push(a);
+      const v = argv[i + 1];
+      if (v !== undefined && !v.startsWith("-")) {
+        allowedTools.push(v);
+        rest.push(v);
+        i += 1;
+      }
+    } else if (a.startsWith("--allowedTools=")) {
+      allowedTools.push(a.slice("--allowedTools=".length));
+      rest.push(a);
     } else {
       if (a === "--model") callerModel = true;
       if (a.startsWith("--model=")) callerModel = true;
@@ -86,7 +102,17 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
     i += 1;
   }
 
-  return { prompt, outputFormat, rest, headless, callerModel, callerMcpConfig, callerSystemPrompt, mcp };
+  return {
+    prompt,
+    outputFormat,
+    rest,
+    headless,
+    callerModel,
+    callerMcpConfig,
+    callerSystemPrompt,
+    mcp,
+    allowedTools,
+  };
 }
 
 /**
