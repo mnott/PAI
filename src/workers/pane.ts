@@ -2,11 +2,13 @@
  * pane.ts — the per-worker follow pane in iTerm2.
  *
  * One small-font pane per worker, stacked in a right-hand column: the first
- * worker of a scope splits the launching session vertically (right, ~40% of
- * the columns), every further one splits the lowest live worker pane
- * horizontally, so panes stack top to bottom. Each pane runs
- * `pai worker follow <id> --auto-exit <n>` under the `pai-worker` dynamic
- * profile (Close Sessions On End), so panes disappear by themselves.
+ * worker of a scope splits the launching session vertically, every further
+ * one splits the lowest live worker pane horizontally, so panes stack top to
+ * bottom. The split never sizes the new session — that would grow the whole
+ * window; instead the window's bounds are read before the split and restored
+ * right after, so the panes share the space the window already had. Each
+ * pane runs `pai worker follow <id> --auto-exit <n>` under the `pai-worker`
+ * dynamic profile (Close Sessions On End), so panes disappear by themselves.
  *
  * Panes are tracked per scope (AIBroker session id, else tab key) in
  * <logDir>/panes/<key>.json, keyed by iTerm session unique id, newest first —
@@ -58,7 +60,8 @@ export function dynamicProfilePath(): string {
 
 // One pane per worker: split the launching session vertically, or the lowest
 // live candidate horizontally. Returns "<live ids>,|<new session id>".
-const WORKER_SPLIT_SCRIPT = `on run(argv)
+// Exported for the script-content tests (window size, argv-only arguments).
+export const WORKER_SPLIT_SCRIPT = `on run(argv)
     set targetID to item 1 of argv
     set candList to item 2 of argv
     set followCmd to item 3 of argv
@@ -69,10 +72,14 @@ const WORKER_SPLIT_SCRIPT = `on run(argv)
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if id of s is targetID then
-                        set parentCols to missing value
-                        try
-                            set parentCols to columns of s
-                        end try
+                        -- sizing the new session would grow the whole window:
+                        -- pin the window's bounds now and restore them after
+                        -- the split, so the panes share the existing space.
+                        -- copy, never set: set stores the property
+                        -- reference lazily, so restoring it would re-read the
+                        -- post-split bounds instead of these — observed as the
+                        -- window jumping to the main display
+                        copy bounds of w to winBounds
                         set sessIDs to {}
                         repeat with other in sessions of t
                             set end of sessIDs to (id of other as text)
@@ -112,13 +119,9 @@ const WORKER_SPLIT_SCRIPT = `on run(argv)
                         tell newS
                             write text followCmd
                         end tell
-                        if splitS is missing value and parentCols is not missing value then
-                            try
-                                tell newS
-                                    set columns to (round (parentCols * 0.4))
-                                end tell
-                            end try
-                        end if
+                        try
+                            set bounds of w to winBounds
+                        end try
                         set out to ""
                         repeat with lid in lived
                             set out to out & lid & ","
@@ -158,6 +161,31 @@ const TAB_TTYS_SCRIPT = `on run(argv)
                             copy (tty of other) to end of ttys
                         end repeat
                         return ttys
+                    end if
+                end repeat
+            end repeat
+        end repeat
+    end tell
+    return "notfound"
+end run`;
+
+// Bounds (x1, y1, x2, y2, comma-joined) of the window hosting one iTerm
+// session — read-only, for `pai worker pane <id> --check`. Exported for the
+// script-content tests (reads bounds, never sets them).
+export const WINDOW_BOUNDS_SCRIPT = `on run(argv)
+    set targetID to item 1 of argv
+    tell application id "com.googlecode.iterm2"
+        if not running then return "notrunning"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if id of s is targetID then
+                        copy bounds of w to winBounds
+                        set prevDels to AppleScript's text item delimiters
+                        set AppleScript's text item delimiters to ", "
+                        set out to winBounds as text
+                        set AppleScript's text item delimiters to prevDels
+                        return out
                     end if
                 end repeat
             end repeat
@@ -490,12 +518,36 @@ export async function openPaneForWorker(
 }
 
 /**
- * Report-only variant used by `pai worker pane <id> --check`: whether a pane
- * runs for the worker, plus the dynamic profile's path, its existence, and
- * the font it contains (or, when missing, would write).
+ * One `--check` line with the bounds of the window hosting `term`'s iTerm
+ * session — the before/after pair that shows whether a split moved it.
+ * Read-only; never touches the window.
  */
-export async function checkPaneForWorker(wid: string, fontSize: number): Promise<string> {
+async function windowBoundsLine(term: string): Promise<string> {
+  const uid = itermUuid(term);
+  if (!uid) return "window bounds: (not in iTerm2)";
+  try {
+    const p = await osascript(WINDOW_BOUNDS_SCRIPT, [uid]);
+    const out = p.stdout.trim();
+    if (out && out !== "notfound" && out !== "notrunning") return `window bounds: ${out}`;
+    const why =
+      out === "notfound" ? "iTerm2 session not found"
+      : out === "notrunning" ? "iTerm2 not running"
+      : (p.stderr.trim() || "no output").slice(0, 120);
+    return `window bounds: (${why})`;
+  } catch (e) {
+    return `window bounds: (osascript: ${String((e as Error).message ?? e).slice(0, 120)})`;
+  }
+}
+
+/**
+ * Report-only variant used by `pai worker pane <id> --check`: whether a pane
+ * runs for the worker, the bounds of the window hosting the asking session,
+ * plus the dynamic profile's path, its existence, and the font it contains
+ * (or, when missing, would write).
+ */
+export async function checkPaneForWorker(wid: string, fontSize: number, term: string): Promise<string> {
   const lines = [workerPaneOpen(wid) ? `pane for ${wid} open` : `no pane for ${wid}`];
+  lines.push(await windowBoundsLine(term));
   const path = dynamicProfilePath();
   if (existsSync(path)) {
     let font = "(unreadable)";

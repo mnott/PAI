@@ -44,6 +44,10 @@ export interface WorkerStatus {
   contextTokens?: number | null;
   /** Context meter: window size (init model info or provider default). */
   contextWindow?: number | null;
+  /** Chain this stage belongs to (the chain id), when it is a chain stage. */
+  parent?: string;
+  /** Class name of the chain stage ("draft", "implement", …). */
+  stage?: string;
 }
 
 /** Context-meter percentage 0–100, null when the numbers are missing. */
@@ -61,9 +65,21 @@ export function nowStamp(d: Date = new Date()): string {
   );
 }
 
+// second-resolution ids repeat when two workers/chains start together in one
+// process; a repeat gets a monotonic suffix so files never collide
+let lastId = "";
+let idSeq = 0;
+
 export function newWorkerId(d: Date = new Date(), pid = process.pid): string {
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${pid}`;
+  const base = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${pid}`;
+  if (base === lastId) {
+    idSeq += 1;
+    return `${base}-${String(idSeq).padStart(2, "0")}`;
+  }
+  lastId = base;
+  idSeq = 0;
+  return base;
 }
 
 /** Write status atomically (temp + rename) and stamp `updated`. */

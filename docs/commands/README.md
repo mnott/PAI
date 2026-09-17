@@ -190,6 +190,10 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai topic check <context>` | Check whether context text has drifted to a different project. |
 | `pai update` | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |
 | `pai worker` | Run subagents on configured worker providers: run, ps, follow, replay, |
+| `pai worker classes` | Classes: which provider serves draft / implement / review / … |
+| `pai worker classes list` | List classes and their targets (default action) |
+| `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |
+| `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
 | `pai worker follow [id]` | Live transcript of one worker, or of this session's running workers |
 | `pai worker install` | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | `pai worker log [what]` | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
@@ -198,20 +202,17 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
 | `pai worker pane [id]` | Open the follow pane for a worker (or one shared pane for this session) |
 | `pai worker providers` | Providers: list (default), add, remove, use, enable, disable, test |
-| `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds roles. |
+| `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds classes. |
 | `pai worker providers disable <name>` | Disable a provider (auto-routing skips it; --provider still works) |
 | `pai worker providers enable <name>` | Enable a provider (also clears its cooldown) |
-| `pai worker providers remove <name>` | Remove a provider and any roles pointing at it |
+| `pai worker providers remove <name>` | Remove a provider and any classes pointing at it |
 | `pai worker providers test [name]` | One-word pong probe through a provider (default: the active one) |
-| `pai worker providers use <name>` | Make this provider the active one for runs without --provider/--role |
+| `pai worker providers update <name>` | Change cost tier and tags of a provider (routing constraints use these) |
+| `pai worker providers use <name>` | Make this provider the active one for runs without --provider/--class |
 | `pai worker proxy [stop]` | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
 | `pai worker ps` | List workers of this session (RUNNING + FINISHED); --all for every worker |
 | `pai worker replay <id>` | Print the transcript of one finished or running worker |
 | `pai worker resume <id> <text>` | Continue a finished worker on the same provider: claude --resume <session> |
-| `pai worker roles` | Roles: which provider serves implement / research / spotcheck |
-| `pai worker roles list` | List roles and their providers (default action) |
-| `pai worker roles set <role> <provider[/alias]>` | Point a role at a provider, optionally its fast model (e.g. glm/fast) |
-| `pai worker roles unset <role>` | Remove a role (runs then use the active provider) |
 | `pai worker run [args...]` | Run one claude-code worker through the configured provider. |
 | `pai worker say <id> <text>` | Send one message to a running worker (forwarded to its open stdin) |
 | `pai worker status-line [term] [cwd]` | One-line worker summary for a status bar (empty when none in scope). |

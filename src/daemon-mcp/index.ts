@@ -71,15 +71,18 @@ import { workersLogDir, ledgerPath } from "../workers/paths.js";
 import { ledgerSummary } from "../workers/ledger.js";
 import {
   addProvider,
+  classTargetText,
   describeProviders,
   removeProvider,
+  setClass,
   setProviderEnabled,
-  setRole,
   setWorkersEnabled,
-  unsetRole,
+  unsetClass,
+  updateProvider,
   useProvider,
 } from "../workers/providers.js";
 import { testProvider, runWorker } from "../workers/run.js";
+import { runChain } from "../workers/chain.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus } from "../workers/status.js";
 import { sayToWorker } from "../workers/operator.js";
@@ -832,20 +835,21 @@ async function startShim(): Promise<void> {
   server.tool(
     "worker_providers",
     [
-      "Manage worker providers (list, add, remove, use, enable, disable, test).",
+      "Manage worker providers (list, add, update, remove, use, enable, disable, test).",
       "",
-      "action=list (default) shows providers, roles and routing.",
+      "action=list (default) shows providers (with cost tier and tags), classes and routing.",
       "action=add needs name, model — and either key_file or key, plus:",
       "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
       "  through the local PAI proxy). A raw key is written to",
       "  ~/.config/pai/keys/<name> (mode 0600); only the path lands in the config.",
       "  engine=codex runs the Codex CLI instead of Claude Code.",
+      "action=update changes cost_tier / tags of an existing provider.",
       "action=test runs a one-word pong probe through the provider",
       "  (reports 'codex not installed' when that engine's CLI is missing).",
     ].join("\n"),
     {
       action: z
-        .enum(["list", "add", "remove", "use", "enable", "disable", "test"])
+        .enum(["list", "add", "update", "remove", "use", "enable", "disable", "test"])
         .optional()
         .describe("Default: list."),
       name: z.string().optional().describe("Provider name (required for every action but list)."),
@@ -861,6 +865,8 @@ async function startShim(): Promise<void> {
       env: z.record(z.string(), z.string()).optional().describe("Extra env for runs (add, optional)."),
       note: z.string().optional().describe("Human note shown in listings (add, optional)."),
       quota_probe: z.string().optional().describe("URL whose JSON first number is the quota percent (add, optional)."),
+      cost_tier: z.number().int().min(1).max(5).optional().describe("Cost tier 1 (cheapest) … 5 (most expensive). Default 3. (add, update)"),
+      tags: z.array(z.enum(["code", "vision", "image-gen", "long-context", "fast", "reasoning"])).optional().describe("Capability tags (add, update)."),
     },
     async (args) => {
       try {
@@ -869,6 +875,18 @@ async function startShim(): Promise<void> {
           return workerText(describeProviders(readWorkersSection().workers).join("\n"));
         }
         if (!args.name) return workerError(new Error("name is required for this action"));
+        if (action === "update") {
+          if (args.cost_tier === undefined && args.tags === undefined) {
+            return workerError(new Error("update needs cost_tier and/or tags"));
+          }
+          updateProvider(args.name, {
+            ...(args.cost_tier !== undefined ? { costTier: args.cost_tier } : {}),
+            ...(args.tags !== undefined ? { tags: args.tags } : {}),
+          });
+          return workerText(
+            [`provider ${args.name} updated`, ...describeProviders(readWorkersSection().workers)].join("\n")
+          );
+        }
         if (action === "add") {
           if (!args.model) return workerError(new Error("add needs model"));
           if (args.protocol !== "openai" && !args.base_url) {
@@ -888,6 +906,8 @@ async function startShim(): Promise<void> {
             ...(args.engine ? { engine: args.engine } : {}),
             ...(args.context_window ? { contextWindow: args.context_window } : {}),
             ...(args.quota_probe ? { quotaProbe: args.quota_probe } : {}),
+            ...(args.cost_tier !== undefined ? { costTier: args.cost_tier } : {}),
+            ...(args.tags?.length ? { tags: args.tags } : {}),
           });
           return workerText(
             [`provider ${args.name} added; active: ${workers.active ?? "(none)"}; workers ${workers.enabled ? "on" : "off"}`, ...describeProviders(workers)].join("\n")
@@ -925,43 +945,134 @@ async function startShim(): Promise<void> {
   );
 
   server.tool(
-    "worker_roles",
+    "worker_classes",
     [
-      "Manage worker roles (list, set, unset).",
+      "Manage worker classes (list, set, unset).",
       "",
-      "A role maps a task class to a provider, optionally its fast model:",
+      "A class maps a task class to a provider, optionally its fast model:",
       "implement=glm, research=glm, spotcheck=glm/fast.",
-      "Runs pick the provider via --role first, then the active provider.",
+      "set can instead give routing constraints only (max_cost_tier,",
+      "require_tags) — auto-routing then picks a qualifying provider.",
+      "Runs pick the provider via --class first, then the active provider.",
     ].join("\n"),
     {
       action: z.enum(["list", "set", "unset"]).optional().describe("Default: list."),
-      role: z.string().optional().describe("Role name (set/unset)."),
+      class: z.string().optional().describe("Class name (set/unset), e.g. implement, spotcheck."),
       target: z.string().optional().describe("Provider or provider/fast (set)."),
+      max_cost_tier: z.number().int().min(1).max(5).optional().describe("Auto-routing considers only providers up to this cost tier (set)."),
+      require_tags: z.array(z.enum(["code", "vision", "image-gen", "long-context", "fast", "reasoning"])).optional().describe("Auto-routing needs these tags (set)."),
     },
     async (args) => {
       try {
         const action = args.action ?? "list";
         if (action === "list") {
           const { workers } = readWorkersSection();
-          const entries = Object.entries(workers.roles);
-          const text = (t: unknown) =>
-            typeof t === "string"
-              ? t
-              : typeof t === "object" && t !== null
-                ? `${(t as { provider?: string }).provider ?? "?"}${(t as { mcp?: string[] }).mcp?.length ? ` +mcp(${(t as { mcp?: string[] }).mcp!.join(",")})` : ""}`
-                : String(t);
+          const entries = Object.entries(workers.classes);
           return workerText(
-            entries.length ? entries.map(([r, t]) => `${r}: ${text(t)}`).join("\n") : "no roles set"
+            entries.length
+              ? entries.map(([cls, t]) => `${cls}: ${classTargetText(t)}`).join("\n")
+              : "no classes set"
           );
         }
-        if (!args.role) return workerError(new Error("role is required for this action"));
+        if (!args.class) return workerError(new Error("class is required for this action"));
         if (action === "set") {
-          if (!args.target) return workerError(new Error("set needs target provider[/fast]"));
-          setRole(args.role, args.target);
-          return workerText(`role ${args.role} → ${args.target}`);
+          const hasConstraints = args.max_cost_tier !== undefined || args.require_tags !== undefined;
+          if (!args.target && !hasConstraints) {
+            return workerError(new Error("set needs target provider[/fast] and/or max_cost_tier/require_tags"));
+          }
+          const target =
+            args.target !== undefined && !hasConstraints
+              ? args.target
+              : {
+                  ...(args.target ? { provider: args.target.split("/")[0] } : {}),
+                  ...(args.max_cost_tier !== undefined ? { maxCostTier: args.max_cost_tier } : {}),
+                  ...(args.require_tags !== undefined ? { requireTags: args.require_tags } : {}),
+                };
+          setClass(args.class, target);
+          return workerText(`class ${args.class} → ${classTargetText(target)}`);
         }
-        unsetRole(args.role);
-        return workerText(`role ${args.role} removed`);
+        unsetClass(args.class);
+        return workerText(`class ${args.class} removed`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_run",
+    [
+      "Start a worker (or a chain) and return its id immediately.",
+      "",
+      "This is the chat-side face of `pai worker run`: prompt is required,",
+      "chain (e.g. \"draft,implement\") runs spec-first stages, class picks the",
+      "provider (default: active). Check on it with worker_ps / worker_replay,",
+      "talk to it with worker_say.",
+    ].join("\n"),
+    {
+      prompt: z.string().min(1).describe("The task (the -p value)."),
+      chain: z.string().optional().describe("Comma-separated stages, e.g. draft,implement or draft,implement,review."),
+      class: z.string().optional().describe("Task class (draft, implement, review, research, spotcheck, simple, complex, image)."),
+      label: z.string().optional().describe("Short task label shown in worker_ps."),
+      cwd: z.string().optional().describe("Working directory (default: here)."),
+      allowed_tools: z.string().optional().describe("Comma-separated tool allowlist passed to the worker."),
+      mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
+    },
+    async (args) => {
+      try {
+        const claudeArgs = [
+          "-p", args.prompt,
+          ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
+        ];
+        // the id resolves the moment the worker (or chain) exists; config
+        // errors surface through the same channel as an empty id
+        let startedIdResolve!: (id: string) => void;
+        let startupFailure: unknown = null;
+        const idArrived = new Promise<string>((resolve) => {
+          startedIdResolve = resolve;
+        });
+        const background = async (): Promise<number> => {
+          if (args.chain) {
+            return runChain({
+              stages: args.chain.split(","),
+              className: args.class,
+              label: args.label,
+              noPane: false,
+              mcpFlag: args.mcp,
+              brief: args.prompt,
+              claudeArgs,
+              ...(args.cwd ? { cwd: args.cwd } : {}),
+              onChainStart: (id) => startedIdResolve(id),
+              quiet: true,
+            });
+          }
+          return runWorker({
+            className: args.class,
+            label: args.label,
+            noPane: false,
+            mcpFlag: args.mcp,
+            claudeArgs,
+            ...(args.cwd ? { cwd: args.cwd } : {}),
+            onWorkerStart: (wid) => startedIdResolve(wid),
+            quiet: true,
+          });
+        };
+        background().catch((e) => {
+          startupFailure = e;
+          startedIdResolve("");
+        });
+        const id = await Promise.race([
+          idArrived,
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error("worker did not start within 15s")), 15_000)
+          ),
+        ]);
+        if (!id) {
+          return workerError(startupFailure ?? new Error("worker failed to start"));
+        }
+        return workerText(
+          `${id} started${args.chain ? ` (chain: ${args.chain})` : ""} — check on it with worker_ps, worker_replay, worker_say`
+        );
       } catch (e) {
         return workerError(e);
       }

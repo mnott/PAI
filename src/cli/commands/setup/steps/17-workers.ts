@@ -32,7 +32,7 @@ export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
     line();
     console.log(c.ok("Skipping worker providers."));
     console.log(c.dim("  Add later: pai worker providers add <name> … — see docs/worker.md"));
-    return { workers: { enabled: false, providers: {}, roles: {} } };
+    return { workers: { enabled: false, providers: {}, classes: {} } };
   }
 
   line();
@@ -44,10 +44,10 @@ export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
   line(c.dim("      --key-file ~/.config/example/api_key \\"));
   line(c.dim("      --model example-4.7 --fast-model example-4.7-flash"));
   line();
-  line("  The first provider turns workers on and seeds the roles.");
+  line("  The first provider turns workers on and seeds the classes.");
   line();
 
   const r = installWorkers();
   for (const l of r.lines) line(`  ${l}`);
-  return { workers: { enabled: false, providers: {}, roles: {} } };
+  return { workers: { enabled: false, providers: {}, classes: {} } };
 }

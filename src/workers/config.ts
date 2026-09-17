@@ -62,6 +62,10 @@ export interface WorkerProvider {
   quotaSkipAt?: number;
   /** Context window of the provider's model, for the context meter. Default 200000. */
   contextWindow?: number;
+  /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
+  costTier?: number;
+  /** Capability tags; classes filter auto-routing via requireTags. */
+  tags?: ProviderTag[];
 }
 
 export interface WorkersPaneConfig {
@@ -81,20 +85,64 @@ export interface WorkersRoutingConfig {
   retryOnQuota: boolean;
 }
 
+/** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
+export type CostTier = 1 | 2 | 3 | 4 | 5;
+
+export const DEFAULT_COST_TIER = 3;
+
+/** Tags a provider may carry; classes filter auto-routing on them. */
+export const PROVIDER_TAGS = [
+  "code",
+  "vision",
+  "image-gen",
+  "long-context",
+  "fast",
+  "reasoning",
+] as const;
+
+export type ProviderTag = (typeof PROVIDER_TAGS)[number];
+
+/** The standard task classes; `workers.classes` maps each to a target. */
+export const WORKER_CLASSES = [
+  "draft",
+  "plan",
+  "implement",
+  "review",
+  "research",
+  "spotcheck",
+  "simple",
+  "complex",
+  "image",
+] as const;
+
+export type WorkerClassName = (typeof WORKER_CLASSES)[number];
+
 /**
- * A role target: "<provider>", "<provider>/<modelAlias>", or an object with a
- * provider and the MCP servers (or mcpSets names) its workers start with.
+ * A class target: "<provider>", "<provider>/<modelAlias>", or an object. The
+ * object either pins a `provider` (plus optional `mcp` allowlist) or only
+ * constrains auto-routing (`maxCostTier`, `requireTags`, per-class `order`).
  */
-export type RoleTarget = string | { provider: string; mcp?: string[] };
+export type ClassTarget =
+  | string
+  | {
+      provider?: string;
+      mcp?: string[];
+      /** Auto-routing may only use providers at or below this cost tier. */
+      maxCostTier?: number;
+      /** Auto-routing may only use providers carrying all these tags. */
+      requireTags?: string[];
+      /** Provider order for this class; defaults to routing.order. */
+      order?: string[];
+    };
 
 export interface WorkersConfig {
   enabled: boolean;
   /** Provider name, or "auto" for routing.order resolution. */
   active: string | null;
   providers: Record<string, WorkerProvider>;
-  /** Role → target; see RoleTarget. */
-  roles: Record<string, RoleTarget>;
-  /** MCP set name → server names; `--mcp <set>` and role `mcp` expand these. */
+  /** Class → target; see ClassTarget. (Reads the legacy `roles` key.) */
+  classes: Record<string, ClassTarget>;
+  /** MCP set name → server names; `--mcp <set>` and class `mcp` expand these. */
   mcpSets: Record<string, string[]>;
   pane: WorkersPaneConfig;
   logDir: string;
@@ -124,7 +172,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     enabled: false,
     active: null,
     providers: {},
-    roles: {},
+    classes: {},
     mcpSets: {},
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
@@ -208,6 +256,26 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     bad(`.providers.${name}.upstreamUrl`, `is required for protocol "openai" (the Chat Completions base, e.g. "https://api.openai.com/v1")`);
   }
 
+  const costTier = p.costTier === undefined ? undefined : p.costTier;
+  if (costTier !== undefined) {
+    if (typeof costTier !== "number" || !Number.isInteger(costTier) || costTier < 1 || costTier > 5) {
+      bad(`.providers.${name}.costTier`, "must be an integer 1 (cheapest) … 5 (most expensive)");
+    }
+  }
+
+  let tags: ProviderTag[] | undefined;
+  if (p.tags !== undefined) {
+    if (!Array.isArray(p.tags) || p.tags.some((x) => typeof x !== "string")) {
+      bad(`.providers.${name}.tags`, `must be an array of tags from: ${PROVIDER_TAGS.join(", ")}`);
+    }
+    for (const t of p.tags as string[]) {
+      if (!(PROVIDER_TAGS as readonly string[]).includes(t)) {
+        bad(`.providers.${name}.tags`, `"${t}" is not a tag (from: ${PROVIDER_TAGS.join(", ")})`);
+      }
+    }
+    tags = p.tags as ProviderTag[];
+  }
+
   return {
     enabled: p.enabled === undefined ? true : p.enabled === true,
     protocol,
@@ -221,6 +289,8 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
     ...(quotaSkipAt !== undefined ? { quotaSkipAt } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(costTier !== undefined ? { costTier } : {}),
+    ...(tags ? { tags } : {}),
   };
 }
 
@@ -246,30 +316,71 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
   }
 
-  const roles: Record<string, RoleTarget> = {};
-  if (w.roles !== undefined) {
-    if (typeof w.roles !== "object" || w.roles === null || Array.isArray(w.roles)) {
-      bad(".roles", "must be an object of role → provider[/alias] or {provider, mcp}");
+  // classes is canonical; a config that still carries the pre-classes `roles`
+  // key is migrated by reading it here — the next write stores only `classes`.
+  const classes: Record<string, ClassTarget> = {};
+  const classesRaw = w.classes !== undefined ? w.classes : w.roles;
+  if (classesRaw !== undefined) {
+    if (typeof classesRaw !== "object" || classesRaw === null || Array.isArray(classesRaw)) {
+      bad(w.classes !== undefined ? ".classes" : ".roles", "must be an object of class → provider[/alias] or {provider, mcp, maxCostTier, requireTags, order}");
     }
-    for (const [role, target] of Object.entries(w.roles)) {
+    for (const [cls, target] of Object.entries(classesRaw)) {
       if (typeof target === "object" && target !== null && !Array.isArray(target)) {
         const o = target as Record<string, unknown>;
         const provider = str(o.provider);
-        if (!provider || provider.includes(" ")) {
-          bad(`.roles.${role}.provider`, `invalid provider "${provider}"`);
+        if (o.provider !== undefined && (!provider || provider.includes(" "))) {
+          bad(`.classes.${cls}.provider`, `invalid provider "${provider}"`);
         }
         let mcp: string[] | undefined;
         if (o.mcp !== undefined) {
           if (!Array.isArray(o.mcp) || o.mcp.some((x) => typeof x !== "string")) {
-            bad(`.roles.${role}.mcp`, "must be an array of MCP server or set names");
+            bad(`.classes.${cls}.mcp`, "must be an array of MCP server or set names");
           }
           mcp = o.mcp as string[];
         }
-        roles[role] = mcp ? { provider, mcp } : { provider };
+        let maxCostTier: number | undefined;
+        if (o.maxCostTier !== undefined) {
+          if (
+            typeof o.maxCostTier !== "number" ||
+            !Number.isInteger(o.maxCostTier) ||
+            o.maxCostTier < 1 ||
+            o.maxCostTier > 5
+          ) {
+            bad(`.classes.${cls}.maxCostTier`, "must be an integer 1 … 5");
+          }
+          maxCostTier = o.maxCostTier;
+        }
+        let requireTags: string[] | undefined;
+        if (o.requireTags !== undefined) {
+          if (!Array.isArray(o.requireTags) || o.requireTags.some((x) => typeof x !== "string")) {
+            bad(`.classes.${cls}.requireTags`, `must be an array of tags from: ${PROVIDER_TAGS.join(", ")}`);
+          }
+          for (const t of o.requireTags as string[]) {
+            if (!(PROVIDER_TAGS as readonly string[]).includes(t)) {
+              bad(`.classes.${cls}.requireTags`, `"${t}" is not a tag (from: ${PROVIDER_TAGS.join(", ")})`);
+            }
+          }
+          requireTags = o.requireTags as string[];
+        }
+        let order: string[] | undefined;
+        if (o.order !== undefined) {
+          if (!Array.isArray(o.order) || o.order.some((x) => typeof x !== "string")) {
+            bad(`.classes.${cls}.order`, "must be an array of provider names");
+          }
+          order = o.order as string[];
+        }
+        const obj: ClassTarget = {
+          ...(provider ? { provider } : {}),
+          ...(mcp ? { mcp } : {}),
+          ...(maxCostTier !== undefined ? { maxCostTier } : {}),
+          ...(requireTags ? { requireTags } : {}),
+          ...(order ? { order } : {}),
+        };
+        classes[cls] = Object.keys(obj).length ? obj : {};
       } else {
         const t = str(target);
-        if (!t || t.includes(" ")) bad(`.roles.${role}`, `invalid target "${t}"`);
-        roles[role] = t;
+        if (!t || t.includes(" ")) bad(`.classes.${cls}`, `invalid target "${t}"`);
+        classes[cls] = t;
       }
     }
   }
@@ -339,7 +450,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     enabled: w.enabled === undefined ? d.enabled : w.enabled === true,
     active,
     providers,
-    roles,
+    classes,
     mcpSets,
     pane,
     logDir: str(w.logDir) || d.logDir,
@@ -399,6 +510,11 @@ export function providerKeyPath(p: WorkerProvider): string | null {
 }
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/** Cost tier of a provider for class filtering (unset = 3, the middle). */
+export function providerCostTier(p: WorkerProvider): number {
+  return p.costTier ?? DEFAULT_COST_TIER;
+}
 
 /** Context window used by the meter when the init event carries none. */
 export function providerContextWindow(p: WorkerProvider): number {

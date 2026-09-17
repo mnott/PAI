@@ -23,12 +23,15 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir, eventsPath, ledgerPath } from "../../../workers/paths.js";
+import { parseRunnerArgs } from "../../../workers/args.js";
 import { runWorker } from "../../../workers/run.js";
+import { runChain } from "../../../workers/chain.js";
+import { agentClaudeArgs, agentLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
 import { openFollowPane, openPaneForWorker, checkPaneForWorker } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
-import { registerWorkerProviderCommands, registerWorkerRoleCommands } from "./providers.js";
+import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { loadStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { describeMcp } from "../../../workers/mcp.js";
@@ -52,32 +55,83 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .description(
       "Run one claude-code worker through the configured provider.\n" +
         "Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);\n" +
-        "--output-format/--verbose are handled here."
+        "--output-format/--verbose are handled here.\n" +
+        "--chain draft,implement[,review] runs a spec-first pipeline;\n" +
+        "--agent <name> runs an agent definition from ~/.claude/agents."
     )
     .allowUnknownOption(true)
     .option("--provider <name>", "Provider to run on (default: active, else routing order)")
-    .option("--role <role>", "Use the provider of this role (implement, research, spotcheck, …)")
+    .option("--class <name>", "Use the provider of this class (draft, implement, review, research, spotcheck, simple, complex, image)")
+    .option("--role <name>", "Alias of --class (roles were renamed to classes)")
+    .option("--chain <stages>", "Comma-separated stage classes, e.g. draft,implement or draft,implement,review")
+    .option("--agent <name>", "Run the agent definition ~/.claude/agents/<name>.md on a worker")
     .option("--model <model>", "Override the provider's model for this run")
     .option("--label <text>", "Short task label shown in ps / follow / status line")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
     .option("--no-pane", "Do not open a follow pane for this worker")
     .argument("[args...]", "claude arguments, e.g. -p '<task>' --allowedTools 'Read,Edit,Bash'")
-    .action(async (args: string[], opts: { provider?: string; role?: string; model?: string; label?: string; mcp?: string; pane?: boolean }) => {
-      try {
-        const rc = await runWorker({
-          providerFlag: opts.provider,
-          role: opts.role,
-          modelFlag: opts.model,
-          label: opts.label,
-          mcpFlag: opts.mcp,
-          noPane: opts.pane === false,
-          claudeArgs: args,
-        });
-        process.exitCode = rc;
-      } catch (e) {
-        fail(e);
+    .action(
+      async (
+        args: string[],
+        opts: {
+          provider?: string;
+          class?: string;
+          role?: string;
+          chain?: string;
+          agent?: string;
+          model?: string;
+          label?: string;
+          mcp?: string;
+          pane?: boolean;
+        }
+      ) => {
+        try {
+          const className = opts.class ?? opts.role;
+          let claudeArgs = args;
+          let label = opts.label;
+          let agentClass: string | undefined;
+          if (opts.agent) {
+            // agent definition: system prompt + tools come from the file, the
+            // model maps to a class, the label defaults to "<agent>: <prompt>"
+            const def = loadAgent(opts.agent);
+            claudeArgs = [...agentClaudeArgs(def), ...args];
+            agentClass = modelToClass(def.model);
+            if (!label) label = agentLabel(opts.agent, parseRunnerArgs(args).prompt);
+          }
+          if (opts.chain) {
+            const brief = parseRunnerArgs(claudeArgs).prompt;
+            if (!brief) {
+              throw new Error("--chain needs the task as -p '<brief>'");
+            }
+            const rc = await runChain({
+              stages: opts.chain.split(","),
+              className: className ?? agentClass,
+              providerFlag: opts.provider,
+              modelFlag: opts.model,
+              label,
+              noPane: opts.pane === false,
+              mcpFlag: opts.mcp,
+              brief,
+              claudeArgs,
+            });
+            process.exitCode = rc;
+            return;
+          }
+          const rc = await runWorker({
+            providerFlag: opts.provider,
+            className: className ?? agentClass,
+            modelFlag: opts.model,
+            label,
+            mcpFlag: opts.mcp,
+            noPane: opts.pane === false,
+            claudeArgs,
+          });
+          process.exitCode = rc;
+        } catch (e) {
+          fail(e);
+        }
       }
-    });
+    );
 
   workerCmd
     .command("ps")
@@ -137,7 +191,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   workerCmd
     .command("pane [id]")
     .description("Open the follow pane for a worker (or one shared pane for this session)")
-    .option("--check", "Only report whether the pane is open, plus the profile file's path and font")
+    .option("--check", "Only report whether the pane is open, plus the profile file's path, font, and the hosting window's bounds")
     .action(async (id: string | undefined, opts: { check?: boolean }) => {
       try {
         const { workers } = readWorkersSection();
@@ -145,7 +199,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
         const term = process.env.ITERM_SESSION_ID ?? "";
         if (id) {
           const msg = opts.check
-            ? await checkPaneForWorker(id, workers.pane.fontSize)
+            ? await checkPaneForWorker(id, workers.pane.fontSize, term)
             : await openPaneForWorker(logDir, workers, id, term);
           console.log(msg);
         } else {
@@ -353,7 +407,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .description("Providers: list, add, remove, use, enable, disable, test");
 
   registerWorkerProviderCommands(providersCmd);
-  registerWorkerRoleCommands(workerCmd);
+  registerWorkerClassCommands(workerCmd);
 }
 
 function parseIntArg(v: string): number {

@@ -1,5 +1,5 @@
 /**
- * providers.ts — provider, role and switch management over the workers config.
+ * providers.ts — provider, class and switch management over the workers config.
  *
  * One layer under both `pai worker providers …` and the MCP worker_providers
  * tool. Every mutation re-reads the config file, changes only the workers
@@ -15,12 +15,15 @@
 import { existsSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import {
   DEFAULT_LOG_DIR,
+  PROVIDER_TAGS,
   WorkersConfigError,
   expandHome,
   keysDir,
   parseWorkersConfig,
+  providerCostTier,
   readWorkersSection,
   writeWorkersSection,
+  type ClassTarget,
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
@@ -41,6 +44,8 @@ export interface AddProviderInput {
   engine?: "claude" | "codex";
   quotaProbe?: string;
   contextWindow?: number;
+  costTier?: number;
+  tags?: string[];
 }
 
 export function addProvider(input: AddProviderInput): WorkersConfig {
@@ -88,22 +93,61 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
     ...(input.engine && input.engine !== "claude" ? { engine: input.engine } : {}),
     ...(input.quotaProbe ? { quotaProbe: input.quotaProbe } : {}),
     ...(input.contextWindow ? { contextWindow: input.contextWindow } : {}),
+    ...(input.costTier ? { costTier: input.costTier } : {}),
+    ...(input.tags?.length ? { tags: input.tags as WorkerProvider["tags"] } : {}),
   };
   workers.providers[input.name] = provider;
 
-  // First provider takes over the whole section: active, default roles, pane.
+  // First provider takes over the whole section: active, default classes, pane.
   const first = Object.keys(workers.providers).length === 1;
   if (first) {
     workers.enabled = true;
     workers.active = input.name;
     workers.logDir = workers.logDir || DEFAULT_LOG_DIR;
-    workers.roles = {
+    const fast = input.fastModel ? `${input.name}/fast` : input.name;
+    workers.classes = {
+      draft: fast,
+      plan: input.name,
       implement: input.name,
+      review: input.name,
       research: input.name,
-      spotcheck: input.fastModel ? `${input.name}/fast` : input.name,
+      spotcheck: fast,
+      simple: fast,
+      complex: input.name,
+      image: input.name,
     };
   }
 
+  writeWorkersSection(raw, workers);
+  return workers;
+}
+
+/** Change costTier / tags on an existing provider (MCP action "update"). */
+export function updateProvider(
+  name: string,
+  changes: { costTier?: number; tags?: string[] }
+): WorkersConfig {
+  const { raw, workers } = readWorkersSection();
+  const p = workers.providers[name];
+  if (!p) {
+    throw new WorkersConfigError(
+      `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+    );
+  }
+  if (changes.costTier !== undefined) {
+    if (!Number.isInteger(changes.costTier) || changes.costTier < 1 || changes.costTier > 5) {
+      throw new WorkersConfigError("costTier must be an integer 1 (cheapest) … 5 (most expensive)");
+    }
+    p.costTier = changes.costTier;
+  }
+  if (changes.tags !== undefined) {
+    for (const t of changes.tags) {
+      if (!(PROVIDER_TAGS as readonly string[]).includes(t)) {
+        throw new WorkersConfigError(`"${t}" is not a tag (from: ${PROVIDER_TAGS.join(", ")})`);
+      }
+    }
+    p.tags = changes.tags as WorkerProvider["tags"];
+  }
   writeWorkersSection(raw, workers);
   return workers;
 }
@@ -114,9 +158,9 @@ export function removeProvider(name: string): WorkersConfig {
     throw new WorkersConfigError(`no provider named "${name}"`);
   }
   delete workers.providers[name];
-  for (const [role, target] of Object.entries(workers.roles)) {
+  for (const [cls, target] of Object.entries(workers.classes)) {
     const targetProvider = typeof target === "string" ? target.split("/")[0] : target.provider;
-    if (targetProvider === name) delete workers.roles[role];
+    if (targetProvider === name) delete workers.classes[cls];
   }
   if (workers.active === name) workers.active = null;
   writeWorkersSection(raw, workers);
@@ -146,34 +190,47 @@ export function setProviderEnabled(name: string, enabled: boolean): WorkersConfi
   return workers;
 }
 
-export function setRole(role: string, target: string): WorkersConfig {
+/**
+ * Point a class at a target ("provider", "provider/fast", or an object with
+ * provider + optional mcp/maxCostTier/requireTags/order). An object without
+ * a provider only constrains auto-routing for that class.
+ */
+export function setClass(name: string, target: ClassTarget): WorkersConfig {
   const { raw, workers } = readWorkersSection();
-  const [name, alias] = target.split("/");
-  const p = workers.providers[name];
-  if (!p) {
-    throw new WorkersConfigError(
-      `no provider named "${name}" in "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
-    );
+  if (typeof target === "string") {
+    const [provider, alias] = target.split("/");
+    const p = workers.providers[provider];
+    if (!p) {
+      throw new WorkersConfigError(
+        `no provider named "${provider}" in "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+      );
+    }
+    if (alias && alias !== "default" && alias !== "fast") {
+      throw new WorkersConfigError(
+        `unknown model alias "${alias}" — providers expose "default" and "fast"`
+      );
+    }
+    if (alias === "fast" && !p.models.fast) {
+      throw new WorkersConfigError(`provider "${provider}" has no fast model configured`);
+    }
+  } else if (target.provider) {
+    if (!workers.providers[target.provider]) {
+      throw new WorkersConfigError(
+        `no provider named "${target.provider}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+      );
+    }
   }
-  if (alias && alias !== "default" && alias !== "fast") {
-    throw new WorkersConfigError(
-      `unknown model alias "${alias}" — providers expose "default" and "fast"`
-    );
-  }
-  if (alias === "fast" && !p.models.fast) {
-    throw new WorkersConfigError(`provider "${name}" has no fast model configured`);
-  }
-  workers.roles[role] = target;
+  workers.classes[name] = target;
   writeWorkersSection(raw, workers);
   return workers;
 }
 
-export function unsetRole(role: string): WorkersConfig {
+export function unsetClass(name: string): WorkersConfig {
   const { raw, workers } = readWorkersSection();
-  if (!(role in workers.roles)) {
-    throw new WorkersConfigError(`no role named "${role}"`);
+  if (!(name in workers.classes)) {
+    throw new WorkersConfigError(`no class named "${name}"`);
   }
-  delete workers.roles[role];
+  delete workers.classes[name];
   writeWorkersSection(raw, workers);
   return workers;
 }
@@ -183,6 +240,19 @@ export function setWorkersEnabled(enabled: boolean): WorkersConfig {
   workers.enabled = enabled;
   writeWorkersSection(raw, workers);
   return workers;
+}
+
+/** `glm/fast` | `{provider, mcp, …}` → one printable target line. */
+export function classTargetText(target: ClassTarget): string {
+  if (typeof target === "string") return target;
+  const bits = [
+    target.provider ?? "(routing)",
+    ...(target.mcp?.length ? [`mcp(${target.mcp.join(",")})`] : []),
+    ...(target.maxCostTier !== undefined ? [`max tier ${target.maxCostTier}`] : []),
+    ...(target.requireTags?.length ? [`needs ${target.requireTags.join(",")}`] : []),
+    ...(target.order?.length ? [`order [${target.order.join(",")}]`] : []),
+  ];
+  return bits.join(" ");
 }
 
 /** Human-readable provider listing (quota probe included when configured). */
@@ -204,10 +274,12 @@ export function describeProviders(workers: WorkersConfig): string[] {
     ].filter(Boolean);
     const quota = p.quotaProbe ? probeQuota(p) : null;
     const quotaNote = quota === null ? "" : `  quota ${quota}% (skip at ${quotaSkipThreshold(p)})`;
+    const tierTags = [`tier ${providerCostTier(p)}`, ...(p.tags ?? [])].join(", ");
     lines.push(`${name}  [${flags.join(", ")}]  ${p.baseUrl}`);
     lines.push(
       `    model ${p.models.default}${p.models.fast ? ` (fast: ${p.models.fast})` : ""}${quotaNote}`
     );
+    lines.push(`    ${tierTags}`);
     if (p.keyFile) lines.push(`    key file ${expandHome(p.keyFile)}`);
     else lines.push(`    no key file (token "local")`);
     if (p.note) lines.push(`    ${p.note}`);
@@ -221,6 +293,10 @@ export function describeProviders(workers: WorkersConfig): string[] {
   const setNames = Object.keys(workers.mcpSets);
   if (setNames.length) {
     lines.push(`mcp sets: ${setNames.map((s) => `${s}=[${workers.mcpSets[s].join(",")}]`).join("  ")}`);
+  }
+  const classNames = Object.keys(workers.classes);
+  if (classNames.length) {
+    lines.push(`classes: ${classNames.map((cl) => `${cl}=${classTargetText(workers.classes[cl])}`).join("  ")}`);
   }
   if (workers.active === "auto") {
     lines.push(`routing: auto — order [${workers.routing.order.join(", ")}], cooldown ${workers.routing.cooldownMinutes}m`);

@@ -33,11 +33,11 @@ describe("parseWorkersConfig", () => {
       enabled: true,
       active: "glm",
       providers: { glm: GLM },
-      roles: { implement: "glm", research: "glm", spotcheck: "glm/fast" },
+      classes: { implement: "glm", research: "glm", spotcheck: "glm/fast" },
     });
     expect(c.active).toBe("glm");
     expect(c.providers.glm.models.fast).toBe("example-4.7-flash");
-    expect(c.roles.spotcheck).toBe("glm/fast");
+    expect(c.classes.spotcheck).toBe("glm/fast");
   });
 
   it("names the field on a bad protocol", () => {
@@ -54,10 +54,38 @@ describe("parseWorkersConfig", () => {
     ).toThrow(/models\.default/);
   });
 
-  it("rejects roles whose target contains spaces", () => {
+  it("rejects classes whose target contains spaces", () => {
     expect(() =>
-      parseWorkersConfig({ roles: { implement: "glm fast" } })
-    ).toThrow(/roles\.implement/);
+      parseWorkersConfig({ classes: { implement: "glm fast" } })
+    ).toThrow(/classes\.implement/);
+  });
+
+  it("reads the legacy roles key as classes (migrates on first write)", () => {
+    const c = parseWorkersConfig({ roles: { implement: "glm/fast" } });
+    expect(c.classes.implement).toBe("glm/fast");
+  });
+
+  it("validates provider costTier and tags", () => {
+    expect(() =>
+      parseWorkersConfig({ providers: { glm: { ...GLM, costTier: 6 } } })
+    ).toThrow(/costTier/);
+    expect(() =>
+      parseWorkersConfig({ providers: { glm: { ...GLM, tags: ["telepathy"] } } })
+    ).toThrow(/tags/);
+    const ok = parseWorkersConfig({
+      providers: { glm: { ...GLM, costTier: 2, tags: ["code", "fast"] } },
+    });
+    expect(ok.providers.glm.costTier).toBe(2);
+    expect(ok.providers.glm.tags).toEqual(["code", "fast"]);
+  });
+
+  it("validates class constraint fields", () => {
+    expect(() =>
+      parseWorkersConfig({ classes: { research: { maxCostTier: 9 } } })
+    ).toThrow(/classes\.research\.maxCostTier/);
+    expect(() =>
+      parseWorkersConfig({ classes: { research: { requireTags: ["nope"] } } })
+    ).toThrow(/classes\.research\.requireTags/);
   });
 
   it("tolerates an active provider that no longer exists (parse-time)", () => {

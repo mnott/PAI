@@ -1,5 +1,5 @@
 /**
- * Tests for role/provider resolution and the runner-args parser.
+ * Tests for class/provider resolution and the runner-args parser.
  *
  * Pure functions, no claude/osascript calls — the routing decision is exactly
  * what a misrouted worker gets wrong, so it is pinned here.
@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig, type WorkerProvider } from "./config.js";
-import { resolveTarget, setCooldown } from "./routing.js";
+import { NoProviderError, resolveTarget, setCooldown } from "./routing.js";
 import { parseRunnerArgs } from "./args.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-workers-routing-"));
@@ -27,7 +27,7 @@ function config(overrides: Record<string, unknown> = {}) {
         env: {},
       },
     },
-    roles: { implement: "glm", research: "glm", spotcheck: "glm/fast" },
+    classes: { implement: "glm", research: "glm", spotcheck: "glm/fast" },
     ...overrides,
   });
 }
@@ -42,26 +42,32 @@ const GLM: WorkerProvider = {
 };
 
 describe("resolveTarget", () => {
-  it("resolves a plain role to the provider default model", () => {
-    const t = resolveTarget(config(), dir, { role: "research" });
+  it("resolves a plain class to the provider default model", () => {
+    const t = resolveTarget(config(), dir, { className: "research" });
     expect(t.providerName).toBe("glm");
     expect(t.modelAlias).toBeNull();
-    expect(t.via).toBe("role");
+    expect(t.via).toBe("class");
   });
 
-  it("resolves a fast role to the fast alias", () => {
-    const t = resolveTarget(config(), dir, { role: "spotcheck" });
+  it("resolves a fast class to the fast alias", () => {
+    const t = resolveTarget(config(), dir, { className: "spotcheck" });
     expect(t.providerName).toBe("glm");
     expect(t.modelAlias).toBe("fast");
   });
 
   it("gives --provider the highest precedence", () => {
-    const t = resolveTarget(config(), dir, { flagProvider: "glm", role: "research" });
+    const t = resolveTarget(config(), dir, { flagProvider: "glm", className: "research" });
     expect(t.via).toBe("flag");
   });
 
-  it("names the role when it does not exist", () => {
-    expect(() => resolveTarget(config(), dir, { role: "nope" })).toThrow(/no role named "nope"/);
+  it("names the class when it does not exist", () => {
+    expect(() => resolveTarget(config(), dir, { className: "nope" })).toThrow(/no class named "nope"/);
+  });
+
+  it("routes a standard but unconfigured class like a run without one", () => {
+    const t = resolveTarget(config(), dir, { className: "draft" });
+    expect(t.providerName).toBe("glm");
+    expect(t.via).toBe("active");
   });
 
   it("skips a cooled-down provider in auto order and takes the next", () => {
@@ -77,6 +83,80 @@ describe("resolveTarget", () => {
     const t = resolveTarget(c, dir);
     expect(t.providerName).toBe("other");
     expect(t.via).toBe("auto");
+  });
+
+  it("keeps reading the legacy roles key until the config is rewritten", () => {
+    const c = parseWorkersConfig({
+      enabled: true,
+      active: "glm",
+      providers: { glm: GLM },
+      roles: { implement: "glm" },
+    });
+    expect(resolveTarget(c, dir, { className: "implement" }).via).toBe("class");
+  });
+});
+
+describe("resolveTarget with class constraints", () => {
+  const providers = {
+    cheap: { ...GLM, baseUrl: "https://cheap.example.com", costTier: 1, tags: ["fast" as const] },
+    smart: {
+      ...GLM,
+      baseUrl: "https://smart.example.com",
+      costTier: 4,
+      tags: ["reasoning" as const, "long-context" as const],
+    },
+  };
+
+  it("auto-routing skips providers above the class's maxCostTier", () => {
+    const c = config({
+      active: "auto",
+      providers,
+      classes: { research: { maxCostTier: 2 } },
+      routing: { order: ["smart", "cheap"], cooldownMinutes: 30, retryOnQuota: true },
+    });
+    const t = resolveTarget(c, dir, { className: "research" });
+    expect(t.providerName).toBe("cheap");
+  });
+
+  it("auto-routing skips providers missing a required tag", () => {
+    const c = config({
+      active: "auto",
+      providers,
+      classes: { research: { requireTags: ["reasoning"] } },
+      routing: { order: ["cheap", "smart"], cooldownMinutes: 30, retryOnQuota: true },
+    });
+    const t = resolveTarget(c, dir, { className: "research" });
+    expect(t.providerName).toBe("smart");
+  });
+
+  it("fails with the exclusion reason of every provider when nothing qualifies", () => {
+    const c = config({
+      active: "auto",
+      providers,
+      classes: { complex: { maxCostTier: 1, requireTags: ["reasoning", "long-context"] } },
+      routing: { order: ["cheap", "smart"], cooldownMinutes: 30, retryOnQuota: true },
+    });
+    try {
+      resolveTarget(c, dir, { className: "complex" });
+      throw new Error("expected resolveTarget to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(NoProviderError);
+      const msg = (e as Error).message;
+      expect(msg).toMatch(/class "complex"/);
+      expect(msg).toMatch(/cheap: missing tags: reasoning, long-context/);
+      expect(msg).toMatch(/smart: cost tier 4 > max 1/);
+    }
+  });
+
+  it("uses the class's own routing order when it has one", () => {
+    const c = config({
+      active: "auto",
+      providers,
+      classes: { simple: { order: ["cheap", "smart"] } },
+      routing: { order: ["smart", "cheap"], cooldownMinutes: 30, retryOnQuota: true },
+    });
+    const t = resolveTarget(c, dir, { className: "simple" });
+    expect(t.providerName).toBe("cheap");
   });
 });
 
