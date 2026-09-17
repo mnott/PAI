@@ -1,22 +1,20 @@
 # Provider Independence
 
-How to free yourself from Claude — so a maxed-out subscription stops being your problem. How to run any cloud model and any local model inside your Claude Code (or OpenCode) harness. How to run models in parallel, each doing what it is best at — all of it purely local, no need for yet another Hermes-or-whatever harness. How to have workers run by default, visibly, each with its own chat you can talk to.
+I started my Thursday at 5am, which is normal — and at about 80%, which is not.
 
-My journey into PAI and AIBroker started nine months ago, when OpenClawd burned through all my credits in four hours. I decided then and there that there had to be a better way: instead of buying API tokens, use the Claude Max subscription I was already paying for.
+Because those 80% are not motivation (that was certainly higher). That is the weekly usage of my Claude Max 200 subscription.
 
-Nine months later, I hit the next wall: maxing out Claude Max itself. The next level of independence was required. I built it — in one day. Here is what happened.
+With still two days to go, I was getting worried. Last week I had already hit 100% hard — despite all my efficiency gains, including creating my own "Agentish" language.
 
-I started my Thursday at 5am, which is normal, and at about 80%, which is not.
+At 9am I was above 90%, and there was no way I would make it through to Saturday 8am, the weekly reset.
 
-That 80% is not motivation — although that was certainly higher. It is the weekly usage of my Claude Max 200 subscription.
+So I decided to solve this problem. At 10pm I am at 97% — and that number has not changed since noon.
 
-With two days to go until the Saturday 8am reset, I was getting worried. Last week I had already hit 100% — despite all my efficiency gains, including inventing my own "Agentish" language.
+This post shows how to become provider-independent. How to free yourself from Claude, so a maxed-out subscription stops being your problem. How to use any cloud model and any local model inside your Claude Code (or OpenCode) harness. How to run models in parallel, each for what it is good at — all purely local, without resorting to yet another Hermes-or-whatever harness. How to have workers run by default, visibly — and how to interact with each of them in its own chat.
 
-By 9am I was above 90%. There was no way I would make it to the reset.
+My whole journey into PAI and AIBroker started nine months ago, when I used OpenClawd for four hours and had burned through all my credits. I decided then and there that there had to be a better way: instead of API tokens, use the Claude Max subscription I was paying for anyway.
 
-So I decided to solve this problem instead of waiting it out. By 10pm I was at 97% — a number that has not moved since noon, because since noon, almost nothing has run on Claude.
-
-This is how I did it.
+Nine months later, I ran into the next wall: maxing out the Claude Max subscription itself. So the next level of independence was required — and I made that happen, today. Here is what happened.
 
 I made myself independent of Claude and Fable. They are great — but I hate being locked in, and I suspect most of us do. I want to decide which model I use: Claude, GLM, Grok, whatever. I need to abstract away from that choice.
 
@@ -36,8 +34,6 @@ So the requirements were:
 The whole implementation cost 7 of my last 10 percentage points of Claude Max 200. Then I switched to GLM for everything else. And what can I say — it works beautifully.
 
 ---
-
-The rest of this page is the operator's guide: switching providers, starting sessions, and the three copy-paste steps to your own setup.
 
 > My AI budget hit 91% before lunch. So I changed one rule: the expensive
 > assistant keeps the thinking, a cheaper crew does the building. The feature
