@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextLabel, contextPercent, type WorkerStatus, alive } from "./status.js";
+import { ageOf, contextLabel, contextPercent, UNLABELED, type WorkerStatus, alive } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -522,54 +522,60 @@ export function renderTable(
 }
 
 /**
- * One-line status-bar summary (same shape glm-ps --status printed). The first
- * segment is this terminal's chat pane itself (origin "chat", alive): its
- * provider, `▶N` — the count of its running SPAWNED workers, nothing at zero —
- * its own age when none run, and its last activity; never its id or label, it
- * is not a worker. Each spawned worker follows as `#id label age · last`;
- * sub-workers render after their parent with a `↳` prefix (`all` carries the
- * whole forest so depth is right even when only some workers are this
- * session's); `◆N` marks an inbox with N handoffs. Without a tracked chat
- * pane the head is the old `provider ▶N` shape (again no ▶ at zero).
+ * The step of a statusline row: what the worker is doing as a verb, never a
+ * raw command. A Bash line trims to its first word (`grep -n -A4 "x" src/` →
+ * `grep …` — no `Bash:` prefix, no flags, no quotes); the file tools keep
+ * their `Edit: button.ts` shape; free text (what the worker last said) is
+ * only shortened. Always ≤ 24 chars.
  */
-export function renderStatusLine(
-  mine: WorkerStatus[],
-  now: Date = new Date(),
-  c: Paint = makeColor(true),
-  all: WorkerStatus[] = mine,
-  inbox: Record<string, number> = {}
-): string {
+export function stepOf(last: string): string {
+  const s = String(last ?? "").trim();
+  if (s.startsWith("Bash: ")) {
+    const cmd = s.slice(6).trim();
+    const verb = cmd.split(/\s+/)[0] ?? "";
+    return shortText(cmd.length > verb.length ? `${verb} …` : verb, 24);
+  }
+  return shortText(s, 24);
+}
+
+/**
+ * The statusline bar: `provider ▶N` then one row per running spawned worker —
+ * `name · age · step` — and today's ✓/✗ tail. The chat pane contributes
+ * nothing but its provider: its age, state and inbox live in `pai worker ps`,
+ * not here. Rows are flat (the ↳ depth is ps territory) and oldest first;
+ * `#id` joins a name only when two running workers share one label, so ids
+ * stay rare enough to read.
+ */
+export function renderStatusLine(mine: WorkerStatus[], now: Date = new Date()): string {
   if (!mine.length) return "";
-  const chat = mine.find((s) => s.origin === "chat" && s.state === "running" && alive(s.pid));
+  // Migration shim: a running entry from before the origin flag, carrying the
+  // unlabeled placeholder and not one turn yet, is the chat pane — not a
+  // worker row and not counted in ▶N. Removable once every pane runs code
+  // that writes `origin`; the flag itself stays the real discriminator.
+  const isChat = (s: WorkerStatus): boolean =>
+    s.origin === "chat" ||
+    (!s.origin && (s.label === UNLABELED || s.label === "(no prompt)") && s.turns === 0);
+  const chat = mine.find((s) => isChat(s) && s.state === "running" && alive(s.pid));
   const running = mine
-    .filter((s) => s.origin !== "chat" && s.state === "running" && alive(s.pid))
-    // stable: parents first; the chat pane is the bar itself, not a level
-    .sort((a, b) => workerDepth(all, a.id, { chatIsRoot: true }) - workerDepth(all, b.id, { chatIsRoot: true }));
+    .filter((s) => !isChat(s) && s.state === "running" && alive(s.pid))
+    .sort((a, b) => a.started.localeCompare(b.started));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
-  const parts = running.slice(0, 3).map((s) => {
-    // context load joins the summary once it passes 60 % (yellow >70, red >85)
-    const meter = contextMeter(c, s, 60);
-    const depth = workerDepth(all, s.id, { chatIsRoot: true });
-    const lead = depth > 0 ? "  ".repeat(depth - 1) + "↳ " : "";
-    const box = inbox[s.id] ? ` ◆${inbox[s.id]}` : "";
-    return (
-      `${lead}#${s.id.slice(-4)} ${s.label.slice(0, 26)} ${ageOf(s.started, now)} · ${s.last.slice(0, 30)}${box}` +
-      (meter ? ` ${meter}` : "")
-    );
+  const rows = running.slice(0, 3).map((s) => {
+    const twin = running.some((o) => o !== s && o.label === s.label);
+    const name = `${twin ? `#${s.id.slice(-4)} ` : ""}${s.label.slice(0, 26)}`;
+    return `${name} · ${ageOf(s.started, now)} · ${stepOf(s.last)}`;
   });
   let head: string;
-  if (chat) {
-    const count = running.length ? `▶${running.length}` : ageOf(chat.started, now);
-    head = `${chat.provider} ${count} · ${chat.last.slice(0, 30)}`;
-  } else {
+  if (chat) head = chat.provider;
+  else {
     const providers = new Set(running.map((s) => s.provider));
-    const providerTag = providers.size === 1 ? [...providers][0] : "workers";
-    head = running.length ? `${providerTag} ▶${running.length}` : providerTag;
+    head = providers.size === 1 ? [...providers][0] : "workers";
   }
-  if (parts.length) head += " | " + parts.join(" | ");
+  if (running.length) head += ` ▶${running.length}`;
+  if (rows.length) head += " | " + rows.join(" | ");
   if (doneToday.length) head += `   ✓${ok} ✗${bad} today`;
   return head;
 }

@@ -302,36 +302,15 @@ describe("renderStatusLine", () => {
     origin: "chat",
     provider: "glm",
     label: "unlabeled",
+    turns: 0,
     last: "interactive",
   };
-
-  it("shows the meter once context passes 60%", () => {
-    const s: WorkerStatus = { ...base, id: "20260917-100000-1234", state: "running", contextTokens: 150000, contextWindow: 200000 };
-    expect(renderStatusLine([s], now, plain)).toContain("ctx 150k/200k (75%)");
-  });
-
-  it("hides the meter below 60%", () => {
-    const s: WorkerStatus = { ...base, id: "20260917-100000-1235", state: "running", contextTokens: 20000, contextWindow: 200000 };
-    expect(renderStatusLine([s], now, plain)).not.toContain("ctx ");
-  });
-
-  it("marks the id short form with # so it cannot read as a number", () => {
-    const s: WorkerStatus = { ...base, id: "20260917-100000-1234", state: "running" };
-    expect(renderStatusLine([s], now, plain)).toContain("#1234 task");
-    expect(renderStatusLine([s], now, plain)).not.toMatch(/ 1234 task/);
-  });
-
-  it("renders the label verbatim, including the unlabeled placeholder", () => {
-    const s: WorkerStatus = { ...base, id: "20260917-100000-1236", state: "running", label: "unlabeled" };
-    expect(renderStatusLine([s], now, plain)).toContain("#1236 unlabeled");
-  });
-
-  it("counts only running workers with a live pid in ▶N", () => {
-    const live: WorkerStatus = { ...base, id: "20260917-100000-1237", state: "running" };
-    const dead: WorkerStatus = { ...base, id: "20260917-100000-1238", state: "running", pid: 999999 };
-    const out = renderStatusLine([live, dead], now, plain);
-    expect(out).toContain("▶1");
-    expect(out).not.toContain("1238");
+  const spawn = (over: Partial<WorkerStatus>): WorkerStatus => ({
+    ...base,
+    state: "running",
+    origin: "spawn",
+    provider: "glm",
+    ...over,
   });
 
   it("agentLabel falls back to the unlabeled placeholder without a prompt", () => {
@@ -339,36 +318,83 @@ describe("renderStatusLine", () => {
     expect(agentLabel("Explore", "fix the thing")).toContain("fix the thing");
   });
 
-  it("renders no ▶N and no id/label when only the chat pane runs", () => {
-    const out = renderStatusLine([chat], now, plain);
-    expect(out).toBe("glm 45s · interactive");
+  it("chat pane alone: the provider and nothing else — no count, age, state, inbox", () => {
+    expect(renderStatusLine([chat], now)).toBe("glm");
   });
 
-  it("excludes the chat pane from ▶N; spawned workers keep id and label", () => {
-    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons" };
-    const w2: WorkerStatus = { ...base, id: "20260917-100000-2924", state: "running", origin: "spawn", provider: "glm", label: "spotcheck login" };
-    const out = renderStatusLine([chat, w1, w2], now, plain);
-    expect(out).toContain("glm ▶2 · interactive | #4969 fix black buttons");
-    expect(out).toContain("#2924 spotcheck login");
-    expect(out).not.toContain("▶3");
-    expect(out).not.toContain("3390");
-    expect(out).not.toContain("unlabeled");
+  it("one worker: provider ▶N and the row name · age · step", () => {
+    const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
+    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s · npm …");
   });
 
-  it("counts a dead chat pane's workers without it claiming the first segment", () => {
+  it("N workers: ▶N, rows ordered oldest first, no #id on distinct labels", () => {
+    const older = spawn({ id: "20260917-100000-4969", label: "fix black buttons", started: "2026-09-17 09:30:00" });
+    const young = spawn({ id: "20260917-100000-2924", label: "spotcheck login" });
+    const out = renderStatusLine([chat, young, older], now);
+    expect(out).toBe("glm ▶2 | fix black buttons · 30m · npm … | spotcheck login · 45s · npm …");
+  });
+
+  it("counts only running workers with a live pid in ▶N", () => {
+    const live = spawn({ id: "20260917-100000-1237" });
+    const dead = spawn({ id: "20260917-100000-1238", pid: 999999 });
+    const out = renderStatusLine([chat, live, dead], now);
+    expect(out).toContain("▶1");
+    expect(out).not.toContain("1238");
+  });
+
+  it("a dead chat pane's workers render under the provider fallback", () => {
     const stale: WorkerStatus = { ...chat, pid: 999999 };
-    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons" };
-    const out = renderStatusLine([stale, w1], now, plain);
-    expect(out).toContain("glm ▶1 | #4969 fix black buttons");
-    expect(out).not.toContain("3390");
+    const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
+    const out = renderStatusLine([stale, w], now);
+    expect(out).toBe("glm ▶1 | fix black buttons · 45s · npm …");
     expect(out).not.toContain("interactive");
   });
 
-  it("treats the chat pane as the bar's root: its spawns are not ↳-indented", () => {
-    const w1: WorkerStatus = { ...base, id: "20260917-100000-4969", state: "running", origin: "spawn", provider: "glm", label: "fix black buttons", parent: chat.id };
-    const w2: WorkerStatus = { ...base, id: "20260917-100000-2924", state: "running", origin: "spawn", provider: "glm", label: "spotcheck login", parent: w1.id };
-    const out = renderStatusLine([chat, w1, w2], now, plain);
-    expect(out).toContain("| #4969 fix black buttons");
-    expect(out).toContain("| ↳ #2924 spotcheck login");
+  it("legacy pane entry (no origin, unlabeled placeholder, 0 turns) is neither row nor count", () => {
+    const legacy: WorkerStatus = { ...chat, id: "20260917-091645-7777", started: "2026-09-17 09:16:45", label: "(no prompt)", origin: undefined };
+    const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
+    const out = renderStatusLine([legacy, w], now);
+    expect(out).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+    const legacy2: WorkerStatus = { ...legacy, label: "unlabeled" };
+    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+  });
+
+  it("rows are flat: a sub-worker renders without ↳ indent", () => {
+    const w1 = spawn({ id: "20260917-100000-4969", label: "fix black buttons", parent: chat.id });
+    const w2 = spawn({ id: "20260917-100000-2924", label: "spotcheck login", parent: w1.id });
+    const out = renderStatusLine([chat, w1, w2], now);
+    expect(out).toContain("| fix black buttons · 45s · npm … | spotcheck login · 45s · npm …");
+    expect(out).not.toContain("↳");
+  });
+
+  it("twins share a label: both rows carry #id; unique labels carry none", () => {
+    const a = spawn({ id: "20260917-100000-1111", label: "build site" });
+    const b = spawn({ id: "20260917-100000-2222", label: "build site" });
+    const out = renderStatusLine([chat, a, b], now);
+    expect(out).toContain("#1111 build site · 45s · npm …");
+    expect(out).toContain("#2222 build site · 45s · npm …");
+    const c = spawn({ id: "20260917-100000-3333", label: "unique label" });
+    expect(renderStatusLine([chat, a, c], now)).not.toContain("#3333");
+  });
+
+  it("step trims the Bash command to its verb, no prefix, flags or quotes", () => {
+    const w = (last: string) => spawn({ id: "20260917-100000-4969", label: "fix black buttons", last });
+    expect(renderStatusLine([chat, w('Bash: grep -n -A4 "x" src/')], now)).toContain("grep …");
+    expect(renderStatusLine([chat, w("Bash: ls")], now)).toContain("45s · ls");
+    expect(renderStatusLine([chat, w("Read: render.ts")], now)).toContain("Read: render.ts");
+    expect(renderStatusLine([chat, w("x".repeat(60))], now)).toContain(`${"x".repeat(23)}…`);
+  });
+
+  it("the bar carries no context meter or inbox mark — ps and the pane do", () => {
+    const w = spawn({ id: "20260917-100000-1234", label: "fix black buttons", contextTokens: 150000, contextWindow: 200000 });
+    expect(renderStatusLine([chat, w], now)).not.toContain("ctx ");
+    expect(renderStatusLine([chat, w], now)).not.toContain("◆");
+  });
+
+  it("today's tail stays: ✓N ✗M today", () => {
+    const done = spawn({ id: "20260917-100000-5555", label: "done earlier", state: "done", rc: 0, secs: 12 });
+    const failed = spawn({ id: "20260917-100000-5556", label: "failed earlier", state: "failed", rc: 1, secs: 5 });
+    const out = renderStatusLine([chat, done, failed], now);
+    expect(out).toBe("glm   ✓1 ✗1 today");
   });
 });
