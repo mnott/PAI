@@ -709,8 +709,18 @@ export async function followWorkers(
     };
     // readline edits silently (its output is a mute stream); the pane draws
     // the prompt row itself from the live buffer, so the placeholder yields
-    // to the first keystroke and returns when the buffer empties again
-    const silent = { write: () => true } as unknown as NodeJS.WriteStream;
+    // to the first keystroke and returns when the buffer empties again.
+    // The emitter no-ops matter: with terminal:true readline attaches a
+    // resize listener on its output, and a bare { write } object crashes
+    // follow in a real terminal ("output.on is not a function").
+    const silent = {
+      write: () => true,
+      on: () => silent,
+      once: () => silent,
+      off: () => silent,
+      removeListener: () => silent,
+      emit: () => false,
+    } as unknown as NodeJS.WriteStream;
     rlIn = createInterface({ input: in_, output: silent, terminal: terminalIn });
     rlIn.on("line", handleChatLine);
     // Ctrl-C: an empty prompt leaves, a draft clears; Ctrl-D (close) leaves
