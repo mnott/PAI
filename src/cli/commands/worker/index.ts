@@ -38,6 +38,7 @@ import { loadStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
+import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../../workers/proxy/server.js";
 import { err, dim } from "../../utils.js";
@@ -310,6 +311,31 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .action((id: string) => {
       try {
         console.log(mergeWorker(currentLogDir(), id));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("wait <ids...>")
+    .description("Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout")
+    .option("--timeout <secs>", "Give up after this many seconds (default 900)", parseIntArg)
+    .action(async (ids: string[], opts: { timeout?: number }) => {
+      try {
+        const { results, timedOut } = await waitWorkers(currentLogDir(), ids, {
+          timeoutMs: (opts.timeout ?? 900) * 1000,
+        });
+        for (const r of results) console.log(JSON.stringify(r));
+        if (timedOut.length) {
+          console.error(err(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`));
+          process.exitCode = 1;
+          return;
+        }
+        const failed = results.filter((r) => !r.ok).map((r) => r.id);
+        if (failed.length) {
+          console.error(err(`pai worker wait: failed: ${failed.join(", ")}`));
+          process.exitCode = 1;
+        }
       } catch (e) {
         fail(e);
       }

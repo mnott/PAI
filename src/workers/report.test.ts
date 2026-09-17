@@ -93,4 +93,10 @@ describe("WORKER_CONTRACT_PROMPT", () => {
     expect(WORKER_CONTRACT_PROMPT).toContain("Answer it FIRST");
     expect(WORKER_CONTRACT_PROMPT).toContain("then continue the");
   });
+
+  it("bans shell heredocs: write a script file, then run it", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/heredoc/i);
+    expect(WORKER_CONTRACT_PROMPT).toContain("Write tool");
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/write the script to a file/);
+  });
 });

@@ -4,7 +4,7 @@
  * functions — no claude, no osascript.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   bumpContextTokens,
@@ -15,6 +15,7 @@ import {
   resetContextTokensOnCompact,
   stdinUserMessage,
   usageContextTokens,
+  printResult,
   type StreamEvent,
 } from "./run.js";
 import { OPERATOR_MARK } from "./report.js";
@@ -216,5 +217,82 @@ describe("stripPromptValues", () => {
 
   it("does not eat the next flag when the value is missing", () => {
     expect(stripPromptValues(["-p", "--verbose"])).toEqual(["-p", "--verbose"]);
+  });
+});
+
+describe("printResult", () => {
+  const ev: StreamEvent = { type: "result", result: "the answer", is_error: false };
+  const report = { notes: "headline" };
+
+  it("json: prints exactly one JSON line carrying the result text and the parsed report", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("json", ev, 0, "/log", "w1", report);
+      expect(log).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(log.mock.calls[0][0] as string);
+      expect(payload.result).toBe("the answer");
+      expect(payload.report).toEqual({ notes: "headline" });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("json without a report omits the report key", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("json", ev, 0, "/log", "w1", null);
+      const payload = JSON.parse(log.mock.calls[0][0] as string);
+      expect(payload.result).toBe("the answer");
+      expect(payload).not.toHaveProperty("report");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("json with no result event still prints one line saying so", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("json", null, 1, "/log", "w1", null);
+      expect(log).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(log.mock.calls[0][0] as string);
+      expect(payload.result).toBe("no result event");
+      expect(payload.is_error).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("text: prints the raw result text", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("text", ev, 0, "/log", "w1", report);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0][0]).toBe("the answer");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("text with no result event writes the stderr pointer", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errW = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      printResult("text", null, 1, "/log", "w1", null);
+      expect(log).not.toHaveBeenCalled();
+      expect(errW.mock.calls[0][0]).toMatch(/run produced no result/);
+    } finally {
+      log.mockRestore();
+      errW.mockRestore();
+    }
+  });
+
+  it("stream-json: prints nothing (events were mirrored live)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("stream-json", ev, 0, "/log", "w1", null);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 });
