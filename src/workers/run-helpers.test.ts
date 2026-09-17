@@ -7,11 +7,15 @@
 import { describe, it, expect } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
+  bumpContextTokens,
   initContextWindow,
+  isCompactBoundary,
   isoStamp,
   operatorUserText,
+  resetContextTokensOnCompact,
   stdinUserMessage,
   usageContextTokens,
+  type StreamEvent,
 } from "./run.js";
 import { OPERATOR_MARK } from "./report.js";
 
@@ -87,6 +91,73 @@ describe("initContextWindow", () => {
   it("null when the endpoint announced nothing", () => {
     expect(initContextWindow({})).toBeNull();
     expect(initContextWindow({ context_window: 0 })).toBeNull();
+  });
+
+  it("derives 1000000 for the [1m] model variant from the suffix", () => {
+    expect(initContextWindow({ type: "system", subtype: "init", model: "glm-5.3[1m]" })).toBe(
+      1_000_000
+    );
+    // no window for plain models: the meter hides rather than guess
+    expect(initContextWindow({ type: "system", subtype: "init", model: "glm-5.3" })).toBeNull();
+  });
+});
+
+describe("bumpContextTokens (monotonic within a segment)", () => {
+  const statusOf = (contextTokens?: number | null) => ({ contextTokens });
+
+  it("a smaller later reading never drags the meter down", () => {
+    const s = statusOf();
+    bumpContextTokens(s, 150_000);
+    bumpContextTokens(s, 60_000); // short reply — the reading the operator saw
+    bumpContextTokens(s, 90_000);
+    expect(s.contextTokens).toBe(150_000);
+  });
+
+  it("rises when a later reading is bigger", () => {
+    const s = statusOf(100_000);
+    bumpContextTokens(s, 120_000);
+    expect(s.contextTokens).toBe(120_000);
+  });
+
+  it("ignores null and zero readings", () => {
+    const s = statusOf(100_000);
+    bumpContextTokens(s, null);
+    bumpContextTokens(s, 0);
+    expect(s.contextTokens).toBe(100_000);
+    const fresh = statusOf();
+    bumpContextTokens(fresh, null);
+    expect(fresh.contextTokens).toBeUndefined();
+  });
+});
+
+describe("compact boundary resets the floor", () => {
+  const statusOf = (contextTokens?: number | null) => ({ contextTokens });
+
+  it("recognises both event spellings", () => {
+    expect(isCompactBoundary({ type: "system", subtype: "compact_boundary" })).toBe(true);
+    expect(isCompactBoundary({ type: "system", subtype: "compact" })).toBe(true);
+    expect(isCompactBoundary({ type: "system", subtype: "init" })).toBe(false);
+    expect(isCompactBoundary({ type: "assistant" } as StreamEvent)).toBe(false);
+  });
+
+  it("big -> compact reset -> fresh readings win again, smaller ones do not", () => {
+    const s = statusOf();
+    bumpContextTokens(s, 150_000);
+    resetContextTokensOnCompact(s, { type: "system", subtype: "compact_boundary" });
+    expect(s.contextTokens).toBeNull(); // the event carries no usage of its own
+    bumpContextTokens(s, 40_000); // first post-compact reading re-seeds low
+    expect(s.contextTokens).toBe(40_000);
+    bumpContextTokens(s, 30_000); // still monotonic after the reset
+    expect(s.contextTokens).toBe(40_000);
+    bumpContextTokens(s, 200_000); // and rises past the old floor when earned
+    expect(s.contextTokens).toBe(200_000);
+  });
+
+  it("uses the compact event's own usage when it carries one", () => {
+    const s = statusOf();
+    bumpContextTokens(s, 150_000);
+    resetContextTokensOnCompact(s, { type: "system", subtype: "compact", usage: { input_tokens: 5_000 } });
+    expect(s.contextTokens).toBe(5_000);
   });
 });
 

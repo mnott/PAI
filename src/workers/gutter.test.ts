@@ -185,7 +185,14 @@ describe("chatStatusRow", () => {
 
   it("composes the running row: provider/model, ctx, turns, tools, runtime, ticker", () => {
     expect(chatStatusRow(plain, running)).toBe(
-      "[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m12s · ⋯ 7s · count the .ts files · $ find src -name '*.ts'"
+      "[glm/glm-5.3] ctx 84k/200k (42%) · turns 12 · tools 7 · 4m12s · ⋯ 7s · count the .ts files · $ find src -name '*.ts'"
+    );
+  });
+
+  it("renders exactly the label the statusline meter renders (one shared format)", () => {
+    expect(chatStatusRow(plain, running)).toContain(contextMeter(plain, running) ?? "");
+    expect(chatStatusRow(color, { ...running, contextTokens: 150000 })).toContain(
+      contextMeter(color, { ...running, contextTokens: 150000 }) ?? ""
     );
   });
 
@@ -197,16 +204,16 @@ describe("chatStatusRow", () => {
 
   it("colours the ctx part yellow past 70 and red past 85 percent", () => {
     expect(chatStatusRow(color, { ...running, contextTokens: 150000 })).toContain(
-      "\x1b[33mctx 150k/200k 75%\x1b[0m"
+      "\x1b[33mctx 150k/200k (75%)\x1b[0m"
     );
     expect(chatStatusRow(color, { ...running, contextTokens: 180000 })).toContain(
-      "\x1b[31mctx 180k/200k 90%\x1b[0m"
+      "\x1b[31mctx 180k/200k (90%)\x1b[0m"
     );
   });
 
   it("a finished row freezes the numbers and shows ✓/✗ instead of the ticker part", () => {
     expect(chatStatusRow(plain, { ...running, state: "done", elapsed: 260 })).toBe(
-      "[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m20s · ✓ done"
+      "[glm/glm-5.3] ctx 84k/200k (42%) · turns 12 · tools 7 · 4m20s · ✓ done"
     );
     const failed = chatStatusRow(color, { ...running, state: "failed" });
     expect(failed).not.toContain("⋯");

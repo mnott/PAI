@@ -874,7 +874,7 @@ async function startShim(): Promise<void> {
       upstream_url: z.string().optional().describe("Chat Completions base URL (add, protocol=openai)."),
       protocol: z.enum(["anthropic", "openai"]).optional().describe("Protocol (add). Default: anthropic."),
       engine: z.enum(["claude", "codex"]).optional().describe("Runner engine (add). Default: claude."),
-      context_window: z.number().int().positive().optional().describe("Context window for the meter (add). Default: 200000."),
+      context_window: z.number().int().positive().optional().describe("Context window for the meter (add). No default: unset hides the meter unless the init event announces one."),
       key_file: z.string().optional().describe("File holding the API token, 0600 (add)."),
       key: z.string().optional().describe("Raw API token (add) — parked in ~/.config/pai/keys/<name>."),
       model: z.string().optional().describe("Default model id (add)."),
