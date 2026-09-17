@@ -19,7 +19,6 @@ import type { Database } from "better-sqlite3";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { err, dim, warn, ok, header, renderTable } from "../utils.js";
 import {
@@ -30,8 +29,7 @@ import {
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
 import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
 import { basename } from "node:path";
-import { printExitDir } from "../lib/exit-dir.js";
-import { probeResume, launchInDir } from "../lib/launch.js";
+import { launchInDir } from "../lib/launch.js";
 import {
   buildDeduped,
   normalizeName,
@@ -135,70 +133,16 @@ function launchSession(
   // there in the path we already resolved. The directory is the better fallback
   // in every case, so shortId is now only reached for a path with no basename.
   const name = session.friendlyName ?? (basename(projectDir) || session.shortId);
-  const promptArg = `/Name ${name}\ngo`;
 
-  if (dryRun) {
-    if (resumableUuid) {
-      console.log("\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n");
-      console.log(`  cwd:      ${chalk.cyan(projectDir)}`);
-      console.log(`  probe:    transcript on disk for ${resumableUuid.slice(0, 8)}?`);
-      console.log(`  argv:     claude --resume ${resumableUuid} --name "${name}" "/Name ${name}\\ngo"`);
-      console.log(`  fallback: claude --name "${name}" "/Name ${name}\\ngo"`);
-    } else {
-      console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
-      console.log(`  cwd:  ${chalk.cyan(projectDir)}`);
-      console.log(`  argv: claude --name "${name}" "/Name ${name}\\ngo"`);
-    }
-    console.log();
-    return true;
-  }
-
-  if (resumableUuid) {
-    const probe = probeResume(resumableUuid, projectDir);
-    if (probe.ok) {
-      const result = spawnSync(
-        "claude",
-        ["--resume", resumableUuid, "--name", name, promptArg],
-        { cwd: projectDir, stdio: "inherit", env: process.env }
-      );
-      if (result.error) {
-        console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exit(1);
-      }
-      printExitDir(projectDir);
-      process.exit(result.status ?? 0);
-    } else {
-      process.stderr.write(
-        chalk.yellow(
-          `\n  Resume failed for ${resumableUuid.slice(0, 8)}: ${probe.reason ?? "unknown error"}\n` +
-            `  Starting fresh session in same directory.\n\n`
-        )
-      );
-      const result = spawnSync(
-        "claude",
-        ["--name", name, promptArg],
-        { cwd: projectDir, stdio: "inherit", env: process.env }
-      );
-      if (result.error) {
-        console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exit(1);
-      }
-      printExitDir(projectDir);
-      process.exit(result.status ?? 0);
-    }
-  } else {
-    const result = spawnSync(
-      "claude",
-      ["--name", name, promptArg],
-      { cwd: projectDir, stdio: "inherit", env: process.env }
-    );
-    if (result.error) {
-      console.error(err(`Failed to launch claude: ${result.error.message}`));
-      process.exit(1);
-    }
-    printExitDir(projectDir);
-    process.exit(result.status ?? 0);
-  }
+  // Hand the launch to the shared router, never spawn claude here. This used to
+  // spawn `claude` directly in every branch — resume, resume-fallback and fresh —
+  // so `pai <name>` ran on Anthropic credentials even with a worker provider
+  // active. launchInDir owns the routing: fresh launches follow the workers
+  // config (provider when routing is on), a wanted resume stays claude because
+  // its transcript is claude-format. Duplicating that dance here is also how
+  // probeResume ended up fixed in one copy and not the others.
+  launchInDir(projectDir, name, { resumableUuid, dryRun });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
