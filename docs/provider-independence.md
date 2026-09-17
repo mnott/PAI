@@ -11,9 +11,9 @@ and so can the session itself.
 
 ## Switching
 
-- **The crew.** Once, at the start: "Add a worker provider named glm — here
-  is the key." Then: "Use glm for the workers from now on."
-- **The session itself.** Start it with the `glm` command — the shim for
+- **The crew.** Once, at the start: "Add a worker provider named <provider> — here
+  is the key." Then: "Use <provider> for the workers from now on."
+- **The session itself.** Start it with the `<provider>` command — the shim for
   `pai worker run` — or just pick a project with `pai`: the picker follows
   the active provider too, so the whole session, you included, runs on it.
 
