@@ -104,6 +104,29 @@ describe("parseWorkersConfig", () => {
   it("names the field on a bad pane.fontSize", () => {
     expect(() => parseWorkersConfig({ pane: { fontSize: 0 } })).toThrow(/pane\.fontSize/);
   });
+
+  it("defaults the sub-worker caps to depth 2, 4 children", () => {
+    const c = parseWorkersConfig(undefined);
+    expect(c.tree).toEqual({ maxDepth: 2, maxChildren: 4 });
+  });
+
+  it("reads custom tree caps and names the field on bad ones", () => {
+    const c = parseWorkersConfig({ tree: { maxDepth: 3, maxChildren: 8 } });
+    expect(c.tree).toEqual({ maxDepth: 3, maxChildren: 8 });
+    expect(() => parseWorkersConfig({ tree: { maxDepth: -1 } })).toThrow(/tree\.maxDepth/);
+    expect(() => parseWorkersConfig({ tree: { maxDepth: 1.5 } })).toThrow(/tree\.maxDepth/);
+    expect(() => parseWorkersConfig({ tree: { maxChildren: 0 } })).toThrow(/tree\.maxChildren/);
+    expect(() => parseWorkersConfig({ tree: "wide" })).toThrow(/tree/);
+  });
+
+  it("ships a desktop mcpSet (clickr) that a user section can override", () => {
+    expect(parseWorkersConfig(undefined).mcpSets.desktop).toEqual(["clickr"]);
+    const custom = parseWorkersConfig({ mcpSets: { desktop: ["clickr", "screencap"] } });
+    expect(custom.mcpSets.desktop).toEqual(["clickr", "screencap"]);
+    // desktop: [] removes the set deliberately, it does not resurrect
+    const off = parseWorkersConfig({ mcpSets: { desktop: [] } });
+    expect(off.mcpSets.desktop).toEqual([]);
+  });
 });
 
 describe("assertProviderRunnable", () => {

@@ -335,6 +335,92 @@ Ctrl-D leaves. The auto-exit countdown never fires while the prompt holds
 unsent text. Without a TTY (piped output) the pane keeps the plain scrolling
 behaviour — no prompt row, no ticker, stdin still the operator channel.
 
+### Sub-workers and handoffs
+
+Any worker may start its own workers: the runner exports `PAI_WORKER_ID` in
+every worker's environment, and a `pai worker run` launched from inside one
+records `parent` in its status — so the forest is visible in `ps` (children
+indented under their parent, `├`/`└` connectors), the status line (`↳` under
+the parent) and each child gets its own follow pane. Handoffs travel **up
+only**, from a child to its parent:
+
+```
+pai worker handoff '{"kind":"proposal","text":"run this on a cheap provider","data":{…}}'
+```
+
+(or the MCP tool `worker_handoff`; kinds `proposal`, `question`, `blocker` —
+`result` is sent automatically when a child finishes). The handoff is appended
+to `<logDir>/<parent>.inbox.jsonl` (durable, ordered) and, when the parent is
+running, also delivered as an operator message `[handoff from <child id>]`. The
+parent sees it in its pane (`◆ from <id> · kind: text`, magenta), `ps` and the
+status line show `◆N` for an inbox with N handoffs, and `replay`/`follow`
+merge them into the transcript by timestamp. There is no sideways channel:
+siblings never see each other, everything goes up.
+
+Two caps keep the tree bounded (`workers.tree`):
+
+- `maxDepth` (default 2) — how deep sub-workers may nest; a launch one level
+  past the cap fails with a message that suggests a handoff instead,
+- `maxChildren` (default 4) — how many children of one parent may run at the
+  same time (finished children do not count).
+
+Chain stages and planner sub-tasks carry a parent too, but a parent without a
+status file (a chain id) is not a worker and is never capped by depth.
+
+### Worktrees and merge
+
+A run whose class writes files (`implement`, `complex`, `plan`) in a git repo,
+with a prompt that is not read-only, gets **its own git worktree** by default:
+`<logDir>/worktrees/<id>` on branch `worker/<id>` from the current HEAD. The
+worker commits its work on that branch (the no-commit rule applies to the main
+branch only — the appended system prompt says so); when git refuses (no
+commits yet, detached setup) the run degrades to in place with a note on
+stderr and in the ledger.
+
+```
+pai worker merge <id>     # git merge --no-ff worker/<id> + remove the worktree
+pai worker discard <id>   # remove worktree and branch, keep nothing
+```
+
+`ps` marks a worker with an unmerged branch `⎇<commits>` (yellow); the status
+file records `branch`, `commits` and `worktreeDir`. Chains give a worktree to
+the implement stage only; `--worktree` forces one on, `--no-worktree` opts
+out.
+
+### The planner class
+
+`--class plan` runs a small orchestration, not one worker:
+
+1. a planner worker reads the repository and writes
+   `<logDir>/plans/<planner id>.json` — sub-tasks (`title`, `brief`, `class`,
+   `files`, `acceptance`), 5–50 of them, fewer only when the goal names a
+   smaller count;
+2. the runner validates the plan and spawns the sub-tasks as children of the
+   planner, at most `workers.tree.maxChildren` at a time;
+3. each child's structured report arrives in the planner's inbox as a
+   `kind: "result"` handoff;
+4. the run finishes with a summary report (`n/m sub-tasks ok`) and the
+   `pai worker merge` lines for any unmerged branches.
+
+The planner's prompt carries the prompt rules that make plans executable:
+domain-specific instructions only (real files, real commands), constraints
+over step lists, explicit quantity ranges, no checkbox style.
+
+### Clickr controls (desktop set)
+
+The default `mcpSets` ship one set: `desktop = ["clickr"]`. A worker launched
+`--mcp desktop` receives the clickr MCP server — screen control for GUI work
+— and follows the same control handover as a session:
+
+```
+pai worker controls <id> you    # hand control of the desktop to the worker
+pai worker controls <id> me     # take it back
+```
+
+`controls` runs the `clickr controls you|me` CLI and the worker's screenshot
+and input tools honour it. Control starts with the operator: a worker cannot
+drive the desktop until it is handed over.
+
 ### Context meter
 
 Status files carry `contextTokens` (input + cache read + cache creation +
@@ -422,7 +508,9 @@ background instead. Decisions are ledgered (`DENIED-ANTHROPIC-AGENT`,
 `cost_tier`/`tags`), `worker_classes` (list/set/unset), `worker_run` (start a
 worker or chain from chat, returns the id immediately), `worker_toggle`,
 `worker_ps`, `worker_replay`, `worker_say` (message a running worker),
-`worker_resume` (continue a finished one) — the same library the CLI calls.
+`worker_resume` (continue a finished one), `worker_handoff` (from inside a
+worker: send a proposal/question/blocker up to its parent) — the same library
+the CLI calls.
 `worker_providers add` accepts a raw `key`, parks it in
 `~/.config/pai/keys/<name>` (mode 0600) and stores only the path.
 

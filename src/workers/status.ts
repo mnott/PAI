@@ -48,6 +48,16 @@ export interface WorkerStatus {
   parent?: string;
   /** Class name of the chain stage ("draft", "implement", …). */
   stage?: string;
+  /** Worktree this run executed in, when it got one (see worktree.ts). */
+  worktreeDir?: string | null;
+  /** Branch the worker committed on (worker/<id>), set on worktree runs. */
+  branch?: string | null;
+  /** Commit the branch started from (worktree base) for the commits count. */
+  worktreeBase?: string | null;
+  /** Commits the worker made on its branch; set with `branch` on success. */
+  commits?: number | null;
+  /** Set by `pai worker merge` once the branch landed in the original checkout. */
+  merged?: boolean;
 }
 
 /** Context-meter percentage 0–100, null when the numbers are missing. */

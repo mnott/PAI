@@ -6,7 +6,14 @@
 
 import { describe, it, expect } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
-import { initContextWindow, isoStamp, stdinUserMessage, usageContextTokens } from "./run.js";
+import {
+  initContextWindow,
+  isoStamp,
+  operatorUserText,
+  stdinUserMessage,
+  usageContextTokens,
+} from "./run.js";
+import { OPERATOR_MARK } from "./report.js";
 
 describe("isoStamp", () => {
   const d = new Date("2026-09-17T12:19:23Z");
@@ -40,6 +47,15 @@ describe("stdinUserMessage", () => {
     const s = stdinUserMessage("a\nb");
     expect(s.split("\n")).toHaveLength(1);
     expect((JSON.parse(s).message as { content: string }).content).toBe("a\nb");
+  });
+});
+
+describe("operatorUserText", () => {
+  it("marks an operator line with the marker the worker contract names", () => {
+    expect(operatorUserText("what is your status")).toBe("[operator] what is your status");
+    expect(operatorUserText("what is your status")).toBe(`${OPERATOR_MARK} what is your status`);
+    const framed = JSON.parse(stdinUserMessage(operatorUserText("hi")));
+    expect((framed.message as { content: string }).content).toBe("[operator] hi");
   });
 });
 

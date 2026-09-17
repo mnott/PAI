@@ -11,6 +11,7 @@
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
 import { ageOf, contextPercent, type WorkerStatus, alive } from "./status.js";
+import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 
@@ -92,6 +93,11 @@ export interface StreamEventLike {
   _ts?: string;
   /** Operator text (type: "operator"). */
   text?: string;
+  /** Operator mirror of a handoff delivery — shown only as the ◆ inbox line. */
+  handoff?: boolean;
+  /** Handoff fields (type: "handoff", from the inbox tail). */
+  from?: string;
+  kind?: string;
 }
 
 /**
@@ -182,6 +188,53 @@ export function tickerText(secs: number, intent: string, tool: string, meter?: s
   return meter ? `${line} · ${meter}` : line;
 }
 
+/** What the chat pane's status row shows (chatStatusRow formats it). */
+export interface StatusRow {
+  provider: string;
+  model: string;
+  contextTokens?: number | null;
+  contextWindow?: number | null;
+  turns: number;
+  tools: number;
+  /** runtime so far in seconds; the finished row freezes its final value. */
+  elapsed: number;
+  /** seconds since the last rendered event (running only). */
+  idle?: number;
+  intent?: string;
+  tool?: string;
+  /** a finished state freezes the row with ✓/✗ instead of the ticker part. */
+  state?: string | null;
+}
+
+/** `4m12s` — the runtime shape the status row shows. */
+export function fmtElapsed(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * The chat pane's status row (always visible while following):
+ * `[glm/glm-5.3] ctx 84k/200k 42% · turns 12 · tools 7 · 4m12s · ⋯ 7s · <intent> · <tool>`
+ * — context yellow past 70 %, red past 85 %, dropped when unknown; once the
+ * worker finished, the ticker part is replaced by `✓ done` / `✗ failed`.
+ */
+export function chatStatusRow(c: Paint, s: StatusRow): string {
+  const parts: string[] = [];
+  const pct = contextPercent(s);
+  if (pct !== null) {
+    const label = `ctx ${fmtK(s.contextTokens ?? 0)}/${fmtK(s.contextWindow ?? 0)} ${pct}%`;
+    parts.push(pct > 85 ? c("red", label) : pct > 70 ? c("yellow", label) : label);
+  }
+  parts.push(`turns ${s.turns}`, `tools ${s.tools}`, fmtElapsed(s.elapsed));
+  if (s.state && s.state !== "running") {
+    parts.push(s.state === "done" ? c("green", "✓ done") : c("red", "✗ failed"));
+  } else {
+    parts.push(`⋯ ${Math.max(0, Math.floor(s.idle ?? 0))}s`);
+    for (const p of [s.intent, s.tool]) if (p && p.trim()) parts.push(p.trim());
+  }
+  return `[${s.provider}/${s.model}] ${parts.join(" · ")}`;
+}
+
 /**
  * One blank line between turns, none inside one: a blank goes before an
  * assistant message that follows a tool result or an operator message (the
@@ -191,7 +244,7 @@ export function tickerText(secs: number, intent: string, tool: string, meter?: s
 export function blankBetween(prev: { type?: string } | null, e: { type?: string }): boolean {
   if (!prev) return false;
   if (e.type !== "assistant") return false;
-  return prev.type === "user" || prev.type === "operator";
+  return prev.type === "user" || prev.type === "operator" || prev.type === "handoff";
 }
 
 /** The worker's last stated intent: the first line of its last text, ≤60. */
@@ -277,9 +330,17 @@ export function renderEvent(
       `${prefix}${c("dim", `worker started · model ${e.model ?? "?"} · cwd ${basename(e.cwd || cwd || "")}`)}`
     );
   } else if (e.type === "operator") {
+    // a handoff delivery is said to the worker AND tailed from the inbox —
+    // the transcript shows only the ◆ line, its mirror renders nothing
+    if (e.handoff) return out;
     // split per line so the gutter continuation pads wrapped text
     for (const ln of String(e.text ?? "").split("\n")) {
       out.push(`${prefix}${c("cyan", "» " + ln)}`);
+    }
+  } else if (e.type === "handoff") {
+    // a child's message from the inbox: ◆ from <id> · <kind>: <text>
+    for (const ln of String(e.text ?? "").split("\n")) {
+      out.push(`${prefix}${c("mag", `◆ from ${e.from ?? "?"} · ${e.kind ?? "?"}: ${ln}`)}`);
     }
   } else if (e.type === "assistant") {
     for (const b of e.message?.content ?? []) {
@@ -353,15 +414,17 @@ function chainLabelOf(stages: WorkerStatus[]): string {
 }
 
 /**
- * The ps table (RUNNING + FINISHED last 8). Chain stages carry `parent` and
- * render as a tree under one `chain <id>` header; plain workers render as
- * before.
+ * The ps table (RUNNING + FINISHED last 8) as a forest: a worker whose parent
+ * is another worker renders indented under it (`├`/`└` connectors); a parent
+ * that is not a worker is a chain id and gets its old `chain <id>` header.
+ * `⎇` marks an unmerged worktree branch, `◆N` an inbox with N handoffs.
  */
 export function renderTable(
   c: Paint,
   statuses: WorkerStatus[],
   scopeLabel: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  inbox: Record<string, number> = {}
 ): string {
   const running: WorkerStatus[] = [];
   const done: WorkerStatus[] = [];
@@ -372,14 +435,9 @@ export function renderTable(
       done.push(s);
     }
   }
-  // group stages by their chain id, keeping first-seen order
-  const group = (list: WorkerStatus[]): { s: WorkerStatus; chain: string | null }[] => {
-    const out: { s: WorkerStatus; chain: string | null }[] = [];
-    for (const s of list) {
-      out.push({ s, chain: s.parent ?? null });
-    }
-    return out;
-  };
+  const isWorker = (id: string): boolean => statuses.some((s) => s.id === id);
+  // a chain id (no status file) groups its stages under a header instead
+  const chainOf = (s: WorkerStatus): string | null => (s.parent && !isWorker(s.parent) ? s.parent : null);
   const treeLine = (line: string, chain: string | null, last: boolean): string => {
     if (chain === null) return line;
     const mark = last ? "└" : "├";
@@ -388,53 +446,73 @@ export function renderTable(
       ? `  ${bar}   ${line.slice(6)}`
       : `  ${mark} ${line.slice(2)}`;
   };
+  // sub-workers: one connector level per depth under their worker parent
+  const rowPrefix = (depth: number, last: boolean): string =>
+    depth <= 0 ? "  " : "  " + "│ ".repeat(depth - 1) + (last ? "└ " : "├ ");
+  const rowCont = (depth: number, last: boolean): string =>
+    depth <= 0 ? "      " : "  " + "│ ".repeat(depth - 1) + (last ? "  " : "│ ");
+  const branchMark = (s: WorkerStatus): string =>
+    s.branch && !s.merged ? "  " + c("yellow", "⎇" + (s.commits ? String(s.commits) : "")) : "";
+  const inboxMark = (s: WorkerStatus): string =>
+    inbox[s.id] ? " " + c("mag", `◆${inbox[s.id]}`) : "";
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   lines.push(c("bold", `RUNNING (${running.length})`));
   if (!running.length) lines.push("  none");
-  const runEntries = group(running);
-  for (let i = 0; i < runEntries.length; i++) {
-    const { s, chain } = runEntries[i];
+  for (let i = 0; i < running.length; i++) {
+    const s = running[i];
+    const chain = chainOf(s);
     if (chain) {
-      const prev = runEntries[i - 1];
-      if (!prev || prev.chain !== chain) {
-        const stages = runEntries.filter((e) => e.chain === chain).map((e) => e.s);
+      const prev = running[i - 1];
+      if (!prev || chainOf(prev) !== chain) {
+        const stages = running.filter((x) => chainOf(x) === chain);
         lines.push(`  ${c("bold", `chain ${chain}`)}  ${chainLabelOf(stages)}`);
       }
     }
-    const last = !chain || !runEntries[i + 1] || runEntries[i + 1].chain !== chain;
+    const last =
+      !!chain && (i + 1 >= running.length || chainOf(running[i + 1]) !== chain);
+    const depth = workerDepth(statuses, s.id);
+    const subLast =
+      !chain && (i + 1 >= running.length || running[i + 1].parent !== s.parent);
     const meter = contextMeter(c, s, 60);
+    const p = chain ? "  " : rowPrefix(depth, subLast);
+    const q = chain ? "      " : rowCont(depth, subLast);
     lines.push(
       treeLine(
-        `  ${c("cyan", s.id)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )
     );
-    lines.push(treeLine(`      task: ${s.label}`, chain, last));
+    lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
     lines.push(
-      treeLine(`      now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`, chain, last)
+      treeLine(`${q}now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`, chain, last)
     );
   }
   lines.push("");
   lines.push(c("bold", "FINISHED (last 8)"));
-  const doneEntries = group(done.slice(-8));
-  for (let i = 0; i < doneEntries.length; i++) {
-    const { s, chain } = doneEntries[i];
+  const doneSlice = done.slice(-8);
+  for (let i = 0; i < doneSlice.length; i++) {
+    const s = doneSlice[i];
+    const chain = chainOf(s);
     if (chain) {
-      const prev = doneEntries[i - 1];
-      if (!prev || prev.chain !== chain) {
-        const stages = doneEntries.filter((e) => e.chain === chain).map((e) => e.s);
+      const prev = doneSlice[i - 1];
+      if (!prev || chainOf(prev) !== chain) {
+        const stages = doneSlice.filter((x) => chainOf(x) === chain);
         lines.push(`  ${c("bold", `chain ${chain}`)}  ${chainLabelOf(stages)}`);
       }
     }
-    const last = !chain || !doneEntries[i + 1] || doneEntries[i + 1].chain !== chain;
+    const last =
+      !!chain && (i + 1 >= doneSlice.length || chainOf(doneSlice[i + 1]) !== chain);
+    const depth = workerDepth(statuses, s.id);
+    const subLast =
+      !chain && (i + 1 >= doneSlice.length || doneSlice[i + 1].parent !== s.parent);
     const col = s.state === "done" ? "green" : "red";
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `  ${s.id} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}  ${s.label}`,
         chain,
         last
       )
@@ -447,14 +525,23 @@ export function renderTable(
   return lines.join("\n");
 }
 
-/** One-line status-bar summary (same shape glm-ps --status printed). */
+/**
+ * One-line status-bar summary (same shape glm-ps --status printed). Sub-workers
+ * render after their parent with a `↳` prefix (`all` carries the whole forest
+ * so depth is right even when only some workers are this session's);
+ * `◆N` marks an inbox with N handoffs.
+ */
 export function renderStatusLine(
   mine: WorkerStatus[],
   now: Date = new Date(),
-  c: Paint = makeColor(true)
+  c: Paint = makeColor(true),
+  all: WorkerStatus[] = mine,
+  inbox: Record<string, number> = {}
 ): string {
   if (!mine.length) return "";
-  const running = mine.filter((s) => s.state === "running" && alive(s.pid));
+  const running = mine
+    .filter((s) => s.state === "running" && alive(s.pid))
+    .sort((a, b) => workerDepth(all, a.id) - workerDepth(all, b.id)); // stable: parents first
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
@@ -465,8 +552,11 @@ export function renderStatusLine(
   const parts = running.slice(0, 3).map((s) => {
     // context load joins the summary once it passes 60 % (yellow >70, red >85)
     const meter = contextMeter(c, s, 60);
+    const depth = workerDepth(all, s.id);
+    const lead = depth > 0 ? "  ".repeat(depth - 1) + "↳ " : "";
+    const box = inbox[s.id] ? ` ◆${inbox[s.id]}` : "";
     return (
-      `${s.id.slice(-4)} ${s.label.slice(0, 26)} ${ageOf(s.started, now)} · ${s.last.slice(0, 30)}` +
+      `${lead}${s.id.slice(-4)} ${s.label.slice(0, 26)} ${ageOf(s.started, now)} · ${s.last.slice(0, 30)}${box}` +
       (meter ? ` ${meter}` : "")
     );
   });

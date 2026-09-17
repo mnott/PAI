@@ -84,8 +84,9 @@ import {
 import { testProvider, runWorker } from "../workers/run.js";
 import { runChain } from "../workers/chain.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
-import { loadStatus } from "../workers/status.js";
+import { loadStatus, loadStatuses, alive } from "../workers/status.js";
 import { sayToWorker } from "../workers/operator.js";
+import { handoffFromInside, readInbox } from "../workers/handoff.js";
 
 // ---------------------------------------------------------------------------
 // IPC client singleton
@@ -802,7 +803,8 @@ async function startShim(): Promise<void> {
     "worker_status",
     [
       "Show the worker system state: on/off, active provider, configured providers,",
-      "roles, and today's run tally from the ledger.",
+      "roles, today's run tally from the ledger, and the running workers with",
+      "their inbox counts (◆N = handoffs waiting).",
       "",
       "Use this before delegating with `pai worker run` to see what routing will choose.",
     ].join("\n"),
@@ -817,6 +819,19 @@ async function startShim(): Promise<void> {
               `agent hook: ${s.denied} denied, ${s.allowed} allowed, ${s.reroutes} reroutes`,
             ]
           : ["no runs recorded yet"];
+        const logDir = workersLogDir(workers);
+        const running = loadStatuses(logDir).filter((w) => w.state === "running" && alive(w.pid));
+        const runningLines = running.length
+          ? [
+              "",
+              `running (${running.length}):`,
+              ...running.map(
+                (w) =>
+                  `  ${w.id} ${w.label}${w.parent ? ` (sub-worker of ${w.parent})` : ""} · ${w.last}` +
+                  (readInbox(logDir, w.id).length ? ` · ◆${readInbox(logDir, w.id).length}` : "")
+              ),
+            ]
+          : [];
         return workerText(
           [
             `workers: ${workers.enabled ? "on" : "off"}`,
@@ -824,6 +839,7 @@ async function startShim(): Promise<void> {
             ...describeProviders(workers),
             "",
             ...tally,
+            ...runningLines,
           ].join("\n")
         );
       } catch (e) {
@@ -1073,6 +1089,36 @@ async function startShim(): Promise<void> {
         return workerText(
           `${id} started${args.chain ? ` (chain: ${args.chain})` : ""} — check on it with worker_ps, worker_replay, worker_say`
         );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_handoff",
+    [
+      "From inside a worker: send a handoff up to the parent worker.",
+      "",
+      "kind: proposal (do this instead of me), question, blocker, or result",
+      "(results are sent for you when you finish — only send one yourself for",
+      "mid-run findings). The handoff lands in the parent's inbox and is said to",
+      "it when it is still running. Outside a worker this fails — there is no",
+      "sideways or downward path.",
+    ].join("\n"),
+    {
+      kind: z.enum(["proposal", "result", "question", "blocker"]).describe("What the handoff carries."),
+      text: z.string().min(1).describe("The message body, one paragraph."),
+      data: z.record(z.string(), z.unknown()).optional().describe("Structured payload (optional)."),
+    },
+    async (args) => {
+      try {
+        const h = await handoffFromInside(
+          workersLogDir(readWorkersSection().workers),
+          process.env,
+          args
+        );
+        return workerText(`ok → ${h.to} (${h.kind}); the parent sees it in its inbox`);
       } catch (e) {
         return workerError(e);
       }

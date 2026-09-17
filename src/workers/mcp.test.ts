@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandMcpNames, readMcpServers, writeMcpConfig, describeMcp, runMcpConfigPath } from "./mcp.js";
-import type { WorkersConfig } from "./config.js";
+import { DEFAULT_MCP_SETS, type WorkersConfig } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-mcp-test-"));
 const claudeJson = join(dir, "claude.json");
@@ -58,6 +58,26 @@ describe("expandMcpNames", () => {
     expect(() => expandMcpNames(["nosuch"], workers, claudeJson)).toThrow(
       /unknown MCP server "nosuch".*Available servers:.*memory.*sets: office/s
     );
+  });
+});
+
+describe("expandMcpNames — desktop set", () => {
+  it("expands the default desktop set to the clickr server", () => {
+    const desktopJson = join(dir, "claude-desktop.json");
+    writeFileSync(
+      desktopJson,
+      JSON.stringify({
+        mcpServers: {
+          clickr: { type: "stdio", command: "clickr", args: ["mcp"] },
+          memory: { type: "stdio", command: "bun", args: ["run", "memory"] },
+        },
+      }),
+      "utf8"
+    );
+    // a config without its own mcpSets section still knows the default desktop set
+    const bare = { mcpSets: { ...DEFAULT_MCP_SETS } } as unknown as WorkersConfig;
+    expect(expandMcpNames(["desktop"], bare, desktopJson)).toEqual(["clickr"]);
+    expect(expandMcpNames(["desktop,memory"], bare, desktopJson)).toEqual(["clickr", "memory"]);
   });
 });
 

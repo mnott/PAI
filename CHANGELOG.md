@@ -4,6 +4,39 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Sub-workers** — any worker may start its own with `pai worker run`: the
+  runner exports `PAI_WORKER_ID`, a run launched from inside a worker records
+  `parent`, and `ps`/status line render the forest (children indented, each
+  with its own pane). Handoffs travel up only — `pai worker handoff
+  '{"kind":"proposal","text":"…"}'` or the `worker_handoff` MCP tool (kinds
+  proposal/question/blocker; results are sent automatically when a child
+  finishes) — appending to `<logDir>/<parent>.inbox.jsonl` and, when the
+  parent runs, arriving as an operator message; panes show `◆` lines, `ps` and
+  the status line show `◆N`. Two caps under `workers.tree` bound the tree:
+  `maxDepth` (default 2) and `maxChildren` running at once (default 4,
+  finished children do not count).
+- **Worktrees** — writing runs (`implement`/`complex`/`plan`, git repo,
+  non-read-only prompt) get their own git worktree on branch `worker/<id>` by
+  default (`--no-worktree` opts out, `--worktree` forces one on); the worker
+  commits its branch, `pai worker merge <id>` merges `--no-ff` back and
+  removes the worktree, `pai worker discard <id>` drops both. `ps` marks
+  unmerged branches `⎇<commits>`; chains give a worktree to the implement
+  stage only.
+- **Planner class** — `--class plan` writes a plan file
+  (`<logDir>/plans/<id>.json`, 5–50 sub-tasks with title/brief/class/files/
+  acceptance, fewer when the goal names a smaller count), runs the sub-tasks
+  as children of the planner in waves of `maxChildren`, and finishes with a
+  summary plus the branches to merge.
+- **Clickr controls** — default `mcpSets` gained `desktop = ["clickr"]`;
+  `pai worker run --mcp desktop` gives a worker screen control following the
+  session handover, and `pai worker controls <id> you|me` flips it.
+
+---
+
 ## [0.38.0] — 2026-09-17
 
 ### Added

@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import { makeColor } from "./render.js";
 import {
   CHAT_HELP,
+  CHAT_HINT,
   CHAT_PROMPT,
   chatEnter,
   chatInsertLine,
@@ -98,10 +99,10 @@ describe("wrapText", () => {
 // ---------------------------------------------------------------------------
 
 describe("scroll region layout", () => {
-  it("setup restricts scrolling to rows 1..rows-2 and parks on the prompt row", () => {
-    expect(chatScrollRegion(24)).toBe("\x1b[1;22r");
-    expect(chatEnter(24)).toBe("\x1b[2J\x1b[1;22r\x1b[23;1H");
-    expect(chatEnter(30)).toBe("\x1b[2J\x1b[1;28r\x1b[29;1H");
+  it("setup restricts scrolling to rows 1..rows-3, blanks the separator, parks on the prompt row", () => {
+    expect(chatScrollRegion(24)).toBe("\x1b[1;21r");
+    expect(chatEnter(24)).toBe("\x1b[2J\x1b[1;21r\x1b[22;1H\x1b[K\x1b[23;3H");
+    expect(chatEnter(30)).toBe("\x1b[2J\x1b[1;27r\x1b[28;1H\x1b[K\x1b[29;3H");
   });
 
   it("teardown resets the region and drops to the last row", () => {
@@ -110,16 +111,38 @@ describe("scroll region layout", () => {
 
   it("degenerate heights clamp instead of going negative", () => {
     expect(chatScrollRegion(2)).toBe("\x1b[1;1r");
-    expect(chatEnter(3)).toBe("\x1b[2J\x1b[1;1r\x1b[2;1H");
+    expect(chatEnter(3)).toBe("\x1b[2J\x1b[1;1r\x1b[1;1H\x1b[K\x1b[2;3H");
   });
 
-  it("the ticker redraws its own row around a saved cursor", () => {
-    expect(chatTickerRow("⋯ 7s", 24)).toBe("\x1b7\x1b[24;1H\x1b[K⋯ 7s\x1b8");
+  it("the ticker redraws its own row and parks the cursor back on the prompt row", () => {
+    expect(chatTickerRow("⋯ 7s", 24)).toBe("\x1b7\x1b[24;1H\x1b[K⋯ 7s\x1b[23;3H");
+    expect(chatTickerRow("⋯ 7s", 24, 6)).toBe("\x1b7\x1b[24;1H\x1b[K⋯ 7s\x1b[23;6H");
   });
 
-  it("the prompt row parks on rows-1 with the marker and optional hint", () => {
-    expect(chatPromptRow(24)).toBe("\x1b[23;1H" + CHAT_PROMPT);
-    expect(chatPromptRow(24, CHAT_PROMPT, "hint")).toBe("\x1b[23;1H" + CHAT_PROMPT + "hint");
+  it("an empty buffer shows the dim placeholder, the cursor at its first column", () => {
+    expect(chatPromptRow(24)).toBe(`\x1b[23;1H\x1b[K${CHAT_PROMPT}${CHAT_HINT}\x1b[23;3H`);
+    const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
+    expect(chatPromptRow(24, "", dim)).toBe(
+      `\x1b[23;1H\x1b[K${CHAT_PROMPT}${dim(CHAT_HINT)}\x1b[23;3H`
+    );
+  });
+
+  it("a typed buffer replaces the placeholder and parks the cursor after it", () => {
+    expect(chatPromptRow(24, "what is your status")).toBe(
+      `\x1b[23;1H\x1b[K${CHAT_PROMPT}what is your status\x1b[23;22H`
+    );
+    // no hint residue behind typed text, and the same start column
+    expect(chatPromptRow(24, "ab")).not.toContain(CHAT_HINT);
+    expect(chatPromptRow(24, "ab")).toContain(`${CHAT_PROMPT}ab`);
+  });
+
+  it("a cursor mid-draft parks inside the buffer, clamped to its length", () => {
+    expect(chatPromptRow(24, "abcd", (s) => s, 2)).toBe(
+      `\x1b[23;1H\x1b[K${CHAT_PROMPT}abcd\x1b[23;5H`
+    );
+    expect(chatPromptRow(24, "ab", (s) => s, 99)).toBe(
+      `\x1b[23;1H\x1b[K${CHAT_PROMPT}ab\x1b[23;5H`
+    );
   });
 });
 

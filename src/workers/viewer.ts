@@ -28,11 +28,11 @@ import { spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath } from "./paths.js";
 import { alive, loadStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
+import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import {
   CHAT_HELP,
-  CHAT_HINT,
-  CHAT_PROMPT,
+  chatBlankRow,
   chatEnter,
   chatInsertLine,
   chatLeave,
@@ -45,6 +45,7 @@ import {
 } from "./chatui.js";
 import {
   blankBetween,
+  chatStatusRow,
   contextMeter,
   dayOf,
   gutterFor,
@@ -58,6 +59,7 @@ import {
   tickerTool,
   type Gutter,
   type Paint,
+  type StatusRow,
   type StreamEventLike,
 } from "./render.js";
 
@@ -84,7 +86,18 @@ export function psOutput(
       : resolveSession(term)
         ? `scope: session ${resolveSession(term)!.name}`
         : `scope: tab ${currentTabKey(env)} (this iTerm tab)`;
-  return renderTable(c, scoped, scopeLabel);
+  const inbox = inboxCounts(logDir, scoped);
+  return renderTable(c, scoped, scopeLabel, new Date(), inbox);
+}
+
+/** Handoffs waiting in each listed worker's inbox: id → count. */
+export function inboxCounts(logDir: string, statuses: WorkerStatus[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const s of statuses) {
+    const n = readInbox(logDir, s.id).length;
+    if (n) out[s.id] = n;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +246,16 @@ export function replayOutput(
   const out: string[] = [headerLine(c, st)];
   const raw = readFileSync(path, "utf8");
   const lines = tailLines !== undefined ? raw.split("\n").slice(-tailLines) : raw.split("\n");
+  // the worker's inbox handoffs join the transcript where they happened (_ts)
+  const handoffs: StreamEventLike[] = readInbox(logDir, wid).map((h) => ({
+    type: "handoff",
+    from: h.from,
+    kind: h.kind,
+    text: h.text,
+    _ts: h._ts,
+  }));
   let state = initialFollowState("");
+  const events: StreamEventLike[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
     let e: StreamEventLike;
@@ -242,6 +264,14 @@ export function replayOutput(
     } catch {
       continue;
     }
+    events.push(e);
+  }
+  const stamp = (e: StreamEventLike): number => {
+    const t = e._ts ? Date.parse(e._ts) : NaN;
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const merged = [...events, ...handoffs].sort((a, b) => stamp(a) - stamp(b));
+  for (const e of merged) {
     const step = applyEvent(c, state, e, st.cwd ?? "", undefined, undefined, wrapWidth);
     if (step.day) out.push(c("dim", `── ${step.day} ──`));
     out.push(...step.lines);
@@ -373,6 +403,8 @@ export async function followWorkers(
   const handles = new Map<string, FollowHandle>();
   const seenHeader = new Set<string>();
   const finished = new Set<string>();
+  // handoffs already rendered per worker (id → inbox lines shown so far)
+  const inboxSeen = new Map<string, number>();
   const states = new Map<string, FollowState>();
   const started = Date.now();
   let idleSince: number | null = null;
@@ -385,12 +417,13 @@ export async function followWorkers(
   };
   process.once("SIGINT", onInt);
 
-  // --- the chat layout (target + TTY): transcript region + two fixed rows
+  // --- the chat layout (target + TTY): transcript region, a blank separator
+  // row, then the two fixed rows (prompt, ticker)
   const chat = tty && target !== null;
   let rows = out_.rows ?? 24;
   const columns = (): number | null => (typeof out_.columns === "number" ? out_.columns : null);
   let fill = 0; // transcript rows filled since the region was (re)set
-  const regionRows = () => Math.max(1, rows - 2);
+  const regionRows = () => Math.max(1, rows - 3);
   /** Every line the pane shows goes through here: plain newline, or a row
    *  inserted above the fixed prompt/ticker rows (chatui.chatInsertLine). */
   const out = (line: string) => {
@@ -415,15 +448,43 @@ export async function followWorkers(
     if (tty) out_.write("\r\x1b[K");
   };
   let ticker = initialFollowState();
+  // the chat ticker row doubles as the worker's status line: provider/model,
+  // context meter, turns, tools, runtime — frozen with ✓/✗ once it finished
+  const statusRowOf = (st: WorkerStatus, secs: number): StatusRow => {
+    const fin = finished.has(st.id);
+    const startedAt = Date.parse((st.started ?? "").replace(" ", "T"));
+    const elapsed =
+      fin && st.secs !== null
+        ? st.secs
+        : Number.isNaN(startedAt)
+          ? 0
+          : Math.floor((Date.now() - startedAt) / 1000);
+    return {
+      provider: st.provider,
+      model: st.model,
+      contextTokens: st.contextTokens,
+      contextWindow: st.contextWindow,
+      turns: st.turns,
+      tools: st.tools,
+      elapsed,
+      idle: secs,
+      intent: ticker.intent,
+      tool: ticker.tool,
+      state: fin ? (st.state === "running" ? "done" : st.state) : null,
+    };
+  };
   const writeLiveness = () => {
     if (!tty) return;
     const secs = Math.max(0, Math.floor((Date.now() - lastEventAt) / 1000));
-    const meter = meterStatus ? contextMeter(c, meterStatus) : null;
-    const text = tickerText(secs, ticker.intent, ticker.tool, meter);
-    if (chat) out_.write(chatTickerRow(text, rows));
-    else {
+    if (chat) {
+      const text = meterStatus
+        ? chatStatusRow(c, statusRowOf(meterStatus, secs))
+        : tickerText(secs, ticker.intent, ticker.tool);
+      out_.write(chatTickerRow(text, rows, promptCursorCol()));
+    } else {
+      const meter = meterStatus ? contextMeter(c, meterStatus) : null;
       out_.write("\r\x1b[K");
-      out_.write(text);
+      out_.write(tickerText(secs, ticker.intent, ticker.tool, meter));
     }
   };
 
@@ -562,7 +623,6 @@ export async function followWorkers(
   // outlives follow itself (a pane then never closes, however long ago the
   // worker ended), so it is closed in the finally block below
   const terminalIn = (in_ as { isTTY?: boolean }).isTTY === true;
-  let hintUp = true;
   let rlIn: ReturnType<typeof createInterface> | null = null;
   let onResize: (() => void) | null = null;
   // an echoed line comes back as a mirrored operator event within moments —
@@ -576,9 +636,21 @@ export async function followWorkers(
     if (g.n <= 0) echoed.delete(text);
     return true;
   };
+  /** Column the prompt row's cursor parks at: right after the draft's cursor. */
+  const promptCursorCol = (): number => {
+    const line = rlIn?.line ?? "";
+    const cur = (rlIn as unknown as { cursor?: number } | null)?.cursor;
+    return 3 + Math.max(0, Math.min(typeof cur === "number" ? cur : line.length, line.length));
+  };
+  /**
+   * The pane owns the prompt row's rendering: `› `, the buffer — or the dim
+   * placeholder while the buffer is empty — and the cursor parked after it.
+   */
   const drawPrompt = () => {
-    if (!chat || terminalIn) return;
-    out_.write(chatPromptRow(rows, CHAT_PROMPT, hintUp ? c("dim", CHAT_HINT) : undefined));
+    if (!chat) return;
+    const line = rlIn?.line ?? "";
+    const cur = (rlIn as unknown as { cursor?: number } | null)?.cursor;
+    out_.write(chatPromptRow(rows, line, (s) => c("dim", s), cur));
   };
   if (chat) {
     const echoOperator = (text: string) => {
@@ -600,21 +672,25 @@ export async function followWorkers(
       states.set(id, step.state);
     };
     const handleChatLine = (raw: string) => {
-      hintUp = false;
       const act = parseChatLine(raw);
+      let redrew = false;
       switch (act.kind) {
         case "message":
           if (!act.text) break;
+          handleOperatorLine(act.text); // send the line …
+          drawPrompt(); // … placeholder back before the » echo is written
+          redrew = true;
           echoOperator(act.text);
-          handleOperatorLine(act.text);
           break;
         case "resume":
           if (!act.text) {
             out(c("dim", "usage: /resume <text>"));
             break;
           }
-          echoOperator(act.text);
           if (target !== null) resumeTarget(act.text, target);
+          drawPrompt();
+          redrew = true;
+          echoOperator(act.text);
           break;
         case "help":
           for (const ln of CHAT_HELP) out(c("dim", ln));
@@ -629,35 +705,37 @@ export async function followWorkers(
           aborted = true;
           break;
       }
-      drawPrompt(); // on a pipe readline does not repaint the prompt itself
+      if (!redrew) drawPrompt(); // on a pipe readline does not repaint the row
     };
-    rlIn = createInterface({
-      input: in_,
-      output: out_ as unknown as NodeJS.WriteStream,
-      terminal: terminalIn,
-    });
+    // readline edits silently (its output is a mute stream); the pane draws
+    // the prompt row itself from the live buffer, so the placeholder yields
+    // to the first keystroke and returns when the buffer empties again
+    const silent = { write: () => true } as unknown as NodeJS.WriteStream;
+    rlIn = createInterface({ input: in_, output: silent, terminal: terminalIn });
     rlIn.on("line", handleChatLine);
     // Ctrl-C: an empty prompt leaves, a draft clears; Ctrl-D (close) leaves
     rlIn.on("SIGINT", () => {
       if ((rlIn?.line ?? "").trim() === "") aborted = true;
-      else rlIn?.write(null, { ctrl: true, name: "u" });
+      else {
+        rlIn?.write(null, { ctrl: true, name: "u" });
+        drawPrompt();
+      }
     });
     rlIn.on("close", () => {
       aborted = true;
     });
     out_.write(chatEnter(rows));
+    drawPrompt();
     if (terminalIn) {
-      rlIn.setPrompt(CHAT_PROMPT);
-      rlIn.prompt();
-      out_.write(c("dim", CHAT_HINT));
-    } else {
-      drawPrompt();
+      // every keystroke re-renders the row (and re-parks the cursor) from
+      // the buffer readline now holds
+      (in_ as NodeJS.ReadableStream).on("keypress", () => drawPrompt());
     }
     // resize: re-read the geometry, rebuild the region, fill it afresh
     onResize = () => {
       if (typeof out_.rows === "number") rows = out_.rows;
       fill = 0;
-      out_.write(chatScrollRegion(rows));
+      out_.write(chatScrollRegion(rows) + chatBlankRow(rows));
       drawPrompt();
     };
     out_.on?.("resize", onResize);
@@ -730,6 +808,26 @@ export async function followWorkers(
           }
           closeSync(h.fd);
           handles.delete(wid);
+        }
+      }
+
+      // inbox tail: new handoffs render as ◆ lines in the recipient's pane
+      // (they may also arrive via the say mirror — the durable copy is here)
+      for (const wid of [...handles.keys()]) {
+        const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
+        const msgs = readInbox(logDir, wid);
+        const seenN = inboxSeen.get(wid) ?? 0;
+        if (msgs.length > seenN) {
+          for (const m of msgs.slice(seenN)) {
+            emitEvent(
+              { type: "handoff", from: m.from, kind: m.kind, text: m.text, _ts: m._ts },
+              wid,
+              st,
+              multi
+            );
+          }
+          inboxSeen.set(wid, msgs.length);
+          progressed = true;
         }
       }
 
@@ -817,5 +915,5 @@ export function statusLineOutput(
     const sameDir = cwd && s.cwd.startsWith(cwd);
     return sameScope || (!term && sameDir);
   });
-  return renderStatusLine(mine, now);
+  return renderStatusLine(mine, now, makeColor(false), statuses, inboxCounts(logDir, mine));
 }

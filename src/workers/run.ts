@@ -56,7 +56,16 @@ import {
 import { resolveSession } from "./scope.js";
 import { isQuotaFailure, nextAutoProvider, resolveTarget, setCooldown } from "./routing.js";
 import { openPaneForWorker } from "./pane.js";
-import { WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
+import { assertChildAllowed, isWorkerId, launchParent } from "./tree.js";
+import { deliverHandoff, isHandoffMessage } from "./handoff.js";
+import {
+  addWorktree,
+  recordWorktree,
+  worktreeSystemPrompt,
+  worktreeWanted,
+  type WorktreeInfo,
+} from "./worktree.js";
+import { OPERATOR_MARK, WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
 import { expandMcpNames, writeMcpConfig } from "./mcp.js";
 import { createOperatorServer } from "./operator.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
@@ -91,8 +100,14 @@ export interface RunOptions {
   quiet?: boolean;
   /** Internal: notified with the worker id once it exists (resume uses it). */
   onWorkerStart?: (wid: string) => void;
+  /** Internal: preset worker id (the planner mints its id before phase 1). */
+  id?: string;
+  /** --worktree/--no-worktree; undefined lets the class default decide. */
+  worktreeFlag?: boolean;
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
+  /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
+  _planner?: boolean;
 }
 
 /** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
@@ -150,6 +165,11 @@ export function ensureNoMcpConfig(logDir: string): string {
 /** A stream-json user message for the child's stdin. */
 export function stdinUserMessage(text: string): string {
   return JSON.stringify({ type: "user", message: { role: "user", content: text } });
+}
+
+/** An operator line as the worker sees it: carrying the contract's marker. */
+export function operatorUserText(text: string): string {
+  return `${OPERATOR_MARK} ${text}`;
 }
 
 /**
@@ -231,6 +251,18 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const logDir = workersLogDir(config);
   mkdirSync(logDir, { recursive: true });
 
+  // class plan is not one worker but the planner orchestration (planner.ts)
+  if (opts.className === "plan" && !opts._planner) {
+    const { runPlanner } = await import("./planner.js");
+    return runPlanner(opts);
+  }
+
+  // Sub-worker bookkeeping: an explicit parent (chain stage, planner child)
+  // wins, else the worker this process runs inside (PAI_WORKER_ID). Both
+  // caps from workers.tree apply to parents that are workers themselves.
+  const parent = launchParent(opts.parent);
+  if (parent) assertChildAllowed(logDir, parent, config.tree);
+
   const target = resolveTarget(config, logDir, {
     flagProvider: opts.providerFlag,
     className: opts.className,
@@ -260,10 +292,13 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         claudeArgs: opts.claudeArgs,
         noPane: opts.noPane ?? false,
         cwd: opts.cwd,
-        parent: opts.parent,
+        parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
         onWorkerStart: opts.onWorkerStart,
+        id: opts.id,
+        worktreeFlag: opts.worktreeFlag,
+        className: opts.className,
       });
     }
     return await executeRun({
@@ -277,10 +312,13 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       noPane: opts.noPane ?? false,
       mcpFlag: opts.mcpFlag,
       cwd: opts.cwd,
-      parent: opts.parent,
+      parent: parent ?? undefined,
       stage: opts.stage,
       quiet: opts.quiet,
       onWorkerStart: opts.onWorkerStart,
+      id: opts.id,
+      worktreeFlag: opts.worktreeFlag,
+      className: opts.className,
       reroutes: opts._reroutes ?? 0,
     });
   } catch (e) {
@@ -309,6 +347,9 @@ interface ExecuteArgs {
   stage?: string;
   quiet?: boolean;
   onWorkerStart?: (wid: string) => void;
+  id?: string;
+  worktreeFlag?: boolean;
+  className?: string;
   reroutes: number;
 }
 
@@ -324,10 +365,26 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   }
   const env = buildRunEnv(target.provider, headless, proxyUrl);
 
-  const wid = newWorkerId();
+  const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
+
+  // One worktree per writing run (implement/complex/plan, a git cwd, a prompt
+  // that is not read-only; --worktree/--no-worktree override). A git refusal
+  // degrades to an in-place run — the worker itself must still run.
+  let worktree: WorktreeInfo | null = null;
+  if (headless && worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })) {
+    try {
+      worktree = addWorktree(logDir, wid, cwd);
+    } catch (e) {
+      const why = (e as Error).message;
+      process.stderr.write(`pai worker: no worktree (${why}) — running in place\n`);
+      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
+    }
+  }
+  // sub-workers detect themselves (and their parent) through this variable
+  env.PAI_WORKER_ID = wid;
 
   const status: WorkerStatus = {
     id: wid,
@@ -348,6 +405,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
+    ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -391,12 +449,18 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
     if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
+    if (worktree) {
+      cmd.push(
+        "--append-system-prompt",
+        worktreeSystemPrompt(wid, worktree.branch, worktree.dir)
+      );
+    }
   }
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
     env,
-    cwd,
+    cwd: worktree?.dir ?? cwd,
     stdio: headless ? ["pipe", "pipe", "inherit"] : "inherit",
   });
 
@@ -433,9 +497,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           clearTimeout(closeTimer);
           closeTimer = null;
         }
-        writeEvent({ type: "operator", text });
+        // a handoff delivery's mirror carries a flag: the viewer shows the
+        // inbox ◆ line instead, never both
+        writeEvent({ type: "operator", text, handoff: isHandoffMessage(text) });
         try {
-          proc.stdin?.write(stdinUserMessage(text) + "\n");
+          proc.stdin?.write(stdinUserMessage(operatorUserText(text)) + "\n");
         } catch {
           /* child gone; the socket is closed by the run's cleanup */
         }
@@ -566,7 +632,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     label,
   });
 
-  if (headless && !a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport);
+  // worktree outcome: keep branch + commit count on success, clean up on failure
+  if (worktree) recordWorktree(logDir, status, worktree, ok);
+
+  if (headless && !a.quiet) {
+    printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport, worktreeExtras(status));
+  }
 
   // Quota reroute: only auto-routed runs, dead before the first tool call.
   const resultText = resultEvent?.result ?? "";
@@ -597,12 +668,45 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         stage: a.stage,
         claudeArgs: a.claudeArgs,
         onWorkerStart: a.onWorkerStart,
+        worktreeFlag: a.worktreeFlag,
+        className: a.className,
         _reroutes: a.reroutes + 1,
       });
     }
   }
 
-  return rc !== 0 ? rc : ok ? 0 : 1;
+  // A finishing child reports to its worker parent automatically: the report
+  // lands in the parent's inbox and (when the parent still runs) is said to
+  // it so it enters the parent's conversation.
+  const finalRc = rc !== 0 ? rc : ok ? 0 : 1;
+  if (status.parent && isWorkerId(logDir, status.parent)) {
+    try {
+      await deliverHandoff(logDir, {
+        from: wid,
+        to: status.parent,
+        kind: "result",
+        text: shortText(
+          ctx.resultReport?.notes ?? resultEvent?.result ?? (ok ? "done" : "failed"),
+          400
+        ),
+        data: {
+          rc: finalRc,
+          ok,
+          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
+          ...(ctx.resultReport ? { report: ctx.resultReport } : {}),
+        },
+      });
+    } catch {
+      // the inbox line is best effort; it must never fail the exit path
+    }
+  }
+
+  return finalRc;
+}
+
+/** The worktree fields printResult adds to a json payload, when there is one. */
+function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undefined {
+  return s.branch ? { branch: s.branch, commits: s.commits ?? 0 } : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -620,10 +724,24 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     );
   }
   const env = buildCodexEnv(target.provider);
-  const wid = newWorkerId();
+  const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = process.env.ITERM_SESSION_ID ?? "";
   const session = resolveSession(term);
+
+  let worktree: WorktreeInfo | null = null;
+  if (worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })) {
+    try {
+      worktree = addWorktree(logDir, wid, cwd);
+    } catch (e) {
+      const why = (e as Error).message;
+      process.stderr.write(`pai worker: no worktree (${why}) — running in place\n`);
+      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
+    }
+  }
+  env.PAI_WORKER_ID = wid;
+  // codex takes instructions through the prompt, not a system prompt flag
+  const prompt = (worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir) + "\n\n" : "") + parsed.prompt;
 
   const status: WorkerStatus = {
     id: wid,
@@ -644,6 +762,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     ...(session ? { session } : {}),
     contextWindow: providerContextWindow(target.provider),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
+    ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -670,9 +789,9 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
 
   const t0 = Date.now();
-  const proc = spawn("codex", buildCodexArgs(parsed.prompt, parsed.callerModel ? undefined : model), {
+  const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {
     env,
-    cwd,
+    cwd: worktree?.dir ?? cwd,
     stdio: ["ignore", "pipe", "inherit"],
   });
 
@@ -759,27 +878,51 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     label,
   });
 
-  if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report);
-  return rc !== 0 ? rc : ok ? 0 : 1;
+  if (worktree) recordWorktree(logDir, status, worktree, ok);
+
+  if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report, worktreeExtras(status));
+
+  // the codex engine reports to its worker parent the same way (handoff.ts)
+  const finalRc = rc !== 0 ? rc : ok ? 0 : 1;
+  if (status.parent && isWorkerId(logDir, status.parent)) {
+    try {
+      await deliverHandoff(logDir, {
+        from: wid,
+        to: status.parent,
+        kind: "result",
+        text: shortText(report?.notes ?? finalText ?? (ok ? "done" : "failed"), 400),
+        data: {
+          rc: finalRc,
+          ok,
+          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
+          ...(report ? { report } : {}),
+        },
+      });
+    } catch {
+      // best effort; never fail the exit path
+    }
+  }
+  return finalRc;
 }
 
 // ---------------------------------------------------------------------------
 // result printing
 // ---------------------------------------------------------------------------
 
-function printResult(
+export function printResult(
   fmt: "text" | "json" | "stream-json",
   resultEvent: StreamEvent | null,
   rc: number,
   logDir: string,
   wid: string,
-  report?: WorkerReport | null
+  report?: WorkerReport | null,
+  extras?: Record<string, unknown>
 ): void {
   if (fmt === "stream-json") return; // already mirrored live
   if (fmt === "json") {
     const payload = report
-      ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report }
-      : resultEvent ?? { is_error: true, result: "no result event", rc };
+      ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report, ...extras }
+      : { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), ...extras };
     console.log(JSON.stringify(payload));
     return;
   }
