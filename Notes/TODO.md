@@ -1,21 +1,37 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0027 - 2026-09-17 - X" session-id="3793827d-3fdc-445d-98aa-ad767220faa6" ts="2026-09-17T07:33:02.592Z" -->
+<!-- pai:checkpoint authored="auto" session="0031 - 2026-09-17 - Pai Infrastructure Investigation And Task Notification System" session-id="dab1eaf7-66ce-4e61-a9a1-1e3f2563d89f" ts="2026-09-17T10:04:57.478Z" -->
 
-> **Last session:** 0027 - 2026-09-17 - X
-> **Paused at:** 2026-09-17T07:33:02.592Z
+> **Last session:** 0031 - 2026-09-17 - Pai Infrastructure Investigation And Task Notification System
+> **Paused at:** 2026-09-17T10:04:57.478Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 3793827d-3fdc-445d-98aa-ad767220faa6`
+> Resume with: `claude --resume dab1eaf7-66ce-4e61-a9a1-1e3f2563d89f`
 
-Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
-
-Work completed:
-- `, `ACTIONS:`, `CAPTURE:`, `COMPLETED:` — plus raw user messages and Edit/Write paths, hard-truncated to 3 user messages at 200 chars, 3 summaries at 150, 5 captures at 150, 10 files. No model is called at compact time. The AG2 autosave is explicitly the floor, and says so in its own docstring: *"strictly worse than what the model would write, and that is the point: it is the floor, not the ceiling."*
-- ` in other transcripts sits in a `hook_success` attachment — the CORE skill text echoed at startup, not model output. Zero model-emitted markers anywhere.
-
-Last completed: ` — plus raw user messages and Edit/Write paths, hard-truncated to 3 user messages at 200 chars, 3 summaries at 150, 5 captures at 150, 10 files. No model is called at compact time. The AG2 autosave is explicitly the floor, and says so in its own docstring: "strictly worse than what the model would write, and that is the point: it is the floor, not the ceiling."
+T
+i=ckpt-2026-09-17T10-04-57.452Z
+g=/Name PAI
+d=go | what are you doing? | no you just started running a precompression hook here in that session! it is at 260K. nothing was happening in this session here really
+t=?
+@1=Notes/TODO.md
+@2=src/hooks/pre-compact.sh
+@3=src/hooks/session-autosave.sh
+@4=src/hooks/session-stop.sh
+@5=src/hooks/ts/lib/context-fill.test.ts
+@6=src/hooks/ts/lib/context-fill.ts
+@7=src/hooks/ts/post-tool-use/sync-todo-to-md.ts
+@8=src/hooks/ts/post-tool-use/update-tab-on-action.ts
+@9=src/hooks/ts/pre-compact/context-compression-hook.ts
+@10=src/hooks/ts/session-start/initialize-session.ts
+@11=src/hooks/ts/session-start/load-core-context.ts
+@12=src/hooks/ts/session-start/load-project-context.ts
+@13=src/hooks/ts/session-start/post-compact-inject.ts
+@14=src/hooks/ts/stop/stop-hook.ts
+@15=src/hooks/ts/subagent-stop/subagent-stop-hook.ts
+@16=src/hooks/ts/user-prompt/update-tab-titles.ts
+@17=src/session/context-handover-trigger.test.ts
+z=auto ckpt (no model); main@791c0ab fix(session): clear the handover marker at compaction; 20 dirty; +5 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 
@@ -1190,4 +1206,4 @@ Fixes, in dependency order:
 
 ---
 
-*Last updated: 2026-09-17T07:33:02.593Z*
+*Last updated: 2026-09-17T09:39:20.595Z*

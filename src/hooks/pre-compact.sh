@@ -1,4 +1,5 @@
 #!/bin/bash
+[ "${PAI_WORKER:-}" = "1" ] && exit 0  # disposable worker: no per-session bookkeeping
 # PAI Knowledge OS — pre-compact hook
 #
 # Called by Claude Code before context compaction.

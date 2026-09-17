@@ -4,6 +4,99 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [0.37.0] — 2026-09-17
+
+### Added
+
+- **Worker providers** — subagents run on endpoints you configure (any
+  Anthropic-compatible API, any OpenAI-compatible API, or the Codex CLI)
+  instead of the main session's Anthropic account.
+  Typed `workers` section in `~/.config/pai/config.json`; `pai worker` CLI
+  group (run, ps, follow, replay, pane, log, status-line, providers, roles,
+  on/off, install); MCP tools `worker_status`, `worker_providers`,
+  `worker_roles`, `worker_toggle`, `worker_ps`, `worker_replay`. A PreToolUse
+  hook denies the Agent tool and rewrites delegation to `pai worker run`
+  (bypass: `ALLOW_ANTHROPIC_AGENTS=1` or `pai worker off`). Provider routing
+  with roles, cooldowns, quota probes and automatic rerouting; per-worker
+  status files, an append-only ledger, iTerm follow panes, and a status-line
+  entry. The glm/glm-run/glm-ps/glm-log commands survive as shims
+  (`pai worker install` migrates and moves previous versions to
+  `<name>.pre-pai`).
+  See [docs/worker.md](docs/worker.md).
+
+- **Worker proxy for OpenAI-protocol providers** — providers with
+  `protocol: "openai"` + `upstreamUrl` run through a built-in translating
+  proxy (Anthropic Messages API in, OpenAI Chat Completions out): system,
+  multi-turn text, tool_use/tool_result ↔ tool_calls, tools ↔ functions,
+  streaming SSE with streamed tool-call arguments, usage and error mapping.
+  Loopback only, started on demand by `run` (pid file under the logDir),
+  managed by hand with `pai worker proxy [--port N|stop]`; the config is
+  re-read per request. The worker holds a placeholder token; the real one
+  stays inside the proxy. `providers test` goes through it.
+
+- **Codex engine for workers** — a provider with `engine: "codex"` runs
+  `codex exec --json` instead of Claude Code; its JSONL events are folded
+  into the same status fields, transcript shape and final print. Flags with
+  no Codex equivalent (`--allowedTools`, MCP) are dropped with a ledger
+  note; `providers test` reports `codex not installed` when the CLI is
+  missing.
+
+- **Stamped transcripts, gutter and liveness** — every mirrored event in
+  `<id>.jsonl` carries an ISO `_ts`; `follow`/`replay` render a dim
+  `HH:MM:SS │ ` gutter (worker-tagged when several run at once, day
+  separator on rollover), and a TTY liveness line
+  `⋯ <n>s since last event · <last action>` overwritten in place.
+
+- **The worker contract** — headless runs append a system prompt fixing the
+  final answer: one JSON message with `changed`/`commands`/`checks`/`open`/
+  `notes`. The runner parses it (notes become the table's one-liner,
+  `--output-format json` gains a `report` field) and the viewer renders it
+  as a compact block. A caller's `--append-system-prompt` is applied
+  alongside. Panes count down `pane.autoExitSecs` (now default 60).
+
+- **say / resume** — headless runs keep stdin open (`--input-format
+  stream-json`): `pai worker say <id> "<text>"` (or `worker_say`) forwards a
+  message over the per-worker Unix socket while it runs, mirrored as `»`
+  operator events; after the result, stdin closes 2 s later unless another
+  message arrives. `pai worker resume <id> "<text>"` (or `worker_resume`)
+  continues the same Claude session on the same provider (`↩ <label>`); a
+  `follow` pane reads its own stdin the same way.
+
+- **Context meter and worker MCP allowlist** — status files track
+  `contextTokens`/`contextWindow` (init event, provider `contextWindow`, or
+  200k); the `ps` table and status line show `ctx 84k/200k (42%)` past 60 %
+  (yellow >70, red >85), the pane liveness always. Headless workers start
+  with no MCP servers by default (server definitions cost context and
+  startup); opt in per run with `--mcp office` / `--mcp memory,github` or a
+  role's `"mcp": [...]`, expanded from `workers.mcpSets` + `~/.claude.json`
+  into a filtered `<id>.mcp.json`; unknown names fail fast;
+  `pai worker mcp list` shows what exists. Pane commands are now
+  `exec pai worker follow …` (one process, direct signals).
+
+### Fixed
+
+- **Worker follow panes never got their profile** — reading iTerm's
+  preferences went through `plutil -convert json` on the whole plist, which
+  refuses real iTerm preferences (they contain `<date>` objects:
+  "Invalid object in plist for JSON format"), so the `pai-worker` dynamic
+  profile was never written and panes opened with the default profile. The
+  read now uses key-scoped `plutil -extract`; and when the preferences
+  cannot be read at all, the profile is still written — font
+  `Menlo-Regular <fontSize>`, no parent, reason on stderr once — instead of
+  being skipped.
+
+### Changed
+
+- **`workers.pane.fontScale` → `workers.pane.fontSize`** (default 13) — the
+  pane profile's font is the default profile's family at that point size
+  (`MesloLGLNFM-Regular 13` on a machine whose default is
+  `MesloLGLNFM-Regular 18`) rather than a scaled size. A legacy `fontScale`
+  value in the config is tolerated and ignored. `pai worker pane <id>
+  --check` now also prints the profile file's path, whether it exists, and
+  the font it contains or would write.
+
+---
+
 ## [0.8.6] — 2026-04-07
 
 ### Added

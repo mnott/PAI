@@ -6,6 +6,7 @@
  * Note: All context loading handled by PAI skill system (core identity in skill description, full context in SKILL.md)
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { execSync } from 'child_process';
 
 interface HookInput {
@@ -42,6 +43,7 @@ async function readStdinWithTimeout(timeout: number = 5000): Promise<string> {
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     // Read the hook input from stdin
     const input = await readStdinWithTimeout();

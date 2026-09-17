@@ -21,5 +21,6 @@ export { whisper } from "./whisper.js";
 export { consolidate } from "./consolidate.js";
 export { advisor } from "./advisor.js";
 export { tasks } from "./tasks.js";
+export { worker } from "./worker.js";
 export { pause } from "./pause.js";
 export { end } from "./end.js";

@@ -171,9 +171,25 @@ pai restore ~/.pai/backups/2026-02-25T14-30-00       # Restore from backup
 
 # Setup
 pai setup                                            # Re-run the setup wizard
+
+# Worker providers (subagents on your own endpoints)
+pai worker run -p '<task spec>' --output-format json # Run one worker
+pai worker ps                                        # This session's workers
+pai worker providers add <name> --base-url <url> …   # Configure a provider
+pai worker install                                   # Agent hook + glm* shims
 ```
 
 For the full CLI reference including all subcommands and flags, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Worker Providers
+
+PAI can run subagents (research, implementation, spotchecks) on an endpoint you
+configure instead of the main session's Anthropic account. Ask Claude to
+delegate through workers, or use the CLI above. `pai worker ps` lists running
+workers, the status line shows their current step, and `pai worker follow`
+tails one live. Full reference: [docs/worker.md](docs/worker.md).
 
 ---
 

@@ -33,9 +33,11 @@ import {
   contextFillThresholds,
   crossedThresholds,
   isImmediate,
+  transcriptModelFamily,
   type ContextFillReading,
   type ThresholdName,
 } from "../hooks/ts/lib/context-fill.js";
+import { isWorkerSession } from "../hooks/ts/lib/worker-session.js";
 import { readContextHandoverCache, type ContextHandoverCache } from "../hooks/ts/lib/context-handover-cache.js";
 import { PaiClient } from "../daemon/ipc-client.js";
 
@@ -248,6 +250,19 @@ export async function checkAndEnqueueContextHandover(
   input: HandoverTriggerInput,
   deps: HandoverTriggerDeps = defaultDeps
 ): Promise<HandoverTriggerResult> {
+  // A disposable worker session gets no handover: nobody resumes it, and its
+  // model may not even be the platform's (a different window, a different
+  // provider's bill). Two signals, either suffices: the launcher's env mark,
+  // or a transcript whose last assistant turn came from a non-Claude model.
+  if (isWorkerSession()) {
+    console.error(`[context-handover-trigger] session ${input.sessionId}: worker session (PAI_WORKER=1) — no handover.`);
+    return NOTHING;
+  }
+  if (input.transcriptPath && transcriptModelFamily(input.transcriptPath) === "foreign") {
+    console.error(`[context-handover-trigger] session ${input.sessionId}: transcript written by a non-Claude model — no handover.`);
+    return NOTHING;
+  }
+
   let state = deps.loadState(input.sessionId);
   if (ALL_THRESHOLDS.every((t) => state.confirmed.includes(t))) return NOTHING;
 

@@ -365,6 +365,51 @@ function listProjectTranscripts(cwd: string, projectsDir: string): string[] {
   return paths;
 }
 
+/** Placeholder model id the platform writes on synthetic assistant turns. */
+const SYNTHETIC_MODEL = "<synthetic>";
+
+/**
+ * Which family of model wrote a transcript. "claude" is the platform's own;
+ * "foreign" is any other provider routed through the same CLI (a different
+ * context window, so its compactions say nothing about ours); "unknown" is
+ * no usable model field at all.
+ */
+export type TranscriptModelFamily = "claude" | "foreign" | "unknown";
+
+export function modelFamily(model: string | null | undefined): TranscriptModelFamily {
+  if (typeof model !== "string" || model === "" || model === SYNTHETIC_MODEL) return "unknown";
+  return model.startsWith("claude-") ? "claude" : "foreign";
+}
+
+/**
+ * The family of the LAST assistant model in a transcript — scanned from the
+ * end so a long transcript costs one read and a few lines of parsing.
+ * Unreadable or model-less transcripts are "unknown", never "foreign":
+ * the callers that skip work on "foreign" must not skip it on doubt.
+ */
+export function transcriptModelFamily(path: string): TranscriptModelFamily {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch {
+    return "unknown";
+  }
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.includes('"model"')) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: string; message?: { model?: unknown } };
+      if (entry.type !== "assistant") continue;
+      const model = entry.message?.model;
+      if (typeof model === "string" && model !== SYNTHETIC_MODEL) return modelFamily(model);
+    } catch {
+      continue;
+    }
+  }
+  return "unknown";
+}
+
 /**
  * Every DISTINCT compact_boundary sample found across ALL of a project's
  * transcripts (live + archived), newest first by the event's OWN timestamp
@@ -383,6 +428,17 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
       continue;
     }
 
+    // The model governing each sample: the most recent assistant
+    // `message.model` seen in this file before the compact_boundary. A
+    // transcript written by a non-Claude model (a headless worker on another
+    // provider, with a different context window) compacts at a different
+    // size and must not shape THIS project's trigger — two such workers
+    // compacting at ~151k pulled a real project's trigger from ~784k to
+    // ~151k. Samples with no model seen yet are kept: older transcripts
+    // may lack the field.
+    let lastModel: string | null = null;
+    let foreignDiscards = 0;
+
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       let entry: {
@@ -391,10 +447,16 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
         timestamp?: string;
         uuid?: string;
         compactMetadata?: { preTokens?: number };
+        message?: { model?: unknown };
       };
       try {
         entry = JSON.parse(line);
       } catch {
+        continue;
+      }
+      if (entry.type === "assistant") {
+        const model = entry.message?.model;
+        if (typeof model === "string" && model !== SYNTHETIC_MODEL) lastModel = model;
         continue;
       }
       if (entry.type !== "system" || entry.subtype !== "compact_boundary") continue;
@@ -402,11 +464,22 @@ function readCompactBoundarySamples(cwd: string, projectsDir: string): CompactBo
       if (typeof preTokens !== "number" || !Number.isFinite(preTokens)) continue;
       const timestampMs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
       if (!Number.isFinite(timestampMs)) continue;
+      if (modelFamily(lastModel) === "foreign") {
+        foreignDiscards++;
+        continue;
+      }
 
       const key = entry.uuid ?? `${timestampMs}:${preTokens}`;
       if (!byKey.has(key)) {
         byKey.set(key, { preTokens, timestampMs, timestamp: entry.timestamp!, uuid: entry.uuid });
       }
+    }
+
+    if (foreignDiscards > 0) {
+      console.error(
+        `[context-fill] ignored ${foreignDiscards} compaction sample(s) from a ` +
+        `non-Claude transcript (model=${lastModel}): ${path}`
+      );
     }
   }
 

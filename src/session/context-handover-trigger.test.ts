@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// A headless worker running this suite carries the launcher's PAI_WORKER=1;
+// the code under test must not mistake the test process for a worker.
+delete process.env.PAI_WORKER;
 import {
   checkAndEnqueueContextHandover,
   loadTriggerState,
@@ -283,6 +289,61 @@ describe("resetHandoverTriggerState — compaction reset (the one-handover-per-s
     } finally {
       if (existsSync(markerPath)) unlinkSync(markerPath);
       if (existsSync(cachePath)) unlinkSync(cachePath);
+    }
+  });
+});
+
+describe("checkAndEnqueueContextHandover — worker sessions and foreign transcripts get no handover", () => {
+  it("PAI_WORKER=1: returns nothing without reading fill, enqueuing, or writing state", async () => {
+    const prev = process.env.PAI_WORKER;
+    process.env.PAI_WORKER = "1";
+    try {
+      const getReading = vi.fn(() => readingAt(900_000));
+      const { deps, enqueued, savedStates } = makeDeps({ getReading });
+      const result = await checkAndEnqueueContextHandover(input, deps);
+      expect(result).toEqual({ attempted: [], confirmed: [] });
+      expect(getReading).not.toHaveBeenCalled();
+      expect(enqueued).toEqual([]);
+      expect(savedStates).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.PAI_WORKER;
+      else process.env.PAI_WORKER = prev;
+    }
+  });
+
+  it("transcript written by a non-claude model: returns nothing without reading fill or enqueuing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-trigger-foreign-test-"));
+    const transcriptPath = join(dir, "t.jsonl");
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({ type: "assistant", message: { role: "assistant", model: "other-model-1", content: [] } }) + "\n"
+    );
+    const getReading = vi.fn(() => readingAt(900_000));
+    const { deps, enqueued } = makeDeps({ getReading });
+    try {
+      const result = await checkAndEnqueueContextHandover({ ...input, transcriptPath }, deps);
+      expect(result).toEqual({ attempted: [], confirmed: [] });
+      expect(getReading).not.toHaveBeenCalled();
+      expect(enqueued).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("transcript written by a claude model: proceeds normally and enqueues at a crossed threshold", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-trigger-claude-test-"));
+    const transcriptPath = join(dir, "t.jsonl");
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({ type: "assistant", message: { role: "assistant", model: "claude-x-1", content: [] } }) + "\n"
+    );
+    const { deps, enqueued } = makeDeps({ getReading: () => readingAt(900_000) });
+    try {
+      const result = await checkAndEnqueueContextHandover({ ...input, transcriptPath }, deps);
+      expect(result.attempted.length).toBeGreaterThan(0);
+      expect(enqueued.length).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

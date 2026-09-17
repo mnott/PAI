@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync } from 'fs';
 
 async function delay(ms: number): Promise<void> {
@@ -145,6 +146,7 @@ function extractCompletionMessage(taskOutput: string): { message: string | null,
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   console.error('SubagentStop hook started');
   // Read input from stdin with timeout
   let input = '';

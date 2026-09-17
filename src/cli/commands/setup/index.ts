@@ -24,6 +24,7 @@ import {
   stepMcp,
   stepDirectories,
   stepTaskBus,
+  stepWorkers,
   stepInitialIndex,
   stepSummary,
 } from "./steps/index.js";
@@ -99,8 +100,11 @@ async function runSetup(): Promise<void> {
     // Step 11b: Task bus (optional external tracker)
     const taskConfig = await stepTaskBus(rl);
 
+    // Step 11c: Worker providers (optional subagent routing)
+    const workersConfig = await stepWorkers(rl);
+
     // Write config after gathering all choices
-    const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig };
+    const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig, ...workersConfig };
     mergeConfig(allUpdates);
 
     line();

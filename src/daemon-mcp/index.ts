@@ -51,6 +51,7 @@ import {
   consolidate,
   advisor,
   tasks,
+  worker,
 } from "./prompts/index.js";
 import {
   aesthetic,
@@ -65,6 +66,23 @@ import {
   terminalTabs,
   mcpDevGuide,
 } from "./resources/index.js";
+import { readWorkersSection } from "../workers/config.js";
+import { workersLogDir, ledgerPath } from "../workers/paths.js";
+import { ledgerSummary } from "../workers/ledger.js";
+import {
+  addProvider,
+  describeProviders,
+  removeProvider,
+  setProviderEnabled,
+  setRole,
+  setWorkersEnabled,
+  unsetRole,
+  useProvider,
+} from "../workers/providers.js";
+import { testProvider, runWorker } from "../workers/run.js";
+import { psOutput, replayOutput } from "../workers/viewer.js";
+import { loadStatus } from "../workers/status.js";
+import { sayToWorker } from "../workers/operator.js";
 
 // ---------------------------------------------------------------------------
 // IPC client singleton
@@ -163,6 +181,7 @@ async function startShim(): Promise<void> {
     "consolidate": consolidate,
     "advisor": advisor,
     "tasks": tasks,
+    "worker": worker,
   };
 
   for (const [promptName, skill] of Object.entries(SKILL_PROMPTS)) {
@@ -761,6 +780,332 @@ async function startShim(): Promise<void> {
         .describe("Tenant ID for entity lookup scoping. Default: 'default'."),
     },
     async (args) => proxyTool("memory_kg_search", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tools: worker_* — subagent routing (direct library calls, no daemon IPC:
+  // these only read/write the config file and the workers log dir)
+  // -------------------------------------------------------------------------
+
+  const workerText = (s: string) => ({
+    content: [{ type: "text" as const, text: s }],
+  });
+  const workerError = (e: unknown) => ({
+    content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }],
+    isError: true as const,
+  });
+
+  server.tool(
+    "worker_status",
+    [
+      "Show the worker system state: on/off, active provider, configured providers,",
+      "roles, and today's run tally from the ledger.",
+      "",
+      "Use this before delegating with `pai worker run` to see what routing will choose.",
+    ].join("\n"),
+    {},
+    async () => {
+      try {
+        const { workers } = readWorkersSection();
+        const s = ledgerSummary(ledgerPath(workersLogDir(workers)), "all", 10);
+        const tally = s
+          ? [
+              `runs ${s.scope}: ${s.started} started, ${s.endedOk} ok, ${s.endedFailed} failed`,
+              `agent hook: ${s.denied} denied, ${s.allowed} allowed, ${s.reroutes} reroutes`,
+            ]
+          : ["no runs recorded yet"];
+        return workerText(
+          [
+            `workers: ${workers.enabled ? "on" : "off"}`,
+            `active provider: ${workers.active ?? "(none)"}`,
+            ...describeProviders(workers),
+            "",
+            ...tally,
+          ].join("\n")
+        );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_providers",
+    [
+      "Manage worker providers (list, add, remove, use, enable, disable, test).",
+      "",
+      "action=list (default) shows providers, roles and routing.",
+      "action=add needs name, model — and either key_file or key, plus:",
+      "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
+      "  through the local PAI proxy). A raw key is written to",
+      "  ~/.config/pai/keys/<name> (mode 0600); only the path lands in the config.",
+      "  engine=codex runs the Codex CLI instead of Claude Code.",
+      "action=test runs a one-word pong probe through the provider",
+      "  (reports 'codex not installed' when that engine's CLI is missing).",
+    ].join("\n"),
+    {
+      action: z
+        .enum(["list", "add", "remove", "use", "enable", "disable", "test"])
+        .optional()
+        .describe("Default: list."),
+      name: z.string().optional().describe("Provider name (required for every action but list)."),
+      base_url: z.string().optional().describe("Anthropic-compatible API base URL (add)."),
+      upstream_url: z.string().optional().describe("Chat Completions base URL (add, protocol=openai)."),
+      protocol: z.enum(["anthropic", "openai"]).optional().describe("Protocol (add). Default: anthropic."),
+      engine: z.enum(["claude", "codex"]).optional().describe("Runner engine (add). Default: claude."),
+      context_window: z.number().int().positive().optional().describe("Context window for the meter (add). Default: 200000."),
+      key_file: z.string().optional().describe("File holding the API token, 0600 (add)."),
+      key: z.string().optional().describe("Raw API token (add) — parked in ~/.config/pai/keys/<name>."),
+      model: z.string().optional().describe("Default model id (add)."),
+      fast_model: z.string().optional().describe("Cheaper model for spotchecks (add, optional)."),
+      env: z.record(z.string(), z.string()).optional().describe("Extra env for runs (add, optional)."),
+      note: z.string().optional().describe("Human note shown in listings (add, optional)."),
+      quota_probe: z.string().optional().describe("URL whose JSON first number is the quota percent (add, optional)."),
+    },
+    async (args) => {
+      try {
+        const action = args.action ?? "list";
+        if (action === "list") {
+          return workerText(describeProviders(readWorkersSection().workers).join("\n"));
+        }
+        if (!args.name) return workerError(new Error("name is required for this action"));
+        if (action === "add") {
+          if (!args.model) return workerError(new Error("add needs model"));
+          if (args.protocol !== "openai" && !args.base_url) {
+            return workerError(new Error("add needs base_url (only protocol=openai goes without it)"));
+          }
+          const workers = addProvider({
+            name: args.name,
+            baseUrl: args.base_url ?? "",
+            keyFile: args.key_file ?? null,
+            ...(args.key !== undefined ? { key: args.key } : {}),
+            model: args.model,
+            ...(args.fast_model ? { fastModel: args.fast_model } : {}),
+            env: args.env ?? {},
+            ...(args.note ? { note: args.note } : {}),
+            ...(args.protocol ? { protocol: args.protocol } : {}),
+            ...(args.upstream_url ? { upstreamUrl: args.upstream_url } : {}),
+            ...(args.engine ? { engine: args.engine } : {}),
+            ...(args.context_window ? { contextWindow: args.context_window } : {}),
+            ...(args.quota_probe ? { quotaProbe: args.quota_probe } : {}),
+          });
+          return workerText(
+            [`provider ${args.name} added; active: ${workers.active ?? "(none)"}; workers ${workers.enabled ? "on" : "off"}`, ...describeProviders(workers)].join("\n")
+          );
+        }
+        if (action === "remove") {
+          removeProvider(args.name);
+          return workerText(`provider ${args.name} removed`);
+        }
+        if (action === "use") {
+          useProvider(args.name);
+          return workerText(`active provider: ${args.name}`);
+        }
+        if (action === "enable" || action === "disable") {
+          setProviderEnabled(args.name, action === "enable");
+          return workerText(`provider ${args.name} ${action}d`);
+        }
+        // test
+        const { workers } = readWorkersSection();
+        const p = workers.providers[args.name];
+        if (!p) return workerError(new Error(`no provider named "${args.name}"`));
+        const r = await testProvider(args.name, p, workersLogDir(workers));
+        if (r.skipped) {
+          return workerText(
+            `${r.provider} ${r.model}  ${r.skipped}\nreply: ${r.result.slice(0, 200)}`
+          );
+        }
+        return workerText(
+          `${r.provider} ${r.model}  ${(r.latencyMs / 1000).toFixed(1)}s\nreply: ${r.result.slice(0, 200)}\n${r.ok ? "OK" : "FAILED"}`
+        );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_roles",
+    [
+      "Manage worker roles (list, set, unset).",
+      "",
+      "A role maps a task class to a provider, optionally its fast model:",
+      "implement=glm, research=glm, spotcheck=glm/fast.",
+      "Runs pick the provider via --role first, then the active provider.",
+    ].join("\n"),
+    {
+      action: z.enum(["list", "set", "unset"]).optional().describe("Default: list."),
+      role: z.string().optional().describe("Role name (set/unset)."),
+      target: z.string().optional().describe("Provider or provider/fast (set)."),
+    },
+    async (args) => {
+      try {
+        const action = args.action ?? "list";
+        if (action === "list") {
+          const { workers } = readWorkersSection();
+          const entries = Object.entries(workers.roles);
+          const text = (t: unknown) =>
+            typeof t === "string"
+              ? t
+              : typeof t === "object" && t !== null
+                ? `${(t as { provider?: string }).provider ?? "?"}${(t as { mcp?: string[] }).mcp?.length ? ` +mcp(${(t as { mcp?: string[] }).mcp!.join(",")})` : ""}`
+                : String(t);
+          return workerText(
+            entries.length ? entries.map(([r, t]) => `${r}: ${text(t)}`).join("\n") : "no roles set"
+          );
+        }
+        if (!args.role) return workerError(new Error("role is required for this action"));
+        if (action === "set") {
+          if (!args.target) return workerError(new Error("set needs target provider[/fast]"));
+          setRole(args.role, args.target);
+          return workerText(`role ${args.role} → ${args.target}`);
+        }
+        unsetRole(args.role);
+        return workerText(`role ${args.role} removed`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_toggle",
+    [
+      "Turn worker routing on or off.",
+      "",
+      "off: the Agent-tool hook stops denying, subagents run on Anthropic.",
+      "on: subagents are denied and rewritten to `pai worker run`.",
+    ].join("\n"),
+    {
+      enabled: z.boolean().describe("true = route subagents to workers, false = Anthropic."),
+    },
+    async (args) => {
+      try {
+        const workers = setWorkersEnabled(args.enabled);
+        return workerText(
+          `workers ${workers.enabled ? "on" : "off"} — Agent subagents ${workers.enabled ? "denied and rewritten to `pai worker run`" : "run on Anthropic"}`
+        );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_ps",
+    [
+      "List workers: running (id, provider, age, turns, current tool) and the last finished.",
+      "",
+      "Use this to check on delegated `pai worker run` calls; worker_replay shows",
+      "the transcript of one worker.",
+    ].join("\n"),
+    {
+      all: z.boolean().optional().describe("Show workers of all sessions (default: this one's)."),
+    },
+    async (args) => {
+      try {
+        const { workers } = readWorkersSection();
+        return workerText(psOutput(workersLogDir(workers), args.all === true, {}, false));
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_replay",
+    [
+      "Replay the transcript of one worker: tool calls, short outputs, result.",
+      "",
+      "Plain text, no colors. Use tail to cap the output.",
+    ].join("\n"),
+    {
+      id: z.string().describe("Worker id (as shown by worker_ps)."),
+      tail: z.number().int().min(1).max(2000).optional().describe("Last N rendered lines. Default: all."),
+    },
+    async (args) => {
+      try {
+        const { workers } = readWorkersSection();
+        return workerText(replayOutput(workersLogDir(workers), args.id, false, args.tail));
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_say",
+    [
+      "Send one message to a RUNNING worker: it lands on the worker's open stdin",
+      "as a user message, mid-run, without breaking its stream.",
+      "",
+      "Fails with an explanation when the worker already finished — then use",
+      "worker_resume (or `pai worker resume <id> \"text\"`) instead.",
+    ].join("\n"),
+    {
+      id: z.string().describe("Worker id (as shown by worker_ps)."),
+      text: z.string().min(1).describe("The message to send (one line)."),
+    },
+    async (args) => {
+      try {
+        const { workers } = readWorkersSection();
+        await sayToWorker(workersLogDir(workers), args.id, args.text);
+        return workerText(`sent to ${args.id}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_resume",
+    [
+      "Continue a FINISHED worker with a follow-up message: claude --resume on the",
+      "same provider, same Claude session, context intact.",
+      "",
+      "Returns the new worker id. Not for running workers — say to those instead.",
+    ].join("\n"),
+    {
+      id: z.string().describe("Worker id of the finished run (as shown by worker_ps)."),
+      text: z.string().min(1).describe("The follow-up message."),
+    },
+    async (args) => {
+      try {
+        const { workers } = readWorkersSection();
+        const logDir = workersLogDir(workers);
+        const old = loadStatus(logDir, args.id);
+        if (!old) return workerError(new Error(`no worker named "${args.id}"`));
+        if (old.state === "running") {
+          return workerError(
+            new Error(`worker ${args.id} is still running — send messages with worker_say`)
+          );
+        }
+        if (!old.claudeSession) {
+          return workerError(
+            new Error(
+              `worker ${args.id} recorded no Claude session id — it predates resume support ` +
+                `or ran through an engine that does not expose one`
+            )
+          );
+        }
+        let newId = "";
+        const rc = await runWorker({
+          providerFlag: old.provider,
+          modelFlag: old.model,
+          label: `↩ ${old.label}`,
+          noPane: true,
+          claudeArgs: ["--resume", old.claudeSession, "-p", args.text],
+          onWorkerStart: (wid) => {
+            newId = wid;
+          },
+        });
+        return workerText(
+          `resumed ${args.id} as ${newId || "(unknown id)"} — rc=${rc}\ncheck on it with worker_ps / worker_replay`
+        );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
   );
 
   // -------------------------------------------------------------------------

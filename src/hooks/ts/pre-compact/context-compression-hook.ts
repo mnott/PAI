@@ -13,6 +13,7 @@
  * and work items from earlier in the session.
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
@@ -34,6 +35,7 @@ import {
 import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
 import { readContextHandoverCache } from '../lib/context-handover-cache.js';
+import { bindHandoverEvidence } from '../lib/handover-evidence.js';
 
 interface HookInput {
   session_id: string;
@@ -515,6 +517,7 @@ function enqueueSessionSummary(payload: {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
   if (isProbeSession()) {
     process.exit(0);
@@ -714,11 +717,13 @@ async function main() {
       // -------------------------------------------------------------------
       let sourceLabel: string;
       let handoverBlock: string;
+      let handoverSummary: string | null = null;
       try {
         const cachedHandover = readContextHandoverCache(hookInput.session_id);
         const handoverIsFresh =
           cachedHandover !== null &&
           (!previousCompactionAt || new Date(cachedHandover.generatedAt) > new Date(previousCompactionAt));
+        handoverSummary = handoverIsFresh ? cachedHandover!.summary : null;
 
         sourceLabel = handoverIsFresh
           ? `model-written handover (${cachedHandover!.model}, generated ${cachedHandover!.generatedAt}, ` +
@@ -737,6 +742,18 @@ async function main() {
         console.error(`Failed to resolve handover cache — falling back to scrape-only: ${err}`);
         sourceLabel = `mechanical scrape only (error resolving handover cache: ${err})`;
         handoverBlock = '';
+      }
+
+      // Evidence binding: which of the handover's identifiers the transcript
+      // actually contains. One footer line, content untouched; its own
+      // failure changes nothing else about the injection.
+      if (handoverSummary !== null && typeof hookInput.transcript_path === 'string') {
+        try {
+          const evidence = bindHandoverEvidence(handoverSummary, null, [hookInput.transcript_path]);
+          handoverBlock += `\n${evidence.footer}`;
+        } catch (err) {
+          console.error(`Evidence check skipped: ${err}`);
+        }
       }
 
       const injection = [

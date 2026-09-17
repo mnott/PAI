@@ -16,6 +16,7 @@
  * - Sending ntfy.sh notifications
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, basename, dirname, resolve } from 'path';
 import { homedir } from 'os';
@@ -141,6 +142,7 @@ interface HookInput {
 }
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   console.error('\nload-project-context.ts starting...');
 
   // Skip probe/health-check sessions (e.g. CodexBar ClaudeProbe)
