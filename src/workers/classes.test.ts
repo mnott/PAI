@@ -78,7 +78,10 @@ describe("agent definitions", () => {
     expect(modelToClass("haiku")).toBe("simple");
     expect(modelToClass("claude-sonnet-5")).toBe("implement");
     expect(modelToClass("opus")).toBe("complex");
-    expect(modelToClass("glm-5.3")).toBeUndefined();
+    // an id that matches no tier falls back to the middle tier's class
+    // instead of dropping the hint silently (registry mapping is covered
+    // in agents.test.ts)
+    expect(modelToClass("glm-5.3")).toBe("implement");
     expect(modelToClass(undefined)).toBeUndefined();
   });
 });

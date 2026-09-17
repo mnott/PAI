@@ -201,7 +201,9 @@ export function applyEvent(
   const gutter = gutterFor(c, e, tag, offMin);
   const prefix = "";
   const body = gutterBody(renderEvent(c, prefix, e, cwd, tools), gutter, wrapWidth ?? null);
-  const lines = blankBetween(s.prev, e) ? ["", ...body] : body;
+  // the turn separator carries the gutter's bar (barCont) so the │ runs
+  // unbroken down the pane; "" only when the event has no stamp/gutter
+  const lines = blankBetween(s.prev, e) ? [gutter ? gutter.barCont : "", ...body] : body;
   return {
     lines,
     day: day && day !== s.lastDay ? day : null,
@@ -424,12 +426,20 @@ export async function followWorkers(
   const columns = (): number | null => (typeof out_.columns === "number" ? out_.columns : null);
   let fill = 0; // transcript rows filled since the region was (re)set
   const regionRows = () => Math.max(1, rows - 3);
+  // the rendered transcript, kept so a resize can replay it onto the cleared
+  // pane (chat mode only; capped so a long run cannot grow without bound)
+  const retained: string[] = [];
+  const RETAIN_CAP = 500;
   /** Every line the pane shows goes through here: plain newline, or a row
    *  inserted above the fixed prompt/ticker rows (chatui.chatInsertLine). */
-  const out = (line: string) => {
+  const out = (line: string, keep = true) => {
     if (!chat) {
       out_.write(line + "\n");
       return;
+    }
+    if (keep) {
+      retained.push(line);
+      if (retained.length > RETAIN_CAP) retained.splice(0, retained.length - RETAIN_CAP);
     }
     const r = chatInsertLine(line, fill, regionRows());
     out_.write(r.seq);
@@ -734,7 +744,9 @@ export async function followWorkers(
     rlIn.on("close", () => {
       aborted = true;
     });
-    out_.write(chatEnter(rows));
+    // the separator rule above the prompt row needs the pane's width and the
+    // pane's dim colour — chatEnter without cols leaves the row blank
+    out_.write(chatEnter(rows, columns() ?? 0, (s) => c("dim", s)));
     drawPrompt();
     if (terminalIn) {
       // every keystroke re-renders the row (and re-parks the cursor) from
@@ -745,7 +757,14 @@ export async function followWorkers(
     onResize = () => {
       if (typeof out_.rows === "number") rows = out_.rows;
       fill = 0;
-      out_.write(chatScrollRegion(rows) + chatBlankRow(rows));
+      // clear first: the refill lands rows top-down and must not overwrite
+      // the stale transcript left under the old geometry
+      out_.write(
+        "\x1b[2J" + chatScrollRegion(rows) + chatBlankRow(rows, columns() ?? 0, (s) => c("dim", s))
+      );
+      // the retained transcript replays in order, newest regionRows() lines
+      // only - a shrunken pane shows its newest rows, not a scroll replay
+      for (const ln of retained.slice(-regionRows())) out(ln, false);
       drawPrompt();
     };
     out_.on?.("resize", onResize);

@@ -21,7 +21,7 @@
 import type { Command } from "commander";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { readWorkersSection } from "../../../workers/config.js";
+import { readWorkersSection, type WorkerProvider } from "../../../workers/config.js";
 import { workersLogDir, eventsPath, ledgerPath } from "../../../workers/paths.js";
 import { parseRunnerArgs } from "../../../workers/args.js";
 import { runWorker } from "../../../workers/run.js";
@@ -33,6 +33,7 @@ import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
+import { registerWorkerModelCommand } from "./model.js";
 import { loadStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
@@ -101,7 +102,15 @@ export function registerWorkerCommands(workerCmd: Command): void {
             // model maps to a class, the label defaults to "<agent>: <prompt>"
             const def = loadAgent(opts.agent);
             claudeArgs = [...agentClaudeArgs(def), ...args];
-            agentClass = modelToClass(def.model);
+            // provider models map into the tier table so routing survives
+            // non-Anthropic ids; an unreadable config still resolves aliases
+            let agentProviders: Record<string, WorkerProvider> | undefined;
+            try {
+              agentProviders = readWorkersSection().workers.providers;
+            } catch {
+              agentProviders = undefined;
+            }
+            agentClass = modelToClass(def.model, agentProviders);
             if (!label) label = agentLabel(opts.agent, parseRunnerArgs(args).prompt);
           }
           if (opts.chain) {
@@ -530,6 +539,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   registerWorkerProviderCommands(providersCmd);
   registerWorkerClassCommands(workerCmd);
+  registerWorkerModelCommand(workerCmd);
 }
 
 function parseIntArg(v: string): number {
