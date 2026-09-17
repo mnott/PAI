@@ -42,10 +42,10 @@ pai worker run --label "short task label" --class research \\
   parked in ~/.config/pai/keys/<name>, mode 0600). update changes cost_tier
   (1 cheapest … 5 most expensive) and tags (code, vision, image-gen,
   long-context, fast, reasoning).
-- \`worker_classes\` — list/set/unset class → provider[/fast], or constraints
+- \`worker_classes\` — list/set/unset class → provider[/<capability>], or constraints
   only (max_cost_tier, require_tags) so auto-routing picks a qualifying provider.
-- \`worker_model\` — show or set a provider's default/fast model id
-  (get without provider lists every provider's ids).
+- \`worker_model\` — show or set a provider's model ids per capability:
+  default, fast, image (get without provider lists every provider's ids).
 - \`worker_run\` — start a worker or chain from chat; returns the id immediately.
 - \`worker_toggle\` — off makes Agent subagents run on Anthropic again.
 - \`worker_fallback\` — machine-wide switch: every NEW Claude Code process
@@ -60,8 +60,9 @@ pai worker run --label "short task label" --class research \\
   worker_classes set <class>=<provider>. One line back.
 - "prefer the flash model for simple tasks" / "cheap only for drafts" →
   worker_classes set simple|draft=<provider>/fast (or a max_cost_tier). One line.
-- "run everything on <model>" / "make <model> the fast model" → worker_model set
-  model=<model> (slot=fast for the second). One line back.
+- "run everything on <model>" / "make <model> the fast model" / "<model> is
+  the image model" → worker_model set model=<model> (capability=fast|image for
+  the latter two). One line back.
 - "reviews should use a reasoning model" → worker_classes set review with
   require_tags ["reasoning"] (drop the pin if one exists). One line.
 - "what handles reviews" / "show the routing table" → worker_classes list

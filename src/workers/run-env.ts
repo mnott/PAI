@@ -7,7 +7,7 @@
  */
 
 import { readFileSync as readKey } from "node:fs";
-import { providerKeyPath, type WorkerProvider } from "./config.js";
+import { providerKeyPath, resolveModelCapability, type WorkerProvider } from "./config.js";
 
 /** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
 export function buildRunEnv(
@@ -38,7 +38,7 @@ export function buildRunEnv(
   }
 
   env.ANTHROPIC_AUTH_TOKEN = token;
-  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.models.fast ?? provider.models.default;
+  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolveModelCapability(provider, "fast");
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.models.default;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
