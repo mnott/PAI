@@ -32,6 +32,7 @@ import {
   getContextFill,
   contextFillThresholds,
   crossedThresholds,
+  isForeignModelFamily,
   isImmediate,
   transcriptModelFamily,
   type ContextFillReading,
@@ -258,8 +259,14 @@ export async function checkAndEnqueueContextHandover(
     console.error(`[context-handover-trigger] session ${input.sessionId}: worker session (PAI_WORKER=1) — no handover.`);
     return NOTHING;
   }
-  if (input.transcriptPath && transcriptModelFamily(input.transcriptPath) === "foreign") {
-    console.error(`[context-handover-trigger] session ${input.sessionId}: transcript written by a non-Claude model — no handover.`);
+  // Native is Claude plus the registry's provider models: a primary session
+  // on a non-Anthropic provider still gets handovers; only transcripts from
+  // models this machine does not run are skipped.
+  if (
+    input.transcriptPath &&
+    isForeignModelFamily(transcriptModelFamily(input.transcriptPath))
+  ) {
+    console.error(`[context-handover-trigger] session ${input.sessionId}: transcript written by a model this machine does not run — no handover.`);
     return NOTHING;
   }
 

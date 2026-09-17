@@ -14,6 +14,8 @@ import {
   resolveAutocompactPct,
   measureCompactionTrigger,
   modelFamily,
+  isForeignModelFamily,
+  nativeModelFamilies,
   selectedCompactionSamples,
   transcriptModelFamily,
   crossedThresholds,
@@ -21,6 +23,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   type ContextFillReading,
 } from "./context-fill.js";
+import { contextWindowFromModelId } from "../../../utils/model-window.js";
 
 let root: string;
 
@@ -705,9 +708,12 @@ describe("measureCompactionTrigger — foreign-model transcripts are ignored", (
 });
 
 describe("modelFamily / transcriptModelFamily", () => {
-  it("classifies claude-, foreign, synthetic and missing models", () => {
+  it("keys families from the id itself, not from an Anthropic allowlist", () => {
     expect(modelFamily("claude-opus-5")).toBe("claude");
-    expect(modelFamily("other-model-1")).toBe("foreign");
+    expect(modelFamily("other-model-1")).toBe("other-model-1");
+    // the variant suffix is stripped, so one family has one key
+    expect(modelFamily("glm-5.3[1m]")).toBe("glm-5.3");
+    expect(modelFamily("glm-5.3")).toBe("glm-5.3");
     expect(modelFamily("<synthetic>")).toBe("unknown");
     expect(modelFamily(null)).toBe("unknown");
     expect(modelFamily("")).toBe("unknown");
@@ -722,11 +728,159 @@ describe("modelFamily / transcriptModelFamily", () => {
         [assistantLine("other-model-1"), compactBoundaryLine(1, "2026-09-17T09:00:00.000Z"), assistantLine("claude-x-1")].join("\n") + "\n"
       );
       expect(transcriptModelFamily(path)).toBe("claude");
-      writeFileSync(path, [assistantLine("claude-x-1"), assistantLine("other-model-1"), assistantLine("<synthetic>")].join("\n") + "\n");
-      expect(transcriptModelFamily(path)).toBe("foreign");
+      writeFileSync(path, [assistantLine("claude-x-1"), assistantLine("glm-5.3[1m]"), assistantLine("<synthetic>")].join("\n") + "\n");
+      expect(transcriptModelFamily(path)).toBe("glm-5.3");
       expect(transcriptModelFamily(join(dir, "missing.jsonl"))).toBe("unknown");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Foreignness is a comparison, not a prefix: a family is foreign exactly when
+// it is neither Claude nor one the worker registry configures. Keying it on
+// the claude- prefix made a non-Anthropic PRIMARY model read as foreign and
+// lose its own compaction/handover history.
+// ---------------------------------------------------------------------------
+
+describe("isForeignModelFamily / nativeModelFamilies", () => {
+  it("claude and unknown are never foreign; anything else depends on the registry", () => {
+    expect(isForeignModelFamily("claude")).toBe(false);
+    expect(isForeignModelFamily("unknown")).toBe(false);
+    expect(isForeignModelFamily("glm-5.3", new Set())).toBe(true);
+    expect(isForeignModelFamily("glm-5.3", new Set(["glm-5.3"]))).toBe(false);
+  });
+
+  it("collects the families of every configured provider model", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-native-families-"));
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        workers: {
+          enabled: true,
+          active: "glm",
+          providers: {
+            glm: {
+              baseUrl: "https://api.example.com/api/anthropic",
+              keyFile: null,
+              models: { default: "example-5.3[1m]", fast: "example-5.3-flash" },
+              env: {},
+            },
+          },
+        },
+      })
+    );
+    try {
+      const families = nativeModelFamilies(configPath);
+      expect(families.has("example-5.3")).toBe(true); // variant suffix stripped
+      expect(families.has("example-5.3-flash")).toBe(true);
+      expect(isForeignModelFamily("example-5.3", families)).toBe(false);
+      expect(isForeignModelFamily("other-model-1", families)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an unreadable registry means nothing is native (the historical rule)", () => {
+    expect(nativeModelFamilies("/nonexistent/pai-config.json").size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A provider-model primary session keeps its compaction history: the samples
+// are glm, the registry configures glm, so nothing is discarded — before and
+// after a simulated compaction alike.
+// ---------------------------------------------------------------------------
+
+describe("measureCompactionTrigger — provider-model transcripts are native", () => {
+  it("keeps glm compaction history across a simulated compaction, still drops foreign models", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-native-trigger-"));
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        workers: {
+          enabled: true,
+          active: "glm",
+          providers: {
+            glm: {
+              baseUrl: "https://api.example.com/api/anthropic",
+              keyFile: null,
+              models: { default: "glm-5.3[1m]", fast: "glm-5.3-flash" },
+              env: {},
+            },
+          },
+        },
+      })
+    );
+    const projectsDir = join(dir, "projects");
+    const cwd = "/fake/project/glm";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "live.jsonl"),
+      [
+        assistantLine("glm-5.3[1m]"),
+        compactBoundaryLine(990_000, "2026-09-16T09:00:00.000Z", "u1"), // before
+        assistantLine("glm-5.3[1m]"),
+        compactBoundaryLine(784_000, "2026-09-17T09:00:00.000Z", "u2"), // after
+      ].join("\n") + "\n"
+    );
+    // a foreign-model worker transcript must still not shape the trigger
+    writeFileSync(
+      join(projectDir, "worker.jsonl"),
+      [assistantLine("other-model-1"), compactBoundaryLine(151_000, "2026-09-17T09:30:00.000Z", "u3")].join("\n") + "\n"
+    );
+    try {
+      expect(selectedCompactionSamples(cwd, projectsDir, configPath).map((s) => s.preTokens))
+        .toEqual([784_000, 990_000]);
+      expect(measureCompactionTrigger(cwd, projectsDir, configPath)).toBe(784_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Window size from the model id — a session whose model declares its window
+// ("[1m]") is measured against that, not against the assumed 200k default.
+// ---------------------------------------------------------------------------
+
+describe("contextWindowFromModelId", () => {
+  it("reads the bracketed variant suffix, and only that", () => {
+    expect(contextWindowFromModelId("glm-5.3[1m]")).toBe(1_000_000);
+    expect(contextWindowFromModelId("glm-5.3")).toBeNull();
+    expect(contextWindowFromModelId("")).toBeNull();
+    expect(contextWindowFromModelId(null)).toBeNull();
+  });
+});
+
+describe("contextFillFromTranscript — window from the transcript's own model", () => {
+  const glmTurn = (tokens: number) => ({
+    type: "assistant",
+    message: { role: "assistant", model: "glm-5.3[1m]", usage: { input_tokens: tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+  });
+
+  it("derives a 1M window from a glm-5.3[1m] transcript when the caller has none", () => {
+    const p = join(root, "glm.jsonl");
+    writeJsonl(p, [glmTurn(500_000)]);
+    const reading = contextFillFromTranscript(p);
+    expect(reading.windowSize).toBe(1_000_000);
+    expect(reading.fraction).toBeCloseTo(0.5);
+  });
+
+  it("an explicit caller window still wins, and a bare id falls back to the default", () => {
+    const p = join(root, "glm.jsonl");
+    writeJsonl(p, [glmTurn(500_000)]);
+    expect(contextFillFromTranscript(p, 200_000).windowSize).toBe(200_000);
+
+    const bare = join(root, "bare.jsonl");
+    writeJsonl(bare, [{
+      type: "assistant",
+      message: { role: "assistant", model: "glm-5.3", usage: { input_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    }]);
+    expect(contextFillFromTranscript(bare).windowSize).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 });

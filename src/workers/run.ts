@@ -31,7 +31,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync as readKey,
   writeFileSync,
   closeSync,
   writeSync,
@@ -39,10 +38,12 @@ import {
 import { parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
   assertProviderRunnable,
-  providerKeyPath,
   readWorkersSection,
   type WorkerProvider,
 } from "./config.js";
+import { buildRunEnv } from "./run-env.js";
+
+export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { eventsPath, ledgerPath, noMcpConfigPath, workersLogDir } from "./paths.js";
 import {
@@ -108,48 +109,6 @@ export interface RunOptions {
   _reroutes?: number;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
   _planner?: boolean;
-}
-
-/** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
-export function buildRunEnv(
-  provider: WorkerProvider,
-  headless: boolean,
-  proxyUrl?: string
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
-
-  let token = "local";
-  if (proxyUrl) {
-    // openai-protocol provider: the proxy holds the real key; the runner only
-    // needs a placeholder so Claude Code sends an auth header at all
-    env.ANTHROPIC_BASE_URL = proxyUrl;
-  } else {
-    const keyPath = providerKeyPath(provider);
-    if (keyPath) {
-      try {
-        token = readKey(keyPath, "utf8").trim();
-      } catch {
-        // the caller turns this into a clear error before spawning
-        throw new Error(`key file not readable: ${keyPath}`);
-      }
-      if (!token) throw new Error(`key file is empty: ${keyPath}`);
-    }
-    env.ANTHROPIC_BASE_URL = provider.baseUrl;
-  }
-
-  env.ANTHROPIC_AUTH_TOKEN = token;
-  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.models.fast ?? provider.models.default;
-  env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.models.default;
-  env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
-  for (const [k, v] of Object.entries(provider.env)) env[k] = v;
-  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-  if (headless) {
-    env.PAI_WORKER = "1";
-  } else {
-    env.ENABLE_TOOL_SEARCH = "true";
-  }
-  return env;
 }
 
 /** The strict empty MCP config for headless workers, written on demand. */

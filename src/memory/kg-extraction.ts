@@ -6,7 +6,7 @@
  *
  * Provides:
  *   - findClaudeBinary()       — locate the claude CLI
- *   - spawnClaude()            — generic prompt -> response runner (strips ANTHROPIC_API_KEY)
+ *   - spawnClaude()            — generic prompt -> response runner (provider-routed)
  *   - extractAndStoreTriples() — run the extractor prompt and persist triples to Postgres
  */
 
@@ -19,6 +19,7 @@ import type { Database } from "better-sqlite3";
 import { buildTripleExtractionPrompt } from "../daemon/templates/triple-extraction-prompt.js";
 import { kgAdd, kgQuery, kgInvalidate } from "./kg.js";
 import { upsertKgEntity } from "./kg-entity.js";
+import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 
 // ---------------------------------------------------------------------------
 // Claude CLI binary discovery
@@ -44,25 +45,29 @@ export function findClaudeBinary(): string | null {
   return "claude";
 }
 
-const CLAUDE_TIMEOUT_MS: Record<string, number> = {
-  haiku: 60_000,
-  sonnet: 120_000,
-  opus: 300_000,
-};
-
 /**
  * Spawn the claude CLI with a prompt on stdin and return stdout.
  *
- * IMPORTANT: ANTHROPIC_API_KEY is stripped from the spawned environment so
- * the CLI uses the user's Max plan (free) instead of billing the API key.
+ * Routed through the provider registry (planLlmSpawn): the tier resolves to
+ * the configured provider's model id and the env carries its base URL and
+ * token. With no provider configured it degrades to the historical behaviour
+ * — the tier alias itself, ambient env minus ANTHROPIC_API_KEY.
  */
 export async function spawnClaude(
   prompt: string,
-  model: "haiku" | "sonnet" | "opus" = "sonnet"
+  tier: ModelTier = "sonnet"
 ): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
     process.stderr.write("[kg-extraction] claude CLI not found.\n");
+    return null;
+  }
+
+  let plan;
+  try {
+    plan = await planLlmSpawn(tier);
+  } catch (e) {
+    process.stderr.write(`[kg-extraction] could not plan ${tier} spawn: ${e}\n`);
     return null;
   }
 
@@ -71,12 +76,10 @@ export async function spawnClaude(
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const { ANTHROPIC_API_KEY: _drop, ...envWithoutApiKey } = process.env;
-    const child = spawn(
-      claudeBin,
-      ["--model", model, "-p", "--no-session-persistence"],
-      { env: envWithoutApiKey, stdio: ["pipe", "pipe", "pipe"] }
-    );
+    const child = spawn(claudeBin, plan.args, {
+      env: plan.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     let stdout = "";
     let stderr = "";
@@ -86,7 +89,7 @@ export async function spawnClaude(
 
     child.on("error", (err: Error) => {
       if (timer) { clearTimeout(timer); timer = null; }
-      process.stderr.write(`[kg-extraction] ${model} spawn error: ${err.message}\n`);
+      process.stderr.write(`[kg-extraction] ${plan.model} spawn error: ${err.message}\n`);
       resolve(null);
     });
 
@@ -94,7 +97,7 @@ export async function spawnClaude(
       if (timer) { clearTimeout(timer); timer = null; }
       if (code !== 0) {
         process.stderr.write(
-          `[kg-extraction] ${model} exited ${code}: ${stderr.slice(0, 300)}\n`
+          `[kg-extraction] ${plan.model} exited ${code}: ${stderr.slice(0, 300)}\n`
         );
         resolve(null);
       } else {
@@ -103,10 +106,10 @@ export async function spawnClaude(
     });
 
     timer = setTimeout(() => {
-      process.stderr.write(`[kg-extraction] ${model} timed out — killing process.\n`);
+      process.stderr.write(`[kg-extraction] ${plan.model} timed out — killing process.\n`);
       child.kill("SIGTERM");
       resolve(null);
-    }, CLAUDE_TIMEOUT_MS[model] ?? 120_000);
+    }, plan.timeoutMs);
 
     child.stdin.write(prompt);
     child.stdin.end();
@@ -123,7 +126,7 @@ export interface ExtractTriplesParams {
   projectId: number | null;
   sessionId: string;
   gitLog?: string;
-  model?: "haiku" | "sonnet" | "opus";
+  model?: ModelTier;
   /** Optional federation SQLite db — when provided, entities are upserted into kg_entities (QW1) */
   federationDb?: Database;
   /** Tenant ID for multi-tenant entity scoping (default: "default") */

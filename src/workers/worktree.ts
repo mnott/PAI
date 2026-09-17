@@ -15,8 +15,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 export function worktreesDir(logDir: string): string {
@@ -173,11 +174,67 @@ function removeWorktree(cwd: string, dir: string, force: boolean): void {
 }
 
 /**
+ * Carry a worktree's uncommitted changes over to `cwd` before the worktree is
+ * removed. `git merge` only moves committed work, so a worker that stopped
+ * without committing would otherwise lose its edits to `worktree remove` —
+ * exactly what happened live on 2026-09-17. Tracked edits (staged or not)
+ * travel as a binary patch applied in `cwd`; untracked files are copied.
+ * Returns the carried paths. On any conflict it throws with the worktree
+ * still in place, so the operator decides instead of data being lost.
+ */
+export function carryUncommitted(wtDir: string, cwd: string): string[] {
+  // name-only, not porcelain: a worktree-only change renders as " M path" and
+  // the shared git() helper trims that leading space away
+  const tracked = git(wtDir, ["diff", "--name-only", "HEAD"]).split("\n").filter(Boolean);
+  const untracked = git(wtDir, ["ls-files", "--others", "--exclude-standard"])
+    .split("\n")
+    .filter(Boolean);
+  if (!tracked.length && !untracked.length) return [];
+
+  if (tracked.length) {
+    // raw buffer, not utf8: --binary patches carry arbitrary bytes
+    const patch = execFileSync("git", ["-C", wtDir, "diff", "--binary", "HEAD"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      maxBuffer: 256 * 1024 * 1024,
+    }) as Buffer;
+    const tmp = join(tmpdir(), `pai-carry-${process.pid}-${Date.now()}.patch`);
+    writeFileSync(tmp, patch);
+    try {
+      git(cwd, ["apply", "--whitespace=nowarn", tmp]);
+    } catch (e) {
+      throw new Error(
+        `cannot carry the worker's uncommitted changes into ${cwd} — ${(e as Error).message}; ` +
+          `the worktree at ${wtDir} was kept: resolve by hand, then re-run merge`
+      );
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+  }
+
+  for (const rel of untracked) {
+    const from = join(wtDir, rel);
+    const to = join(cwd, rel);
+    if (existsSync(to) && readFileSync(to, "utf8") !== readFileSync(from, "utf8")) {
+      throw new Error(
+        `cannot carry untracked ${rel}: ${cwd} already has a different file there; ` +
+          `the worktree at ${wtDir} was kept: resolve by hand, then re-run merge`
+      );
+    }
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+
+  return [...tracked, ...untracked];
+}
+
+/**
  * `pai worker merge <id>`: merge the worker's branch into the original
- * checkout with --no-ff (the merge commit names the worker), then remove the
- * worktree and delete the branch; the status gains `merged: true`. A branch
- * with nothing to merge is refused loudly — its worktree may hold
- * uncommitted work, and reporting success there would destroy it.
+ * checkout with --no-ff (the merge commit names the worker), carry any
+ * changes the worker left uncommitted, then remove the worktree and delete
+ * the branch; the status gains `merged: true`. A branch with nothing to
+ * merge is refused loudly — its worktree may hold uncommitted work, and
+ * reporting success there would destroy it.
  */
 export function mergeWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
@@ -191,6 +248,7 @@ export function mergeWorker(logDir: string, id: string): string {
     );
   }
   git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
+  const carried = existsSync(st.worktreeDir!) ? carryUncommitted(st.worktreeDir!, st.cwd) : [];
   removeWorktree(st.cwd, st.worktreeDir!, false);
   let branchGone = true;
   try {
@@ -200,7 +258,10 @@ export function mergeWorker(logDir: string, id: string): string {
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
-  return `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
+  const base = `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
+  return carried.length
+    ? `${base}; carried ${carried.length} uncommitted change(s): ${carried.join(", ")}`
+    : base;
 }
 
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */
