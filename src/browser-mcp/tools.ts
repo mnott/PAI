@@ -171,7 +171,7 @@ export const BROWSER_TOOLS: BrowserToolDef[] = [
   },
   {
     name: "console_logs",
-    description: "Read the console output captured for a tab while the bridge debugger was attached.",
+    description: "Read the console output captured for a tab since its last snapshot.",
     shape: { tab: tabSchema },
     command: "console_logs",
     toParams: (a) => ({ tabId: a.tab }),

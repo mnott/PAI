@@ -7,6 +7,9 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startBridgeServer, acceptKey, encodeTextFrame, parseFrames } from "./ws-server.mjs";
 
@@ -94,24 +97,37 @@ describe("ws-server live handshake", () => {
 describe("host.mjs stdio bridge", () => {
   it("forwards WS frames to framed stdout and framed stdin back to WS clients", async () => {
     const hostUrl = new URL("./host.mjs", import.meta.url);
+    // The host logs to a file (stderr stays clean); give it its own log so
+    // parallel test runs cannot race for the same lines.
+    const logDir = mkdtempSync(join(tmpdir(), "pai-bridge-test-"));
+    const logPath = join(logDir, "bridge.log");
     const child = spawn(process.execPath, [fileURLToPath(hostUrl)], {
-      env: { ...process.env, PAI_BROWSER_BRIDGE_PORT: "0" },
+      env: { ...process.env, PAI_BROWSER_BRIDGE_PORT: "0", PAI_BROWSER_BRIDGE_LOG: logPath },
       stdio: ["pipe", "pipe", "pipe"],
     });
     cleanups.push(() => {
       child.kill();
     });
 
-    // The host logs its bound port to stderr.
+    // The host logs its bound port to the log file; stderr must stay empty.
+    const stderrChunks: Buffer[] = [];
+    child.stderr.on("data", (d: Buffer) => stderrChunks.push(d));
     const port = await new Promise<number>((resolve, reject) => {
+      const started = Date.now();
       const timer = setTimeout(() => reject(new Error("host never logged its port")), 5000);
-      child.stderr.on("data", (d: Buffer) => {
-        const m = /listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(d.toString("utf8"));
+      const poll = setInterval(() => {
+        if (!existsSync(logPath)) return;
+        const m = /listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(readFileSync(logPath, "utf8"));
         if (m) {
           clearTimeout(timer);
+          clearInterval(poll);
           resolve(Number(m[1]));
+        } else if (Date.now() - started > 4900) {
+          clearTimeout(timer);
+          clearInterval(poll);
+          reject(new Error("host log exists but never mentioned its port"));
         }
-      });
+      }, 25);
     });
 
     const ws = await connectWs(`ws://127.0.0.1:${port}`);
@@ -146,5 +162,12 @@ describe("host.mjs stdio bridge", () => {
     header.writeUInt32LE(payload.length, 0);
     child.stdin.write(Buffer.concat([header, payload]));
     expect(JSON.parse(await reply)).toEqual({ id: 42, ok: true, result: [] });
+
+    // Logging went to the file with timestamps; stderr stayed clean.
+    const logText = readFileSync(logPath, "utf8");
+    expect(logText).toMatch(/listening on ws:\/\/127\.0\.0\.1:\d+/);
+    expect(logText).toMatch(/ws→ext list_tabs id=42/);
+    expect(logText).toMatch(/ext→ws id=42 ok=true/);
+    expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("");
   }, 15000);
 });

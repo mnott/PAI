@@ -9,16 +9,41 @@
  *
  *   extension <-> [stdio, framed JSON] <-> host.mjs <-> [ws://127.0.0.1:8756] <-> MCP
  *
- * stdout is the protocol channel — logs go to stderr ONLY. The host also pings
- * the extension every 20s so the MV3 service worker's idle timer resets and
- * neither side of the bridge dies while the other still needs it.
+ * stdout is the protocol channel. Logs append to /tmp/pai-browser-bridge.log
+ * (override with PAI_BROWSER_BRIDGE_LOG) — stderr stays clean, because without
+ * DevTools on the service worker the log file is the only way to see what the
+ * bridge did. The host also pings the extension every 20s so the MV3 service
+ * worker's idle timer resets and neither side of the bridge dies while the
+ * other still needs it.
  */
 
+import { appendFileSync } from "node:fs";
 import { startBridgeServer, PAI_BROWSER_BRIDGE_PORT } from "./ws-server.mjs";
+
+const LOG_PATH = process.env.PAI_BROWSER_BRIDGE_LOG || "/tmp/pai-browser-bridge.log";
+
+/**
+ * Timestamped file log. appendFileSync keeps lines ordered without a stream to
+ * manage; the volume here is a few lines per lifecycle event, not per frame.
+ * stderr is the fallback of last resort (only if the log file is unwritable).
+ */
+function log(msg) {
+  const line = `[pai-browser-bridge] ${new Date().toISOString()} ${msg}\n`;
+  try {
+    appendFileSync(LOG_PATH, line);
+  } catch {
+    process.stderr.write(line);
+  }
+}
 
 // --- native messaging framing (Chrome <-> host) ----------------------------
 
 const MAX_FRAME = 64 * 1024 * 1024;
+// Chrome drops the port on oversized native-messaging messages. The exact
+// limits are version-dependent and direction-dependent; this threshold only
+// flags frames that plausibly exceed them, so a mystery disconnect leaves a
+// trace in the log instead of nothing.
+const SIZE_WARN_BYTES = 512 * 1024;
 let stdinBuf = Buffer.alloc(0);
 
 /** Frames one JSON message for Chrome. */
@@ -30,7 +55,11 @@ function frame(message) {
 }
 
 function writeStdout(message) {
-  process.stdout.write(frame(message));
+  const framed = frame(message);
+  if (framed.length > SIZE_WARN_BYTES) {
+    log(`outbound frame is ${framed.length} bytes — Chrome may drop the port if it exceeds the native-messaging limit`);
+  }
+  process.stdout.write(framed);
 }
 
 process.stdin.on("data", (chunk) => {
@@ -46,8 +75,12 @@ process.stdin.on("data", (chunk) => {
     stdinBuf = stdinBuf.subarray(4 + len);
     try {
       const msg = JSON.parse(payload);
+      if (payload.length > SIZE_WARN_BYTES) {
+        log(`inbound extension frame is ${payload.length} bytes — Chrome may refuse frames this large`);
+      }
       bridge?.broadcast(payload); // extension → all WS clients, verbatim
       if (msg?.type === "hello") writeStdout({ type: "hello", host: "pai-browser-bridge" });
+      else if (msg?.type !== "ping") log(`ext→ws id=${msg?.id} ok=${msg?.ok} (${payload.length} bytes)`);
     } catch (e) {
       log(`unparseable frame: ${e}`);
     }
@@ -62,10 +95,6 @@ process.stdin.on("end", () => {
 process.stdin.on("error", (e) => log(`stdin error: ${e}`));
 process.stdout.on("error", (e) => log(`stdout error: ${e}`));
 
-function log(msg) {
-  process.stderr.write(`[pai-browser-bridge] ${new Date().toISOString()} ${msg}\n`);
-}
-
 // --- WebSocket side ----------------------------------------------------------
 
 let bridge = null;
@@ -75,17 +104,20 @@ startBridgeServer({
   onClientMessage: (text) => {
     // WS client (MCP server) → extension, verbatim JSON over the native port.
     try {
-      writeStdout(JSON.parse(text)); // parse first — never forward garbage to Chrome
+      const msg = JSON.parse(text); // parse first — never forward garbage to Chrome
+      writeStdout(msg);
+      if (msg?.type !== "ping") log(`ws→ext ${msg?.cmd ?? msg?.command ?? "?"} id=${msg?.id ?? "?"}`);
     } catch (e) {
       log(`dropping non-JSON frame from WS client: ${e}`);
     }
   },
-  onClientState: () => {
-    log("ws client connected or closed");
+  onClientState: (connected, count) => {
+    log(`ws client ${connected ? "connected" : "closed"} (${count} open)`);
   },
 })
   .then((b) => {
     bridge = b;
+    log(`host up pid=${process.pid} log=${LOG_PATH}`);
     log(`listening on ws://127.0.0.1:${b.port}`);
   })
   .catch((e) => {
