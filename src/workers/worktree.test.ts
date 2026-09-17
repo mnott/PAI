@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,12 +19,14 @@ import {
   promptLooksReadonly,
   recordWorktree,
   salvageUncommitted,
+  sweepOrphanWorktrees,
   uncommittedPaths,
   worktreeBranch,
   worktreePath,
   worktreeWanted,
   worktreeSystemPrompt,
 } from "./worktree.js";
+import { statusPath } from "./paths.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-worktree-test-"));
@@ -331,3 +333,4 @@ describe("worktreeBranch", () => {
     expect(worktreeBranch("20260917-101010-123")).toBe("worker/20260917-101010-123");
   });
 });
+
