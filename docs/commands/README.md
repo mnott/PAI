@@ -68,8 +68,8 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai kg query` | Query KG triples by subject, predicate, object, time, or project |
 | `pai kg stats` | Show triple counts and contradiction count |
 | `pai mcp` | MCP server management: install and status |
-| `pai mcp install` | Register the PAI MCP server in ~/.claude.json (restart Claude Code to activate) |
-| `pai mcp status` | Show whether the PAI MCP server is registered and the binary exists |
+| `pai mcp install` | Register the PAI MCP servers (pai, pai-browser) in ~/.claude.json (restart Claude Code to activate) |
+| `pai mcp status` | Show whether the PAI MCP servers (pai, pai-browser) are registered and the binaries exist |
 | `pai memory` | Memory engine: index, search, and status |
 | `pai memory embed [project-slug]` | Generate embeddings for un-embedded chunks (Phase 2.5) |
 | `pai memory index [project-slug]` | Index memory files for one project or all projects |
