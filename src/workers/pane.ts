@@ -6,7 +6,10 @@
  * one splits the lowest live worker pane horizontally, so panes stack top to
  * bottom. The split never sizes the new session — that would grow the whole
  * window; instead the window's bounds are read before the split and restored
- * right after, so the panes share the space the window already had. Each
+ * right after, so the panes share the space the window already had. A split
+ * would also make the new session the tab's active one — the scripts re-select
+ * the launching session right after, so a pane opening never steals the
+ * keystrokes the operator is typing. Each
  * pane runs `pai worker follow <id> --auto-exit <n>` under the `pai-worker`
  * dynamic profile (Close Sessions On End), so panes disappear by themselves.
  *
@@ -119,6 +122,13 @@ export const WORKER_SPLIT_SCRIPT = `on run(argv)
                         tell newS
                             write text followCmd
                         end tell
+                        -- a split makes the new session the tab's active one:
+                        -- re-select the launching session so keystrokes keep
+                        -- going where the operator was typing, not into the
+                        -- pane's chat prompt
+                        try
+                            select s
+                        end try
                         try
                             set bounds of w to winBounds
                         end try
@@ -195,7 +205,8 @@ export const WINDOW_BOUNDS_SCRIPT = `on run(argv)
 end run`;
 
 // Split the launching session vertically and run followCmd in the new pane.
-const SPLIT_SCRIPT = `on run(argv)
+// Exported for the script-content tests (focus stays on the launching session).
+export const SPLIT_SCRIPT = `on run(argv)
     set targetID to item 1 of argv
     set followCmd to item 2 of argv
     tell application id "com.googlecode.iterm2"
@@ -210,6 +221,11 @@ const SPLIT_SCRIPT = `on run(argv)
                         tell newS
                             write text followCmd
                         end tell
+                        -- keep the tab's active session where it was (see
+                        -- WORKER_SPLIT_SCRIPT)
+                        try
+                            select s
+                        end try
                         return "opened"
                     end if
                 end repeat
