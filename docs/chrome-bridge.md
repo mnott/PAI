@@ -20,13 +20,14 @@ pai-browser-mcp  (dist/browser-mcp/index.mjs)
 native host  (src/browser-bridge/host/host.mjs, spawned by Chrome)
     │ native messaging (4-byte length-prefixed JSON on stdin/stdout)
 extension background service worker  (extensions/browser-bridge)
-    │ chrome.tabs  +  chrome.debugger (CDP)
+    │ chrome.tabs  +  chrome.scripting (injected DOM functions)
 the real running Chrome
 ```
 
 The extension is the only part that touches Chrome. It uses `chrome.tabs` for
-tab operations and `chrome.debugger` (the DevTools protocol) for DOM
-operations — trusted input events, so clicks work in SPAs. The native host
+tab operations and `chrome.scripting` for DOM operations — functions injected
+into the page (snapshot walks, clicks, typing), so there is no debugger
+attachment and no "started debugging this browser" banner. The native host
 bridges the extension's native messaging port to a localhost WebSocket; the
 MCP server connects there. The WebSocket server is hand-rolled (RFC 6455,
 text frames only) because Node's global `WebSocket` is client-only and PAI
@@ -79,12 +80,12 @@ Eleven tools, all named after what they do:
 | `tab_select {tab}` | Bring a tab to the front |
 | `tab_close {tab}` | Close a tab |
 | `dom_snapshot {tab}` | A11y-tree YAML of the page, with `[ref=sN]` ids |
-| `dom_click {tab, ref}` | Click an element (trusted CDP event) |
+| `dom_click {tab, ref}` | Click an element (scrolls into view first) |
 | `dom_type {tab, ref, text}` | Focus an element and type into it |
 | `page_text {tab}` | Read `document.body.innerText` |
 | `eval_js {tab, code}` | Evaluate JavaScript (awaits promises) |
-| `tab_screenshot {tab}` | PNG screenshot, base64 |
-| `console_logs {tab}` | Console output captured while the debugger was attached |
+| `tab_screenshot {tab}` | PNG screenshot of the visible tab, base64 |
+| `console_logs {tab}` | Console output captured since the last snapshot |
 
 ### The ref workflow
 
@@ -115,12 +116,14 @@ unknown ref returns `unknown ref sN — take a new snapshot`.
   the repo moved; re-run install.mjs). The MCP server stays alive and
   reconnects on the next call, so fixing Chrome is enough — no restart needed.
 - **Yellow "PAI Browser Bridge started debugging this browser" banner** —
-  expected while a DOM tool is attached to a tab. It disappears when the
-  debugger detaches; it is the price of driving the real Chrome without a
-  remote debugging port. Don't click "Cancel" while a command runs.
-- **DevTools open on a tab** — Chrome allows one debugger per tab. If
-  DevTools is attached, DOM tools fail with an "already attached" error;
-  close DevTools on that tab and retry.
+  gone: DOM tools run through `chrome.scripting`, which attaches nothing.
+  Reload the unpacked extension (chrome://extensions → reload icon) after
+  updating it, so Chrome drops the old `debugger` permission.
+- **No reply to a command** — every command frame now answers, ok or a loud
+  error (`missing command key`, `unknown command`, ...). If nothing comes
+  back at all, the host log tells the story: `/tmp/pai-browser-bridge.log`
+  (override with `PAI_BROWSER_BRIDGE_LOG`). The extension reconnects to the
+  host with backoff after a host death and respawns it from disk.
 - **Big screenshots** — the native messaging channel caps message size; very
   large viewports can exceed it. Scroll or shrink the window and retry.
 - **Port conflict** — the bridge uses `ws://127.0.0.1:8756`; override with
