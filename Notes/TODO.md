@@ -1,22 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Provider Independence Doc, Worker Panes, Clickr Check" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T22:56:07.134Z" -->
+<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Provider Independence Doc, Glm Workers, Memory Notes" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T23:43:27.497Z" -->
 
-> **Last session:** 0058 - 2026-09-17 - Provider Independence Doc, Worker Panes, Clickr Check
-> **Paused at:** 2026-09-17T22:56:07.134Z
+> **Last session:** 0058 - 2026-09-17 - Provider Independence Doc, Glm Workers, Memory Notes
+> **Paused at:** 2026-09-17T23:43:27.497Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
 
 T
-i=ckpt-2026-09-17T22-56-07.007Z
-g=you can remove your bridge, the controls are with Browsr, and you can then step back as Browsr can take over everything, with its own bridge.
-d=[Session:Browsr] Ack — standing down the channel. Decision: Browsr stays on 8757, 8756 remains free. Will flag you only for a PAI-side worker or a cross-check. Good night. | I think your time gating does not make sense. why do you busy wait? you'd be getting the result from your worker.     Waiting for fix worker to finish · 2m 6s     ⎿  $ sleep 180; pai worker ps (2m 5s)… | [Session:Browsr] Fix request for the PAI worker system (operator wants this): workers cannot use MCP tools. Repro just now: pai worker run --class spotcheck --allowedTools "Bash,mcp__clickr__check_per… | [Session:Browsr] Good scope — subset loading is the right call. Standing by to rerun the exact probe (spotcheck, allowedTools with mcp__clickr__check_permissions + screenshot, ToolSearch → live call)… | ok then while thre's one more worker open saying hi on your end, I'd suggest a) remove the browsr work that still may live here, then commit all publish all (cpp)
+i=ckpt-2026-09-17T23-43-27.335Z
+g=[Session:Browsr] Bug report (worker system): worktree mode leaves workers TOOL-BLIND. Repro tonight: pai worker run --class implement (default worktree, repo has a commit) → worker transcript shows re…
+d=why does it keep hitting these  :47 │ $ python3 -c " import json d = json.lo          │ ad(open('/Users/i052341/.config/pai/co          │ nfig.json')) w = d.get('workers', {})          │ p = w.get('pr… | well heredoc should never be used. it keeps failing because of parsing, this ban is ours. but it should be respected and other means used | they keep trying  $ python3 -c " import json, re src = o          │ pen('/Users/i052341/.claude/projects/-          │ Users-i052341-Daten-Cloud-Development-          │ ai-browsr/20499742-b427-4d8d-9cd… | they shouldnt be intercepted. what is so hard just witing a small temp script, then execute. every time. not like "try oneliner, stop it, then do something else" | and your new workers still capture my input!!!!!  Fri 18 | 01:31:12 ️ ➜ r exec pai worker follow "20260918-013110-8681" --auto-exit 10 fc: too many arguments i052341 in  HKP9MJXWJY in ~ via 🥟 v1.3.5…
 t=?
 @1=Notes/TODO.md
-@2=.aibroker/
-z=auto ckpt (no model); main@01029f5 merge worker 20260918-004255-12877 (worker mcp loading); 2 dirty; git status for detail
+z=auto ckpt (no model); main@aff9b23 merge worker 20260918-012458-97519 (worker supervision events); 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
@@ -1214,3 +1213,13 @@ Fixes, in dependency order:
 ---
 
 *Last updated: 2026-09-17T09:39:20.595Z*
+
+
+## Post-release additions (01:00-01:45)
+- [x] Worker MCP grants: mcp__server__tool in --allowedTools loads exactly that server (ad16f0f, verified live from two sides)
+- [x] No-busy-wait rule in Worker skill + wait docs (339fa33); one-liner ban in WORKER_CONTRACT_PROMPT (9901d77): script file first, every time, never python3 -c / node -e
+- [x] Event-driven worker supervision merged (726e28d): daemon pushes finished/failed/stalled to the orchestrator - no polling anywhere
+- [x] Worktree tool-blindness fixed (f966987): root cause was inherited CLAUDE_CODE_MESSAGING_SOCKET/_TOKEN env crossing the spawn boundary, deferring the child's core tools; run-env strips the six session-identity vars; killed-run cleanup + orphan sweep included
+- [x] 0.41.0 published (b422b6a): bridge removed from PAI (productized as Browsr), suite 1005 then 439 workers-suite green after supervision merge
+- Incidents: live pai config clobbered twice by workers testing config writes (restored both times; corrupt copies kept); panes DISABLED via config (workers.pane.enabled=false) after focus theft typed into the operator shell - real fix (create session WITH command, no write-text) not yet specced
+- Open for morning: pane.ts proper fix if panes wanted again; publish supervision + worktree fix in next cpp; Browsr re-verifying worktree repro on f966987
