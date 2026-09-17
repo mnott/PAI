@@ -8,7 +8,7 @@
  * tagged so the two stay visibly distinct.
  *
  * Two modes (see runSelector):
- *   - command (default): ↑↓/j/k move · g go-to-tab · n new · c cd · f finder · q quit
+ *   - command (default): ↑↓/j/k move · g go-to-tab · n new · c cd · w worker · a claude · f finder · q quit
  *   - search (after s or /): type to filter, Enter/esc back to command
  * Action keys fire IMMEDIATELY on the highlighted row — letters are commands in
  * command mode, filter text only in the explicit, visible search mode. This is
@@ -273,7 +273,7 @@ function buildFeedFrom(
 
 // ---------------------------------------------------------------------------
 // Modal selector — our own TUI (no fzf). Two modes:
-//   command mode (default): ↑↓/j/k move · g go-to-tab · n new · c cd · s search · q quit
+//   command mode (default): ↑↓/j/k move · g go-to-tab · n new · c cd · w worker · a claude · s search · q quit
 //   search mode  (after s or /): type to filter · Enter/esc back to command
 // Action keys fire IMMEDIATELY on the highlighted row — no Enter dance, because
 // in command mode letters are commands, not filter input. Search is a distinct,
@@ -281,7 +281,7 @@ function buildFeedFrom(
 // colliding.
 // ---------------------------------------------------------------------------
 
-type PickAction = "new" | "cd" | "switch";
+type PickAction = "new" | "cd" | "switch" | "worker" | "anthropic";
 
 interface SelectorResult {
   record: PickRecord;
@@ -459,6 +459,8 @@ async function runSelector(
         if (cur?.record.live) parts.push(chalk.cyan("g") + dim(" go to tab"));
         if (cur?.record.dir) parts.push(chalk.cyan("n") + dim(" new"));
         if (cur?.record.dir) parts.push(chalk.cyan("c") + dim(" cd"));
+        if (cur?.record.dir) parts.push(chalk.cyan("w") + dim(" worker"));
+        if (cur?.record.dir) parts.push(chalk.cyan("a") + dim(" claude"));
         if (cur?.record.dir) parts.push(chalk.cyan("f") + dim(" finder"));
         if (cur?.record.slug) parts.push(chalk.cyan("d") + dim(" remove"));
         parts.push(chalk.cyan("s") + dim(" search"));
@@ -530,6 +532,9 @@ async function runSelector(
       if (s === "g" && cur.record.live) return finish({ record: cur.record, action: "switch" });
       if (s === "n" && cur.record.dir) return finish({ record: cur.record, action: "new" });
       if (s === "c" && cur.record.dir) return finish({ record: cur.record, action: "cd" });
+      // w/a force one engine for the launch, overriding the workers config.
+      if (s === "w" && cur.record.dir) return finish({ record: cur.record, action: "worker" });
+      if (s === "a" && cur.record.dir) return finish({ record: cur.record, action: "anthropic" });
       // f → open in the file manager, but stay in the picker.
       if (s === "f" && cur.record.dir) { openInFileManager(cur.record.dir); return; }
       // d → ask to remove this row from PAI's list (only registered projects).
@@ -652,7 +657,7 @@ export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> 
     }
   };
 
-  // Modal selector — navigate, then g/n/c act immediately on the highlighted row.
+  // Modal selector — navigate, then g/n/c/w/a act immediately on the highlighted row.
   const sel = await runSelector(lines, onRemove);
   if (!sel) return; // cancelled
   const { record, action } = sel;
@@ -690,6 +695,8 @@ export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> 
     return;
   }
 
-  // new → start a fresh session here, in the current terminal.
-  launchInDir(record.dir, record.name, { forceFresh: true, dryRun: opts.dryRun });
+  // new → start a fresh session here, in the current terminal. The engine
+  // follows the workers config; w/a above forced one explicitly.
+  const engine = action === "worker" ? "worker" : action === "anthropic" ? "claude" : undefined;
+  launchInDir(record.dir, record.name, { forceFresh: true, engine, dryRun: opts.dryRun });
 }
