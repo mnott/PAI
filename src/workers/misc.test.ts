@@ -54,18 +54,18 @@ describe("spawner session map", () => {
   const t0 = 1_700_000_000_000;
 
   it("resolves the session a fresh entry records, per cwd", () => {
-    recordSessionMapEntry(dir, cwd, "sess-1", t0);
+    recordSessionMapEntry(dir, cwd, "sess-1", undefined, t0);
     expect(resolveSpawnerSession(dir, cwd, {}, t0 + 1000)).toBe("sess-1");
     expect(resolveSpawnerSession(dir, "/other", {}, t0 + 1000)).toBeNull();
   });
   it("ignores entries past the TTL", () => {
-    recordSessionMapEntry(dir, cwd, "sess-2", t0);
+    recordSessionMapEntry(dir, cwd, "sess-2", undefined, t0);
     expect(resolveSpawnerSession(dir, cwd, {}, t0 + 60 * 60_000)).toBeNull();
   });
   it("overwrites the previous session and prunes stale cwds", () => {
-    recordSessionMapEntry(dir, cwd, "sess-2", t0);
-    recordSessionMapEntry(dir, "/gone", "sess-3", t0);
-    recordSessionMapEntry(dir, cwd, "sess-4", t0 + 2 * 60 * 60_000);
+    recordSessionMapEntry(dir, cwd, "sess-2", undefined, t0);
+    recordSessionMapEntry(dir, "/gone", "sess-3", undefined, t0);
+    recordSessionMapEntry(dir, cwd, "sess-4", undefined, t0 + 2 * 60 * 60_000);
     const map = JSON.parse(readFileSync(sessionMapPath(dir), "utf8")) as Record<string, { session: string }>;
     expect(map[cwd].session).toBe("sess-4");
     expect(map["/gone"]).toBeUndefined();

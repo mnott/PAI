@@ -25,7 +25,7 @@ import {
   embedSchedulerTimer,
   storageBackend,
 } from "./state.js";
-import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler } from "./scheduler.js";
+import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -149,6 +149,10 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Registry scan scheduler only needs the registry DB — safe to start now.
   startRegistryScanScheduler();
+
+  // Worker supervision reads the workers ledger off disk and pushes events to
+  // owning sessions — no backend dependency, so it starts with the IPC server.
+  startWorkerSupervisor();
 
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so
