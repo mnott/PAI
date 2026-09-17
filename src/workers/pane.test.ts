@@ -220,7 +220,7 @@ describe("WORKER_SPLIT_SCRIPT window size", () => {
     expect(pin).toBeGreaterThan(-1);
     expect(split).toBeGreaterThan(pin); // captured before the split
     expect(restore).toBeGreaterThan(split); // restored after it
-    expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.indexOf("write text followCmd"));
+    expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command followCmd"));
     // `set winBounds to bounds of w` stores the property reference lazily —
     // the restore then re-reads the post-split bounds and iTerm clamps the
     // window onto the main display. copy forces the plain list value.
@@ -237,13 +237,35 @@ describe("WORKER_SPLIT_SCRIPT window size", () => {
   });
 });
 
+describe("split scripts never leak keystrokes", () => {
+  it("creates every new session with its command from the start", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
+      // iTerm's `split … command <text>` runs the command in the new session
+      // as it is born — the only way no typing step can race the operator's
+      // keystrokes or land in the wrong session
+      const calls = script.match(/split (vertically|horizontally)[^\n]*/g) ?? [];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        expect(call).toMatch(/ command followCmd$/);
+      }
+    }
+  });
+
+  it("never types text into any session (no write text, scoped or not)", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
+      expect(script).not.toMatch(/write text/);
+      expect(script).not.toMatch(/\bwrite\b/);
+    }
+  });
+});
+
 describe("split scripts never steal input focus", () => {
   it("re-selects the launching session after the split (a split makes the new session active)", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
       const split = script.indexOf("split");
       const select = script.indexOf("select s");
       expect(split).toBeGreaterThan(-1);
-      expect(select).toBeGreaterThan(script.lastIndexOf("write text followCmd"));
+      expect(select).toBeGreaterThan(script.lastIndexOf("command followCmd"));
     }
   });
 

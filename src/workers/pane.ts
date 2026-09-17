@@ -6,10 +6,14 @@
  * one splits the lowest live worker pane horizontally, so panes stack top to
  * bottom. The split never sizes the new session — that would grow the whole
  * window; instead the window's bounds are read before the split and restored
- * right after, so the panes share the space the window already had. A split
- * would also make the new session the tab's active one — the scripts re-select
- * the launching session right after, so a pane opening never steals the
- * keystrokes the operator is typing. Each
+ * right after, so the panes share the space the window already had. The follow
+ * command is part of the split itself — iTerm creates the new session already
+ * running it — so no text is ever typed into any session afterwards; a separate
+ * typing step raced the operator's keystrokes (focus briefly sits on the new
+ * pane after a split, and in one observed failure the command landed in the
+ * operator's own shell). A split still makes the new session the tab's active
+ * one — the scripts re-select the launching session right after, so a pane
+ * opening never steals the keystrokes the operator is typing. Each
  * pane runs `pai worker follow <id> --auto-exit <n>` under the `pai-worker`
  * dynamic profile (Close Sessions On End), so panes disappear by themselves.
  *
@@ -98,34 +102,35 @@ export const WORKER_SPLIT_SCRIPT = `on run(argv)
                                 end if
                             end if
                         end repeat
+                        -- the follow command is part of the split itself: the
+                        -- pane is born already running it, so no text is ever
+                        -- typed into any session — a typing step raced the
+                        -- operator's keystrokes and could even land in the
+                        -- operator's own session
                         if profileName is "" then
                             if splitS is missing value then
                                 tell s
-                                    set newS to split vertically with default profile
+                                    set newS to split vertically with default profile command followCmd
                                 end tell
                             else
                                 tell splitS
-                                    set newS to split horizontally with default profile
+                                    set newS to split horizontally with default profile command followCmd
                                 end tell
                             end if
                         else
                             if splitS is missing value then
                                 tell s
-                                    set newS to split vertically with profile profileName
+                                    set newS to split vertically with profile profileName command followCmd
                                 end tell
                             else
                                 tell splitS
-                                    set newS to split horizontally with profile profileName
+                                    set newS to split horizontally with profile profileName command followCmd
                                 end tell
                             end if
                         end if
-                        tell newS
-                            write text followCmd
-                        end tell
                         -- a split makes the new session the tab's active one:
-                        -- re-select the launching session so keystrokes keep
-                        -- going where the operator was typing, not into the
-                        -- pane's chat prompt
+                        -- re-select the launching session so focus returns to
+                        -- where the operator was typing, never the new pane
                         try
                             select s
                         end try
@@ -215,11 +220,11 @@ export const SPLIT_SCRIPT = `on run(argv)
             repeat with t in tabs of w
                 repeat with s in sessions of t
                     if id of s is targetID then
+                        -- the follow command is part of the split itself (see
+                        -- WORKER_SPLIT_SCRIPT): nothing is ever typed into a
+                        -- session afterwards
                         tell s
-                            set newS to split vertically with default profile
-                        end tell
-                        tell newS
-                            write text followCmd
+                            set newS to split vertically with default profile command followCmd
                         end tell
                         -- keep the tab's active session where it was (see
                         -- WORKER_SPLIT_SCRIPT)
