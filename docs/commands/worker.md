@@ -34,6 +34,7 @@ pai worker <subcommand> [options]
 | [`pai worker status-line [term] [cwd]`](#pai-worker-status-line-term-cwd) | One-line worker summary for a status bar (empty when none in scope). |
 | [`pai worker on`](#pai-worker-on) | Route Agent-tool subagents to workers (default when a provider exists) |
 | [`pai worker off`](#pai-worker-off) | Stop routing: Agent tool runs on Anthropic again |
+| [`pai worker fallback [action] [provider]`](#pai-worker-fallback-action-provider) | Machine-wide fallback: every NEW Claude Code process runs on a worker |
 | [`pai worker install`](#pai-worker-install) | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
@@ -282,6 +283,23 @@ Route Agent-tool subagents to workers (default when a provider exists)
 ### pai worker off
 
 Stop routing: Agent tool runs on Anthropic again
+
+
+### pai worker fallback [action] [provider]
+
+Machine-wide fallback: every NEW Claude Code process runs on a worker
+
+provider (settings.json env + model pin) until switched back.
+on [provider] switches (default: active), off restores settings.json
+exactly, status shows state and running sessions. CLAUDE_SETTINGS_PATH
+points at another settings.json for dry runs.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[action]` | optional |
+| `[provider]` | optional |
 
 
 ### pai worker install

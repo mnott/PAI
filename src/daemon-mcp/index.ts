@@ -82,6 +82,7 @@ import {
   useProvider,
 } from "../workers/providers.js";
 import { testProvider, runWorker } from "../workers/run.js";
+import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
 import { runChain } from "../workers/chain.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus, loadStatuses, alive } from "../workers/status.js";
@@ -953,6 +954,54 @@ async function startShim(): Promise<void> {
         }
         return workerText(
           `${r.provider} ${r.model}  ${(r.latencyMs / 1000).toFixed(1)}s\nreply: ${r.result.slice(0, 200)}\n${r.ok ? "OK" : "FAILED"}`
+        );
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_fallback",
+    [
+      "Machine-wide fallback: switch every NEW Claude Code process on this",
+      "machine (interactive, task-bus, daemon summarizer) to a worker provider,",
+      "or back to the Anthropic login.",
+      "",
+      "action=on switches (provider optional, default: active) by writing the",
+      "provider's env into ~/.claude/settings.json — the token is read from its",
+      "key file and then sits in settings.json until off. action=off restores",
+      "settings.json exactly. action=status (default) shows on/off, provider,",
+      "running sessions and the FALLBACK-ACTIVE.md note. Running sessions keep",
+      "their provider until restarted. CLAUDE_SETTINGS_PATH retargets settings",
+      "for dry runs. Subagent routing is unchanged while on.",
+    ].join("\n"),
+    {
+      action: z.enum(["on", "off", "status"]).optional().describe("Default: status."),
+      provider: z.string().optional().describe("Provider to switch to (on). Default: active."),
+    },
+    async (args) => {
+      try {
+        const action = args.action ?? "status";
+        if (action === "status") {
+          return workerText(fallbackStatusText(fallbackStatus()).join("\n"));
+        }
+        if (action === "on") {
+          const r = fallbackOn(args.provider);
+          return workerText(
+            [
+              r.alreadyOn
+                ? `fallback already on — provider ${r.provider}, env re-applied`
+                : `fallback on — provider ${r.provider}; every new Claude Code process uses it`,
+              `settings.json env: ${r.envKeys.join(", ")}`,
+              `model pin: ${r.model}`,
+              "running sessions keep their current provider until restarted",
+            ].join("\n")
+          );
+        }
+        const r = fallbackOff();
+        return workerText(
+          `fallback off — provider ${r.provider} released, settings.json restored (${r.envKeys.join(", ")})`
         );
       } catch (e) {
         return workerError(e);
