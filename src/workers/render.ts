@@ -526,10 +526,15 @@ export function renderTable(
 }
 
 /**
- * One-line status-bar summary (same shape glm-ps --status printed). Sub-workers
- * render after their parent with a `↳` prefix (`all` carries the whole forest
- * so depth is right even when only some workers are this session's);
- * `◆N` marks an inbox with N handoffs.
+ * One-line status-bar summary (same shape glm-ps --status printed). The first
+ * segment is this terminal's chat pane itself (origin "chat", alive): its
+ * provider, `▶N` — the count of its running SPAWNED workers, nothing at zero —
+ * its own age when none run, and its last activity; never its id or label, it
+ * is not a worker. Each spawned worker follows as `#id label age · last`;
+ * sub-workers render after their parent with a `↳` prefix (`all` carries the
+ * whole forest so depth is right even when only some workers are this
+ * session's); `◆N` marks an inbox with N handoffs. Without a tracked chat
+ * pane the head is the old `provider ▶N` shape (again no ▶ at zero).
  */
 export function renderStatusLine(
   mine: WorkerStatus[],
@@ -539,28 +544,36 @@ export function renderStatusLine(
   inbox: Record<string, number> = {}
 ): string {
   if (!mine.length) return "";
+  const chat = mine.find((s) => s.origin === "chat" && s.state === "running" && alive(s.pid));
   const running = mine
-    .filter((s) => s.state === "running" && alive(s.pid))
-    .sort((a, b) => workerDepth(all, a.id) - workerDepth(all, b.id)); // stable: parents first
+    .filter((s) => s.origin !== "chat" && s.state === "running" && alive(s.pid))
+    // stable: parents first; the chat pane is the bar itself, not a level
+    .sort((a, b) => workerDepth(all, a.id, { chatIsRoot: true }) - workerDepth(all, b.id, { chatIsRoot: true }));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
-  const providers = new Set(running.map((s) => s.provider));
-  const providerTag = providers.size === 1 ? [...providers][0] : "workers";
-  let head = `${providerTag} ▶${running.length}`;
   const parts = running.slice(0, 3).map((s) => {
     // context load joins the summary once it passes 60 % (yellow >70, red >85)
     const meter = contextMeter(c, s, 60);
-    const depth = workerDepth(all, s.id);
+    const depth = workerDepth(all, s.id, { chatIsRoot: true });
     const lead = depth > 0 ? "  ".repeat(depth - 1) + "↳ " : "";
     const box = inbox[s.id] ? ` ◆${inbox[s.id]}` : "";
     return (
-      `${lead}${s.id.slice(-4)} ${s.label.slice(0, 26)} ${ageOf(s.started, now)} · ${s.last.slice(0, 30)}${box}` +
+      `${lead}#${s.id.slice(-4)} ${s.label.slice(0, 26)} ${ageOf(s.started, now)} · ${s.last.slice(0, 30)}${box}` +
       (meter ? ` ${meter}` : "")
     );
   });
-  if (parts.length) head += "  " + parts.join(" | ");
+  let head: string;
+  if (chat) {
+    const count = running.length ? `▶${running.length}` : ageOf(chat.started, now);
+    head = `${chat.provider} ${count} · ${chat.last.slice(0, 30)}`;
+  } else {
+    const providers = new Set(running.map((s) => s.provider));
+    const providerTag = providers.size === 1 ? [...providers][0] : "workers";
+    head = running.length ? `${providerTag} ▶${running.length}` : providerTag;
+  }
+  if (parts.length) head += " | " + parts.join(" | ");
   if (doneToday.length) head += `   ✓${ok} ✗${bad} today`;
   return head;
 }
