@@ -14,17 +14,17 @@ pai mcp <subcommand> [options]
 
 | Command | Description |
 |---------|-------------|
-| [`pai mcp install`](#pai-mcp-install) | Register the PAI MCP server in ~/.claude.json (restart Claude Code to activate) |
-| [`pai mcp status`](#pai-mcp-status) | Show whether the PAI MCP server is registered and the binary exists |
+| [`pai mcp install`](#pai-mcp-install) | Register the PAI MCP servers (pai, pai-browser) in ~/.claude.json (restart Claude Code to activate) |
+| [`pai mcp status`](#pai-mcp-status) | Show whether the PAI MCP servers (pai, pai-browser) are registered and the binaries exist |
 
 ### pai mcp install
 
-Register the PAI MCP server in ~/.claude.json (restart Claude Code to activate)
+Register the PAI MCP servers (pai, pai-browser) in ~/.claude.json (restart Claude Code to activate)
 
 
 ### pai mcp status
 
-Show whether the PAI MCP server is registered and the binary exists
+Show whether the PAI MCP servers (pai, pai-browser) are registered and the binaries exist
 
 
 ## See also

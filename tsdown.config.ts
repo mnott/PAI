@@ -7,6 +7,7 @@ export default defineConfig({
     "src/cli/program.ts",
     "src/daemon/index.ts",
     "src/daemon-mcp/index.ts",
+    "src/browser-mcp/index.ts",
   ],
   format: "esm",
   target: "node20",

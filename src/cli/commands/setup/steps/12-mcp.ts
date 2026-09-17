@@ -9,7 +9,9 @@ import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 export async function stepMcp(rl: Rl): Promise<boolean> {
   section("Step 10: MCP Registration");
   line();
-  line("  Registering the PAI MCP server lets Claude Code call PAI tools directly.");
+  line("  Registering the PAI MCP servers (pai and pai-browser) lets Claude Code");
+  line("  call PAI tools directly — including the browser bridge tools that drive");
+  line("  the real running Chrome.");
   line();
 
   const claudeJsonPath = join(homedir(), ".claude.json");
@@ -18,8 +20,12 @@ export async function stepMcp(rl: Rl): Promise<boolean> {
       const raw = readFileSync(claudeJsonPath, "utf-8");
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const mcpServers = parsed["mcpServers"] as Record<string, unknown> | undefined;
-      if (mcpServers && Object.prototype.hasOwnProperty.call(mcpServers, "pai")) {
-        console.log(c.ok("PAI MCP server already registered in ~/.claude.json."));
+      if (
+        mcpServers &&
+        Object.prototype.hasOwnProperty.call(mcpServers, "pai") &&
+        Object.prototype.hasOwnProperty.call(mcpServers, "pai-browser")
+      ) {
+        console.log(c.ok("PAI MCP servers (pai, pai-browser) already registered in ~/.claude.json."));
         console.log(c.dim("  Skipping MCP registration."));
         return false;
       }
@@ -28,7 +34,7 @@ export async function stepMcp(rl: Rl): Promise<boolean> {
     }
   }
 
-  const register = await promptYesNo(rl, "Register the PAI MCP server in ~/.claude.json?", true);
+  const register = await promptYesNo(rl, "Register the PAI MCP servers (pai, pai-browser) in ~/.claude.json?", true);
   if (!register) {
     console.log(c.dim("  Skipping MCP registration. Run manually: pai mcp install"));
     return false;
@@ -42,6 +48,6 @@ export async function stepMcp(rl: Rl): Promise<boolean> {
     return false;
   }
 
-  console.log(c.ok("PAI MCP server registered in ~/.claude.json."));
+  console.log(c.ok("PAI MCP servers (pai, pai-browser) registered in ~/.claude.json."));
   return true;
 }
