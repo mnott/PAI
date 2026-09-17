@@ -3,30 +3,39 @@
  *
  * Owns the native messaging port to com.pai.browser_bridge and answers JSON
  * commands arriving over it with {id, ok, result} / {id, ok: false, error}.
- * Tab operations go through chrome.tabs; DOM operations attach the CDP
- * debugger (chrome.debugger) per tab — the real running Chrome, no remote
- * debugging port, nothing headless.
+ * Tab operations go through chrome.tabs; DOM operations inject script via
+ * chrome.scripting — the real running Chrome, no remote debugging port, no
+ * debugger attachment (and therefore no "started debugging this browser"
+ * banner), nothing headless.
  *
- * Keeps itself alive with a 20s ping from the host over the port (incoming
- * messages reset the MV3 idle timer), and reconnects the port on wake.
+ * Every command frame gets a reply — ok or explicit error. A bad wire key
+ * fails loudly instead of hanging the caller (that silent drop cost an hour
+ * once). Keeps itself alive with a 20s ping from the host over the port
+ * (incoming messages reset the MV3 idle timer), and reconnects the port on
+ * wake and after host death.
  */
 
 import { buildSnapshot } from "./snapshot.js";
+import {
+  walkDom,
+  clickByPath,
+  typeByPath,
+  evalInPage,
+  installConsoleHook,
+  readConsole,
+} from "./injected.js";
 
 const HOST_NAME = "com.pai.browser_bridge";
 
 /** @type {chrome.runtime.Port|null} */
 let port = null;
 
-/** tabId -> Map(ref -> CDP nodeId), valid until next snapshot/navigation */
+let reconnectTimer = null;
+let reconnectDelay = 2_000;
+const RECONNECT_MAX_DELAY = 30_000;
+
+/** tabId -> Map(ref -> child-index path from document.documentElement) */
 const refMaps = new Map();
-
-/** tabId -> console/log entries (ring, cap below) */
-const consoleBuffers = new Map();
-const CONSOLE_CAP = 500;
-
-/** tabIds this worker attached the debugger to (best effort) */
-const attached = new Set();
 
 // ---------------------------------------------------------------------------
 // Native messaging port
@@ -34,29 +43,56 @@ const attached = new Set();
 
 function connectHost() {
   if (port) return;
+  let nativePort;
   try {
-    port = chrome.runtime.connectNative(HOST_NAME);
+    nativePort = chrome.runtime.connectNative(HOST_NAME);
   } catch (e) {
     console.error("browser-bridge: connectNative failed", e);
+    scheduleReconnect();
     return;
   }
+  port = nativePort;
+  reconnectDelay = 2_000; // connected — reset the backoff
   port.onMessage.addListener(onHostMessage);
   port.onDisconnect.addListener(() => {
+    // Consume the disconnect reason, or Chrome logs an unchecked-lastError
+    // error on the extension card for every host death.
+    const why = chrome.runtime.lastError?.message;
+    if (why) console.warn("browser-bridge: host disconnected:", why);
     port = null;
-    // Chrome may have killed the host (or the SW is going down); retry soon.
-    setTimeout(connectHost, 2_000);
+    scheduleReconnect();
   });
 }
 
 /**
+ * Reconnects with capped backoff. connectNative respawns host.mjs from disk,
+ * so a killed or stale host is replaced with fresh code on every retry.
+ * MV3 note: a pending timer dies with a suspended service worker, but any
+ * wake event (tab activity, onStartup) re-runs this module's top-level
+ * connectHost(), so reconnect also happens on service-worker wake.
+ */
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectHost();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_DELAY);
+}
+
+/**
  * Handles one framed JSON message from the host.
- * Bridge control messages (ping) are silent; commands get a reply.
+ * Bridge control messages (ping) are silent; every command frame gets a
+ * reply, so malformed or unknown requests fail loudly instead of hanging.
  */
 function onHostMessage(msg) {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "ping") return; // host keepalive, resets the idle timer
   const { id, command, ...params } = msg;
-  if (command === undefined) return;
+  if (command === undefined) {
+    reply(id, false, undefined, "missing command key (send 'command')");
+    return;
+  }
   handleCommand(command, params)
     .then((result) => reply(id, true, result))
     .catch((e) => reply(id, false, undefined, e?.message ?? String(e)));
@@ -73,188 +109,41 @@ function reply(id, ok, result, error) {
 }
 
 // ---------------------------------------------------------------------------
-// CDP plumbing
+// Scripting plumbing
 // ---------------------------------------------------------------------------
 
-function cdp(tabId, method, params = {}) {
+/**
+ * Runs one injected function in a tab and resolves its result.
+ * Injection needs host permission for the tab (host_permissions: all_urls).
+ */
+function execScript(tabId, func, args = [], world = "ISOLATED") {
   return new Promise((resolve, reject) => {
-    chrome.debugger.sendCommand({ tabId }, method, params, (res) => {
-      const e = chrome.runtime.lastError;
-      if (e) reject(new Error(`${method}: ${e.message}`));
-      else resolve(res);
-    });
-  });
-}
-
-function attachDebugger(tabId) {
-  return new Promise((resolve, reject) => {
-    chrome.debugger.attach({ tabId }, "1.3", () => {
+    chrome.scripting.executeScript({ target: { tabId }, func, args, world }, (results) => {
       const e = chrome.runtime.lastError;
       if (e) reject(new Error(e.message));
-      else resolve();
+      else resolve(results?.[0]?.result);
     });
   });
 }
 
-/**
- * Attaches unless already attached. "Already attached" after a service worker
- * restart is usually OUR old session — probe and reuse it; if the tab answers
- * nothing (someone else's debugger), detach and reattach once, then give up.
- */
-async function ensureAttached(tabId) {
-  if (attached.has(tabId)) return;
-  try {
-    await attachDebugger(tabId);
-    attached.add(tabId);
-    await cdp(tabId, "Runtime.enable");
-    await cdp(tabId, "Log.enable");
-    return;
-  } catch (e) {
-    if (!/already attached/i.test(String(e?.message ?? e))) throw e;
-  }
-  try {
-    await cdp(tabId, "Runtime.enable");
-    await cdp(tabId, "Log.enable");
-    attached.add(tabId); // ours after all — reuse
-  } catch {
-    try {
-      await detachDebugger(tabId);
-      await attachDebugger(tabId);
-      attached.add(tabId);
-      await cdp(tabId, "Runtime.enable");
-      await cdp(tabId, "Log.enable");
-    } catch (e2) {
-      throw new Error(
-        `debugger already attached by another client: ${e2?.message ?? e2}`
-      );
-    }
-  }
-}
-
-function detachDebugger(tabId) {
-  return new Promise((resolve) => {
-    chrome.debugger.detach({ tabId }, () => void chrome.runtime.lastError);
-    resolve();
+function tabsGet(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.get(tabId, (tab) => {
+      const e = chrome.runtime.lastError;
+      if (e) reject(new Error(e.message));
+      else resolve(tab);
+    });
   });
 }
 
-chrome.debugger.onDetach.addListener((source) => {
-  if (source?.tabId !== undefined) attached.delete(source.tabId);
-});
-
-// Console + log collection while the debugger is attached.
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  const tabId = source?.tabId;
-  if (tabId === undefined) return;
-  if (method !== "Runtime.consoleAPICalled" && method !== "Log.entryAdded") return;
-  const buf = consoleBuffers.get(tabId) ?? [];
-  if (method === "Runtime.consoleAPICalled") {
-    const text = (params.args || [])
-      .map((a) => (a.value !== undefined ? String(a.value) : a.description ?? a.type))
-      .join(" ");
-    buf.push({ source: "console", type: params.type, text, timestamp: params.timestamp });
-  } else {
-    buf.push({
-      source: "log",
-      level: params.level,
-      text: params.text,
-      url: params.url,
-      timestamp: params.timestamp,
-    });
-  }
-  while (buf.length > CONSOLE_CAP) buf.shift();
-  consoleBuffers.set(tabId, buf);
-});
-
-// Navigation invalidates refs and console context for that tab.
+// Navigation invalidates refs for that tab.
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "loading") {
-    refMaps.delete(tabId);
-    consoleBuffers.delete(tabId);
-  }
+  if (info.status === "loading") refMaps.delete(tabId);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   refMaps.delete(tabId);
-  consoleBuffers.delete(tabId);
-  attached.delete(tabId);
 });
-
-// ---------------------------------------------------------------------------
-// DOM walk → distilled tree for snapshot.js
-// ---------------------------------------------------------------------------
-
-const KEEP_ATTRS = new Set([
-  "role",
-  "aria-label",
-  "name",
-  "id",
-  "placeholder",
-  "href",
-  "type",
-  "value",
-  "tabindex",
-  "title",
-]);
-
-const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "LINK", "META", "HEAD"]);
-
-/** Flattens CDP's [name, value, name, value...] attribute array. */
-function attrsToMap(flat) {
-  const out = {};
-  for (let i = 0; i + 1 < (flat || []).length; i += 2) {
-    const name = flat[i];
-    if (!KEEP_ATTRS.has(name)) continue;
-    out[name === "aria-label" ? "aria-label" : name] = flat[i + 1];
-  }
-  return out;
-}
-
-/**
- * Distills a CDP DOM Node into the simplified shape snapshot.js expects.
- * getAttributes is only called when the node came back without inline
- * attributes (large documents may omit them).
- */
-async function distill(node, tabId, depthGuard = 0) {
-  if (!node || depthGuard > 60) return null;
-  if (node.nodeType === 3) {
-    const text = String(node.nodeValue ?? "").replace(/\s+/g, " ").trim();
-    return text ? { nodeId: node.nodeId, nodeName: "#text", nodeType: 3, attrs: { text }, children: [] } : null;
-  }
-  let flat = node.attributes;
-  if (flat === undefined && node.nodeId) {
-    try {
-      flat = (await cdp(tabId, "DOM.getAttributes", { nodeId: node.nodeId })).attributes;
-    } catch {
-      flat = [];
-    }
-  }
-  const attrs = attrsToMap(flat);
-  if (node.nodeName === "#document") {
-    const title = (node.children || [])
-      .flatMap((c) => c.children || [])
-      .filter((c) => c.nodeName === "TITLE")
-      .map((c) => c.children || [])
-      .flat()
-      .map((t) => t.nodeValue)
-      .join(" ")
-      .trim();
-    if (title) attrs.name = title;
-  }
-  const children = [];
-  for (const child of node.children || []) {
-    if (SKIP_TAGS.has(child.nodeName)) continue;
-    const distilled = await distill(child, tabId, depthGuard + 1);
-    if (distilled) children.push(distilled);
-  }
-  return {
-    nodeId: node.nodeId,
-    nodeName: node.nodeName,
-    nodeType: node.nodeType,
-    attrs,
-    children,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Command handlers
@@ -270,13 +159,11 @@ function tabsQuery(query) {
   });
 }
 
-function resolveRef(tabId, ref) {
-  const map = refMaps.get(tabId);
-  const nodeId = map?.get(ref);
-  if (nodeId === undefined) {
-    throw new Error(`unknown ref ${ref} — take a new snapshot`);
-  }
-  return nodeId;
+/** ref → child-index path from the last snapshot, or a loud error. */
+function resolveRefPath(tabId, ref) {
+  const path = refMaps.get(tabId)?.get(String(ref));
+  if (!path) throw new Error(`unknown ref ${ref} — take a new snapshot`);
+  return path;
 }
 
 async function handleCommand(command, p) {
@@ -330,77 +217,64 @@ async function handleCommand(command, p) {
         });
       });
       refMaps.delete(Number(p.tabId));
-      consoleBuffers.delete(Number(p.tabId));
       return { closed: true };
 
     case "snapshot": {
       const tabId = Number(p.tabId);
-      await ensureAttached(tabId);
-      const { root } = await cdp(tabId, "DOM.getDocument", { depth: -1, pierce: true });
-      const tree = await distill(root, tabId);
+      const { tree, paths } = await execScript(tabId, walkDom);
       if (!tree) throw new Error("could not read DOM for this tab");
       const { yaml, refMap } = buildSnapshot(tree);
-      const map = new Map(Object.entries(refMap).map(([ref, id]) => [ref, id]));
+      const map = new Map();
+      for (const [ref, nodeId] of Object.entries(refMap)) {
+        const path = paths[nodeId];
+        if (path) map.set(ref, path); // interactive elements only
+      }
       refMaps.set(tabId, map);
+      // Console capture hook, installed with the snapshot (MAIN world, best effort).
+      await execScript(tabId, installConsoleHook, [], "MAIN").catch(() => {});
       return { yaml };
     }
 
     case "click": {
       const tabId = Number(p.tabId);
-      const nodeId = resolveRef(tabId, String(p.ref));
-      await ensureAttached(tabId);
-      const { object } = await cdp(tabId, "DOM.resolveNode", { nodeId });
-      await cdp(tabId, "DOM.scrollIntoViewIfNeeded", { nodeId }).catch(() => {});
-      const box = await cdp(tabId, "DOM.getBoxModel", {
-        ...(object?.objectId ? { objectId: object.objectId } : { nodeId }),
-      }).catch(() => cdp(tabId, "DOM.getBoxModel", { nodeId }));
-      const [x1, , x2, , , y2, , y1] = box.model.border;
-      const x = (x1 + x2) / 2;
-      const y = (y1 + y2) / 2;
-      const base = { x, y, button: "left", clickCount: 1 };
-      await cdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", ...base });
-      await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", ...base });
-      return { clicked: true, ref: String(p.ref), x, y };
+      const path = resolveRefPath(tabId, String(p.ref));
+      const r = await execScript(tabId, clickByPath, [path]);
+      if (r?.error) throw new Error(r.error);
+      return { clicked: true, ref: String(p.ref), x: r.x, y: r.y };
     }
 
     case "type": {
       const tabId = Number(p.tabId);
-      const nodeId = resolveRef(tabId, String(p.ref));
-      await ensureAttached(tabId);
-      const { object } = await cdp(tabId, "DOM.resolveNode", { nodeId });
-      if (!object?.objectId) throw new Error("could not resolve element for typing");
-      await cdp(tabId, "Runtime.callFunctionOn", {
-        objectId: object.objectId,
-        functionDeclaration: "function () { this.focus(); }",
-      });
-      await cdp(tabId, "Input.insertText", { text: String(p.text) });
+      const path = resolveRefPath(tabId, String(p.ref));
+      const r = await execScript(tabId, typeByPath, [path, String(p.text)]);
+      if (r?.error) throw new Error(r.error);
       return { typed: true, ref: String(p.ref) };
     }
 
     case "eval": {
       const tabId = Number(p.tabId);
-      await ensureAttached(tabId);
-      const r = await cdp(tabId, "Runtime.evaluate", {
-        expression: String(p.code),
-        returnByValue: true,
-        awaitPromise: true,
-      });
-      if (r.exceptionDetails) {
-        throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-      }
-      return { value: jsonSafe(r.result?.value) };
+      const r = await execScript(tabId, evalInPage, [String(p.code)]);
+      if (!r?.ok) throw new Error(r?.error ?? "eval failed");
+      return { value: jsonSafe(r.value) };
     }
 
     case "screenshot": {
       const tabId = Number(p.tabId);
-      await ensureAttached(tabId);
-      const r = await cdp(tabId, "Page.captureScreenshot", { format: "png" });
-      return { base64: r.data };
+      const tab = await tabsGet(tabId);
+      const dataUrl = await new Promise((resolve, reject) => {
+        chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (url) => {
+          const e = chrome.runtime.lastError;
+          if (e) reject(new Error(e.message));
+          else resolve(url);
+        });
+      });
+      return { base64: String(dataUrl).replace(/^data:image\/\w+;base64,/, "") };
     }
 
     case "console_logs": {
       const tabId = Number(p.tabId);
-      return { entries: consoleBuffers.get(tabId) ?? [] };
+      const r = await execScript(tabId, readConsole, [], "MAIN").catch(() => null);
+      return { entries: r?.entries ?? [] };
     }
 
     default:

@@ -2,16 +2,18 @@
   "manifest_version": 3,
   "name": "PAI Browser Bridge",
   "version": "0.1.0",
-  "description": "Lets PAI drive the real running Chrome: tabs and DOM over native messaging. No remote debugging port, provider independent.",
+  "description": "Lets PAI drive the real running Chrome: tabs and DOM over native messaging. No remote debugging port, no debugger banner, provider independent.",
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "permissions": [
     "tabs",
-    "debugger",
     "scripting",
-    "nativeMessaging",
-    "activeTab"
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ]
 }
