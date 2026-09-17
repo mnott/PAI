@@ -7,18 +7,21 @@
  * src/workers/providers.ts, shared with the `pai worker model` CLI.
  */
 
-import { readWorkersSection } from "../../workers/config.js";
+import { readWorkersSection, type ModelCapability } from "../../workers/config.js";
 import {
   describeModels,
+  modelPrefsText,
   resolveProviderName,
   setProviderModel,
-  type ModelSlot,
 } from "../../workers/providers.js";
 
 export interface WorkerModelArgs {
   action?: "get" | "set";
   provider?: string;
-  slot?: ModelSlot;
+  /** Which model capability to set (default, fast, image, …). */
+  capability?: ModelCapability;
+  /** Deprecated pre-capability spelling of `capability` (default | fast). */
+  slot?: string;
   model?: string;
 }
 
@@ -35,8 +38,8 @@ const error = (e: unknown): WorkerToolResult => ({
 
 /**
  * get: the model ids of one provider (default: the active one), or of every
- * provider when no provider is given. set: write a provider's default or
- * fast model id and report the change.
+ * provider when no provider is given. set: write a provider's model id for a
+ * capability and report the change.
  */
 export function workerModel(args: WorkerModelArgs, configPath?: string): WorkerToolResult {
   try {
@@ -44,14 +47,17 @@ export function workerModel(args: WorkerModelArgs, configPath?: string): WorkerT
     if (action !== "get" && action !== "set") {
       return error(new Error(`unknown action "${String(action)}" (expected: get, set)`));
     }
-    const slot = args.slot ?? "default";
+    if (args.capability !== undefined && args.slot !== undefined && args.capability !== args.slot) {
+      return error(new Error(`capability "${args.capability}" and slot "${args.slot}" disagree — pass one`));
+    }
+    const capability = args.capability ?? (args.slot as ModelCapability | undefined) ?? "default";
     const { workers } = readWorkersSection(configPath);
     if (action === "get") {
       if (args.provider) {
         const name = resolveProviderName(workers, args.provider);
         const p = workers.providers[name];
         return p
-          ? text(`${name}  default ${p.models.default}  fast ${p.models.fast ?? "(none)"}`)
+          ? text(`${name}  ${modelPrefsText(p)}`)
           : error(new Error(`no provider named "${args.provider}"`));
       }
       return text(describeModels(workers).join("\n"));
@@ -60,11 +66,9 @@ export function workerModel(args: WorkerModelArgs, configPath?: string): WorkerT
       return error(new Error("set needs a non-empty model id"));
     }
     const name = resolveProviderName(workers, args.provider);
-    const fresh = setProviderModel(name, slot, args.model, configPath);
+    const fresh = setProviderModel(name, capability, args.model, configPath);
     const p = fresh.providers[name];
-    return text(
-      `${name} ${slot} model: ${slot === "fast" ? (p?.models.fast ?? "?") : (p?.models.default ?? "?")}`
-    );
+    return text(`${name} ${capability} model: ${p?.models[capability] ?? "?"}`);
   } catch (e) {
     return error(e);
   }

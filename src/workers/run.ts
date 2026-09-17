@@ -38,7 +38,10 @@ import {
 import { parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
   assertProviderRunnable,
+  classModelCapability,
+  isModelCapability,
   readWorkersSection,
+  resolveModelCapability,
   type WorkerProvider,
 } from "./config.js";
 import { buildRunEnv } from "./run-env.js";
@@ -263,11 +266,12 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
 
-  const model =
-    opts.modelFlag ??
-    (target.modelAlias === "fast"
-      ? target.provider.models.fast ?? target.provider.models.default
-      : target.provider.models.default);
+  // model from the class target's alias ("glm/fast"), else the capability the
+  // class implies (image class → image model, everything else → default)
+  const alias = target.modelAlias;
+  const capability =
+    alias && isModelCapability(alias) ? alias : classModelCapability(opts.className);
+  const model = opts.modelFlag ?? resolveModelCapability(target.provider, capability);
 
   try {
     if (target.provider.engine === "codex") {

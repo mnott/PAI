@@ -66,7 +66,7 @@ import {
   terminalTabs,
   mcpDevGuide,
 } from "./resources/index.js";
-import { readWorkersSection } from "../workers/config.js";
+import { MODEL_CAPABILITIES, readWorkersSection } from "../workers/config.js";
 import { workersLogDir, ledgerPath } from "../workers/paths.js";
 import { ledgerSummary } from "../workers/ledger.js";
 import {
@@ -1072,12 +1072,19 @@ async function startShim(): Promise<void> {
       "",
       "action=get (default): the model ids of one provider (provider given,",
       "default: the active one) or of every provider when provider is omitted.",
-      "action=set needs model; slot picks default (default) or fast.",
+      "action=set needs model; capability picks which one (default, fast, image).",
     ].join("\n"),
     {
       action: z.enum(["get", "set"]).optional().describe("Default: get."),
       provider: z.string().optional().describe("Provider to read or change (default: the active one)."),
-      slot: z.enum(["default", "fast"]).optional().describe("Which model slot (set). Default: default."),
+      capability: z
+        .enum(MODEL_CAPABILITIES)
+        .optional()
+        .describe("Which model capability to set (default, fast, image). Default: default."),
+      slot: z
+        .enum(["default", "fast"])
+        .optional()
+        .describe("Deprecated pre-capability alias of `capability`."),
       model: z.string().optional().describe("The new model id (required for set)."),
     },
     async (args) => workerModel(args)

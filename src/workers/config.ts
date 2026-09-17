@@ -42,11 +42,8 @@ export interface WorkerProvider {
   baseUrl: string;
   /** 0600 file holding the auth token; null for local servers ("local"). */
   keyFile: string | null;
-  models: {
-    default: string;
-    /** Alias used for cheap/fast work (spotcheck, research). */
-    fast?: string;
-  };
+  /** Model id per capability; see MODEL_CAPABILITIES. Only default is required. */
+  models: { default: string } & Partial<Record<ModelCapability, string>>;
   /**
    * Model id → tier alias, overriding the built-in mapping (models.fast →
    * haiku tier, models.default → sonnet tier). Lets a provider pin an extra
@@ -141,6 +138,43 @@ export const WORKER_CLASSES = [
 ] as const;
 
 export type WorkerClassName = (typeof WORKER_CLASSES)[number];
+
+/**
+ * The named model capabilities a provider may carry a preference for, set
+ * per provider under `workers.providers.<name>.models`. "default" is the
+ * required catch-all; the others name what a model is *for* — "fast" the
+ * cheap tier (spotcheck, haiku-tier spawns), "image" the image class.
+ * Everything resolves through resolveModelCapability, falling back to default.
+ */
+export const MODEL_CAPABILITIES = ["default", "fast", "image"] as const;
+
+export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+
+/** Is this string the name of a known model capability? */
+export function isModelCapability(v: string): v is ModelCapability {
+  return (MODEL_CAPABILITIES as readonly string[]).includes(v);
+}
+
+/**
+ * Which model capability a class runs on when its target names no alias: the
+ * image class uses the image model; every other class the provider default.
+ */
+const CLASS_MODEL_CAPABILITY: Record<WorkerClassName, ModelCapability> = {
+  draft: "default",
+  plan: "default",
+  implement: "default",
+  review: "default",
+  research: "default",
+  spotcheck: "default",
+  simple: "default",
+  complex: "default",
+  image: "image",
+};
+
+/** Capability for a run's class (default when unset or not a standard class). */
+export function classModelCapability(className?: string): ModelCapability {
+  return (className && CLASS_MODEL_CAPABILITY[className as WorkerClassName]) || "default";
+}
 
 /**
  * A class target: "<provider>", "<provider>/<modelAlias>", or an object. The
@@ -295,7 +329,19 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
   const m = modelsRaw as Record<string, unknown>;
   const defaultModel = str(m.default);
   if (!defaultModel) bad(`.providers.${name}.models.default`, "is required");
-  const fast = m.fast === undefined ? undefined : str(m.fast);
+  const models: WorkerProvider["models"] = { default: defaultModel };
+  for (const key of Object.keys(m)) {
+    if (key === "default") continue;
+    if (!isModelCapability(key)) {
+      bad(
+        `.providers.${name}.models.${key}`,
+        `"${key}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`
+      );
+    }
+    const id = str(m[key]);
+    if (!id) bad(`.providers.${name}.models.${key}`, "must be a non-empty model id");
+    models[key] = id;
+  }
 
   let modelTiers: Record<string, ModelTier> | undefined;
   if (p.modelTiers !== undefined) {
@@ -369,7 +415,7 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     protocol,
     baseUrl,
     keyFile,
-    models: fast ? { default: defaultModel, fast } : { default: defaultModel },
+    models,
     ...(modelTiers ? { modelTiers } : {}),
     env,
     ...(str(p.note) ? { note: str(p.note) } : {}),
@@ -667,6 +713,15 @@ export { DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 /** Cost tier of a provider for class filtering (unset = 3, the middle). */
 export function providerCostTier(p: WorkerProvider): number {
   return p.costTier ?? DEFAULT_COST_TIER;
+}
+
+/**
+ * The model id for a capability: the provider's preference for it, else its
+ * default model — the one resolution rule every consumer (image class, fast
+ * tier spawns, env pins) goes through.
+ */
+export function resolveModelCapability(p: WorkerProvider, capability: ModelCapability): string {
+  return p.models[capability] ?? p.models.default;
 }
 
 /**

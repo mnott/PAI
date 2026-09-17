@@ -1,18 +1,23 @@
 /**
- * `pai worker model` — the model ids a provider runs on.
+ * `pai worker model` — the model ids a provider runs on, per capability.
  *
- * Reads and writes workers.providers.<name>.models.{default,fast} through the
- * same functions the MCP worker_model tool uses, so CLI and chat agree on
- * what a set means.
+ * Reads and writes workers.providers.<name>.models.<capability> (default,
+ * fast, image, …) through the same functions the MCP worker_model tool uses,
+ * so CLI and chat agree on what a set means.
  */
 
 import type { Command } from "commander";
-import { WorkersConfigError, readWorkersSection } from "../../../workers/config.js";
+import {
+  WorkersConfigError,
+  isModelCapability,
+  readWorkersSection,
+  type ModelCapability,
+} from "../../../workers/config.js";
 import {
   describeModels,
+  modelPrefsText,
   resolveProviderName,
   setProviderModel,
-  type ModelSlot,
 } from "../../../workers/providers.js";
 import { ok, err, dim } from "../../utils.js";
 
@@ -27,8 +32,9 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
     .command("model [what] [model]")
     .description(
       "Model ids per provider: no args lists them,\n" +
-        "`model <model-id>` sets the active provider's default model,\n" +
-        "`model fast <model-id>` its fast model. --provider targets another provider."
+        "`model <model-id>` sets the active provider's default model (back-compat),\n" +
+        "`model <capability>` shows one capability, `model <capability> <model-id>` sets it.\n" +
+        `Capabilities: default, fast, image. --provider targets another provider.`
     )
     .option("--provider <name>", "Provider to read or change (default: the active one)")
     .action((what: string | undefined, model: string | undefined, opts: { provider?: string }) => {
@@ -38,28 +44,28 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
           for (const line of describeModels(workers)) console.log(`  ${line}`);
           return;
         }
-        let slot: ModelSlot = "default";
+        let capability: ModelCapability = "default";
         let id = what;
-        if (what === "fast") {
-          slot = "fast";
-          const name = resolveProviderName(workers, opts.provider);
+        if (isModelCapability(what)) {
+          capability = what;
           if (model === undefined) {
+            const name = resolveProviderName(workers, opts.provider);
             const p = workers.providers[name];
-            if (p) console.log(`  ${name} fast ${p.models.fast ?? "(none)"}`);
+            if (p) console.log(`  ${name} ${capability} ${p.models[capability] ?? "(none)"}`);
             return;
           }
           id = model;
         } else if (model !== undefined) {
           throw new WorkersConfigError(
-            `unexpected second argument "${model}" — usage: model [fast] <model-id>`
+            `unexpected second argument "${model}" — usage: model [<capability>] <model-id>`
           );
         }
         const name = resolveProviderName(workers, opts.provider);
-        const fresh = setProviderModel(name, slot, id);
+        const fresh = setProviderModel(name, capability, id);
         const p = fresh.providers[name];
         if (p) {
-          console.log(ok(`${name} ${slot} model: ${slot === "fast" ? p.models.fast : p.models.default}`));
-          console.log(dim(`  default ${p.models.default}  fast ${p.models.fast ?? "(none)"}`));
+          console.log(ok(`${name} ${capability} model: ${p.models[capability]}`));
+          console.log(dim(`  ${modelPrefsText(p)}`));
         }
       } catch (e) {
         fail(e);

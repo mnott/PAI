@@ -42,7 +42,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function models(): { default: string; fast?: string } {
+function models(): { default: string; fast?: string; image?: string } {
   return parseWorkersConfig(
     JSON.parse(readFileSync(configPath, "utf8")).workers
   ).providers.glm!.models;
@@ -60,7 +60,9 @@ describe("worker_model get", () => {
 
   it("narrows to one provider when given", () => {
     const r = workerModel({ provider: "glm" }, configPath);
-    expect(r.content[0]!.text).toBe("glm  default example-5.3  fast example-5.3-flash");
+    expect(r.content[0]!.text).toBe(
+      "glm  default example-5.3  fast example-5.3-flash  image (none)"
+    );
   });
 
   it("fails on an unknown provider", () => {
@@ -86,6 +88,33 @@ describe("worker_model set", () => {
     expect(r.isError).toBeUndefined();
     expect(r.content[0]!.text).toBe("glm fast model: example-6-flash");
     expect(models().fast).toBe("example-6-flash");
+  });
+
+  it("sets the image capability and reports it", () => {
+    const r = workerModel(
+      { action: "set", provider: "glm", capability: "image", model: "example-paint" },
+      configPath
+    );
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0]!.text).toBe("glm image model: example-paint");
+    expect(models().image).toBe("example-paint");
+    expect(models().default).toBe("example-5.3"); // untouched
+  });
+
+  it("still honours slot as the pre-capability spelling", () => {
+    const r = workerModel({ action: "set", slot: "fast", model: "example-6-flash" }, configPath);
+    expect(r.isError).toBeUndefined();
+    expect(models().fast).toBe("example-6-flash");
+  });
+
+  it("rejects a slot and capability that disagree", () => {
+    const r = workerModel(
+      { action: "set", slot: "fast", capability: "image", model: "example-paint" },
+      configPath
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toMatch(/disagree/);
+    expect(models().image).toBeUndefined(); // nothing written
   });
 
   it("fails without a model id", () => {
