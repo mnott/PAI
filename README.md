@@ -84,11 +84,40 @@ Browse the same pages on GitHub under [`docs/commands/`](docs/commands/README.md
 
 ## Worker Providers — Run the Fleet Anywhere
 
-**Parallel workers are a commodity: route them anywhere.** Every subagent PAI spawns — research, drafting, implementation, review — can run on any provider that speaks the Anthropic Messages protocol. Providers are registry entries with their own models, keys and price tiers, so there is no vendor lock-in, parallel work runs at commodity pricing instead of on one premium seat, and `pai worker providers use <name>` swaps the whole fleet in one command.
+Only the outer orchestrator session runs on Anthropic. Every worker PAI spawns — research, drafting, implementation, review, spotchecks — runs on a managed provider you choose (default: `glm`). The same provider layer carries the daemon's background calls and the session picker, so the whole stack moves together.
+
+### Why
+
+- **Vendor independence.** Any provider that speaks the Anthropic Messages protocol is a registry entry: models, key file, price tier. OpenAI-protocol providers work through a built-in translating proxy. Switching is configuration, not surgery.
+- **Cost control.** Parallel work is a commodity; it should not burn your premium seat. Workers bill against their own provider, and cheap classes resolve to the provider's fast model automatically.
+- **No lock-in to one orchestrator vendor.** Sessions run on the active provider too — the picker launches through it, and `pai worker fallback` extends that machine-wide.
+- **Survives orchestrator outages.** Workers carry their own provider credentials, so a quota freeze or outage on the vendor seat does not stop delegated work.
+
+### How
+
+- **Managed providers.** `pai worker providers add` registers one, `pai worker providers use <name>` switches the fleet, `pai worker off` disables routing entirely (the Agent tool runs on Anthropic again), `pai worker on` re-enables it.
+- **Classes route work to the right model.** `--class` picks the provider and model for the job: `draft`, `plan`, `implement`, `review`, `research`, `spotcheck`, `simple`, `complex`, `image`. `pai worker classes` shows and edits the mapping; `--provider` / `--model` override for a single run.
+- **Every worker spawn stands alone.** The orchestrator's API key is stripped and the spawn gets the provider's base URL, token and model ids instead — proven live: a worker answers with the parent's credentials gone. No inherited billing, no fallback to the vendor login.
+
+### What
+
+```bash
+pai worker run -p '<task>' --class implement   # one worker on a provider
+pai worker ps                                  # this session's workers (--all: every one)
+pai worker follow <id>                         # live transcript of one worker
+pai worker pane                                # shared follow pane for the session
+pai worker replay <id>                         # transcript of a finished or running worker
+pai worker say <id> <text>                     # message a running worker mid-run
+pai worker handoff '<json>'                    # from inside a worker: report to the parent
+pai worker merge <id>                          # merge the worker's branch back, drop the worktree
+pai worker watch                               # ps refreshed every 2 seconds
+```
+
+The rest of the surface — `discard`, `resume`, `controls`, `proxy`, `mcp`, `model`, `providers`, `classes` — is in `pai help worker` and [docs/commands/worker.md](docs/commands/worker.md).
 
 ![Workers in the statusline](docs/images/workers.png)
 
-Activate, configure and use in three copy-paste steps: **[docs/provider-independence.md](docs/provider-independence.md)**.
+Get started in three copy-paste steps: **[docs/provider-independence.md](docs/provider-independence.md)**. For the depth — provider registry, statusline instrumentation, seam patches, current limits — see **[docs/provider-abstraction.md](docs/provider-abstraction.md)**.
 
 ---
 
