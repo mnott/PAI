@@ -19,7 +19,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeResume } from "./launch.js";
+import { probeResume, resolveLaunchRoute, workerRunArgv } from "./launch.js";
+import type { WorkerProvider } from "../../workers/config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The whole source tree — the duplicates that were missed lived outside cli/lib. */
@@ -186,5 +187,82 @@ describe("the probe has exactly one implementation", () => {
       /\bfunction\s+probeResume\b/.test(readFileSync(f, "utf8"))
     );
     expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli/lib/launch.ts"]);
+  });
+});
+
+describe("launch route - which engine a picker launch runs on", () => {
+  // One real provider entry; the route only asks whether any exist.
+  const provider: WorkerProvider = {
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: "https://provider.example/api",
+    keyFile: "~/.config/pai/keys/example",
+    models: { default: "model-default" },
+    env: {},
+  };
+  const routingOn = { enabled: true, active: "example", providers: { example: provider } };
+  const routingOff = { enabled: false, active: "example", providers: { example: provider } };
+
+  it("routes a fresh launch to the worker provider when routing is on", () => {
+    expect(resolveLaunchRoute(routingOn, {})).toEqual({ engine: "worker", resume: false });
+  });
+
+  it("routing off is exactly today: claude", () => {
+    expect(resolveLaunchRoute(routingOff, {})).toEqual({ engine: "claude", resume: false });
+  });
+
+  it("no active provider means claude", () => {
+    expect(resolveLaunchRoute({ ...routingOn, active: null }, {})).toEqual({
+      engine: "claude",
+      resume: false,
+    });
+  });
+
+  it("an empty providers map means claude - mirrors the hook gate", () => {
+    expect(resolveLaunchRoute({ enabled: true, active: "example", providers: {} }, {})).toEqual({
+      engine: "claude",
+      resume: false,
+    });
+  });
+
+  it("engine override wins over routing off", () => {
+    expect(resolveLaunchRoute(routingOff, { engine: "worker" })).toEqual({
+      engine: "worker",
+      resume: false,
+    });
+  });
+
+  it("engine override wins over routing on", () => {
+    expect(resolveLaunchRoute(routingOn, { engine: "claude" })).toEqual({
+      engine: "claude",
+      resume: false,
+    });
+  });
+
+  it("resume stays claude even when a provider is active", () => {
+    expect(resolveLaunchRoute(routingOn, { resumableUuid: LIVE })).toEqual({
+      engine: "claude",
+      resume: true,
+    });
+  });
+
+  it("forceFresh drops the resume, so the fresh default applies: worker", () => {
+    expect(resolveLaunchRoute(routingOn, { resumableUuid: LIVE, forceFresh: true })).toEqual({
+      engine: "worker",
+      resume: false,
+    });
+  });
+});
+
+describe("worker launch argv", () => {
+  it("is an interactive run: label, cwd, no prompt", () => {
+    expect(workerRunArgv("fix login timeout", "/Users/someone/dev/A Project")).toEqual([
+      "worker",
+      "run",
+      "--label",
+      "fix login timeout",
+      "--cwd",
+      "/Users/someone/dev/A Project",
+    ]);
   });
 });
