@@ -40,6 +40,12 @@ export interface WorkerStatus {
   session?: WorkerSessionRef | null;
   /** Claude Code session id (system/init) — what `resume` continues. */
   claudeSession?: string | null;
+  /**
+   * Claude Code session id of the orchestrator whose Bash launched this run,
+   * when the status line's session map knew it (see scope.ts). Distinct from
+   * claudeSession, which is the run's own session.
+   */
+  spawnerSession?: string | null;
   /** Context meter: tokens of the last assistant turn (input+cache+output). */
   contextTokens?: number | null;
   /** Context meter: window size (init model info or provider default). */

@@ -20,7 +20,11 @@ import {
   tickerTool,
 } from "./render.js";
 import { agentLabel } from "./agents.js";
-import type { WorkerStatus } from "./status.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
+import { statusLineOutput } from "./viewer.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const plain = makeColor(false);
 const color = makeColor(true);
@@ -275,6 +279,49 @@ describe("renderEvent", () => {
 
   it("unstamped events render exactly as before (no gutter arg)", () => {
     expect(renderEvent(plain, "  ", { type: "operator", text: "hi" }, "", tools)).toEqual(["  » hi"]);
+  });
+});
+
+describe("statusLineOutput scope", () => {
+  const logDir = mkdtempSync(join(tmpdir(), "pai-statusline-"));
+  const base = {
+    pid: process.pid, // alive, so the row actually renders
+    label: "fix black buttons",
+    cwd: "/repo",
+    term: "", // spawned from a Claude Code Bash: no terminal identity
+    provider: "prov",
+    model: "m",
+    state: "running",
+    started: "2026-09-17 10:00:00",
+    updated: "2026-09-17 10:00:30",
+    turns: 1,
+    tools: 1,
+    last: "Bash: npm test",
+    rc: null,
+    secs: null,
+    origin: "spawn",
+    spawnerSession: "claude-sess-1",
+  } as WorkerStatus;
+  const now = new Date("2026-09-17T10:00:45");
+
+  it("claims an orchestrator-spawned worker via the claude session id", () => {
+    saveStatus(logDir, { ...base, id: "20260917-100000-1" });
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now)).toMatch(
+      /fix black buttons/
+    );
+  });
+  it("hides it from another session's tab and from plain terminal scope", () => {
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now)).toBe("");
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toBe("");
+  });
+  it("terminal scope still wins for workers that have a terminal", () => {
+    saveStatus(logDir, {
+      ...base,
+      id: "20260917-100001-2",
+      term: "w11t0p0:AAAA-BBBB",
+      spawnerSession: null,
+    });
+    expect(statusLineOutput(logDir, "w11t0p0:ZZZZ-YYYY", "/nowhere", "", now)).toMatch(/fix black buttons/);
   });
 });
 

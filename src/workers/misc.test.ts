@@ -8,12 +8,12 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tabKey, itermUuid, workerInScope } from "./scope.js";
+import { tabKey, itermUuid, workerInScope, recordSessionMapEntry, resolveSpawnerSession, sessionMapPath } from "./scope.js";
 import { relPath, unifiedDiffLines, makeColor } from "./render.js";
 import { appendLedger, parseLedgerLine, ledgerSummary } from "./ledger.js";
 import { resultFromOutput } from "./run.js";
 import { statusPath, eventsPath, ledgerPath } from "./paths.js";
-import type { WorkerStatus } from "./status.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 
 describe("tabKey", () => {
   it("extracts w<n>t<n> and ignores pane suffixes", () => {
@@ -45,6 +45,43 @@ describe("workerInScope", () => {
     const withSession = { ...base, session: { id: "S-1", name: "pai" } };
     expect(workerInScope(withSession, "w9t9p0:S-1")).toBe(true);
     expect(workerInScope(withSession, "w0t3p2:U2")).toBe(false);
+  });
+});
+
+describe("spawner session map", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pai-session-map-"));
+  const cwd = "/proj/pai";
+  const t0 = 1_700_000_000_000;
+
+  it("resolves the session a fresh entry records, per cwd", () => {
+    recordSessionMapEntry(dir, cwd, "sess-1", t0);
+    expect(resolveSpawnerSession(dir, cwd, {}, t0 + 1000)).toBe("sess-1");
+    expect(resolveSpawnerSession(dir, "/other", {}, t0 + 1000)).toBeNull();
+  });
+  it("ignores entries past the TTL", () => {
+    recordSessionMapEntry(dir, cwd, "sess-2", t0);
+    expect(resolveSpawnerSession(dir, cwd, {}, t0 + 60 * 60_000)).toBeNull();
+  });
+  it("overwrites the previous session and prunes stale cwds", () => {
+    recordSessionMapEntry(dir, cwd, "sess-2", t0);
+    recordSessionMapEntry(dir, "/gone", "sess-3", t0);
+    recordSessionMapEntry(dir, cwd, "sess-4", t0 + 2 * 60 * 60_000);
+    const map = JSON.parse(readFileSync(sessionMapPath(dir), "utf8")) as Record<string, { session: string }>;
+    expect(map[cwd].session).toBe("sess-4");
+    expect(map["/gone"]).toBeUndefined();
+  });
+  it("inherits the spawner of the worker this runs inside", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-spawner-"));
+    saveStatus(logDir, {
+      ...({ id: "parent-1", label: "", cwd: "", term: "", pid: 1, provider: "p", model: "m",
+        state: "running", started: "2026-09-17 10:00:00", updated: "2026-09-17 10:00:00",
+        turns: 0, tools: 0, last: "", rc: null, secs: null } as WorkerStatus),
+      spawnerSession: "sess-9",
+    });
+    expect(resolveSpawnerSession(logDir, "/anywhere", { PAI_WORKER_ID: "parent-1" })).toBe("sess-9");
+  });
+  it("returns null without a map", () => {
+    expect(resolveSpawnerSession(join(dir, "missing"), cwd, {}, t0)).toBeNull();
   });
 });
 

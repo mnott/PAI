@@ -917,13 +917,17 @@ export function statusLineOutput(
   logDir: string,
   term: string,
   cwd: string,
+  claudeSession: string = "",
   now: Date = new Date()
 ): string {
   const statuses = loadStatuses(logDir);
   const mine = statuses.filter((s) => {
     const sameScope = term && workerInScope(s, term);
+    // orchestrator Bash spawns have no terminal identity; their spawner
+    // session (the claude session rendering this bar) claims them instead
+    const spawnedHere = claudeSession && s.spawnerSession === claudeSession;
     const sameDir = cwd && s.cwd.startsWith(cwd);
-    return sameScope || (!term && sameDir);
+    return sameScope || spawnedHere || (!term && sameDir);
   });
   return renderStatusLine(mine, now);
 }

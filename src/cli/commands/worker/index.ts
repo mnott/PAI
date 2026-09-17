@@ -297,7 +297,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   workerCmd
     .command("merge <id>")
-    .description("Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree")
+    .description("Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch")
     .action((id: string) => {
       try {
         console.log(mergeWorker(currentLogDir(), id));
@@ -429,17 +429,19 @@ export function registerWorkerCommands(workerCmd: Command): void {
     });
 
   workerCmd
-    .command("status-line [term] [cwd]")
+    .command("status-line [term] [cwd] [session]")
     .description(
       "One-line worker summary for a status bar (empty when none in scope).\n" +
-        "Called by statusline-command.sh with ITERM_SESSION_ID and the pane cwd."
+        "Called by statusline-command.sh with ITERM_SESSION_ID, the pane cwd and\n" +
+        "the claude session id (claims workers spawned by that session's Bash)."
     )
-    .action((term: string | undefined, cwd: string | undefined) => {
+    .action((term: string | undefined, cwd: string | undefined, session: string | undefined) => {
       try {
         const out = statusLineOutput(
           currentLogDir(),
           term ?? process.env.ITERM_SESSION_ID ?? "",
-          cwd ?? process.cwd()
+          cwd ?? process.cwd(),
+          session ?? ""
         );
         if (out) console.log(out);
       } catch (e) {
