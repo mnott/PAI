@@ -35,7 +35,16 @@
  * Used by: pai sessions, pai resume
  */
 
-import { readdirSync, statSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import {
+  readdirSync,
+  statSync,
+  readFileSync,
+  existsSync,
+  realpathSync,
+  mkdirSync,
+  writeFileSync,
+  renameSync,
+} from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import type { Database } from "better-sqlite3";
@@ -181,6 +190,85 @@ function buildRegistryRootPathMap(db: Database): Map<string, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Parse cache
+// ---------------------------------------------------------------------------
+
+/**
+ * Parsing every jsonl under ~/.claude/projects is the scan's whole cost:
+ * thousands of files and multiple gigabytes on a long-lived machine, re-read
+ * on every `pai` listing just to render twenty rows (measured 2026-09-18:
+ * 10.8s of a 13.4s `pai project list`). A parse result is a pure function of
+ * the file's bytes, and (path, mtime, size) is enough to know the bytes have
+ * not changed since the last parse — the same freshness check make and rsync
+ * use. So parse results are cached on disk and only changed files re-read.
+ */
+const SCAN_CACHE_FILE = join(homedir(), ".config", "pai", "session-scan-cache.json");
+
+interface ScanCacheFile {
+  v: 1;
+  top: Record<string, { m: number; s: number; info: TopLevelInfo }>;
+  tr: Record<string, { m: number; s: number; info: TranscriptInfo }>;
+}
+
+let scanCache: ScanCacheFile | null = null;
+let scanCacheDirty = false;
+/**
+ * Paths parsed this run. scanSessions walks every file, so a flush after it
+ * may prune entries it did not touch — deleted sessions stop accumulating.
+ */
+const touchedTop = new Set<string>();
+const touchedTr = new Set<string>();
+
+function loadScanCache(): ScanCacheFile {
+  if (scanCache) return scanCache;
+  try {
+    const raw = JSON.parse(readFileSync(SCAN_CACHE_FILE, "utf8")) as ScanCacheFile;
+    if (raw && raw.v === 1 && typeof raw.top === "object" && typeof raw.tr === "object") {
+      scanCache = raw;
+      return scanCache;
+    }
+  } catch {
+    // Missing, unreadable or corrupt — start over. The cache is an
+    // optimization; its absence costs one full parse, never correctness.
+  }
+  scanCache = { v: 1, top: {}, tr: {} };
+  return scanCache;
+}
+
+/**
+ * Persist the parse cache, atomically (tmp + rename) so a concurrent `pai`
+ * never reads a half-written file.
+ *
+ * `prune` drops entries for files not touched this run. Only scanSessions
+ * may prune, because only it walks every file — the UUID-prefix fallback
+ * parses a handful of paths and must not flatten the cache.
+ */
+function flushScanCache(prune: boolean): void {
+  if (!scanCache || !scanCacheDirty) return;
+  try {
+    const out: ScanCacheFile = prune
+      ? {
+          v: 1,
+          top: Object.fromEntries(
+            Object.entries(scanCache.top).filter(([p]) => touchedTop.has(p))
+          ),
+          tr: Object.fromEntries(
+            Object.entries(scanCache.tr).filter(([p]) => touchedTr.has(p))
+          ),
+        }
+      : scanCache;
+    mkdirSync(join(homedir(), ".config", "pai"), { recursive: true });
+    const tmp = SCAN_CACHE_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(out));
+    renameSync(tmp, SCAN_CACHE_FILE);
+  } catch {
+    // Unwritable cache location — next run parses cold, which is exactly
+    // what the no-cache behaviour was.
+  }
+  scanCacheDirty = false;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level jsonl parser
 // ---------------------------------------------------------------------------
 
@@ -191,13 +279,30 @@ interface TopLevelInfo {
 }
 
 function parseTopLevel(filePath: string): TopLevelInfo {
-  let systemLines = 0;
-  let size = 0;
-  let mtime = 0;
+  let st: { size: number; mtimeMs: number };
   try {
-    const st = statSync(filePath);
-    size = st.size;
-    mtime = st.mtimeMs;
+    st = statSync(filePath);
+  } catch {
+    return { systemLines: 0, size: 0, mtime: 0 };
+  }
+  const hit = loadScanCache().top[filePath];
+  if (hit && hit.m === st.mtimeMs && hit.s === st.size) {
+    touchedTop.add(filePath);
+    return hit.info;
+  }
+  const info = parseTopLevelFile(filePath, st);
+  loadScanCache().top[filePath] = { m: st.mtimeMs, s: st.size, info };
+  touchedTop.add(filePath);
+  scanCacheDirty = true;
+  return info;
+}
+
+function parseTopLevelFile(
+  filePath: string,
+  st: { size: number; mtimeMs: number }
+): TopLevelInfo {
+  let systemLines = 0;
+  try {
     const content = readFileSync(filePath, "utf8");
     for (const line of content.split("\n")) {
       const t = line.trim();
@@ -207,9 +312,9 @@ function parseTopLevel(filePath: string): TopLevelInfo {
       }
     }
   } catch {
-    /* ignore */
+    /* unreadable — size and mtime are still reported, as before */
   }
-  return { systemLines, size, mtime };
+  return { systemLines, size: st.size, mtime: st.mtimeMs };
 }
 
 // ---------------------------------------------------------------------------
@@ -225,17 +330,30 @@ interface TranscriptInfo {
 }
 
 function parseTranscript(filePath: string): TranscriptInfo {
+  let mtime = 0;
+  try {
+    const st = statSync(filePath);
+    mtime = st.mtimeMs;
+    const hit = loadScanCache().tr[filePath];
+    if (hit && hit.m === st.mtimeMs && hit.s === st.size) {
+      touchedTr.add(filePath);
+      return hit.info;
+    }
+    const info = parseTranscriptFile(filePath, st.mtimeMs);
+    loadScanCache().tr[filePath] = { m: st.mtimeMs, s: st.size, info };
+    touchedTr.add(filePath);
+    scanCacheDirty = true;
+    return info;
+  } catch {
+    return { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime: 0 };
+  }
+}
+
+function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
   let userLines = 0;
   let lastUserPrompt = "";
   let msgCount = 0;
   let aiTitle: string | undefined;
-  let mtime = 0;
-
-  try {
-    mtime = statSync(filePath).mtimeMs;
-  } catch {
-    return { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime: 0 };
-  }
 
   let content: string;
   try {
@@ -683,6 +801,8 @@ export function scanSessions(
   }
 
   results.sort((a, b) => b.mtime - a.mtime);
+  // This walk covered every file, so this is the one flush allowed to prune.
+  flushScanCache(true);
   return results.slice(0, limit);
 }
 
