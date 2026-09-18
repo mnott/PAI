@@ -69,6 +69,28 @@ export function readJsonStrict(path: string, label = path): Record<string, unkno
 }
 
 /**
+ * Leaf values that mean "type word", not data.
+ *
+ * A config whose top-level keys map to bare type words is a serialized schema,
+ * not a configuration — the exact shape found over the live config on
+ * 2026-09-18 (399 bytes: `socketPath: string`, `indexIntervalSecs: int`, …).
+ * No real config carries three of these at its top level; a dump carries
+ * nothing else.
+ */
+const SCHEMA_TYPE_WORDS = new Set([
+  "string", "int", "integer", "number", "bool", "boolean",
+  "float", "double", "object", "array", "any", "unknown",
+]);
+
+function schemaDumpHits(data: Record<string, unknown>): number {
+  let hits = 0;
+  for (const v of Object.values(data)) {
+    if (typeof v === "string" && SCHEMA_TYPE_WORDS.has(v.trim())) hits += 1;
+  }
+  return hits;
+}
+
+/**
  * Write JSON without risking the existing file.
  *
  * Keeps a `.bak-pai` copy of the previous contents, then writes to a temp file
@@ -82,6 +104,14 @@ export function writeJsonAtomic(
   opts: { backup?: boolean; label?: string } = {}
 ): void {
   const { backup = true, label = path } = opts;
+  if (schemaDumpHits(data) >= 3) {
+    throw new Error(
+      `${label}: refusing to write — the object looks like a type schema, not values ` +
+        `(several top-level keys map to bare type words). That is the corruption ` +
+        `signature of 2026-09-18: the caller serialized the schema instead of the ` +
+        `config. Nothing was written.`
+    );
+  }
   const serialized = JSON.stringify(data, null, 2) + "\n";
 
   const dir = dirname(path);

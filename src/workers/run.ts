@@ -51,7 +51,13 @@ import { buildRunEnv } from "./run-env.js";
 
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
-import { eventsPath, ledgerPath, noMcpConfigPath, workersLogDir } from "./paths.js";
+import {
+  ensureNoMcpConfig,
+  eventsPath,
+  ledgerPath,
+  noMcpConfigPath,
+  workersLogDir,
+} from "./paths.js";
 import {
   type WorkerStatus,
   newWorkerId,
@@ -118,14 +124,7 @@ export interface RunOptions {
 }
 
 /** The strict empty MCP config for headless workers, written on demand. */
-export function ensureNoMcpConfig(logDir: string): string {
-  const path = noMcpConfigPath(logDir);
-  if (!existsSync(path)) {
-    mkdirSync(logDir, { recursive: true });
-    writeFileSync(path, '{ "mcpServers": {} }\n', "utf8");
-  }
-  return path;
-}
+export { ensureNoMcpConfig } from "./paths.js";
 
 /** A stream-json user message for the child's stdin. */
 export function stdinUserMessage(text: string): string {

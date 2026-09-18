@@ -6,12 +6,23 @@
  * disposable and configurable: `workers.logDir`, default ~/.claude/logs/workers.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expandHome, type WorkersConfig } from "./config.js";
 
 /** Absolute logDir for the given config. */
 export function workersLogDir(config: WorkersConfig): string {
   return expandHome(config.logDir);
+}
+
+/** The strict empty MCP config for headless runs, written on demand. */
+export function ensureNoMcpConfig(logDir: string): string {
+  const path = noMcpConfigPath(logDir);
+  if (!existsSync(path)) {
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(path, '{ "mcpServers": {} }\n', "utf8");
+  }
+  return path;
 }
 
 export function statusPath(logDir: string, id: string): string {

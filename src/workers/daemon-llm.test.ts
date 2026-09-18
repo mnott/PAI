@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planLlmSpawn, LLM_TIMEOUT_MS } from "./daemon-llm.js";
@@ -24,8 +24,24 @@ const PROVIDER = {
   env: {},
 };
 
-function writeConfig(workers: unknown): void {
-  writeFileSync(configPath, JSON.stringify({ workers }, null, 2) + "\n", "utf8");
+function writeConfig(workers: Record<string, unknown>): void {
+  // logDir pinned into the tmp dir so the containment config never lands in
+  // the real worker log tree from a test
+  writeFileSync(
+    configPath,
+    JSON.stringify({ workers: { logDir: join(dir, "logs"), ...workers } }, null, 2) + "\n",
+    "utf8"
+  );
+}
+
+/** The containment slice of a plan's args: strict empty MCP + empty tool grant. */
+function containmentOf(args: string[]): { mcpConfig: string; allowedTools: string } {
+  const mcp = args.indexOf("--mcp-config");
+  const tools = args.indexOf("--allowedTools");
+  return {
+    mcpConfig: mcp === -1 ? "" : args[mcp + 1],
+    allowedTools: tools === -1 ? "<absent>" : args[tools + 1],
+  };
 }
 
 beforeEach(() => {
@@ -54,7 +70,12 @@ describe("planLlmSpawn — provider configured", () => {
     expect(plan.provider).toBe("glm");
     // the configured default model, not the tier alias
     expect(plan.model).toBe("example-5.3");
-    expect(plan.args).toEqual(["--model", "example-5.3", "-p", "--no-session-persistence"]);
+    expect(plan.args).toEqual([
+      "--model", "example-5.3",
+      "--strict-mcp-config", "--mcp-config", join(dir, "logs", "no-mcp.json"),
+      "--allowedTools", "",
+      "-p", "--no-session-persistence",
+    ]);
     // the provider env the worker runner would set
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.example.com/api/anthropic");
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("test-token");
@@ -82,7 +103,11 @@ describe("planLlmSpawn — no provider configured", () => {
     const plan = await planLlmSpawn("sonnet", join(dir, "missing.json"));
     expect(plan.provider).toBeNull();
     expect(plan.model).toBe("sonnet");
-    expect(plan.args).toEqual(["--model", "sonnet", "-p", "--no-session-persistence"]);
+    const { mcpConfig, allowedTools } = containmentOf(plan.args);
+    // containment survives the fallback: no tools, no MCP servers, ever
+    expect(plan.args).toContain("--strict-mcp-config");
+    expect(mcpConfig.endsWith("no-mcp.json")).toBe(true);
+    expect(allowedTools).toBe("");
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(plan.env.PATH).toBe(process.env.PATH);
     expect(plan.timeoutMs).toBe(LLM_TIMEOUT_MS.sonnet);
@@ -104,5 +129,48 @@ describe("planLlmSpawn — broken provider", () => {
       providers: { glm: { ...PROVIDER, keyFile: join(dir, "no-such-key") } },
     });
     await expect(planLlmSpawn("sonnet", configPath)).rejects.toThrow(/key file/);
+  });
+});
+
+describe("planLlmSpawn — containment (the 2026-09-18 config-corruption fix)", () => {
+  it("grants no tool at all: the allowlist is empty on every path", async () => {
+    writeConfig({
+      enabled: true,
+      active: "glm",
+      providers: { glm: { ...PROVIDER, keyFile: keyPath } },
+    });
+    for (const plan of [
+      await planLlmSpawn("haiku", configPath),
+      await planLlmSpawn("sonnet", configPath),
+      await planLlmSpawn("opus", configPath),
+    ]) {
+      const { allowedTools } = containmentOf(plan.args);
+      expect(allowedTools).toBe("");
+      // no file, shell or search tool can hide in an empty grant
+      for (const t of ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]) {
+        expect(allowedTools).not.toContain(t);
+      }
+    }
+  });
+
+  it("points MCP at a strict empty config the spawn cannot widen", async () => {
+    writeConfig({
+      enabled: true,
+      active: "glm",
+      providers: { glm: { ...PROVIDER, keyFile: keyPath } },
+    });
+    const plan = await planLlmSpawn("sonnet", configPath);
+    expect(plan.args).toContain("--strict-mcp-config");
+    const { mcpConfig } = containmentOf(plan.args);
+    expect(mcpConfig.startsWith(dir)).toBe(true);
+    expect(JSON.parse(readFileSync(mcpConfig, "utf8"))).toEqual({ mcpServers: {} });
+  });
+
+  it("carries the same containment on the no-provider fallback", async () => {
+    writeConfig({ enabled: true, active: null, providers: {} });
+    const plan = await planLlmSpawn("haiku", configPath);
+    const { mcpConfig, allowedTools } = containmentOf(plan.args);
+    expect(mcpConfig.startsWith(dir)).toBe(true);
+    expect(allowedTools).toBe("");
   });
 });
