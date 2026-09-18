@@ -6,10 +6,15 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseWorkersConfig,
   assertProviderRunnable,
   providerContextWindow,
+  readWorkersSection,
+  writeWorkersSection,
   WorkersConfigError,
 } from "./config.js";
 
@@ -194,3 +199,46 @@ describe("providerContextWindow", () => {
     expect(providerContextWindow(c.providers.glm)).toBe(200_000);
   });
 });
+
+describe("writeWorkersSection — round-trip (the 2026-09-18 regression)", () => {
+  it("writes the loaded values back, preserving every other section", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-workers-cfg-"));
+    try {
+      const path = join(dir, "config.json");
+      const raw = {
+        socketPath: "/tmp/pai.sock",
+        indexIntervalSecs: 86400,
+        identity: { selfEmails: ["owner@example.ch"] },
+        workers: {
+          enabled: true,
+          active: "glm",
+          providers: { glm: { ...GLM, models: { ...GLM.models, default: "example-5.3" } } },
+          logDir: join(dir, "logs"),
+        },
+      };
+      writeFileSync(path, JSON.stringify(raw, null, 2) + "\n", "utf8");
+
+      // load → modify one value → save the same object: the shape every
+      // legitimate config mutation must go through
+      const loaded = readWorkersSection(path);
+      loaded.workers.pane.fontSize = 15;
+      writeWorkersSection(loaded.raw, loaded.workers, path);
+
+      const reread = readWorkersSection(path);
+      expect(reread.workers.pane.fontSize).toBe(15);
+      expect(reread.workers.providers.glm.models.default).toBe("example-5.3");
+      expect(reread.workers.enabled).toBe(true);
+      // untouched sections survive the write
+      const saved = JSON.parse(readFileSync(path, "utf8"));
+      expect(saved.socketPath).toBe("/tmp/pai.sock");
+      expect(saved.identity).toEqual(raw.identity);
+      // and no schema-shaped dump ever appears in the file
+      const text = readFileSync(path, "utf8");
+      expect(text).not.toContain("socketPath: string");
+      expect(text).not.toMatch(/":\s*"(int|bool)"\s*$/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+

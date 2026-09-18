@@ -14,6 +14,7 @@
 
 import { mkdirSync } from "node:fs";
 import {
+  defaultWorkersConfig,
   readWorkersSection,
   resolveModelCapability,
   type ModelTier,
@@ -21,7 +22,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
-import { workersLogDir } from "./paths.js";
+import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
 import { buildRunEnv } from "./run-env.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 
@@ -52,13 +53,34 @@ function tierModel(provider: WorkerProvider, tier: ModelTier): string {
   return resolveModelCapability(provider, tier === "haiku" ? "fast" : "default");
 }
 
+/**
+ * Containment every daemon-side LLM spawn carries. These calls are
+ * text-in/text-out: the prompt carries the context, the answer is the
+ * product, and nothing about summarizing a session justifies a tool. An
+ * unrestricted background summarizer was observed on 2026-09-18 (01:33-01:51)
+ * rewriting the live config with a schema-shaped dump while the daemon ran;
+ * with the tool grant empty and MCP strictly empty, that class of damage is
+ * structurally impossible rather than merely unlikely.
+ */
+function containmentArgs(logDir: string): string[] {
+  return [
+    "--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir),
+    // the empty grant allows no tool at all — not Read, not Bash, nothing
+    "--allowedTools", "",
+  ];
+}
+
 /** The historical fallback: tier alias as the model id, ambient env with the
  *  Anthropic API key stripped (so the CLI uses its interactive login). */
-function legacyPlan(tier: ModelTier): LlmSpawnPlan {
+function legacyPlan(tier: ModelTier, config: WorkersConfig | null): LlmSpawnPlan {
   const { ANTHROPIC_API_KEY: _drop, ...env } = process.env;
   return {
     model: tier,
-    args: ["--model", tier, "-p", "--no-session-persistence"],
+    args: [
+      "--model", tier,
+      ...containmentArgs(workersLogDir(config ?? defaultWorkersConfig())),
+      "-p", "--no-session-persistence",
+    ],
     env,
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: null,
@@ -77,24 +99,27 @@ export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promis
   let config: WorkersConfig | null = null;
   try {
     const { workers } = readWorkersSection(configPath);
+    // the section is kept even when routing is off: its logDir is where the
+    // containment config lives, on every path, provider or fallback
+    config = workers;
     if (workers.enabled) {
       const target = resolveTarget(workers, workersLogDir(workers), {});
       provider = target.provider;
       providerName = target.providerName;
-      config = workers;
     }
   } catch {
     // no usable provider configured — the tier-alias fallback keeps the
-    // feature alive exactly as it behaved before providers existed
+    // feature alive exactly as it behaved before providers existed. The
+    // section (when it parsed) is kept: its logDir still decides where the
+    // containment config lives.
     provider = null;
     providerName = null;
-    config = null;
   }
-  if (!provider || !providerName || !config) return legacyPlan(tier);
+  if (!provider || !providerName || !config) return legacyPlan(tier, config);
 
+  const logDir = workersLogDir(config);
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {
-    const logDir = workersLogDir(config);
     mkdirSync(logDir, { recursive: true });
     proxyUrl = `${await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir)}/${providerName}`;
   }
@@ -102,7 +127,11 @@ export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promis
   const model = tierModel(provider, tier);
   return {
     model,
-    args: ["--model", model, "-p", "--no-session-persistence"],
+    args: [
+      "--model", model,
+      ...containmentArgs(logDir),
+      "-p", "--no-session-persistence",
+    ],
     env: buildRunEnv(provider, true, proxyUrl),
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: providerName,

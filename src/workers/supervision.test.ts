@@ -3,10 +3,12 @@
  * over a fake ledger: plain WorkerStatus objects, no processes, no real clock.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readWorkersSection } from "./config.js";
+import { workersLogDir } from "./paths.js";
 import {
   baselineState,
   detectSupervisionEvents,
@@ -359,5 +361,78 @@ describe("state persistence shapes", () => {
     };
     markDelivered(state, [ev, ev]);
     expect(state.delivered["x"]).toHaveLength(1);
+  });
+});
+
+describe("config safety — supervision never rewrites the config", () => {
+  // The 2026-09-18 incident: with the daemon running, the live config was
+  // repeatedly replaced by a schema-shaped dump while supervision ticks ran.
+  // Supervision is read-only over the config; these tests pin that down.
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-supervision-cfg-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves the config byte-identical across ticks that deliver events", async () => {
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          socketPath: "/tmp/pai.sock",
+          indexIntervalSecs: 86400,
+          storageBackend: "sqlite",
+          identity: { selfEmails: ["owner@example.ch"] },
+          workers: {
+            enabled: true,
+            active: null,
+            providers: {},
+            classes: {},
+            mcpSets: {},
+            pane: { enabled: false, fontSize: 13, autoExitSecs: 10 },
+            logDir: join(dir, "logs"),
+            routing: { order: [], cooldownMinutes: 30, retryOnQuota: true },
+            tree: { maxDepth: 2, maxChildren: 4 },
+            fallback: null,
+          },
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    const before = readFileSync(configPath, "utf8");
+
+    // the scheduler wiring's exact read: config → logDir → tick
+    const logDir = workersLogDir(readWorkersSection(configPath).workers);
+    // several ticks under load: a stall, a failure, a clean finish
+    await runSupervisionTick(logDir, {
+      now: NOW,
+      isAlive: () => true,
+      statuses: [fake({ id: "w-a", state: "running", updatedMinsAgo: 20 })],
+    });
+    await runSupervisionTick(logDir, {
+      now: NOW,
+      isAlive: () => false,
+      statuses: [fake({ id: "w-a", state: "failed", rc: 1 })],
+    });
+    await runSupervisionTick(logDir, {
+      now: NOW,
+      isAlive: () => true,
+      statuses: [fake({ id: "w-b", state: "done", rc: 0 })],
+    });
+
+    const after = readFileSync(configPath, "utf8");
+    // byte-identical — no reload/save cycle, no reformatting, nothing
+    expect(after).toBe(before);
+    // and never the schema-shaped dump the incident produced
+    expect(after).not.toContain("socketPath: string");
+    expect(after).not.toContain("indexIntervalSecs: int");
+    // the ticks really ran: their state lives under the logDir, not the config
+    expect(existsSync(join(logDir, "supervision", "state.json"))).toBe(true);
   });
 });

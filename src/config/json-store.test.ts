@@ -73,6 +73,41 @@ describe("writeJsonAtomic", () => {
     writeJsonAtomic(nested, { created: true });
     expect(JSON.parse(readFileSync(nested, "utf8"))).toEqual({ created: true });
   });
+
+  it("round-trips values: what is written is what comes back", () => {
+    const values = {
+      socketPath: "/tmp/pai.sock",
+      indexIntervalSecs: 300,
+      flag: true,
+      nested: { list: ["a", "b"], keep: true },
+    };
+    writeJsonAtomic(FILE, values);
+    expect(readJsonStrict(FILE)).toEqual(values);
+    expect(readFileSync(FILE, "utf8")).toBe(JSON.stringify(values, null, 2) + "\n");
+  });
+
+  it("refuses to write a schema-shaped dump over a config (2026-09-18 signature)", () => {
+    writeFileSync(FILE, POPULATED);
+    // the exact shape found over the live config: top-level keys mapped to
+    // bare type words, values gone
+    const dump = {
+      socketPath: "string",
+      indexIntervalSecs: "int",
+      storageBackend: "string",
+      postgres: "object",
+      logLevel: "string",
+    };
+    expect(() => writeJsonAtomic(FILE, dump)).toThrow(/type schema, not values/);
+    // nothing was written: the real contents survive byte for byte
+    expect(readFileSync(FILE, "utf8")).toBe(POPULATED);
+  });
+
+  it("does not trip on legitimate values that happen to be type words", () => {
+    // one stray "bool"/"string" value is data, not a dump — the guard needs
+    // three hits because a schema dump never has fewer
+    writeJsonAtomic(FILE, { mode: "string", note: "bool", real: 42 });
+    expect(readJsonStrict(FILE)).toEqual({ mode: "string", note: "bool", real: 42 });
+  });
 });
 
 describe("the original data-loss path, generically", () => {
