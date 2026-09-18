@@ -1,20 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0068 - 2026-09-18 - Cpp Release V0.42.2 Worker Orchestration (in Progress)" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:13:19.344Z" -->
+<!-- pai:checkpoint authored="auto" session="0068 - 2026-09-18 - Worker Kill Command, Daemon Keepalive, And Cache Features" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:18:53.913Z" -->
 
-> **Last session:** 0068 - 2026-09-18 - Cpp Release V0.42.2 Worker Orchestration (in Progress)
-> **Paused at:** 2026-09-18T17:13:19.344Z
+> **Last session:** 0068 - 2026-09-18 - Worker Kill Command, Daemon Keepalive, And Cache Features
+> **Paused at:** 2026-09-18T17:18:53.913Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3a442dd4-5496-4f1f-a650-91c6bc287425`
 
 T
-i=ckpt-2026-09-18T17-13-19.314Z
-g=so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
-d=cpp merge everything here for pai and cpp | you should use a lightweight worker | but glm is out of credits, so use one of anthropic | 2 workers open do we still need them | so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
+i=ckpt-2026-09-18T17-18-53.890Z
+g=cpp merge everything here for pai and cpp
+d=you should use a lightweight worker | but glm is out of credits, so use one of anthropic | 2 workers open do we still need them | so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed | worker/cache-keepalive is there, actually  Fri 18 | 19:12:47 ️ ➜ gf ls                                                      Local branches ╭─────────────────────────────────┬─────────┬────────────────…
 t=?
-z=auto ckpt (no model); worker/cache-keepalive@cc2bf37 feat(worker): add kill subcommand to manage running workers; 0 dirty; git status for detail
+@1=Notes/TODO.md
+z=auto ckpt (no model); main@0aba1f0 feat(release): merge cache-keepalive branch and worker enhancements; 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
