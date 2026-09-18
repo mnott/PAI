@@ -6,9 +6,11 @@
 
 import { indexAll } from "../../memory/indexer.js";
 import { readWorkersSection } from "../../workers/config.js";
+import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { runSupervisionTick, stallMinutesFromEnv } from "../../workers/supervision.js";
-import type { SQLiteBackendWithDb } from "./types.js";
+import { storeObservationWithProject } from "../../observations/store.js";
+import type { PostgresBackendWithPool, SQLiteBackendWithDb } from "./types.js";
 import {
   registryDb,
   storageBackend,
@@ -25,6 +27,7 @@ import {
   setEmbedSchedulerTimer,
   setVaultIndexInProgress,
   setLastVaultIndexTime,
+  setCacheKeepaliveTimer,
 } from "./state.js";
 
 // ---------------------------------------------------------------------------
@@ -479,4 +482,100 @@ export function startWorkerSupervisor(): void {
   process.stderr.write(
     `[pai-daemon] Worker supervisor: every ${Math.round(SUPERVISION_TICK_MS / 1000)}s\n`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Worker prompt-cache keepalive scheduler
+// ---------------------------------------------------------------------------
+
+/** First beat waits a while after boot; the daemon start is itself a warm request. */
+const KEEPALIVE_STARTUP_DELAY_MS = 60_000;
+
+/**
+ * Start the cache keepalive: every workers.cacheKeepaliveSecs one trivial
+ * single-turn worker (src/workers/keepalive.ts) re-arms the provider's
+ * implicit prompt cache so real worker spawns start warm. Needs no storage
+ * backend — it starts with the IPC server, not after the federation connect.
+ * 0 (or workers off) keeps it off. A failed beat is logged and swallowed.
+ */
+export function startCacheKeepalive(opts: {
+  configPath?: string;
+  beat?: () => Promise<BeatMetrics | null>;
+} = {}): void {
+  let workers: ReturnType<typeof readWorkersSection>["workers"];
+  try {
+    workers = readWorkersSection(opts.configPath).workers;
+  } catch (e) {
+    process.stderr.write(
+      `[pai-daemon] Cache keepalive: not started (${e instanceof Error ? e.message : String(e)})\n`
+    );
+    return;
+  }
+  if (!workers.enabled) {
+    process.stderr.write("[pai-daemon] Cache keepalive: disabled (workers are off)\n");
+    return;
+  }
+  const secs = keepaliveSecs(workers);
+  if (!secs) {
+    process.stderr.write("[pai-daemon] Cache keepalive: disabled (cacheKeepaliveSecs is 0)\n");
+    return;
+  }
+
+  let notedNoPostgres = false;
+  const sqliteNote = () => {
+    const pool = (storageBackend as PostgresBackendWithPool | undefined)?.getPool?.();
+    if (pool) return pool;
+    if (!notedNoPostgres) {
+      notedNoPostgres = true;
+      process.stderr.write(
+        "[pai-daemon] Cache keepalive: observation rows need Postgres — ledger line only\n"
+      );
+    }
+    return null;
+  };
+
+  const beat = async (): Promise<void> => {
+    const m = await (opts.beat ?? runKeepaliveBeat)();
+    if (!m) return; // overlap guard: previous beat still running
+    const pool = sqliteNote();
+    if (!pool) return; // ledger line already written by the beat itself
+    try {
+      await storeObservationWithProject(registryDb, pool, {
+        session_id: m.id,
+        type: "change",
+        title: `cache keepalive ${m.ok ? "ok" : "failed"} (cache_read=${m.cache_read_input_tokens}, api_ms=${m.duration_api_ms})`,
+        tool_name: "cache-keepalive",
+        narrative: `beat ${m.id}: input=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_creation=${m.cache_creation_input_tokens} duration_api_ms=${m.duration_api_ms}`,
+        tool_input_summary: undefined,
+        files_read: [],
+        files_modified: [],
+        concepts: [],
+      });
+    } catch (e) {
+      // a failed observation must never fail the beat
+      process.stderr.write(
+        `[pai-daemon] Cache keepalive observation error: ${e instanceof Error ? e.message : String(e)}\n`
+      );
+    }
+  };
+
+  const first = setTimeout(() => {
+    beat().catch((e) => {
+      process.stderr.write(
+        `[pai-daemon] Cache keepalive beat error: ${e instanceof Error ? e.message : String(e)}\n`
+      );
+    });
+  }, KEEPALIVE_STARTUP_DELAY_MS);
+  if (first.unref) first.unref();
+
+  const timer = setInterval(() => {
+    beat().catch((e) => {
+      process.stderr.write(
+        `[pai-daemon] Cache keepalive beat error: ${e instanceof Error ? e.message : String(e)}\n`
+      );
+    });
+  }, secs * 1000);
+  if (timer.unref) timer.unref();
+  setCacheKeepaliveTimer(timer);
+  process.stderr.write(`[pai-daemon] Cache keepalive: every ${secs}s\n`);
 }

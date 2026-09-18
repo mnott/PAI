@@ -23,9 +23,10 @@ import {
   embedInProgress,
   indexSchedulerTimer,
   embedSchedulerTimer,
+  cacheKeepaliveTimer,
   storageBackend,
 } from "./state.js";
-import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor } from "./scheduler.js";
+import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -154,6 +155,11 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // owning sessions — no backend dependency, so it starts with the IPC server.
   startWorkerSupervisor();
 
+  // Cache keepalive spawns trivial workers on the workers config — also no
+  // backend dependency (observations store opportunistically when Postgres
+  // is up), so it starts with the IPC server too.
+  startCacheKeepalive();
+
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so
   // the boot race with Docker/Postgres resolves itself once Postgres is up.
@@ -195,6 +201,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
     if (indexSchedulerTimer) clearInterval(indexSchedulerTimer);
     if (embedSchedulerTimer) clearInterval(embedSchedulerTimer);
+    if (cacheKeepaliveTimer) clearInterval(cacheKeepaliveTimer);
 
     stopWorker();
 

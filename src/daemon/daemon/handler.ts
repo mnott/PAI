@@ -11,7 +11,7 @@ import {
 import { routeNotification } from "../../notifications/router.js";
 import {
   ensureObservationTables,
-  storeObservation,
+  storeObservationWithProject,
   queryObservations,
   queryRecentObservations,
   storeSessionSummary,
@@ -221,31 +221,17 @@ export async function handleRequest(
         cwd?: string;
       };
 
-      let project_id: number | null = null;
-      let project_slug: string | null = null;
-      if (p.cwd) {
-        const row = registryDb.prepare(
-          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
-        ).get(p.cwd) as { id: number; slug: string } | undefined;
-        if (row) {
-          project_id = row.id;
-          project_slug = row.slug;
-        }
-      }
-
-      await ensureObservationTables(pool);
-      const insertedId = await storeObservation(pool, {
+      const insertedId = await storeObservationWithProject(registryDb, pool, {
         session_id: p.session_id,
-        project_id,
-        project_slug,
         type: p.type as "decision" | "bugfix" | "feature" | "refactor" | "discovery" | "change",
         title: p.title,
         narrative: p.narrative ?? null,
         tool_name: p.tool_name,
-        tool_input_summary: p.tool_input_summary ?? null,
+        tool_input_summary: p.tool_input_summary ?? undefined,
         files_read: p.files_read ?? [],
         files_modified: p.files_modified ?? [],
         concepts: p.concepts ?? [],
+        cwd: p.cwd,
       });
 
       sendResponse(socket, { id, ok: true, result: { ok: true, id: insertedId } });

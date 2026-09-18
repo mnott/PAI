@@ -182,6 +182,8 @@ export type StreamEvent = {
   is_compact?: boolean;
   num_turns?: number;
   duration_ms?: number;
+  /** API time of the final turn — the TTFT proxy on zeroed per-turn usage. */
+  duration_api_ms?: number;
 };
 
 /** Context tokens of an assistant/result usage block (input+cache+output). */

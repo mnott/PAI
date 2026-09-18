@@ -232,6 +232,12 @@ export interface WorkersConfig {
   routing: WorkersRoutingConfig;
   /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
+  /**
+   * Daemon cache-keepalive cadence in seconds: how often a trivial
+   * single-turn heartbeat worker re-arms the provider prompt cache
+   * (src/workers/keepalive.ts). 0 = off.
+   */
+  cacheKeepaliveSecs: number;
   /** Machine-wide Claude Code fallback; null = off. */
   fallback: WorkersFallback | null;
 }
@@ -260,6 +266,18 @@ export const DEFAULT_TREE: WorkersTreeConfig = {
 };
 
 /**
+ * Cache-keepalive cadence when the config names none. Measured 2026-09-18
+ * (pair probes through the real worker spawn path, numbers in
+ * docs/cache-keepalive.md): the implicit provider cache only serves a fresh
+ * worker warm within roughly the first minute (positive back-to-back, gone
+ * at 2 min), and it covers only ~2.6k of the ~18k-token prefix. Holding it
+ * needs a beat every <2 min — a continuous bill for a small saving — so the
+ * default is OFF and arming it is the operator's explicit call (set e.g.
+ * "cacheKeepaliveSecs": 60).
+ */
+export const DEFAULT_CACHE_KEEPALIVE_SECS = 0;
+
+/**
  * The default MCP sets every config starts from. `desktop` names the clickr
  * server so `--mcp desktop` hands a worker the machine controls (read-only
  * tools always; actuating ones after the operator hands the controls over,
@@ -281,6 +299,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
+    cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     fallback: null,
   };
 }
@@ -597,6 +616,18 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
+  let cacheKeepaliveSecs = DEFAULT_CACHE_KEEPALIVE_SECS;
+  if (w.cacheKeepaliveSecs !== undefined) {
+    if (
+      typeof w.cacheKeepaliveSecs !== "number" ||
+      !Number.isInteger(w.cacheKeepaliveSecs) ||
+      w.cacheKeepaliveSecs < 0
+    ) {
+      bad(".cacheKeepaliveSecs", "must be a non-negative integer (seconds, 0 = off)");
+    }
+    cacheKeepaliveSecs = w.cacheKeepaliveSecs;
+  }
+
   const active = w.active === undefined || w.active === null ? null : str(w.active);
   if (active !== null && active !== "auto" && !(active in providers)) {
     // Tolerated at parse time (a provider may have been removed while active
@@ -647,6 +678,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     logDir: str(w.logDir) || d.logDir,
     routing,
     tree,
+    cacheKeepaliveSecs,
     fallback,
   };
 }

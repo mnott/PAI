@@ -34,6 +34,9 @@ export let embedSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 export let vaultIndexInProgress = false;
 export let lastVaultIndexTime = 0;
 
+/** Interval timer of the worker prompt-cache keepalive (null = not armed). */
+export let cacheKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
 // ---------------------------------------------------------------------------
 // Notification state
 // ---------------------------------------------------------------------------
@@ -71,3 +74,4 @@ export function setLastEmbedTime(v: number): void { lastEmbedTime = v; }
 export function setEmbedSchedulerTimer(v: ReturnType<typeof setInterval> | null): void { embedSchedulerTimer = v; }
 export function setVaultIndexInProgress(v: boolean): void { vaultIndexInProgress = v; }
 export function setLastVaultIndexTime(v: number): void { lastVaultIndexTime = v; }
+export function setCacheKeepaliveTimer(v: ReturnType<typeof setInterval> | null): void { cacheKeepaliveTimer = v; }

@@ -1,21 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0062 - 2026-09-18 - Statusline Worker Rendering Srcworkersrenderts" session-id="847da891-1a89-492c-8808-f4ffabf6e1df" ts="2026-09-18T09:32:20.722Z" -->
+<!-- pai:checkpoint authored="auto" session="0062 - 2026-09-18 - Pane Split Fix, Man Pages, Statusline, Keepalive Probes" session-id="847da891-1a89-492c-8808-f4ffabf6e1df" ts="2026-09-18T10:49:21.479Z" -->
 
-> **Last session:** 0062 - 2026-09-18 - Statusline Worker Rendering Srcworkersrenderts
-> **Paused at:** 2026-09-18T09:32:20.722Z
+> **Last session:** 0062 - 2026-09-18 - Pane Split Fix, Man Pages, Statusline, Keepalive Probes
+> **Paused at:** 2026-09-18T10:49:21.479Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 847da891-1a89-492c-8808-f4ffabf6e1df`
 
 T
-i=ckpt-2026-09-18T09-32-20.690Z
-g=nothing works. go further back to 12pm yesterday
-d=ok then try to show me another agent which will show what the does to identify and merge | the pane does not open for agents. go back in the git history to when it was still working like 1800 or so yesterday. see what broke. | well prove it then show it | nothing works. go further back to 12pm yesterday | ok then try to show me another agent which will show what the does to identify and merge
+i=ckpt-2026-09-18T10-49-21.410Z
+g=[Session:pai-cli] worker 20260918-121754-24718-01 daemon cache keepalive · draft finished rc=0 - see pai worker replay 20260918-121754-24718-01
+d=DAMNIT I don't want you to fix the session. I stopped it already. I keep trying whenever you say "done" and just start it by pai CaseLeaf. And then I keep running into the same issue, copy the output,… | [Session:pai-cli] worker probe-keepalive-20260918-124026-2 cache-probe finished rc=0 - see pai worker replay probe-keepalive-20260918-124026-2 | there's one more worker open do I wait for it | [Session:pai-cli] worker probe-keepalive-20260918-124155-1 cache-probe finished rc=0 - see pai worker replay probe-keepalive-20260918-124155-1 | [Session:pai-cli] worker probe-keepalive-20260918-124407-2 cache-probe finished rc=0 - see pai worker replay probe-keepalive-20260918-124407-2
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@de2e2db fix(workers): pane command is one exec-able line, no shell syntax; 1 dirty; git status for detail
+@2=src/daemon/daemon/handler.ts
+@3=src/daemon/daemon/scheduler.ts
+@4=src/daemon/daemon/server.ts
+@5=src/daemon/daemon/state.ts
+@6=src/observations/store.ts
+@7=src/workers/config.test.ts
+@8=src/workers/config.ts
+@9=src/workers/run.ts
+@10=docs/cache-keepalive.md
+@11=scripts/probe-cache-keepalive.ts
+@12=src/workers/keepalive.test.ts
+@13=src/workers/keepalive.ts
+z=auto ckpt (no model); worker/cache-keepalive@b1dc97e merge worker 20260918-123450-52350 (resume reminder hook); 13 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
