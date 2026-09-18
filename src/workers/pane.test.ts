@@ -21,6 +21,7 @@ import {
   WORKER_SPLIT_SCRIPT,
   checkPaneForWorker,
   dynamicProfilePath,
+  followCommand,
   followProfile,
   itermPrefs,
   paneFont,
@@ -111,6 +112,15 @@ describe("readItermPlist", () => {
     expect(read.error).toBeNull();
     expect(read.bookmarks.length).toBeGreaterThan(0);
     expect(read.defaultGuid).toBeTruthy();
+  });
+});
+
+describe("followCommand", () => {
+  it("is plain: no leading space, no exec — iTerm dies on both", () => {
+    const cmd = followCommand("20260918-104952-27763", 60);
+    expect(cmd).toBe('pai worker follow "20260918-104952-27763" --auto-exit 60');
+    expect(cmd).not.toMatch(/^\s/); // a leading space killed the pane at birth
+    expect(cmd).not.toMatch(/\bexec\b/); // exec made iTerm fail to run it at all
   });
 });
 

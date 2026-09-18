@@ -494,6 +494,18 @@ function saveRegistry(path: string, reg: PaneEntry[]): void {
 // Public entry points
 // ---------------------------------------------------------------------------
 
+/**
+ * The command a worker pane runs: plain `pai worker follow …`, no leading
+ * space and no `exec` — iTerm's split-with-command fails outright on the
+ * " exec …" shape (the pane dies instantly with a red error, observed live
+ * twice). iTerm runs the command in the session's shell, so follow stays
+ * that shell's child and signals reach it; history pollution is irrelevant
+ * for a throwaway pane.
+ */
+export function followCommand(wid: string, autoExitSecs: number): string {
+  return `pai worker follow ${JSON.stringify(wid)} --auto-exit ${autoExitSecs}`;
+}
+
 /** Open (or only report on) the stacked follow pane of one worker. */
 export async function openPaneForWorker(
   logDir: string,
@@ -506,10 +518,7 @@ export async function openPaneForWorker(
   const regPath = join(panesDir(logDir), `${scopeKey(term)}.json`);
   const reg = loadRegistry(regPath);
   const profile = await followProfile(config.pane.fontSize);
-  // leading space keeps the command out of shell history; `exec` replaces the
-  // pane's shell with follow itself, so signals reach it directly and no shell
-  // lingers once the pane closes
-  const cmd = ` exec pai worker follow ${JSON.stringify(wid)} --auto-exit ${config.pane.autoExitSecs}`;
+  const cmd = followCommand(wid, config.pane.autoExitSecs);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
   const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile]);
@@ -611,7 +620,8 @@ export async function openFollowPane(
   const overlap = [...tabTtys].filter((t) => followTtys().has(t));
   if (overlap.length > 0) return "follow pane already open";
   if (checkOnly) return "no follow pane";
-  const cmd = " exec pai worker follow";
+  // plain, no leading space and no exec — see followCommand()
+  const cmd = "pai worker follow";
   const s = await osascript(SPLIT_SCRIPT, [uid, cmd]);
   const sout = s.stdout.trim();
   if (sout === "opened") return "follow pane opened";
