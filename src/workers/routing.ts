@@ -24,6 +24,7 @@ import {
   WORKER_CLASSES,
   WorkersConfigError,
   providerCostTier,
+  getProviderOrNative,
 } from "./config.js";
 import { routingStatePath } from "./paths.js";
 
@@ -129,7 +130,7 @@ export interface ResolvedTarget {
 export class NoProviderError extends WorkersConfigError {}
 
 function mustExist(config: WorkersConfig, name: string): WorkerProvider {
-  const p = config.providers[name];
+  const p = getProviderOrNative(config, name);
   if (!p) {
     throw new NoProviderError(
       `no worker provider named "${name}". Configured: ` +
@@ -156,7 +157,7 @@ function exclusionReason(
   name: string,
   cls?: { maxCostTier?: number; requireTags?: string[] }
 ): string | null {
-  const p = config.providers[name];
+  const p = getProviderOrNative(config, name);
   if (!p) return "not configured";
   if (!p.enabled) return "disabled";
   if (cooldownRemaining(state, name) > 0) return "cooldown";
@@ -255,13 +256,15 @@ export function resolveTarget(
   const order = cls?.order ?? config.routing.order;
   const excluded: string[] = [];
   for (const name of order) {
-    const p = config.providers[name];
+    const p = getProviderOrNative(config, name);
     const why = exclusionReason(config, state, name, cls);
     if (why) {
       excluded.push(`${name}: ${why}`);
       continue;
     }
-    return { providerName: name, provider: p, modelAlias: null, classMcp: cls?.mcp ?? null, via: "auto" };
+    // exclusionReason already returned null (no exclusion) above, which is
+    // only possible when getProviderOrNative found a real provider
+    return { providerName: name, provider: p!, modelAlias: null, classMcp: cls?.mcp ?? null, via: "auto" };
   }
   throw new NoProviderError(
     `auto-routing found no usable provider${opts.className ? ` for class "${opts.className}"` : ""} ` +
@@ -286,7 +289,7 @@ export function nextAutoProvider(
   const start = order.indexOf(from);
   for (let i = start + 1; i < order.length; i++) {
     const name = order[i];
-    const p = config.providers[name];
+    const p = getProviderOrNative(config, name);
     if (!p || !p.enabled) continue;
     const end = state.cooldowns[name];
     if (end && Date.parse(end) > now.getTime()) continue;

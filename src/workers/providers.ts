@@ -14,6 +14,7 @@
 
 import { existsSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import {
+  ANTHROPIC_NATIVE,
   DEFAULT_LOG_DIR,
   MODEL_CAPABILITIES,
   PROVIDER_TAGS,
@@ -172,7 +173,7 @@ export function removeProvider(name: string): WorkersConfig {
 
 export function useProvider(name: string): WorkersConfig {
   const { raw, workers } = readWorkersSection();
-  if (!workers.providers[name]) {
+  if (name !== ANTHROPIC_NATIVE && !workers.providers[name]) {
     throw new WorkersConfigError(
       `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
     );
@@ -250,8 +251,9 @@ export function setClass(name: string, target: ClassTarget): WorkersConfig {
   const { raw, workers } = readWorkersSection();
   if (typeof target === "string") {
     const [provider, alias] = target.split("/");
-    const p = workers.providers[provider];
-    if (!p) {
+    const native = provider === ANTHROPIC_NATIVE;
+    const p = native ? undefined : workers.providers[provider];
+    if (!native && !p) {
       throw new WorkersConfigError(
         `no provider named "${provider}" in "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
       );
@@ -262,12 +264,14 @@ export function setClass(name: string, target: ClassTarget): WorkersConfig {
           `unknown model alias "${alias}" — providers expose: ${MODEL_CAPABILITIES.join(", ")}`
         );
       }
-      if (alias !== "default" && !p.models[alias]) {
+      // the native provider has no configurable model slots — any alias
+      // resolves through resolveModelCapability's own default fallback
+      if (!native && alias !== "default" && !p!.models[alias]) {
         throw new WorkersConfigError(`provider "${provider}" has no ${alias} model configured`);
       }
     }
   } else if (target.provider) {
-    if (!workers.providers[target.provider]) {
+    if (target.provider !== ANTHROPIC_NATIVE && !workers.providers[target.provider]) {
       throw new WorkersConfigError(
         `no provider named "${target.provider}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
       );
@@ -337,9 +341,13 @@ export function describeModels(workers: WorkersConfig): string[] {
 /** Human-readable provider listing (quota probe included when configured). */
 export function describeProviders(workers: WorkersConfig): string[] {
   const lines: string[] = [];
+  const nativeActive = workers.active === ANTHROPIC_NATIVE;
+  lines.push(
+    `${ANTHROPIC_NATIVE}  [built-in${nativeActive ? ", active" : ""}]  Claude Code's own OAuth/Max-plan login — no base URL, no API key`
+  );
   const names = Object.keys(workers.providers);
   if (!names.length) {
-    lines.push(`no providers configured. Add one with:`);
+    lines.push(`no other providers configured. Add one with:`);
     lines.push(
       `  pai worker providers add <name> --base-url <url> --key-file <path> --model <model>`
     );

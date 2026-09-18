@@ -470,7 +470,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
   const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
   const cmd: string[] = ["claude"];
-  if (!parsed.callerModel) cmd.push("--model", model);
+  // a native-Anthropic run with no explicit --model resolves to "" (let
+  // Claude Code pick its own default) — passing --model "" would break the
+  // spawn, so skip the flag entirely in that case.
+  if (!parsed.callerModel && model) cmd.push("--model", model);
   cmd.push(...mcpArgs, ...toolArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");

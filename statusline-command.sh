@@ -38,14 +38,24 @@ model_name=$(echo "$input" | jq -r '.model.display_name')
 model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // empty')
 cc_version=$(echo "$input" | jq -r '.version // "unknown"')
 
-# Provider detection: strip any [...] suffix (e.g. the [1m] context marker)
-# so "glm-5.3[1m]" is recognized as a glm model. glm sessions read their plan
-# usage from Z.ai, everything else keeps the Anthropic OAuth path.
+# Provider detection: which worker provider is this session running on? The
+# answer comes from the PAI config, not from model-name prefixes — a session
+# belongs to the provider that lists its model id under workers.providers.
+# Any [...] suffix (e.g. the [1m] context marker) is stripped on both sides,
+# so a session on "glm-5.3[1m]" matches a configured "glm-5.3" and vice versa.
+# No config, no jq, unreadable JSON or no match => anthropic, silently.
+pai_config="${PAI_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/pai/config.json}"
 model_base="${model_id%%\[*}"
-is_glm=0
-case "$model_base" in
-    [Gg][Ll][Mm]*) is_glm=1 ;;
-esac
+session_provider=anthropic
+if [ -n "$model_base" ] && [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
+    _matched_provider=$(jq -r --arg mb "$model_base" '
+        (.workers.providers // {}) | to_entries[] as $p
+        | (($p.value.models // {}) | to_entries[]) as $m
+        | ($m.value | tostring) as $v
+        | select($v == $mb or ($v | split("[")[0]) == $mb)
+        | $p.key' "$pai_config" 2>/dev/null | head -1)
+    [ -n "$_matched_provider" ] && session_provider="$_matched_provider"
+fi
 
 # Get directory name
 dir_name=$(basename "$current_dir")
@@ -62,7 +72,9 @@ tell application "iTerm2"
         if id of aSession is "${ITERM_UUID}" then
           tell aSession
             try
-              return (variable named "user.paiName")
+              set v to (variable named "user.paiName")
+              if v is missing value then return ""
+              return v
             on error
               return ""
             end try
@@ -76,6 +88,10 @@ end tell
 APPLESCRIPT
     )
 fi
+
+# Defence in depth: if the osascript text differs by version, iTerm2's unset
+# variable can still surface as the literal "missing value" — normalise here.
+[ "$pai_session_name" = "missing value" ] && pai_session_name=""
 
 # Build session suffix (only if different from dir_name)
 session_suffix=""
@@ -356,11 +372,12 @@ fi
 printf "${LINE2_PRIMARY}${EMOJI_PLUG} MCPs${RESET}${LINE2_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${mcp_line1}${RESET}\n"
 
 
-# Usage suffix: provider-aware. glm sessions read the Z.ai plan quota
-# (5-hour + weekly credit windows), everything else keeps the Anthropic
-# OAuth path (5-hour + 1d pace + 7-day). Both cache for usage_cache_ttl.
+# Usage suffix: provider-aware. The built-in anthropic provider reads the
+# Claude Code OAuth usage endpoint (5-hour + 1d pace + 7-day); every other
+# provider is rendered from its own `usage` block in the PAI config (see
+# docs/provider-abstraction.md) — endpoint, auth header and per-window jq
+# expressions are config, not code. Both paths cache for usage_cache_ttl.
 usage_cache="/tmp/claude/statusline-usage-cache.json"
-zai_cache="/tmp/claude/statusline-zai-cache.json"
 usage_cache_ttl=60  # seconds
 usage_suffix=""
 
@@ -388,7 +405,7 @@ _fetch_usage() {
 }
 
 # Use cache if fresh, otherwise fetch in background (Anthropic plan only)
-if [ "$is_glm" -eq 0 ]; then
+if [ "$session_provider" = "anthropic" ]; then
     if [ -f "$usage_cache" ]; then
         cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
         if [ "$cache_age" -gt "$usage_cache_ttl" ]; then
@@ -399,9 +416,10 @@ if [ "$is_glm" -eq 0 ]; then
     fi
 fi
 
-# Read cached usage data — skipped on glm sessions so Anthropic-plan numbers
-# (usage line AND the advisor-mode budget file) never leak into a glm statusline
-if [ "$is_glm" -eq 0 ] && [ -f "$usage_cache" ]; then
+# Read cached usage data — skipped on non-anthropic sessions so
+# Anthropic-plan numbers (usage line AND the advisor-mode budget file)
+# never leak into a glm or kimi statusline
+if [ "$session_provider" = "anthropic" ] && [ -f "$usage_cache" ]; then
     five_hour=$(jq -r '.five_hour.utilization // 0' "$usage_cache" 2>/dev/null)
     seven_day=$(jq -r '.seven_day.utilization // 0' "$usage_cache" 2>/dev/null)
     five_reset=$(jq -r '.five_hour.resets_at // empty' "$usage_cache" 2>/dev/null)
@@ -519,77 +537,136 @@ if [ "$is_glm" -eq 0 ] && [ -f "$usage_cache" ]; then
     usage_suffix="${usage_suffix} ${SEPARATOR_COLOR}│${RESET} ${seven_color}${seven_label}${RESET}"
 fi
 
-# Z.ai plan quota (glm sessions). The monitor endpoint exposes two credit
-# windows: limits[] number==5 is the 5-hour window, number==1 the weekly one
-# (nextResetTime in epoch ms) — no 1d window exists on this plan, so none is
-# rendered. PAI_ZAI_QUOTA_URL overrides the endpoint (kill switch / testing).
-_fetch_zai_usage() {
-    local key="${ZAI_API_KEY:-}"
-    if [ -z "$key" ] && [ -f "$HOME/.config/zai/api_key" ]; then
-        key=$(tr -d '[:space:]' < "$HOME/.config/zai/api_key")
+# Plan quota for a configured (non-anthropic) provider, driven entirely by
+# its `usage` block: a JSON GET endpoint plus one jq expression per window.
+# Fetches in the background into a per-provider cache, exactly as the OAuth
+# path above does, and never blocks the status line on the network.
+#
+# Args: url, auth-header template, key file, cache path, probe expression.
+# The probe is the first window's percent expression: a provider that answers
+# HTTP 200 with an empty body (a rejected key often does) would otherwise be
+# cached as a valid "no windows" reading, so a response that yields no number
+# for it is dropped rather than stored.
+_fetch_provider_usage() {
+    local url="$1" auth="$2" keyfile="$3" cache="$4" probe="$5"
+    local key=""
+    if [ -n "$keyfile" ] && [ -f "$keyfile" ]; then
+        key=$(tr -d '[:space:]' < "$keyfile")
     fi
     [ -n "$key" ] || return
+    # "Authorization: Bearer" (has a space) → "Authorization: Bearer <key>";
+    # a single token like "x-api-key" → "x-api-key: <key>".
+    local header
+    if [ "${auth#* }" != "$auth" ]; then
+        header="${auth} ${key}"
+    else
+        header="${auth}: ${key}"
+    fi
     mkdir -p /tmp/claude
     local response
     response=$(curl -sf --max-time 3 \
-        -H "Authorization: Bearer $key" \
+        -H "$header" \
         -H "Accept: application/json" \
-        "${PAI_ZAI_QUOTA_URL:-https://api.z.ai/api/monitor/usage/quota/limit}" 2>/dev/null)
-    # A bad key returns HTTP 200 with empty limits — only cache responses
-    # that actually carry quota windows, so a broken fetch is never cached.
-    if [ -n "$response" ] && echo "$response" | jq -e '.data.limits | length > 0' >/dev/null 2>&1; then
-        echo "$response" > "$zai_cache"
+        "$url" 2>/dev/null)
+    [ -n "$response" ] || return
+    if [ -n "$probe" ]; then
+        printf '%s' "$response" | jq -e "($probe) | numbers" >/dev/null 2>&1 || return
     fi
+    printf '%s' "$response" > "$cache"
 }
 
-if [ "$is_glm" -eq 1 ]; then
-    # Use cache if fresh, otherwise fetch in background
-    if [ -f "$zai_cache" ]; then
-        cache_age=$(( $(date +%s) - $(stat -f %m "$zai_cache" 2>/dev/null || echo 0) ))
-        if [ "$cache_age" -gt "$usage_cache_ttl" ]; then
-            _fetch_zai_usage &
-        fi
-    else
-        _fetch_zai_usage &
+# Usage rendering for a configured provider. anthropic has already been
+# rendered from the OAuth cache above; everything else is rendered here from
+# its usage block, or shows "<provider> usage n/a" when it has none.
+if [ "$session_provider" != "anthropic" ]; then
+    provider_usage=""
+    provider_keyfile=""
+    if [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
+        provider_usage=$(jq -c --arg p "$session_provider" '.workers.providers[$p].usage // empty' "$pai_config" 2>/dev/null)
+        provider_keyfile=$(jq -r --arg p "$session_provider" '.workers.providers[$p].keyFile // empty' "$pai_config" 2>/dev/null)
+        case "$provider_keyfile" in "~/"*) provider_keyfile="$HOME/${provider_keyfile#\~/}" ;; esac
     fi
 
-    zai_five_pct=""
-    zai_seven_pct=""
-    zai_five_reset_ms=""
-    zai_seven_reset_ms=""
-    if [ -f "$zai_cache" ]; then
-        zai_five_pct=$(jq -r '.data.limits[]? | select(.number == 5) | .percentage' "$zai_cache" 2>/dev/null | head -1)
-        zai_seven_pct=$(jq -r '.data.limits[]? | select(.number == 1) | .percentage' "$zai_cache" 2>/dev/null | head -1)
-        zai_five_reset_ms=$(jq -r '.data.limits[]? | select(.number == 5) | .nextResetTime' "$zai_cache" 2>/dev/null | head -1)
-        zai_seven_reset_ms=$(jq -r '.data.limits[]? | select(.number == 1) | .nextResetTime' "$zai_cache" 2>/dev/null | head -1)
-    fi
+    if [ -n "$provider_usage" ]; then
+        usage_label=$(printf '%s' "$provider_usage" | jq -r --arg p "$session_provider" '.label // $p')
+        usage_url=$(printf '%s' "$provider_usage" | jq -r '.url // empty')
+        usage_auth=$(printf '%s' "$provider_usage" | jq -r '.authHeader // "Authorization: Bearer"')
+        usage_ttl=$(printf '%s' "$provider_usage" | jq -r '.ttlSeconds // empty')
+        [ "$usage_ttl" -gt 0 ] 2>/dev/null || usage_ttl="$usage_cache_ttl"
+        provider_cache="/tmp/claude/statusline-usage-${session_provider}.json"
+        usage_probe=$(printf '%s' "$provider_usage" | jq -r '.windows[0].percent // empty')
 
-    if [ -n "$zai_five_pct" ] && [ "$zai_five_pct" != "null" ]; then
-        zai_five_int=$(printf "%.0f" "$zai_five_pct" 2>/dev/null || echo "?")
-        zai_five_reset_fmt=""
-        if [ -n "$zai_five_reset_ms" ] && [ "$zai_five_reset_ms" != "null" ]; then
-            # nextResetTime is epoch milliseconds; date -r wants seconds
-            zai_five_epoch=$(( zai_five_reset_ms / 1000 ))
-            [ "$zai_five_epoch" -gt 0 ] 2>/dev/null && zai_five_reset_fmt=$(date -r "$zai_five_epoch" "+%H:%M" 2>/dev/null || echo "")
-        fi
-        zai_five_label="zai 5h: ${zai_five_int}%%"
-        [ -n "$zai_five_reset_fmt" ] && zai_five_label="${zai_five_label} → ${zai_five_reset_fmt}"
-        usage_suffix=" ${SEPARATOR_COLOR}│${RESET} $(_usage_color "$zai_five_int")${zai_five_label}${RESET}"
-        if [ -n "$zai_seven_pct" ] && [ "$zai_seven_pct" != "null" ]; then
-            zai_seven_int=$(printf "%.0f" "$zai_seven_pct" 2>/dev/null || echo "?")
-            zai_seven_reset_fmt=""
-            if [ -n "$zai_seven_reset_ms" ] && [ "$zai_seven_reset_ms" != "null" ]; then
-                zai_seven_epoch=$(( zai_seven_reset_ms / 1000 ))
-                [ "$zai_seven_epoch" -gt 0 ] 2>/dev/null && zai_seven_reset_fmt=$(date -r "$zai_seven_epoch" "+%a %H:%M" 2>/dev/null || echo "")
+        # Use cache if fresh, otherwise refresh in the background
+        if [ -n "$usage_url" ]; then
+            if [ -f "$provider_cache" ]; then
+                cache_age=$(( $(date +%s) - $(stat -f %m "$provider_cache" 2>/dev/null || echo 0) ))
+                if [ "$cache_age" -gt "$usage_ttl" ]; then
+                    _fetch_provider_usage "$usage_url" "$usage_auth" "$provider_keyfile" "$provider_cache" "$usage_probe" &
+                fi
+            else
+                _fetch_provider_usage "$usage_url" "$usage_auth" "$provider_keyfile" "$provider_cache" "$usage_probe" &
             fi
-            zai_seven_label="7d: ${zai_seven_int}%%"
-            [ -n "$zai_seven_reset_fmt" ] && zai_seven_label="${zai_seven_label} → ${zai_seven_reset_fmt}"
-            usage_suffix="${usage_suffix} ${SEPARATOR_COLOR}│${RESET} $(_usage_color "$zai_seven_int")${zai_seven_label}${RESET}"
+        fi
+
+        provider_suffix=""
+        if [ -f "$provider_cache" ]; then
+            window_count=$(printf '%s' "$provider_usage" | jq -r '.windows | length' 2>/dev/null || echo 0)
+            window_i=0
+            while [ "$window_i" -lt "$window_count" ] 2>/dev/null; do
+                w_name=$(printf '%s' "$provider_usage" | jq -r --argjson i "$window_i" '.windows[$i].name // empty')
+                w_pct_expr=$(printf '%s' "$provider_usage" | jq -r --argjson i "$window_i" '.windows[$i].percent // empty')
+                w_reset_expr=$(printf '%s' "$provider_usage" | jq -r --argjson i "$window_i" '.windows[$i].resetAt // empty')
+                w_reset_unit=$(printf '%s' "$provider_usage" | jq -r --argjson i "$window_i" '.windows[$i].resetUnit // "ms"')
+                window_i=$(( window_i + 1 ))
+
+                w_pct=""
+                [ -n "$w_pct_expr" ] && w_pct=$(jq -r "($w_pct_expr) // empty" "$provider_cache" 2>/dev/null | head -1)
+                [ -n "$w_pct" ] && [ "$w_pct" != "null" ] || continue
+                w_pct_int=$(printf "%.0f" "$w_pct" 2>/dev/null || echo "?")
+
+                w_reset_fmt=""
+                if [ -n "$w_reset_expr" ]; then
+                    w_reset=$(jq -r "($w_reset_expr) // empty" "$provider_cache" 2>/dev/null | head -1)
+                    w_epoch=0
+                    case "$w_reset_unit" in
+                        iso)
+                            [ -n "$w_reset" ] && w_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(printf '%s' "$w_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$w_reset" "+%s" 2>/dev/null || echo 0)
+                            ;;
+                        s)
+                            case "$w_reset" in ''|*[!0-9.]*) ;; *) w_epoch="${w_reset%%.*}" ;; esac
+                            ;;
+                        *)
+                            # epoch milliseconds (the default); date -r wants seconds
+                            case "$w_reset" in ''|*[!0-9.]*) ;; *) w_epoch=$(( ${w_reset%%.*} / 1000 )) ;; esac
+                            ;;
+                    esac
+                    if [ "$w_epoch" -gt 0 ] 2>/dev/null; then
+                        # Within the next 24h the weekday carries no information;
+                        # beyond it, the bare time would be ambiguous.
+                        if [ $(( w_epoch - $(date +%s) )) -lt 86400 ]; then
+                            w_reset_fmt=$(date -r "$w_epoch" "+%H:%M" 2>/dev/null || echo "")
+                        else
+                            w_reset_fmt=$(date -r "$w_epoch" "+%a %H:%M" 2>/dev/null || echo "")
+                        fi
+                    fi
+                fi
+
+                w_label="${usage_label} ${w_name}: ${w_pct_int}%%"
+                [ -n "$w_reset_fmt" ] && w_label="${w_label} → ${w_reset_fmt}"
+                provider_suffix="${provider_suffix} ${SEPARATOR_COLOR}│${RESET} $(_usage_color "$w_pct_int")${w_label}${RESET}"
+            done
+        fi
+
+        if [ -n "$provider_suffix" ]; then
+            usage_suffix="$provider_suffix"
+        else
+            # No key, timeout, non-200 or an unusable response — show the
+            # marker instead of silently falling back to Anthropic numbers.
+            usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${LINE3_ACCENT}${usage_label} usage ?${RESET}"
         fi
     else
-        # No key, timeout, non-200 or empty limits — show the marker instead
-        # of silently falling back to Anthropic-plan numbers.
-        usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${LINE3_ACCENT}zai 5h: ?${RESET}"
+        # A provider without a usage block has no quota endpoint to read.
+        usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${LINE3_ACCENT}${session_provider} usage n/a${RESET}"
     fi
 fi
 

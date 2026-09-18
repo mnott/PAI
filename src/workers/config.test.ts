@@ -61,6 +61,12 @@ describe("parseWorkersConfig", () => {
     ).toThrow(/models\.default/);
   });
 
+  it("rejects a providers.anthropic entry (reserved name)", () => {
+    expect(() =>
+      parseWorkersConfig({ providers: { anthropic: GLM } })
+    ).toThrow(/anthropic.*reserved/i);
+  });
+
   it("rejects classes whose target contains spaces", () => {
     expect(() =>
       parseWorkersConfig({ classes: { implement: "glm fast" } })
@@ -84,6 +90,134 @@ describe("parseWorkersConfig", () => {
     });
     expect(ok.providers.glm.costTier).toBe(2);
     expect(ok.providers.glm.tags).toEqual(["code", "fast"]);
+  });
+
+  // The statusline renders a provider's plan quota straight from this block
+  // (docs/provider-abstraction.md carries the two shipped ones verbatim), so
+  // the jq expressions must survive parsing untouched — a mangled expression
+  // shows up as a missing percentage on the status line, never as an error.
+  // Hosts are neutral here; the window expressions are the shipped ones.
+  const CREDIT_USAGE = {
+    url: "https://api.example.com/api/monitor/usage/quota/limit",
+    label: "example",
+    ttlSeconds: 60,
+    windows: [
+      {
+        name: "5h",
+        percent: ".data.limits[]? | select(.number == 5) | .percentage",
+        resetAt: ".data.limits[]? | select(.number == 5) | .nextResetTime",
+        resetUnit: "ms",
+      },
+      {
+        name: "7d",
+        percent: ".data.limits[]? | select(.number == 1) | .percentage",
+        resetAt: ".data.limits[]? | select(.number == 1) | .nextResetTime",
+        resetUnit: "ms",
+      },
+    ],
+  };
+
+  it("parses a credit-plan usage block with epoch-ms resets", () => {
+    const c = parseWorkersConfig({
+      providers: { glm: { ...GLM, usage: CREDIT_USAGE } },
+    });
+    const u = c.providers.glm.usage!;
+    expect(u.url).toBe(CREDIT_USAGE.url);
+    expect(u.label).toBe("example");
+    expect(u.ttlSeconds).toBe(60);
+    expect(u.windows.map((w) => w.name)).toEqual(["5h", "7d"]);
+    expect(u.windows[0].percent).toBe(".data.limits[]? | select(.number == 5) | .percentage");
+    expect(u.windows[1].resetAt).toBe(".data.limits[]? | select(.number == 1) | .nextResetTime");
+    expect(u.windows[1].resetUnit).toBe("ms");
+  });
+
+  it("parses ISO resets and a percent computed from a used/limit pair", () => {
+    // A plan that reports fractions (0.0262 = 2.62%) and a request-count
+    // window carrying no percentage at all: both are expressible as jq, so
+    // neither needs a schema extension.
+    const c = parseWorkersConfig({
+      providers: {
+        kimi: {
+          ...GLM,
+          usage: {
+            url: "https://api.example.com/coding/v1/usages",
+            authHeader: "Authorization: Bearer",
+            windows: [
+              {
+                name: "5h",
+                percent: ".usages.limit_5h.used_ratio * 100",
+                resetAt: ".usages.limit_5h.reset_time",
+                resetUnit: "iso",
+              },
+              {
+                name: "req",
+                percent:
+                  "(.limits[0].detail.used | tonumber) / (.limits[0].detail.limit | tonumber) * 100",
+                resetAt: ".limits[0].detail.resetTime",
+                resetUnit: "iso",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const u = c.providers.kimi.usage!;
+    expect(u.authHeader).toBe("Authorization: Bearer");
+    expect(u.windows[0].percent).toBe(".usages.limit_5h.used_ratio * 100");
+    expect(u.windows[0].resetUnit).toBe("iso");
+    expect(u.windows[1].percent).toBe(
+      "(.limits[0].detail.used | tonumber) / (.limits[0].detail.limit | tonumber) * 100"
+    );
+  });
+
+  it("omits usage defaults the config did not state", () => {
+    const c = parseWorkersConfig({
+      providers: {
+        glm: {
+          ...GLM,
+          usage: { url: "https://api.example.com/usage", windows: [{ name: "5h", percent: ".pct" }] },
+        },
+      },
+    });
+    const u = c.providers.glm.usage!;
+    expect(u.authHeader).toBeUndefined();
+    expect(u.label).toBeUndefined();
+    expect(u.ttlSeconds).toBeUndefined();
+    expect(u.windows[0].resetAt).toBeUndefined();
+    expect(u.windows[0].resetUnit).toBeUndefined();
+  });
+
+  it("names the offending field on a bad usage block", () => {
+    const withUsage = (usage: unknown) =>
+      parseWorkersConfig({ providers: { glm: { ...GLM, usage } } });
+    expect(() => withUsage({ windows: CREDIT_USAGE.windows })).toThrow(/usage\.url/);
+    expect(() => withUsage({ url: "https://api.example.com/usage", windows: [] })).toThrow(
+      /usage\.windows/
+    );
+    expect(() =>
+      withUsage({ url: "https://api.example.com/usage", windows: [{ percent: ".pct" }] })
+    ).toThrow(/windows\[0\]\.name/);
+    expect(() =>
+      withUsage({ url: "https://api.example.com/usage", windows: [{ name: "5h" }] })
+    ).toThrow(/windows\[0\]\.percent/);
+  });
+
+  it("rejects an unknown resetUnit and a non-positive ttl", () => {
+    const withUsage = (usage: unknown) =>
+      parseWorkersConfig({ providers: { glm: { ...GLM, usage } } });
+    expect(() =>
+      withUsage({
+        url: "https://api.example.com/usage",
+        windows: [{ name: "5h", percent: ".pct", resetAt: ".at", resetUnit: "fortnights" }],
+      })
+    ).toThrow(/windows\[0\]\.resetUnit/);
+    expect(() =>
+      withUsage({
+        url: "https://api.example.com/usage",
+        ttlSeconds: 0,
+        windows: [{ name: "5h", percent: ".pct" }],
+      })
+    ).toThrow(/usage\.ttlSeconds/);
   });
 
   it("validates class constraint fields", () => {

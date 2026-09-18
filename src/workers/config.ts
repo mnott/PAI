@@ -34,6 +34,39 @@ export type WorkerProtocol = "anthropic" | "openai";
 /** Runner executable behind a provider: Claude Code or the Codex CLI. */
 export type WorkerEngine = "claude" | "codex";
 
+/** One quota window the statusline renders for a provider (e.g. "5h", "7d"). */
+export interface UsageWindow {
+  /** Window label shown in the statusline, e.g. "5h". */
+  name: string;
+  /** jq expression against the usage response yielding a percent 0–100. */
+  percent: string;
+  /** jq expression against the usage response yielding the reset time. */
+  resetAt?: string;
+  /** How resetAt is interpreted: epoch ms (default), epoch s, or ISO string. */
+  resetUnit?: "ms" | "s" | "iso";
+}
+
+/**
+ * How the statusline fetches and renders a provider's plan quota. The block
+ * names a JSON GET endpoint plus per-window jq expressions, so a new provider
+ * is config, not code in statusline-command.sh.
+ */
+export interface ProviderUsage {
+  /** GET endpoint returning the usage JSON. */
+  url: string;
+  /**
+   * Auth header template, default "Authorization: Bearer"; the key from
+   * keyFile is appended after a space. A value without a space (e.g.
+   * "x-api-key") is sent as "<authHeader>: <key>".
+   */
+  authHeader?: string;
+  /** Display label for the usage segments, default = provider name. */
+  label?: string;
+  windows: UsageWindow[];
+  /** Statusline cache TTL in seconds, default 60. */
+  ttlSeconds?: number;
+}
+
 export interface WorkerProvider {
   enabled: boolean;
   /** Wire protocol the baseUrl speaks. */
@@ -74,6 +107,49 @@ export interface WorkerProvider {
   costTier?: number;
   /** Capability tags; classes filter auto-routing via requireTags. */
   tags?: ProviderTag[];
+  /** Statusline plan-quota block; see ProviderUsage. Absent = "usage n/a". */
+  usage?: ProviderUsage;
+  /**
+   * True only for the synthetic built-in "anthropic" provider (see
+   * ANTHROPIC_NATIVE): plain Claude Code, on its own OAuth/Max-plan login —
+   * no baseUrl, no key file, no config entry. Never set by parseProvider.
+   */
+  native?: boolean;
+}
+
+/**
+ * Reserved provider name for plain Anthropic: Claude Code's own OAuth/Max-plan
+ * login, no base URL override and no API key. It never needs (or accepts) a
+ * `providers.anthropic` config entry — resolveTarget/mustExist synthesize it
+ * on demand via `nativeAnthropicProvider()`.
+ */
+export const ANTHROPIC_NATIVE = "anthropic";
+
+/**
+ * The synthetic provider object for ANTHROPIC_NATIVE. `baseUrl` is empty and
+ * `models.default` is "" (unresolved) so buildRunEnv/run.ts skip passing
+ * --model and env overrides entirely, leaving Claude Code to use whatever it
+ * would use when run bare.
+ */
+export function nativeAnthropicProvider(): WorkerProvider {
+  return {
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: "",
+    keyFile: null,
+    models: { default: "" },
+    env: {},
+    native: true,
+  };
+}
+
+/** Provider by name, synthesizing ANTHROPIC_NATIVE when it is asked for. */
+export function getProviderOrNative(
+  config: { providers: Record<string, WorkerProvider> },
+  name: string
+): WorkerProvider | undefined {
+  if (name === ANTHROPIC_NATIVE) return nativeAnthropicProvider();
+  return config.providers[name];
 }
 
 export interface WorkersPaneConfig {
@@ -319,6 +395,12 @@ function str(v: unknown): string {
 }
 
 function parseProvider(name: string, raw: unknown): WorkerProvider {
+  if (name === ANTHROPIC_NATIVE) {
+    bad(
+      `.providers.${name}`,
+      `"${ANTHROPIC_NATIVE}" is reserved for plain Anthropic (Claude Code's own OAuth/Max-plan login) and cannot be configured here — remove this entry; use --provider ${ANTHROPIC_NATIVE} or "pai worker providers use ${ANTHROPIC_NATIVE}" instead`
+    );
+  }
   if (typeof raw !== "object" || raw === null) bad(`.providers.${name}`, "must be an object");
   const p = raw as Record<string, unknown>;
 
@@ -429,6 +511,52 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     tags = p.tags as ProviderTag[];
   }
 
+  let usage: ProviderUsage | undefined;
+  if (p.usage !== undefined) {
+    if (typeof p.usage !== "object" || p.usage === null || Array.isArray(p.usage)) {
+      bad(`.providers.${name}.usage`, "must be an object");
+    }
+    const u = p.usage as Record<string, unknown>;
+    const usageUrl = str(u.url);
+    if (!usageUrl) bad(`.providers.${name}.usage.url`, "is required");
+    if (!Array.isArray(u.windows) || u.windows.length === 0) {
+      bad(`.providers.${name}.usage.windows`, "must be a non-empty array");
+    }
+    const windows: UsageWindow[] = [];
+    for (const [i, wRaw] of (u.windows as unknown[]).entries()) {
+      const wpath = `.providers.${name}.usage.windows[${i}]`;
+      if (typeof wRaw !== "object" || wRaw === null || Array.isArray(wRaw)) {
+        bad(wpath, "must be an object");
+      }
+      const w = wRaw as Record<string, unknown>;
+      const wname = str(w.name);
+      if (!wname) bad(`${wpath}.name`, "is required");
+      const percent = str(w.percent);
+      if (!percent) bad(`${wpath}.percent`, "is required (a jq expression yielding 0–100)");
+      const resetUnit = w.resetUnit === undefined ? undefined : str(w.resetUnit);
+      if (resetUnit !== undefined && resetUnit !== "ms" && resetUnit !== "s" && resetUnit !== "iso") {
+        bad(`${wpath}.resetUnit`, `must be "ms", "s" or "iso"`);
+      }
+      windows.push({
+        name: wname,
+        percent,
+        ...(str(w.resetAt) ? { resetAt: str(w.resetAt) } : {}),
+        ...(resetUnit ? { resetUnit } : {}),
+      });
+    }
+    const ttlSeconds = u.ttlSeconds === undefined ? undefined : u.ttlSeconds;
+    if (ttlSeconds !== undefined && (typeof ttlSeconds !== "number" || ttlSeconds <= 0)) {
+      bad(`.providers.${name}.usage.ttlSeconds`, "must be a positive number of seconds");
+    }
+    usage = {
+      url: usageUrl,
+      ...(str(u.authHeader) ? { authHeader: str(u.authHeader) } : {}),
+      ...(str(u.label) ? { label: str(u.label) } : {}),
+      windows,
+      ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+    };
+  }
+
   return {
     enabled: p.enabled === undefined ? true : p.enabled === true,
     protocol,
@@ -445,6 +573,7 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
+    ...(usage ? { usage } : {}),
   };
 }
 

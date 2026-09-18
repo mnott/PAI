@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunEnv } from "./run-env.js";
-import type { WorkerProvider } from "./config.js";
+import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
 const keyFile = join(dir, "key");
@@ -85,6 +85,34 @@ describe("buildRunEnv session identity", () => {
       if (saved.CLAUDECODE === undefined) delete process.env.CLAUDECODE;
       else process.env.CLAUDECODE = saved.CLAUDECODE;
       if (saved.PAI_WORKER !== undefined) process.env.PAI_WORKER = saved.PAI_WORKER;
+    }
+  });
+});
+
+describe("buildRunEnv native anthropic", () => {
+  it("strips ANTHROPIC_BASE_URL/AUTH_TOKEN/API_KEY even when the parent shell has them set", () => {
+    const saved = { ...process.env };
+    process.env.ANTHROPIC_BASE_URL = "https://leaked.example.invalid/api/anthropic";
+    process.env.ANTHROPIC_AUTH_TOKEN = "leaked-token";
+    process.env.ANTHROPIC_API_KEY = "leaked-key";
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "leaked-model";
+    try {
+      const env = buildRunEnv(nativeAnthropicProvider(), true);
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+      expect(env.PAI_WORKER).toBe("1");
+    } finally {
+      for (const k of [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      ]) {
+        delete process.env[k];
+      }
+      for (const [k, v] of Object.entries(saved)) process.env[k] = v;
     }
   });
 });
