@@ -1,34 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0066 - 2026-09-18 - New Session" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:03:36.831Z" -->
+<!-- pai:checkpoint authored="auto" session="0067 - 2026-09-18 - Provider Routing And Worker Configuration Ecosyste" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:09:01.016Z" -->
 
-> **Last session:** 0066 - 2026-09-18 - New Session
-> **Paused at:** 2026-09-18T17:03:36.831Z
+> **Last session:** 0067 - 2026-09-18 - Provider Routing And Worker Configuration Ecosyste
+> **Paused at:** 2026-09-18T17:09:01.016Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3a442dd4-5496-4f1f-a650-91c6bc287425`
 
 T
-i=ckpt-2026-09-18T17-03-36.797Z
-g=that's interesting to know. what's the tooling on deciding what worker type / provider we want to use for a given task?
-d=currently says, usage n/a and also   "k3" isn't described by this version's model catalog; update Claude Code, or map it with behavesAs on a modelPicker row (or modelOverrides, if it is a provider id… | ok but still  💎 Context: ... (80% left) │ kimi usage n/a | retry | I can't see your personal quota numbers from here, but here's how quota works and how to check yours:     How to check your actual quota    • In this CLI: type /usage to see your current usage and rem… | if I have a kimi worker and do /usage, it says not known command, so perhaps it isn't passed through
+i=ckpt-2026-09-18T17-09-00.919Z
+g=so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
+d=cpp merge everything here for pai and cpp | you should use a lightweight worker | but glm is out of credits, so use one of anthropic | 2 workers open do we still need them | so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
 t=?
 @1=Notes/TODO.md
-@2=README.md
-@3=docs/provider-abstraction.md
-@4=src/hooks/ts/pre-tool-use/route-agents-to-worker.ts
-@5=src/workers/config.test.ts
-@6=src/workers/config.ts
-@7=src/workers/providers.ts
-@8=src/workers/render.ts
-@9=src/workers/routing.test.ts
-@10=src/workers/routing.ts
-@11=src/workers/run-env.test.ts
-@12=src/workers/run-env.ts
-@13=src/workers/run.ts
-@14=statusline-command.sh
-z=auto ckpt (no model); worker/cache-keepalive@a051dcb merge worker 20260918-135448-54039 (worker run cwd flag); 14 dirty; git status for detail
+z=auto ckpt (no model); worker/cache-keepalive@5d93cde feat(worker,daemon): keepalive prompt cache and provider routing; 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 

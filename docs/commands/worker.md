@@ -28,6 +28,7 @@ pai worker <subcommand> [options]
 | [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
 | [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
+| [`pai worker kill <id>`](#pai-worker-kill-id) | Send SIGTERM to a running worker process |
 | [`pai worker controls <id> <who>`](#pai-worker-controls-id-who) | Hand the desktop controls (clickr) to a worker or take them back. |
 | [`pai worker resume <id> <text>`](#pai-worker-resume-id-text) | Continue a finished worker on the same provider: claude --resume <session> |
 | [`pai worker proxy [stop]`](#pai-worker-proxy-stop) | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
@@ -212,6 +213,17 @@ Never busy-wait for a worker: no sleep loops, no sleep-then-`pai worker ps` poll
 ### pai worker discard <id>
 
 Drop a worker's worktree and branch, keeping nothing
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+
+### pai worker kill <id>
+
+Send SIGTERM to a running worker process
 
 **Arguments**
 
