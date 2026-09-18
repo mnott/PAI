@@ -1,21 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0058 - 2026-09-17 - Provider Independence Doc, Glm Workers, Memory Notes" session-id="3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c" ts="2026-09-17T23:43:27.497Z" -->
+<!-- pai:checkpoint authored="auto" session="0062 - 2026-09-18 - Statusline Worker Rendering Srcworkersrenderts" session-id="847da891-1a89-492c-8808-f4ffabf6e1df" ts="2026-09-18T09:32:20.722Z" -->
 
-> **Last session:** 0058 - 2026-09-17 - Provider Independence Doc, Glm Workers, Memory Notes
-> **Paused at:** 2026-09-17T23:43:27.497Z
+> **Last session:** 0062 - 2026-09-18 - Statusline Worker Rendering Srcworkersrenderts
+> **Paused at:** 2026-09-18T09:32:20.722Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 3ad4b9e2-cc4c-4740-93b6-92eb67d8e38c`
+> Resume with: `claude --resume 847da891-1a89-492c-8808-f4ffabf6e1df`
 
 T
-i=ckpt-2026-09-17T23-43-27.335Z
-g=[Session:Browsr] Bug report (worker system): worktree mode leaves workers TOOL-BLIND. Repro tonight: pai worker run --class implement (default worktree, repo has a commit) → worker transcript shows re…
-d=why does it keep hitting these  :47 │ $ python3 -c " import json d = json.lo          │ ad(open('/Users/i052341/.config/pai/co          │ nfig.json')) w = d.get('workers', {})          │ p = w.get('pr… | well heredoc should never be used. it keeps failing because of parsing, this ban is ours. but it should be respected and other means used | they keep trying  $ python3 -c " import json, re src = o          │ pen('/Users/i052341/.claude/projects/-          │ Users-i052341-Daten-Cloud-Development-          │ ai-browsr/20499742-b427-4d8d-9cd… | they shouldnt be intercepted. what is so hard just witing a small temp script, then execute. every time. not like "try oneliner, stop it, then do something else" | and your new workers still capture my input!!!!!  Fri 18 | 01:31:12 ️ ➜ r exec pai worker follow "20260918-013110-8681" --auto-exit 10 fc: too many arguments i052341 in  HKP9MJXWJY in ~ via 🥟 v1.3.5…
+i=ckpt-2026-09-18T09-32-20.690Z
+g=nothing works. go further back to 12pm yesterday
+d=ok then try to show me another agent which will show what the does to identify and merge | the pane does not open for agents. go back in the git history to when it was still working like 1800 or so yesterday. see what broke. | well prove it then show it | nothing works. go further back to 12pm yesterday | ok then try to show me another agent which will show what the does to identify and merge
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@aff9b23 merge worker 20260918-012458-97519 (worker supervision events); 1 dirty; git status for detail
+z=auto ckpt (no model); main@de2e2db fix(workers): pane command is one exec-able line, no shell syntax; 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
