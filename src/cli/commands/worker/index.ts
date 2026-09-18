@@ -34,7 +34,7 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
-import { loadStatus } from "../../../workers/status.js";
+import { loadStatus, saveStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
@@ -360,6 +360,43 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .action((id: string) => {
       try {
         console.log(discardWorker(currentLogDir(), id));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("kill <id>")
+    .description("Send SIGTERM to a running worker process")
+    .action((id: string) => {
+      try {
+        const logDir = currentLogDir();
+        const status = loadStatus(logDir, id);
+        if (!status) {
+          fail(new Error(`no worker named "${id}"`));
+          return;
+        }
+        if (status.state !== "running") {
+          fail(new Error(`worker ${id} is not running (state: ${status.state})`));
+          return;
+        }
+        if (!status.pid || status.pid <= 0) {
+          fail(new Error(`worker ${id} has no pid recorded`));
+          return;
+        }
+        try {
+          process.kill(status.pid, "SIGTERM");
+          status.state = "killed";
+          saveStatus(logDir, status);
+          console.log(`sent SIGTERM to worker ${id} (pid ${status.pid})`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("ESRCH")) {
+            fail(new Error(`process ${status.pid} not found (already exited?)`));
+          } else {
+            fail(e);
+          }
+        }
       } catch (e) {
         fail(e);
       }
