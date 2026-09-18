@@ -116,11 +116,24 @@ describe("readItermPlist", () => {
 });
 
 describe("followCommand", () => {
-  it("is plain: no leading space, no exec — iTerm dies on both", () => {
+  it("is one exec-able line: absolute node on the CLI entry, unquoted wid", () => {
     const cmd = followCommand("20260918-104952-27763", 60);
-    expect(cmd).toBe('pai worker follow "20260918-104952-27763" --auto-exit 60');
+    const suffix = " worker follow 20260918-104952-27763 --auto-exit 60";
+    expect(cmd.endsWith(suffix)).toBe(true);
+    const bin = cmd.slice(0, cmd.length - suffix.length);
+    expect(bin.startsWith(`${process.execPath} `)).toBe(true);
+    // the CLI part is the absolute running pai, or the PATH-lookup fallback
+    expect(bin.slice(process.execPath.length + 1)).toMatch(/(^|\/)pai$/);
     expect(cmd).not.toMatch(/^\s/); // a leading space killed the pane at birth
     expect(cmd).not.toMatch(/\bexec\b/); // exec made iTerm fail to run it at all
+  });
+
+  it("carries no shell syntax: iTerm execs the split command, not a shell", () => {
+    // proven live: `export …; …` and redirects die instantly, plain execs survive
+    const cmd = followCommand("20260918-104952-27763", 60);
+    expect(cmd).not.toContain(";");
+    expect(cmd).not.toContain("export");
+    expect(cmd).not.toContain('"'); // quotes would reach execve as literal characters
   });
 });
 
