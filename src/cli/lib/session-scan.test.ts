@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -124,5 +124,42 @@ describe("a project whose sessions have all ended is still findable", () => {
     const found = await scan("named");
     expect(found).toHaveLength(1);
     expect(found[0].friendlyName).toBe("Paperfull");
+  });
+});
+
+describe("the parse cache", () => {
+  // The cache trades "always re-read every file" for "(path, mtime, size)
+  // freshness". These tests pin the two properties that make that safe:
+  // an unchanged file yields the identical result from cache, and a changed
+  // file is re-parsed rather than answered from the stale entry.
+  beforeEach(() => {
+    const dir = projectDir();
+    writeFileSync(join(dir, `${RUNNING}.jsonl`), SYSTEM_LINE + USER_LINE);
+    writeFileSync(join(dir, "sessions", `${FINISHED_NEW}.jsonl`), USER_LINE);
+  });
+
+  it("answers a second scan from cache with identical results", async () => {
+    const first = await scan("named");
+    const second = await scan("named");
+    expect(second).toEqual(first);
+  });
+
+  it("persists the cache under the (sandboxed) PAI config dir", async () => {
+    await scan("named");
+    expect(existsSync(join(home, ".config", "pai", "session-scan-cache.json"))).toBe(true);
+  });
+
+  it("re-parses a file whose content changed", async () => {
+    const before = await scan("named");
+    // Same uuid, different content AND size — a rewrite the cache key must see.
+    writeFileSync(
+      join(projectDir(), `${RUNNING}.jsonl`),
+      SYSTEM_LINE + SYSTEM_LINE + USER_LINE
+    );
+    const after = await scan("named");
+    const running = (rows: typeof before) => rows.find((s) => s.uuid === RUNNING);
+    expect(running(after)?.topLevelSystemLines).toBe(
+      (running(before)?.topLevelSystemLines ?? 0) + 1
+    );
   });
 });
