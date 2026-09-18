@@ -1,0 +1,82 @@
+# Worker prompt-cache keepalive
+
+Why `workers.cacheKeepaliveSecs` exists, what the provider cache actually
+does, and the measured numbers behind the default.
+
+## Mechanism
+
+Workers on an anthropic-compat GLM endpoint (`protocol: "anthropic"`) carry no
+`cache_control` blocks, yet the endpoint caches implicitly: the final `result`
+usage of a real worker run showed `cache_read_input_tokens: 1,129,984` with
+`cache_creation_input_tokens: 0` (worker `20260918-120947-11956`, 2026-09-18).
+
+The keepalive arms that implicit cache for future spawns with a trivial
+single-turn worker (`src/workers/keepalive.ts`) driven by the daemon on
+`workers.cacheKeepaliveSecs` (`src/daemon/daemon/scheduler.ts`,
+`startCacheKeepalive`). The beat goes through `runWorker` itself — the
+maximal sharing of prefix construction (env, tool grants, contract prompt) —
+so a beat and a real worker differ in nothing but the user message. Beats run
+in the workers logDir, adopt no session identity, notify nobody, and write one
+`WORKER-KEEPALIVE` ledger line each; on a Postgres backend they also store one
+observation row via `storeObservationWithProject`.
+
+Measurement constraints (measured, not assumed): per-turn `assistant` events
+on this endpoint always carry `usage: {input_tokens: 0, output_tokens: 0}`
+with no cache fields; the only real usage is the final `result` event. A
+single-turn worker therefore reads its first-turn usage straight off its
+result line, and `duration_api_ms` is the TTFT proxy.
+
+## Measured numbers (2026-09-18, probe `scripts/probe-cache-keepalive.ts`)
+
+Every spawn is a fresh claude process and session; prompt identical; class
+`simple` on glm-5.3-flash. "gap" = time between the two spawns of a pair.
+
+| pair | gap | spawn | input_tokens | cache_read | cache_creation | duration_api_ms |
+|------|-----|-------|--------------|-----------|----------------|-----------------|
+| back-to-back | ~16 s | 1 | 17,906 | 0 | 0 | 12,911 |
+| back-to-back | ~16 s | 2 | 15,282 | **2,624** | 0 | **7,316** |
+| gap 120 s | ~2.2 min | 1 | 17,957 | 0 | 0 | 8,401 |
+| gap 120 s | ~2.2 min | 2 | 17,909 | 0 | 0 | 9,812 |
+| gap 240 s | ~4.4 min | 1 | 17,909 | 0 | 0 | 10,827 |
+| gap 240 s | ~4.4 min | 2 | 17,881 | 0 | 0 | 10,037 |
+| gap 360 s | 6 min | 1 | 17,949 | 0 | 0 | 10,132 |
+| gap 360 s | 6 min | 2 | 17,951 | 0 | 0 | 9,714 |
+
+## Armed-cadence proof (60 s beats through the real beat code, then a pair)
+
+| run | after | input_tokens | cache_read | duration_api_ms |
+|-----|-------|--------------|-----------|-----------------|
+| beat 125003 | — | 14,445 | 0 | 5,307 |
+| beat 125111 | ~68 s | 14,010 | 0 | 5,480 |
+| beat 125220 | ~69 s | 14,010 | 0 | 8,577 |
+| probe-1 125232 | ~12 s | 17,989 | 0 | 6,687 |
+| probe-2 125242 | ~10 s | 17,736 | **256** | 10,034 |
+
+Ledger lines: `WORKER-KEEPALIVE id=… provider=glm model=glm-5.3-flash
+input_tokens=… cache_read_input_tokens=… duration_api_ms=…` land as designed.
+
+## Decision
+
+1. **Cross-session implicit caching exists, but only at seconds range.**
+   Spawn 2 of the back-to-back pair is a different process and session than
+   spawn 1 and still got `cache_read > 0` — but the only positive readings
+   across nine pairs came 10–16 s after the previous identical request
+   (2,624 tokens at ~16 s; 256 at ~10 s), and the hit size is unstable. At
+   every gap ≥ 60 s — including a 60 s heartbeat cadence proven live through
+   the shipped beat code — every spawn was cold.
+2. **A keepalive therefore cannot hold this cache at any cadence the
+   constraints allow** ("cadence is minutes, not seconds"): holding it would
+   need a beat every few seconds, billing ~14–18k fresh input tokens per
+   beat around the clock, to serve at best a few hundred to ~2.6k cached
+   tokens to the next spawn. The drafted "default = TTL/2" rule assumed a
+   TTL in minutes; the measured TTL/2 ≈ 5–30 s, which no sane daemon
+   interval meets, and a 60 s default was disproven by the armed proof.
+3. **Therefore `DEFAULT_CACHE_KEEPALIVE_SECS = 0`** (a deliberate deviation
+   from the drafted spec, per its own STOP-on-negative-evidence rule): the
+   instrument ships — knob, beat, daemon wiring, ledger, observations, tests
+   — and stays off unless the operator explicitly arms it
+   (`"cacheKeepaliveSecs": <secs>` in the workers section). The honest
+   reading of the measurement: this endpoint's implicit cache is a
+   short-range replay buffer, not a warmable baseline; new-worker cold starts
+   cannot be removed by a heartbeat, and the fix would have to live in the
+   provider (explicit `cache_control` support) rather than in the daemon.
