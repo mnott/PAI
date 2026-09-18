@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextLabel, contextPercent, UNLABELED, type WorkerStatus, alive } from "./status.js";
+import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, alive } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -548,13 +548,9 @@ export function stepOf(last: string): string {
  */
 export function renderStatusLine(mine: WorkerStatus[], now: Date = new Date()): string {
   if (!mine.length) return "";
-  // Migration shim: a running entry from before the origin flag, carrying the
-  // unlabeled placeholder and not one turn yet, is the chat pane — not a
-  // worker row and not counted in ▶N. Removable once every pane runs code
-  // that writes `origin`; the flag itself stays the real discriminator.
-  const isChat = (s: WorkerStatus): boolean =>
-    s.origin === "chat" ||
-    (!s.origin && (s.label === UNLABELED || s.label === "(no prompt)") && s.turns === 0);
+  // isChatPane carries the migration shim for pre-`origin` entries (see
+  // status.ts): the chat pane is not a worker row and not counted in ▶N.
+  const isChat = isChatPane;
   const chat = mine.find((s) => isChat(s) && s.state === "running" && alive(s.pid));
   const running = mine
     .filter((s) => !isChat(s) && s.state === "running" && alive(s.pid))

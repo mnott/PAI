@@ -48,6 +48,8 @@ interface FakeOptions {
   itermSession?: string | null;
   parent?: string;
   pid?: number;
+  origin?: WorkerStatus["origin"];
+  label?: string;
 }
 
 /** One ledger row with everything defaulted to "healthy and owned". */
@@ -75,6 +77,8 @@ function fake(o: FakeOptions = {}): WorkerStatus {
         : {}),
     ...(o.itermSession ? { session: { id: o.itermSession, name: "orchestrator" } } : {}),
     ...(o.parent ? { parent: o.parent, stage: "implement" } : {}),
+    ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.label !== undefined ? { label: o.label } : {}),
   };
 }
 
@@ -141,6 +145,27 @@ describe("condition detection", () => {
   it("honours a custom threshold", () => {
     expect(detect([fake({ state: "running", updatedMinsAgo: 3 })], 2)).toHaveLength(1);
     expect(detect([fake({ state: "running", updatedMinsAgo: 3 })], 5)).toHaveLength(0);
+  });
+
+  it("never reports the interactive chat pane as stalled, however idle", () => {
+    // origin "chat" is the pane, not a task worker: idle is its healthy state
+    expect(detect([fake({ origin: "chat", turns: 0, updatedMinsAgo: 816 })])).toHaveLength(0);
+    // pre-`origin` status files: the unlabeled no-turns shape reads as chat too
+    expect(detect([fake({ label: "unlabeled", turns: 0, updatedMinsAgo: 816 })])).toHaveLength(0);
+  });
+
+  it("still reports a task worker with the same idle timestamp as stalled", () => {
+    const [ev] = detect([fake({ origin: "spawn", turns: 0, updatedMinsAgo: 816 })]);
+    expect(ev.kind).toBe("stalled");
+    expect(ev.stalledMin).toBe(816);
+  });
+
+  it("keeps finished and failed detection for the interactive chat pane", () => {
+    const [fin] = detect([fake({ origin: "chat", state: "done", rc: 0 })]);
+    expect(fin.kind).toBe("finished");
+    const [bad] = detect([fake({ origin: "chat", state: "running", pid: 0, updatedMinsAgo: 20 })]);
+    expect(bad.kind).toBe("failed");
+    expect(bad.text).toContain("runner gone");
   });
 
   it("ignores workers no session owns", () => {
