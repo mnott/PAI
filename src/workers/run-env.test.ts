@@ -1,8 +1,9 @@
 /**
  * Tests for the spawn environment: a headless worker must not inherit the
  * spawner's session identity (messaging socket, session id, nesting markers)
- * — inherited, a worktree-mode child starts with its core tools deferred out
- * of reach and only the tool-registry search callable (2026-09-18).
+ * nor the spawner's harness settings — ENABLE_TOOL_SEARCH arrives through the
+ * user settings' env block and, inherited, leaves the child with only the
+ * tool-registry search callable (2026-09-18).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -54,6 +55,20 @@ describe("buildRunEnv session identity", () => {
     } finally {
       for (const k of [...SESSION_IDENTITY, "ANTHROPIC_API_KEY"]) delete process.env[k];
       for (const [k, v] of Object.entries(saved)) process.env[k] = v;
+    }
+  });
+
+  it("strips an inherited ENABLE_TOOL_SEARCH from a headless run", () => {
+    const saved = { ...process.env };
+    // the user settings' env block injects this into every claude process,
+    // so a pai spawned from a session's Bash carries it into worker children
+    process.env.ENABLE_TOOL_SEARCH = "true";
+    try {
+      const env = buildRunEnv(provider, true);
+      expect(env.ENABLE_TOOL_SEARCH, "core tools must not be deferred away").toBeUndefined();
+    } finally {
+      if (saved.ENABLE_TOOL_SEARCH === undefined) delete process.env.ENABLE_TOOL_SEARCH;
+      else process.env.ENABLE_TOOL_SEARCH = saved.ENABLE_TOOL_SEARCH;
     }
   });
 
