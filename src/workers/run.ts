@@ -13,8 +13,12 @@
  *     demand, the provider name in the URL path); codex-engine providers run
  *     the Codex CLI.
  *   - headless (-p): strict empty MCP config unless the caller brings one or
- *     names servers via --mcp / a role (then a filtered <id>.mcp.json),
- *     PAI_WORKER=1 so PAI's per-session hooks leave it alone, the worker
+ *     names servers via --mcp / a role (then a filtered <id>.mcp.json), the
+ *     core tool grants the caller did not bring (a headless run cannot
+ *     approve a permission-gated tool mid-flight — with no grant at all,
+ *     claude drops the file/shell tools entirely and the worker is
+ *     tool-blind), PAI_WORKER=1 so PAI's per-session hooks leave it alone,
+ *     the worker
  *     contract appended to the system prompt, `--input-format stream-json`
  *     with the prompt as the first stdin user message (the operator socket
  *     can add more mid-run), stream-json mirroring (every line stamped `_ts`)
@@ -327,6 +331,21 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
 }
 
+/**
+ * The core tools a headless run grants when the caller brings none of its
+ * own. Permission-gated tools (Bash, Read, Write, …) are never offered to a
+ * headless session that has no allow rule for them — the child starts with
+ * only the tools that never ask (tool search, web, cron, tasks) and cannot
+ * touch a file or shell (2026-09-18). A caller's own --allowedTools is a
+ * deliberate restriction and passes through untouched.
+ */
+const DEFAULT_WORKER_TOOLS = "Read,Edit,Write,Bash,Grep,Glob";
+
+/** The --allowedTools args a headless run needs; [] when the caller granted. */
+export function headlessToolGrants(allowedTools: string[]): string[] {
+  return allowedTools.length ? [] : ["--allowedTools", DEFAULT_WORKER_TOOLS];
+}
+
 interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
@@ -447,9 +466,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // In stdin mode the prompt moves to the first user message on stdin, so it
   // must come off the command line (bare -p stays: stream-json needs --print).
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
+  const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
   const cmd: string[] = ["claude"];
   if (!parsed.callerModel) cmd.push("--model", model);
-  cmd.push(...mcpArgs, ...restArgs);
+  cmd.push(...mcpArgs, ...toolArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
     if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
