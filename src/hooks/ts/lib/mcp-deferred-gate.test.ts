@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   decideMcpGate,
   isMcpTool,
+  lastToolSearchSurfacingIndex,
   scanTranscriptEvidence,
   type GateHookInput,
 } from "./mcp-deferred-gate.js";
@@ -46,6 +47,9 @@ const GATE_ERROR =
   "available via ToolSearch. Their schemas are NOT loaded — calling them directly will " +
   'fail. Use ToolSearch with query "select:mcp__aibroker__aibroker_rename" to load tool ' +
   "schemas before calling them.";
+
+/** What a mid-session re-registration's stale-handle rejection looks like (2026-09-18 incident). */
+const STALE_ERROR = "Error: 411 deferred tools are no longer available: aibroker_rename";
 
 // ---------------------------------------------------------------------------
 // isMcpTool
@@ -139,6 +143,75 @@ describe("decideMcpGate: deferred and failed-call contexts", () => {
     expect(decision.observation?.type).toBe("decision");
     expect(decision.observation?.tool_name).toBe(TOOL);
     expect(decision.observation?.title).toContain("MCP deferred-tool gate");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decideMcpGate — (a2) stale deferred-tool handles after a re-registration
+// ---------------------------------------------------------------------------
+
+describe("decideMcpGate: stale deferred-tool handles", () => {
+  it("corrects the retry after a re-registration invalidated the handle (2026-09-18 incident)", () => {
+    // The tool was surfaced by ToolSearch earlier — evidence would normally
+    // pass it through — but the handle is dead now, so the gate must deny.
+    const transcript = [
+      toolUseLine("t0", "ToolSearch", { query: `select:${TOOL}` }),
+      toolResultLine("t0"),
+      toolUseLine("t1", TOOL, { from: "a", to: "b" }),
+      toolResultLine("t1", STALE_ERROR),
+    ].join("\n");
+    const decision = decideMcpGate(hookInput(), transcript);
+
+    expect(decision.action).toBe("correct");
+    const reason = JSON.parse(decision.output).hookSpecificOutput.permissionDecisionReason;
+    expect(reason).toContain("ToolSearch");
+    expect(reason).toContain(`select:${TOOL}`);
+    expect(reason.toLowerCase()).toContain("not disconnected");
+    expect(reason).toContain("do not report an outage");
+  });
+
+  it("re-arms even when the tool ran successfully before the re-registration", () => {
+    const transcript = [
+      toolUseLine("t0", TOOL, { from: "a", to: "b" }),
+      toolResultLine("t0"),
+      toolUseLine("t1", TOOL, { from: "a", to: "b" }),
+      toolResultLine("t1", STALE_ERROR),
+    ].join("\n");
+    expect(decideMcpGate(hookInput(), transcript).action).toBe("correct");
+  });
+
+  it("passes once a ToolSearch after the invalidation reloaded the entry", () => {
+    const transcript = [
+      toolUseLine("t1", TOOL, { from: "a", to: "b" }),
+      toolResultLine("t1", STALE_ERROR),
+      toolUseLine("t2", "ToolSearch", { query: `select:${TOOL}` }),
+      toolResultLine("t2"),
+    ].join("\n");
+    const decision = decideMcpGate(hookInput(), transcript);
+    expect(decision.action).toBe("pass");
+    expect(JSON.parse(decision.output).hookSpecificOutput.permissionDecision).toBe("allow");
+  });
+
+  it("corrects when only the tool input carries the stale-handle text", () => {
+    const input = hookInput();
+    input.tool_input = { text: `411 ${"deferred tools are no longer available"}` };
+    expect(decideMcpGate(input, "").action).toBe("correct");
+  });
+});
+
+describe("lastToolSearchSurfacingIndex", () => {
+  it("finds the last surfacing ToolSearch and returns -1 when absent", () => {
+    const transcript = [
+      toolUseLine("t1", TOOL, { from: "a", to: "b" }),
+      toolResultLine("t1", STALE_ERROR),
+      toolUseLine("t2", "ToolSearch", { query: `select:${TOOL}` }),
+      toolResultLine("t2"),
+    ].join("\n");
+    // After the stale error, i.e. the remedy postdates the invalidation.
+    expect(lastToolSearchSurfacingIndex(transcript, TOOL)).toBeGreaterThan(
+      transcript.lastIndexOf("deferred tools are no longer available"),
+    );
+    expect(lastToolSearchSurfacingIndex("not json", TOOL)).toBe(-1);
   });
 });
 

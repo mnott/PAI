@@ -7,6 +7,13 @@
  * outage that never happened (observed with a rename tool while every server
  * was connected).
  *
+ * A second failure shape: when an MCP server re-registers mid-session, the
+ * session's deferred tool handles are invalidated and calls fail with the
+ * harness text "N deferred tools are no longer available" (observed 2026-09-18,
+ * N=411, a rename tool). Sessions misread that as a disconnect too. The gate
+ * denies that shape with the same ToolSearch remedy; a ToolSearch that
+ * surfaces the tool after the last invalidation re-arms the pass-through.
+ *
  * The decision is evidence-based: the session transcript either shows the tool
  * was surfaced (a ToolSearch mentioning it) or already ran successfully — in
  * which case the schema is loaded and the call passes through untouched — or
@@ -64,6 +71,12 @@ export const PASS_OUTPUT = JSON.stringify({
   hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
 });
 
+/**
+ * Harness text emitted when a mid-session MCP server re-registration
+ * invalidates the session's deferred tool handles.
+ */
+export const STALE_HANDLE_MARKER = "deferred tools are no longer available";
+
 /** True for MCP tool names (`mcp__<server>__<tool>`), false for everything else. */
 export function isMcpTool(name: string): boolean {
   return name.startsWith("mcp__") && name.split("__").length >= 3 && !!name.split("__")[2];
@@ -116,14 +129,92 @@ export function scanTranscriptEvidence(transcriptText: string, toolName: string)
   return { surfacedByToolSearch, succeededBefore };
 }
 
+/**
+ * Byte index of the last transcript line where a ToolSearch call surfaced
+ * `toolName` (same liberal match as scanTranscriptEvidence), or -1 if never.
+ * Used to order the stale-handle remedy against the last invalidation.
+ */
+export function lastToolSearchSurfacingIndex(
+  transcriptText: string,
+  toolName: string,
+): number {
+  let last = -1;
+  let offset = 0;
+  for (const line of transcriptText.split("\n")) {
+    const start = offset;
+    offset += line.length + 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const content = (entry as { message?: { content?: unknown } })?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (
+        block?.type === "tool_use" &&
+        block.name === "ToolSearch" &&
+        JSON.stringify(block.input ?? "").includes(toolName)
+      ) {
+        last = start;
+      }
+    }
+  }
+  return last;
+}
+
+/** The ToolSearch remedy shared by both correction shapes. */
+function buildRemedy(toolName: string): string {
+  return (
+    `Remedy: call ToolSearch with query "select:${toolName}" to load the fresh registry ` +
+    `entry, then call ${toolName} again with the same arguments.`
+  );
+}
+
 /** The corrective instruction fed back to the session on a deny. */
 export function buildCorrection(toolName: string): string {
   return (
     `${toolName} is a deferred MCP tool: its schema is not loaded in this session yet, so this ` +
     `call would fail input validation. The MCP server is NOT disconnected — do not report an ` +
-    `outage and do not retry the call unchanged. Remedy: call ToolSearch with query ` +
-    `"select:${toolName}" to load the schema, then call ${toolName} again with the same arguments.`
+    `outage and do not retry the call unchanged. ${buildRemedy(toolName)}`
   );
+}
+
+/** Same remedy for the stale-handle shape: a re-registration invalidated a loaded schema. */
+export function buildStaleHandleCorrection(toolName: string): string {
+  return (
+    `${toolName}'s deferred tool handle is stale: the MCP server re-registered mid-session, ` +
+    `invalidating the schema this session had loaded ("${STALE_HANDLE_MARKER}"). The MCP ` +
+    `server is NOT disconnected — do not report an outage and do not retry the call ` +
+    `unchanged. ${buildRemedy(toolName)}`
+  );
+}
+
+/** The deny decision shared by both failure shapes. */
+function correctDecision(toolName: string, reason: string, narrative: string): GateDecision {
+  return {
+    action: "correct",
+    output: JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: reason,
+      },
+    }),
+    observation: {
+      type: "decision",
+      title: `MCP deferred-tool gate corrected: ${toolName}`,
+      narrative,
+      tool_name: toolName,
+      tool_input_summary: toolName,
+      files_read: [],
+      files_modified: [],
+      concepts: ["mcp", "deferred", "toolsearch"],
+    },
+  };
 }
 
 /**
@@ -136,31 +227,35 @@ export function decideMcpGate(input: GateHookInput, transcriptText: string): Gat
     return { action: "pass", output: PASS_OUTPUT, observation: null };
   }
 
+  // Stale-handle shape: a mid-session re-registration invalidated loaded
+  // schemas. Overrides the normal evidence pass-through, because a tool that
+  // was surfaced (or even ran) earlier can still have a dead handle now. The
+  // gate re-arms to pass-through only once a ToolSearch re-surfaced the tool
+  // after the last invalidation.
+  const toolInputText = JSON.stringify(input.tool_input ?? "");
+  const lastStale = transcriptText.lastIndexOf(STALE_HANDLE_MARKER);
+  if (toolInputText.includes(STALE_HANDLE_MARKER) || lastStale !== -1) {
+    const remedyAt = lastToolSearchSurfacingIndex(transcriptText, toolName);
+    if (remedyAt === -1 || remedyAt <= lastStale) {
+      return correctDecision(
+        toolName,
+        buildStaleHandleCorrection(toolName),
+        `Blocked a retry against a stale deferred-tool handle for ${toolName} and issued ` +
+          "the ToolSearch remedy (server not disconnected)",
+      );
+    }
+    return { action: "pass", output: PASS_OUTPUT, observation: null };
+  }
+
   const evidence = scanTranscriptEvidence(transcriptText, toolName);
   if (evidence.surfacedByToolSearch || evidence.succeededBefore) {
     return { action: "pass", output: PASS_OUTPUT, observation: null };
   }
 
-  return {
-    action: "correct",
-    output: JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: buildCorrection(toolName),
-      },
-    }),
-    observation: {
-      type: "decision",
-      title: `MCP deferred-tool gate corrected: ${toolName}`,
-      narrative:
-        `Blocked a call to deferred MCP tool ${toolName} and issued the ToolSearch remedy ` +
-        "(server not disconnected)",
-      tool_name: toolName,
-      tool_input_summary: toolName,
-      files_read: [],
-      files_modified: [],
-      concepts: ["mcp", "deferred", "toolsearch"],
-    },
-  };
+  return correctDecision(
+    toolName,
+    buildCorrection(toolName),
+    `Blocked a call to deferred MCP tool ${toolName} and issued the ToolSearch remedy ` +
+      "(server not disconnected)",
+  );
 }
