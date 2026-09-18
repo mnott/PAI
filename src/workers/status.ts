@@ -75,6 +75,19 @@ export interface WorkerStatus {
 /** Label a worker gets when launched with neither --label nor a prompt. */
 export const UNLABELED = "unlabeled";
 
+/**
+ * Whether a status is the terminal's interactive chat pane, not a spawned
+ * task worker. `origin` is the real discriminator; the fallback catches
+ * running entries from before the flag existed (unlabeled, no turns yet).
+ * Removable once every pane runs code that writes `origin`.
+ */
+export function isChatPane(s: Pick<WorkerStatus, "origin" | "label" | "turns">): boolean {
+  return (
+    s.origin === "chat" ||
+    (!s.origin && (s.label === UNLABELED || s.label === "(no prompt)") && s.turns === 0)
+  );
+}
+
 /** Context-meter percentage 0–100, null when the numbers are missing. */
 export function contextPercent(s: Pick<WorkerStatus, "contextTokens" | "contextWindow">): number | null {
   if (!s.contextTokens || !s.contextWindow) return null;
