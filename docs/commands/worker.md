@@ -68,6 +68,7 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--agent <name>` | Run the agent definition ~/.claude/agents/<name>.md on a worker |  |
 | `--model <model>` | Override the provider's model for this run |  |
 | `--label <text>` | Short task label shown in ps / follow / status line |  |
+| `--cwd <dir>` | Directory the worker runs in (default: this process's cwd) |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
 | `--no-pane` | Do not open a follow pane for this worker |  |
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
