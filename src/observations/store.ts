@@ -211,6 +211,48 @@ export async function storeObservation(
 }
 
 // ---------------------------------------------------------------------------
+// Store observation with project attribution
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal registry handle the cwd → project lookup needs (better-sqlite3
+ * shaped). Kept structural so callers pass the daemon's registryDb without a
+ * cross-module import.
+ */
+export interface ProjectLookupDb {
+  prepare(sql: string): { get(...params: unknown[]): unknown };
+}
+
+export interface ObservationWithCwd extends StoreObservationInput {
+  /** Working directory the observation happened in; attributed to a project when one actively covers it. */
+  cwd?: string;
+}
+
+/**
+ * Attribute an observation to the active project covering `cwd`, then store
+ * it. One shared sequence for every daemon-side writer (IPC handler, cache
+ * keepalive) so the lookup query exists exactly once.
+ */
+export async function storeObservationWithProject(
+  db: ProjectLookupDb,
+  pool: Pool,
+  obs: ObservationWithCwd
+): Promise<number | null> {
+  let project_id: number | null = null;
+  let project_slug: string | null = null;
+  if (obs.cwd) {
+    const row = db.prepare(
+      "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
+    ).get(obs.cwd) as { id: number; slug: string } | undefined;
+    if (row) {
+      project_id = row.id;
+      project_slug = row.slug;
+    }
+  }
+  return storeObservation(pool, { ...obs, project_id, project_slug });
+}
+
+// ---------------------------------------------------------------------------
 // Query observations
 // ---------------------------------------------------------------------------
 

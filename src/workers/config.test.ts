@@ -16,6 +16,7 @@ import {
   readWorkersSection,
   writeWorkersSection,
   WorkersConfigError,
+  DEFAULT_CACHE_KEEPALIVE_SECS,
 } from "./config.js";
 
 const GLM = {
@@ -239,6 +240,34 @@ describe("writeWorkersSection — round-trip (the 2026-09-18 regression)", () =>
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("cacheKeepaliveSecs knob", () => {
+  it("defaults to DEFAULT_CACHE_KEEPALIVE_SECS when absent", () => {
+    const c = parseWorkersConfig({ providers: { glm: GLM } });
+    expect(c.cacheKeepaliveSecs).toBe(DEFAULT_CACHE_KEEPALIVE_SECS);
+    expect(DEFAULT_CACHE_KEEPALIVE_SECS).toBe(0); // off until the operator arms it
+  });
+
+  it("parses 0 as off and a positive cadence verbatim", () => {
+    expect(parseWorkersConfig({ cacheKeepaliveSecs: 0 }).cacheKeepaliveSecs).toBe(0);
+    expect(parseWorkersConfig({ cacheKeepaliveSecs: 120 }).cacheKeepaliveSecs).toBe(120);
+  });
+
+  it("rejects negative and non-integer values by field name", () => {
+    expect(() => parseWorkersConfig({ cacheKeepaliveSecs: -1 })).toThrow(
+      WorkersConfigError
+    );
+    expect(() => parseWorkersConfig({ cacheKeepaliveSecs: -1 })).toThrow(
+      /\.cacheKeepaliveSecs/
+    );
+    expect(() => parseWorkersConfig({ cacheKeepaliveSecs: 1.5 })).toThrow(
+      /\.cacheKeepaliveSecs/
+    );
+    expect(() => parseWorkersConfig({ cacheKeepaliveSecs: "120" })).toThrow(
+      /\.cacheKeepaliveSecs/
+    );
   });
 });
 
