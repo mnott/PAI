@@ -24,6 +24,12 @@
       "description": "Validate shell commands against security rules before execution"
     },
     {
+      "event": "PreToolUse",
+      "matcher": "mcp__",
+      "command": "${PAI_DIR}/Hooks/mcp-deferred-gate.mjs",
+      "description": "Correct deferred MCP tool calls: ToolSearch remedy instead of a false 'MCP server disconnected' report"
+    },
+    {
       "event": "Stop",
       "command": "${PAI_DIR}/Hooks/stop-hook.mjs",
       "description": "Write work items and summary to session note, send notification"
