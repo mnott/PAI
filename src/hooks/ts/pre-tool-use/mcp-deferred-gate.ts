@@ -5,7 +5,9 @@
  *
  * Claude Code defers MCP tool schemas: calling a deferred mcp__server__tool
  * without surfacing it via ToolSearch fails input validation, and sessions
- * misread that as "MCP server disconnected". PreToolUse is the only event on
+ * misread that as "MCP server disconnected" — as they do the stale handles a
+ * mid-session server re-registration leaves behind ("deferred tools are no
+ * longer available"). PreToolUse is the only event on
  * the attempt path — when the schema gate rejects the call the tool never
  * runs, so no PostToolUse fires to correct it. A deny here lands the remedy
  * in the same channel the model already reads (same mechanism as
