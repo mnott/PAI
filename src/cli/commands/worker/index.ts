@@ -73,6 +73,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--agent <name>", "Run the agent definition ~/.claude/agents/<name>.md on a worker")
     .option("--model <model>", "Override the provider's model for this run")
     .option("--label <text>", "Short task label shown in ps / follow / status line")
+    .option("--cwd <dir>", "Directory the worker runs in (default: this process's cwd)")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
     .option("--no-pane", "Do not open a follow pane for this worker")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
@@ -89,6 +90,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
           agent?: string;
           model?: string;
           label?: string;
+          cwd?: string;
           mcp?: string;
           pane?: boolean;
           worktree?: boolean;
@@ -96,6 +98,11 @@ export function registerWorkerCommands(workerCmd: Command): void {
       ) => {
         try {
           const className = opts.class ?? opts.role;
+          // The picker passes the project dir; fail loudly rather than spawn elsewhere.
+          if (opts.cwd !== undefined) {
+            if (!existsSync(opts.cwd)) throw new Error(`--cwd: directory does not exist: ${opts.cwd}`);
+            if (!statSync(opts.cwd).isDirectory()) throw new Error(`--cwd: not a directory: ${opts.cwd}`);
+          }
           let claudeArgs = args;
           let label = opts.label;
           let agentClass: string | undefined;
@@ -128,6 +135,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
               label,
               noPane: opts.pane === false,
               mcpFlag: opts.mcp,
+              cwd: opts.cwd,
               brief,
               claudeArgs,
             });
@@ -140,6 +148,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
             modelFlag: opts.model,
             label,
             mcpFlag: opts.mcp,
+            cwd: opts.cwd,
             noPane: opts.pane === false,
             worktreeFlag: opts.worktree,
             claudeArgs,
