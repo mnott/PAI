@@ -37,6 +37,19 @@ const SESSION_IDENTITY_VARS = [
  */
 const HEADLESS_STRIP_VARS = ["ENABLE_TOOL_SEARCH"] as const;
 
+/**
+ * Provider-specific env vars a native-Anthropic run must never carry — not
+ * set by this function, and stripped even when a parent shell exported them
+ * (e.g. this worker was itself spawned from a GLM-configured environment).
+ */
+const NATIVE_STRIP_VARS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+] as const;
+
 /** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
 export function buildRunEnv(
   provider: WorkerProvider,
@@ -48,6 +61,20 @@ export function buildRunEnv(
   if (headless) {
     for (const k of SESSION_IDENTITY_VARS) delete env[k];
     for (const k of HEADLESS_STRIP_VARS) delete env[k];
+  }
+
+  if (provider.native) {
+    // Plain Claude Code on its own OAuth/Max-plan login: no base URL, no
+    // token, no provider-specific model pins — and none inherited from a
+    // shell that had a different provider exported into it either.
+    for (const k of NATIVE_STRIP_VARS) delete env[k];
+    env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+    if (headless) {
+      env.PAI_WORKER = "1";
+    } else {
+      env.ENABLE_TOOL_SEARCH = "true";
+    }
+    return env;
   }
 
   let token = "local";

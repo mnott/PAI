@@ -7,6 +7,7 @@ The entire assistant stack — interactive sessions, workers, follow panes, hook
 What that buys:
 
 - **No single-vendor lock-in.** Providers are entries in a registry (`src/workers/config.ts`): protocol (`anthropic`/`openai`), engine (`claude`/`codex`), model ids, key files, cost tiers, capability tags, quota probes. Switching is `pai worker providers use <name>`; disabling routing entirely is `pai worker off`.
+- **Plain Anthropic stays a first-class choice.** The reserved provider name `anthropic` needs no registry entry — it is Claude Code's own OAuth/Max-plan login, with no base URL override and no API key. `pai worker providers use anthropic` makes it the default; `--provider anthropic` or a class pointed at `anthropic` uses it for one run. `pai worker providers` lists it as `anthropic  [built-in]`.
 - **Plan/quota-aware instrumentation.** The statusline reads the *active provider's* real plan utilization (5-hour rolling window and weekly quota with reset times), not a hardcoded vendor endpoint.
 - **Cost routing per task class.** Work is dispatched by class (`draft`, `spotcheck`, `complex`, …); each class maps to a provider and model, so cheap work lands on cheap models without touching code.
 - **Provider swaps are configuration, not surgery.** Every seam that used to assume one vendor — daemon LLM spawns, compaction-history family detection, context-window defaults, tier aliases — has been patched at protocol level (see below), so a new provider is a registry entry plus a key file.
@@ -40,10 +41,59 @@ The `fast` slot is what cheap classes resolve to; the runner also honors the pla
 
 `statusline-command.sh` derives everything it can from the session's model id instead of assuming one vendor:
 
-- **Plan utilization** — glm sessions fetch the provider's plan quota (5-hour window and weekly credit window, `nextResetTime` rendered as reset times); claude models keep the existing Anthropic OAuth path. Each source has its own 60-second cache. On fetch failure the provider windows show `?` rather than silently falling back to another plan's numbers. `PAI_ZAI_QUOTA_URL` overrides the endpoint (kill switch / testing).
+- **Session provider from the registry** — the session's model id (any `[…]` variant suffix stripped) is matched against every `workers.providers.<name>.models` value in the PAI config, so a session belongs to the provider that lists its model, not to a name prefix. No config, no `jq`, unreadable JSON or no match ⇒ the built-in `anthropic` path, silently.
+- **Plan utilization** — a provider with a `usage` block has its quota fetched and rendered from that block (see below); the built-in `anthropic` provider keeps the OAuth path (5-hour, 1d pace, 7-day). Each provider caches to `/tmp/claude/statusline-usage-<provider>.json` for `ttlSeconds` (default 60) and refreshes in the background, so the line never waits on the network. On fetch failure the windows show `?`, and a provider with no `usage` block shows `<provider> usage n/a` — never another plan's numbers.
 - **Context window from the model id** — a `[1m]` variant suffix means a 1,000,000-token window (`statusline-command.sh:126`); ids with no marker keep the previous default. The same derivation lives in TypeScript as `contextWindowFromModelId()` (`src/utils/model-window.ts`), so the session hooks and the worker meter agree with the statusline.
 - **`(N% left)`** — remaining context until auto-compact, computed against that derived window.
 - **Worker row** — line 4 lists the workers this session launched, running ones with their current step (`pai worker status-line`, `statusline-command.sh:634`).
+
+#### Provider usage blocks
+
+A provider's quota endpoint is configuration. `workers.providers.<name>.usage` (schema: `ProviderUsage` / `UsageWindow`, `src/workers/config.ts`) names a JSON `GET` endpoint plus one jq expression per window, and the statusline renders `<label> <window>: <pct>% → <reset>` for each:
+
+| field | meaning |
+| --- | --- |
+| `url` | endpoint returning the usage JSON |
+| `authHeader` | header template, default `Authorization: Bearer`; the key from the provider's `keyFile` is appended after a space. A value with no space (e.g. `x-api-key`) is sent as `<value>: <key>` |
+| `label` | display label for the segments, default the provider name |
+| `ttlSeconds` | cache TTL, default 60 |
+| `windows[].name` | window label, e.g. `5h` |
+| `windows[].percent` | jq expression yielding 0–100 — an arithmetic expression is fine, so a percentage can be computed from a used/limit pair |
+| `windows[].resetAt` | jq expression yielding the reset time |
+| `windows[].resetUnit` | `ms` (default), `s` or `iso` |
+
+Reset times render as `HH:MM` within the next 24 hours and `<weekday> HH:MM` beyond it. The first window's `percent` doubles as the response probe: a reply that yields no number for it is not cached, so a rejected key answering `HTTP 200` with an empty body never masquerades as a valid zero reading.
+
+Two working blocks. A Z.ai-style credit plan, whose two windows live in one array distinguished by `number`, with epoch-millisecond resets:
+
+```json
+"usage": {
+  "url": "https://api.z.ai/api/monitor/usage/quota/limit",
+  "authHeader": "Authorization: Bearer",
+  "label": "zai",
+  "ttlSeconds": 60,
+  "windows": [
+    { "name": "5h", "percent": ".data.limits[]? | select(.number == 5) | .percentage", "resetAt": ".data.limits[]? | select(.number == 5) | .nextResetTime", "resetUnit": "ms" },
+    { "name": "7d", "percent": ".data.limits[]? | select(.number == 1) | .percentage", "resetAt": ".data.limits[]? | select(.number == 1) | .nextResetTime", "resetUnit": "ms" }
+  ]
+}
+```
+
+And a coding plan that reports *fractions* (`0.0262` = 2.62%, hence the `* 100`), ISO-8601 resets, and a request-count window that has no percentage at all — computed here from its used/limit pair:
+
+```json
+"usage": {
+  "url": "https://api.kimi.ai/coding/v1/usages",
+  "authHeader": "Authorization: Bearer",
+  "label": "kimi",
+  "ttlSeconds": 60,
+  "windows": [
+    { "name": "5h", "percent": ".usages.limit_5h.used_ratio * 100", "resetAt": ".usages.limit_5h.reset_time", "resetUnit": "iso" },
+    { "name": "30d", "percent": ".usages.limit_month_total.used_ratio * 100", "resetAt": ".usages.limit_month_total.reset_time", "resetUnit": "iso" },
+    { "name": "req", "percent": "(.limits[0].detail.used | tonumber) / (.limits[0].detail.limit | tonumber) * 100", "resetAt": ".limits[0].detail.resetTime", "resetUnit": "iso" }
+  ]
+}
+```
 
 ### Seam patches
 
@@ -82,6 +132,6 @@ Two further instruments are deployed configuration in the PAI config dir rather 
 
 ## Current limits
 
-The layer is proven against one non-Anthropic provider so far (the `glm` endpoint); other Anthropic-protocol providers are expected to work but have not been exercised end-to-end, and OpenAI-protocol providers additionally depend on the translating proxy. Instrumentation still special-cases per-provider quota endpoints as providers are added. The seam audit that drove these patches lives outside this repository; new seams are patched as they surface, and each patch carries a unit test pinning the provider-neutral behaviour (`src/workers/daemon-llm.test.ts`, `src/workers/model.test.ts`, `src/workers/agents.test.ts`, `src/hooks/ts/lib/context-fill.test.ts`).
+The layer is proven against one non-Anthropic provider so far (the `glm` endpoint); other Anthropic-protocol providers are expected to work but have not been exercised end-to-end, and OpenAI-protocol providers additionally depend on the translating proxy. Quota endpoints are no longer special-cased in code — a provider's windows are its `usage` block — but a provider whose response needs more than a jq expression per window (paging, a second request, an auth flow other than a single header) would still need code. The seam audit that drove these patches lives outside this repository; new seams are patched as they surface, and each patch carries a unit test pinning the provider-neutral behaviour (`src/workers/daemon-llm.test.ts`, `src/workers/model.test.ts`, `src/workers/agents.test.ts`, `src/hooks/ts/lib/context-fill.test.ts`).
 
 For the full worker command reference see [worker.md](worker.md) and [commands/worker.md](commands/worker.md).

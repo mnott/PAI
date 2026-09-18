@@ -232,7 +232,7 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
     parts.push(`⋯ ${Math.max(0, Math.floor(s.idle ?? 0))}s`);
     for (const p of [s.intent, s.tool]) if (p && p.trim()) parts.push(p.trim());
   }
-  return `[${s.provider}/${s.model}] ${parts.join(" · ")}`;
+  return `[${s.provider}${s.model ? "/" + s.model : ""}] ${parts.join(" · ")}`;
 }
 
 /**

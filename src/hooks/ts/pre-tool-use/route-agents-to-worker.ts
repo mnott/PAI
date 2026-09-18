@@ -17,7 +17,7 @@
  * Every decision is appended to the routing ledger read by `pai worker log`.
  */
 
-import { readWorkersSection } from "../../../workers/config.js";
+import { readWorkersSection, ANTHROPIC_NATIVE } from "../../../workers/config.js";
 import { workersLogDir, ledgerPath } from "../../../workers/paths.js";
 import { appendLedger } from "../../../workers/ledger.js";
 
@@ -102,7 +102,11 @@ async function main(): Promise<void> {
     process.stdout.write(ALLOW);
     return;
   }
-  if (!workers.enabled || Object.keys(workers.providers).length === 0) {
+  if (
+    !workers.enabled ||
+    Object.keys(workers.providers).length === 0 ||
+    workers.active === ANTHROPIC_NATIVE
+  ) {
     process.stdout.write(ALLOW);
     return;
   }

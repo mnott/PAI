@@ -96,6 +96,43 @@ describe("resolveTarget", () => {
   });
 });
 
+describe("resolveTarget \u2014 native anthropic provider", () => {
+  it("resolves --provider anthropic to the native provider, bypassing config", () => {
+    const t = resolveTarget(config(), dir, { flagProvider: "anthropic" });
+    expect(t.providerName).toBe("anthropic");
+    expect(t.provider.native).toBe(true);
+    expect(t.provider.baseUrl).toBe("");
+    expect(t.via).toBe("flag");
+  });
+
+  it("resolves active: anthropic to the native provider", () => {
+    const c = config({ active: "anthropic" });
+    const t = resolveTarget(c, dir, {});
+    expect(t.providerName).toBe("anthropic");
+    expect(t.provider.native).toBe(true);
+  });
+
+  it('resolves a class target of "anthropic" to the native provider', () => {
+    const c = config({
+      classes: { implement: "glm", research: "glm", spotcheck: "glm/fast", simple: "anthropic" },
+    });
+    const t = resolveTarget(c, dir, { className: "simple" });
+    expect(t.providerName).toBe("anthropic");
+    expect(t.provider.native).toBe(true);
+    expect(t.via).toBe("class");
+  });
+
+  it('resolves a class target of {provider: "anthropic"} to the native provider', () => {
+    const c = config({
+      classes: { implement: "glm", complex: { provider: "anthropic" } },
+    });
+    const t = resolveTarget(c, dir, { className: "complex" });
+    expect(t.providerName).toBe("anthropic");
+    expect(t.provider.native).toBe(true);
+    expect(t.via).toBe("class");
+  });
+});
+
 describe("resolveTarget with class constraints", () => {
   const providers = {
     cheap: { ...GLM, baseUrl: "https://cheap.example.com", costTier: 1, tags: ["fast" as const] },
