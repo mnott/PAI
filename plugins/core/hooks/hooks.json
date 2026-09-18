@@ -18,6 +18,12 @@
       "description": "Create numbered session note and register in PAI registry"
     },
     {
+      "event": "SessionStart",
+      "matcher": "resume|compact",
+      "command": "${PAI_DIR}/Hooks/mcp-deferred-reminder.mjs",
+      "description": "Heal stale deferred MCP tool handles on resumed sessions: ToolSearch-and-retry instead of trusting a stale disconnect conclusion"
+    },
+    {
       "event": "PreToolUse",
       "matcher": "Bash",
       "command": "${PAI_DIR}/Hooks/security-validator.mjs",
