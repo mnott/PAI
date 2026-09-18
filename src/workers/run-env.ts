@@ -26,6 +26,17 @@ const SESSION_IDENTITY_VARS = [
   "CLAUDECODE",
 ] as const;
 
+/**
+ * Harness settings the spawner's environment carries that a headless worker
+ * must not keep. ENABLE_TOOL_SEARCH reaches every pai process through the
+ * user settings' env block, so a pai spawned from inside a Claude session
+ * passes it on to worker children; inherited, the headless child starts with
+ * every core tool deferred out of reach — only ToolSearch remains callable,
+ * granted tools included (2026-09-18, verified by stripping exactly this one
+ * var). Interactive runs set it deliberately below.
+ */
+const HEADLESS_STRIP_VARS = ["ENABLE_TOOL_SEARCH"] as const;
+
 /** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
 export function buildRunEnv(
   provider: WorkerProvider,
@@ -34,7 +45,10 @@ export function buildRunEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
-  if (headless) for (const k of SESSION_IDENTITY_VARS) delete env[k];
+  if (headless) {
+    for (const k of SESSION_IDENTITY_VARS) delete env[k];
+    for (const k of HEADLESS_STRIP_VARS) delete env[k];
+  }
 
   let token = "local";
   if (proxyUrl) {

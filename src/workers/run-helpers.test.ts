@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   bumpContextTokens,
+  headlessToolGrants,
   initContextWindow,
   isCompactBoundary,
   isoStamp,
@@ -19,6 +20,21 @@ import {
   type StreamEvent,
 } from "./run.js";
 import { OPERATOR_MARK } from "./report.js";
+
+describe("headlessToolGrants", () => {
+  it("grants the core tool set when the caller brings no allowedTools", () => {
+    // a headless run cannot approve a permission-gated tool mid-flight: with
+    // no grant at all, claude drops the file/shell tools entirely
+    const args = headlessToolGrants([]);
+    expect(args[0]).toBe("--allowedTools");
+    expect(args[1].split(",")).toEqual(["Read", "Edit", "Write", "Bash", "Grep", "Glob"]);
+  });
+
+  it("stays out of the way when the caller granted tools itself", () => {
+    expect(headlessToolGrants(["Read,Bash"])).toEqual([]);
+    expect(headlessToolGrants(["mcp__web__fetch"])).toEqual([]);
+  });
+});
 
 describe("isoStamp", () => {
   const d = new Date("2026-09-17T12:19:23Z");
