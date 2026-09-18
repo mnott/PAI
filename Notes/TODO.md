@@ -1,21 +1,20 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0067 - 2026-09-18 - Provider Routing And Worker Configuration Ecosyste" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:09:01.016Z" -->
+<!-- pai:checkpoint authored="auto" session="0068 - 2026-09-18 - Cpp Release V0.42.2 Worker Orchestration (in Progress)" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:13:19.344Z" -->
 
-> **Last session:** 0067 - 2026-09-18 - Provider Routing And Worker Configuration Ecosyste
-> **Paused at:** 2026-09-18T17:09:01.016Z
+> **Last session:** 0068 - 2026-09-18 - Cpp Release V0.42.2 Worker Orchestration (in Progress)
+> **Paused at:** 2026-09-18T17:13:19.344Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3a442dd4-5496-4f1f-a650-91c6bc287425`
 
 T
-i=ckpt-2026-09-18T17-09-00.919Z
+i=ckpt-2026-09-18T17-13-19.314Z
 g=so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
 d=cpp merge everything here for pai and cpp | you should use a lightweight worker | but glm is out of credits, so use one of anthropic | 2 workers open do we still need them | so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed
 t=?
-@1=Notes/TODO.md
-z=auto ckpt (no model); worker/cache-keepalive@5d93cde feat(worker,daemon): keepalive prompt cache and provider routing; 1 dirty; git status for detail
+z=auto ckpt (no model); worker/cache-keepalive@cc2bf37 feat(worker): add kill subcommand to manage running workers; 0 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
