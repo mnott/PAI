@@ -32,11 +32,47 @@ input=$(cat)
 DA_NAME="${DA:-Assistant}"  # Assistant name
 DA_COLOR="${DA_COLOR:-purple}"  # Color for the assistant name
 
-# Extract data from JSON input
-current_dir=$(echo "$input" | jq -r '.workspace.current_dir')
-model_name=$(echo "$input" | jq -r '.model.display_name')
-model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // empty')
-cc_version=$(echo "$input" | jq -r '.version // "unknown"')
+# Where the status line keeps what it may cache between renders: the usage
+# snapshots per provider and the Claude Code version. One knob rather than a
+# path repeated six times, so a test (or a second user on the same machine)
+# can point the whole lot somewhere private.
+pai_cache_dir="${PAI_CACHE_DIR:-/tmp/claude}"
+
+# Extract data from JSON input.
+#
+# `.workspace.current_dir` is the documented field and a full session always
+# sends it — but `jq -r` prints the JSON null as the four characters "null"
+# when it is absent, and `basename null` is "null", so any payload without a
+# workspace block rendered a confident "📁 null". A folder name is never
+# unknowable here: the payload also carries the flat `.cwd`, and failing both
+# we are running in the directory ourselves. Fall through all three.
+current_dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty' 2>/dev/null)
+[ -n "$current_dir" ] && [ "$current_dir" != "null" ] || current_dir="${PWD:-}"
+model_name=$(echo "$input" | jq -r '.model.display_name // empty' 2>/dev/null)
+[ -n "$model_name" ] || model_name="?"
+model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // empty' 2>/dev/null)
+
+# Claude Code version. The payload carries `.version` as a plain string, but a
+# caller that sends a partial payload (a test harness, an older client) left it
+# rendering the literal word "unknown" next to a version that `claude --version`
+# would have answered immediately. Ask the binary, and cache the answer for a
+# day: it is a ~200MB executable and the status line runs on every keystroke.
+cc_version=$(echo "$input" | jq -r '.version // empty' 2>/dev/null)
+if [ -z "$cc_version" ]; then
+    _ccv_cache="${pai_cache_dir}/cc-version"
+    _ccv_age=$(( $(date +%s) - $(stat -f %m "$_ccv_cache" 2>/dev/null || echo 0) ))
+    if [ -s "$_ccv_cache" ] && [ "$_ccv_age" -lt 86400 ] 2>/dev/null; then
+        read -r cc_version < "$_ccv_cache"
+    elif command -v claude >/dev/null 2>&1; then
+        # "2.1.267 (Claude Code)" -> "2.1.267"
+        cc_version=$(command claude --version 2>/dev/null | awk 'NR==1{print $1}')
+        if [ -n "$cc_version" ]; then
+            mkdir -p "$pai_cache_dir" 2>/dev/null
+            printf '%s\n' "$cc_version" > "$_ccv_cache" 2>/dev/null || true
+        fi
+    fi
+fi
+[ -n "$cc_version" ] || cc_version="?"
 
 # Provider detection: which worker provider is this session running on? The
 # answer comes from the PAI config, not from model-name prefixes — a session
@@ -58,7 +94,8 @@ if [ -n "$model_base" ] && [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1
 fi
 
 # Get directory name
-dir_name=$(basename "$current_dir")
+dir_name=$(basename "$current_dir" 2>/dev/null)
+[ -n "$dir_name" ] || dir_name="?"
 
 # Read Whazaa session name from iTerm2 user variable
 pai_session_name=""
@@ -372,19 +409,45 @@ fi
 printf "${LINE2_PRIMARY}${EMOJI_PLUG} MCPs${RESET}${LINE2_PRIMARY}${SEPARATOR_COLOR}: ${RESET}${mcp_line1}${RESET}\n"
 
 
-# Usage suffix: provider-aware. The built-in anthropic provider reads the
-# Claude Code OAuth usage endpoint (5-hour + 1d pace + 7-day); every other
-# provider is rendered from its own `usage` block in the PAI config (see
-# docs/provider-abstraction.md) — endpoint, auth header and per-window jq
-# expressions are config, not code. Both paths cache for usage_cache_ttl.
-usage_cache="/tmp/claude/statusline-usage-cache.json"
-usage_cache_ttl=60  # seconds
+# Usage suffix: provider-aware. Every non-anthropic provider is rendered from
+# its own `usage` block in the PAI config (see docs/provider-abstraction.md) —
+# endpoint, auth header and per-window jq expressions are config, not code.
+#
+# The anthropic numbers come from Claude Code itself. Its status line payload
+# carries a `rate_limits` object built from the same internal reading that
+# /usage renders:
+#
+#     "rate_limits": {
+#       "five_hour": { "used_percentage": 9, "resets_at": 1789810200 },
+#       "seven_day": { "used_percentage": 2, "resets_at": 1790402400 }
+#     }
+#
+# `used_percentage` is already 0-100 (used, not remaining) and `resets_at` is
+# Unix epoch SECONDS. It is live, free and needs no credential.
+#
+# The OAuth usage endpoint below stays only as a fallback for payloads that
+# carry no rate_limits (it reports `utilization` on the same 0-100 scale but
+# `resets_at` as an ISO-8601 UTC string, so the two are parsed differently).
+# That endpoint needs an OAuth token out of the Keychain, and when the token
+# goes away the fetch fails silently and leaves whatever it cached last. A
+# cache with no expiry is not a reading, it is a photograph: this one sat at
+# "7d: 97%" for a day and a half after the window had already reset to 2%, and
+# that number is not decoration — it is written to advisor-mode.json and
+# injected into every session as an instruction about how much work to do. So
+# the fallback is refused once it is older than usage_cache_max_age, and any
+# window whose resets_at has already passed is dropped. What neither source can
+# answer renders "?", which is the honest reading.
+usage_cache="${pai_cache_dir}/statusline-usage-cache.json"
+usage_cache_ttl=60       # refetch the fallback after this many seconds
+usage_cache_max_age=300  # refuse to render from the fallback past this age
 usage_suffix=""
 
-# Color based on utilization: green < 50%, orange 50-75%, red > 75%
+# Color based on utilization: green < 50%, orange 50-75%, red > 75%.
+# An unknown percentage is neither good nor bad news — render it neutral.
 _usage_color() {
     local pct=$1
-    if [ "$pct" -gt 75 ] 2>/dev/null; then echo "$BRIGHT_RED"
+    if [ -z "$pct" ]; then echo "$LINE3_ACCENT"
+    elif [ "$pct" -gt 75 ] 2>/dev/null; then echo "$BRIGHT_RED"
     elif [ "$pct" -gt 50 ] 2>/dev/null; then echo "$BRIGHT_ORANGE"
     else echo "$BRIGHT_GREEN"; fi
 }
@@ -404,7 +467,7 @@ _fetch_usage() {
         token=$(printf '%s' "$raw" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
     fi
 
-    mkdir -p /tmp/claude
+    mkdir -p "$pai_cache_dir"
     if [ -z "$token" ]; then
         echo "no usable OAuth token in keychain item Claude Code-credentials" > "$usage_cache.error"
         return
@@ -424,48 +487,97 @@ _fetch_usage() {
     fi
 }
 
-# Use cache if fresh, otherwise fetch in background (Anthropic plan only)
+# Resolve the anthropic windows — skipped on non-anthropic sessions so
+# Anthropic-plan numbers (usage line AND the advisor-mode budget file)
+# never leak into a glm or kimi statusline. A worker running on another
+# provider spends another budget; counting it here would be the same lie in
+# the other direction.
+five_hour_int=""
+seven_day_int=""
+five_reset_epoch=0
+seven_reset_epoch=0
+usage_source=""
+
+# Source 1 (authoritative): rate_limits on stdin, straight from Claude Code.
 if [ "$session_provider" = "anthropic" ]; then
+    _rl=$(echo "$input" | jq -r '
+        [ (.rate_limits.five_hour.used_percentage // ""),
+          (.rate_limits.five_hour.resets_at      // ""),
+          (.rate_limits.seven_day.used_percentage // ""),
+          (.rate_limits.seven_day.resets_at       // "") ] | @tsv' 2>/dev/null)
+    _p5=$(printf '%s' "$_rl" | cut -f1)
+    _r5=$(printf '%s' "$_rl" | cut -f2)
+    _p7=$(printf '%s' "$_rl" | cut -f3)
+    _r7=$(printf '%s' "$_rl" | cut -f4)
+    if [ -n "$_p5" ] || [ -n "$_p7" ]; then
+        usage_source="payload"
+        [ -n "$_p5" ] && five_hour_int=$(printf "%.0f" "$_p5" 2>/dev/null || echo "")
+        [ -n "$_p7" ] && seven_day_int=$(printf "%.0f" "$_p7" 2>/dev/null || echo "")
+        # resets_at is epoch seconds here, not an ISO string.
+        case "$_r5" in ''|*[!0-9.]*) ;; *) five_reset_epoch="${_r5%%.*}" ;; esac
+        case "$_r7" in ''|*[!0-9.]*) ;; *) seven_reset_epoch="${_r7%%.*}" ;; esac
+    fi
+fi
+
+# Refresh the fallback in the background, but only when the payload did not
+# already answer — a keychain lookup plus an HTTPS round trip on every render
+# buys nothing when the live numbers arrived on stdin.
+if [ "$session_provider" = "anthropic" ] && [ -z "$usage_source" ]; then
     if [ -f "$usage_cache" ]; then
         cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
-        if [ "$cache_age" -gt "$usage_cache_ttl" ]; then
-            _fetch_usage &
-        fi
+        [ "$cache_age" -gt "$usage_cache_ttl" ] && _fetch_usage &
     else
         _fetch_usage &
     fi
 fi
 
-# Read cached usage data — skipped on non-anthropic sessions so
-# Anthropic-plan numbers (usage line AND the advisor-mode budget file)
-# never leak into a glm or kimi statusline
-if [ "$session_provider" = "anthropic" ] && [ -f "$usage_cache" ]; then
-    five_hour=$(jq -r '.five_hour.utilization // 0' "$usage_cache" 2>/dev/null)
-    seven_day=$(jq -r '.seven_day.utilization // 0' "$usage_cache" 2>/dev/null)
-    five_reset=$(jq -r '.five_hour.resets_at // empty' "$usage_cache" 2>/dev/null)
-    seven_reset=$(jq -r '.seven_day.resets_at // empty' "$usage_cache" 2>/dev/null)
+# Source 2 (fallback): the OAuth endpoint cache, and only while it is fresh.
+if [ "$session_provider" = "anthropic" ] && [ -z "$usage_source" ] && [ -f "$usage_cache" ]; then
+    _usage_cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
+    if [ "$_usage_cache_age" -le "$usage_cache_max_age" ] 2>/dev/null; then
+        usage_source="oauth"
+        five_hour=$(jq -r '.five_hour.utilization // empty' "$usage_cache" 2>/dev/null)
+        seven_day=$(jq -r '.seven_day.utilization // empty' "$usage_cache" 2>/dev/null)
+        five_reset=$(jq -r '.five_hour.resets_at // empty' "$usage_cache" 2>/dev/null)
+        seven_reset=$(jq -r '.seven_day.resets_at // empty' "$usage_cache" 2>/dev/null)
+        [ -n "$five_hour" ] && five_hour_int=$(printf "%.0f" "$five_hour" 2>/dev/null || echo "")
+        [ -n "$seven_day" ] && seven_day_int=$(printf "%.0f" "$seven_day" 2>/dev/null || echo "")
+        # The endpoint states these in UTC ("...T06:00:00+00:00"). Parsing
+        # without -u reads 06:00 UTC as 06:00 local and prints a reset time out
+        # by the offset — two hours here, long enough to plan around and be
+        # wrong. Parse as UTC to get the epoch; render local further down.
+        if [ -n "$five_reset" ]; then
+            five_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$five_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$five_reset" "+%s" 2>/dev/null || echo 0)
+        fi
+        if [ -n "$seven_reset" ]; then
+            seven_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$seven_reset" "+%s" 2>/dev/null || echo 0)
+        fi
+    fi
+fi
 
-    # Round to integers
-    five_hour_int=$(printf "%.0f" "$five_hour" 2>/dev/null || echo 0)
-    seven_day_int=$(printf "%.0f" "$seven_day" 2>/dev/null || echo 0)
+# A window whose reset has already passed describes a window that no longer
+# exists. Its percentage belongs to a period that has been and gone, so it is
+# dropped rather than carried forward — a spent budget rendered as the current
+# one is exactly the failure this whole block exists to avoid.
+if [ "$session_provider" = "anthropic" ]; then
+    _now_epoch=$(date +%s)
+    if [ "$five_reset_epoch" -gt 0 ] 2>/dev/null && [ "$five_reset_epoch" -le "$_now_epoch" ] 2>/dev/null; then
+        five_hour_int=""; five_reset_epoch=0
+    fi
+    if [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && [ "$seven_reset_epoch" -le "$_now_epoch" ] 2>/dev/null; then
+        seven_day_int=""; seven_reset_epoch=0
+    fi
+fi
 
-    # Format reset times as HH:MM (local time)
+# Rendered even when both windows are unknown: "5h: ? │ 7d: ?" says the
+# instrument is blind, where dropping the section altogether would read as
+# "this session is not on the anthropic plan".
+if [ "$session_provider" = "anthropic" ]; then
+    # Format reset times in local time
     five_reset_fmt=""
     seven_reset_fmt=""
-    seven_reset_epoch=0
-    if [ -n "$five_reset" ]; then
-        # The API states these in UTC ("...T06:00:00+00:00"). Parsing without -u
-        # reads 06:00 UTC as 06:00 local and prints a reset time that is out by
-        # the offset — two hours here, which is long enough to plan around and
-        # be wrong. Parse as UTC to get the epoch, then let date render it in
-        # local time, which is the only form worth showing a person.
-        five_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$five_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$five_reset" "+%s" 2>/dev/null || echo 0)
-        five_reset_fmt=$([ "$five_reset_epoch" -gt 0 ] 2>/dev/null && date -r "$five_reset_epoch" "+%H:%M" 2>/dev/null || echo "")
-    fi
-    if [ -n "$seven_reset" ]; then
-        seven_reset_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$(echo "$seven_reset" | cut -c1-19)" "+%s" 2>/dev/null || date -d "$seven_reset" "+%s" 2>/dev/null || echo 0)
-        seven_reset_fmt=$([ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && date -r "$seven_reset_epoch" "+%a %H:%M" 2>/dev/null || echo "")
-    fi
+    [ "$five_reset_epoch" -gt 0 ] 2>/dev/null && five_reset_fmt=$(date -r "$five_reset_epoch" "+%H:%M" 2>/dev/null || echo "")
+    [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && seven_reset_fmt=$(date -r "$seven_reset_epoch" "+%a %H:%M" 2>/dev/null || echo "")
 
     five_color=$(_usage_color "$five_hour_int")
     seven_color=$(_usage_color "$seven_day_int")
@@ -473,57 +585,74 @@ if [ "$session_provider" = "anthropic" ] && [ -f "$usage_cache" ]; then
     # Budget pace indicator for 7-day window
     # Compare actual usage vs linear expected usage based on elapsed time
     pace_dot=""
-    if [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null; then
+    if [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && [ -n "$seven_day_int" ]; then
         now_epoch=$(date +%s)
         window_secs=$((7 * 86400))
         remaining_secs=$((seven_reset_epoch - now_epoch))
         [ "$remaining_secs" -lt 0 ] && remaining_secs=0
         elapsed_secs=$((window_secs - remaining_secs))
-        # Expected usage if spending linearly: elapsed/total * 100
-        expected_pct=$(( elapsed_secs * 100 / window_secs ))
         # Daily pace: actual spend/day vs dynamic budget
         # Budget = remaining capacity / remaining days (not static 100/7)
         elapsed_days_x10=$((elapsed_secs * 10 / 86400))
-        [ "$elapsed_days_x10" -lt 1 ] && elapsed_days_x10=1
-        spend_per_day=$((seven_day_int * 10 / elapsed_days_x10))
-        remaining_days_x10=$((remaining_secs * 10 / 86400))
-        [ "$remaining_days_x10" -lt 1 ] && remaining_days_x10=1
-        remaining_budget=$((100 - seven_day_int))
-        budget_per_day=$((remaining_budget * 10 / remaining_days_x10))
-        # Color: green = under budget, orange = near budget, red = over budget
-        overspend=$((spend_per_day - budget_per_day))
-        if [ "$overspend" -le -3 ] 2>/dev/null; then
-            pace_color="$BRIGHT_GREEN"           # well under budget
-        elif [ "$overspend" -le 2 ] 2>/dev/null; then
-            pace_color="$BRIGHT_ORANGE"          # near budget
-        else
-            pace_color="$BRIGHT_RED"             # over budget
+        # A per-day rate divided by a fraction of a day is not a rate, it is an
+        # extrapolation from noise: an hour into a fresh window the old clamp to
+        # 0.1 days turned 2% spent into "20% per day" and painted the pace red.
+        # Below half a day there is nothing to pace against yet — say nothing.
+        if [ "$elapsed_days_x10" -ge 5 ]; then
+            spend_per_day=$((seven_day_int * 10 / elapsed_days_x10))
+            remaining_days_x10=$((remaining_secs * 10 / 86400))
+            [ "$remaining_days_x10" -lt 1 ] && remaining_days_x10=1
+            remaining_budget=$((100 - seven_day_int))
+            budget_per_day=$((remaining_budget * 10 / remaining_days_x10))
+            # Color: green = under budget, orange = near budget, red = over budget
+            overspend=$((spend_per_day - budget_per_day))
+            if [ "$overspend" -le -3 ] 2>/dev/null; then
+                pace_color="$BRIGHT_GREEN"           # well under budget
+            elif [ "$overspend" -le 2 ] 2>/dev/null; then
+                pace_color="$BRIGHT_ORANGE"          # near budget
+            else
+                pace_color="$BRIGHT_RED"             # over budget
+            fi
+            pace_dot="${pace_color}${spend_per_day}%% / ${budget_per_day}%%${RESET}"
         fi
-        pace_dot="${pace_color}${spend_per_day}%% / ${budget_per_day}%%${RESET}"
     fi
 
-    # Write weekly budget to advisor-mode.json for the whisper hook
-    # Preserve existing mode if manually set — only update weeklyBudgetPercent
+    # Write weekly budget to advisor-mode.json for the whisper hook.
+    # Preserve existing mode if manually set — only update weeklyBudgetPercent.
+    #
+    # `asOf` is the epoch second the percentage was read. The consumer refuses a
+    # percentage without one, or one that has gone stale: this file is the input
+    # to an instruction injected on every prompt ("weekly budget at N% — do as
+    # little as possible"), so a number that stopped being refreshed must stop
+    # being obeyed rather than quietly harden into a permanent constraint.
+    # Nothing is written at all while the percentage is unknown.
     _advisor_file="${HOME}/.claude/advisor-mode.json"
-    if [ -n "$seven_day_int" ] 2>/dev/null; then
-        _existing_mode="auto"
-        _existing_force=""
-        if [ -f "$_advisor_file" ]; then
-            _existing_mode=$(jq -r '.mode // "auto"' "$_advisor_file" 2>/dev/null)
-            _existing_force=$(jq -r '.forceModel // empty' "$_advisor_file" 2>/dev/null)
-        fi
+    _existing_mode="auto"
+    _existing_force=""
+    if [ -f "$_advisor_file" ]; then
+        _existing_mode=$(jq -r '.mode // "auto"' "$_advisor_file" 2>/dev/null)
+        _existing_force=$(jq -r '.forceModel // empty' "$_advisor_file" 2>/dev/null)
+    fi
+    case "$_existing_mode" in
+        normal|conservative|strict|critical|auto) ;;
+        *) _existing_mode="auto" ;;
+    esac
+    if [ -n "$seven_day_int" ]; then
         if [ -n "$_existing_force" ]; then
-            printf '{"weeklyBudgetPercent":%d,"mode":"%s","forceModel":"%s"}\n' "$seven_day_int" "$_existing_mode" "$_existing_force" > "$_advisor_file" 2>/dev/null
+            printf '{"weeklyBudgetPercent":%d,"asOf":%d,"mode":"%s","forceModel":"%s"}\n' "$seven_day_int" "$(date +%s)" "$_existing_mode" "$_existing_force" > "$_advisor_file" 2>/dev/null
         else
-            printf '{"weeklyBudgetPercent":%d,"mode":"%s"}\n' "$seven_day_int" "$_existing_mode" > "$_advisor_file" 2>/dev/null
+            printf '{"weeklyBudgetPercent":%d,"asOf":%d,"mode":"%s"}\n' "$seven_day_int" "$(date +%s)" "$_existing_mode" > "$_advisor_file" 2>/dev/null
         fi
     fi
 
     # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: 91% → Fr. 08:00
-    five_label="5h: ${five_hour_int}%%"
+    # A window we could not read renders "?" — a gauge that admits it cannot
+    # tell beats one reading 0% while the tank drains. The advisor mode word is
+    # deliberately not rendered here; the whisper hook is where it acts.
+    five_label="5h: ${five_hour_int:-?}%%"
     [ -n "$five_reset_fmt" ] && five_label="${five_label} → ${five_reset_fmt}"
     seven_label="7d: "
-    seven_label="${seven_label}${seven_day_int}%%"
+    seven_label="${seven_label}${seven_day_int:-?}%%"
     [ -n "$seven_reset_fmt" ] && seven_label="${seven_label} → ${seven_reset_fmt}"
 
     usage_suffix=" ${SEPARATOR_COLOR}│${RESET} ${five_color}${five_label}${RESET}"
@@ -556,7 +685,7 @@ _fetch_provider_usage() {
     else
         header="${auth}: ${key}"
     fi
-    mkdir -p /tmp/claude
+    mkdir -p "$pai_cache_dir"
     local response
     response=$(curl -sf --max-time 3 \
         -H "$header" \
@@ -587,7 +716,7 @@ if [ "$session_provider" != "anthropic" ]; then
         usage_auth=$(printf '%s' "$provider_usage" | jq -r '.authHeader // "Authorization: Bearer"')
         usage_ttl=$(printf '%s' "$provider_usage" | jq -r '.ttlSeconds // empty')
         [ "$usage_ttl" -gt 0 ] 2>/dev/null || usage_ttl="$usage_cache_ttl"
-        provider_cache="/tmp/claude/statusline-usage-${session_provider}.json"
+        provider_cache="${pai_cache_dir}/statusline-usage-${session_provider}.json"
         usage_probe=$(printf '%s' "$provider_usage" | jq -r '.windows[0].percent // empty')
 
         # Use cache if fresh, otherwise refresh in the background

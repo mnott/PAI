@@ -1,37 +1,26 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display And Keychain Credential Handling" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:35:27.248Z" -->
+<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:39:43.902Z" -->
 
-> **Last session:** 0083 - 2026-09-19 - Statusline Budget Display And Keychain Credential Handling
-> **Paused at:** 2026-09-19T11:35:27.248Z
+> **Last session:** 0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application
+> **Paused at:** 2026-09-19T11:39:43.902Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
 
 T
-i=ckpt-2026-09-19T11-35-27.199Z
-g=o you're not getting it. I was looking for what we had before, just the 97% were wrong
-d=[Session:pai-cli] worker 20260919-124719-28001 usage fetch broken, fail loudly stalled 10m no turns - see pai worker replay 20260919-124719-28001 | Still not working because it currently shows 2% while it should be showing 6% by now. So go back significantly in the history of of this status bar cinematic and make sure for anthropic you did it jus… | Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom… | [Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line…
+i=ckpt-2026-09-19T11-39-43.837Z
+g=Still not working because it currently shows 2% while it should be showing 6% by now. So go back significantly in the history of of this status bar cinematic and make sure for anthropic you did it jus…
+d=Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom… | [Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line… | So currently there are two workers open. Why? And more importantly, I see one of those workers is using Fable 5.1. So as a general rule workers should be used a to parallelize and b to conserve costs… | This rule of yours has to be way more fundamental. Put it in the whisper rules. There is a rule, but apparently it is not good enough. Saying that never, ever, ever, ever use here doc or the likes alw…
 t=?
-@1=Notes/TODO.md
-@2=docs/provider-abstraction.md
-@3=docs/provider-independence-details.md
-@4=scripts/build-hooks.mjs
-@5=src/cli/commands/worker/index.ts
-@6=src/hooks/ts/pre-tool-use/route-agents-to-worker.ts
-@7=src/workers/gutter.test.ts
-@8=src/workers/install.ts
-@9=src/workers/mcp.test.ts
-@10=src/workers/mcp.ts
-@11=src/workers/misc.test.ts
-@12=src/workers/render.ts
-@13=src/workers/run-helpers.test.ts
-@14=src/workers/run.ts
-@15=src/workers/standalone/status-line.ts
-@16=src/workers/status.ts
-@17=src/workers/viewer.ts
-z=auto ckpt (no model); main@b96bd65 Update TODO.; 20 dirty; +4 paths; git status for detail
+@1=src/hooks/ts/lib/advisor-budget.test.ts
+@2=src/hooks/ts/lib/advisor-budget.ts
+@3=src/hooks/ts/user-prompt/whisper-rules.ts
+@4=src/runtime-paths.ts
+@5=statusline-command.sh
+@6=test/statusline-command.test.ts
+z=auto ckpt (no model); main@1c91e95 feat(workers,statusline): worker rows show goal and model, live usage via user keychain item, agent gate and chrome passthrough; 6 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 

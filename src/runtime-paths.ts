@@ -50,6 +50,16 @@ export function schedulerLogPath(): string {
 }
 
 /**
+ * Where the status line caches what it may reuse between renders: the
+ * per-provider plan-usage snapshots and the Claude Code version. Shared with
+ * every live session's status line, so a test writing here would be feeding
+ * fixtures to the real thing. Read by statusline-command.sh as PAI_CACHE_DIR.
+ */
+export function paiCacheDir(): string {
+  return process.env.PAI_CACHE_DIR ?? "/tmp/claude";
+}
+
+/**
  * Every runtime path, for the test guard to redirect in one place.
  *
  * Listed here rather than in the guard so that adding a path and forgetting to
@@ -61,4 +71,5 @@ export const RUNTIME_PATH_ENV_VARS = [
   "PAI_DAEMON_LOG_PATH",
   "PAI_DAEMON_PID_PATH",
   "PAI_SCHEDULER_LOG_PATH",
+  "PAI_CACHE_DIR",
 ] as const;

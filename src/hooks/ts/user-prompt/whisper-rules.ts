@@ -13,13 +13,16 @@
  * - Strict (85-95%): haiku only for subagents, main context stays on current model
  * - Critical (>95%): minimize all subagent spawning, essential work only
  *
- * Budget percentage is written by the statusline or manually to advisor-mode.json.
- * If the file doesn't exist, no advisor guidance is injected.
+ * Budget percentage is written by the statusline or manually to advisor-mode.json,
+ * stamped with the epoch second it was read. If the file doesn't exist, or its
+ * reading is too old to still describe the current window, no advisor guidance
+ * is injected — see lib/advisor-budget.ts for why that direction is the safe one.
  */
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js";
 
 const WHISPER_FILE = join(homedir(), ".claude", "whisper-rules.md");
 const ADVISOR_FILE = join(homedir(), ".claude", "advisor-mode.json");
@@ -51,12 +54,6 @@ function getWhisperRules(): string {
   }
 }
 
-interface AdvisorConfig {
-  weeklyBudgetPercent?: number;  // 0-100, written by statusline or manually
-  mode?: "normal" | "conservative" | "strict" | "critical" | "auto";
-  forceModel?: string;  // override: always use this model for subagents
-}
-
 function getAdvisorGuidance(): string {
   if (!existsSync(ADVISOR_FILE)) return "";
 
@@ -67,24 +64,12 @@ function getAdvisorGuidance(): string {
     return "";
   }
 
-  // Determine mode.
-  //
-  // `??` only substitutes on null/undefined, so a config written as
-  // {"mode": ""} — which is what the statusline produces when it has no manual
-  // override — left mode as the empty string. That matched no case below, so
-  // the advisor silently returned nothing regardless of budget. A budget guard
-  // that quietly does nothing is worse than none, because you believe you have
-  // one. Treat anything that is not a recognised mode as "auto".
-  const VALID = ["normal", "conservative", "strict", "critical", "auto"] as const;
-  let mode: string =
-    config.mode && (VALID as readonly string[]).includes(config.mode) ? config.mode : "auto";
-  if (mode === "auto" && typeof config.weeklyBudgetPercent === "number") {
-    const pct = config.weeklyBudgetPercent;
-    if (pct < 60) mode = "normal";
-    else if (pct < 80) mode = "conservative";
-    else if (pct < 92) mode = "strict";
-    else mode = "critical";
-  }
+  // Determine mode: the manual one if set, else derived from a budget reading
+  // that is current. No current reading and no manual mode means say nothing —
+  // guessing is how a wrong number gets obeyed for a day and a half. See
+  // lib/advisor-budget.ts.
+  const { mode, percent: pct } = resolveAdvisorMode(config, Math.floor(Date.now() / 1000));
+  if (mode === undefined) return "";
 
   // Force model override
   if (config.forceModel) {
@@ -97,7 +82,7 @@ function getAdvisorGuidance(): string {
 
     case "conservative":
       return [
-        `ADVISOR MODE (conservative — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
+        `ADVISOR MODE (conservative — weekly budget at ${pct ?? "?"}%):`,
         "Main context is opus (most expensive — 20x haiku, 5x sonnet). Delegate aggressively to subagents.",
         "Default subagents to SONNET (Agent tool, model: sonnet). Use haiku for simple lookups/verification.",
         "For substantial tasks, use swarm mode: spawn a sonnet orchestrator that delegates to haiku workers.",
@@ -106,7 +91,7 @@ function getAdvisorGuidance(): string {
 
     case "strict":
       return [
-        `ADVISOR MODE (strict — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
+        `ADVISOR MODE (strict — weekly budget at ${pct ?? "?"}%):`,
         "Main context is opus (most expensive — 20x haiku, 5x sonnet). Minimize work done here.",
         "Default subagents to SONNET (Agent tool, model: sonnet) for implementation and research. Use haiku for simple tasks.",
         "For any substantial task, use swarm mode: spawn ONE sonnet orchestrator that delegates to haiku workers.",
@@ -116,7 +101,7 @@ function getAdvisorGuidance(): string {
 
     case "critical":
       return [
-        `ADVISOR MODE (critical — weekly budget at ${config.weeklyBudgetPercent ?? "?"}%):`,
+        `ADVISOR MODE (critical — weekly budget at ${pct ?? "?"}%):`,
         "MINIMIZE ALL TOKEN USAGE. Main context is opus — the most expensive model (20x haiku, 5x sonnet).",
         "For ANY non-trivial task, immediately spawn a sonnet orchestrator agent and let it handle everything.",
         "Main context should only send the task and receive the final result — do not do work here.",
