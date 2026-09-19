@@ -43,7 +43,7 @@ function collectEntryPoints(dir) {
     if (name === "lib") continue;
     if (statSync(full).isDirectory()) {
       entries.push(...collectEntryPoints(full));
-    } else if (name.endsWith(".ts")) {
+    } else if (name.endsWith(".ts") && !name.endsWith(".test.ts")) {
       entries.push(full);
     }
   }

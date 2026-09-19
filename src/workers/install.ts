@@ -29,6 +29,17 @@ const LOCAL_BIN = join(homedir(), ".local", "bin");
 export const NEW_AGENT_HOOK = "${PAI_DIR}/Hooks/route-agents-to-worker.mjs";
 const OLD_AGENT_HOOK_STEM = "route-agents-to-glm";
 
+/**
+ * The PreToolUse matcher for the subagent gate. It covers both names the
+ * harness has used for the in-process subagent tool — the current "Agent" and
+ * the older "Task" — because a matcher that names only one of them leaves the
+ * gate registered but never invoked after a rename.
+ */
+export const AGENT_MATCHER = "Agent|Task";
+
+/** Matchers a previous PAI version wrote for this same hook. */
+const LEGACY_AGENT_MATCHERS = ["Agent", "Task"];
+
 export interface InstallResult {
   lines: string[];
   changed: boolean;
@@ -47,8 +58,22 @@ function paiPath(): string {
 // 1. settings.json: Agent hook migration
 // ---------------------------------------------------------------------------
 
-function patchAgentHook(lines: string[]): boolean {
-  const settings = readSettingsJson();
+/**
+ * Bring the subagent-gate registration up to date inside an already-read
+ * settings object. Pure: it mutates `settings` and reports, the caller decides
+ * whether to write. Exported so the registration can be tested against a copy
+ * of a real settings.json instead of the live file.
+ *
+ * Three things must hold afterwards, and each one has been wrong at some point:
+ *   - the rule exists,
+ *   - its matcher covers every subagent tool name (AGENT_MATCHER), not just
+ *     the one the harness happened to emit when it was written,
+ *   - its command points at the current hook.
+ */
+export function patchAgentHookSettings(
+  settings: Record<string, unknown>,
+  lines: string[]
+): boolean {
   const hooks = (typeof settings["hooks"] === "object" && settings["hooks"] !== null
     ? settings["hooks"]
     : {}) as Record<string, unknown>;
@@ -58,41 +83,58 @@ function patchAgentHook(lines: string[]): boolean {
     : [];
 
   let changed = false;
-  let replaced = false;
+  let found = false;
 
   for (const rule of preToolUse) {
-    if (rule["matcher"] !== "Agent") continue;
-    const entries = Array.isArray(rule["hooks"]) ? (rule["hooks"] as Array<Record<string, unknown>>) : [];
+    const matcher = typeof rule["matcher"] === "string" ? rule["matcher"] : "";
+    if (matcher !== AGENT_MATCHER && !LEGACY_AGENT_MATCHERS.includes(matcher)) continue;
+
+    const entries = Array.isArray(rule["hooks"])
+      ? (rule["hooks"] as Array<Record<string, unknown>>)
+      : [];
+    let ours = false;
     for (const entry of entries) {
       const cmd = typeof entry["command"] === "string" ? entry["command"] : "";
-      if (cmd === NEW_AGENT_HOOK) replaced = true;
+      if (cmd === NEW_AGENT_HOOK) ours = true;
       if (cmd.includes(OLD_AGENT_HOOK_STEM)) {
         entry["command"] = NEW_AGENT_HOOK;
-        lines.push(`settings.json: Agent hook migrated to ${NEW_AGENT_HOOK}`);
+        lines.push(`settings.json: subagent hook migrated to ${NEW_AGENT_HOOK}`);
         changed = true;
-        replaced = true;
+        ours = true;
       }
     }
-    // rules whose matcher only existed for the old hook entry stay as-is;
-    // the new command reuses the rule
+    if (!ours) continue; // someone else's rule on the same matcher — leave it
+
+    found = true;
+    if (matcher !== AGENT_MATCHER) {
+      rule["matcher"] = AGENT_MATCHER;
+      lines.push(`settings.json: subagent matcher widened "${matcher}" → "${AGENT_MATCHER}"`);
+      changed = true;
+    }
   }
 
-  if (!replaced) {
+  if (!found) {
     preToolUse.push({
-      matcher: "Agent",
+      matcher: AGENT_MATCHER,
       hooks: [{ type: "command", command: NEW_AGENT_HOOK }],
     });
-    lines.push(`settings.json: Agent hook added → ${NEW_AGENT_HOOK}`);
+    lines.push(`settings.json: subagent hook added (${AGENT_MATCHER}) → ${NEW_AGENT_HOOK}`);
     changed = true;
   }
 
   if (changed) {
     hooks["PreToolUse"] = preToolUse;
     settings["hooks"] = hooks;
-    writeSettingsJson(settings);
   } else {
-    lines.push(`settings.json: Agent hook already current`);
+    lines.push(`settings.json: subagent hook already current`);
   }
+  return changed;
+}
+
+function patchAgentHook(lines: string[]): boolean {
+  const settings = readSettingsJson();
+  const changed = patchAgentHookSettings(settings, lines);
+  if (changed) writeSettingsJson(settings);
   return changed;
 }
 

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tabKey, itermUuid, workerInScope, recordSessionMapEntry, resolveSpawnerSession, sessionMapPath } from "./scope.js";
@@ -13,7 +13,7 @@ import { relPath, unifiedDiffLines, makeColor } from "./render.js";
 import { appendLedger, parseLedgerLine, ledgerSummary } from "./ledger.js";
 import { resultFromOutput } from "./run.js";
 import { statusPath, eventsPath, ledgerPath } from "./paths.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatuses, saveStatus, statusTmpPath, type WorkerStatus } from "./status.js";
 
 describe("tabKey", () => {
   it("extracts w<n>t<n> and ignores pane suffixes", () => {
@@ -82,6 +82,59 @@ describe("spawner session map", () => {
   });
   it("returns null without a map", () => {
     expect(resolveSpawnerSession(join(dir, "missing"), cwd, {}, t0)).toBeNull();
+  });
+});
+
+describe("saveStatus atomic write", () => {
+  const sample = (id: string): WorkerStatus =>
+    ({
+      id,
+      pid: 1,
+      label: "probe",
+      cwd: "/repo",
+      term: "",
+      provider: "anthropic",
+      model: "m",
+      state: "running",
+      started: "2026-09-19 08:00:00",
+      updated: "2026-09-19 08:00:00",
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+    }) as WorkerStatus;
+
+  it("writes when neither the logDir nor the status file exists yet", () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "pai-status-write-")), "not", "created", "yet");
+    saveStatus(dir, sample("20260919-080000-1"));
+    const back = JSON.parse(readFileSync(statusPath(dir, "20260919-080000-1"), "utf8")) as WorkerStatus;
+    expect(back.label).toBe("probe");
+    expect(loadStatuses(dir)).toHaveLength(1);
+  });
+
+  it("gives every write its own temp name, so a second writer cannot rename it away", () => {
+    // the live failure (2026-09-19): `pai worker kill` and the run's own
+    // SIGTERM handler both wrote <id>.status.tmp; one rename won, the other
+    // died with ENOENT and the terminal state never landed
+    const dir = mkdtempSync(join(tmpdir(), "pai-status-tmp-"));
+    const a = statusTmpPath(dir, "20260919-080000-2");
+    const b = statusTmpPath(dir, "20260919-080000-2");
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(`${statusPath(dir, "20260919-080000-2")}.tmp`);
+  });
+
+  it("leaves no temp file behind and survives a stale foreign temp file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-status-stale-"));
+    const id = "20260919-080000-3";
+    writeFileSync(`${statusPath(dir, id)}.tmp`, "{ truncated", "utf8"); // crashed writer
+    saveStatus(dir, sample(id));
+    saveStatus(dir, { ...sample(id), state: "killed", rc: 143 } as WorkerStatus);
+    const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
+    expect(back.state).toBe("killed");
+    expect(back.rc).toBe(143);
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([`${id}.status.tmp`]);
+    expect(loadStatuses(dir)).toHaveLength(1);
   });
 });
 

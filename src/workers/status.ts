@@ -7,7 +7,15 @@
  * (the AIBroker identity of the launching session, see scope.ts).
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
@@ -138,13 +146,35 @@ export function newWorkerId(d: Date = new Date(), pid = process.pid): string {
   return base;
 }
 
+// Temp names must be unique per writer, not just per worker: two processes
+// legitimately write the same id at the same moment (`pai worker kill` marking
+// a run killed while the run's own SIGTERM handler writes its terminal state).
+// With one shared `<id>.status.tmp` they clobber each other's temp file and the
+// loser's rename fails with ENOENT — observed live on 2026-09-19.
+let tmpSeq = 0;
+
+/** A temp path only this call owns — never the same string twice. */
+export function statusTmpPath(logDir: string, id: string): string {
+  return `${statusPath(logDir, id)}.${process.pid}.${tmpSeq++}.tmp`;
+}
+
 /** Write status atomically (temp + rename) and stamp `updated`. */
 export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new Date()): void {
   status.updated = nowStamp(d);
   const path = statusPath(logDir, status.id);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(status), "utf8");
-  renameSync(tmp, path);
+  const tmp = statusTmpPath(logDir, status.id);
+  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+  try {
+    writeFileSync(tmp, JSON.stringify(status), "utf8");
+    renameSync(tmp, path);
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // nothing to clean up
+    }
+    throw e;
+  }
 }
 
 /** Load every status file in the logDir, oldest id first, skipping damage. */
@@ -169,6 +199,26 @@ export function loadStatus(logDir: string, id: string): WorkerStatus | null {
     return JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Wait for a worker to record its own terminal state (the run's signal
+ * handler writes killed/rc/secs). Returns that status, or null when it is
+ * still "running" after `timeoutMs` — the caller then writes the state itself.
+ */
+export async function waitForTerminalStatus(
+  logDir: string,
+  id: string,
+  timeoutMs = 2000,
+  stepMs = 50
+): Promise<WorkerStatus | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = loadStatus(logDir, id);
+    if (s && s.state !== "running") return s;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, stepMs));
   }
 }
 

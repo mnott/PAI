@@ -83,7 +83,7 @@ import {
   type WorktreeInfo,
 } from "./worktree.js";
 import { OPERATOR_MARK, WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
-import { expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
+import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { createOperatorServer } from "./operator.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
@@ -224,6 +224,20 @@ export function isCompactBoundary(e: StreamEvent): boolean {
   return e.type === "system" && (e.subtype === "compact_boundary" || e.subtype === "compact");
 }
 
+/**
+ * The model the init event announces, adopted into the status when the spawn
+ * could not name one. The native Anthropic provider resolves `models.default`
+ * to "" on purpose (see nativeAnthropicProvider) so that no `--model` flag is
+ * passed and Claude Code picks its own; the run's real model is therefore only
+ * knowable from the first event it sends. Never overwrites an explicit model —
+ * a `--model` pin stays the recorded truth.
+ */
+export function adoptInitModel(status: Pick<WorkerStatus, "model">, e: StreamEvent): void {
+  if (status.model) return;
+  const m = (e.model ?? "").trim();
+  if (m) status.model = m;
+}
+
 /** Context window announced by the init event, when the endpoint sends one. */
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
@@ -348,6 +362,21 @@ export function headlessToolGrants(allowedTools: string[]): string[] {
   return allowedTools.length ? [] : ["--allowedTools", DEFAULT_WORKER_TOOLS];
 }
 
+/**
+ * The claude flag that turns on the browser bridge, when the run asked for it.
+ *
+ * The bridge is not an MCP server — it rides the Chrome native-host channel,
+ * is absent from `mcpServers`, and is off in a spawned claude until `--chrome`
+ * is passed. A grant such as `mcp__claude-in-chrome__tabs_context_mcp` is
+ * therefore a request for that flag, not for a server to load; without this
+ * the grant names a tool that never exists. `rest` is the caller's own argv:
+ * a `--chrome` they passed themselves is kept rather than duplicated.
+ */
+export function chromeGrantArgs(wanted: string[], rest: string[] = []): string[] {
+  if (rest.includes("--chrome")) return [];
+  return grantsChrome(wanted) ? ["--chrome"] : [];
+}
+
 interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
@@ -447,6 +476,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     void openPaneForWorker(logDir, config, wid, term).catch(() => {});
   }
 
+  const chromeArgs = chromeGrantArgs(
+    [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp, ...(target.classMcp ?? []), ...parsed.allowedTools],
+    parsed.rest
+  );
+
   // MCP: caller config > allowlist (--mcp flag / --mcp args / role / mcp__
   // grants in --allowedTools) > the strict empty set.
   let mcpArgs: string[] = [];
@@ -474,7 +508,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // Claude Code pick its own default) — passing --model "" would break the
   // spawn, so skip the flag entirely in that case.
   if (!parsed.callerModel && model) cmd.push("--model", model);
-  cmd.push(...mcpArgs, ...toolArgs, ...restArgs);
+  cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
     if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
@@ -612,6 +646,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       writeEvent(e as Record<string, unknown>);
       if (e.type === "system" && e.subtype === "init") {
         if (e.session_id) status.claudeSession = e.session_id;
+        adoptInitModel(status, e);
         const cw = initContextWindow(e);
         if (cw) status.contextWindow = cw;
         saveStatus(logDir, status);

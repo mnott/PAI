@@ -7,7 +7,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
+  adoptInitModel,
   bumpContextTokens,
+  chromeGrantArgs,
   headlessToolGrants,
   initContextWindow,
   isCompactBoundary,
@@ -33,6 +35,27 @@ describe("headlessToolGrants", () => {
   it("stays out of the way when the caller granted tools itself", () => {
     expect(headlessToolGrants(["Read,Bash"])).toEqual([]);
     expect(headlessToolGrants(["mcp__web__fetch"])).toEqual([]);
+  });
+});
+
+describe("chromeGrantArgs", () => {
+  // the bridge is off in a spawned claude; without the flag the grant names a
+  // tool that is simply not there, and the run reports TOOL_NOT_AVAILABLE
+  it("appends --chrome when a claude-in-chrome tool is allowlisted", () => {
+    expect(chromeGrantArgs(["mcp__claude-in-chrome__tabs_context_mcp"])).toEqual(["--chrome"]);
+    expect(chromeGrantArgs(["Read,Bash,mcp__claude-in-chrome__read_page"])).toEqual(["--chrome"]);
+    expect(chromeGrantArgs(["claude-in-chrome"])).toEqual(["--chrome"]);
+  });
+
+  it("adds nothing for a run that did not ask for the browser", () => {
+    expect(chromeGrantArgs([])).toEqual([]);
+    expect(chromeGrantArgs(["Read,Edit,Bash", "mcp__github__get_issue"])).toEqual([]);
+  });
+
+  it("does not duplicate a --chrome the caller passed itself", () => {
+    expect(
+      chromeGrantArgs(["mcp__claude-in-chrome__tabs_context_mcp"], ["-p", "task", "--chrome"])
+    ).toEqual([]);
   });
 });
 
@@ -116,6 +139,32 @@ describe("initContextWindow", () => {
     );
     // no window for plain models: the meter hides rather than guess
     expect(initContextWindow({ type: "system", subtype: "init", model: "glm-5.3" })).toBeNull();
+  });
+});
+
+describe("adoptInitModel", () => {
+  const init = (model?: string): StreamEvent => ({ type: "system", subtype: "init", model });
+
+  it("the built-in anthropic provider records the model the run announced", () => {
+    // nativeAnthropicProvider resolves models.default to "" so no --model flag
+    // is passed; without this the status file reported an empty model forever
+    const status = { model: "" };
+    adoptInitModel(status, init("claude-opus-5[1m]"));
+    expect(status.model).toBe("claude-opus-5[1m]");
+  });
+
+  it("never overwrites a model the spawn already resolved", () => {
+    const status = { model: "glm-5.3[1m]" };
+    adoptInitModel(status, init("claude-opus-5[1m]"));
+    expect(status.model).toBe("glm-5.3[1m]");
+  });
+
+  it("leaves the field alone when the event announces nothing usable", () => {
+    for (const m of [undefined, "", "   "]) {
+      const status = { model: "" };
+      adoptInitModel(status, init(m));
+      expect(status.model).toBe("");
+    }
   });
 });
 

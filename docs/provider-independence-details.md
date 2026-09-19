@@ -241,7 +241,7 @@ One orchestrator, many workers, split made mechanical by four hooks:
 
 | Hook | Enforces | Where |
 | --- | --- | --- |
-| PreToolUse (Agent) | every in-process subagent denied while providers are configured; the deny reason prints the `pai worker run` line to use instead | `src/hooks/ts/pre-tool-use/route-agents-to-worker.ts`, deployed `${PAI_DIR}/Hooks/route-agents-to-worker.mjs` |
+| PreToolUse (`Agent\|Task`) | every in-process subagent denied, unconditionally and in every project, so all delegated work stays visible in `pai worker ps`; the deny reason prints the `pai worker run --provider anthropic …` line to use instead. `ALLOW_ANTHROPIC_AGENTS=1` is the only bypass | `src/hooks/ts/lib/agent-gate.ts` (decision), `src/hooks/ts/pre-tool-use/route-agents-to-worker.ts` (I/O), deployed `${PAI_DIR}/Hooks/route-agents-to-worker.mjs` |
 | PreToolUse (Edit/Write) | no code edits by the orchestrator inside a git work tree; `PAI_WORKER=1` sessions are exempt | `${PAI_DIR}/Hooks/route-edits-to-worker.mjs` (deployed config) |
 | SessionStart (compact) | saved state replayed and the live worker list injected — a compacted orchestrator still sees every worker | `src/hooks/ts/session-start/post-compact-inject.ts`, `${PAI_DIR}/Hooks/post-compact-workers.mjs` |
 | PreToolUse (TaskOutput) | blocking waits denied unless `block: false` — end the turn; the result arrives as a task notification | `${PAI_DIR}/Hooks/block-taskoutput-wait.mjs` |

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   expandMcpNames,
+  grantsChrome,
   readMcpServers,
   writeMcpConfig,
   describeMcp,
@@ -45,6 +46,41 @@ describe("readMcpServers", () => {
     const broken = join(dir, "broken.json");
     writeFileSync(broken, "{not json", "utf8");
     expect(readMcpServers(broken)).toEqual({});
+  });
+
+  // The vendor config is not ours and has been found carrying tool-usage
+  // records under mcpServers, keyed by tool name. Those are not servers:
+  // offering one as available invites a run that cannot start, and passing
+  // one to --mcp-config is rejected outright. A server has a command or a url.
+  it("ignores tool-name entries that are not server definitions", () => {
+    const polluted = join(dir, "polluted.json");
+    writeFileSync(
+      polluted,
+      JSON.stringify({
+        mcpServers: {
+          memory: { type: "stdio", command: "bun", args: ["run", "memory"] },
+          remote: { type: "http", url: "https://example.invalid/mcp" },
+          Read: { usageCount: 1405, lastUsedAt: 1 },
+          Bash: { usageCount: 4296, lastUsedAt: 2 },
+          ToolSearch: { usageCount: 304, lastUsedAt: 3 },
+          AskUserQuestion: { usageCount: 2, lastUsedAt: 4 },
+          mcp__memory__search: { usageCount: 6, lastUsedAt: 5 },
+          mcp__memory__search_but_with_a_command: { command: "node" },
+          blank: { command: "" },
+          notAnObject: "nonsense",
+        },
+      }),
+      "utf8"
+    );
+
+    const servers = readMcpServers(polluted);
+    expect(Object.keys(servers).sort()).toEqual(["memory", "remote"]);
+    for (const name of Object.keys(servers)) expect(name.startsWith("mcp__")).toBe(false);
+
+    // and the list a user is shown offers only those two
+    const shown = describeMcp(workers, polluted).join("\n");
+    expect(shown).not.toContain("Read");
+    expect(shown).not.toContain("mcp__");
   });
 });
 
@@ -132,6 +168,42 @@ describe("mcpServersFromToolGrants", () => {
     expect(() => expandMcpNames(names, workers, claudeJson)).toThrow(
       /unknown MCP server "nosuch".*Available servers:/s
     );
+  });
+});
+
+// claude-in-chrome rides the Chrome native-host bridge, so it is in no
+// config file and cannot be loaded by one: it is switched on per process by
+// the --chrome flag. Treating it as a server rejected every run that asked
+// for one of its tools, before claude was ever started.
+describe("claude-in-chrome is a flag, not a server", () => {
+  it("recognises the server name and its tool grants", () => {
+    expect(grantsChrome(["mcp__claude-in-chrome__tabs_context_mcp"])).toBe(true);
+    expect(grantsChrome(["Read,mcp__claude-in-chrome__read_page,Bash"])).toBe(true);
+    expect(grantsChrome(["mcp__claude-in-chrome"])).toBe(true);
+    expect(grantsChrome(["claude-in-chrome"])).toBe(true);
+  });
+
+  it("does not fire for other servers", () => {
+    expect(grantsChrome(["Read", "Bash", "mcp__github__get_issue", "github"])).toBe(false);
+    expect(grantsChrome([])).toBe(false);
+  });
+
+  it("is never derived as a server to load", () => {
+    expect(mcpServersFromToolGrants(["mcp__claude-in-chrome__tabs_context_mcp"])).toEqual([]);
+    expect(
+      mcpServersFromToolGrants(["mcp__claude-in-chrome__read_page,mcp__github__get_issue"])
+    ).toEqual(["github"]);
+  });
+
+  it("is not rejected as an unknown server by the allowlist", () => {
+    expect(() =>
+      expandMcpNames(
+        mcpServersFromToolGrants(["mcp__claude-in-chrome__tabs_context_mcp"]),
+        workers,
+        claudeJson
+      )
+    ).not.toThrow();
+    expect(expandMcpNames(["claude-in-chrome", "memory"], workers, claudeJson)).toEqual(["memory"]);
   });
 });
 

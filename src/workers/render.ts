@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, alive } from "./status.js";
+import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, alive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -232,7 +232,8 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
     parts.push(`⋯ ${Math.max(0, Math.floor(s.idle ?? 0))}s`);
     for (const p of [s.intent, s.tool]) if (p && p.trim()) parts.push(p.trim());
   }
-  return `[${s.provider}${s.model ? "/" + s.model : ""}] ${parts.join(" · ")}`;
+  const model = shortModel(s.model);
+  return `[${s.provider}${model ? "/" + model : ""}] ${parts.join(" · ")}`;
 }
 
 /**
@@ -522,32 +523,73 @@ export function renderTable(
 }
 
 /**
- * The step of a statusline row: what the worker is doing as a verb, never a
- * raw command. A Bash line trims to its first word (`grep -n -A4 "x" src/` →
- * `grep …` — no `Bash:` prefix, no flags, no quotes); the file tools keep
- * their `Edit: button.ts` shape; free text (what the worker last said) is
- * only shortened. Always ≤ 24 chars.
+ * The one place a model id is compacted for display, so every renderer
+ * shortens identically: the vendor prefix goes (the provider column already
+ * says who serves it), a release-date suffix goes, version segments read as
+ * dots, and a `[1m]` window marker is kept because it changes what the run
+ * costs. `claude-opus-5[1m]` → `opus-5[1m]`, `claude-haiku-4-5-20251001` →
+ * `haiku-4.5`, `glm-5.3[1m]` and `k3[1m]` unchanged. Empty in, empty out.
  */
-export function stepOf(last: string): string {
-  const s = String(last ?? "").trim();
-  if (s.startsWith("Bash: ")) {
-    const cmd = s.slice(6).trim();
-    const verb = cmd.split(/\s+/)[0] ?? "";
-    return shortText(cmd.length > verb.length ? `${verb} …` : verb, 24);
+export function shortModel(model: string | null | undefined): string {
+  const raw = String(model ?? "").trim();
+  if (!raw) return "";
+  const wide = /\[1m\]$/i.test(raw);
+  let id = wide ? raw.slice(0, -4) : raw;
+  id = id.replace(/^(?:us\.|eu\.|apac\.)?(?:anthropic|claude|openai|google|models)[./-]/i, "");
+  id = id.replace(/-\d{8}$/, "");
+  // trailing numeric segments are one version: haiku-4-5 → haiku-4.5
+  const parts = id.split("-");
+  const nums: string[] = [];
+  while (parts.length > 1 && /^\d+(?:\.\d+)*$/.test(parts[parts.length - 1])) {
+    nums.unshift(parts.pop() as string);
   }
-  return shortText(s, 24);
+  if (nums.length) id = `${parts.join("-")}-${nums.join(".")}`;
+  return wide ? `${id}[1m]` : id;
+}
+
+/**
+ * The goal of a statusline row: what the worker is FOR, never what it is doing
+ * this second. The operator's `--label` is the goal and is preferred over
+ * anything the model wrote; an unlabelled run's label already holds its prompt
+ * (see run.ts), so the same path shortens that to its first sentence, cut on a
+ * word boundary. A run with neither label nor prompt reads "unlabeled". Width
+ * fitting goes through shortText, the repo's one truncation helper.
+ */
+export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
+  const raw = String(s.label ?? "").trim();
+  if (!raw || raw === "(no prompt)") return UNLABELED;
+  const first = raw.split(/(?<=[.!?])\s+/)[0] ?? raw;
+  if (first.length <= max) return shortText(first, max);
+  const cut = first.slice(0, max - 1).replace(/\s+\S*$/, "");
+  return shortText(`${cut || first.slice(0, max - 1)}…`, max);
 }
 
 /**
  * The statusline bar: `provider ▶N` then one row per running spawned worker —
- * `name · age · step` — and today's ✓/✗ tail. The chat pane contributes
- * nothing but its provider: its age, state and inbox live in `pai worker ps`,
- * not here. Rows are flat (the ↳ depth is ps territory) and oldest first;
- * `#id` joins a name only when two running workers share one label, so ids
- * stay rare enough to read.
+ * `goal · age · model` — and today's ✓/✗ tail. The row answers the two
+ * questions a glance asks — what is this worker for, and what model is it
+ * spending — so the momentary tool call is gone: liveness is the age, and step
+ * detail belongs to `pai worker ps` / `worker follow`. The worker's name IS its
+ * goal here (both are the operator's `--label`), so it is printed once rather
+ * than twice; printing it twice would only spend the width this row protects.
+ * The chat pane contributes nothing but its provider: its age, state and inbox
+ * live in `pai worker ps`, not here. Rows are flat (the ↳ depth is ps
+ * territory) and oldest first; `#id` joins a name only when two running
+ * workers share one label, so ids stay rare enough to read.
  */
-export function renderStatusLine(mine: WorkerStatus[], now: Date = new Date()): string {
-  if (!mine.length) return "";
+export function renderStatusLine(
+  mine: WorkerStatus[],
+  now: Date = new Date(),
+  active: string | null = null
+): string {
+  // `active` is the live routing choice (workers.active). The head names the
+  // provider the next worker goes to, so it has to come from the config on
+  // every refresh: the chat pane's own `provider` is frozen at pane launch and
+  // stops being true the moment `pai worker providers use <name>` runs — the
+  // bar then shows a provider hours out of date (2026-09-19). "auto" is not
+  // one provider, so it falls through to what is actually running.
+  const live = active && active !== "auto" ? active : null;
+  if (!mine.length) return live ?? "";
   // isChatPane carries the migration shim for pre-`origin` entries (see
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
   const isChat = isChatPane;
@@ -561,11 +603,13 @@ export function renderStatusLine(mine: WorkerStatus[], now: Date = new Date()): 
   const bad = doneToday.length - ok;
   const rows = running.slice(0, 3).map((s) => {
     const twin = running.some((o) => o !== s && o.label === s.label);
-    const name = `${twin ? `#${s.id.slice(-4)} ` : ""}${s.label.slice(0, 26)}`;
-    return `${name} · ${ageOf(s.started, now)} · ${stepOf(s.last)}`;
+    const name = `${twin ? `#${s.id.slice(-4)} ` : ""}${goalOf(s)}`;
+    const model = shortModel(s.model);
+    return `${name} · ${ageOf(s.started, now)}${model ? ` · ${model}` : ""}`;
   });
   let head: string;
-  if (chat) head = chat.provider;
+  if (live) head = live;
+  else if (chat) head = chat.provider;
   else {
     const providers = new Set(running.map((s) => s.provider));
     head = providers.size === 1 ? [...providers][0] : "workers";
