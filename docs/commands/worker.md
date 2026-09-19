@@ -41,6 +41,7 @@ pai worker <subcommand> [options]
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
+| [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check |
 
 ### pai worker run [args...]
 
@@ -521,6 +522,46 @@ Capabilities: default, fast, image. --provider targets another provider.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--provider <name>` | Provider to read or change (default: the active one) |  |
+
+
+### pai worker config
+
+workers.yaml itself: path, init, migrate, check
+
+
+### pai worker config path
+
+Print the resolved workers.yaml path
+
+
+### pai worker config init
+
+Write the commented starter workers.yaml (refuses if one already exists)
+
+
+### pai worker config migrate
+
+Move providers/classes/mcp_sets/active out of the JSON config into workers.yaml.
+
+Backs the JSON section up to workers.json.migrated-<date> next to it.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--force` | Overwrite an existing workers.yaml |  |
+| `--dry-run` | Print the would-be workers.yaml without writing anything |  |
+
+
+### pai worker config check [path]
+
+Validate workers.yaml (or the file at [path]); exits non-zero with file:line on error
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[path]` | optional |
 
 
 ## See also

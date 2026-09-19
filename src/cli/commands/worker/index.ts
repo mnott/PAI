@@ -34,6 +34,7 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
+import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, saveStatus, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
@@ -629,6 +630,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerProviderCommands(providersCmd);
   registerWorkerClassCommands(workerCmd);
   registerWorkerModelCommand(workerCmd);
+  registerWorkerConfigCommands(workerCmd);
 }
 
 function parseIntArg(v: string): number {
