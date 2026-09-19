@@ -15,11 +15,13 @@
  * Code.
  */
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
+import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -147,24 +149,31 @@ export const NATIVE_ANTHROPIC_MODELS: WorkerProvider["models"] = {
  * the models come from NATIVE_ANTHROPIC_MODELS so a run always names its
  * model on the command line.
  */
-export function nativeAnthropicProvider(): WorkerProvider {
+export function nativeAnthropicProvider(
+  models: WorkerProvider["models"] = NATIVE_ANTHROPIC_MODELS
+): WorkerProvider {
   return {
     enabled: true,
     protocol: "anthropic",
     baseUrl: "",
     keyFile: null,
-    models: { ...NATIVE_ANTHROPIC_MODELS },
+    models: { ...models },
     env: {},
     native: true,
   };
 }
 
-/** Provider by name, synthesizing ANTHROPIC_NATIVE when it is asked for. */
+/**
+ * Provider by name, synthesizing ANTHROPIC_NATIVE when it is asked for. Reads
+ * `config.nativeModels` (workers.yaml's documented `providers.anthropic.models`
+ * override, if any) so a config that pins a different default/fast id for the
+ * built-in provider is honored everywhere a provider is resolved.
+ */
 export function getProviderOrNative(
-  config: { providers: Record<string, WorkerProvider> },
+  config: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
   name: string
 ): WorkerProvider | undefined {
-  if (name === ANTHROPIC_NATIVE) return nativeAnthropicProvider();
+  if (name === ANTHROPIC_NATIVE) return nativeAnthropicProvider(config.nativeModels);
   return config.providers[name];
 }
 
@@ -334,6 +343,12 @@ export interface WorkersConfig {
   cacheKeepaliveSecs: number;
   /** Machine-wide Claude Code fallback; null = off. */
   fallback: WorkersFallback | null;
+  /**
+   * Model ids for the built-in `anthropic` provider, when workers.yaml
+   * documents an override under `providers.anthropic.models`. Defaults to
+   * NATIVE_ANTHROPIC_MODELS.
+   */
+  nativeModels: WorkerProvider["models"];
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +410,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     tree: { ...DEFAULT_TREE },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     fallback: null,
+    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
   };
 }
 
@@ -412,7 +428,32 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-function parseProvider(name: string, raw: unknown): WorkerProvider {
+/**
+ * Parse a `models` block (capability → model id, "default" required). Shared
+ * by parseProvider and the YAML loader's builtin-anthropic override, which
+ * has no other provider fields to validate.
+ */
+export function parseModelsBlock(pathPrefix: string, modelsRaw: unknown): WorkerProvider["models"] {
+  const raw = modelsRaw === undefined ? {} : modelsRaw;
+  if (typeof raw !== "object" || raw === null) bad(pathPrefix, "must be an object");
+  const m = raw as Record<string, unknown>;
+  const defaultModel = str(m.default);
+  if (!defaultModel) bad(`${pathPrefix}.default`, "is required");
+  const models: WorkerProvider["models"] = { default: defaultModel };
+  for (const key of Object.keys(m)) {
+    if (key === "default") continue;
+    if (!isModelCapability(key)) {
+      bad(`${pathPrefix}.${key}`, `"${key}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`);
+    }
+    const id = str(m[key]);
+    if (!id) bad(`${pathPrefix}.${key}`, "must be a non-empty model id");
+    models[key] = id;
+  }
+  return models;
+}
+
+/** Parse and validate one provider entry (shared by JSON and YAML loading). */
+export function parseProvider(name: string, raw: unknown): WorkerProvider {
   if (name === ANTHROPIC_NATIVE) {
     bad(
       `.providers.${name}`,
@@ -441,26 +482,7 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
       ? null
       : str(p.keyFile);
 
-  const modelsRaw = p.models === undefined ? {} : p.models;
-  if (typeof modelsRaw !== "object" || modelsRaw === null) {
-    bad(`.providers.${name}.models`, "must be an object");
-  }
-  const m = modelsRaw as Record<string, unknown>;
-  const defaultModel = str(m.default);
-  if (!defaultModel) bad(`.providers.${name}.models.default`, "is required");
-  const models: WorkerProvider["models"] = { default: defaultModel };
-  for (const key of Object.keys(m)) {
-    if (key === "default") continue;
-    if (!isModelCapability(key)) {
-      bad(
-        `.providers.${name}.models.${key}`,
-        `"${key}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`
-      );
-    }
-    const id = str(m[key]);
-    if (!id) bad(`.providers.${name}.models.${key}`, "must be a non-empty model id");
-    models[key] = id;
-  }
+  const models = parseModelsBlock(`.providers.${name}.models`, p.models);
 
   let modelTiers: Record<string, ModelTier> | undefined;
   if (p.modelTiers !== undefined) {
@@ -596,6 +618,101 @@ function parseProvider(name: string, raw: unknown): WorkerProvider {
 }
 
 /**
+ * Parse a `classes` (or legacy `roles`) value shared by JSON and YAML
+ * loading. `badPathPrefix` names the field in error messages, e.g. ".classes".
+ */
+export function parseClassesValue(
+  classesRaw: unknown,
+  badPathPrefix: string
+): Record<string, ClassTarget> {
+  const classes: Record<string, ClassTarget> = {};
+  if (classesRaw === undefined) return classes;
+  if (typeof classesRaw !== "object" || classesRaw === null || Array.isArray(classesRaw)) {
+    bad(badPathPrefix, "must be an object of class → provider[/alias] or {provider, mcp, maxCostTier, requireTags, order}");
+  }
+  for (const [cls, target] of Object.entries(classesRaw as Record<string, unknown>)) {
+    if (typeof target === "object" && target !== null && !Array.isArray(target)) {
+      const o = target as Record<string, unknown>;
+      const provider = str(o.provider);
+      if (o.provider !== undefined && (!provider || provider.includes(" "))) {
+        bad(`${badPathPrefix}.${cls}.provider`, `invalid provider "${provider}"`);
+      }
+      let mcp: string[] | undefined;
+      if (o.mcp !== undefined) {
+        if (!Array.isArray(o.mcp) || o.mcp.some((x) => typeof x !== "string")) {
+          bad(`${badPathPrefix}.${cls}.mcp`, "must be an array of MCP server or set names");
+        }
+        mcp = o.mcp as string[];
+      }
+      let maxCostTier: number | undefined;
+      if (o.maxCostTier !== undefined) {
+        if (
+          typeof o.maxCostTier !== "number" ||
+          !Number.isInteger(o.maxCostTier) ||
+          o.maxCostTier < 1 ||
+          o.maxCostTier > 5
+        ) {
+          bad(`${badPathPrefix}.${cls}.maxCostTier`, "must be an integer 1 … 5");
+        }
+        maxCostTier = o.maxCostTier;
+      }
+      let requireTags: string[] | undefined;
+      if (o.requireTags !== undefined) {
+        if (!Array.isArray(o.requireTags) || o.requireTags.some((x) => typeof x !== "string")) {
+          bad(`${badPathPrefix}.${cls}.requireTags`, `must be an array of tags from: ${PROVIDER_TAGS.join(", ")}`);
+        }
+        for (const t of o.requireTags as string[]) {
+          if (!(PROVIDER_TAGS as readonly string[]).includes(t)) {
+            bad(`${badPathPrefix}.${cls}.requireTags`, `"${t}" is not a tag (from: ${PROVIDER_TAGS.join(", ")})`);
+          }
+        }
+        requireTags = o.requireTags as string[];
+      }
+      let order: string[] | undefined;
+      if (o.order !== undefined) {
+        if (!Array.isArray(o.order) || o.order.some((x) => typeof x !== "string")) {
+          bad(`${badPathPrefix}.${cls}.order`, "must be an array of provider names");
+        }
+        order = o.order as string[];
+      }
+      const obj: ClassTarget = {
+        ...(provider ? { provider } : {}),
+        ...(mcp ? { mcp } : {}),
+        ...(maxCostTier !== undefined ? { maxCostTier } : {}),
+        ...(requireTags ? { requireTags } : {}),
+        ...(order ? { order } : {}),
+      };
+      classes[cls] = Object.keys(obj).length ? obj : {};
+    } else {
+      const t = str(target);
+      if (!t || t.includes(" ")) bad(`${badPathPrefix}.${cls}`, `invalid target "${t}"`);
+      classes[cls] = t;
+    }
+  }
+  return classes;
+}
+
+/**
+ * Parse an `mcpSets` (or `mcp_sets`) value shared by JSON and YAML loading.
+ * Always merged over DEFAULT_MCP_SETS, so an omitted `desktop` key keeps the
+ * built-in clickr set (see DEFAULT_MCP_SETS).
+ */
+export function parseMcpSetsValue(raw: unknown, badPathPrefix: string): Record<string, string[]> {
+  const mcpSets: Record<string, string[]> = { ...DEFAULT_MCP_SETS };
+  if (raw === undefined) return mcpSets;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    bad(badPathPrefix, "must be an object of set name → [server names]");
+  }
+  for (const [setName, servers] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(servers) || servers.some((x) => typeof x !== "string")) {
+      bad(`${badPathPrefix}.${setName}`, "must be an array of MCP server names");
+    }
+    mcpSets[setName] = servers as string[];
+  }
+  return mcpSets;
+}
+
+/**
  * Parse and validate a raw `workers` value. Missing section → defaults.
  * Unknown-but-typed garbage → WorkersConfigError naming the offending field.
  */
@@ -619,85 +736,10 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
 
   // classes is canonical; a config that still carries the pre-classes `roles`
   // key is migrated by reading it here — the next write stores only `classes`.
-  const classes: Record<string, ClassTarget> = {};
   const classesRaw = w.classes !== undefined ? w.classes : w.roles;
-  if (classesRaw !== undefined) {
-    if (typeof classesRaw !== "object" || classesRaw === null || Array.isArray(classesRaw)) {
-      bad(w.classes !== undefined ? ".classes" : ".roles", "must be an object of class → provider[/alias] or {provider, mcp, maxCostTier, requireTags, order}");
-    }
-    for (const [cls, target] of Object.entries(classesRaw)) {
-      if (typeof target === "object" && target !== null && !Array.isArray(target)) {
-        const o = target as Record<string, unknown>;
-        const provider = str(o.provider);
-        if (o.provider !== undefined && (!provider || provider.includes(" "))) {
-          bad(`.classes.${cls}.provider`, `invalid provider "${provider}"`);
-        }
-        let mcp: string[] | undefined;
-        if (o.mcp !== undefined) {
-          if (!Array.isArray(o.mcp) || o.mcp.some((x) => typeof x !== "string")) {
-            bad(`.classes.${cls}.mcp`, "must be an array of MCP server or set names");
-          }
-          mcp = o.mcp as string[];
-        }
-        let maxCostTier: number | undefined;
-        if (o.maxCostTier !== undefined) {
-          if (
-            typeof o.maxCostTier !== "number" ||
-            !Number.isInteger(o.maxCostTier) ||
-            o.maxCostTier < 1 ||
-            o.maxCostTier > 5
-          ) {
-            bad(`.classes.${cls}.maxCostTier`, "must be an integer 1 … 5");
-          }
-          maxCostTier = o.maxCostTier;
-        }
-        let requireTags: string[] | undefined;
-        if (o.requireTags !== undefined) {
-          if (!Array.isArray(o.requireTags) || o.requireTags.some((x) => typeof x !== "string")) {
-            bad(`.classes.${cls}.requireTags`, `must be an array of tags from: ${PROVIDER_TAGS.join(", ")}`);
-          }
-          for (const t of o.requireTags as string[]) {
-            if (!(PROVIDER_TAGS as readonly string[]).includes(t)) {
-              bad(`.classes.${cls}.requireTags`, `"${t}" is not a tag (from: ${PROVIDER_TAGS.join(", ")})`);
-            }
-          }
-          requireTags = o.requireTags as string[];
-        }
-        let order: string[] | undefined;
-        if (o.order !== undefined) {
-          if (!Array.isArray(o.order) || o.order.some((x) => typeof x !== "string")) {
-            bad(`.classes.${cls}.order`, "must be an array of provider names");
-          }
-          order = o.order as string[];
-        }
-        const obj: ClassTarget = {
-          ...(provider ? { provider } : {}),
-          ...(mcp ? { mcp } : {}),
-          ...(maxCostTier !== undefined ? { maxCostTier } : {}),
-          ...(requireTags ? { requireTags } : {}),
-          ...(order ? { order } : {}),
-        };
-        classes[cls] = Object.keys(obj).length ? obj : {};
-      } else {
-        const t = str(target);
-        if (!t || t.includes(" ")) bad(`.classes.${cls}`, `invalid target "${t}"`);
-        classes[cls] = t;
-      }
-    }
-  }
+  const classes = parseClassesValue(classesRaw, w.classes !== undefined ? ".classes" : ".roles");
 
-  const mcpSets: Record<string, string[]> = { ...DEFAULT_MCP_SETS };
-  if (w.mcpSets !== undefined) {
-    if (typeof w.mcpSets !== "object" || w.mcpSets === null || Array.isArray(w.mcpSets)) {
-      bad(".mcpSets", "must be an object of set name → [server names]");
-    }
-    for (const [setName, servers] of Object.entries(w.mcpSets)) {
-      if (!Array.isArray(servers) || servers.some((x) => typeof x !== "string")) {
-        bad(`.mcpSets.${setName}`, "must be an array of MCP server names");
-      }
-      mcpSets[setName] = servers as string[];
-    }
-  }
+  const mcpSets = parseMcpSetsValue(w.mcpSets, ".mcpSets");
 
   let pane = { ...DEFAULT_PANE };
   if (w.pane !== undefined) {
@@ -827,6 +869,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     tree,
     cacheKeepaliveSecs,
     fallback,
+    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
   };
 }
 
@@ -834,31 +877,76 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
 // Read / write
 // ---------------------------------------------------------------------------
 
+function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
+  return {
+    active: workers.active,
+    providers: workers.providers,
+    classes: workers.classes,
+    mcpSets: workers.mcpSets,
+    nativeModels: workers.nativeModels,
+  };
+}
+
 /**
  * Read the whole config file and return (raw, workers) — the raw record so
  * callers can rewrite it preserving every other section, the parsed+validated
  * workers section. Unreadable config throws (readJsonStrict), missing is fine.
  * `path` overrides the config location (tests, CLAUDE_SETTINGS_PATH-style
  * dry runs); default ~/.config/pai/config.json.
+ *
+ * Providers, classes, mcpSets and active load from workers.yaml (next to
+ * `path`) when it exists; otherwise they fall back to the JSON `workers`
+ * section, and then to built-in defaults — nothing breaks before migration
+ * (`pai worker config migrate`). Everything else (pane, routing, tree,
+ * cacheKeepaliveSecs, fallback, enabled, logDir) always comes from JSON.
  */
 export function readWorkersSection(path: string = CONFIG_FILE): {
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
   const raw = readJsonStrict(path, "~/.config/pai/config.json");
-  return { raw, workers: parseWorkersConfig(raw.workers) };
+  const workers = parseWorkersConfig(raw.workers);
+  const yaml = readWorkersYaml(workersYamlPath(path));
+  if (yaml) {
+    workers.active = yaml.data.active;
+    workers.providers = yaml.data.providers;
+    workers.classes = yaml.data.classes;
+    workers.mcpSets = yaml.data.mcpSets;
+    workers.nativeModels = yaml.data.nativeModels;
+  }
+  return { raw, workers };
 }
 
-/** Write the workers section back into the config file, atomically. */
+/**
+ * Write the workers section back, atomically. When workers.yaml exists, its
+ * providers/classes/mcpSets/active are synced there (comment-preserving,
+ * only the entries that changed are touched) and stripped from the JSON
+ * `workers` section; everything else still writes to JSON as before.
+ */
 export function writeWorkersSection(
   raw: Record<string, unknown>,
   workers: WorkersConfig,
   path: string = CONFIG_FILE
 ): void {
-  // null fallback (off) is omitted rather than written, so a config that
-  // never used it does not gain a `"fallback": null` line from an unrelated
-  // worker mutation.
-  raw.workers = workers.fallback ? workers : { ...workers, fallback: undefined };
+  const yamlPath = workersYamlPath(path);
+  const usingYaml = existsSync(yamlPath);
+  if (usingYaml) {
+    writeWorkersYaml(yamlPath, workersYamlDataOf(workers));
+  }
+  const jsonWorkers = usingYaml
+    ? {
+        enabled: workers.enabled,
+        pane: workers.pane,
+        logDir: workers.logDir,
+        routing: workers.routing,
+        tree: workers.tree,
+        cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
+        ...(workers.fallback ? { fallback: workers.fallback } : {}),
+      }
+    : workers.fallback
+      ? workers
+      : { ...workers, fallback: undefined };
+  raw.workers = jsonWorkers;
   writeJsonAtomic(path, raw, { label: "~/.config/pai/config.json" });
 }
 
