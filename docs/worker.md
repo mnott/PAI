@@ -59,69 +59,57 @@ main session (Anthropic)          workers (configured provider)
 
 ## Config
 
-`~/.config/pai/config.json`, `workers` section:
+Providers, model roles, class routing and MCP sets live in one hand-editable
+file, `~/.config/pai/workers.yaml` — see **docs/workers-config.md** for the
+full reference (the annotated example, how to add a provider, the load
+order, and `pai worker config migrate` for configs still on the old JSON
+shape). Everything else worker-related (pane, log dir, routing cooldown,
+cache-keepalive cadence, fallback) stays in `~/.config/pai/config.json`'s
+`workers` section.
 
-```json
-{
-  "workers": {
-    "enabled": true,
-    "active": "glm",
-    "providers": {
-      "glm": {
-        "baseUrl": "https://api.z.ai/api/anthropic",
-        "keyFile": "~/.config/zai/api_key",
-        "models": { "default": "glm-5.3", "fast": "glm-5.3-flash" },
-        "env": { "API_TIMEOUT_MS": "3000000" },
-        "contextWindow": 200000,
-        "costTier": 2,
-        "tags": ["code", "long-context"]
-      },
-      "oai": {
-        "protocol": "openai",
-        "upstreamUrl": "https://api.openai.com/v1",
-        "keyFile": "~/.config/pai/keys/oai",
-        "models": { "default": "gpt-5.2", "fast": "gpt-5.2-mini" },
-        "costTier": 4,
-        "tags": ["reasoning", "vision"]
-      },
-      "codexprov": {
-        "engine": "codex",
-        "models": { "default": "gpt-5.2-codex" }
-      }
-    },
-    "classes": {
-      "implement": "glm",
-      "research": { "maxCostTier": 2, "requireTags": ["long-context"] },
-      "spotcheck": "glm/fast",
-      "docs": { "provider": "glm", "mcp": ["office"] }
-    },
-    "mcpSets": {
-      "office": ["memory", "github"],
-      "tiny": ["fetcher"]
-    },
-    "pane": { "enabled": true, "fontSize": 13, "autoExitSecs": 60 },
-    "logDir": "~/.claude/logs/workers",
-    "routing": { "order": [], "cooldownMinutes": 30, "retryOnQuota": true }
-  }
-}
+Quick summary of workers.yaml:
+
+```yaml
+active: glm
+
+providers:
+  anthropic:
+    builtin: true
+    models:
+      default: claude-sonnet-5
+      fast: claude-haiku-4-5-20251001
+  glm:
+    url: https://api.z.ai/api/anthropic
+    key_file: ~/.config/zai/api_key
+    tier: 2
+    models:
+      default: glm-5.3
+      fast: glm-5.3-flash
+
+classes:
+  implement: glm
+  spotcheck: glm/fast
+
+mcp_sets:
+  office: [memory, github]
 ```
 
-- `keyFile` holds the API token (chmod 600). Keys never go into the config.
-- `active` is one provider name, or `"auto"` to walk `routing.order`.
-- `protocol: "openai"` routes the provider through the built-in proxy (next
-  section); it needs `upstreamUrl`, the Chat Completions base.
-- `engine: "codex"` runs the provider on the Codex CLI instead of Claude
-  Code (see below).
-- `contextWindow` overrides the context-meter window when the endpoint's
-  init event does not announce one (default 200 000).
-- `costTier` (1 cheapest … 5 most expensive, default 3) and `tags` (from:
-  `code`, `vision`, `image-gen`, `long-context`, `fast`, `reasoning`) describe
-  a provider; classes use them to constrain routing (next section).
-- A class target is `"provider[/model]"` or an object with `provider` and a
-  `mcp` allowlist applied on top of `--mcp`, or an object with only routing
-  constraints (`maxCostTier`, `requireTags`, `order`).
+- `key_file` holds the API token (chmod 600). Keys never go into the config.
+- `active` is one provider name, `"auto"` to walk `routing.order` (still in
+  the JSON config), or the built-in `anthropic`.
+- `protocol: openai` (plus `upstream_url`) routes the provider through the
+  built-in proxy (next section); `engine: codex` runs it on the Codex CLI
+  instead of Claude Code. `tier` (1 cheapest … 5 most expensive, default 3)
+  and `tags` describe a provider for routing constraints. These, and a
+  provider's `env`/`note`/`quota_probe`/`context_window`/`model_tiers`, are
+  optional advanced fields not shown in the starter — docs/workers-config.md
+  lists them all.
+- A class target is `provider[/role]`; the object form (`provider` + `mcp`
+  allowlist, or routing-only constraints `maxCostTier`/`requireTags`/`order`)
+  is still supported for advanced routing.
 
-Or add one from the CLI:
+Or add a provider from the CLI (writes workers.yaml once it exists, else the
+JSON `workers` section):
 
 ```
 pai worker providers add glm \
