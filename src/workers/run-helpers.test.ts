@@ -14,14 +14,18 @@ import {
   initContextWindow,
   isCompactBoundary,
   isoStamp,
+  modelArgs,
   operatorUserText,
   resetContextTokensOnCompact,
+  resolveRunModel,
   stdinUserMessage,
   usageContextTokens,
   printResult,
   type StreamEvent,
 } from "./run.js";
 import { OPERATOR_MARK } from "./report.js";
+import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
+import { describeProviders } from "./providers.js";
 
 describe("headlessToolGrants", () => {
   it("grants the core tool set when the caller brings no allowedTools", () => {
@@ -142,12 +146,70 @@ describe("initContextWindow", () => {
   });
 });
 
+describe("resolveRunModel / modelArgs — the built-in provider names its model", () => {
+  // A headless claude with no --model takes the interactive session default;
+  // a probe once came up on the most expensive tier because the chat session
+  // had been switched to it. Workers exist to save cost, so the built-in
+  // provider resolves through a model table like any other (2026-09-19).
+  const native = () => ({ provider: nativeAnthropicProvider(), modelAlias: null });
+
+  it("anthropic with no --model resolves the sonnet default and passes --model", () => {
+    const model = resolveRunModel(native(), "implement");
+    expect(model).toBe("claude-sonnet-5");
+    expect(modelArgs(model, false)).toEqual(["--model", "claude-sonnet-5"]);
+  });
+
+  it("no class at all still resolves the default, never an empty model", () => {
+    const model = resolveRunModel(native());
+    expect(model).toBe("claude-sonnet-5");
+    expect(modelArgs(model, false)).toEqual(["--model", "claude-sonnet-5"]);
+  });
+
+  it("--class spotcheck and --class simple resolve the fast model (haiku)", () => {
+    expect(resolveRunModel(native(), "spotcheck")).toBe("claude-haiku-4-5-20251001");
+    expect(resolveRunModel(native(), "simple")).toBe("claude-haiku-4-5-20251001");
+    expect(modelArgs(resolveRunModel(native(), "spotcheck"), false)).toEqual([
+      "--model",
+      "claude-haiku-4-5-20251001",
+    ]);
+  });
+
+  it("an explicit --model wins over both the class and the provider table", () => {
+    expect(resolveRunModel(native(), "spotcheck", "claude-opus-5")).toBe("claude-opus-5");
+    expect(resolveRunModel(native(), "implement", "claude-opus-5")).toBe("claude-opus-5");
+  });
+
+  it("a class alias (provider/fast) names the capability on any provider", () => {
+    expect(resolveRunModel({ provider: nativeAnthropicProvider(), modelAlias: "fast" }, "implement")).toBe(
+      "claude-haiku-4-5-20251001"
+    );
+  });
+
+  it("a provider without a fast model falls back to its default for the cheap classes", () => {
+    const glm = parseWorkersConfig({
+      providers: { glm: { enabled: true, baseUrl: "https://example.invalid", models: { default: "glm-x" } } },
+    }).providers.glm;
+    expect(resolveRunModel({ provider: glm, modelAlias: null }, "spotcheck")).toBe("glm-x");
+  });
+
+  it("a caller that pinned --model in the claude args is not clobbered", () => {
+    expect(modelArgs("claude-sonnet-5", true)).toEqual([]);
+    expect(modelArgs("", false)).toEqual([]);
+  });
+
+  it("the providers listing shows the built-in default and fast models", () => {
+    const lines = describeProviders(parseWorkersConfig({ active: "anthropic", providers: {} }));
+    expect(lines[0]).toMatch(/^anthropic {2}\[built-in, active\]/);
+    expect(lines[1]).toBe("    default claude-sonnet-5  fast claude-haiku-4-5-20251001  image (none)");
+  });
+});
+
 describe("adoptInitModel", () => {
   const init = (model?: string): StreamEvent => ({ type: "system", subtype: "init", model });
 
-  it("the built-in anthropic provider records the model the run announced", () => {
-    // nativeAnthropicProvider resolves models.default to "" so no --model flag
-    // is passed; without this the status file reported an empty model forever
+  it("a spawn that could not name a model records the one the run announced", () => {
+    // e.g. the caller pinned --model in the claude args, so the spawn recorded
+    // ""; without this the status file reported an empty model forever
     const status = { model: "" };
     adoptInitModel(status, init("claude-opus-5[1m]"));
     expect(status.model).toBe("claude-opus-5[1m]");
