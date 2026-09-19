@@ -1,26 +1,22 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:39:43.902Z" -->
+<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:43:47.506Z" -->
 
 > **Last session:** 0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application
-> **Paused at:** 2026-09-19T11:39:43.902Z
+> **Paused at:** 2026-09-19T11:43:47.506Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
 
 T
-i=ckpt-2026-09-19T11-39-43.837Z
-g=Still not working because it currently shows 2% while it should be showing 6% by now. So go back significantly in the history of of this status bar cinematic and make sure for anthropic you did it jus…
-d=Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom… | [Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line… | So currently there are two workers open. Why? And more importantly, I see one of those workers is using Fable 5.1. So as a general rule workers should be used a to parallelize and b to conserve costs… | This rule of yours has to be way more fundamental. Put it in the whisper rules. There is a rule, but apparently it is not good enough. Saying that never, ever, ever, ever use here doc or the likes alw…
+i=ckpt-2026-09-19T11-43-47.384Z
+g=Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom…
+d=[Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line… | So currently there are two workers open. Why? And more importantly, I see one of those workers is using Fable 5.1. So as a general rule workers should be used a to parallelize and b to conserve costs… | This rule of yours has to be way more fundamental. Put it in the whisper rules. There is a rule, but apparently it is not good enough. Saying that never, ever, ever, ever use here doc or the likes alw… | I still see some contradiction in our model hierarchy. So at the moment we are using this session, Fable 5.1, for the overall orchestration which is very effective. Then you suggest to use sonnet for…
 t=?
-@1=src/hooks/ts/lib/advisor-budget.test.ts
-@2=src/hooks/ts/lib/advisor-budget.ts
-@3=src/hooks/ts/user-prompt/whisper-rules.ts
-@4=src/runtime-paths.ts
-@5=statusline-command.sh
-@6=test/statusline-command.test.ts
-z=auto ckpt (no model); main@1c91e95 feat(workers,statusline): worker rows show goal and model, live usage via user keychain item, agent gate and chrome passthrough; 6 dirty; git status for detail
+@1=Notes/TODO.md
+@2=src/workers/config.ts
+z=auto ckpt (no model); main@ff83a0d merge: statusline version and folder fallbacks, 1d pace, advisor asOf guard; 2 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 

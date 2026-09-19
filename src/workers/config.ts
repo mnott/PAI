@@ -126,10 +126,26 @@ export interface WorkerProvider {
 export const ANTHROPIC_NATIVE = "anthropic";
 
 /**
+ * Models the built-in provider runs on. This is the only place a model id is
+ * named for it: run.ts resolves the class capability against this table like
+ * it does for any configured provider and passes `--model` explicitly.
+ *
+ * Workers exist to parallelise and to save cost, so they must never inherit
+ * the orchestrator's model. A bare headless `claude` takes the interactive
+ * session default, and one probe came up on the most expensive tier because
+ * the chat session had been switched to it. Sonnet is the working tier;
+ * haiku serves the fast classes (spotcheck, simple).
+ */
+export const NATIVE_ANTHROPIC_MODELS: WorkerProvider["models"] = {
+  default: "claude-sonnet-5",
+  fast: "claude-haiku-4-5-20251001",
+};
+
+/**
  * The synthetic provider object for ANTHROPIC_NATIVE. `baseUrl` is empty and
- * `models.default` is "" (unresolved) so buildRunEnv/run.ts skip passing
- * --model and env overrides entirely, leaving Claude Code to use whatever it
- * would use when run bare.
+ * there is no key file, so buildRunEnv strips every provider env override;
+ * the models come from NATIVE_ANTHROPIC_MODELS so a run always names its
+ * model on the command line.
  */
 export function nativeAnthropicProvider(): WorkerProvider {
   return {
@@ -137,7 +153,7 @@ export function nativeAnthropicProvider(): WorkerProvider {
     protocol: "anthropic",
     baseUrl: "",
     keyFile: null,
-    models: { default: "" },
+    models: { ...NATIVE_ANTHROPIC_MODELS },
     env: {},
     native: true,
   };
@@ -233,7 +249,9 @@ export function isModelCapability(v: string): v is ModelCapability {
 
 /**
  * Which model capability a class runs on when its target names no alias: the
- * image class uses the image model; every other class the provider default.
+ * image class uses the image model, the cheap classes (spotcheck, simple) the
+ * fast model, every other class the provider default. A provider without a
+ * fast model falls back to its default (resolveModelCapability).
  */
 const CLASS_MODEL_CAPABILITY: Record<WorkerClassName, ModelCapability> = {
   draft: "default",
@@ -241,8 +259,8 @@ const CLASS_MODEL_CAPABILITY: Record<WorkerClassName, ModelCapability> = {
   implement: "default",
   review: "default",
   research: "default",
-  spotcheck: "default",
-  simple: "default",
+  spotcheck: "fast",
+  simple: "fast",
   complex: "default",
   image: "image",
 };

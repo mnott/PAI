@@ -226,16 +226,45 @@ export function isCompactBoundary(e: StreamEvent): boolean {
 
 /**
  * The model the init event announces, adopted into the status when the spawn
- * could not name one. The native Anthropic provider resolves `models.default`
- * to "" on purpose (see nativeAnthropicProvider) so that no `--model` flag is
- * passed and Claude Code picks its own; the run's real model is therefore only
- * knowable from the first event it sends. Never overwrites an explicit model —
- * a `--model` pin stays the recorded truth.
+ * could not name one (a caller that passed `--model` itself in the claude
+ * args, or a provider whose table has no entry for the capability). The run's
+ * real model is then only knowable from the first event it sends. Never
+ * overwrites an explicit model — a resolved or pinned model stays the
+ * recorded truth.
  */
 export function adoptInitModel(status: Pick<WorkerStatus, "model">, e: StreamEvent): void {
   if (status.model) return;
   const m = (e.model ?? "").trim();
   if (m) status.model = m;
+}
+
+/**
+ * The model a run goes out on: an explicit `--model` wins; else the class
+ * target's alias ("glm/fast") names the capability; else the capability the
+ * class implies (image → image model, spotcheck/simple → fast, everything
+ * else → default), resolved against the provider's model table. The built-in
+ * anthropic provider resolves through the same table as any other, so a
+ * worker never inherits the orchestrator session's model.
+ */
+export function resolveRunModel(
+  target: { provider: WorkerProvider; modelAlias: string | null },
+  className?: string,
+  modelFlag?: string
+): string {
+  if (modelFlag) return modelFlag;
+  const alias = target.modelAlias;
+  const capability =
+    alias && isModelCapability(alias) ? alias : classModelCapability(className);
+  return resolveModelCapability(target.provider, capability);
+}
+
+/**
+ * The `--model` part of the claude argv. Skipped when the caller already
+ * pinned one in the claude args (it must not be clobbered) or when nothing
+ * resolved — `--model ""` would break the spawn.
+ */
+export function modelArgs(model: string, callerPinned: boolean): string[] {
+  return !callerPinned && model ? ["--model", model] : [];
 }
 
 /** Context window announced by the init event, when the endpoint sends one. */
@@ -288,12 +317,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
 
-  // model from the class target's alias ("glm/fast"), else the capability the
-  // class implies (image class → image model, everything else → default)
-  const alias = target.modelAlias;
-  const capability =
-    alias && isModelCapability(alias) ? alias : classModelCapability(opts.className);
-  const model = opts.modelFlag ?? resolveModelCapability(target.provider, capability);
+  const model = resolveRunModel(target, opts.className, opts.modelFlag);
 
   try {
     if (target.provider.engine === "codex") {
@@ -504,10 +528,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
   const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
   const cmd: string[] = ["claude"];
-  // a native-Anthropic run with no explicit --model resolves to "" (let
-  // Claude Code pick its own default) — passing --model "" would break the
-  // spawn, so skip the flag entirely in that case.
-  if (!parsed.callerModel && model) cmd.push("--model", model);
+  cmd.push(...modelArgs(model, Boolean(parsed.callerModel)));
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");

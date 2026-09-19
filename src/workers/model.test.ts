@@ -191,10 +191,11 @@ describe("resolveModelCapability", () => {
 });
 
 describe("classModelCapability", () => {
-  it("maps the image class to the image capability, everything else to default", () => {
+  it("maps image to image, the cheap classes to fast, everything else to default", () => {
     expect(classModelCapability("image")).toBe("image");
     expect(classModelCapability("implement")).toBe("default");
-    expect(classModelCapability("spotcheck")).toBe("default");
+    expect(classModelCapability("spotcheck")).toBe("fast");
+    expect(classModelCapability("simple")).toBe("fast");
     expect(classModelCapability(undefined)).toBe("default");
     expect(classModelCapability("made-up-class")).toBe("default");
   });

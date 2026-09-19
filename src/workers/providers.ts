@@ -22,6 +22,7 @@ import {
   expandHome,
   isModelCapability,
   keysDir,
+  nativeAnthropicProvider,
   parseWorkersConfig,
   providerCostTier,
   readWorkersSection,
@@ -345,6 +346,7 @@ export function describeProviders(workers: WorkersConfig): string[] {
   lines.push(
     `${ANTHROPIC_NATIVE}  [built-in${nativeActive ? ", active" : ""}]  Claude Code's own OAuth/Max-plan login — no base URL, no API key`
   );
+  lines.push(`    ${modelPrefsText(nativeAnthropicProvider())}`);
   const names = Object.keys(workers.providers);
   if (!names.length) {
     lines.push(`no other providers configured. Add one with:`);
