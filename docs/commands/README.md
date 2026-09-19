@@ -194,6 +194,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker classes list` | List classes and their targets (default action) |
 | `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |
 | `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
+| `pai worker config` | workers.yaml itself: path, init, migrate, check |
+| `pai worker config check [path]` | Validate workers.yaml (or the file at [path]); exits non-zero with file:line on error |
+| `pai worker config init` | Write the commented starter workers.yaml (refuses if one already exists) |
+| `pai worker config migrate` | Move providers/classes/mcp_sets/active out of the JSON config into workers.yaml. |
+| `pai worker config path` | Print the resolved workers.yaml path |
 | `pai worker controls <id> <who>` | Hand the desktop controls (clickr) to a worker or take them back. |
 | `pai worker discard <id>` | Drop a worker's worktree and branch, keeping nothing |
 | `pai worker fallback [action] [provider]` | Machine-wide fallback: every NEW Claude Code process runs on a worker |
