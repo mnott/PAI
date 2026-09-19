@@ -45,13 +45,13 @@ import {
 } from "./chatui.js";
 import {
   blankBetween,
-  chatStatusRow,
   contextMeter,
   dayOf,
   gutterFor,
   headerLine,
   intentOf,
   makeColor,
+  paneStatusRow,
   renderEvent,
   renderStatusLine,
   renderTable,
@@ -414,6 +414,10 @@ export async function followWorkers(
   // liveness state: rewritten in place between events, TTY only
   let lastEventAt = Date.now();
   let meterStatus: WorkerStatus | null = null;
+  // the pane's bottom line (chat mode): the target's current status, kept
+  // fresh every loop tick (not only on a new event) so a `pai worker goal`
+  // relabel shows up on the pane's next refresh, not its next tool call
+  let paneStatus: WorkerStatus | undefined;
   const onInt = () => {
     aborted = true;
   };
@@ -487,8 +491,12 @@ export async function followWorkers(
     if (!tty) return;
     const secs = Math.max(0, Math.floor((Date.now() - lastEventAt) / 1000));
     if (chat) {
-      const text = meterStatus
-        ? chatStatusRow(c, statusRowOf(meterStatus, secs))
+      // the pane's bottom line: goal · model · started · age, never the tool
+      // call this second (see paneStatusRow) — before the first status file
+      // exists there is nothing to show it from yet, so the plain ticker
+      // covers that brief startup window only
+      const text = paneStatus
+        ? paneStatusRow(paneStatus, new Date(), columns())
         : tickerText(secs, ticker.intent, ticker.tool);
       out_.write(chatTickerRow(text, rows, promptCursorCol()));
     } else {
@@ -781,6 +789,7 @@ export async function followWorkers(
     for (;;) {
       if (aborted) return;
       const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
+      if (target) paneStatus = statuses.get(target) ?? paneStatus;
       const wanted = target ? [target] : runningIds();
       for (const wid of wanted) {
         if (handles.has(wid) || finished.has(wid)) continue;

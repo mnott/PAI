@@ -15,6 +15,7 @@ import {
   gutterFor,
   intentOf,
   makeColor,
+  paneStatusRow,
   renderEvent,
   renderStatusLine,
   shortModel,
@@ -236,6 +237,56 @@ describe("chatStatusRow", () => {
   });
 });
 
+describe("paneStatusRow", () => {
+  const now = new Date("2026-09-17T10:00:45");
+  const base = { label: "fix black buttons", model: "m", started: "2026-09-17 10:00:00" };
+
+  it("renders the goal, not the step it happens to be running", () => {
+    expect(paneStatusRow({ ...base, last: 'Bash: grep -n -A4 "x" src/' } as WorkerStatus, now)).toBe(
+      "fix black buttons · m · started 10:00 · 45s"
+    );
+  });
+
+  it("no step leaks in through any of its shapes", () => {
+    for (const last of ["Bash: ls", "Read: render.ts", "says: nearly done"]) {
+      const row = paneStatusRow({ ...base, last } as WorkerStatus, now);
+      expect(row).not.toContain("Bash");
+      expect(row).not.toContain("Read:");
+      expect(row).not.toContain("says:");
+    }
+  });
+
+  it("an empty label reads unlabeled, model/started/age intact", () => {
+    expect(paneStatusRow({ ...base, label: "" }, now)).toBe(`${UNLABELED} · m · started 10:00 · 45s`);
+  });
+
+  it("an unlabelled run's label already holds the prompt: cut on a word boundary", () => {
+    const row = paneStatusRow(
+      { ...base, label: "Fix the black buttons on the settings page. Then run the suite." },
+      now
+    );
+    expect(row).toBe("Fix the black buttons on the settings… · m · started 10:00 · 45s");
+  });
+
+  it("a legacy status with no recorded model omits that field, not a bare gap", () => {
+    expect(paneStatusRow({ ...base, model: "" }, now)).toBe("fix black buttons · started 10:00 · 45s");
+  });
+
+  it("a narrow pane trims the goal but never the model/start/age tail", () => {
+    const row = paneStatusRow({ ...base, label: "x".repeat(80), model: "glm-5.3" }, now, 20);
+    expect(row).toBe("… · glm-5.3 · started 10:00 · 45s");
+  });
+
+  it("a wide-enough pane still cuts an overlong goal, not just an unbounded one", () => {
+    const row = paneStatusRow(
+      { ...base, label: "Reorganise the notes directory and then commit changes across the repo", model: "glm-5.3" },
+      now,
+      40
+    );
+    expect(row).toBe("Reorgan… · glm-5.3 · started 10:00 · 45s");
+  });
+});
+
 describe("renderEvent", () => {
   const tools: Record<string, string> = {};
 
@@ -310,7 +361,7 @@ describe("statusLineOutput scope", () => {
   it("claims an orchestrator-spawned worker via the claude session id", () => {
     saveStatus(logDir, { ...base, id: "20260917-100000-1" });
     expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now)).toMatch(
-      /fix black buttons/
+      /prov ▶1/
     );
   });
   it("hides it from another session's tab and from plain terminal scope", () => {
@@ -324,7 +375,7 @@ describe("statusLineOutput scope", () => {
       term: "w11t0p0:AAAA-BBBB",
       spawnerSession: null,
     });
-    expect(statusLineOutput(logDir, "w11t0p0:ZZZZ-YYYY", "/nowhere", "", now)).toMatch(/fix black buttons/);
+    expect(statusLineOutput(logDir, "w11t0p0:ZZZZ-YYYY", "/nowhere", "", now)).toMatch(/prov ▶1/);
   });
 });
 
@@ -372,16 +423,17 @@ describe("renderStatusLine", () => {
     expect(renderStatusLine([chat], now)).toBe("glm");
   });
 
-  it("one worker: provider ▶N and the row goal · age · model", () => {
+  it("one worker: ▶1 · model · oldest age", () => {
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
-    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 · m · oldest 45s");
   });
 
-  it("N workers: ▶N, rows ordered oldest first, no #id on distinct labels", () => {
-    const older = spawn({ id: "20260917-100000-4969", label: "fix black buttons", started: "2026-09-17 09:30:00" });
-    const young = spawn({ id: "20260917-100000-2924", label: "spotcheck login" });
-    const out = renderStatusLine([chat, young, older], now);
-    expect(out).toBe("glm ▶2 | fix black buttons · 30m · m | spotcheck login · 45s · m");
+  it("3 workers over two models: counts ordered by count desc, then name", () => {
+    const a = spawn({ id: "20260917-100000-1111", label: "a", model: "sonnet-5" });
+    const b = spawn({ id: "20260917-100000-2222", label: "b", model: "sonnet-5" });
+    const d = spawn({ id: "20260917-100000-3333", label: "d", model: "haiku-4.5" });
+    const out = renderStatusLine([chat, a, b, d], now);
+    expect(out).toBe("glm ▶3 · sonnet-5 ×2 · haiku-4.5 · oldest 45s");
   });
 
   it("counts only running workers with a live pid in ▶N", () => {
@@ -396,74 +448,30 @@ describe("renderStatusLine", () => {
     const stale: WorkerStatus = { ...chat, pid: 999999 };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([stale, w], now);
-    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(out).toBe("glm ▶1 · m · oldest 45s");
     expect(out).not.toContain("interactive");
   });
 
-  it("legacy pane entry (no origin, unlabeled placeholder, 0 turns) is neither row nor count", () => {
+  it("legacy pane entry (no origin, unlabeled placeholder, 0 turns) is neither counted nor a model", () => {
     const legacy: WorkerStatus = { ...chat, id: "20260917-091645-7777", started: "2026-09-17 09:16:45", label: "(no prompt)", origin: undefined };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([legacy, w], now);
-    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(out).toBe("glm ▶1 · m · oldest 45s");
     const legacy2: WorkerStatus = { ...legacy, label: "unlabeled" };
-    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 · m · oldest 45s");
   });
 
-  it("rows are flat: a sub-worker renders without ↳ indent", () => {
-    const w1 = spawn({ id: "20260917-100000-4969", label: "fix black buttons", parent: chat.id });
-    const w2 = spawn({ id: "20260917-100000-2924", label: "spotcheck login", parent: w1.id });
-    const out = renderStatusLine([chat, w1, w2], now);
-    expect(out).toContain("| fix black buttons · 45s · m | spotcheck login · 45s · m");
-    expect(out).not.toContain("↳");
-  });
-
-  it("twins share a label: both rows carry #id; unique labels carry none", () => {
-    const a = spawn({ id: "20260917-100000-1111", label: "build site" });
-    const b = spawn({ id: "20260917-100000-2222", label: "build site" });
-    const out = renderStatusLine([chat, a, b], now);
-    expect(out).toContain("#1111 build site · 45s · m");
-    expect(out).toContain("#2222 build site · 45s · m");
-    const c = spawn({ id: "20260917-100000-3333", label: "unique label" });
-    expect(renderStatusLine([chat, a, c], now)).not.toContain("#3333");
-  });
-
-  it("a labelled worker renders its label, never the step it is running", () => {
+  it("no goal, label or step leaks into the bar — that is pane/ps territory", () => {
     const w = spawn({
       id: "20260917-100000-4969",
       label: "fix black buttons",
       last: 'Bash: grep -n -A4 "x" src/',
     });
     const out = renderStatusLine([chat, w], now);
-    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(out).toBe("glm ▶1 · m · oldest 45s");
     expect(out).not.toContain("grep");
     expect(out).not.toContain("Bash");
-  });
-
-  it("no step leaks in through any of its shapes", () => {
-    const w = (last: string) => spawn({ id: "20260917-100000-4969", label: "fix black buttons", last });
-    for (const last of ["Bash: ls", "Read: render.ts", "says: nearly done", "x".repeat(60)]) {
-      expect(renderStatusLine([chat, w(last)], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
-    }
-  });
-
-  it("an unlabelled worker falls back to its prompt, never to the step", () => {
-    // run.ts seeds label from the prompt when --label is absent, so the goal
-    // is the prompt's first sentence, cut on a word boundary
-    const w = spawn({
-      id: "20260917-100000-4969",
-      label: "Fix the black buttons on the settings page. Then run the suite.",
-      last: "Bash: npm test",
-    });
-    const out = renderStatusLine([chat, w], now);
-    expect(out).toBe("glm ▶1 | Fix the black buttons on the settings… · 45s · m");
-    expect(out).not.toContain("npm");
-  });
-
-  it("a worker with neither label nor prompt reads unlabeled, not its step", () => {
-    const w = spawn({ id: "20260917-100000-4969", label: UNLABELED, turns: 3, last: "Bash: npm test" });
-    const out = renderStatusLine([chat, w], now);
-    expect(out).toBe("glm ▶1 | unlabeled · 45s · m");
-    expect(out).not.toContain("npm");
+    expect(out).not.toContain("fix black buttons");
   });
 
   it("goalOf prefers the label and cuts long prompts on a word boundary", () => {
@@ -486,19 +494,35 @@ describe("renderStatusLine", () => {
     expect(shortModel(undefined)).toBe("");
   });
 
-  it("an empty model drops its column rather than rendering a gap", () => {
+  it("an empty model counts under ? rather than vanishing", () => {
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons", model: "" });
-    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s");
+    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 · ? · oldest 45s");
   });
 
-  it("each provider's model shortens in its own row", () => {
+  it("each running worker's model shortens in the models segment", () => {
     const a = spawn({ id: "20260917-100000-1111", label: "opus job", provider: "anthropic", model: "claude-opus-5[1m]" });
     const b = spawn({ id: "20260917-100000-2222", label: "glm job", provider: "glm", model: "glm-5.3[1m]" });
     const c = spawn({ id: "20260917-100000-3333", label: "kimi job", provider: "kimi", model: "k3[1m]" });
     const out = renderStatusLine([chat, a, b, c], now);
-    expect(out).toContain("opus job · 45s · opus-5[1m]");
-    expect(out).toContain("glm job · 45s · glm-5.3[1m]");
-    expect(out).toContain("kimi job · 45s · k3[1m]");
+    expect(out).toBe("glm ▶3 · glm-5.3[1m] · k3[1m] · opus-5[1m] · oldest 45s");
+  });
+
+  it("zero workers: the head alone, no models or oldest segment", () => {
+    expect(renderStatusLine([chat], now)).toBe("glm");
+    expect(renderStatusLine([chat], now)).not.toContain("oldest");
+  });
+
+  it("over-width trims the models segment first; head, count and tally survive", () => {
+    const a = spawn({ id: "20260917-100000-1111", label: "a", model: "sonnet-5" });
+    const b = spawn({ id: "20260917-100000-2222", label: "b", model: "haiku-4.5" });
+    const c = spawn({ id: "20260917-100000-3333", label: "c", model: "opus-5" });
+    const full = renderStatusLine([chat, a, b, c], now);
+    expect(full).toBe("glm ▶3 · haiku-4.5 · opus-5 · sonnet-5 · oldest 45s");
+    const trimmed = renderStatusLine([chat, a, b, c], now, null, 30);
+    expect(trimmed.length).toBeLessThanOrEqual(30);
+    expect(trimmed).toContain("glm ▶3");
+    expect(trimmed).toContain("oldest 45s");
+    expect(trimmed).not.toBe(full);
   });
 
   it("the bar carries no context meter or inbox mark — ps and the pane do", () => {
@@ -535,9 +559,7 @@ describe("renderStatusLine", () => {
 
     it("overrides the pane's launch-time provider on every refresh", () => {
       const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
-      expect(renderStatusLine([chat, w], now, "anthropic")).toBe(
-        "anthropic ▶1 | fix black buttons · 45s · m"
-      );
+      expect(renderStatusLine([chat, w], now, "anthropic")).toBe("anthropic ▶1 · m · oldest 45s");
       expect(renderStatusLine([chat, w], now, "kimi")).toContain("kimi ▶1");
     });
 

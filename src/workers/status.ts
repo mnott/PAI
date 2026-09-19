@@ -158,10 +158,28 @@ export function statusTmpPath(logDir: string, id: string): string {
   return `${statusPath(logDir, id)}.${process.pid}.${tmpSeq++}.tmp`;
 }
 
+// The label this process first wrote for a given worker id: run.ts holds one
+// unchanging label in memory for the whole run and passes it to every
+// periodic saveStatus call, so a later call whose label still equals this
+// baseline is that unmodified write, never an intentional change — on-disk
+// then wins, so an external `pai worker goal` relabel between two of a
+// worker's own writes survives instead of being reverted by the next one. A
+// call whose label differs from the baseline (or the first call for an id in
+// this process, which has no baseline yet) IS the intentional change and
+// always wins — exactly the one-shot `pai worker goal` process itself.
+const firstWrittenLabel = new Map<string, string>();
+
 /** Write status atomically (temp + rename) and stamp `updated`. */
 export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new Date()): void {
   status.updated = nowStamp(d);
   const path = statusPath(logDir, status.id);
+  const baseline = firstWrittenLabel.get(status.id);
+  if (baseline === undefined) {
+    firstWrittenLabel.set(status.id, status.label);
+  } else if (status.label === baseline) {
+    const onDisk = loadStatus(logDir, status.id);
+    if (onDisk && onDisk.label !== status.label) status.label = onDisk.label;
+  }
   const tmp = statusTmpPath(logDir, status.id);
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
   try {
@@ -175,6 +193,21 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     }
     throw e;
   }
+}
+
+/**
+ * Set a worker's goal (the operator's `--label`), atomically, through the
+ * same saveStatus path everything else writes with. Used by `pai worker
+ * goal` and the `--goal` option of `say`: a fresh call in a fresh process, so
+ * it always carries no baseline yet and always wins over the worker's own
+ * next periodic write (see saveStatus above).
+ */
+export function setWorkerLabel(logDir: string, id: string, label: string): WorkerStatus {
+  const status = loadStatus(logDir, id);
+  if (!status) throw new Error(`no worker named "${id}"`);
+  status.label = label;
+  saveStatus(logDir, status);
+  return status;
 }
 
 /** Load every status file in the logDir, oldest id first, skipping damage. */

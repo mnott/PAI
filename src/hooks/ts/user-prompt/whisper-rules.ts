@@ -27,6 +27,11 @@ import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js
 const WHISPER_FILE = join(homedir(), ".claude", "whisper-rules.md");
 const ADVISOR_FILE = join(homedir(), ".claude", "advisor-mode.json");
 
+/** A "# N. TITLE" section header: the start of a new section, tag reset. */
+function isSectionHeader(line: string): boolean {
+  return /^#\s*\d+\.\s/.test(line);
+}
+
 /**
  * Read the rule file, dropping everything that is there for the author rather
  * than for the reader: "#" comment lines and blank lines.
@@ -38,17 +43,37 @@ const ADVISOR_FILE = join(homedir(), ".claude", "advisor-mode.json");
  * maintainable, and none of it reaches the prompt. Only the rules do.
  *
  * A line whose rule text legitimately starts with "#" can be escaped as "\\#".
+ *
+ * Section tags: this file is injected into every claude process, spawned
+ * workers included, and some rules (e.g. "delegate to workers") are true only
+ * for the interactive orchestrating session. A comment line "# @orchestrator"
+ * marks every following rule as orchestrator-only, "# @worker" marks
+ * worker-only, until the next "# N. TITLE" section header resets the tag (a
+ * section's own header/divider box, which the tag line sits inside, does not
+ * count as the next section). An untagged section reaches both. `isWorker`
+ * selects which side of the tag this process is on — see PAI_WORKER in
+ * run-env.ts.
  */
-function getWhisperRules(): string {
+function getWhisperRules(isWorker: boolean): string {
   if (!existsSync(WHISPER_FILE)) return "";
   try {
-    return readFileSync(WHISPER_FILE, "utf-8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith("#"))
-      .map((l) => (l.startsWith("\\#") ? l.slice(1) : l))
-      .join("\n")
-      .trim();
+    const lines = readFileSync(WHISPER_FILE, "utf-8").split("\n");
+    const out: string[] = [];
+    let tag: "orchestrator" | "worker" | null = null;
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (line.length === 0) continue;
+      if (line.startsWith("#")) {
+        if (isSectionHeader(line)) tag = null;
+        else if (line === "# @orchestrator") tag = "orchestrator";
+        else if (line === "# @worker") tag = "worker";
+        continue;
+      }
+      if (tag === "orchestrator" && isWorker) continue;
+      if (tag === "worker" && !isWorker) continue;
+      out.push(line.startsWith("\\#") ? line.slice(1) : line);
+    }
+    return out.join("\n").trim();
   } catch {
     return "";
   }
@@ -151,11 +176,12 @@ function resetReinjectCounter(): void {
 function main() {
   resetReinjectCounter();
 
+  const isWorker = process.env.PAI_WORKER === "1";
   const parts: string[] = [];
 
   parts.push(`CURRENT LOCAL TIME: ${currentLocalTime()} — use this verbatim for any [YYYY-MM-DD HH:MM] stamp; never estimate or increment it.`);
 
-  const rules = getWhisperRules();
+  const rules = getWhisperRules(isWorker);
   if (rules) parts.push(rules);
 
   const advisor = getAdvisorGuidance();
