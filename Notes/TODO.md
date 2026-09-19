@@ -1,33 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T12:37:07.867Z" -->
+<!-- pai:checkpoint authored="auto" session="0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T12:42:23.117Z" -->
 
 > **Last session:** 0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration
-> **Paused at:** 2026-09-19T12:37:07.867Z
+> **Paused at:** 2026-09-19T12:42:23.117Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
 
 T
-i=ckpt-2026-09-19T12-37-07.784Z
+i=ckpt-2026-09-19T12-42-23.057Z
 g=And use clicker to take a screenshot of my screen. will see what kind of status line these guys have. One of them is basically just giving me some message back that I don't understand. two of them are…
 d=I was talking about the status line of the workers, not about your own status line. That own status line of yours where the little B is that's anyway not really readable because of all of the text in… | [Session:pai-cli] worker 20260919-140121-27403 role-probe finished rc=0 - see pai worker replay 20260919-140121-27403 | [Session:pai-cli] worker 20260919-140654-56239 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140654-56239 | [Session:pai-cli] worker 20260919-140746-58288 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140746-58288 | Use a worker then to merge all so that at the same time I can see it.
 t=?
-@1=Notes/TODO.md
-@2=docs/commands/README.md
-@3=docs/commands/worker.md
-@4=src/cli/commands/worker/index.ts
-@5=src/daemon-mcp/index.ts
-@6=src/hooks/ts/user-prompt/whisper-rules.ts
-@7=src/workers/gutter.test.ts
-@8=src/workers/misc.test.ts
-@9=src/workers/render.ts
-@10=src/workers/report.test.ts
-@11=src/workers/report.ts
-@12=src/workers/status.ts
-@13=src/workers/viewer.ts
-z=auto ckpt (no model); main@a7b9dc0 feat(workers): built-in anthropic provider defaults to sonnet, haiku for fast classes; 13 dirty; git status for detail
+@1=scripts/build-hooks.mjs
+z=auto ckpt (no model); main@68e01a6 merge: workers.yaml configuration for providers, models and classes; 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 

@@ -35,6 +35,15 @@ const HOOKS_SRC = "src/hooks/ts";
 const HOOKS_OUT = "dist/hooks";
 const doSync = process.argv.includes("--sync");
 
+// Bundled CJS deps (e.g. yaml) call require() for Node builtins like
+// "process". esbuild's ESM output leaves those calls as a `require` that
+// only exists at runtime if the module defines it — plain .mjs run via node
+// has no `require`, so the call throws "Dynamic require of ... is not
+// supported". createRequire gives every bundle a real one.
+const REQUIRE_SHIM = {
+  js: "import { createRequire as __paiCreateRequire } from 'node:module';\nconst require = __paiCreateRequire(import.meta.url);",
+};
+
 // Collect all .ts entry points (skip lib/ — those are bundled into each hook)
 function collectEntryPoints(dir) {
   const entries = [];
@@ -81,6 +90,7 @@ for (const entry of entryPoints) {
     format: "esm",
     outfile: staged,
     sourcemap: true,
+    banner: REQUIRE_SHIM,
   });
 
   chmodSync(staged, 0o755);
@@ -124,6 +134,7 @@ for (const [entry, name] of STANDALONE_ENTRIES) {
     format: "esm",
     outfile: staged,
     sourcemap: true,
+    banner: REQUIRE_SHIM,
   });
   chmodSync(staged, 0o755);
   const stagedMap = `${staged}.map`;
