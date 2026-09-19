@@ -12,6 +12,11 @@
  * `<logDir>/<id>.mcp.json` and is passed with `--strict-mcp-config
  * --mcp-config` so exactly those servers load. MCP servers are chosen at
  * launch only — a mid-run `say` cannot add any.
+ *
+ * One name in that space is not a server at all: `claude-in-chrome` is the
+ * Chrome native-host bridge, which no config file can load and which the
+ * `--chrome` flag switches on instead. It is recognised here so a grant
+ * naming it becomes that flag rather than an "unknown MCP server" rejection.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -22,17 +27,69 @@ import { WorkersConfigError, type WorkersConfig } from "./config.js";
 /** ~/.claude.json — the user's MCP server definitions (top-level mcpServers). */
 export const CLAUDE_JSON = join(homedir(), ".claude.json");
 
+/**
+ * The browser bridge is not an MCP server. It rides the Chrome native-host
+ * channel, so it never appears in `mcpServers`; a spawned claude has it off
+ * and the `--chrome` flag switches it on. Tool grants naming it must
+ * therefore neither resolve to a server nor be rejected as unknown — they
+ * select a flag. See `grantsChrome`.
+ */
+export const CHROME_SERVER = "claude-in-chrome";
+
+/**
+ * True for a real server definition, false for anything else that happens to
+ * sit under `mcpServers`.
+ *
+ * The vendor config is not ours and has been observed carrying non-server
+ * entries under that key — tool-usage records keyed by tool name
+ * (`Read`, `Bash`, `mcp__server__tool`, …). Those are not servers: handing
+ * one to `--mcp-config` yields "invalid MCP server config", and listing one
+ * as available invites a run that cannot work. A server has a `command` (or a
+ * `url` for remote transports); an `mcp__…` key is a tool name whatever its
+ * shape.
+ */
+function isServerDefinition(name: string, value: unknown): boolean {
+  if (name.startsWith("mcp__")) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    (typeof v.command === "string" && v.command.length > 0) ||
+    (typeof v.url === "string" && v.url.length > 0)
+  );
+}
+
 export function readMcpServers(claudeJson = CLAUDE_JSON): Record<string, unknown> {
   try {
     if (!existsSync(claudeJson)) return {};
     const parsed = JSON.parse(readFileSync(claudeJson, "utf8")) as Record<string, unknown>;
     const servers = parsed.mcpServers;
     if (typeof servers !== "object" || servers === null || Array.isArray(servers)) return {};
-    return servers as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
+      if (isServerDefinition(name, value)) out[name] = value;
+    }
+    return out;
   } catch {
     // a damaged ~/.claude.json must not take workers down with it
     return {};
   }
+}
+
+/**
+ * True when any `--mcp` name or `--allowedTools` grant asks for the browser
+ * bridge: the bare server name, `mcp__claude-in-chrome`, or any
+ * `mcp__claude-in-chrome__<tool>`. The runner turns this into `--chrome` on
+ * the claude argv.
+ */
+export function grantsChrome(entries: string[]): boolean {
+  for (const entry of entries) {
+    for (const name of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (name === CHROME_SERVER) return true;
+      if (name === `mcp__${CHROME_SERVER}`) return true;
+      if (name.startsWith(`mcp__${CHROME_SERVER}__`)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -48,6 +105,7 @@ export function expandMcpNames(
   const out: string[] = [];
   for (const raw of names) {
     for (const name of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (name === CHROME_SERVER) continue; // a flag, not a server — see grantsChrome
       if (name in config.mcpSets) {
         for (const member of config.mcpSets[name]) {
           if (!out.includes(member)) out.push(member);
@@ -81,6 +139,7 @@ export function mcpServersFromToolGrants(tools: string[]): string[] {
     for (const name of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
       if (!name.startsWith("mcp__")) continue;
       const server = name.slice("mcp__".length).split("__")[0];
+      if (server === CHROME_SERVER) continue; // a flag, not a server — see grantsChrome
       if (server && !out.includes(server)) out.push(server);
     }
   }

@@ -1,51 +1,42 @@
 #!/usr/bin/env node
 
 /**
- * route-agents-to-worker.ts — PreToolUse hook on the Agent tool.
+ * route-agents-to-worker.ts — PreToolUse hook on the in-process subagent tool.
  *
- * Denies every in-process subagent when worker providers are configured, so no
- * worker ever runs on Anthropic. The deny reason tells the orchestrator how to
- * delegate through `pai worker run` instead — same idea as the old
- * route-agents-to-glm.sh, but provider-neutral and ledgered in the workers
- * log dir.
+ * Denies every in-process subagent, in every project, so that delegated work
+ * always goes through `pai worker run` and therefore shows up in
+ * `pai worker ps`, in the status line and in the worker log dir. The deny
+ * reason names the replacement command, `--provider anthropic` included, so
+ * there is never a reason to reach for the built-in tool.
  *
- * Allows (and does not touch) when:
- *   - the tool is not the Agent tool (this hook is Agent-matched, but stay safe)
- *   - ALLOW_ANTHROPIC_AGENTS=1 is in the environment (one-session bypass)
- *   - workers are off or no provider is configured
+ * This file is only I/O: read stdin, ask lib/agent-gate for the decision,
+ * ledger it, print it. The decision itself lives in lib/agent-gate.ts and is
+ * tested there.
  *
- * Every decision is appended to the routing ledger read by `pai worker log`.
+ * Registered in ~/.claude/settings.json under a PreToolUse matcher that covers
+ * both tool names ("Agent|Task") — see src/workers/install.ts, which owns that
+ * registration.
  */
 
-import { readWorkersSection, ANTHROPIC_NATIVE } from "../../../workers/config.js";
+import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir, ledgerPath } from "../../../workers/paths.js";
 import { appendLedger } from "../../../workers/ledger.js";
+import {
+  decideAgentGate,
+  renderDecision,
+  shortLabel,
+  type AgentGateInput,
+} from "../lib/agent-gate.js";
 
-interface HookInput {
-  session_id?: string;
-  cwd?: string;
-  tool_name?: string;
-  tool_input?: { description?: string; prompt?: string; subagent_type?: string } | string;
-}
-
-const ALLOW = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
-
-function deny(reason: string): string {
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: reason,
-    },
-  });
-}
-
-function shortLabel(input: HookInput): string {
-  const desc =
-    typeof input.tool_input === "object" && input.tool_input !== null
-      ? input.tool_input.description ?? ""
-      : "";
-  return desc.replace(/\s+/g, " ").trim().slice(0, 60);
+/**
+ * What to print when the hook cannot read or parse its own input. This hook is
+ * matcher-scoped to the subagent tool, so anything that reaches it *is* a
+ * subagent launch: a broken event denies rather than allows, and the bypass
+ * env var is still honoured. A gate that opens whenever it stumbles is the
+ * failure this hook exists to prevent.
+ */
+function fallback(): string {
+  return renderDecision(decideAgentGate({}, process.env));
 }
 
 async function main(): Promise<void> {
@@ -53,80 +44,36 @@ async function main(): Promise<void> {
   try {
     for await (const chunk of process.stdin) text += chunk;
   } catch {
-    process.stdout.write(ALLOW);
-    return;
-  }
-  if (!text.trim()) {
-    process.stdout.write(ALLOW);
+    process.stdout.write(fallback());
     return;
   }
 
-  let input: HookInput;
-  try {
-    input = JSON.parse(text) as HookInput;
-  } catch {
-    process.stdout.write(ALLOW);
-    return;
-  }
-
-  if (input.tool_name && input.tool_name !== "Agent") {
-    process.stdout.write(ALLOW);
-    return;
-  }
-
-  const label = shortLabel(input);
-  const cwd = input.cwd ?? process.cwd();
-
-  const ledger = (event: string): void => {
+  let input: AgentGateInput = {};
+  if (text.trim()) {
     try {
-      appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), event, {
-        cwd,
+      input = JSON.parse(text) as AgentGateInput;
+    } catch {
+      // A malformed event on a matcher-scoped hook is still a subagent launch;
+      // an empty input denies, which is the safe direction here.
+      input = {};
+    }
+  }
+
+  const decision = decideAgentGate(input, process.env);
+
+  if (decision.ledger) {
+    const label = shortLabel(input);
+    try {
+      appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), decision.ledger, {
+        cwd: input.cwd ?? process.cwd(),
         ...(label ? { label } : {}),
       });
     } catch {
-      // no config / no log dir yet — the decision below still stands
+      // no config / no log dir yet — the decision still stands
     }
-  };
-
-  if (process.env.ALLOW_ANTHROPIC_AGENTS === "1") {
-    ledger("ALLOWED-ANTHROPIC-AGENT");
-    process.stdout.write(ALLOW);
-    return;
   }
 
-  let workers: ReturnType<typeof readWorkersSection>["workers"];
-  try {
-    workers = readWorkersSection().workers;
-  } catch {
-    // broken workers config must not break the session
-    process.stdout.write(ALLOW);
-    return;
-  }
-  if (
-    !workers.enabled ||
-    Object.keys(workers.providers).length === 0 ||
-    workers.active === ANTHROPIC_NATIVE
-  ) {
-    process.stdout.write(ALLOW);
-    return;
-  }
-
-  ledger("DENIED-ANTHROPIC-AGENT");
-  process.stdout.write(
-    deny(
-      "Agent tool is disabled: subagents run on the configured worker provider, not Anthropic. " +
-        "Delegate with Bash instead, in the background:\n\n" +
-        `pai worker run --label "${label || "task"}" --class research -p '<full, self-contained task spec>' ` +
-        "--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json\n\n" +
-        "- Run it with run_in_background: true and always with a timeout.\n" +
-        "- Use --class spotcheck (or implement) as the task demands.\n" +
-        "- Web research: add WebSearch,WebFetch to --allowedTools.\n" +
-        "- The answer is in the `result` field of the JSON it prints. Review the diff yourself.\n" +
-        "- pai worker ps lists running workers; pai worker follow <id> shows one live.\n" +
-        "Keep only orchestration, review and synthesis in this session. " +
-        "To run subagents on Anthropic for one session: start it with ALLOW_ANTHROPIC_AGENTS=1."
-    )
-  );
+  process.stdout.write(renderDecision(decision));
 }
 
-main().catch(() => process.stdout.write(ALLOW));
+main().catch(() => process.stdout.write(fallback()));

@@ -11,16 +11,19 @@ import {
   contextMeter,
   dayOf,
   fmtElapsed,
+  goalOf,
   gutterFor,
   intentOf,
   makeColor,
   renderEvent,
   renderStatusLine,
+  shortModel,
   tickerText,
   tickerTool,
 } from "./render.js";
 import { agentLabel } from "./agents.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
+import { saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { statusLineOutput } from "./viewer.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -369,16 +372,16 @@ describe("renderStatusLine", () => {
     expect(renderStatusLine([chat], now)).toBe("glm");
   });
 
-  it("one worker: provider ▶N and the row name · age · step", () => {
+  it("one worker: provider ▶N and the row goal · age · model", () => {
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
-    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
   });
 
   it("N workers: ▶N, rows ordered oldest first, no #id on distinct labels", () => {
     const older = spawn({ id: "20260917-100000-4969", label: "fix black buttons", started: "2026-09-17 09:30:00" });
     const young = spawn({ id: "20260917-100000-2924", label: "spotcheck login" });
     const out = renderStatusLine([chat, young, older], now);
-    expect(out).toBe("glm ▶2 | fix black buttons · 30m · npm … | spotcheck login · 45s · npm …");
+    expect(out).toBe("glm ▶2 | fix black buttons · 30m · m | spotcheck login · 45s · m");
   });
 
   it("counts only running workers with a live pid in ▶N", () => {
@@ -393,7 +396,7 @@ describe("renderStatusLine", () => {
     const stale: WorkerStatus = { ...chat, pid: 999999 };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([stale, w], now);
-    expect(out).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
     expect(out).not.toContain("interactive");
   });
 
@@ -401,16 +404,16 @@ describe("renderStatusLine", () => {
     const legacy: WorkerStatus = { ...chat, id: "20260917-091645-7777", started: "2026-09-17 09:16:45", label: "(no prompt)", origin: undefined };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([legacy, w], now);
-    expect(out).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
     const legacy2: WorkerStatus = { ...legacy, label: "unlabeled" };
-    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 | fix black buttons · 45s · npm …");
+    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
   });
 
   it("rows are flat: a sub-worker renders without ↳ indent", () => {
     const w1 = spawn({ id: "20260917-100000-4969", label: "fix black buttons", parent: chat.id });
     const w2 = spawn({ id: "20260917-100000-2924", label: "spotcheck login", parent: w1.id });
     const out = renderStatusLine([chat, w1, w2], now);
-    expect(out).toContain("| fix black buttons · 45s · npm … | spotcheck login · 45s · npm …");
+    expect(out).toContain("| fix black buttons · 45s · m | spotcheck login · 45s · m");
     expect(out).not.toContain("↳");
   });
 
@@ -418,18 +421,84 @@ describe("renderStatusLine", () => {
     const a = spawn({ id: "20260917-100000-1111", label: "build site" });
     const b = spawn({ id: "20260917-100000-2222", label: "build site" });
     const out = renderStatusLine([chat, a, b], now);
-    expect(out).toContain("#1111 build site · 45s · npm …");
-    expect(out).toContain("#2222 build site · 45s · npm …");
+    expect(out).toContain("#1111 build site · 45s · m");
+    expect(out).toContain("#2222 build site · 45s · m");
     const c = spawn({ id: "20260917-100000-3333", label: "unique label" });
     expect(renderStatusLine([chat, a, c], now)).not.toContain("#3333");
   });
 
-  it("step trims the Bash command to its verb, no prefix, flags or quotes", () => {
+  it("a labelled worker renders its label, never the step it is running", () => {
+    const w = spawn({
+      id: "20260917-100000-4969",
+      label: "fix black buttons",
+      last: 'Bash: grep -n -A4 "x" src/',
+    });
+    const out = renderStatusLine([chat, w], now);
+    expect(out).toBe("glm ▶1 | fix black buttons · 45s · m");
+    expect(out).not.toContain("grep");
+    expect(out).not.toContain("Bash");
+  });
+
+  it("no step leaks in through any of its shapes", () => {
     const w = (last: string) => spawn({ id: "20260917-100000-4969", label: "fix black buttons", last });
-    expect(renderStatusLine([chat, w('Bash: grep -n -A4 "x" src/')], now)).toContain("grep …");
-    expect(renderStatusLine([chat, w("Bash: ls")], now)).toContain("45s · ls");
-    expect(renderStatusLine([chat, w("Read: render.ts")], now)).toContain("Read: render.ts");
-    expect(renderStatusLine([chat, w("x".repeat(60))], now)).toContain(`${"x".repeat(23)}…`);
+    for (const last of ["Bash: ls", "Read: render.ts", "says: nearly done", "x".repeat(60)]) {
+      expect(renderStatusLine([chat, w(last)], now)).toBe("glm ▶1 | fix black buttons · 45s · m");
+    }
+  });
+
+  it("an unlabelled worker falls back to its prompt, never to the step", () => {
+    // run.ts seeds label from the prompt when --label is absent, so the goal
+    // is the prompt's first sentence, cut on a word boundary
+    const w = spawn({
+      id: "20260917-100000-4969",
+      label: "Fix the black buttons on the settings page. Then run the suite.",
+      last: "Bash: npm test",
+    });
+    const out = renderStatusLine([chat, w], now);
+    expect(out).toBe("glm ▶1 | Fix the black buttons on the settings… · 45s · m");
+    expect(out).not.toContain("npm");
+  });
+
+  it("a worker with neither label nor prompt reads unlabeled, not its step", () => {
+    const w = spawn({ id: "20260917-100000-4969", label: UNLABELED, turns: 3, last: "Bash: npm test" });
+    const out = renderStatusLine([chat, w], now);
+    expect(out).toBe("glm ▶1 | unlabeled · 45s · m");
+    expect(out).not.toContain("npm");
+  });
+
+  it("goalOf prefers the label and cuts long prompts on a word boundary", () => {
+    expect(goalOf({ label: "fix black buttons" })).toBe("fix black buttons");
+    expect(goalOf({ label: "" })).toBe(UNLABELED);
+    expect(goalOf({ label: "(no prompt)" })).toBe(UNLABELED);
+    expect(goalOf({ label: "Reorganise the notes directory and then commit" })).toBe(
+      "Reorganise the notes directory and…"
+    );
+    // no whitespace to cut on: the hard limit still holds
+    expect(goalOf({ label: "x".repeat(80) })).toBe(`${"x".repeat(39)}…`);
+  });
+
+  it("shortModel drops the vendor and date, keeps the 1m marker", () => {
+    expect(shortModel("claude-opus-5[1m]")).toBe("opus-5[1m]");
+    expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku-4.5");
+    expect(shortModel("glm-5.3[1m]")).toBe("glm-5.3[1m]");
+    expect(shortModel("k3[1m]")).toBe("k3[1m]");
+    expect(shortModel("")).toBe("");
+    expect(shortModel(undefined)).toBe("");
+  });
+
+  it("an empty model drops its column rather than rendering a gap", () => {
+    const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons", model: "" });
+    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 | fix black buttons · 45s");
+  });
+
+  it("each provider's model shortens in its own row", () => {
+    const a = spawn({ id: "20260917-100000-1111", label: "opus job", provider: "anthropic", model: "claude-opus-5[1m]" });
+    const b = spawn({ id: "20260917-100000-2222", label: "glm job", provider: "glm", model: "glm-5.3[1m]" });
+    const c = spawn({ id: "20260917-100000-3333", label: "kimi job", provider: "kimi", model: "k3[1m]" });
+    const out = renderStatusLine([chat, a, b, c], now);
+    expect(out).toContain("opus job · 45s · opus-5[1m]");
+    expect(out).toContain("glm job · 45s · glm-5.3[1m]");
+    expect(out).toContain("kimi job · 45s · k3[1m]");
   });
 
   it("the bar carries no context meter or inbox mark — ps and the pane do", () => {
@@ -443,5 +512,42 @@ describe("renderStatusLine", () => {
     const failed = spawn({ id: "20260917-100000-5556", label: "failed earlier", state: "failed", rc: 1, secs: 5 });
     const out = renderStatusLine([chat, done, failed], now);
     expect(out).toBe("glm   ✓1 ✗1 today");
+  });
+
+  // The head must name the provider the next worker goes to. That is the live
+  // `workers.active`, not the provider frozen into the chat pane's status file
+  // when it launched — switching providers has to move the bar (2026-09-19).
+  describe("head follows the active provider", () => {
+    it("renders the built-in provider, which has no baseUrl and no keyFile", () => {
+      // "anthropic" is synthetic: it is never a key in workers.providers, so
+      // any "is it configured" filter would drop it — it must still render
+      const workers = parseWorkersConfig({
+        active: "anthropic",
+        providers: {
+          glm: { enabled: true, baseUrl: "https://example.invalid", models: { default: "glm-x" } },
+        },
+      });
+      expect(workers.providers.anthropic).toBeUndefined();
+      expect(nativeAnthropicProvider().baseUrl).toBe("");
+      expect(nativeAnthropicProvider().keyFile).toBeNull();
+      expect(renderStatusLine([chat], now, workers.active)).toBe("anthropic");
+    });
+
+    it("overrides the pane's launch-time provider on every refresh", () => {
+      const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
+      expect(renderStatusLine([chat, w], now, "anthropic")).toBe(
+        "anthropic ▶1 | fix black buttons · 45s · m"
+      );
+      expect(renderStatusLine([chat, w], now, "kimi")).toContain("kimi ▶1");
+    });
+
+    it("shows the active provider even with nothing running at all", () => {
+      expect(renderStatusLine([], now, "anthropic")).toBe("anthropic");
+      expect(renderStatusLine([], now, null)).toBe("");
+    });
+
+    it('"auto" is not one provider, so it falls through to what is running', () => {
+      expect(renderStatusLine([chat], now, "auto")).toBe("glm");
+    });
   });
 });

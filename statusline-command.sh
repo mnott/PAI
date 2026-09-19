@@ -381,27 +381,47 @@ usage_cache="/tmp/claude/statusline-usage-cache.json"
 usage_cache_ttl=60  # seconds
 usage_suffix=""
 
-# Color based on utilization: green < 50%, yellow 50-75%, red > 75%
+# Color based on utilization: green < 50%, orange 50-75%, red > 75%
 _usage_color() {
     local pct=$1
     if [ "$pct" -gt 75 ] 2>/dev/null; then echo "$BRIGHT_RED"
-    elif [ "$pct" -gt 50 ] 2>/dev/null; then echo "$BRIGHT_YELLOW"
+    elif [ "$pct" -gt 50 ] 2>/dev/null; then echo "$BRIGHT_ORANGE"
     else echo "$BRIGHT_GREEN"; fi
 }
 
 _fetch_usage() {
     # Try to get OAuth token from macOS Keychain
     local token=""
-    token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-    [ -z "$token" ] && return
+    # More than one keychain item can carry this service name: the real one is
+    # stored under the login user account, and a stub with empty tokens has
+    # been seen under acct "unknown". Without -a the first match wins, so ask
+    # for the user item first and only then fall back to an unqualified read.
+    local raw
+    raw=$(security find-generic-password -s "Claude Code-credentials" -a "$(id -un)" -w 2>/dev/null)
+    token=$(printf '%s' "$raw" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    if [ -z "$token" ]; then
+        raw=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+        token=$(printf '%s' "$raw" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    fi
 
     mkdir -p /tmp/claude
-    local response
-    response=$(curl -sf --max-time 3 \
+    if [ -z "$token" ]; then
+        echo "no usable OAuth token in keychain item Claude Code-credentials" > "$usage_cache.error"
+        return
+    fi
+    # Per-process temp file: several renders may fetch at once.
+    local tmp="$usage_cache.tmp.$$" http
+    http=$(curl -s --max-time 3 -o "$tmp" -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
         -H "anthropic-beta: oauth-2025-04-20" \
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-    [ -n "$response" ] && echo "$response" > "$usage_cache"
+    if [ "$http" = "200" ] && [ -s "$tmp" ]; then
+        mv -f "$tmp" "$usage_cache"
+        rm -f "$usage_cache.error"
+    else
+        echo "usage fetch failed: http ${http:-timeout}" > "$usage_cache.error"
+        rm -f "$tmp"
+    fi
 }
 
 # Use cache if fresh, otherwise fetch in background (Anthropic plan only)
@@ -499,36 +519,10 @@ if [ "$session_provider" = "anthropic" ] && [ -f "$usage_cache" ]; then
         fi
     fi
 
-    # Compute advisor mode label (mirrors thresholds in whisper-rules.ts)
-    # If mode is manually set (not "auto"), show that instead of auto-calculated
-    advisor_label=""
-    advisor_label_color=""
-    _display_mode="$_existing_mode"
-    if [ "$_display_mode" = "auto" ]; then
-        if [ "$seven_day_int" -ge 92 ] 2>/dev/null; then
-            _display_mode="critical"
-        elif [ "$seven_day_int" -ge 80 ] 2>/dev/null; then
-            _display_mode="strict"
-        elif [ "$seven_day_int" -ge 60 ] 2>/dev/null; then
-            _display_mode="conservative"
-        fi
-    fi
-    case "$_display_mode" in
-        "critical") advisor_label="critical"; advisor_label_color="$BRIGHT_RED" ;;
-        "strict") advisor_label="strict"; advisor_label_color="$BRIGHT_ORANGE" ;;
-        "conservative") advisor_label="conserve"; advisor_label_color="$BRIGHT_YELLOW" ;;
-        "normal") advisor_label="normal"; advisor_label_color="$BRIGHT_GREEN" ;;
-    esac
-    # Mark forced modes with a pin symbol so user knows it's not auto
-    if [ "$_existing_mode" != "auto" ] && [ -n "$advisor_label" ]; then
-        advisor_label="📌${advisor_label}"
-    fi
-
-    # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: ⚡strict 91% → Fr. 08:00
+    # Build usage suffix: 5h: 8% → 00:59 │ 1d: ● 29% / 36% │ 7d: 91% → Fr. 08:00
     five_label="5h: ${five_hour_int}%%"
     [ -n "$five_reset_fmt" ] && five_label="${five_label} → ${five_reset_fmt}"
     seven_label="7d: "
-    [ -n "$advisor_label" ] && seven_label="${seven_label}${advisor_label_color}${advisor_label}${RESET} "
     seven_label="${seven_label}${seven_day_int}%%"
     [ -n "$seven_reset_fmt" ] && seven_label="${seven_label} → ${seven_reset_fmt}"
 

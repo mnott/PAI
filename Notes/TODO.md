@@ -1,21 +1,37 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0068 - 2026-09-18 - Worker Kill Command, Daemon Keepalive, And Cache Features" session-id="3a442dd4-5496-4f1f-a650-91c6bc287425" ts="2026-09-18T17:18:53.913Z" -->
+<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display And Keychain Credential Handling" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:35:27.248Z" -->
 
-> **Last session:** 0068 - 2026-09-18 - Worker Kill Command, Daemon Keepalive, And Cache Features
-> **Paused at:** 2026-09-18T17:18:53.913Z
+> **Last session:** 0083 - 2026-09-19 - Statusline Budget Display And Keychain Credential Handling
+> **Paused at:** 2026-09-19T11:35:27.248Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 3a442dd4-5496-4f1f-a650-91c6bc287425`
+> Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
 
 T
-i=ckpt-2026-09-18T17-18-53.890Z
-g=cpp merge everything here for pai and cpp
-d=you should use a lightweight worker | but glm is out of credits, so use one of anthropic | 2 workers open do we still need them | so then add a kill command using a lightweight worker, then cpp again, and kill whats not needed | worker/cache-keepalive is there, actually  Fri 18 | 19:12:47 ️ ➜ gf ls                                                      Local branches ╭─────────────────────────────────┬─────────┬────────────────…
+i=ckpt-2026-09-19T11-35-27.199Z
+g=o you're not getting it. I was looking for what we had before, just the 97% were wrong
+d=[Session:pai-cli] worker 20260919-124719-28001 usage fetch broken, fail loudly stalled 10m no turns - see pai worker replay 20260919-124719-28001 | Still not working because it currently shows 2% while it should be showing 6% by now. So go back significantly in the history of of this status bar cinematic and make sure for anthropic you did it jus… | Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom… | [Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line…
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@0aba1f0 feat(release): merge cache-keepalive branch and worker enhancements; 1 dirty; git status for detail
+@2=docs/provider-abstraction.md
+@3=docs/provider-independence-details.md
+@4=scripts/build-hooks.mjs
+@5=src/cli/commands/worker/index.ts
+@6=src/hooks/ts/pre-tool-use/route-agents-to-worker.ts
+@7=src/workers/gutter.test.ts
+@8=src/workers/install.ts
+@9=src/workers/mcp.test.ts
+@10=src/workers/mcp.ts
+@11=src/workers/misc.test.ts
+@12=src/workers/render.ts
+@13=src/workers/run-helpers.test.ts
+@14=src/workers/run.ts
+@15=src/workers/standalone/status-line.ts
+@16=src/workers/status.ts
+@17=src/workers/viewer.ts
+z=auto ckpt (no model); main@b96bd65 Update TODO.; 20 dirty; +4 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

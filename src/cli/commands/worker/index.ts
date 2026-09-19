@@ -34,7 +34,7 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
-import { loadStatus, saveStatus } from "../../../workers/status.js";
+import { loadStatus, saveStatus, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
@@ -368,7 +368,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   workerCmd
     .command("kill <id>")
     .description("Send SIGTERM to a running worker process")
-    .action((id: string) => {
+    .action(async (id: string) => {
       try {
         const logDir = currentLogDir();
         const status = loadStatus(logDir, id);
@@ -386,8 +386,19 @@ export function registerWorkerCommands(workerCmd: Command): void {
         }
         try {
           process.kill(status.pid, "SIGTERM");
-          status.state = "killed";
-          saveStatus(logDir, status);
+          // The run's own SIGTERM handler writes the terminal status (killed,
+          // rc 143, secs) — it knows the numbers we do not. Give it a moment
+          // and only write ourselves if it never got there: writing our own
+          // pre-signal snapshot unconditionally raced that handler and put a
+          // half-empty "killed rc=null ?s" row back on disk (2026-09-19).
+          const selfReported = await waitForTerminalStatus(logDir, id);
+          if (!selfReported) {
+            const latest = loadStatus(logDir, id) ?? status;
+            latest.state = "killed";
+            latest.rc = latest.rc ?? 143;
+            latest.last = latest.last || "killed by signal SIGTERM";
+            saveStatus(logDir, latest);
+          }
           console.log(`sent SIGTERM to worker ${id} (pid ${status.pid})`);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -507,7 +518,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
       }
       try {
         const { workers } = readWorkersSection();
-        console.log(describeMcp(workers));
+        console.log(describeMcp(workers).join("\n"));
       } catch (e) {
         fail(e);
       }
@@ -526,7 +537,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           currentLogDir(),
           term ?? process.env.ITERM_SESSION_ID ?? "",
           cwd ?? process.cwd(),
-          session ?? ""
+          session ?? "",
+          new Date(),
+          readWorkersSection().workers.active
         );
         if (out) console.log(out);
       } catch (e) {

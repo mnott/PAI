@@ -937,7 +937,9 @@ export function statusLineOutput(
   term: string,
   cwd: string,
   claudeSession: string = "",
-  now: Date = new Date()
+  now: Date = new Date(),
+  /** Live routing choice (workers.active) — the head of the line. */
+  active: string | null = null
 ): string {
   const statuses = loadStatuses(logDir);
   const mine = statuses.filter((s) => {
@@ -948,5 +950,5 @@ export function statusLineOutput(
     const sameDir = cwd && s.cwd.startsWith(cwd);
     return sameScope || spawnedHere || (!term && sameDir);
   });
-  return renderStatusLine(mine, now);
+  return renderStatusLine(mine, now, active);
 }
