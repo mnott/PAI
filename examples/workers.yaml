@@ -1,0 +1,46 @@
+# PAI worker configuration.
+# Providers PAI can run workers on, the model each role uses, and which
+# provider every --class goes to. Edit by hand; `pai worker providers` shows
+# the effective result. Comments are preserved when PAI writes this file.
+
+active: anthropic          # provider for `pai worker run` without --provider or --class
+
+providers:
+  anthropic:
+    builtin: true          # Claude Code's own login: no url, no key file
+    models:
+      default: claude-sonnet-5
+      fast: claude-haiku-4-5-20251001
+  glm:
+    url: https://api.z.ai/api/anthropic
+    key_file: ~/.config/zai/api_key
+    tier: 3
+    models:
+      default: glm-5.3[1m]
+      fast: glm-5.3-flash
+      image: example-paint
+  kimi:
+    url: https://api.kimi.ai/coding/
+    key_file: ~/.config/kimi/api_key
+    tier: 3
+    models:
+      default: k3[1m]
+      fast: kimi-for-coding[1m]
+
+# A class names a provider, or provider/role to pick a non-default model.
+# Workers exist to parallelise and to save cost: the default is Sonnet,
+# Haiku for the mechanical classes, and nothing here inherits the
+# orchestrating session's model.
+classes:
+  implement: anthropic
+  draft: anthropic
+  research: anthropic
+  complex: anthropic
+  plan: anthropic
+  review: anthropic
+  spotcheck: anthropic/fast
+  simple: anthropic/fast
+  image: glm/image
+
+mcp_sets:
+  desktop: [clickr]
