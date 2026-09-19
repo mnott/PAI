@@ -1,22 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T11:43:47.506Z" -->
+<!-- pai:checkpoint authored="auto" session="0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T12:37:07.867Z" -->
 
-> **Last session:** 0083 - 2026-09-19 - Statusline Budget Display, Keychain Fix, And Worker Patch Application
-> **Paused at:** 2026-09-19T11:43:47.506Z
+> **Last session:** 0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration
+> **Paused at:** 2026-09-19T12:37:07.867Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
 
 T
-i=ckpt-2026-09-19T11-43-47.384Z
-g=Okay please Fable implement or fix the status bar because the Opus model is not able to achieve it. It is really horrific. What has happened is we have changed our status bar so that it can also accom…
-d=[Session:pai-cli] worker 20260919-131202-40065 restore usage fetch failed rc=143 - see pai worker replay 20260919-131202-40065 | Okay now for the status line of a given worker I had said that I want to see not only the provider like anthropic but also the actual model that it is using and I don't want to see in the status line… | So currently there are two workers open. Why? And more importantly, I see one of those workers is using Fable 5.1. So as a general rule workers should be used a to parallelize and b to conserve costs… | This rule of yours has to be way more fundamental. Put it in the whisper rules. There is a rule, but apparently it is not good enough. Saying that never, ever, ever, ever use here doc or the likes alw… | I still see some contradiction in our model hierarchy. So at the moment we are using this session, Fable 5.1, for the overall orchestration which is very effective. Then you suggest to use sonnet for…
+i=ckpt-2026-09-19T12-37-07.784Z
+g=And use clicker to take a screenshot of my screen. will see what kind of status line these guys have. One of them is basically just giving me some message back that I don't understand. two of them are…
+d=I was talking about the status line of the workers, not about your own status line. That own status line of yours where the little B is that's anyway not really readable because of all of the text in… | [Session:pai-cli] worker 20260919-140121-27403 role-probe finished rc=0 - see pai worker replay 20260919-140121-27403 | [Session:pai-cli] worker 20260919-140654-56239 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140654-56239 | [Session:pai-cli] worker 20260919-140746-58288 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140746-58288 | Use a worker then to merge all so that at the same time I can see it.
 t=?
 @1=Notes/TODO.md
-@2=src/workers/config.ts
-z=auto ckpt (no model); main@ff83a0d merge: statusline version and folder fallbacks, 1d pace, advisor asOf guard; 2 dirty; git status for detail
+@2=docs/commands/README.md
+@3=docs/commands/worker.md
+@4=src/cli/commands/worker/index.ts
+@5=src/daemon-mcp/index.ts
+@6=src/hooks/ts/user-prompt/whisper-rules.ts
+@7=src/workers/gutter.test.ts
+@8=src/workers/misc.test.ts
+@9=src/workers/render.ts
+@10=src/workers/report.test.ts
+@11=src/workers/report.ts
+@12=src/workers/status.ts
+@13=src/workers/viewer.ts
+z=auto ckpt (no model); main@a7b9dc0 feat(workers): built-in anthropic provider defaults to sonnet, haiku for fast classes; 13 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 

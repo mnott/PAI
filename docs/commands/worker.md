@@ -24,6 +24,7 @@ pai worker <subcommand> [options]
 | [`pai worker pane [id]`](#pai-worker-pane-id) | Open the follow pane for a worker (or one shared pane for this session) |
 | [`pai worker log [what]`](#pai-worker-log-what) | all = ledger, tail = last ledger lines, <id> = raw event stream, none = list |
 | [`pai worker say <id> <text>`](#pai-worker-say-id-text) | Send one message to a running worker (forwarded to its open stdin) |
+| [`pai worker goal <id> <text>`](#pai-worker-goal-id-text) | Relabel a running worker (its ps / pane goal) without sending it a message |
 | [`pai worker handoff <json>`](#pai-worker-handoff-json) | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
 | [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
 | [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
@@ -158,6 +159,24 @@ all = ledger, tail = last ledger lines, <id> = raw event stream, none = list
 ### pai worker say <id> <text>
 
 Send one message to a running worker (forwarded to its open stdin)
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+| `<text>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--goal <text>` | Relabel the worker (its ps / pane goal) before sending the message |  |
+
+
+### pai worker goal <id> <text>
+
+Relabel a running worker (its ps / pane goal) without sending it a message
 
 **Arguments**
 

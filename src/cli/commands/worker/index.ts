@@ -34,7 +34,7 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
-import { loadStatus, saveStatus, waitForTerminalStatus } from "../../../workers/status.js";
+import { loadStatus, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
@@ -284,9 +284,23 @@ export function registerWorkerCommands(workerCmd: Command): void {
   workerCmd
     .command("say <id> <text>")
     .description("Send one message to a running worker (forwarded to its open stdin)")
-    .action(async (id: string, text: string) => {
+    .option("--goal <text>", "Relabel the worker (its ps / pane goal) before sending the message")
+    .action(async (id: string, text: string, opts: { goal?: string }) => {
       try {
+        if (opts.goal !== undefined) setWorkerLabel(currentLogDir(), id, opts.goal);
         await sayToWorker(currentLogDir(), id, text);
+        console.log("ok");
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("goal <id> <text>")
+    .description("Relabel a running worker (its ps / pane goal) without sending it a message")
+    .action((id: string, text: string) => {
+      try {
+        setWorkerLabel(currentLogDir(), id, text);
         console.log("ok");
       } catch (e) {
         fail(e);

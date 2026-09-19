@@ -85,7 +85,7 @@ import { testProvider, runWorker } from "../workers/run.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
 import { runChain } from "../workers/chain.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
-import { loadStatus, loadStatuses, alive } from "../workers/status.js";
+import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/status.js";
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
@@ -1277,11 +1277,14 @@ async function startShim(): Promise<void> {
     {
       id: z.string().describe("Worker id (as shown by worker_ps)."),
       text: z.string().min(1).describe("The message to send (one line)."),
+      goal: z.string().optional().describe("Relabel the worker (its ps / pane goal) before sending the message."),
     },
     async (args) => {
       try {
         const { workers } = readWorkersSection();
-        await sayToWorker(workersLogDir(workers), args.id, args.text);
+        const logDir = workersLogDir(workers);
+        if (args.goal !== undefined) setWorkerLabel(logDir, args.id, args.goal);
+        await sayToWorker(logDir, args.id, args.text);
         return workerText(`sent to ${args.id}`);
       } catch (e) {
         return workerError(e);

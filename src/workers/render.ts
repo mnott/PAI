@@ -565,22 +565,49 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
 }
 
 /**
- * The statusline bar: `provider ▶N` then one row per running spawned worker —
- * `goal · age · model` — and today's ✓/✗ tail. The row answers the two
- * questions a glance asks — what is this worker for, and what model is it
- * spending — so the momentary tool call is gone: liveness is the age, and step
- * detail belongs to `pai worker ps` / `worker follow`. The worker's name IS its
- * goal here (both are the operator's `--label`), so it is printed once rather
- * than twice; printing it twice would only spend the width this row protects.
- * The chat pane contributes nothing but its provider: its age, state and inbox
- * live in `pai worker ps`, not here. Rows are flat (the ↳ depth is ps
- * territory) and oldest first; `#id` joins a name only when two running
- * workers share one label, so ids stay rare enough to read.
+ * A worker pane's bottom line: `<goal> · <model> · started HH:MM · <age>` —
+ * what the pane is FOR and how long it has run, never the tool call it
+ * happens to be executing this second (that is `pai worker ps` / `follow`
+ * territory). `columns`, when known, shrinks the goal so the fixed
+ * `model · started · age` tail always survives — trimming that tail instead
+ * would defeat the one thing an operator scanning several panes needs at a
+ * glance. A legacy status with no recorded model omits that field rather
+ * than rendering a bare gap.
+ */
+export function paneStatusRow(
+  s: Pick<WorkerStatus, "label" | "model" | "started">,
+  now: Date = new Date(),
+  columns: number | null = null
+): string {
+  const model = shortModel(s.model);
+  const started = String(s.started ?? "").slice(11, 16);
+  const age = ageOf(s.started, now);
+  const tail = [model, started ? `started ${started}` : "", age].filter(Boolean).join(" · ");
+  const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
+  return `${goalOf(s, budget)} · ${tail}`;
+}
+
+/**
+ * The statusline bar: `provider ▶N · <models> · oldest <age>` and today's
+ * ✓/✗ tail. Three workers used to spell out three goals, three ages and three
+ * models on one line and none of it fit; each worker's own pane bottom line
+ * now carries `goal · model · started · age` (paneStatusRow) and `pai worker
+ * ps` has the full table, so the bar only has to answer how many workers are
+ * running, on what models, and how long the oldest has been going. `<models>`
+ * lists distinct short model names, most-populous first (ties broken by
+ * name), each suffixed `×N` past one; an empty model counts under `?` rather
+ * than vanishing (a legacy status with no recorded model is still a worker).
+ * `columns`, when known, shrinks only the models segment (shortText) so the
+ * head, the `▶N` count and the today tally — the three things worth reading
+ * at a glance — never get cut for the one segment that can grow without
+ * bound. The chat pane contributes nothing but its provider: its age, state
+ * and inbox live in `pai worker ps`, not here.
  */
 export function renderStatusLine(
   mine: WorkerStatus[],
   now: Date = new Date(),
-  active: string | null = null
+  active: string | null = null,
+  columns: number | null = null
 ): string {
   // `active` is the live routing choice (workers.active). The head names the
   // provider the next worker goes to, so it has to come from the config on
@@ -594,19 +621,12 @@ export function renderStatusLine(
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
   const isChat = isChatPane;
   const chat = mine.find((s) => isChat(s) && s.state === "running" && alive(s.pid));
-  const running = mine
-    .filter((s) => !isChat(s) && s.state === "running" && alive(s.pid))
-    .sort((a, b) => a.started.localeCompare(b.started));
+  const running = mine.filter((s) => !isChat(s) && s.state === "running" && alive(s.pid));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
-  const rows = running.slice(0, 3).map((s) => {
-    const twin = running.some((o) => o !== s && o.label === s.label);
-    const name = `${twin ? `#${s.id.slice(-4)} ` : ""}${goalOf(s)}`;
-    const model = shortModel(s.model);
-    return `${name} · ${ageOf(s.started, now)}${model ? ` · ${model}` : ""}`;
-  });
+
   let head: string;
   if (live) head = live;
   else if (chat) head = chat.provider;
@@ -615,7 +635,28 @@ export function renderStatusLine(
     head = providers.size === 1 ? [...providers][0] : "workers";
   }
   if (running.length) head += ` ▶${running.length}`;
-  if (rows.length) head += " | " + rows.join(" | ");
-  if (doneToday.length) head += `   ✓${ok} ✗${bad} today`;
-  return head;
+  const tail = doneToday.length ? `   ✓${ok} ✗${bad} today` : "";
+
+  if (!running.length) return head + tail;
+
+  const counts = new Map<string, number>();
+  for (const s of running) {
+    const m = shortModel(s.model) || "?";
+    counts.set(m, (counts.get(m) ?? 0) + 1);
+  }
+  const modelsFull = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([m, n]) => (n > 1 ? `${m} ×${n}` : m))
+    .join(" · ");
+  const oldest = running.reduce((a, b) => (a.started < b.started ? a : b));
+  const oldestPart = `oldest ${ageOf(oldest.started, now)}`;
+
+  let models = modelsFull;
+  const fixedLen = head.length + 3 + oldestPart.length + tail.length; // + " · "
+  if (columns !== null && fixedLen + 3 + modelsFull.length > columns) {
+    const budget = columns - fixedLen - 3;
+    models = budget > 0 ? shortText(modelsFull, budget) : "";
+  }
+  const mid = [models, oldestPart].filter(Boolean).join(" · ");
+  return `${head} · ${mid}${tail}`;
 }

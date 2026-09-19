@@ -97,7 +97,13 @@ describe("WORKER_CONTRACT_PROMPT", () => {
   it("bans shell heredocs: write a script file, then run it", () => {
     expect(WORKER_CONTRACT_PROMPT).toMatch(/heredoc/i);
     expect(WORKER_CONTRACT_PROMPT).toContain("Write tool");
-    expect(WORKER_CONTRACT_PROMPT).toMatch(/write the script to a file/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/write it to a file with/);
+  });
+
+  it("bans inline multi-line/quoted payloads broadly, not just heredocs", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/inline/i);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/Write tool/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/\$\(cat /);
   });
 
   it("bans inline interpreter one-liners: permission layer denies them, write a script file or use jq", () => {
@@ -108,5 +114,16 @@ describe("WORKER_CONTRACT_PROMPT", () => {
     expect(WORKER_CONTRACT_PROMPT).toMatch(/command denied by permission rules/);
     expect(WORKER_CONTRACT_PROMPT).toMatch(/python3 script\.py/);
     expect(WORKER_CONTRACT_PROMPT).toMatch(/use jq/);
+  });
+
+  it("states the worker's role first: finish the task itself, don't hand it off wholesale", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/You are the worker/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/PARALLELISING/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/one tier down/);
+  });
+
+  it("tells the worker its turn ending ends the run: no ScheduleWakeup, no leaving children running", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/Ending your turn ends/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/ScheduleWakeup/);
   });
 });

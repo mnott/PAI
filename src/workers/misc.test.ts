@@ -13,7 +13,7 @@ import { relPath, unifiedDiffLines, makeColor } from "./render.js";
 import { appendLedger, parseLedgerLine, ledgerSummary } from "./ledger.js";
 import { resultFromOutput } from "./run.js";
 import { statusPath, eventsPath, ledgerPath } from "./paths.js";
-import { loadStatuses, saveStatus, statusTmpPath, type WorkerStatus } from "./status.js";
+import { loadStatuses, saveStatus, setWorkerLabel, statusTmpPath, type WorkerStatus } from "./status.js";
 
 describe("tabKey", () => {
   it("extracts w<n>t<n> and ignores pane suffixes", () => {
@@ -135,6 +135,72 @@ describe("saveStatus atomic write", () => {
     expect(back.rc).toBe(143);
     expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([`${id}.status.tmp`]);
     expect(loadStatuses(dir)).toHaveLength(1);
+  });
+});
+
+describe("setWorkerLabel / saveStatus label merge", () => {
+  const sample = (id: string): WorkerStatus =>
+    ({
+      id,
+      pid: 1,
+      label: "probe",
+      cwd: "/repo",
+      term: "",
+      provider: "anthropic",
+      model: "m",
+      state: "running",
+      started: "2026-09-19 08:00:00",
+      updated: "2026-09-19 08:00:00",
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+    }) as WorkerStatus;
+
+  it("updates the label atomically", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-goal-"));
+    const id = "20260919-090000-1";
+    saveStatus(dir, sample(id));
+    setWorkerLabel(dir, id, "re-goaled by operator");
+    const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
+    expect(back.label).toBe("re-goaled by operator");
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("throws for a worker id with no status file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-goal-missing-"));
+    expect(() => setWorkerLabel(dir, "no-such-id", "text")).toThrow(/no worker named/);
+  });
+
+  it("survives the worker's own next periodic write: merge, not replace", () => {
+    // the worker process holds one status object in memory and never changes
+    // its own .label — it just resends the same value on every turn — so a
+    // relabel landing between two of its writes must not be reverted by the
+    // next one (2026-09-19)
+    const dir = mkdtempSync(join(tmpdir(), "pai-goal-merge-"));
+    const id = "20260919-090000-2";
+    const status = sample(id);
+    saveStatus(dir, status); // the worker's first write
+    saveStatus(dir, status); // an unmodified periodic write, before any relabel
+    setWorkerLabel(dir, id, "re-goaled by operator"); // the operator relabels
+    saveStatus(dir, status); // the worker's own next periodic write (stale label)
+    const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
+    expect(back.label).toBe("re-goaled by operator");
+    // the mutation is visible on the caller's own object too, so its writes
+    // stay stable rather than needing to re-fight the merge every time
+    expect(status.label).toBe("re-goaled by operator");
+  });
+
+  it("a legitimate first label in a fresh process is never treated as a stale echo", () => {
+    // a one-shot process (like `pai worker goal` itself) has no baseline for
+    // this id yet, so its first save always wins outright
+    const dir = mkdtempSync(join(tmpdir(), "pai-goal-fresh-"));
+    const id = "20260919-090000-3";
+    saveStatus(dir, { ...sample(id), label: "original" });
+    setWorkerLabel(dir, id, "brand new goal");
+    const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
+    expect(back.label).toBe("brand new goal");
   });
 });
 
