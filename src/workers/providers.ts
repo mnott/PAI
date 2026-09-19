@@ -23,7 +23,6 @@ import {
   isModelCapability,
   keysDir,
   nativeAnthropicProvider,
-  parseWorkersConfig,
   providerCostTier,
   readWorkersSection,
   writeWorkersSection,
@@ -34,6 +33,8 @@ import {
 } from "./config.js";
 import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
+import { workersYamlPath } from "./workers-config.js";
+import { CONFIG_FILE } from "../daemon/config.js";
 
 export interface AddProviderInput {
   name: string;
@@ -51,6 +52,8 @@ export interface AddProviderInput {
   contextWindow?: number;
   costTier?: number;
   tags?: string[];
+  /** Config file override (tests, dry runs); default ~/.config/pai/config.json. */
+  configPath?: string;
 }
 
 export function addProvider(input: AddProviderInput): WorkersConfig {
@@ -83,7 +86,7 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
     keyFile = path;
   }
 
-  const { raw, workers } = readWorkersSection();
+  const { raw, workers } = readWorkersSection(input.configPath);
   const provider: WorkerProvider = {
     enabled: true,
     protocol: input.protocol ?? "anthropic",
@@ -123,16 +126,17 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
     };
   }
 
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, input.configPath);
   return workers;
 }
 
 /** Change costTier / tags on an existing provider (MCP action "update"). */
 export function updateProvider(
   name: string,
-  changes: { costTier?: number; tags?: string[] }
+  changes: { costTier?: number; tags?: string[] },
+  configPath?: string
 ): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+  const { raw, workers } = readWorkersSection(configPath);
   const p = workers.providers[name];
   if (!p) {
     throw new WorkersConfigError(
@@ -153,12 +157,12 @@ export function updateProvider(
     }
     p.tags = changes.tags as WorkerProvider["tags"];
   }
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
-export function removeProvider(name: string): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function removeProvider(name: string, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   if (!workers.providers[name]) {
     throw new WorkersConfigError(`no provider named "${name}"`);
   }
@@ -168,19 +172,19 @@ export function removeProvider(name: string): WorkersConfig {
     if (targetProvider === name) delete workers.classes[cls];
   }
   if (workers.active === name) workers.active = null;
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
-export function useProvider(name: string): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function useProvider(name: string, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   if (name !== ANTHROPIC_NATIVE && !workers.providers[name]) {
     throw new WorkersConfigError(
       `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
     );
   }
   workers.active = name;
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
@@ -232,14 +236,14 @@ export function setProviderModel(
   return workers;
 }
 
-export function setProviderEnabled(name: string, enabled: boolean): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function setProviderEnabled(name: string, enabled: boolean, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   const p = workers.providers[name];
   if (!p) throw new WorkersConfigError(`no provider named "${name}"`);
   p.enabled = enabled;
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   // `enable` is also the manual cooldown-clear (spec: routing)
-  if (enabled) clearCooldown(workersLogDir(parseWorkersConfig(raw.workers)), name);
+  if (enabled) clearCooldown(workersLogDir(workers), name);
   return workers;
 }
 
@@ -248,8 +252,8 @@ export function setProviderEnabled(name: string, enabled: boolean): WorkersConfi
  * provider + optional mcp/maxCostTier/requireTags/order). An object without
  * a provider only constrains auto-routing for that class.
  */
-export function setClass(name: string, target: ClassTarget): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function setClass(name: string, target: ClassTarget, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   if (typeof target === "string") {
     const [provider, alias] = target.split("/");
     const native = provider === ANTHROPIC_NATIVE;
@@ -279,24 +283,24 @@ export function setClass(name: string, target: ClassTarget): WorkersConfig {
     }
   }
   workers.classes[name] = target;
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
-export function unsetClass(name: string): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function unsetClass(name: string, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   if (!(name in workers.classes)) {
     throw new WorkersConfigError(`no class named "${name}"`);
   }
   delete workers.classes[name];
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
-export function setWorkersEnabled(enabled: boolean): WorkersConfig {
-  const { raw, workers } = readWorkersSection();
+export function setWorkersEnabled(enabled: boolean, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
   workers.enabled = enabled;
-  writeWorkersSection(raw, workers);
+  writeWorkersSection(raw, workers, configPath);
   return workers;
 }
 
@@ -339,20 +343,30 @@ export function describeModels(workers: WorkersConfig): string[] {
   return lines;
 }
 
+/** Classes (in declaration order) whose target resolves to this provider. */
+function classesForProvider(workers: WorkersConfig, name: string): string[] {
+  return Object.entries(workers.classes)
+    .filter(([, target]) => (typeof target === "string" ? target.split("/")[0] : target.provider) === name)
+    .map(([cls]) => cls);
+}
+
 /** Human-readable provider listing (quota probe included when configured). */
-export function describeProviders(workers: WorkersConfig): string[] {
+export function describeProviders(workers: WorkersConfig, configPath: string = CONFIG_FILE): string[] {
   const lines: string[] = [];
   const nativeActive = workers.active === ANTHROPIC_NATIVE;
   lines.push(
     `${ANTHROPIC_NATIVE}  [built-in${nativeActive ? ", active" : ""}]  Claude Code's own OAuth/Max-plan login — no base URL, no API key`
   );
-  lines.push(`    ${modelPrefsText(nativeAnthropicProvider())}`);
+  lines.push(`    ${modelPrefsText(nativeAnthropicProvider(workers.nativeModels))}`);
+  const nativeClasses = classesForProvider(workers, ANTHROPIC_NATIVE);
+  lines.push(`    classes: ${nativeClasses.length ? nativeClasses.join(", ") : "(none)"}`);
   const names = Object.keys(workers.providers);
   if (!names.length) {
     lines.push(`no other providers configured. Add one with:`);
     lines.push(
       `  pai worker providers add <name> --base-url <url> --key-file <path> --model <model>`
     );
+    lines.push(`config: ${existsSync(workersYamlPath(configPath)) ? workersYamlPath(configPath) : configPath}`);
     return lines;
   }
   for (const name of names) {
@@ -376,17 +390,16 @@ export function describeProviders(workers: WorkersConfig): string[] {
     if (p.engine === "codex") {
       lines.push(`    engine codex (runs through the Codex CLI)`);
     }
+    const cls = classesForProvider(workers, name);
+    lines.push(`    classes: ${cls.length ? cls.join(", ") : "(none)"}`);
   }
   const setNames = Object.keys(workers.mcpSets);
   if (setNames.length) {
     lines.push(`mcp sets: ${setNames.map((s) => `${s}=[${workers.mcpSets[s].join(",")}]`).join("  ")}`);
   }
-  const classNames = Object.keys(workers.classes);
-  if (classNames.length) {
-    lines.push(`classes: ${classNames.map((cl) => `${cl}=${classTargetText(workers.classes[cl])}`).join("  ")}`);
-  }
   if (workers.active === "auto") {
     lines.push(`routing: auto — order [${workers.routing.order.join(", ")}], cooldown ${workers.routing.cooldownMinutes}m`);
   }
+  lines.push(`config: ${existsSync(workersYamlPath(configPath)) ? workersYamlPath(configPath) : configPath}`);
   return lines;
 }
