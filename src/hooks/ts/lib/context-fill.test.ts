@@ -633,6 +633,46 @@ describe("contextFillThresholds — trigger source", () => {
 });
 
 // ---------------------------------------------------------------------------
+// contextFillThresholds — the 2026-09-20 regime change (override 80 -> 20 on
+// a 1M window). Same min(measured, configured) formula, no code change
+// needed, but the specific numbers of that day are worth pinning down: a
+// project's measured history (784k, from the prior 78-79% regime) is now
+// HIGHER than the newly configured 20%-of-1M trigger (200k), so the clamp
+// must take the configured value, not the stale measured one.
+// ---------------------------------------------------------------------------
+
+describe("contextFillThresholds — 2026-09-20 regime change (override 80 -> 20)", () => {
+  it("measured 784k + configured 200k (override=20, 1M window) -> clamps to 200k", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "20" }, { measuredTrigger: 784_000 });
+    expect(t.configuredTriggerTokens).toBe(200_000);
+    expect(t.triggerSource).toBe("measured-clamped");
+    expect(t.effectiveTriggerTokens).toBe(200_000);
+    expect(t.warmupTokens).toBe(100_000); // 200,000 - 100,000
+  });
+
+  it("measured 784k + configured 800k (override=80, 1M window) -> measured wins at 784k", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" }, { measuredTrigger: 784_000 });
+    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.triggerSource).toBe("measured");
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+  });
+
+  it("measured null + configured 200k (override=20, no compaction history yet) -> 200k", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "20" }, { measuredTrigger: null });
+    expect(t.triggerSource).toBe("configured");
+    expect(t.effectiveTriggerTokens).toBe(200_000);
+  });
+
+  it("measured 784k + override unset (defaults to 80, configured 800k) -> measured wins at 784k", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 784_000 });
+    expect(t.autocompactPct).toBe(80);
+    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.triggerSource).toBe("measured");
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Foreign-model transcripts — a headless worker on another provider (a
 // different context window) shares the project folder; its compactions must
 // not shape THIS project's measured trigger. Observed 2026-09-17: two such

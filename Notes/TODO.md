@@ -1,25 +1,24 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0120 - 2026-09-20 - New Session" session-id="87659197-4bcc-4e43-9bee-4badf4a0c997" ts="2026-09-20T10:15:12.922Z" -->
+<!-- pai:checkpoint authored="model" session="0123 - 2026-09-20 - Token Waste Audit Run 4" session-id="5bb7a49e-6158-4a48-b3bf-6a5675e0cb56" ts="2026-09-20T11:23:00.000Z" -->
 
-> **Last session:** 0120 - 2026-09-20 - New Session
-> **Paused at:** 2026-09-20T10:15:12.922Z
+> **Last session:** 0123 - 2026-09-20 - Token Waste Audit Run 4
+> **Paused at:** 2026-09-20 13:23 local
 >
-> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume 87659197-4bcc-4e43-9bee-4badf4a0c997`
+> Resume with a FRESH session (not --resume): the point of the next run is a
+> launch that carries the new autocompact setting.
 
 T
-i=ckpt-2026-09-20T10-15-12.803Z
-g=so proposal you run that allow antrhropic agents yourself in a fable worker and have that one then call an agent for some controllable work. and then you do the same with the worker spawned from you.…
-d=so that means to your second point that we need to optimize the scaffolding / overhead for the workers? also I think worker invocations and their responses should strictly use agentish (aibroker has t… | /Name PAI | do the following inside of this session; you also have pai tools for that. report in a table.   Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to me… | so proposal you run that allow antrhropic agents yourself in a fable worker and have that one then call an agent for some controllable work. and then you do the same with the worker spawned from you.… | so that means to your second point that we need to optimize the scaffolding / overhead for the workers? also I think worker invocations and their responses should strictly use agentish (aibroker has t…
-t=?
-@1=Notes/TODO.md
-@2=docs/commands/README.md
-@3=docs/commands/audit.md
-@4=docs/commands/worker.md
-@5=scripts/build-hooks.mjs
-z=auto ckpt (no model); main@3f8a5bb Handover.; 20 dirty; +26 paths; git status for detail
+i=token-waste-cycle-run6
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim (`-p "$(cat audits/token-waste/reviewprompt.md)"` or paste). It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run5.md`, fixes what is RED/AMBER, records run 6.
+d=Run 4 (2026-09-20) recorded in audits/token-waste/2026-09-20-run4.md: 1 RED (context growth), fixes applied: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE 80→20 in ~/.claude/settings.json (backup ~/.claude/pai/backups/settings.json.2026-09-20T1300), session-commands hook removed (18→17 hooks). Instrument extended: `pai audit tokens subagents|mcp`, growth stats in `session`, `--record <dir>`. Shipped as v0.44.0.
+t=vitest src/audit 90+, src/hooks 195+, tsc 80 pre-existing errors (memory/zettel/daemon), not new
+@1=audits/token-waste/reviewprompt.md
+@2=audits/token-waste/runs.md
+@3=audits/token-waste/2026-09-20-run4.md
+@4=audits/token-waste/2026-09-20-run5.md
+@5=src/audit/mcp.ts
+z=Proof pending for the RED fix: the first compact_boundary in the fresh session must show preTokens near 200,000 and `pai audit tokens session` must show avg ctx well under 140k. If it still compacts near 784k, the override is not honoured (see memory compaction-trigger-moved) and the next lever is dropping the [1m] window suffix from the model in settings.json. Run 5 read RED for this session only because it launched with the old env.
 
 <!-- /pai:checkpoint -->
 

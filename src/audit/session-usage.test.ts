@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSessionUsage, totalUsageTokens } from "./session-usage.js";
+import { parseSessionUsage, totalUsageTokens, isRealUserPrompt } from "./session-usage.js";
 
 const dirs: string[] = [];
 function newDir(): string {
@@ -104,5 +104,96 @@ describe("parseSessionUsage", () => {
 
     const report = await parseSessionUsage(path);
     expect(report.turns).toBe(1);
+  });
+
+  it("averages and maxes the per-turn context across turns", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        usageLine("msg_1", { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+        usageLine("msg_2", { input_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+        usageLine("msg_3", { input_tokens: 30, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.avgContext).toBe(20);
+    expect(report.maxContext).toBe(30);
+  });
+
+  it("reports null avgContext/maxContext when there are zero turns", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(path, JSON.stringify({ type: "user", message: { content: "hi" } }) + "\n", "utf8");
+
+    const report = await parseSessionUsage(path);
+    expect(report.avgContext).toBeNull();
+    expect(report.maxContext).toBeNull();
+  });
+
+  it("counts turns above the context threshold, default and explicit", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        usageLine("msg_1", { input_tokens: 300_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+        usageLine("msg_2", { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const defaultReport = await parseSessionUsage(path);
+    expect(defaultReport.turnsAboveThreshold).toBe(1);
+
+    const lowThresholdReport = await parseSessionUsage(path, 5);
+    expect(lowThresholdReport.turnsAboveThreshold).toBe(2);
+  });
+
+  it("counts cache-rebuild turns where cache_creation_input_tokens exceeds 20000", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [usageLine("msg_1", { cache_creation_input_tokens: 25000 }), usageLine("msg_2", { cache_creation_input_tokens: 100 })].join(
+        "\n"
+      ) + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.cacheRebuildTurns).toBe(1);
+  });
+
+  it("counts real user prompts, excluding tool-result-only and assistant lines", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    const realPrompt = { type: "user", message: { content: "real prompt" } };
+    const toolResultOnly = { type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } };
+    const mixedWithToolResult = {
+      type: "user",
+      message: { content: [{ type: "tool_result", content: "ok" }, { type: "text", text: "also text" }] },
+    };
+    writeFileSync(
+      path,
+      [
+        JSON.stringify(realPrompt),
+        JSON.stringify(toolResultOnly),
+        JSON.stringify(mixedWithToolResult),
+        usageLine("msg_1"),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.userPrompts).toBe(1);
+
+    expect(isRealUserPrompt(realPrompt)).toBe(true);
+    expect(isRealUserPrompt(toolResultOnly)).toBe(false);
+    expect(isRealUserPrompt(mixedWithToolResult)).toBe(false);
+    expect(isRealUserPrompt({ type: "assistant", message: { content: "hi" } })).toBe(false);
   });
 });

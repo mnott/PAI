@@ -45,16 +45,18 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | Command | Description |
 |---------|-------------|
 | `pai audit` | Diagnostic audits: token-waste report and friends |
-| `pai audit tokens` | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue |
+| `pai audit tokens` | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP |
 | `pai audit tokens daemon` | LLM spawns, KG-extraction parse failures, work-queue counts from the daemon log |
 | `pai audit tokens env` | ANTHROPIC_BASE_URL / model-override env on every live claude process |
 | `pai audit tokens files [paths...]` | Token count per memory file (CLAUDE.md chain, CORE skill, whisper rules, auto-memory) |
 | `pai audit tokens hooks` | Token cost of every SessionStart / UserPromptSubmit hook |
 | `pai audit tokens ladder` | LIVE: first-turn context at increasing headless-worker configuration (spawns real claude -p calls) |
+| `pai audit tokens mcp` | MCP servers: configured vs. pinned vs. loaded-live vs. used in the last 30 days |
 | `pai audit tokens schedule` | Launchd agents / crontab entries that outpace the measured prompt-cache TTL |
 | `pai audit tokens session [path]` | Cache/input/output token split for a session transcript (default: newest) |
 | `pai audit tokens skills` | Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate names |
 | `pai audit tokens spawn` | Spawn-overhead comparison: Agent-tool subagents vs. pai workers |
+| `pai audit tokens subagents` | Token cost of Claude Code subagent definitions (~/.claude/agents, <cwd>/.claude/agents) and their model pinning |
 | `pai backup` | Backup registry, config, and Postgres database to PAI_HOME/backups/ |
 | `pai clear-names` | Recovery: wipe corrupted iTerm2 session name state. |
 | `pai config` | PAI_HOME namespace dir: path, migrate |

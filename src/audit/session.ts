@@ -48,10 +48,10 @@ export interface SessionReportOutput extends SessionUsageReport {
   percentages: Record<string, number>;
 }
 
-export async function auditSession(path?: string): Promise<SessionReportOutput | null> {
+export async function auditSession(path?: string, threshold?: number): Promise<SessionReportOutput | null> {
   const target = path ?? newestSessionLog();
   if (!target) return null;
-  const report = await parseSessionUsage(target);
+  const report = await parseSessionUsage(target, threshold);
   const total = totalUsageTokens(report.totals) || 1;
   const percentages: Record<string, number> = {};
   for (const [key, value] of Object.entries(report.totals)) {

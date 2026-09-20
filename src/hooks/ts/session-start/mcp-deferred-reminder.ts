@@ -11,8 +11,8 @@
  * call: see ../lib/mcp-deferred-reminder.ts for the rationale and text.
  *
  * stdout is captured by Claude Code and injected into the session context,
- * same channel as session-commands/inject-observations. Never blocks session
- * start: always exits 0.
+ * same channel as inject-observations. Never blocks session start: always
+ * exits 0.
  */
 
 import { decideMcpDeferredReminder, type ReminderHookInput } from "../lib/mcp-deferred-reminder.js";

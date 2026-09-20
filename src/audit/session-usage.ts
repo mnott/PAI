@@ -40,6 +40,15 @@ export interface SessionUsageReport {
   firstTurnContext: number | null;
   lastTurnContext: number | null;
   cacheCreationSplit: CacheCreationSplit;
+  /** Average / max of the per-turn context value across all turns; null if no turns. */
+  avgContext: number | null;
+  maxContext: number | null;
+  /** Turns whose per-turn context value exceeds the report's threshold. */
+  turnsAboveThreshold: number;
+  /** Turns whose cache_creation_input_tokens exceeds 20000. */
+  cacheRebuildTurns: number;
+  /** Real human-authored user prompts (excludes tool-result-only "user" lines). */
+  userPrompts: number;
 }
 
 const USAGE_KEYS: (keyof UsageTotals)[] = [
@@ -62,6 +71,7 @@ interface AssistantLine {
     usage?: Record<string, unknown> & {
       cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
     };
+    content?: string | Array<{ type?: string }>;
   };
 }
 
@@ -69,19 +79,33 @@ interface AssistantLine {
  * Fold one already-parsed JSONL line into a report being accumulated.
  * Exported separately so both the streaming file reader below and tests
  * (which build fixtures as arrays of objects, not files) share one path.
+ * Returns the turn's context value when a new turn was counted, else null
+ * (non-assistant line, no usage, or a duplicate message.id already seen).
  */
 export function foldAssistantLine(
-  report: Pick<SessionUsageReport, "turns" | "totals" | "models" | "firstTurnContext" | "lastTurnContext" | "cacheCreationSplit">,
+  report: Pick<
+    SessionUsageReport,
+    | "turns"
+    | "totals"
+    | "models"
+    | "firstTurnContext"
+    | "lastTurnContext"
+    | "cacheCreationSplit"
+    | "maxContext"
+    | "turnsAboveThreshold"
+    | "cacheRebuildTurns"
+  >,
   seenIds: Set<string>,
-  line: AssistantLine
-): void {
-  if (line.type !== "assistant") return;
+  line: AssistantLine,
+  threshold: number
+): number | null {
+  if (line.type !== "assistant") return null;
   const message = line.message;
   const usage = message?.usage;
-  if (!usage) return;
+  if (!usage) return null;
   const id = message?.id ?? line.uuid;
   if (id) {
-    if (seenIds.has(id)) return;
+    if (seenIds.has(id)) return null;
     seenIds.add(id);
   }
   report.turns++;
@@ -95,6 +119,9 @@ export function foldAssistantLine(
     (Number(usage.input_tokens) || 0);
   if (report.firstTurnContext === null) report.firstTurnContext = context;
   report.lastTurnContext = context;
+  report.maxContext = report.maxContext === null ? context : Math.max(report.maxContext, context);
+  if (context > threshold) report.turnsAboveThreshold++;
+  if ((Number(usage.cache_creation_input_tokens) || 0) > 20000) report.cacheRebuildTurns++;
   const model = message?.model ?? "unknown";
   report.models[model] = (report.models[model] ?? 0) + 1;
   const split = usage.cache_creation;
@@ -102,10 +129,25 @@ export function foldAssistantLine(
     report.cacheCreationSplit.ephemeral5m += Number(split.ephemeral_5m_input_tokens) || 0;
     report.cacheCreationSplit.ephemeral1h += Number(split.ephemeral_1h_input_tokens) || 0;
   }
+  return context;
+}
+
+/**
+ * True for a real human-authored `type:"user"` prompt line: content is a
+ * plain string, or a content array with no `tool_result` block. Claude Code
+ * encodes tool results as `type:"user"` messages whose content array is
+ * entirely (or partly) tool_result blocks — those must not count as prompts.
+ */
+export function isRealUserPrompt(line: AssistantLine): boolean {
+  if (line.type !== "user") return false;
+  const content = line.message?.content;
+  if (typeof content === "string") return true;
+  if (Array.isArray(content)) return !content.some((block) => block?.type === "tool_result");
+  return false;
 }
 
 /** Parse a session/subagent/worker-event JSONL file into a usage report. */
-export async function parseSessionUsage(path: string): Promise<SessionUsageReport> {
+export async function parseSessionUsage(path: string, threshold = 200_000): Promise<SessionUsageReport> {
   const report: SessionUsageReport = {
     path,
     sizeBytes: existsSync(path) ? readFileSync(path).byteLength : 0,
@@ -115,8 +157,14 @@ export async function parseSessionUsage(path: string): Promise<SessionUsageRepor
     firstTurnContext: null,
     lastTurnContext: null,
     cacheCreationSplit: { ephemeral5m: 0, ephemeral1h: 0 },
+    avgContext: null,
+    maxContext: null,
+    turnsAboveThreshold: 0,
+    cacheRebuildTurns: 0,
+    userPrompts: 0,
   };
   const seenIds = new Set<string>();
+  let contextSum = 0;
 
   const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
   for await (const raw of rl) {
@@ -127,8 +175,14 @@ export async function parseSessionUsage(path: string): Promise<SessionUsageRepor
     } catch {
       continue;
     }
-    foldAssistantLine(report, seenIds, obj);
+    if (obj.type === "user") {
+      if (isRealUserPrompt(obj)) report.userPrompts++;
+      continue;
+    }
+    const context = foldAssistantLine(report, seenIds, obj, threshold);
+    if (context !== null) contextSum += context;
   }
+  report.avgContext = report.turns > 0 ? Math.round(contextSum / report.turns) : null;
   return report;
 }
 

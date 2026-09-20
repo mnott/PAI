@@ -15,7 +15,6 @@ describe("session-start hooks: worker sessions get no injected context", () => {
     "src/hooks/ts/session-start/load-project-context.ts",
     "src/hooks/ts/session-start/mcp-deferred-reminder.ts",
     "src/hooks/ts/session-start/post-compact-inject.ts",
-    "src/hooks/ts/session-start/session-commands.ts",
   ];
 
   function runHook(entrypoint: string, env: NodeJS.ProcessEnv): string {
