@@ -14,7 +14,7 @@ import type { EnvReport } from "./env.js";
 import type { SkillsReport } from "./skills.js";
 import type { SubagentsReport } from "./subagents.js";
 import type { McpReport } from "./mcp.js";
-import type { CompactionEvent } from "./session-usage.js";
+import type { CompactionEvent, ModelSwitch, FallbackEvent } from "./session-usage.js";
 
 const files: FilesReport = { encoding: "cl100k_base", readings: [], total: 0 };
 const hooks: HooksReport = {
@@ -65,6 +65,10 @@ function sessionWith(compactions: CompactionEvent[]): SessionReportOutput {
     userPrompts: 0,
     promptExposure: 0,
     compactions,
+    firstTurnAt: null,
+    lastModel: null,
+    modelSwitches: [],
+    fallbacks: [],
     totalTokens: 1,
     percentages: {},
   };
@@ -172,5 +176,39 @@ describe("buildFindings — compaction trigger", () => {
   it("manual compactions alone never turn the finding RED", () => {
     const finding = compactionFinding(sessionWith([{ trigger: "manual", preTokens: 900_000, turnIndex: 1 }]), 200_000);
     expect(finding.severity).toBe("GREEN");
+  });
+});
+
+function modelSwitchFinding(
+  modelSwitches: ModelSwitch[],
+  fallbacks: FallbackEvent[] = []
+) {
+  const session: SessionReportOutput = { ...sessionWith([]), modelSwitches, fallbacks };
+  const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold: 200_000 });
+  return findings.find((f) => f.finding === "mid-session model switches")!;
+}
+
+describe("buildFindings — mid-session model switches", () => {
+  it("is GREEN with no switches", () => {
+    const finding = modelSwitchFinding([]);
+    expect(finding.severity).toBe("GREEN");
+    expect(finding.evidence).toContain("0 switches in 2 turns");
+  });
+
+  it("is AMBER with one switch under the rebuild limit, and notes a fallback", () => {
+    const finding = modelSwitchFinding(
+      [{ turnIndex: 126, from: "claude-fable-5-1", to: "claude-opus-5", cacheRead: 82795, cacheCreation: 0 }],
+      [{ turnIndex: 126, from: "claude-fable-5-1", to: "claude-opus-5", category: "cyber", scope: "session" }]
+    );
+    expect(finding.severity).toBe("AMBER");
+    expect(finding.evidence).toContain("fable-5-1->opus-5 at turn 126 (cache_read 82795, cache_creation 0)");
+    expect(finding.evidence).toContain("1 safeguard fallback(s): cyber");
+  });
+
+  it("is RED when a switch's cache_creation exceeds the rebuild limit", () => {
+    const finding = modelSwitchFinding([
+      { turnIndex: 144, from: "claude-opus-5", to: "claude-fable-5-1", cacheRead: 98783, cacheCreation: 90000 },
+    ]);
+    expect(finding.severity).toBe("RED");
   });
 });

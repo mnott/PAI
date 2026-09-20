@@ -22,6 +22,7 @@ export const FIRST_TURN_CONTEXT_LIMIT = 30_000;
 export const DAEMON_FAILURE_RATE_LIMIT = 0.05;
 export const CONTEXT_GROWTH_AVG_RED = 100_000;
 export const CONTEXT_GROWTH_MAX_AMBER = 150_000;
+export const MODEL_SWITCH_REBUILD_LIMIT = 20_000;
 
 export type Severity = "RED" | "AMBER" | "GREEN";
 
@@ -214,6 +215,31 @@ export function buildFindings(input: {
           : compactions.length === 0
             ? `0 compactions in ${input.session.turns} turns`
             : `${compactions.length} compaction(s), all within 25% of configured ${input.ctxThreshold}`,
+    });
+
+    const switches = input.session.modelSwitches;
+    const fallbacks = input.session.fallbacks;
+    const rebuilds = switches.filter((s) => s.cacheCreation > MODEL_SWITCH_REBUILD_LIMIT);
+    const short = (model: string) => model.replace(/^claude-/, "");
+    let switchEvidence: string;
+    if (switches.length === 0) {
+      switchEvidence = `0 switches in ${input.session.turns} turns, models ${JSON.stringify(input.session.models)}`;
+    } else {
+      const list = switches
+        .map(
+          (s) =>
+            `${short(s.from)}->${short(s.to)} at turn ${s.turnIndex} (cache_read ${s.cacheRead}, cache_creation ${s.cacheCreation})`
+        )
+        .join("; ");
+      switchEvidence = `${switches.length} switch(es): ${list}`;
+      if (fallbacks.length > 0) {
+        switchEvidence += `; ${fallbacks.length} safeguard fallback(s): ${fallbacks.map((f) => f.category).join(",")}`;
+      }
+    }
+    findings.push({
+      finding: "mid-session model switches",
+      severity: switches.length === 0 ? "GREEN" : rebuilds.length > 0 ? "RED" : "AMBER",
+      evidence: switchEvidence,
     });
   }
 

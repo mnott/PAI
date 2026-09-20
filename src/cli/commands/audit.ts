@@ -5,7 +5,9 @@
  *            whisper rules, project auto-memory) and their total
  * hooks    — token cost of every SessionStart / UserPromptSubmit hook,
  *            plus which PreToolUse hooks rewrite Bash commands
- * session  — cache/input/output token split for one session transcript
+ * session  — cache/input/output token split for one session transcript;
+ *            `--history [n]` lists the first-turn context of the newest n
+ *            sessions in this project's transcript directory, newest first
  * spawn    — first-turn context overhead: Agent-tool subagents vs. pai
  *            workers (interactive/pane vs. headless); `--detail` adds
  *            per-log prompt-token/overhead rows and a median-overhead column
@@ -35,7 +37,7 @@ import { header, ok, warn, err, dim, bold, renderTable } from "../utils.js";
 import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
 import { auditHooks, type HooksReport } from "../../audit/hooks.js";
-import { auditSession, newestSessionLog, type SessionReportOutput } from "../../audit/session.js";
+import { auditSession, newestSessionLog, sessionHistory, type SessionReportOutput, type SessionHistoryRow } from "../../audit/session.js";
 import { auditSpawn, type SpawnGroupStats, type SpawnReport } from "../../audit/spawn.js";
 import { auditDaemon, type DaemonReport } from "../../audit/daemon.js";
 import { auditEnv, type EnvReport } from "../../audit/env.js";
@@ -142,12 +144,44 @@ function printSession(report: SessionReportOutput): void {
   for (const c of report.compactions) {
     console.log(dim(`  ${c.trigger} at turn ${c.turnIndex}: preTokens=${c.preTokens}`));
   }
+  console.log(`model switches: ${report.modelSwitches.length}`);
+  for (const s of report.modelSwitches) {
+    console.log(dim(`  ${s.from} -> ${s.to} at turn ${s.turnIndex}: cache_read=${s.cacheRead}, cache_creation=${s.cacheCreation}`));
+  }
+  if (report.fallbacks.length > 0) {
+    console.log(`safeguard fallbacks: ${report.fallbacks.length}`);
+    for (const f of report.fallbacks) {
+      console.log(dim(`  ${f.from} -> ${f.to} before turn ${f.turnIndex}: ${f.category} (${f.scope})`));
+    }
+  }
+}
+
+function printSessionHistory(rows: SessionHistoryRow[]): void {
+  console.log(header("Session history (newest first)"));
+  const tableRows = rows.map((r) => [
+    r.firstTurnAt ?? "n/a",
+    r.sessionId,
+    r.firstTurnContext === null ? "n/a" : String(r.firstTurnContext),
+    String(r.turns),
+    String(r.switches),
+    Object.entries(r.models)
+      .map(([name, count]) => `${name}:${count}`)
+      .join(","),
+  ]);
+  console.log(renderTable(["first turn (UTC)", "session", "first-turn ctx", "turns", "switches", "models"], tableRows));
 }
 
 async function cmdSession(
   path: string | undefined,
-  opts: { json?: boolean; ctxThreshold?: string }
+  opts: { json?: boolean; ctxThreshold?: string; history?: string | boolean }
 ): Promise<void> {
+  if (opts.history !== undefined) {
+    const limit = typeof opts.history === "string" ? parseInt(opts.history, 10) : 20;
+    const rows = await sessionHistory(process.cwd(), limit);
+    if (opts.json) return printJson(rows);
+    printSessionHistory(rows);
+    return;
+  }
   const threshold = opts.ctxThreshold ? parseInt(opts.ctxThreshold, 10) : undefined;
   const report = await auditSession(path, threshold);
   if (!report) {
@@ -631,7 +665,8 @@ export function registerAuditCommands(auditCmd: Command): void {
     .description("Cache/input/output token split for a session transcript (default: newest)")
     .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
     .option("--ctx-threshold <n>", "Per-turn context size above which a turn counts as 'above threshold' (default 200000)")
-    .action(async (path: string | undefined, opts: { ctxThreshold?: string }) => {
+    .option("--history [n]", "List first-turn context of the newest n sessions in this project's transcript directory (default 20)")
+    .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean }) => {
       await cmdSession(path, { ...jsonOpt(), ...opts });
     });
 

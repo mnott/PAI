@@ -1,0 +1,1747 @@
+{
+  "encoding": "cl100k_base",
+  "findings": [
+    {
+      "finding": "per-prompt hook cost",
+      "severity": "AMBER",
+      "evidence": "596 tokens/prompt x 6 prompts, carried over 5 turns = 14900 tokens (11.8% of 126767 input tokens sent)"
+    },
+    {
+      "finding": "total memory-file tokens",
+      "severity": "GREEN",
+      "evidence": "2992 tokens across 6 files"
+    },
+    {
+      "finding": "SessionStart / UserPromptSubmit hook output",
+      "severity": "GREEN",
+      "evidence": "17 hooks, all under 1000 tokens"
+    },
+    {
+      "finding": "first-turn context size",
+      "severity": "GREEN",
+      "evidence": "24248 tokens (~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/805e0472-9049-401a-97ca-7eb17643a400.jsonl)"
+    },
+    {
+      "finding": "daemon KG-extraction JSON parse failure rate",
+      "severity": "GREEN",
+      "evidence": "0.0% (0 failures over session-summary spawns)"
+    },
+    {
+      "finding": "claude process base URL",
+      "severity": "GREEN",
+      "evidence": "1 claude process(es), none proxied"
+    },
+    {
+      "finding": "tool deferral on live processes",
+      "severity": "GREEN",
+      "evidence": "1 claude process(es) checked, none with an explicit --tools list missing ToolSearch and MCP servers registered"
+    },
+    {
+      "finding": "skill catalogue tokens",
+      "severity": "GREEN",
+      "evidence": "1824 tokens loaded (4894 on disk) across 73 entries, 10 case-insensitive duplicate name(s)"
+    },
+    {
+      "finding": "subagent model pinning",
+      "severity": "GREEN",
+      "evidence": "0 of 8 inherit"
+    },
+    {
+      "finding": "MCP servers loaded vs. used",
+      "severity": "GREEN",
+      "evidence": "12 configured, no plain launch found"
+    },
+    {
+      "finding": "context growth",
+      "severity": "GREEN",
+      "evidence": "avg 25353, max 27411, 0 turns > 200000, 5 turns"
+    },
+    {
+      "finding": "compaction trigger",
+      "severity": "GREEN",
+      "evidence": "0 compactions in 5 turns"
+    }
+  ],
+  "files": {
+    "encoding": "cl100k_base",
+    "readings": [
+      {
+        "path": "~/.claude/CLAUDE.md",
+        "tokens": 1037,
+        "missing": false
+      },
+      {
+        "path": "~/Daten/Cloud/Development/ai/PAI/CLAUDE.md",
+        "tokens": 0,
+        "missing": true
+      },
+      {
+        "path": "~/Daten/Cloud/Development/ai/PAI/.claude/CLAUDE.md",
+        "tokens": 0,
+        "missing": true
+      },
+      {
+        "path": "~/.claude/Skills/CORE/SKILL.md",
+        "tokens": 224,
+        "missing": false
+      },
+      {
+        "path": "~/.claude/pai/whisper-rules.md",
+        "tokens": 544,
+        "missing": false
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/memory/MEMORY.md",
+        "tokens": 1187,
+        "missing": false
+      }
+    ],
+    "total": 2992
+  },
+  "hooks": {
+    "encoding": "cl100k_base",
+    "settingsFiles": [
+      "~/.claude/settings.json"
+    ],
+    "readings": [
+      {
+        "event": "SessionStart",
+        "command": "~/.claude/Hooks/load-core-context.mjs",
+        "tokens": 198
+      },
+      {
+        "event": "SessionStart",
+        "command": "~/.claude/Hooks/load-project-context.mjs",
+        "tokens": 703
+      },
+      {
+        "event": "SessionStart",
+        "command": "~/.claude/Hooks/initialize-session.mjs",
+        "tokens": 59
+      },
+      {
+        "event": "SessionStart",
+        "command": "~/.claude/Hooks/capture-all-events.mjs --event-type SessionStart",
+        "tokens": 0
+      },
+      {
+        "event": "SessionStart",
+        "command": "~/.claude/Hooks/inject-observations.mjs",
+        "tokens": 134
+      },
+      {
+        "event": "SessionStart",
+        "matcher": "compact",
+        "command": "~/.claude/Hooks/post-compact-inject.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "SessionStart",
+        "matcher": "compact",
+        "command": "node ~/.claude/Hooks/post-compact-workers.mjs",
+        "tokens": 524
+      },
+      {
+        "event": "SessionStart",
+        "command": "~/.config/iterm2/cc-status",
+        "tokens": 4
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/dev/ai/AIBroker/hooks/budget-stop.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/Daten/Cloud/Development/ai/AIBroker/hooks/manage-hook.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.claude/Hooks/cleanup-session-files.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.claude/Hooks/update-tab-titles.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.claude/Hooks/capture-all-events.mjs --event-type UserPromptSubmit",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.claude/Hooks/whisper-rules.mjs",
+        "tokens": 592
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.claude/Hooks/pai-session-autosave.sh",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/dev/ai/AIBroker/hooks/drain-mailbox.mjs",
+        "tokens": 0
+      },
+      {
+        "event": "UserPromptSubmit",
+        "command": "~/.config/iterm2/cc-status",
+        "tokens": 4
+      }
+    ],
+    "totalsByEvent": {
+      "SessionStart": 1622,
+      "UserPromptSubmit": 596
+    },
+    "preToolUseHooks": [
+      {
+        "matcher": "Agent|Task",
+        "command": "~/.claude/Hooks/route-agents-to-worker.mjs"
+      },
+      {
+        "matcher": "TaskOutput",
+        "command": "~/.claude/Hooks/block-taskoutput-wait.mjs"
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "command": "~/.claude/Hooks/route-edits-to-worker.mjs"
+      },
+      {
+        "matcher": "Bash",
+        "command": "~/.claude/Hooks/security-validator.mjs"
+      },
+      {
+        "matcher": "*",
+        "command": "~/.claude/Hooks/capture-all-events.mjs --event-type PreToolUse"
+      },
+      {
+        "matcher": "Bash",
+        "command": "~/.claude/Hooks/ztk-auto.sh"
+      },
+      {
+        "matcher": "Task|Agent",
+        "command": "node ~/Daten/Cloud/Development/ai/AIBroker/hooks/aibroker-progress.mjs"
+      },
+      {
+        "command": "~/.config/iterm2/cc-status"
+      }
+    ],
+    "preToolUseRewritesBash": true
+  },
+  "session": {
+    "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/805e0472-9049-401a-97ca-7eb17643a400.jsonl",
+    "sizeBytes": 135039,
+    "turns": 5,
+    "totals": {
+      "cache_read_input_tokens": 110608,
+      "cache_creation_input_tokens": 16059,
+      "input_tokens": 100,
+      "output_tokens": 553
+    },
+    "models": {
+      "claude-fable-5-1": 5
+    },
+    "firstTurnContext": 24248,
+    "lastTurnContext": 27411,
+    "cacheCreationSplit": {
+      "ephemeral5m": 0,
+      "ephemeral1h": 16059
+    },
+    "avgContext": 25353,
+    "maxContext": 27411,
+    "turnsAboveThreshold": 0,
+    "cacheRebuildTurns": 0,
+    "userPrompts": 6,
+    "promptExposure": 25,
+    "compactions": [],
+    "totalTokens": 127320,
+    "percentages": {
+      "cache_read_input_tokens": 86.87401822180333,
+      "cache_creation_input_tokens": 12.613100848256362,
+      "input_tokens": 0.07854225573358467,
+      "output_tokens": 0.43433867420672323
+    }
+  },
+  "spawn": {
+    "agentSubagents": {
+      "count": 10,
+      "min": 15836,
+      "median": 44949,
+      "max": 218030,
+      "medianOverhead": 44609.5,
+      "models": [
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001"
+      ]
+    },
+    "workersInteractive": {
+      "count": 0,
+      "min": null,
+      "median": null,
+      "max": null,
+      "medianOverhead": null,
+      "models": []
+    },
+    "workersHeadless": {
+      "count": 10,
+      "min": 18069,
+      "median": 25867.5,
+      "max": 27830,
+      "medianOverhead": 25867.5,
+      "models": [
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001"
+      ]
+    },
+    "readings": [
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/31b7f8ef-62fc-473d-bc23-30706c1b0d44/subagents/agent-a4663792c444614d0.jsonl",
+        "firstTurnContext": 18616,
+        "model": "claude-sonnet-5",
+        "promptTokens": 62,
+        "overhead": 18554,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/e61a7bb8-24e0-4508-9eb4-51438fd5ac14/subagents/agent-a69a6cf4e1933ae40.jsonl",
+        "firstTurnContext": 24755,
+        "model": "claude-sonnet-5",
+        "promptTokens": 62,
+        "overhead": 24693,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/02adbb06-bc7d-4848-b6f8-0510b422b68f/subagents/agent-a0aa5f180da339734.jsonl",
+        "firstTurnContext": 218030,
+        "model": "claude-sonnet-5",
+        "promptTokens": 62,
+        "overhead": 217968,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/0534f7ca-dfc8-4d53-8bfb-7782bbffe1ec/subagents/agent-a43103b46241acb88.jsonl",
+        "firstTurnContext": 59006,
+        "model": "claude-sonnet-5",
+        "promptTokens": 62,
+        "overhead": 58944,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/bf276e10-cc3b-4912-b844-926e682272a3/subagents/agent-a92045b29ff6c654a.jsonl",
+        "firstTurnContext": 15836,
+        "model": "claude-sonnet-5",
+        "promptTokens": 62,
+        "overhead": 15774,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-apps-Paperfull-apps-CaseLeaf/8312897e-9c02-4844-8576-e9f179b60c48/subagents/agent-a1397557d7217822c.jsonl",
+        "firstTurnContext": 30791,
+        "model": "claude-haiku-4-5-20251001",
+        "promptTokens": 299,
+        "overhead": 30492,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-apps-Paperfull-apps-CaseLeaf/8312897e-9c02-4844-8576-e9f179b60c48/subagents/agent-a6b57e2dd783cda03.jsonl",
+        "firstTurnContext": 45011,
+        "model": "claude-sonnet-5",
+        "promptTokens": 667,
+        "overhead": 44344,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/09001a18-abb6-4a97-830c-cdaab31d127a/subagents/agent-a2cb3827b07a31dc9.jsonl",
+        "firstTurnContext": 44887,
+        "model": "claude-haiku-4-5-20251001",
+        "promptTokens": 12,
+        "overhead": 44875,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/09001a18-abb6-4a97-830c-cdaab31d127a/subagents/agent-a99a9192caff340eb.jsonl",
+        "firstTurnContext": 68732,
+        "model": "claude-sonnet-5",
+        "promptTokens": 1190,
+        "overhead": 67542,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/projects/~-Daten-Cloud-Development-ai-PAI/09001a18-abb6-4a97-830c-cdaab31d127a/subagents/agent-aac5e07238abbd50f.jsonl",
+        "firstTurnContext": 68769,
+        "model": "claude-sonnet-5",
+        "promptTokens": 1217,
+        "overhead": 67552,
+        "group": "agentSubagents"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-153511-79467.jsonl",
+        "firstTurnContext": 25258,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 25258,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-152922-62513.jsonl",
+        "firstTurnContext": 18069,
+        "model": "claude-haiku-4-5-20251001",
+        "promptTokens": 0,
+        "overhead": 18069,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-151619-97460.jsonl",
+        "firstTurnContext": 26693,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 26693,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-151752-269.jsonl",
+        "firstTurnContext": 26855,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 26855,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-151750-99917.jsonl",
+        "firstTurnContext": 26262,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 26262,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-151330-90670.jsonl",
+        "firstTurnContext": 26115,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 26115,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-143821-65919.jsonl",
+        "firstTurnContext": 23992,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 23992,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-142643-27430.jsonl",
+        "firstTurnContext": 25620,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 25620,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-143109-44300.jsonl",
+        "firstTurnContext": 25203,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 25203,
+        "group": "workersHeadless"
+      },
+      {
+        "path": "~/.claude/pai/logs/workers/20260920-142951-39926.jsonl",
+        "firstTurnContext": 27830,
+        "model": "claude-sonnet-5",
+        "promptTokens": 0,
+        "overhead": 27830,
+        "group": "workersHeadless"
+      }
+    ]
+  },
+  "daemon": {
+    "logPath": "/tmp/pai-daemon.log",
+    "windowStart": "2026-09-20T08:12:43.893Z",
+    "spawnsByModel": {
+      "haiku": {
+        "count": 35,
+        "avgPromptChars": 6825
+      }
+    },
+    "kgParseFailures": 0,
+    "kgExtractionLines": 0,
+    "kgParseFailureRate": 0,
+    "jobCounts": {
+      "registry-scan": {
+        "processing": 50,
+        "completed": 50
+      },
+      "context-handover": {
+        "processing": 12,
+        "completed": 12
+      },
+      "session-end": {
+        "processing": 36,
+        "completed": 36
+      },
+      "session-summary": {
+        "processing": 40,
+        "completed": 40
+      }
+    }
+  },
+  "env": {
+    "processes": [
+      {
+        "pid": 7980,
+        "baseUrl": null,
+        "authTokenPresent": false,
+        "defaultModels": {},
+        "enableToolSearch": "true",
+        "workerId": "20260920-163125-7972",
+        "age": "01:30",
+        "toolsArg": "Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,TodoWrite,WebFetch,WebSearch",
+        "mcpServers": 5,
+        "deferral": "on"
+      }
+    ],
+    "mcpServerCount": 12,
+    "settingsModel": "claude-fable-5-1[1m]",
+    "settingsEffortLevel": "high"
+  },
+  "schedule": {
+    "ttlSeconds": 3600,
+    "agents": [
+      {
+        "path": "~/Library/LaunchAgents/ai.openclaw.gateway.plist",
+        "label": "ai.openclaw.gateway",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "/usr/local/lib/node_modules/openclaw/dist/index.js"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.aibroker.daemon.plist",
+        "label": "com.aibroker.daemon",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/AIBroker/dist/daemon/cli.js"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.aibroker.manage-watchdog.plist",
+        "label": "com.aibroker.manage-watchdog",
+        "startInterval": 900,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/AIBroker/tools/manage-watchdog.mjs"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.aibroker.sessions-snapshot.plist",
+        "label": "com.aibroker.sessions-snapshot",
+        "startInterval": 300,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "/usr/local/bin/aibroker"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.aibroker.stayawake.plist",
+        "label": "com.aibroker.stayawake",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/bin/caffeinate",
+          "-d"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.bjango.istatmenus.agent.plist",
+        "label": "com.bjango.istatmenus.agent",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": {
+          "Crashed": true,
+          "SuccessfulExit": false
+        },
+        "programArgs": [],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.bjango.istatmenus.status.plist",
+        "label": "com.bjango.istatmenus.status",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": {
+          "Crashed": true,
+          "SuccessfulExit": false
+        },
+        "programArgs": [],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.google.GoogleUpdater.wake.plist",
+        "label": "com.google.GoogleUpdater.wake",
+        "startInterval": 3600,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "~/Library/Application Support/Google/GoogleUpdater/Current/GoogleUpdater.app/Contents/MacOS/GoogleUpdater",
+          "--wake-all"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.google.keystone.agent.plist",
+        "label": null,
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.google.keystone.xpcservice.plist",
+        "label": null,
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.brio.plist",
+        "label": "com.pai.brio",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "~/.local/bin/brio",
+          "_run"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.claudaemon.plist",
+        "label": "com.pai.claudaemon",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "~/.bun/bin/bun",
+          "run"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.coogle.plist",
+        "label": "com.pai.coogle",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/coogle/dist/index.js"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.pai-daemon.plist",
+        "label": "com.pai.pai-daemon",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/PAI/dist/daemon/index.mjs"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.task-scheduler.plist",
+        "label": "com.pai.task-scheduler",
+        "startInterval": 900,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/Daten/Cloud/Development/ai/PAI/dist/cli/index.mjs"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.pai.voiceserver.plist",
+        "label": "com.pai.voiceserver",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": {
+          "SuccessfulExit": false
+        },
+        "programArgs": [
+          "~/.bun/bin/bun",
+          "run"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.paperfull.dashboard.plist",
+        "label": "com.paperfull.dashboard",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "~/.local/share/virtualenvs/π/bin/python3",
+          "~/Daten/Cloud/Development/apps/Paperfull/tools/dashboard.py"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.paperfull.nightly.plist",
+        "label": "com.paperfull.nightly",
+        "startInterval": null,
+        "startCalendarInterval": {
+          "Hour": 2,
+          "Minute": 30
+        },
+        "keepAlive": null,
+        "programArgs": [
+          "~/.local/share/virtualenvs/π/bin/python3",
+          "~/Daten/Cloud/Development/apps/Paperfull/tools/nightly.py"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.paperfull.onarrival.plist",
+        "label": "com.paperfull.onarrival",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": false,
+        "programArgs": [
+          "~/.local/share/virtualenvs/π/bin/python3",
+          "~/Daten/Cloud/Development/apps/Paperfull/tools/on_arrival.py"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.paperfull.quarterhourly.plist",
+        "label": "com.paperfull.quarterhourly",
+        "startInterval": 900,
+        "startCalendarInterval": null,
+        "keepAlive": null,
+        "programArgs": [
+          "~/.local/share/virtualenvs/π/bin/python3",
+          "~/Daten/Cloud/Development/apps/Paperfull/tools/on_arrival.py"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.telex.watcher.plist",
+        "label": "com.telex.watcher",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/Telex/dist/index.js"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/com.whazaa.watcher.plist",
+        "label": "com.whazaa.watcher",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": true,
+        "programArgs": [
+          "/usr/local/bin/node",
+          "~/dev/ai/Whazaa/dist/index.js"
+        ],
+        "exceedsTtl": false
+      },
+      {
+        "path": "~/Library/LaunchAgents/org.mnsoft.launchmgr.plist",
+        "label": "org.mnsoft.launchmgr",
+        "startInterval": null,
+        "startCalendarInterval": null,
+        "keepAlive": false,
+        "programArgs": [
+          "/usr/local/bin/launchmgr",
+          "start"
+        ],
+        "exceedsTtl": false
+      }
+    ],
+    "crontabLines": [
+      "*/5 * * * * ~/.local/share/virtualenvs/π/bin/python -c pass"
+    ]
+  },
+  "skills": {
+    "encoding": "cl100k_base",
+    "entries": [
+      {
+        "name": "Advisor",
+        "description": "Manage budget-aware advisor mode — control model tiering for subagents based on weekly usage. USE WHEN user says 'advisor', 'budget mode', 'set advisor', 'save budget', '/advisor', 'how much budget', OR wants to control model tiering for subagents.",
+        "source": "skills",
+        "path": "~/.claude/skills/Advisor/SKILL.md",
+        "tokens": 59,
+        "enabled": true
+      },
+      {
+        "name": "Art",
+        "description": "Create visual content, diagrams, flowcharts, and AI-generated images. USE WHEN user wants to create visual content, illustrations, diagrams, art, header images, visualizations, mermaid charts, flowcharts, or any visual request.",
+        "source": "skills",
+        "path": "~/.claude/skills/Art/SKILL.md",
+        "tokens": 50,
+        "enabled": true
+      },
+      {
+        "name": "CORE",
+        "description": "PAI core rules. AUTO-LOADS at session start. USE WHEN any session begins OR user asks about PAI identity, session commands, or operating principles.",
+        "source": "skills",
+        "path": "~/.claude/skills/CORE/SKILL.md",
+        "tokens": 36,
+        "enabled": true
+      },
+      {
+        "name": "Clickr",
+        "description": "Install or troubleshoot Clickr macOS MCP. USE WHEN asked to install/set up, tools are missing/misbehaving, or task needs native dialog.",
+        "source": "skills",
+        "path": "~/.claude/skills/Clickr/SKILL.md",
+        "tokens": 35,
+        "enabled": true
+      },
+      {
+        "name": "Consolidate",
+        "description": "Report duplicate session notes and fix bad titles. Collapses a group ONLY when one note provably contains the others; never deletes otherwise, and never renumbers. USE WHEN user says 'consolidate notes', 'clean up notes', 'merge duplicate notes', 'fix session notes', 'deduplicate notes', '/consolidate', OR notes directory has duplicates or bad titles.",
+        "source": "skills",
+        "path": "~/.claude/skills/Consolidate/SKILL.md",
+        "tokens": 80,
+        "enabled": true
+      },
+      {
+        "name": "Createskill",
+        "description": "Create, validate, update, or canonicalize a PAI skill. USE WHEN user wants to create, validate, update, or canonicalize a skill, OR mentions skill creation, new skill, build skill, skill compliance, or skill structure.",
+        "source": "skills",
+        "path": "~/.claude/skills/Createskill/SKILL.md",
+        "tokens": 53,
+        "enabled": true
+      },
+      {
+        "name": "End",
+        "description": "Finalize session - checkpoint, mark done, commit, exit. USE WHEN user says '/end', 'end session', 'finish', or done with conversation.",
+        "source": "skills",
+        "path": "~/.claude/skills/End/SKILL.md",
+        "tokens": 35,
+        "enabled": true
+      },
+      {
+        "name": "Jobs",
+        "description": "Job application management - triage, evaluate, apply, track. AUTO-LOADS for job search sessions. USE WHEN user mentions job posting, search, or applications.",
+        "source": "skills",
+        "path": "~/.claude/skills/Jobs/SKILL.md",
+        "tokens": 37,
+        "enabled": true
+      },
+      {
+        "name": "Journal",
+        "description": "Create, read, or search personal journal entries. USE WHEN user says 'journal', 'note to self', 'capture this thought', 'journal entry', 'I want to write down', 'reflect on', 'yaja', '/journal', OR wants to record a freeform observation, insight, or personal note.",
+        "source": "skills",
+        "path": "~/.claude/skills/Journal/SKILL.md",
+        "tokens": 67,
+        "enabled": true
+      },
+      {
+        "name": "Name",
+        "description": "Name or rename the current session. USE WHEN user says '/name', 'name this session', 'rename session', OR wants to label what they're working on.",
+        "source": "skills",
+        "path": "~/.claude/skills/Name/SKILL.md",
+        "tokens": 36,
+        "enabled": true
+      },
+      {
+        "name": "Observability",
+        "description": "Start, stop, or check the multi-agent observability dashboard. USE WHEN user says 'start observability', 'stop dashboard', 'restart observability', 'monitor agents', 'show agent activity', or needs to debug multi-agent workflows.",
+        "source": "skills",
+        "path": "~/.claude/skills/Observability/SKILL.md",
+        "tokens": 52,
+        "enabled": true
+      },
+      {
+        "name": "Pause",
+        "description": "Save checkpoint and prepare exit safely. USE WHEN user says '/pause', 'pause session', 'pause this', or wants to step away and return.",
+        "source": "skills",
+        "path": "~/.claude/skills/Pause/SKILL.md",
+        "tokens": 33,
+        "enabled": true
+      },
+      {
+        "name": "Plan",
+        "description": "Plan tomorrow, the week, or the month based on open tasks and calendar. USE WHEN user says 'plan', 'what should I focus on', 'plan tomorrow', 'plan my week', 'what\\\\'s next', 'priorities', 'focus areas', '/plan', OR asks about upcoming work priorities or wants to set intentions for a time period.",
+        "source": "skills",
+        "path": "~/.claude/skills/Plan/SKILL.md",
+        "tokens": 76,
+        "enabled": true
+      },
+      {
+        "name": "Providers",
+        "description": "List every configured provider and model, mark the one this session runs on, and explain how to switch. USE WHEN user says /providers, /models, /provider, what providers exist, which models are configured, show providers, what model this session is on, switch provider, OR asks which provider or model this session or the harness is currently running on.",
+        "source": "skills",
+        "path": "~/.claude/skills/Providers/SKILL.md",
+        "tokens": 75,
+        "enabled": true
+      },
+      {
+        "name": "Reconstruct",
+        "description": "Retroactively create session notes from JSONL transcripts and git history when automatic capture failed or was incomplete. USE WHEN user says 'reconstruct sessions', 'rebuild session notes', 'recover session notes', 'retroactively create notes', 'create notes from git history', 'notes are missing', 'backfill session notes', 'reconstruct what we did', OR /reconstruct.",
+        "source": "skills",
+        "path": "~/.claude/skills/Reconstruct/SKILL.md",
+        "tokens": 81,
+        "enabled": true
+      },
+      {
+        "name": "Research",
+        "description": "Web research, content extraction, and wisdom analysis via parallel agents. USE WHEN user says 'do research', 'extract wisdom', 'analyze content', 'find information about', or requests web/content research.",
+        "source": "skills",
+        "path": "~/.claude/skills/Research/SKILL.md",
+        "tokens": 43,
+        "enabled": true
+      },
+      {
+        "name": "Review",
+        "description": "Weekly/daily/monthly review of work accomplished. USE WHEN user says 'review', 'what did I do', 'this week', 'weekly review', 'daily review', 'monthly review', 'what have we achieved', 'reflect', 'retrospective', 'recap', '/review', OR asks about accomplishments over a time period.",
+        "source": "skills",
+        "path": "~/.claude/skills/Review/SKILL.md",
+        "tokens": 72,
+        "enabled": true
+      },
+      {
+        "name": "Route",
+        "description": "Detect which PAI project the current session belongs to. USE WHEN user says 'route', 'what project is this', 'tag this session', 'where does this belong', 'categorize this session', OR starting work in an unfamiliar directory needing to connect to a PAI project.",
+        "source": "skills",
+        "path": "~/.claude/skills/Route/SKILL.md",
+        "tokens": 61,
+        "enabled": true
+      },
+      {
+        "name": "SearchHistory",
+        "description": "Search past sessions, history, and previous work by keyword. USE WHEN user says 'search history', 'find past', 'what did we do', 'when did we', OR asks about previous sessions, past work, or historical context.",
+        "source": "skills",
+        "path": "~/.claude/skills/SearchHistory/SKILL.md",
+        "tokens": 52,
+        "enabled": true
+      },
+      {
+        "name": "Sessions",
+        "description": "Navigate sessions, projects, and switch working context. USE WHEN user says 'list sessions', 'where was I working', 'show my sessions', 'find session', 'continue work from', 'switch to project', 'open project', 'name project', 'work on X', 'show me what we did on X', OR asks about past sessions, previous work, or project navigation.",
+        "source": "skills",
+        "path": "~/.claude/skills/Sessions/SKILL.md",
+        "tokens": 81,
+        "enabled": true
+      },
+      {
+        "name": "Share",
+        "description": "Generate LinkedIn, X/Twitter, or Bluesky posts about completed work. USE WHEN user says 'share on linkedin', 'post about', 'write a tweet about', '/share', 'linkedin post', 'tweet this', 'publish to X', 'bluesky post', 'post to bluesky', OR wants to create social media content about their work.",
+        "source": "skills",
+        "path": "~/.claude/skills/Share/SKILL.md",
+        "tokens": 77,
+        "enabled": true
+      },
+      {
+        "name": "StoryExplanation",
+        "description": "Create numbered narrative story explanations of any content. USE WHEN user explicitly says '/story', 'create story explanation', 'run CSE', 'explain this as a story', 'story with links', 'deep story'. Do NOT activate on vague mentions of 'story'.",
+        "source": "skills",
+        "path": "~/.claude/skills/StoryExplanation/SKILL.md",
+        "tokens": 57,
+        "enabled": true
+      },
+      {
+        "name": "Tasks",
+        "description": "Run the task bus — read cross-session work from the tracker, dispatch it to the sessions that own it, and file findings. USE WHEN user says 'morning routine', 'what needs doing', 'run the routine', 'check my tasks', 'dispatch tasks', 'file a finding', 'add this to todoist', 'what did we find', OR /tasks.",
+        "source": "skills",
+        "path": "~/.claude/skills/Tasks/SKILL.md",
+        "tokens": 79,
+        "enabled": true
+      },
+      {
+        "name": "VaultConnect",
+        "description": "Find connections between two topics in the Obsidian vault. USE WHEN user says 'connect X and Y', 'how does X relate to Y', 'find path between', 'bridge topics', '/vault-connect', OR asks how two ideas are connected in the vault.",
+        "source": "skills",
+        "path": "~/.claude/skills/VaultConnect/SKILL.md",
+        "tokens": 57,
+        "enabled": true
+      },
+      {
+        "name": "VaultContext",
+        "description": "Load Obsidian vault context for a morning briefing. USE WHEN user says 'load vault context', 'brief me from Obsidian', 'morning briefing', '/vault-context', 'what am I working on', 'what\\\\'s in my vault'.",
+        "source": "skills",
+        "path": "~/.claude/skills/VaultContext/SKILL.md",
+        "tokens": 55,
+        "enabled": true
+      },
+      {
+        "name": "VaultEmerge",
+        "description": "Surface emerging themes and clusters forming in the vault. USE WHEN user says 'what\\\\'s emerging', 'find patterns', 'emerging clusters', 'themes in vault', '/vault-emerge', 'new projects forming', 'what am I thinking about', 'recent themes'.",
+        "source": "skills",
+        "path": "~/.claude/skills/VaultEmerge/SKILL.md",
+        "tokens": 61,
+        "enabled": true
+      },
+      {
+        "name": "VaultOrphans",
+        "description": "Find and reconnect orphaned notes with zero inbound links. USE WHEN user says 'find orphans', 'orphaned notes', 'unlinked notes', 'vault orphans', '/vault-orphans', 'clean up vault graph', 'disconnected notes'.",
+        "source": "skills",
+        "path": "~/.claude/skills/VaultOrphans/SKILL.md",
+        "tokens": 58,
+        "enabled": true
+      },
+      {
+        "name": "VaultTrace",
+        "description": "Trace the evolution of an idea across vault notes over time. USE WHEN user says 'trace idea', 'how did X evolve', 'history of X in notes', 'when did I first write about', '/vault-trace', 'timeline of X', 'track idea evolution', 'idea history'.",
+        "source": "skills",
+        "path": "~/.claude/skills/VaultTrace/SKILL.md",
+        "tokens": 64,
+        "enabled": true
+      },
+      {
+        "name": "Webcam",
+        "description": "Switch BRIO webcam on/off and send footage. USE WHEN user says 'webcam on/off', 'switch on camera', 'send footage/video', or 'Webcam an/aus'.",
+        "source": "skills",
+        "path": "~/.claude/skills/Webcam/SKILL.md",
+        "tokens": 41,
+        "enabled": true
+      },
+      {
+        "name": "Whisper",
+        "description": "Manage whisper rules — persistent behavioral constraints injected on every prompt. USE WHEN user says 'whisper', 'add whisper rule', 'remove whisper rule', 'list whisper rules', 'show whisper rules', '/whisper', OR wants to manage persistent behavioral rules.",
+        "source": "skills",
+        "path": "~/.claude/skills/Whisper/SKILL.md",
+        "tokens": 55,
+        "enabled": true
+      },
+      {
+        "name": "Worker",
+        "description": "Run, watch and route subagent workers on configured providers. USE WHEN delegating subagent work, checking on running workers, or managing worker providers/classes from chat.",
+        "source": "skills",
+        "path": "~/.claude/skills/Worker/SKILL.md",
+        "tokens": 36,
+        "enabled": true
+      },
+      {
+        "name": "Writing",
+        "description": "KDP pipeline: niche research, writing, cover, listing, portfolio. USE WHEN user says '/Writing', validates Amazon niche, writes book, or manages publishing.",
+        "source": "skills",
+        "path": "~/.claude/skills/Writing/SKILL.md",
+        "tokens": 36,
+        "enabled": true
+      },
+      {
+        "name": "markedit-tools",
+        "description": "Provides tools for managing MarkEdit, a macOS markdown editor.",
+        "source": "skills",
+        "path": "~/.claude/skills/markedit/SKILL.md",
+        "tokens": 17,
+        "enabled": true
+      },
+      {
+        "name": "manage",
+        "description": "",
+        "source": "commands",
+        "path": "~/.claude/commands/manage.md",
+        "tokens": 4,
+        "enabled": true
+      },
+      {
+        "name": "pa",
+        "description": "",
+        "source": "commands",
+        "path": "~/.claude/commands/pa.md",
+        "tokens": 4,
+        "enabled": true
+      },
+      {
+        "name": "paiupdate",
+        "description": "",
+        "source": "commands",
+        "path": "~/.claude/commands/paiupdate.md",
+        "tokens": 5,
+        "enabled": true
+      },
+      {
+        "name": "sessions",
+        "description": "",
+        "source": "commands",
+        "path": "~/.claude/commands/sessions.md",
+        "tokens": 4,
+        "enabled": true
+      },
+      {
+        "name": "Browser Automation",
+        "description": "Automate web browser interactions using natural language via CLI commands. Use when the user asks to browse websites, navigate web pages, extract data from websites, take screenshots, fill forms, click buttons, or interact with web applications. Triggers include \"browse\", \"navigate to\", \"go to website\", \"extract data from webpage\", \"screenshot\", \"web scraping\", \"fill out form\", \"click on\", \"search for on the web\". When taking actions be as specific as possible.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/browser-tools/browser-automation/0.0.1/.claude/skills/browser-automation/SKILL.md",
+        "tokens": 103,
+        "enabled": false
+      },
+      {
+        "name": "orchestrate",
+        "description": ">-\n  Multi-agent orchestration for substantive implementation work. Use when a task\n  decomposes into more than ~3 independent units, spans multiple files or\n  subsystems, or benefits from parallel workers with verification gates —\n  features, migrations, audits, large refactors, multi-bug sweeps. Routes each\n  unit to the cheapest capable model, verifies with evidence-gated checks, and\n  escalates only on genuine capability failures. Do NOT use for trivial turns,\n  single-file fixes, or quick lookups — work directly instead.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/claude-orchestrate/orchestrate/0.5.5/skills/orchestrate/SKILL.md",
+        "tokens": 117,
+        "enabled": false
+      },
+      {
+        "name": "context-mode",
+        "description": "|\n  Use context-mode tools (ctx_execute, ctx_execute_file) instead of Bash/cat when processing\n  large outputs. Triggers: \"analyze logs\", \"summarize output\", \"process data\",\n  \"parse JSON\", \"filter results\", \"extract errors\", \"check build output\",\n  \"analyze dependencies\", \"process API response\", \"large file analysis\",\n  \"page snapshot\", \"browser snapshot\", \"DOM structure\", \"inspect page\",\n  \"accessibility tree\", \"Playwright snapshot\",\n  \"run tests\", \"test output\", \"coverage report\", \"git log\", \"recent commits\",\n  \"diff between branches\", \"list containers\", \"pod status\", \"disk usage\",\n  \"fetch docs\", \"API reference\", \"index documentation\",\n  \"call API\", \"check response\", \"query results\",\n  \"find TODOs\", \"count lines\", \"codebase statistics\", \"security audit\",\n  \"outdated packages\", \"dependency tree\", \"cloud resources\", \"CI/CD output\".\n  Also triggers on ANY MCP tool output that may exceed 20 lines.\n  Subagent routing is handled automatically via PreToolUse hook.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/context-mode/SKILL.md",
+        "tokens": 239,
+        "enabled": false
+      },
+      {
+        "name": "context-mode-ops",
+        "description": "Manage context-mode GitHub issues, PRs, releases, and marketing with parallel subagent army. Orchestrates 10-20 dynamic agents per task. Use when triaging issues, reviewing PRs, releasing versions, writing LinkedIn posts, announcing releases, fixing bugs, merging contributions, validating ENV vars, testing adapters, or syncing branches.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/context-mode-ops/SKILL.md",
+        "tokens": 74,
+        "enabled": false
+      },
+      {
+        "name": "ctx-doctor",
+        "description": "|\n  Run context-mode diagnostics. Checks runtimes, hooks, FTS5,\n  plugin registration, npm and marketplace versions.\n  Trigger: /context-mode:ctx-doctor",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-doctor/SKILL.md",
+        "tokens": 41,
+        "enabled": false
+      },
+      {
+        "name": "ctx-insight",
+        "description": "|\n  Open the context-mode Insight analytics dashboard in the browser.\n  Shows personal metrics: session activity, tool usage, error rate,\n  parallel work patterns, project focus, and actionable insights.\n  First run installs dependencies (~30s). Subsequent runs open instantly.\n  Trigger: /context-mode:ctx-insight",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-insight/SKILL.md",
+        "tokens": 69,
+        "enabled": false
+      },
+      {
+        "name": "ctx-purge",
+        "description": "|\n  Purge the context-mode knowledge base. Permanently deletes all indexed content\n  and resets session stats. This is destructive and cannot be undone.\n  Trigger: /context-mode:ctx-purge",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-purge/SKILL.md",
+        "tokens": 47,
+        "enabled": false
+      },
+      {
+        "name": "ctx-stats",
+        "description": "|\n  Show how much context window context-mode saved this session.\n  Displays token consumption, context savings ratio, and per-tool breakdown.\n  Read-only — shows stats only, no reset capability.\n  To wipe the knowledge base entirely, use ctx_purge instead.\n  Trigger: /context-mode:ctx-stats",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-stats/SKILL.md",
+        "tokens": 66,
+        "enabled": false
+      },
+      {
+        "name": "ctx-upgrade",
+        "description": "|\n  Update context-mode from GitHub and fix hooks/settings.\n  Pulls latest, builds, installs, updates npm global, configures hooks.\n  Trigger: /context-mode:ctx-upgrade",
+        "source": "plugins",
+        "path": "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-upgrade/SKILL.md",
+        "tokens": 44,
+        "enabled": false
+      },
+      {
+        "name": "algorithmic-art",
+        "description": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/algorithmic-art/SKILL.md",
+        "tokens": 63,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "brand-guidelines",
+        "description": "Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting, or company design standards apply.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/brand-guidelines/SKILL.md",
+        "tokens": 50,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "canvas-design",
+        "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/canvas-design/SKILL.md",
+        "tokens": 60,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "claude-api",
+        "description": "Build apps with the Claude API or Anthropic SDK. TRIGGER when: code imports `anthropic`/`@anthropic-ai/sdk`/`claude_agent_sdk`, or user asks to use Claude API, Anthropic SDKs, or Agent SDK. DO NOT TRIGGER when: code imports `openai`/other AI SDK, general programming, or ML/data-science tasks.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/claude-api/SKILL.md",
+        "tokens": 86,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "doc-coauthoring",
+        "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/doc-coauthoring/SKILL.md",
+        "tokens": 78,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "docx",
+        "description": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a 'report', 'memo', 'letter', 'template', or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/docx/SKILL.md",
+        "tokens": 172,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "frontend-design",
+        "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/frontend-design/SKILL.md",
+        "tokens": 79,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "internal-comms",
+        "description": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.).",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/internal-comms/SKILL.md",
+        "tokens": 68,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "mcp-builder",
+        "description": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/mcp-builder/SKILL.md",
+        "tokens": 62,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "pdf",
+        "description": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rotating pages, adding watermarks, creating new PDFs, filling PDF forms, encrypting/decrypting PDFs, extracting images, and OCR on scanned PDFs to make them searchable. If the user mentions a .pdf file or asks to produce one, use this skill.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pdf/SKILL.md",
+        "tokens": 99,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "pptx",
+        "description": "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from any .pptx file (even if the extracted content will be used elsewhere, like in an email or summary); editing, modifying, or updating existing presentations; combining or splitting slide files; working with templates, layouts, speaker notes, or comments. Trigger whenever the user mentions \\\"deck,\\\" \\\"slides,\\\" \\\"presentation,\\\" or references a .pptx filename, regardless of what they plan to do with the content afterward. If a .pptx file needs to be opened, created, or touched, use this skill.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pptx/SKILL.md",
+        "tokens": 153,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "skill-creator",
+        "description": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, update or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/skill-creator/SKILL.md",
+        "tokens": 64,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "slack-gif-creator",
+        "description": "Knowledge and utilities for creating animated GIFs optimized for Slack. Provides constraints, validation tools, and animation concepts. Use when users request animated GIFs for Slack like \"make me a GIF of X doing Y for Slack.\"",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/slack-gif-creator/SKILL.md",
+        "tokens": 51,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "theme-factory",
+        "description": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with colors/fonts that you can apply to any artifact that has been creating, or can generate a new theme on-the-fly.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/theme-factory/SKILL.md",
+        "tokens": 62,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "web-artifacts-builder",
+        "description": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/web-artifacts-builder/SKILL.md",
+        "tokens": 65,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "webapp-testing",
+        "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/webapp-testing/SKILL.md",
+        "tokens": 36,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "xlsx",
+        "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (e.g., adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path — even casually (like \\\"the xlsx in my downloads\\\") — and wants something done to it or produced from it. Also trigger for cleaning or restructuring messy tabular data files (malformed rows, misplaced headers, junk data) into proper spreadsheets. The deliverable must be a spreadsheet file. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/xlsx/SKILL.md",
+        "tokens": 204,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "template-skill",
+        "description": "Replace with description of the skill and when Claude should use it.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/anthropic-agent-skills/template/SKILL.md",
+        "tokens": 18,
+        "enabled": false,
+        "status": "unknown"
+      },
+      {
+        "name": "Browser Automation",
+        "description": "Automate web browser interactions using natural language via CLI commands. Use when the user asks to browse websites, navigate web pages, extract data from websites, take screenshots, fill forms, click buttons, or interact with web applications. Triggers include \"browse\", \"navigate to\", \"go to website\", \"extract data from webpage\", \"screenshot\", \"web scraping\", \"fill out form\", \"click on\", \"search for on the web\". When taking actions be as specific as possible.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/browser-tools/.claude/skills/browser-automation/SKILL.md",
+        "tokens": 103,
+        "enabled": false
+      },
+      {
+        "name": "orchestrate",
+        "description": ">-\n  Multi-agent orchestration for substantive implementation work. Use when a task\n  decomposes into more than ~3 independent units, spans multiple files or\n  subsystems, or benefits from parallel workers with verification gates —\n  features, migrations, audits, large refactors, multi-bug sweeps. Routes each\n  unit to the cheapest capable model, verifies with evidence-gated checks, and\n  escalates only on genuine capability failures. Do NOT use for trivial turns,\n  single-file fixes, or quick lookups — work directly instead.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/claude-orchestrate/skills/orchestrate/SKILL.md",
+        "tokens": 117,
+        "enabled": false
+      },
+      {
+        "name": "context-mode",
+        "description": "|\n  Use context-mode tools (ctx_execute, ctx_execute_file) instead of Bash/cat when processing\n  large outputs. Triggers: \"analyze logs\", \"summarize output\", \"process data\",\n  \"parse JSON\", \"filter results\", \"extract errors\", \"check build output\",\n  \"analyze dependencies\", \"process API response\", \"large file analysis\",\n  \"page snapshot\", \"browser snapshot\", \"DOM structure\", \"inspect page\",\n  \"accessibility tree\", \"Playwright snapshot\",\n  \"run tests\", \"test output\", \"coverage report\", \"git log\", \"recent commits\",\n  \"diff between branches\", \"list containers\", \"pod status\", \"disk usage\",\n  \"fetch docs\", \"API reference\", \"index documentation\",\n  \"call API\", \"check response\", \"query results\",\n  \"find TODOs\", \"count lines\", \"codebase statistics\", \"security audit\",\n  \"outdated packages\", \"dependency tree\", \"cloud resources\", \"CI/CD output\".\n  Also triggers on ANY MCP tool output that may exceed 20 lines.\n  Subagent routing is handled automatically via PreToolUse hook.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/context-mode/SKILL.md",
+        "tokens": 239,
+        "enabled": false
+      },
+      {
+        "name": "context-mode-ops",
+        "description": "Manage context-mode GitHub issues, PRs, releases, and marketing with parallel subagent army. Orchestrates 10-20 dynamic agents per task. Use when triaging issues, reviewing PRs, releasing versions, writing LinkedIn posts, announcing releases, fixing bugs, merging contributions, validating ENV vars, testing adapters, or syncing branches.",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/context-mode-ops/SKILL.md",
+        "tokens": 74,
+        "enabled": false
+      },
+      {
+        "name": "ctx-doctor",
+        "description": "|\n  Run context-mode diagnostics. Checks runtimes, hooks, FTS5,\n  plugin registration, npm and marketplace versions.\n  Trigger: /context-mode:ctx-doctor",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/ctx-doctor/SKILL.md",
+        "tokens": 41,
+        "enabled": false
+      },
+      {
+        "name": "ctx-insight",
+        "description": "|\n  Open the context-mode Insight analytics dashboard in the browser.\n  Shows personal metrics: session activity, tool usage, error rate,\n  parallel work patterns, project focus, and actionable insights.\n  First run installs dependencies (~30s). Subsequent runs open instantly.\n  Trigger: /context-mode:ctx-insight",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/ctx-insight/SKILL.md",
+        "tokens": 69,
+        "enabled": false
+      },
+      {
+        "name": "ctx-purge",
+        "description": "|\n  Purge the context-mode knowledge base. Permanently deletes all indexed content\n  and resets session stats. This is destructive and cannot be undone.\n  Trigger: /context-mode:ctx-purge",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/ctx-purge/SKILL.md",
+        "tokens": 47,
+        "enabled": false
+      },
+      {
+        "name": "ctx-stats",
+        "description": "|\n  Show how much context window context-mode saved this session.\n  Displays token consumption, context savings ratio, and per-tool breakdown.\n  Read-only — shows stats only, no reset capability.\n  To wipe the knowledge base entirely, use ctx_purge instead.\n  Trigger: /context-mode:ctx-stats",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/ctx-stats/SKILL.md",
+        "tokens": 66,
+        "enabled": false
+      },
+      {
+        "name": "ctx-upgrade",
+        "description": "|\n  Update context-mode from GitHub and fix hooks/settings.\n  Pulls latest, builds, installs, updates npm global, configures hooks.\n  Trigger: /context-mode:ctx-upgrade",
+        "source": "plugins",
+        "path": "~/.claude/plugins/marketplaces/context-mode/skills/ctx-upgrade/SKILL.md",
+        "tokens": 44,
+        "enabled": false
+      }
+    ],
+    "total": 4894,
+    "totalsBySource": {
+      "skills": 1807,
+      "commands": 17,
+      "plugins": 3070
+    },
+    "countsBySource": {
+      "skills": 33,
+      "commands": 4,
+      "plugins": 36
+    },
+    "enabledTotal": 1824,
+    "enabledTotalsBySource": {
+      "skills": 1807,
+      "commands": 17,
+      "plugins": 0
+    },
+    "duplicates": [
+      {
+        "name": "browser automation",
+        "paths": [
+          "~/.claude/plugins/cache/browser-tools/browser-automation/0.0.1/.claude/skills/browser-automation/SKILL.md",
+          "~/.claude/plugins/marketplaces/browser-tools/.claude/skills/browser-automation/SKILL.md"
+        ]
+      },
+      {
+        "name": "context-mode",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/context-mode/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/context-mode/SKILL.md"
+        ]
+      },
+      {
+        "name": "context-mode-ops",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/context-mode-ops/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/context-mode-ops/SKILL.md"
+        ]
+      },
+      {
+        "name": "ctx-doctor",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-doctor/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/ctx-doctor/SKILL.md"
+        ]
+      },
+      {
+        "name": "ctx-insight",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-insight/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/ctx-insight/SKILL.md"
+        ]
+      },
+      {
+        "name": "ctx-purge",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-purge/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/ctx-purge/SKILL.md"
+        ]
+      },
+      {
+        "name": "ctx-stats",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-stats/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/ctx-stats/SKILL.md"
+        ]
+      },
+      {
+        "name": "ctx-upgrade",
+        "paths": [
+          "~/.claude/plugins/cache/context-mode/context-mode/1.0.89/skills/ctx-upgrade/SKILL.md",
+          "~/.claude/plugins/marketplaces/context-mode/skills/ctx-upgrade/SKILL.md"
+        ]
+      },
+      {
+        "name": "orchestrate",
+        "paths": [
+          "~/.claude/plugins/cache/claude-orchestrate/orchestrate/0.5.5/skills/orchestrate/SKILL.md",
+          "~/.claude/plugins/marketplaces/claude-orchestrate/skills/orchestrate/SKILL.md"
+        ]
+      },
+      {
+        "name": "sessions",
+        "paths": [
+          "~/.claude/skills/Sessions/SKILL.md",
+          "~/.claude/commands/sessions.md"
+        ]
+      }
+    ]
+  },
+  "subagents": {
+    "encoding": "cl100k_base",
+    "entries": [
+      {
+        "path": "~/.claude/agents/Architect.md",
+        "tokens": 2210,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/ClaudeResearcher.md",
+        "tokens": 917,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/Designer.md",
+        "tokens": 1273,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/Engineer.md",
+        "tokens": 2416,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/GeminiResearcher.md",
+        "tokens": 1728,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/Pentester.md",
+        "tokens": 1851,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/PerplexityResearcher.md",
+        "tokens": 923,
+        "model": "sonnet"
+      },
+      {
+        "path": "~/.claude/agents/Researcher.md",
+        "tokens": 755,
+        "model": "sonnet"
+      }
+    ]
+  },
+  "mcp": {
+    "servers": [
+      {
+        "server": "agent-browser",
+        "configuredIn": [],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 3,
+        "calls30d": 10
+      },
+      {
+        "server": "aibroker",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "yes",
+        "loadedLive": "pid 7980",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 25,
+        "calls30d": 2220
+      },
+      {
+        "server": "browsr",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 3,
+        "calls30d": 10
+      },
+      {
+        "server": "claude_ai_Gmail",
+        "configuredIn": [],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 2,
+        "calls30d": 22
+      },
+      {
+        "server": "claude-in-chrome",
+        "configuredIn": [],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 15,
+        "calls30d": 4809
+      },
+      {
+        "server": "clickr",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "yes",
+        "loadedLive": "pid 7980",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 19,
+        "calls30d": 3183
+      },
+      {
+        "server": "coogle",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 16,
+        "calls30d": 5618
+      },
+      {
+        "server": "devonthink",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 5,
+        "calls30d": 146
+      },
+      {
+        "server": "hook",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 0,
+        "calls30d": 0
+      },
+      {
+        "server": "jobs",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 9,
+        "calls30d": 787
+      },
+      {
+        "server": "macos_automator",
+        "configuredIn": [],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 1,
+        "calls30d": 4
+      },
+      {
+        "server": "pai",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "yes",
+        "loadedLive": "pid 7980",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 10,
+        "calls30d": 108
+      },
+      {
+        "server": "plugin_context-mode_context-mode",
+        "configuredIn": [],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 6,
+        "calls30d": 768
+      },
+      {
+        "server": "scribe",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 1,
+        "calls30d": 1
+      },
+      {
+        "server": "seriousletter",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "-",
+        "loadedLive": "-",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 30,
+        "calls30d": 1805
+      },
+      {
+        "server": "todoist",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "yes",
+        "loadedLive": "pid 7980",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 15,
+        "calls30d": 572
+      },
+      {
+        "server": "webfetch",
+        "configuredIn": [
+          "global"
+        ],
+        "disabled": false,
+        "pinned": "yes",
+        "loadedLive": "pid 7980",
+        "toolsExposed": "UNKNOWN",
+        "toolsUsed30d": 2,
+        "calls30d": 135
+      }
+    ],
+    "liveProcesses": [
+      {
+        "pid": 7980,
+        "mcpConfigPath": "~/.claude/pai/logs/workers/20260920-163125-7972.mcp.json",
+        "servers": [
+          "aibroker",
+          "clickr",
+          "pai",
+          "todoist",
+          "webfetch"
+        ]
+      }
+    ]
+  }
+}
