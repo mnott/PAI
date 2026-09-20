@@ -71,6 +71,7 @@ function sessionWith(compactions: CompactionEvent[]): SessionReportOutput {
     fallbacks: [],
     totalTokens: 1,
     percentages: {},
+    firstTurn: null,
   };
 }
 

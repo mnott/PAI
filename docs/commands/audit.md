@@ -60,6 +60,7 @@ Cache/input/output token split for a session transcript (default: newest)
 |--------|-------------|---------|
 | `--ctx-threshold <n>` | Per-turn context size above which a turn counts as 'above threshold' (default 200000) |  |
 | `--history [n]` | List first-turn context of the newest n sessions in this project's transcript directory (default 20) |  |
+| `--turn <n>` | Attribute API call n's context growth to the transcript lines injected since the previous call |  |
 
 
 ### pai audit tokens spawn
