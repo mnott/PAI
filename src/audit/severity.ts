@@ -177,6 +177,20 @@ export function buildFindings(input: {
       severity,
       evidence: `avg ${avg}, max ${max}, ${input.session.turnsAboveThreshold} turns > ${input.ctxThreshold}, ${input.session.turns} turns`,
     });
+
+    const compactions = input.session.compactions;
+    const autoCompactions = compactions.filter((c) => c.trigger === "auto");
+    const overshoots = autoCompactions.filter((c) => c.preTokens > 1.25 * input.ctxThreshold);
+    findings.push({
+      finding: "compaction trigger",
+      severity: overshoots.length > 0 ? "RED" : "GREEN",
+      evidence:
+        overshoots.length > 0
+          ? `override not honoured: ${overshoots.map((c) => `preTokens=${c.preTokens}`).join(", ")} vs configured ${input.ctxThreshold}`
+          : compactions.length === 0
+            ? `0 compactions in ${input.session.turns} turns`
+            : `${compactions.length} compaction(s), all within 25% of configured ${input.ctxThreshold}`,
+    });
   }
 
   return sortFindings(findings);

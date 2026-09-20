@@ -263,16 +263,22 @@ export function formatContextFill(reading: ContextFillReading): FillDisplay {
 // summary ahead of a compaction.
 // ---------------------------------------------------------------------------
 //
-// THE CONFIGURED VALUE DOES NOT PREDICT THE TRIGGER. CLAUDE_AUTOCOMPACT_
-// PCT_OVERRIDE was 80 throughout, on this machine, across BOTH of the
-// following regimes — the same configured number, two different truths:
+// THE CONFIGURED VALUE PREDICTS THE TRIGGER ONLY WHILE THE PLATFORM'S FORMULA
+// HOLDS. CLAUDE_AUTOCOMPACT_PCT_OVERRIDE was 80 throughout, on this machine,
+// across BOTH of the following regimes — the same configured number, two
+// different truths:
 //
-//   2026-08-16 .. 2026-09-10   preTokens ~ 993,096 – 1,002,500  (~100% of a 1M window)
-//   2026-09-12 .. 2026-09-15   preTokens ~   782,981 – 791,995  (~78-79% of a 1M window)
+//   2026-08-16 .. 2026-09-10   preTokens ~ 993,096 – 1,002,500  (~100% of a 1M window; override ignored)
+//   2026-09-12 .. 2026-09-20   preTokens ~   782,981 – 791,995  (1M window) and
+//                              preTokens ~   143,280 – 154,832  (200k window)
+//                              = pct/100 × (window − 20,000), measured 2026-09-20
 //
 // A threshold derived only from the configured override was wrong for the
-// second regime and would be wrong again the next time it moves — the
+// first regime and will be wrong again the next time the formula moves — the
 // config is not ground truth, it is what Claude Code claims it will honor.
+// Two more facts (2026-09-20): the settings.json `env` value beats the
+// process env, so there is no per-launch override; and headless `-p`
+// sessions do not compact at the derived trigger at all.
 //
 // GROUND TRUTH IS ON DISK ALREADY: every real compaction writes a
 // `compact_boundary` system event to the transcript with

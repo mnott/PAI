@@ -29,6 +29,12 @@ export interface CacheCreationSplit {
   ephemeral1h: number;
 }
 
+export interface CompactionEvent {
+  trigger: string;
+  preTokens: number;
+  turnIndex: number;
+}
+
 export interface SessionUsageReport {
   path: string;
   sizeBytes: number;
@@ -49,6 +55,7 @@ export interface SessionUsageReport {
   cacheRebuildTurns: number;
   /** Real human-authored user prompts (excludes tool-result-only "user" lines). */
   userPrompts: number;
+  compactions: CompactionEvent[];
 }
 
 const USAGE_KEYS: (keyof UsageTotals)[] = [
@@ -65,6 +72,8 @@ function emptyTotals(): UsageTotals {
 interface AssistantLine {
   type?: string;
   uuid?: string;
+  subtype?: string;
+  compactMetadata?: { trigger?: string; preTokens?: number };
   message?: {
     id?: string;
     model?: string;
@@ -73,6 +82,21 @@ interface AssistantLine {
     };
     content?: string | Array<{ type?: string }>;
   };
+}
+
+/**
+ * `type:"system"` `subtype:"compact_boundary"` lines mark a compaction.
+ * turnIndex is the count of assistant turns already folded when it fired,
+ * so it lines up with the turn numbering the text/JSON report prints.
+ */
+export function isCompactBoundary(line: AssistantLine): boolean {
+  return line.type === "system" && line.subtype === "compact_boundary";
+}
+
+export function parseCompactionEvent(line: AssistantLine, turnIndex: number): CompactionEvent | null {
+  const meta = line.compactMetadata;
+  if (!meta || typeof meta.preTokens !== "number") return null;
+  return { trigger: meta.trigger ?? "unknown", preTokens: meta.preTokens, turnIndex };
 }
 
 /**
@@ -162,6 +186,7 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     turnsAboveThreshold: 0,
     cacheRebuildTurns: 0,
     userPrompts: 0,
+    compactions: [],
   };
   const seenIds = new Set<string>();
   let contextSum = 0;
@@ -177,6 +202,11 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     }
     if (obj.type === "user") {
       if (isRealUserPrompt(obj)) report.userPrompts++;
+      continue;
+    }
+    if (isCompactBoundary(obj)) {
+      const event = parseCompactionEvent(obj, report.turns);
+      if (event) report.compactions.push(event);
       continue;
     }
     const context = foldAssistantLine(report, seenIds, obj, threshold);
