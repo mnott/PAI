@@ -1,25 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update" session-id="5e55c2db-e49f-40a6-9104-bf24a702656a" ts="2026-09-20T08:35:33.079Z" -->
+<!-- pai:checkpoint authored="auto" session="0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update" session-id="5e55c2db-e49f-40a6-9104-bf24a702656a" ts="2026-09-20T08:44:05.508Z" -->
 
 > **Last session:** 0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update
-> **Paused at:** 2026-09-20T08:35:33.079Z
+> **Paused at:** 2026-09-20T08:44:05.508Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 5e55c2db-e49f-40a6-9104-bf24a702656a`
 
 T
-i=ckpt-2026-09-20T08-35-32.951Z
-g=/Name PAI
-d=do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table | /Name PAI | do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table
+i=ckpt-2026-09-20T08-44-05.456Z
+g=you wrote it as a table and now that table is as lines. do again as a table
+d=ok merge and cpp all, Ill then exit and restart to remeasure | /Name PAI | do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table | ok merge and cpp all, Ill then exit and restart to remeasure
 t=?
-@1=.aibroker/session-PAI.md
-@2=ARCHITECTURE.md
-@3=CHANGELOG.md
-@4=Notes/TODO.md
-@5=Notes/docs/architecture-decisions.md
-z=auto ckpt (no model); main@3d99742 fix(build): give bundled hooks a real require for CJS interop; 20 dirty; +181 paths; git status for detail
+@1=Notes/TODO.md
+z=auto ckpt (no model); main@8ff0287 feat(audit): pai audit tokens command and prefix token cuts; 1 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
