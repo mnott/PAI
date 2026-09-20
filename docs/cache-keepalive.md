@@ -80,3 +80,141 @@ input_tokens=… cache_read_input_tokens=… duration_api_ms=…` land as design
    short-range replay buffer, not a warmable baseline; new-worker cold starts
    cannot be removed by a heartbeat, and the fix would have to live in the
    provider (explicit `cache_control` support) rather than in the daemon.
+
+## Interactive sessions
+
+`sessions.cacheKeepalive` is a *different* problem from the worker keepalive
+above: an anthropic Claude Code session's ephemeral prompt cache has a 1-hour
+TTL. A cache **read** (the daemon typing a trivial prompt into an idle
+session) refreshes that TTL at roughly 0.1x the input-token price of a normal
+turn. If the cache is instead allowed to expire, the next real prompt has to
+rebuild the whole context from scratch — an input-token rewrite billed at
+2x. So each beat that prevents one expiry is worth roughly 20x its own cost
+(0.1x spent vs. 2x avoided over the same context size) — the break-even is
+around 20 avoided expiries per beat's worth of spend, which is why the
+feature caps itself at a handful of beats per idle stretch rather than
+beating forever: past `maxBeats`, further beats are pure cost with nothing
+left to protect (either the user came back, or the idle stretch has already
+run past anything the TTL math pays for).
+
+Unlike the worker keepalive, this cannot run on a fixed timer: an interactive
+session's cache is only ever at risk while genuinely idle, and beating a
+session the user is actively reading burns tokens and clutters the
+transcript for zero benefit. So the daemon tick (`src/daemon/session-keepalive.ts`,
+started from `src/daemon/daemon/scheduler.ts` only when enabled) runs every
+60 seconds and, per live interactive session, beats it only when *every* one
+of these holds:
+
+- idle time (time since the transcript file was last written) is at least
+  `idleMinutes`
+- the local clock is inside `activeHours`
+- the last known context size is at least `minContextTokens` (a session too
+  small to have paid for a 1h cache in the first place is not worth beating)
+- the session is not mid-turn (its last transcript line is a finished
+  assistant turn, not a streaming one or an unanswered prompt)
+- fewer than `maxBeats` beats have been sent since the last real (non-beat)
+  user prompt
+
+A worker session is not excluded "for free": a `claude -p` worker running in
+a worktree writes its own transcript under `~/.claude/projects` (Claude Code
+encodes its worktree cwd — under `<workers.logDir>/worktrees` — as the
+project-dir name), so an unguarded tick could beat a worker pane. The tick
+instead checks each session's transcript path against the workers log dir's
+worktrees directory (`isWorkerSession` in `session-keepalive.ts`) and skips
+with `skipped:worker` when it matches.
+
+### Config
+
+Off by default. Enable by editing the PAI config file directly (there is no
+`pai config set` for this yet — see the config-CLI work landing separately):
+
+```json
+{
+  "sessions": {
+    "cacheKeepalive": {
+      "enabled": true,
+      "idleMinutes": 50,
+      "maxBeats": 6,
+      "activeHours": "08:00-22:00",
+      "minContextTokens": 20000,
+      "prompt": "keepalive"
+    }
+  }
+}
+```
+
+- `idleMinutes` — how long a session must sit untouched before it is beaten
+  (default 50, just under the 1h TTL).
+- `maxBeats` — hard cap on consecutive beats since the last real prompt, so a
+  session left open overnight does not accrue an unbounded bill; resets the
+  moment a genuine new prompt appears.
+- `activeHours` — `"HH:MM-HH:MM"`, local time; a window may wrap midnight
+  (e.g. `"22:00-06:00"`). Keeps beats confined to hours where a fresh cache
+  is actually likely to be used again soon.
+- `minContextTokens` — skip sessions too small to have a cache worth
+  protecting.
+- `prompt` — the literal text sent as the beat. The `UserPromptSubmit` hook
+  (`src/hooks/ts/user-prompt/whisper-rules.ts`, `isCacheKeepaliveBeat`)
+  recognizes this exact word and replies with the smallest possible
+  instruction ("reply with a single period, no tools"), suppressing every
+  other injected rule/advisor block for that one prompt — the point of the
+  beat is a cheap round trip, and injecting the usual ~5KB of rules into it
+  would erase most of the saving.
+
+### State file
+
+Per-session beat counters live at `~/.claude/pai/session-keepalive.json`
+(`PAI_HOME`-relative, rebuildable — a damaged file just resets counters, it
+is never a reason to skip beating):
+
+```json
+{
+  "<session-id>": {
+    "beats": 2,
+    "lastRealPromptKey": "<uuid-of-last-real-prompt>",
+    "lastBeatAt": "2026-09-20T10:00:00.000Z"
+  }
+}
+```
+
+### Ledger
+
+Every tick decision — sent or skipped, with the reason — writes one line to
+the same ledger `WORKER-KEEPALIVE` already uses
+(`<workers.logDir>/ledger.log`). `session=` is the Claude transcript session
+id (resolved from the AIBroker pane id via `claude-session-map.json`, see
+below); `pane=` is the raw AIBroker/iTerm pane id, kept alongside it so both
+identities are visible:
+
+```
+2026-09-20 10:00:00 SESSION-KEEPALIVE session=<id> pane=<pane-id> idle_min=52.3 context=84213 beat=1/6 result=sent
+2026-09-20 10:01:00 SESSION-KEEPALIVE session=<id> pane=<pane-id> idle_min=0.2 context=84501 beat=1/6 result=skipped:idle:0.2min
+2026-09-20 10:02:00 SESSION-KEEPALIVE pane=<pane-id> result=skipped:unmapped
+```
+
+`fetchLiveSessions()` identifies a live session by its AIBroker/iTerm pane id,
+not the Claude session id its transcript is named after — the status line
+bridges the two on every refresh (`claude-session-map.json` in the workers
+log dir, see `resolveClaudeSessionIdFromMap` in `session-keepalive.ts`). A
+pane with no (fresh enough) mapped Claude session — too new, or a non-iTerm
+terminal the status line never wrote an entry for — is skipped with
+`skipped:unmapped` and sent no beat, since it has no transcript to read.
+
+### Checking payoff
+
+`pai daemon keepalive` prints whether the feature is enabled, its current
+parameters, every session's beat counter, and the last 10 ledger lines.
+
+`pai audit tokens session` reports, on any session transcript, `idle gaps >
+60min: N` (how many times the session actually sat idle long enough to be at
+risk) alongside `keepalive beats: N` (how many of that session's prompts were
+beats rather than real turns) — the two numbers together show whether the
+feature is firing where it is needed and how much it is costing to do so.
+
+### Caveat
+
+A beat is still a real API call and, on a Max-plan subscription, still
+counts against the plan's rate-limit window even though its token cost is
+small — `maxBeats` and `activeHours` exist as much to bound that call count
+as to bound spend. An operator on a tight rate window should keep `maxBeats`
+low and `activeHours` narrow rather than assuming "cheap" means "free."

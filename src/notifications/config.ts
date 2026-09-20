@@ -9,17 +9,7 @@
  * so it can be used standalone (e.g. from CLI commands).
  */
 
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
-import {
-  CONFIG_FILE,
-  CONFIG_DIR,
-  expandHome,
-} from "../daemon/config.js";
+import { expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import type {
   NotificationConfig,
   ChannelConfigs,
@@ -72,20 +62,9 @@ function deepMerge<T extends object>(
  * Returns defaults merged with any stored values.
  */
 export function loadNotificationConfig(): NotificationConfig {
-  if (!existsSync(CONFIG_FILE)) {
-    return { ...DEFAULT_NOTIFICATION_CONFIG };
-  }
-
-  let raw: string;
-  try {
-    raw = readFileSync(CONFIG_FILE, "utf-8");
-  } catch {
-    return { ...DEFAULT_NOTIFICATION_CONFIG };
-  }
-
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = readMainConfigRaw();
   } catch {
     return { ...DEFAULT_NOTIFICATION_CONFIG };
   }
@@ -110,28 +89,17 @@ export function loadNotificationConfig(): NotificationConfig {
  * CONFIG_FILE. Creates the file if it does not exist.
  */
 export function saveNotificationConfig(config: NotificationConfig): void {
-  // Ensure the config dir exists
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
-  }
-
-  // Read current full config
   let full: Record<string, unknown> = {};
-  if (existsSync(CONFIG_FILE)) {
-    try {
-      full = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      // Start fresh if the file is unreadable
-    }
+  try {
+    full = readMainConfigRaw();
+  } catch {
+    // Start fresh if the file is unreadable
   }
 
   // Replace the notifications section
   full["notifications"] = config;
 
-  writeFileSync(CONFIG_FILE, JSON.stringify(full, null, 2) + "\n", "utf-8");
+  writeMainConfigRaw(full);
 }
 
 // ---------------------------------------------------------------------------

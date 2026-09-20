@@ -20,11 +20,13 @@ let provider: WorkerProvider;
 beforeAll(() => {
   writeFileSync(keyFile, "test-token\n", "utf8");
   provider = {
+    enabled: true,
+    protocol: "anthropic",
     baseUrl: "https://api.example.invalid/api/anthropic",
     keyFile,
     models: { default: "example-5.3", fast: "example-5.3-flash" },
     env: {},
-  } as WorkerProvider;
+  };
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

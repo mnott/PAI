@@ -13,9 +13,10 @@
  * logDir stays covered.
  */
 
-import { readFileSync, realpathSync } from "fs";
+import { readFileSync, realpathSync, existsSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join, sep } from "path";
+import { parse } from "yaml";
 
 const DEFAULT_LOG_DIR = "~/.claude/logs/workers";
 
@@ -26,18 +27,44 @@ export function expandHomePath(p) {
 }
 
 /**
+ * Resolve PAI_HOME directory: PAI_HOME env var or ~/.claude/pai default.
+ */
+function paiHomeDir() {
+  return process.env.PAI_HOME || join(homedir(), ".claude", "pai");
+}
+
+/**
  * The configured workers logDir: `workers.logDir` from the PAI config, or the
  * default. Missing/unreadable config falls back silently — the default is
- * what an unconfigured machine runs on.
+ * what an unconfigured machine runs on. Reads config.yaml (canonical) if it
+ * exists, else config.json, with fallback to legacy paths in the same order
+ * as src/daemon/config.ts `paiConfigFilePath()` uses.
  */
 export function workersLogDirFromConfig(configPath) {
-  const file = configPath ?? join(homedir(), ".config", "pai", "config.json");
+  const paiHome = paiHomeDir();
+  const NEW_CONFIG_JSON = join(paiHome, "config.json");
+  const NEW_CONFIG_YAML = join(paiHome, "config.yaml");
+  const OLD_CONFIG_FILE = join(homedir(), ".claude", "pai.json");
+  const LEGACY_CONFIG_FILE = join(homedir(), ".config", "pai", "config.json");
+
+  const candidates = [NEW_CONFIG_YAML, NEW_CONFIG_JSON, OLD_CONFIG_FILE, LEGACY_CONFIG_FILE];
+  const file = configPath ?? candidates.find((f) => existsSync(f));
+
+  if (!file) {
+    return expandHomePath(DEFAULT_LOG_DIR);
+  }
+
   try {
-    const raw = JSON.parse(readFileSync(file, "utf8"));
+    let raw;
+    if (file.endsWith(".yaml")) {
+      raw = parse(readFileSync(file, "utf8")) ?? {};
+    } else {
+      raw = JSON.parse(readFileSync(file, "utf8"));
+    }
     const logDir = raw?.workers?.logDir;
     if (typeof logDir === "string" && logDir.trim()) return expandHomePath(logDir.trim());
   } catch {
-    // no config or not JSON — default below
+    // no config or parsing failed — default below
   }
   return expandHomePath(DEFAULT_LOG_DIR);
 }

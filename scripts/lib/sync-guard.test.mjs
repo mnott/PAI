@@ -21,15 +21,21 @@ describe("workersLogDirFromConfig", () => {
     );
   });
 
-  it("reads workers.logDir and expands its ~", () => {
+  it("reads workers.logDir from JSON and expands its ~", () => {
     const cfg = join(dir, "config.json");
     writeFileSync(cfg, JSON.stringify({ workers: { logDir: "~/somewhere/workers" } }), "utf8");
     expect(workersLogDirFromConfig(cfg)).toBe(join(homedir(), "somewhere", "workers"));
   });
 
-  it("falls back to the default on a non-JSON or empty workers section", () => {
+  it("reads workers.logDir from YAML and expands its ~", () => {
+    const cfg = join(dir, "config.yaml");
+    writeFileSync(cfg, "workers:\n  logDir: ~/yaml-workers\n", "utf8");
+    expect(workersLogDirFromConfig(cfg)).toBe(join(homedir(), "yaml-workers"));
+  });
+
+  it("falls back to the default on a non-JSON/YAML or empty workers section", () => {
     const bad = join(dir, "bad.json");
-    writeFileSync(bad, "not json", "utf8");
+    writeFileSync(bad, "not json or yaml", "utf8");
     expect(workersLogDirFromConfig(bad)).toBe(join(homedir(), ".claude", "logs", "workers"));
     const empty = join(dir, "empty.json");
     writeFileSync(empty, JSON.stringify({ workers: {} }), "utf8");

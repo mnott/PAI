@@ -33,6 +33,11 @@ describe("worker_run schema: label", () => {
     const r = schema.safeParse({ specPath: "/tmp/spec.txt", label: "the goal" });
     expect(r.success).toBe(true);
   });
+
+  it("accepts an optional capability, any string", () => {
+    const r = schema.safeParse({ prompt: "a red circle", label: "paint", capability: "image" });
+    expect(r.success).toBe(true);
+  });
 });
 
 describe("resolveWorkerRunPrompt", () => {

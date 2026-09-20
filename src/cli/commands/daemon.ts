@@ -22,11 +22,16 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
-import { loadConfig } from "../../daemon/config.js";
+import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
+import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
 import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
+import {
+  loadSessionKeepaliveState,
+  sessionKeepaliveLedgerSummary,
+} from "../../daemon/session-keepalive.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -396,6 +401,47 @@ async function cmdMigrate(connectionString?: string): Promise<void> {
   }
 }
 
+function cmdKeepalive(): void {
+  const config = loadConfig().sessions.cacheKeepalive;
+
+  console.log();
+  console.log(bold("  Session cache keepalive"));
+  console.log();
+  console.log(config.enabled ? ok(`  enabled`) : warn(`  disabled`));
+  console.log(
+    dim(
+      `    idleMinutes: ${config.idleMinutes}  maxBeats: ${config.maxBeats}  ` +
+        `activeHours: ${config.activeHours}  minContextTokens: ${config.minContextTokens}  prompt: "${config.prompt}"`
+    )
+  );
+  if (!config.enabled) {
+    console.log();
+    console.log(dim(`  Enable it in ${resolvedMainConfigPath(paiConfigFilePath())}: sessions.cacheKeepalive.enabled: true`));
+    console.log(dim(`    pai config set sessions.cacheKeepalive.enabled true`));
+  }
+
+  const state = loadSessionKeepaliveState();
+  const ids = Object.keys(state);
+  console.log();
+  if (ids.length === 0) {
+    console.log(dim("  No per-session beat counters recorded yet."));
+  } else {
+    console.log(bold("  Per-session beat counters"));
+    for (const id of ids) {
+      const e = state[id];
+      console.log(dim(`    ${id}: beats=${e.beats} lastBeatAt=${e.lastBeatAt ?? "never"}`));
+    }
+  }
+
+  const summary = sessionKeepaliveLedgerSummary();
+  console.log();
+  console.log(bold(`  Ledger: ${summary.sent} sent, ${summary.skipped} skipped`));
+  for (const line of summary.lastLines) {
+    console.log(dim(`    ${line}`));
+  }
+  console.log();
+}
+
 function cmdLogs(opts: { lines?: string; follow?: boolean }): void {
   const lines = opts.lines ?? "50";
 
@@ -480,6 +526,13 @@ export function registerDaemonCommands(daemonCmd: Command): void {
     .description("Remove the launchd service and revert to direct MCP")
     .action(() => {
       cmdUninstall();
+    });
+
+  daemonCmd
+    .command("keepalive")
+    .description("Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines")
+    .action(() => {
+      cmdKeepalive();
     });
 
   daemonCmd

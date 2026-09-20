@@ -146,7 +146,9 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
         "--key writes the token inline as `key:` in workers.yaml (quoted, file kept 0600);\n" +
         "--key-file writes only a path to a 0600 file holding it — use one or the other.\n" +
         "OpenAI-protocol: --protocol openai --upstream-url https://…/v1 (runs via the PAI proxy).\n" +
-        "Codex (ChatGPT plan): --engine codex — runs through the Codex CLI."
+        "Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.\n" +
+        "Image generation: --engine image — `pai worker run --capability image` then POSTs\n" +
+        "straight to {url}/images/generations instead of spawning claude."
     )
     .option("--base-url <url>", "Anthropic-compatible API base URL (required unless --protocol openai)")
     .option("--url <url>", "Alias of --base-url")
@@ -158,7 +160,7 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
     .option("--note <text>", "Human note shown in `providers list`")
     .option("--protocol <proto>", "anthropic (default) or openai — openai runs through the local PAI proxy")
     .option("--upstream-url <url>", "Chat Completions base URL (required for --protocol openai)")
-    .option("--engine <engine>", "claude (default) or codex — codex runs `codex exec --json`")
+    .option("--engine <engine>", "claude (default), codex, or image — codex runs `codex exec --json`, image POSTs {url}/images/generations")
     .option("--context-window <tokens>", "Context window for the meter (default 200000; init event overrides)", parseIntArg)
     .option("--quota-probe <url>", "URL whose JSON first number is the quota percent (0-100)")
     .option("--cost-tier <1-5>", "Cost tier 1 (cheapest) … 5 (most expensive; default 3)", parseCostTier)
@@ -186,12 +188,12 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
       ) => {
         try {
           const protocol = opts.protocol as "anthropic" | "openai" | undefined;
-          const engine = opts.engine as "claude" | "codex" | undefined;
+          const engine = opts.engine as "claude" | "codex" | "image" | undefined;
           if (protocol && protocol !== "anthropic" && protocol !== "openai") {
             throw new WorkersConfigError(`--protocol must be anthropic or openai, got "${protocol}"`);
           }
-          if (engine && engine !== "claude" && engine !== "codex") {
-            throw new WorkersConfigError(`--engine must be claude or codex, got "${engine}"`);
+          if (engine && engine !== "claude" && engine !== "codex" && engine !== "image") {
+            throw new WorkersConfigError(`--engine must be claude, codex, or image, got "${engine}"`);
           }
           const baseUrl = opts.baseUrl ?? opts.url;
           if (protocol !== "openai" && !baseUrl) {

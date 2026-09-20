@@ -67,7 +67,7 @@ annotated example, how to add a provider, the load order, and
 `pai worker config migrate` for configs still on the old JSON shape or an
 old `workers.yaml` location). Everything else worker-related (pane, log
 dir, routing cooldown, cache-keepalive cadence, fallback) stays in
-`~/.claude/pai/config.json`'s `workers` section.
+`~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`)'s `workers` section.
 
 Quick summary of workers.yaml:
 
@@ -215,6 +215,27 @@ so it is unavailable for codex workers (their thread id is kept, but
 `pai worker resume` refuses with an explanation). `providers test` reports
 `codex not installed` (exit 0) when the CLI is missing.
 
+## The image engine
+
+Claude cannot generate images; a provider that can sets `engine: "image"`
+and `--capability image` runs it directly instead of spawning any process:
+
+```
+pai worker providers add pictures --engine image \
+  --url https://api.example.com/v1 --key sk-… --model example-image-model
+pai worker model image example-image-model --provider pictures
+pai worker run --capability image -p "a red circle on white" --out ./circle.png
+```
+
+This POSTs `{model, prompt, size, n: 1, response_format: "b64_json"}` to
+`{url}/images/generations`, decodes the PNG, and writes it — no worktree, no
+MCP, no follow pane. `--capability` (alias `--for`) picks the provider by
+capability instead of by class/`--provider`; see `docs/workers-config.md`'s
+"Capabilities" section for the full resolution order, `pai worker
+capability` (cross-provider preference) vs. `pai worker model` (one
+provider's own model ids), and what happens with no image provider
+configured.
+
 ## Daily use
 
 ```
@@ -236,8 +257,11 @@ pai worker log [all|tail|<id>]   # raw streams + routing ledger
 ```
 
 Classes pick the provider for a task class: `--class implement|research|spotcheck|…`
-(`--role` still works as its alias). `--no-pane` suppresses the iTerm follow
-pane; `--provider <name>` bypasses classes entirely. If you bring your own
+(`--role` still works as its alias). `--capability <name>` (alias `--for`)
+picks the provider by capability instead — e.g. `--capability image` runs
+the configured image engine (above) regardless of the active provider or
+class. `--no-pane` suppresses the iTerm follow pane; `--provider <name>`
+bypasses classes and capabilities entirely. If you bring your own
 `--append-system-prompt`, the worker contract below is added alongside it, not
 instead.
 
@@ -282,7 +306,11 @@ to the pai commands (`pai worker install` moves any previous versions to
 
 ## Routing
 
-A run resolves its provider as: `--provider` > `--class` > `active`.
+A run resolves its provider as: `--provider` > `--capability`/a class implying
+one > `--class` > `active`. `--capability` (and a class whose implied
+capability is not `default` and names no provider of its own, e.g. `image`)
+resolves cross-provider through `capabilities:` instead of this chain — see
+`docs/workers-config.md`'s "Capabilities" section.
 
 With `active: "auto"`, providers are tried in `routing.order` (or the class's
 own `order`), skipping:
@@ -318,7 +346,7 @@ What `on` does:
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
 - Pins the top-level `model` key to the provider's default model.
 - Saves the replaced values under `workers.fallback.saved` in
-  `~/.claude/pai/config.json` and writes a `FALLBACK-ACTIVE.md` note into the
+  `~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`) and writes a `FALLBACK-ACTIVE.md` note into the
   workers log dir telling running sessions what to do.
 
 Notes:

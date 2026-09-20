@@ -6,5 +6,5 @@ USE WHEN user says 'load vault context', 'brief me from Obsidian', 'morning brie
 
 Reads: daily note → open TODOs → PAI index (active projects) → HOME.md (focus areas) → recent insights. Synthesizes into morning briefing with Suggested First Action.
 
-All vault skills work with the vault configured in \`~/.claude/pai/config.json\` (\`vaultPath\` key).`,
+All vault skills work with the vault configured in \`~/.claude/pai/config.yaml\` (\`vaultPath\` key, or \`config.json\` until you run \`pai config yaml\`).`,
 };

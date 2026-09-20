@@ -34,7 +34,9 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
       "Model ids per provider: no args lists them,\n" +
         "`model <model-id>` sets the active provider's default model (back-compat),\n" +
         "`model <capability>` shows one capability, `model <capability> <model-id>` sets it.\n" +
-        `Capabilities: default, fast, image. --provider targets another provider.`
+        "Capability names are open (default, fast, image, … — any ^[a-z][a-z0-9-]*$ name);\n" +
+        "`pai worker capability` picks which provider serves one across the whole config.\n" +
+        `--provider targets another provider.`
     )
     .option("--provider <name>", "Provider to read or change (default: the active one)")
     .action((what: string | undefined, model: string | undefined, opts: { provider?: string }) => {

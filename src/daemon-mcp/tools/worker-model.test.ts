@@ -101,6 +101,16 @@ describe("worker_model set", () => {
     expect(models().default).toBe("example-5.3"); // untouched
   });
 
+  it("sets a capability outside the well-known set (open set)", () => {
+    const r = workerModel(
+      { action: "set", provider: "glm", capability: "vision", model: "example-vision" },
+      configPath
+    );
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0]!.text).toBe("glm vision model: example-vision");
+    expect(models().default).toBe("example-5.3"); // untouched
+  });
+
   it("still honours slot as the pre-capability spelling", () => {
     const r = workerModel({ action: "set", slot: "fast", model: "example-6-flash" }, configPath);
     expect(r.isError).toBeUndefined();

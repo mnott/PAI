@@ -28,6 +28,7 @@ import {
   nativeAnthropicProvider,
   providerCostTier,
   readWorkersSection,
+  resolveCapability,
   writeWorkersSection,
   type ClassTarget,
   type ModelCapability,
@@ -53,12 +54,12 @@ export interface AddProviderInput {
   note?: string;
   protocol?: "anthropic" | "openai";
   upstreamUrl?: string;
-  engine?: "claude" | "codex";
+  engine?: "claude" | "codex" | "image";
   quotaProbe?: string;
   contextWindow?: number;
   costTier?: number;
   tags?: string[];
-  /** Config file override (tests, dry runs); default ~/.claude/pai/config.json. */
+  /** Config file override (tests, dry runs); default ~/.claude/pai/config.yaml. */
   configPath?: string;
 }
 
@@ -226,7 +227,7 @@ export function setProviderModel(
 ): WorkersConfig {
   if (!isModelCapability(capability)) {
     throw new WorkersConfigError(
-      `"${capability}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`
+      `"${capability}" is not a valid capability name (must match ^[a-z][a-z0-9-]*$; well-known: ${MODEL_CAPABILITIES.join(", ")})`
     );
   }
   const id = model.trim();
@@ -325,11 +326,14 @@ export function classTargetText(target: ClassTarget): string {
 }
 
 /**
- * `default X  fast Y  image Z` — every model capability on one line, unset
- * ones shown as "(none)" (they resolve to the default model).
+ * `default X  fast Y  image Z  …` — every well-known capability on one line
+ * (unset ones shown as "(none)"), plus any open-set capability this provider
+ * actually declares (e.g. `vision`), which is only listed when set.
  */
 export function modelPrefsText(p: WorkerProvider): string {
-  return MODEL_CAPABILITIES.map((c) => `${c} ${p.models[c] ?? "(none)"}`).join("  ");
+  const known = new Set<string>(MODEL_CAPABILITIES);
+  const extra = Object.keys(p.models).filter((c) => !known.has(c)).sort();
+  return [...MODEL_CAPABILITIES, ...extra].map((c) => `${c} ${p.models[c] ?? "(none)"}`).join("  ");
 }
 
 /**
@@ -398,6 +402,9 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
     if (p.engine === "codex") {
       lines.push(`    engine codex (runs through the Codex CLI)`);
     }
+    if (p.engine === "image") {
+      lines.push(`    engine image (no process spawn — POSTs {url}/images/generations directly)`);
+    }
     const cls = classesForProvider(workers, name);
     lines.push(`    classes: ${cls.length ? cls.join(", ") : "(none)"}`);
   }
@@ -410,4 +417,66 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
   }
   lines.push(`config: ${existsSync(workersYamlPath()) ? workersYamlPath() : configPath}`);
   return lines;
+}
+
+/**
+ * Set which provider(s), in order, serve a capability across the whole
+ * config (`pai worker capability <name> <provider>[,<provider>…]`, MCP
+ * worker_capability). resolveCapability walks this list at run time.
+ */
+export function setCapabilityPreference(
+  capability: string,
+  providers: string[],
+  configPath?: string
+): WorkersConfig {
+  if (!isModelCapability(capability)) {
+    throw new WorkersConfigError(`"${capability}" is not a valid capability name (must match ^[a-z][a-z0-9-]*$)`);
+  }
+  if (!providers.length) {
+    throw new WorkersConfigError("at least one provider name is required");
+  }
+  const { raw, workers } = readWorkersSection(configPath);
+  for (const name of providers) {
+    if (name !== ANTHROPIC_NATIVE && !workers.providers[name]) {
+      throw new WorkersConfigError(
+        `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+      );
+    }
+  }
+  workers.capabilities[capability] = providers;
+  writeWorkersSection(raw, workers, configPath);
+  return workers;
+}
+
+export function unsetCapabilityPreference(capability: string, configPath?: string): WorkersConfig {
+  const { raw, workers } = readWorkersSection(configPath);
+  if (!(capability in workers.capabilities)) {
+    throw new WorkersConfigError(`no capability preference set for "${capability}"`);
+  }
+  delete workers.capabilities[capability];
+  writeWorkersSection(raw, workers, configPath);
+  return workers;
+}
+
+/**
+ * `pai worker capability` with no args: every configured `capabilities:`
+ * preference and what it resolves to right now — provider/model/engine, or
+ * `fallback: <provider>/<model>` when nothing on the list actually declares
+ * the capability (see resolveCapability's fellBack flag).
+ */
+export function describeCapabilities(workers: WorkersConfig): string[] {
+  const names = Object.keys(workers.capabilities);
+  if (!names.length) {
+    return ["no capability preferences set — set one with `pai worker capability <name> <provider>[,<provider>…]`"];
+  }
+  return names.map((cap) => {
+    const pref = workers.capabilities[cap];
+    try {
+      const r = resolveCapability(workers, cap);
+      const resolved = r.fellBack ? `fallback: ${r.provider}/${r.model}` : `${r.provider}/${r.model}  engine ${r.engine}`;
+      return `${cap}: [${pref.join(", ")}] -> ${resolved}`;
+    } catch (e) {
+      return `${cap}: [${pref.join(", ")}] -> unresolved: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  });
 }

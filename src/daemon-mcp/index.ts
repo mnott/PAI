@@ -67,7 +67,7 @@ import {
   terminalTabs,
   mcpDevGuide,
 } from "./resources/index.js";
-import { MODEL_CAPABILITIES, readWorkersSection } from "../workers/config.js";
+import { CAPABILITY_NAME_RE, MODEL_CAPABILITIES, readWorkersSection } from "../workers/config.js";
 import { workersLogDir, ledgerPath } from "../workers/paths.js";
 import { ledgerSummary } from "../workers/ledger.js";
 import {
@@ -91,6 +91,8 @@ import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/stat
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
+import { configList, configGet, configSet, configUnset } from "./tools/config.js";
+import { workerCapability } from "./tools/worker-capability.js";
 
 // ---------------------------------------------------------------------------
 // IPC client singleton
@@ -274,7 +276,7 @@ async function startShim(): Promise<void> {
       "",
       "Recency boost optionally down-weights older results (recency_boost=90 means scores halve every 90 days).",
       "",
-      "Defaults come from ~/.claude/pai/config.json (search section). Per-call parameters override config defaults.",
+      "Defaults come from ~/.claude/pai/config.yaml (search section). Per-call parameters override config defaults.",
       "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
@@ -863,7 +865,9 @@ async function startShim(): Promise<void> {
       "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
       "  through the local PAI proxy). A raw key is written to",
       "  ~/.claude/pai/keys/<name> (mode 0600); only the path lands in the config.",
-      "  engine=codex runs the Codex CLI instead of Claude Code.",
+      "  engine=codex runs the Codex CLI instead of Claude Code; engine=image POSTs",
+      "  straight to {base_url}/images/generations instead of spawning a process —",
+      "  pair it with a worker_capability image preference to run it.",
       "action=update changes cost_tier / tags of an existing provider.",
       "action=test runs a one-word pong probe through the provider",
       "  (reports 'codex not installed' when that engine's CLI is missing).",
@@ -877,7 +881,7 @@ async function startShim(): Promise<void> {
       base_url: z.string().optional().describe("Anthropic-compatible API base URL (add)."),
       upstream_url: z.string().optional().describe("Chat Completions base URL (add, protocol=openai)."),
       protocol: z.enum(["anthropic", "openai"]).optional().describe("Protocol (add). Default: anthropic."),
-      engine: z.enum(["claude", "codex"]).optional().describe("Runner engine (add). Default: claude."),
+      engine: z.enum(["claude", "codex", "image"]).optional().describe("Runner engine (add). Default: claude."),
       context_window: z.number().int().positive().optional().describe("Context window for the meter (add). No default: unset hides the meter unless the init event announces one."),
       key_file: z.string().optional().describe("File holding the API token, 0600 (add)."),
       key: z.string().optional().describe("Raw API token (add) — parked in ~/.claude/pai/keys/<name>."),
@@ -1075,15 +1079,17 @@ async function startShim(): Promise<void> {
       "",
       "action=get (default): the model ids of one provider (provider given,",
       "default: the active one) or of every provider when provider is omitted.",
-      "action=set needs model; capability picks which one (default, fast, image).",
+      "action=set needs model; capability picks which one — the set is open",
+      `(well-known: ${MODEL_CAPABILITIES.join(", ")}; any other ^[a-z][a-z0-9-]*$ name works too).`,
     ].join("\n"),
     {
       action: z.enum(["get", "set"]).optional().describe("Default: get."),
       provider: z.string().optional().describe("Provider to read or change (default: the active one)."),
       capability: z
-        .enum(MODEL_CAPABILITIES)
+        .string()
+        .regex(CAPABILITY_NAME_RE)
         .optional()
-        .describe("Which model capability to set (default, fast, image). Default: default."),
+        .describe(`Which model capability to set (open set; well-known: ${MODEL_CAPABILITIES.join(", ")}). Default: default.`),
       slot: z
         .enum(["default", "fast"])
         .optional()
@@ -1091,6 +1097,27 @@ async function startShim(): Promise<void> {
       model: z.string().optional().describe("The new model id (required for set)."),
     },
     async (args) => workerModel(args)
+  );
+
+  server.tool(
+    "worker_capability",
+    [
+      "Which provider(s) serve a capability across the whole config (the",
+      "config behind `pai worker capability`) — distinct from worker_model,",
+      "which sets a model id on one provider's own table.",
+      "",
+      "action=list (default): every preference and what it resolves to now.",
+      "action=set needs capability, providers (first usable one wins).",
+      "action=unset needs capability. E.g. set capability=image,",
+      "providers=[\"pictures\"] to run worker_run with capability=image against",
+      "an engine=image provider named \"pictures\".",
+    ].join("\n"),
+    {
+      action: z.enum(["list", "set", "unset"]).optional().describe("Default: list."),
+      capability: z.string().optional().describe("Capability name, e.g. image (required for set, unset)."),
+      providers: z.array(z.string()).optional().describe("Preference list, first usable one wins (required for set)."),
+    },
+    async (args) => workerCapability(args)
   );
 
   server.tool(
@@ -1102,8 +1129,9 @@ async function startShim(): Promise<void> {
       "exactly one of prompt/specPath (the -p value, or a file/stdin '-' to read",
       "it from — avoids quoting long prompts through JSON-RPC). chain (e.g.",
       "\"draft,implement\") runs spec-first stages, class picks the provider",
-      "(default: active). Check on it with worker_ps / worker_replay, talk to",
-      "it with worker_say.",
+      "(default: active); capability=image runs an engine=image provider",
+      "directly instead, writing a PNG rather than spawning claude.",
+      "Check on it with worker_ps / worker_replay, talk to it with worker_say.",
     ].join("\n"),
     workerRunShape,
     async (args) => {
@@ -1145,6 +1173,7 @@ async function startShim(): Promise<void> {
           }
           return runWorker({
             className: args.class,
+            capabilityFlag: args.capability,
             label: args.label,
             noPane: false,
             mcpFlag: args.mcp,
@@ -1348,6 +1377,71 @@ async function startShim(): Promise<void> {
         return workerError(e);
       }
     }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tools: config_* — the main PAI config (config.yaml/config.json), the
+  // same src/config/main-config-ops.ts functions `pai config` calls on the
+  // CLI. Direct library calls, no daemon IPC.
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "config_list",
+    [
+      "Print the main PAI config as YAML (or JSON). Secrets (key/token/secret/",
+      "password fields, and postgres.connectionString) are always masked to",
+      "****<last4>. Defaults to only what the file explicitly sets; all=true",
+      "includes every built-in default value too.",
+    ].join("\n"),
+    {
+      all: z.boolean().optional().describe("Include every default value, not just what the file sets. Default: false."),
+      json: z.boolean().optional().describe("Return JSON instead of YAML. Default: false."),
+    },
+    async (args) => configList(args)
+  );
+
+  server.tool(
+    "config_get",
+    [
+      "Read one config value by dotted path (e.g. search.recencyBoostDays).",
+      "Resolves against the defaults-merged effective config, so a value never",
+      "set in the file still answers with its built-in default. Masked",
+      "(****<last4>) if the path looks like a secret.",
+    ].join("\n"),
+    {
+      path: z.string().min(1).describe("Dotted config path, e.g. search.recencyBoostDays."),
+    },
+    async (args) => configGet(args)
+  );
+
+  server.tool(
+    "config_set",
+    [
+      "Write one config value by dotted path. WRITES THE FILE: creates",
+      "config.yaml on first use (converting config.json if it exists), then",
+      "writes comment-preserving. Value parsing: true/false, null, numbers,",
+      "[...] / {...} as JSON, else a plain string. Refuses an unknown",
+      "top-level key or a value whose type disagrees with the built-in",
+      "default unless force=true.",
+    ].join("\n"),
+    {
+      path: z.string().min(1).describe("Dotted config path, e.g. search.recencyBoostDays."),
+      value: z.string().describe("Value to set, as a string (parsed per the rules above)."),
+      force: z.boolean().optional().describe("Allow an unknown top-level key or a type mismatch. Default: false."),
+    },
+    async (args) => configSet(args)
+  );
+
+  server.tool(
+    "config_unset",
+    [
+      "Remove one config value by dotted path, WRITING THE FILE — reverting it",
+      "to the built-in default. No-ops when the path was never explicitly set.",
+    ].join("\n"),
+    {
+      path: z.string().min(1).describe("Dotted config path, e.g. search.recencyBoostDays."),
+    },
+    async (args) => configUnset(args)
   );
 
   // -------------------------------------------------------------------------

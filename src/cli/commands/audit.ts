@@ -172,6 +172,11 @@ function printSession(report: SessionReportOutput): void {
       console.log(dim(`  ${f.from} -> ${f.to} before turn ${f.turnIndex}: ${f.category} (${f.scope})`));
     }
   }
+  console.log(
+    dim(
+      `idle gaps > 60min: ${report.idleGapsOver60min}, keepalive beats: ${report.keepaliveBeats ?? "n/a"}`
+    )
+  );
 }
 
 function printTurnBreakdown(tb: TurnBreakdown): void {

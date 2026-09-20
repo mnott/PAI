@@ -1,7 +1,7 @@
 /**
  * config.ts — the `workers` section of the PAI config file (CONFIG_FILE,
- * see src/daemon/config.ts's paiConfigFilePath — ~/.claude/pai/config.json
- * today, pre-2026-09-19 ~/.config/pai/config.json).
+ * see src/daemon/config.ts's paiConfigFilePath — ~/.claude/pai/config.yaml
+ * today, config.json until `pai config yaml` runs).
  *
  * Everything that knows about worker providers reads this module: the CLI
  * (`pai worker …`), the MCP tools (worker_*), and the Agent-routing hook.
@@ -20,8 +20,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
-import { CONFIG_FILE } from "../daemon/config.js";
+import { CONFIG_FILE, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
@@ -36,8 +35,12 @@ import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlDat
  */
 export type WorkerProtocol = "anthropic" | "openai";
 
-/** Runner executable behind a provider: Claude Code or the Codex CLI. */
-export type WorkerEngine = "claude" | "codex";
+/**
+ * Runner executable behind a provider: Claude Code, the Codex CLI, or the
+ * "image" engine (src/workers/engines/image.ts — an OpenAI-compatible
+ * images API, not a claude/codex spawn).
+ */
+export type WorkerEngine = "claude" | "codex" | "image";
 
 /** One quota window the statusline renders for a provider (e.g. "5h", "7d"). */
 export interface UsageWindow {
@@ -252,19 +255,26 @@ export const WORKER_CLASSES = [
 export type WorkerClassName = (typeof WORKER_CLASSES)[number];
 
 /**
- * The named model capabilities a provider may carry a preference for, set
- * per provider under `workers.providers.<name>.models`. "default" is the
- * required catch-all; the others name what a model is *for* — "fast" the
- * cheap tier (spotcheck, haiku-tier spawns), "image" the image class.
- * Everything resolves through resolveModelCapability, falling back to default.
+ * The well-known model capabilities — documented, and what the starter
+ * workers.yaml and `pai worker model`'s listing show by name. The set is
+ * open, though: a provider's `models` block may carry any capability name
+ * matching CAPABILITY_NAME_RE (see isModelCapability), e.g. "vision" or
+ * "longcontext" for a provider that serves them. "default" is the required
+ * catch-all; the others name what a model is *for* — "fast" the cheap tier
+ * (spotcheck, haiku-tier spawns), "image" the image class/capability.
+ * Everything resolves through resolveModelCapability, falling back to
+ * default; cross-provider preference for a capability is `capabilities:` in
+ * workers.yaml (see resolveCapability).
  */
 export const MODEL_CAPABILITIES = ["default", "fast", "image"] as const;
 
-export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+export type ModelCapability = string;
 
-/** Is this string the name of a known model capability? */
+export const CAPABILITY_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+/** Is this string a syntactically valid capability name (open set)? */
 export function isModelCapability(v: string): v is ModelCapability {
-  return (MODEL_CAPABILITIES as readonly string[]).includes(v);
+  return CAPABILITY_NAME_RE.test(v);
 }
 
 /**
@@ -341,6 +351,13 @@ export interface WorkersConfig {
   classes: Record<string, ClassTarget>;
   /** MCP set name → server names; `--mcp <set>` and class `mcp` expand these. */
   mcpSets: Record<string, string[]>;
+  /**
+   * Capability → provider names in preference order (workers.yaml
+   * `capabilities:`), e.g. `{ image: ["pictures", "glm"] }`. Cross-provider,
+   * unlike a provider's own `models` table: this is what lets `--capability
+   * image` find the one provider configured to serve it. See resolveCapability.
+   */
+  capabilities: Record<string, string[]>;
   pane: WorkersPaneConfig;
   logDir: string;
   routing: WorkersRoutingConfig;
@@ -415,6 +432,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     providers: {},
     classes: {},
     mcpSets: { ...DEFAULT_MCP_SETS },
+    capabilities: {},
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
@@ -454,7 +472,10 @@ export function parseModelsBlock(pathPrefix: string, modelsRaw: unknown): Worker
   for (const key of Object.keys(m)) {
     if (key === "default") continue;
     if (!isModelCapability(key)) {
-      bad(`${pathPrefix}.${key}`, `"${key}" is not a model capability (from: ${MODEL_CAPABILITIES.join(", ")})`);
+      bad(
+        `${pathPrefix}.${key}`,
+        `"${key}" is not a valid capability name (must match ^[a-z][a-z0-9-]*$; well-known: ${MODEL_CAPABILITIES.join(", ")}, but any name in that shape is accepted)`
+      );
     }
     const id = str(m[key]);
     if (!id) bad(`${pathPrefix}.${key}`, "must be a non-empty model id");
@@ -479,8 +500,8 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     bad(`.providers.${name}.protocol`, `"${str(p.protocol)}" is neither "anthropic" nor "openai"`);
   }
   const engine = p.engine === undefined ? "claude" : str(p.engine);
-  if (engine !== "claude" && engine !== "codex") {
-    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is neither "claude" nor "codex"`);
+  if (engine !== "claude" && engine !== "codex" && engine !== "image") {
+    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "image"`);
   }
 
   const baseUrl = str(p.baseUrl);
@@ -726,6 +747,31 @@ export function parseMcpSetsValue(raw: unknown, badPathPrefix: string): Record<s
 }
 
 /**
+ * Parse a `capabilities` value shared by JSON and YAML loading: capability
+ * name (open set, see isModelCapability) → provider names in preference
+ * order. Provider names are not cross-checked here — a name that stops
+ * existing is simply skipped by resolveCapability at resolve time, the same
+ * way routing.order tolerates a removed provider.
+ */
+export function parseCapabilitiesValue(raw: unknown, badPathPrefix: string): Record<string, string[]> {
+  const capabilities: Record<string, string[]> = {};
+  if (raw === undefined) return capabilities;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    bad(badPathPrefix, "must be an object of capability name → [provider names]");
+  }
+  for (const [name, order] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isModelCapability(name)) {
+      bad(`${badPathPrefix}.${name}`, `"${name}" is not a valid capability name (must match ^[a-z][a-z0-9-]*$)`);
+    }
+    if (!Array.isArray(order) || order.length === 0 || order.some((x) => typeof x !== "string" || !x)) {
+      bad(`${badPathPrefix}.${name}`, "must be a non-empty array of provider names");
+    }
+    capabilities[name] = order as string[];
+  }
+  return capabilities;
+}
+
+/**
  * Parse and validate a raw `workers` value. Missing section → defaults.
  * Unknown-but-typed garbage → WorkersConfigError naming the offending field.
  */
@@ -753,6 +799,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
   const classes = parseClassesValue(classesRaw, w.classes !== undefined ? ".classes" : ".roles");
 
   const mcpSets = parseMcpSetsValue(w.mcpSets, ".mcpSets");
+  const capabilities = parseCapabilitiesValue(w.capabilities, ".capabilities");
 
   let pane = { ...DEFAULT_PANE };
   if (w.pane !== undefined) {
@@ -876,6 +923,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     providers,
     classes,
     mcpSets,
+    capabilities,
     pane,
     logDir: str(w.logDir) || d.logDir,
     routing,
@@ -896,6 +944,7 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
     providers: workers.providers,
     classes: workers.classes,
     mcpSets: workers.mcpSets,
+    capabilities: workers.capabilities,
     nativeModels: workers.nativeModels,
   };
 }
@@ -903,21 +952,24 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
 /**
  * Read the whole config file and return (raw, workers) — the raw record so
  * callers can rewrite it preserving every other section, the parsed+validated
- * workers section. Unreadable config throws (readJsonStrict), missing is fine.
- * `path` overrides the config location (tests, CLAUDE_SETTINGS_PATH-style
- * dry runs); default CONFIG_FILE (see paiConfigFilePath).
+ * workers section. Unreadable config throws, missing is fine. `path`
+ * overrides the config location (tests, CLAUDE_SETTINGS_PATH-style dry runs);
+ * default CONFIG_FILE (see paiConfigFilePath). Reads via readMainConfigRaw,
+ * so a config.yaml next to `path` is preferred over JSON, same as every
+ * other main-config reader.
  *
  * Providers, classes, mcpSets and active load from workers.yaml (next to
  * `path`) when it exists; otherwise they fall back to the JSON `workers`
  * section, and then to built-in defaults — nothing breaks before migration
  * (`pai worker config migrate`). Everything else (pane, routing, tree,
- * cacheKeepaliveSecs, fallback, enabled, logDir) always comes from JSON.
+ * cacheKeepaliveSecs, fallback, enabled, logDir) always comes from the main
+ * config (JSON or YAML).
  */
 export function readWorkersSection(path: string = CONFIG_FILE): {
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
-  const raw = readJsonStrict(path, path);
+  const raw = readMainConfigRaw(path);
   const workers = parseWorkersConfig(raw.workers);
   const yaml = readWorkersYaml(workersYamlPath());
   if (yaml) {
@@ -925,6 +977,7 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
     workers.providers = yaml.data.providers;
     workers.classes = yaml.data.classes;
     workers.mcpSets = yaml.data.mcpSets;
+    workers.capabilities = yaml.data.capabilities;
     workers.nativeModels = yaml.data.nativeModels;
   }
   return { raw, workers };
@@ -960,7 +1013,7 @@ export function writeWorkersSection(
       ? workers
       : { ...workers, fallback: undefined };
   raw.workers = jsonWorkers;
-  writeJsonAtomic(path, raw, { label: path });
+  writeMainConfigRaw(raw, path);
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */
@@ -1031,6 +1084,102 @@ export function providerCostTier(p: WorkerProvider): number {
  */
 export function resolveModelCapability(p: WorkerProvider, capability: ModelCapability): string {
   return p.models[capability] ?? p.models.default;
+}
+
+/** Runner behind a provider, defaulting to the Claude Code harness. */
+function providerEngine(p: WorkerProvider): WorkerEngine {
+  return p.engine ?? "claude";
+}
+
+/** Does this provider name a model for the capability ("default" always counts)? */
+function providerDeclaresCapability(p: WorkerProvider, capability: string): boolean {
+  return capability === "default" || p.models[capability] !== undefined;
+}
+
+/** A provider usable for this capability: declares it, enabled, and passes assertProviderRunnable. */
+function providerUsableForCapability(p: WorkerProvider | undefined, capability: string): p is WorkerProvider {
+  if (!p || !p.enabled || !providerDeclaresCapability(p, capability)) return false;
+  try {
+    assertProviderRunnable("", p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface ResolvedCapability {
+  /** Provider name the capability resolved to ("anthropic" for the built-in). */
+  provider: string;
+  model: string;
+  engine: WorkerEngine;
+  /**
+   * True when nothing declared this capability anywhere and the result is
+   * just the active provider's default model — a caller should treat this as
+   * "no real image/vision/… provider is configured", not a genuine match.
+   */
+  fellBack: boolean;
+}
+
+/**
+ * Cross-provider capability resolution (`workers.yaml`'s `capabilities:`
+ * map): which provider+model serves a named capability (e.g. "image"),
+ * independent of any one provider's own `models` table.
+ *
+ * Resolution order:
+ *   1. `capabilities.<name>` (explicit preference list) — first provider
+ *      that declares the capability, is enabled, and passes
+ *      assertProviderRunnable.
+ *   2. No preference list: the active provider, if it declares the
+ *      capability.
+ *   3. Still nothing: any enabled provider that declares the capability
+ *      (stable order — provider names sorted, "anthropic" included).
+ *   4. Nothing anywhere: the active provider's default model, `fellBack: true`.
+ */
+export function resolveCapability(
+  workers: Pick<WorkersConfig, "providers" | "active" | "capabilities" | "nativeModels">,
+  capability: string
+): ResolvedCapability {
+  const order = workers.capabilities[capability];
+  if (order?.length) {
+    for (const name of order) {
+      const p = getProviderOrNative(workers, name);
+      if (providerUsableForCapability(p, capability)) {
+        return { provider: name, model: resolveModelCapability(p, capability), engine: providerEngine(p), fellBack: false };
+      }
+    }
+    throw new WorkersConfigError(
+      `no configured provider for capability "${capability}" is usable right now ` +
+        `(checked, in order: ${order.join(", ")}) — set one with: pai worker capability ${capability} <provider>`
+    );
+  }
+
+  const activeName = workers.active && workers.active !== "auto" ? workers.active : null;
+  if (activeName) {
+    const p = getProviderOrNative(workers, activeName);
+    if (providerUsableForCapability(p, capability)) {
+      return { provider: activeName, model: resolveModelCapability(p, capability), engine: providerEngine(p), fellBack: false };
+    }
+  }
+
+  const candidates: Record<string, WorkerProvider> = {
+    [ANTHROPIC_NATIVE]: nativeAnthropicProvider(workers.nativeModels),
+    ...workers.providers,
+  };
+  for (const name of Object.keys(candidates).sort()) {
+    const p = candidates[name];
+    if (providerUsableForCapability(p, capability)) {
+      return { provider: name, model: resolveModelCapability(p, capability), engine: providerEngine(p), fellBack: false };
+    }
+  }
+
+  const fallbackName = activeName ?? ANTHROPIC_NATIVE;
+  const fallback = getProviderOrNative(workers, fallbackName) ?? nativeAnthropicProvider(workers.nativeModels);
+  return {
+    provider: fallbackName,
+    model: fallback.models.default,
+    engine: providerEngine(fallback),
+    fellBack: true,
+  };
 }
 
 /**

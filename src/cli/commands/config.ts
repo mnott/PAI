@@ -26,7 +26,17 @@ import {
   type MigrateFileResult,
   type MigrateDirResult,
 } from "../../config/pai-home.js";
-import { paiConfigFilePath, migrateConfigFile } from "../../daemon/config.js";
+import { paiConfigFilePath, paiConfigYamlFilePath, migrateConfigFile } from "../../daemon/config.js";
+import { migrateMainConfigToYaml, MainConfigError } from "../../config/main-config.js";
+import { voicesJsonPath, voicesYamlPath, migrateVoicesToYaml } from "../../config/voices-config.js";
+import {
+  listConfigOp,
+  getConfigValueOp,
+  setConfigValueOp,
+  unsetConfigValueOp,
+  formatConfigGetOutput,
+  MainConfigOpsError,
+} from "../../config/main-config-ops.js";
 import { workersYamlPath, relocateWorkersYaml } from "../../workers/workers-config.js";
 import { registryDbPath, oldRegistryPath } from "../../registry/db.js";
 import { federationDbPath, oldFederationPath } from "../../memory/db.js";
@@ -362,15 +372,17 @@ export function registerConfigCommands(configCmd: Command): void {
     .description("Print the PAI_HOME namespace dir and each resolved per-user file")
     .action(() => {
       console.log(bold("PAI_HOME: ") + paiHomeDir());
-      console.log(`  config.json:              ${paiConfigFilePath()}`);
+      console.log(`  config.json / config.yaml: ${paiConfigFilePath()} / ${paiConfigYamlFilePath()}`);
       console.log(`  workers.yaml:             ${workersYamlPath()}`);
       console.log(`  whisper-rules.md:         ${whisperRulesPath()}`);
       console.log(`  advisor-mode.json:        ${advisorModePath()}`);
       console.log(`  session-state/:           ${sessionStateDir()}`);
       console.log(`  session-scan-cache.json:  ${scanCacheFilePath()}`);
       console.log(`  queries/:                 ${queriesDirPath()}`);
-      console.log(`  summary-cooldowns.json, work-queue.json, kg-backfill-state.json,`);
-      console.log(`  voices.json, federation.db (orphan): all under PAI_HOME`);
+      console.log(`  summary-cooldowns.json, work-queue.json, kg-backfill-state.json:`);
+      console.log(`                            all under PAI_HOME`);
+      console.log(`  voices.json / voices.yaml: ${voicesJsonPath()} / ${voicesYamlPath()}`);
+      console.log(`  federation.db (orphan): under PAI_HOME`);
       console.log(`  logs/workers/:            ${paiHomePath("logs", "workers")} (pass --logs to move)`);
       console.log(`  History/:                 ${paiHomePath("History")} (pass --history to move)`);
       console.log(`  agent-sessions.json, session-routing.json, History/security/security-events.jsonl:`);
@@ -384,6 +396,101 @@ export function registerConfigCommands(configCmd: Command): void {
       console.log(`  registry-scan.json:       ${paiHomePath("registry-scan.json")}`);
       console.log(`  agents/:                  ${paiHomePath("agents")} (~/.claude/Agents symlinks here after migrate)`);
       console.log(`  commands/:                ${paiHomePath("commands")} (~/.claude/Commands symlinks here after migrate)`);
+    });
+
+  configCmd
+    .command("yaml")
+    .description(
+      "Convert config.json → config.yaml (and voices.json → voices.yaml), with a short\n" +
+        "      # comment above every top-level section and any \"_comment\"/\"_...Note\" JSON-\n" +
+        "      workaround key re-attached as a real comment. Verifies the generated YAML\n" +
+        "      re-parses to the exact same data before writing anything; the JSON is then\n" +
+        "      renamed to <name>.migrated-<YYYY-MM-DD> (never deleted). Every writer keeps\n" +
+        "      working unmodified afterwards — see docs/config.md."
+    )
+    .option("--dry-run", "Print the plan without writing anything")
+    .option("--force", "Regenerate config.yaml (or voices.yaml) even if it already exists")
+    .action((opts: { dryRun?: boolean; force?: boolean }) => {
+      let hadError = false;
+      const run = (label: string, fn: () => ReturnType<typeof migrateMainConfigToYaml>) => {
+        try {
+          const r = fn();
+          if (r.dryRun) {
+            console.log(dim(`  ${label}: would write ${r.yamlPath}`));
+          } else {
+            console.log(ok(`  ${label}: `) + `${r.backupPath} → ${r.yamlPath}`);
+          }
+        } catch (e) {
+          hadError = true;
+          console.error(err(`  ${label}: `) + (e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e)));
+        }
+      };
+      run("config.yaml", () => migrateMainConfigToYaml(paiConfigFilePath(), { dryRun: opts.dryRun, force: opts.force }));
+      run("voices.yaml", () => migrateVoicesToYaml({ dryRun: opts.dryRun, force: opts.force }));
+      if (hadError) process.exitCode = 1;
+    });
+
+  configCmd
+    .command("list")
+    .description("Print the main PAI config as YAML (secrets masked). Defaults to what the file explicitly sets.")
+    .option("--all", "Include every default value, not just what the file sets")
+    .option("--json", "Print JSON instead of YAML")
+    .action((opts: { all?: boolean; json?: boolean }) => {
+      const r = listConfigOp({ all: opts.all });
+      console.log(opts.json ? JSON.stringify(r.data, null, 2) : r.yaml.trimEnd());
+    });
+
+  configCmd
+    .command("get <path>")
+    .description(
+      "Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON."
+    )
+    .option("--json", "Print an object/array value as JSON instead of YAML")
+    .action((path: string, opts: { json?: boolean }) => {
+      try {
+        const r = getConfigValueOp(path);
+        if (!r.found) {
+          console.error(err(`Not set: ${path}`));
+          process.exitCode = 1;
+          return;
+        }
+        console.log(formatConfigGetOutput(r.value, { json: opts.json }));
+      } catch (e) {
+        console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
+        process.exitCode = 1;
+      }
+    });
+
+  configCmd
+    .command("set <path> <value>")
+    .description(
+      "Set one config value (dotted path). Value parsing: true/false, null, numbers,\n" +
+        "      [...] / {...} as JSON, else a string. Creates config.yaml (from config.json,\n" +
+        "      if any) on first use, then writes comment-preserving."
+    )
+    .option("--force", "Set an unknown top-level key, or a value of a different type than the default")
+    .action((path: string, value: string, opts: { force?: boolean }) => {
+      try {
+        const r = setConfigValueOp(path, value, { force: opts.force });
+        if (r.yamlCreated) console.log(dim(`  created ${r.yamlPath}`));
+        console.log(ok(`Set ${path} = `) + (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value)));
+      } catch (e) {
+        console.error(err((e instanceof MainConfigOpsError || e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e))));
+        process.exitCode = 1;
+      }
+    });
+
+  configCmd
+    .command("unset <path>")
+    .description("Remove one config value (dotted path), reverting it to the built-in default")
+    .action((path: string) => {
+      try {
+        const r = unsetConfigValueOp(path);
+        console.log(r.existed ? ok(`Unset ${path}`) : dim(`  ${path} was not set`));
+      } catch (e) {
+        console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
+        process.exitCode = 1;
+      }
     });
 
   configCmd

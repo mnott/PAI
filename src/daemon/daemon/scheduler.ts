@@ -10,6 +10,7 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { runSupervisionTick, stallMinutesFromEnv } from "../../workers/supervision.js";
 import { storeObservationWithProject } from "../../observations/store.js";
+import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import type { PostgresBackendWithPool, SQLiteBackendWithDb } from "./types.js";
 import {
   registryDb,
@@ -578,4 +579,42 @@ export function startCacheKeepalive(opts: {
   if (timer.unref) timer.unref();
   setCacheKeepaliveTimer(timer);
   process.stderr.write(`[pai-daemon] Cache keepalive: every ${secs}s\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Interactive-session prompt-cache keepalive scheduler
+// ---------------------------------------------------------------------------
+
+/** Tick cadence: coarse enough to be cheap, fine enough that a session
+ *  crossing idleMinutes gets beaten within a minute of becoming eligible. */
+const SESSION_KEEPALIVE_TICK_MS = 60_000;
+
+/**
+ * Start the interactive-session cache keepalive: every 60s, beat every live
+ * session that has gone idle past `sessions.cacheKeepalive.idleMinutes`
+ * (src/daemon/session-keepalive.ts). Off unless
+ * `sessions.cacheKeepalive.enabled` is true — no hot-reload, matching
+ * startCacheKeepalive above: config changes need a daemon restart.
+ */
+export function startSessionKeepalive(): void {
+  const config = daemonConfig.sessions.cacheKeepalive;
+  if (!config.enabled) {
+    process.stderr.write("[pai-daemon] Session keepalive: disabled (sessions.cacheKeepalive.enabled is false)\n");
+    return;
+  }
+
+  const tick = () => {
+    runSessionKeepaliveTick(config).catch((e) => {
+      process.stderr.write(
+        `[pai-daemon] Session keepalive tick error: ${e instanceof Error ? e.message : String(e)}\n`
+      );
+    });
+  };
+
+  const timer = setInterval(tick, SESSION_KEEPALIVE_TICK_MS);
+  if (timer.unref) timer.unref();
+  process.stderr.write(
+    `[pai-daemon] Session keepalive: every ${SESSION_KEEPALIVE_TICK_MS / 1000}s ` +
+      `(idle >= ${config.idleMinutes}min, hours ${config.activeHours}, max ${config.maxBeats} beats/stretch)\n`
+  );
 }

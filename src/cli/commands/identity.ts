@@ -13,8 +13,7 @@
  */
 
 import type { Command } from "commander";
-import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
-import { CONFIG_FILE } from "../../daemon/config.js";
+import { readMainConfigRaw, writeMainConfigRaw, paiConfigFilePath } from "../../daemon/config.js";
 import {
   normalizeEmail,
   checkDeliveryReachability,
@@ -28,24 +27,18 @@ interface ConfigShape {
 }
 
 function readConfig(): ConfigShape {
-  if (!existsSync(CONFIG_FILE)) return {};
   try {
-    return JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as ConfigShape;
+    return readMainConfigRaw() as ConfigShape;
   } catch (e) {
-    console.error(err("pai identity: ") + `Could not parse ${CONFIG_FILE}: ${String(e)}`);
+    console.error(err("pai identity: ") + `Could not read ${paiConfigFilePath()}: ${String(e)}`);
     process.exit(1);
   }
 }
 
-/**
- * Write via a temp file and rename, so an interrupted write cannot leave the
- * config truncated. The daemon reads this file; a half-written one takes the
- * whole system down rather than just this command.
- */
+/** Writes through writeMainConfigRaw — comment-preserving into config.yaml
+ *  when it exists, else atomic into config.json. */
 function writeConfig(config: ConfigShape): void {
-  const tmp = `${CONFIG_FILE}.identity.tmp`;
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n", "utf-8");
-  renameSync(tmp, CONFIG_FILE);
+  writeMainConfigRaw(config);
 }
 
 function identityOf(config: ConfigShape) {

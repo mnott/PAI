@@ -2,11 +2,10 @@
 
 import type { Command } from "commander";
 import type { Database } from "better-sqlite3";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import chalk from "chalk";
 import { openFederation } from "../../../memory/db.js";
 import { renderTable, dim, bold, ok, err, warn, fmtDate } from "../../utils.js";
-import { loadConfig, CONFIG_FILE, ensureConfigDir } from "../../../daemon/config.js";
+import { loadConfig, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 
 function tierColor(tier: string): string {
   switch (tier) {
@@ -196,7 +195,7 @@ export function registerStatsCommands(
         console.log(`  ${bold("defaultLimit:")}     ${search.defaultLimit}`);
         console.log(`  ${bold("snippetLength:")}    ${search.snippetLength}`);
         console.log();
-        console.log(dim(`  Config file: ${CONFIG_FILE}`));
+        console.log(dim(`  Config file: ${paiConfigFilePath()}`));
         console.log(dim(`  Edit directly or use: pai memory settings <key> <value>`));
         console.log();
         return;
@@ -222,15 +221,13 @@ export function registerStatsCommands(
         return;
       }
 
-      let fileConfig: Record<string, unknown> = {};
-      if (existsSync(CONFIG_FILE)) {
-        try {
-          fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;
-        } catch {
-          console.error(err(`Could not parse ${CONFIG_FILE}`));
-          process.exitCode = 1;
-          return;
-        }
+      let fileConfig: Record<string, unknown>;
+      try {
+        fileConfig = readMainConfigRaw();
+      } catch (e) {
+        console.error(err(`Could not read config: ${e instanceof Error ? e.message : String(e)}`));
+        process.exitCode = 1;
+        return;
       }
 
       if (!fileConfig.search || typeof fileConfig.search !== "object") {
@@ -259,8 +256,7 @@ export function registerStatsCommands(
       (fileConfig.search as Record<string, unknown>)[key] = parsed;
 
       try {
-        ensureConfigDir();
-        writeFileSync(CONFIG_FILE, JSON.stringify(fileConfig, null, 2) + "\n", "utf-8");
+        writeMainConfigRaw(fileConfig);
         console.log(ok(`Set search.${key} = ${parsed}`));
         console.log(dim(`  Restart daemon to apply: pai daemon restart`));
       } catch (e) {
