@@ -35,6 +35,22 @@ export interface CompactionEvent {
   turnIndex: number;
 }
 
+export interface ModelSwitch {
+  turnIndex: number;
+  from: string;
+  to: string;
+  cacheRead: number;
+  cacheCreation: number;
+}
+
+export interface FallbackEvent {
+  turnIndex: number;
+  from: string;
+  to: string;
+  category: string;
+  scope: string;
+}
+
 export interface SessionUsageReport {
   path: string;
   sizeBytes: number;
@@ -62,6 +78,12 @@ export interface SessionUsageReport {
    */
   promptExposure: number;
   compactions: CompactionEvent[];
+  /** ISO timestamp of the first assistant turn. */
+  firstTurnAt: string | null;
+  /** Model of the last folded turn; drives switch detection. */
+  lastModel: string | null;
+  modelSwitches: ModelSwitch[];
+  fallbacks: FallbackEvent[];
 }
 
 const USAGE_KEYS: (keyof UsageTotals)[] = [
@@ -79,7 +101,16 @@ interface AssistantLine {
   type?: string;
   uuid?: string;
   subtype?: string;
+  /** Claude Code marks skill expansions and injected system reminders isMeta; they fire no UserPromptSubmit hook. */
+  isMeta?: boolean;
+  /** Present on newer logs: { kind: "human" } for a typed prompt. */
+  origin?: { kind?: string };
   compactMetadata?: { trigger?: string; preTokens?: number };
+  timestamp?: string;
+  originalModel?: string;
+  fallbackModel?: string;
+  apiRefusalCategory?: string;
+  scope?: string;
   message?: {
     id?: string;
     model?: string;
@@ -106,6 +137,26 @@ export function parseCompactionEvent(line: AssistantLine, turnIndex: number): Co
 }
 
 /**
+ * `type:"system"` `subtype:"model_refusal_fallback"` lines mark an
+ * automatic model switch fired by an API safety refusal (e.g. "cyber"
+ * category), not a user or config choice — worth flagging separately since
+ * it can rebuild the whole prompt cache mid-session.
+ */
+export function isModelFallback(line: AssistantLine): boolean {
+  return line.type === "system" && line.subtype === "model_refusal_fallback";
+}
+
+export function parseFallbackEvent(line: AssistantLine, turnIndex: number): FallbackEvent {
+  return {
+    turnIndex,
+    from: line.originalModel ?? "unknown",
+    to: line.fallbackModel ?? "unknown",
+    category: line.apiRefusalCategory ?? "unknown",
+    scope: line.scope ?? "unknown",
+  };
+}
+
+/**
  * Fold one already-parsed JSONL line into a report being accumulated.
  * Exported separately so both the streaming file reader below and tests
  * (which build fixtures as arrays of objects, not files) share one path.
@@ -124,6 +175,9 @@ export function foldAssistantLine(
     | "maxContext"
     | "turnsAboveThreshold"
     | "cacheRebuildTurns"
+    | "firstTurnAt"
+    | "lastModel"
+    | "modelSwitches"
   >,
   seenIds: Set<string>,
   line: AssistantLine,
@@ -147,13 +201,26 @@ export function foldAssistantLine(
     (Number(usage.cache_read_input_tokens) || 0) +
     (Number(usage.cache_creation_input_tokens) || 0) +
     (Number(usage.input_tokens) || 0);
-  if (report.firstTurnContext === null) report.firstTurnContext = context;
+  if (report.firstTurnContext === null) {
+    report.firstTurnContext = context;
+    report.firstTurnAt = line.timestamp ?? null;
+  }
   report.lastTurnContext = context;
   report.maxContext = report.maxContext === null ? context : Math.max(report.maxContext, context);
   if (context > threshold) report.turnsAboveThreshold++;
   if ((Number(usage.cache_creation_input_tokens) || 0) > 20000) report.cacheRebuildTurns++;
   const model = message?.model ?? "unknown";
   report.models[model] = (report.models[model] ?? 0) + 1;
+  if (report.lastModel !== null && report.lastModel !== model) {
+    report.modelSwitches.push({
+      turnIndex: report.turns,
+      from: report.lastModel,
+      to: model,
+      cacheRead: Number(usage.cache_read_input_tokens) || 0,
+      cacheCreation: Number(usage.cache_creation_input_tokens) || 0,
+    });
+  }
+  report.lastModel = model;
   const split = usage.cache_creation;
   if (split) {
     report.cacheCreationSplit.ephemeral5m += Number(split.ephemeral_5m_input_tokens) || 0;
@@ -170,6 +237,8 @@ export function foldAssistantLine(
  */
 export function isRealUserPrompt(line: AssistantLine): boolean {
   if (line.type !== "user") return false;
+  if (line.isMeta) return false;
+  if (line.origin?.kind && line.origin.kind !== "human") return false;
   const content = line.message?.content;
   if (typeof content === "string") return true;
   if (Array.isArray(content)) return !content.some((block) => block?.type === "tool_result");
@@ -194,6 +263,10 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     userPrompts: 0,
     promptExposure: 0,
     compactions: [],
+    firstTurnAt: null,
+    lastModel: null,
+    modelSwitches: [],
+    fallbacks: [],
   };
   const seenIds = new Set<string>();
   let contextSum = 0;
@@ -214,6 +287,10 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     if (isCompactBoundary(obj)) {
       const event = parseCompactionEvent(obj, report.turns);
       if (event) report.compactions.push(event);
+      continue;
+    }
+    if (isModelFallback(obj)) {
+      report.fallbacks.push(parseFallbackEvent(obj, report.turns));
       continue;
     }
     const context = foldAssistantLine(report, seenIds, obj, threshold);

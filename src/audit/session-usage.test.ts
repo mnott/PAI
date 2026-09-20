@@ -20,12 +20,17 @@ afterEach(() => {
   while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
-function usageLine(id: string, overrides: Record<string, unknown> = {}): string {
+function usageLine(
+  id: string,
+  overrides: Record<string, unknown> = {},
+  envelope: { model?: string; timestamp?: string } = {}
+): string {
   return JSON.stringify({
     type: "assistant",
+    ...(envelope.timestamp ? { timestamp: envelope.timestamp } : {}),
     message: {
       id,
-      model: "claude-sonnet-5",
+      model: envelope.model ?? "claude-sonnet-5",
       usage: {
         input_tokens: 2,
         cache_creation_input_tokens: 100,
@@ -177,21 +182,34 @@ describe("parseSessionUsage", () => {
       type: "user",
       message: { content: [{ type: "tool_result", content: "ok" }, { type: "text", text: "also text" }] },
     };
+    /* skill expansion and injected system reminder: isMeta, no UserPromptSubmit hook fired */
+    const skillExpansion = { type: "user", isMeta: true, message: { content: [{ type: "text", text: "## Skill" }] } };
+    const systemReminder = { type: "user", isMeta: true, message: { content: "<system-reminder>x</system-reminder>" } };
+    const nonHumanOrigin = { type: "user", origin: { kind: "hook" }, message: { content: "injected" } };
+    const humanOrigin = { type: "user", origin: { kind: "human" }, message: { content: "typed" } };
     writeFileSync(
       path,
       [
         JSON.stringify(realPrompt),
         JSON.stringify(toolResultOnly),
         JSON.stringify(mixedWithToolResult),
+        JSON.stringify(skillExpansion),
+        JSON.stringify(systemReminder),
+        JSON.stringify(nonHumanOrigin),
+        JSON.stringify(humanOrigin),
         usageLine("msg_1"),
       ].join("\n") + "\n",
       "utf8"
     );
 
     const report = await parseSessionUsage(path);
-    expect(report.userPrompts).toBe(1);
+    expect(report.userPrompts).toBe(2);
 
     expect(isRealUserPrompt(realPrompt)).toBe(true);
+    expect(isRealUserPrompt(humanOrigin)).toBe(true);
+    expect(isRealUserPrompt(skillExpansion)).toBe(false);
+    expect(isRealUserPrompt(systemReminder)).toBe(false);
+    expect(isRealUserPrompt(nonHumanOrigin)).toBe(false);
     expect(isRealUserPrompt(toolResultOnly)).toBe(false);
     expect(isRealUserPrompt(mixedWithToolResult)).toBe(false);
     expect(isRealUserPrompt({ type: "assistant", message: { content: "hi" } })).toBe(false);
@@ -242,5 +260,47 @@ describe("parseSessionUsage", () => {
       { trigger: "auto", preTokens: 784000, turnIndex: 1 },
       { trigger: "manual", preTokens: 150000, turnIndex: 2 },
     ]);
+  });
+
+  it("records model switches with the new model's cache figures and firstTurnAt", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        usageLine("msg_1", {}, { timestamp: "2026-01-01T00:00:00Z" }),
+        usageLine("msg_2", { cache_read_input_tokens: 500, cache_creation_input_tokens: 0 }, { model: "claude-opus-5" }),
+        usageLine("msg_3", { cache_creation_input_tokens: 30000 }, { model: "claude-sonnet-5" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.firstTurnAt).toBe("2026-01-01T00:00:00Z");
+    expect(report.modelSwitches).toEqual([
+      { turnIndex: 2, from: "claude-sonnet-5", to: "claude-opus-5", cacheRead: 500, cacheCreation: 0 },
+      { turnIndex: 3, from: "claude-opus-5", to: "claude-sonnet-5", cacheRead: 50, cacheCreation: 30000 },
+    ]);
+    expect(report.lastModel).toBe("claude-sonnet-5");
+  });
+
+  it("parses model_refusal_fallback lines with turnIndex counted from turns already seen", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    const fallback = {
+      type: "system",
+      subtype: "model_refusal_fallback",
+      originalModel: "claude-fable-5-1",
+      fallbackModel: "claude-opus-5",
+      apiRefusalCategory: "cyber",
+      scope: "session",
+    };
+    writeFileSync(path, [usageLine("msg_1"), JSON.stringify(fallback), usageLine("msg_2")].join("\n") + "\n", "utf8");
+
+    const report = await parseSessionUsage(path);
+    expect(report.fallbacks).toEqual([
+      { turnIndex: 1, from: "claude-fable-5-1", to: "claude-opus-5", category: "cyber", scope: "session" },
+    ]);
+    expect(report.turns).toBe(2);
   });
 });
