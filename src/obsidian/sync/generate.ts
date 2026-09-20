@@ -145,7 +145,7 @@ export function generateTopicPages(vaultPath: string, db: Database): number {
 }
 
 /** Old default vault path, inside ~/.pai/ (pre-2026-09-19). */
-function oldDefaultVaultPath(): string {
+export function oldDefaultVaultPath(): string {
   return join(homedir(), ".pai", "obsidian-vault");
 }
 

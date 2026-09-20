@@ -16,6 +16,8 @@ import { SINGLE_FILE_LIMIT, TOTAL_LIMIT } from "./files.js";
 import { SKILL_CATALOGUE_AMBER, SKILL_CATALOGUE_RED } from "./skills.js";
 
 export const HOOK_TOKEN_LIMIT = 1000;
+export const PER_PROMPT_HOOK_COST_AMBER = 0.05;
+export const PER_PROMPT_HOOK_COST_RED = 0.15;
 export const FIRST_TURN_CONTEXT_LIMIT = 30_000;
 export const DAEMON_FAILURE_RATE_LIMIT = 0.05;
 export const CONTEXT_GROWTH_AVG_RED = 100_000;
@@ -177,6 +179,24 @@ export function buildFindings(input: {
       severity,
       evidence: `avg ${avg}, max ${max}, ${input.session.turnsAboveThreshold} turns > ${input.ctxThreshold}, ${input.session.turns} turns`,
     });
+
+    const perPromptHookCost = input.hooks.totalsByEvent.UserPromptSubmit;
+    if (perPromptHookCost !== undefined && input.session.lastTurnContext !== null) {
+      const prompts = input.session.userPrompts;
+      const ctx = input.session.lastTurnContext;
+      const total = perPromptHookCost * prompts;
+      const pct = ctx > 0 ? (total / ctx) * 100 : 0;
+      findings.push({
+        finding: "per-prompt hook cost",
+        severity:
+          pct > PER_PROMPT_HOOK_COST_RED * 100
+            ? "RED"
+            : pct > PER_PROMPT_HOOK_COST_AMBER * 100
+              ? "AMBER"
+              : "GREEN",
+        evidence: `${perPromptHookCost} tokens/prompt x ${prompts} prompts = ${total} tokens (${pct.toFixed(1)}% of last-turn context ${ctx})`,
+      });
+    }
 
     const compactions = input.session.compactions;
     const autoCompactions = compactions.filter((c) => c.trigger === "auto");

@@ -74,6 +74,50 @@ function compactionFinding(session: SessionReportOutput, ctxThreshold: number) {
   return findings.find((f) => f.finding === "compaction trigger")!;
 }
 
+function hooksWith(userPromptSubmitTokens: number | undefined): HooksReport {
+  return {
+    ...hooks,
+    totalsByEvent: userPromptSubmitTokens === undefined ? {} : { UserPromptSubmit: userPromptSubmitTokens },
+  };
+}
+
+function perPromptFinding(hooksReport: HooksReport, session: SessionReportOutput | null, ctxThreshold = 200_000) {
+  const findings = buildFindings({ files, hooks: hooksReport, session, daemon, env, skills, subagents, mcp, ctxThreshold });
+  return findings.find((f) => f.finding === "per-prompt hook cost");
+}
+
+describe("buildFindings — per-prompt hook cost", () => {
+  it("is GREEN when cumulative cost is under 5% of last-turn context", () => {
+    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+    const finding = perPromptFinding(hooksWith(400), session);
+    expect(finding!.severity).toBe("GREEN");
+    expect(finding!.evidence).toBe("400 tokens/prompt x 10 prompts = 4000 tokens (4.0% of last-turn context 100000)");
+  });
+
+  it("is AMBER between 5% and 15% of last-turn context", () => {
+    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+    const finding = perPromptFinding(hooksWith(1000), session);
+    expect(finding!.severity).toBe("AMBER");
+  });
+
+  it("is RED above 15% of last-turn context", () => {
+    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+    const finding = perPromptFinding(hooksWith(2000), session);
+    expect(finding!.severity).toBe("RED");
+  });
+
+  it("is omitted when the session report is missing", () => {
+    const finding = perPromptFinding(hooksWith(400), null);
+    expect(finding).toBeUndefined();
+  });
+
+  it("is omitted when the hooks report has no UserPromptSubmit reading", () => {
+    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+    const finding = perPromptFinding(hooksWith(undefined), session);
+    expect(finding).toBeUndefined();
+  });
+});
+
 describe("buildFindings — compaction trigger", () => {
   it("is GREEN with no compactions", () => {
     const finding = compactionFinding(sessionWith([]), 200_000);

@@ -47,7 +47,7 @@ the new location, or with nothing old to migrate, are skipped.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--dry-run` | Print the plan without writing anything |  |
-| `--logs` | Also move ~/.claude/logs/workers into PAI_HOME (refuses while any worker       other than the interactive session is RUNNING — see `pai worker ps`) |  |
+| `--logs` | Also move ~/.claude/logs/workers into PAI_HOME: an atomic rename plus a       symlink left at the old path, so any worker still writing there       keeps landing in the new directory (falls back to copy+verify       across volumes, refusing while a worker is RUNNING — see       `pai worker ps` — only in that fallback case) |  |
 | `--history` | Also move ~/.claude/History/, agent-sessions.json, session-routing.json       and history/security/security-events.jsonl into PAI_HOME. These are       written by hooks on EVERY session's every turn, not just spawned       workers — refuses while any worker other than the interactive       session is RUNNING (see `pai worker ps`), but that guard cannot see       OTHER interactive `claude` sessions on this machine. Confirm none       are active (`ps aux \| grep claude`, `aibroker sessions list`) before       passing this flag. |  |
 
 

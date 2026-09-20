@@ -34,7 +34,8 @@ import { STATE_FILE as schedulerStatePath, migrateSchedulerState } from "../../t
 import { migrateIdentityFile } from "../../memory/wakeup.js";
 import { migrateScanConfig } from "./registry/scan.js";
 import { oldBackupsDir, backupsDirPath } from "./backup.js";
-import { defaultVaultPath, migrateObsidianVaultDir } from "../../obsidian/sync/generate.js";
+import { defaultVaultPath, oldDefaultVaultPath, migrateObsidianVaultDir } from "../../obsidian/sync/generate.js";
+import { getConfigObsidianVaultPathRaw, saveVaultPath as saveObsidianVaultPath } from "./obsidian.js";
 import { migrateAgentsDir, migrateCommandsDir, type MigrateContentDirResult } from "../../config/adapter-content.js";
 import {
   whisperRulesPath,
@@ -327,6 +328,34 @@ function migrateBackupsLegacy(dryRun: boolean): MigrateBackupsLegacyResult {
   return { fromDir: oldDir, toDir: newDir, dryRun: false, filesVerified: relFiles.length };
 }
 
+export interface MigrateObsidianVaultPathConfigResult {
+  status: "rewritten" | "would-rewrite" | "already-new" | "not-set" | "custom";
+  from?: string;
+  to?: string;
+}
+
+/**
+ * `pai obsidian sync --vault` used to save the then-default path
+ * (~/.pai/obsidian-vault) into config.json's obsidianVaultPath explicitly.
+ * migrateObsidianVaultDir above moves the directory but has no reason to
+ * touch config.json, so without this every later sync (including the one
+ * the session-stop hook runs) kept regenerating the vault at the old path.
+ * Only rewrites when the stored value is EXACTLY the old default — a custom
+ * vault path is left alone.
+ */
+export function migrateObsidianVaultPathConfig(dryRun: boolean): MigrateObsidianVaultPathConfigResult {
+  const current = getConfigObsidianVaultPathRaw();
+  const newPath = paiHomePath("obsidian-vault");
+
+  if (!current) return { status: "not-set" };
+  if (current === newPath) return { status: "already-new", from: current, to: newPath };
+  if (current !== oldDefaultVaultPath()) return { status: "custom", from: current };
+  if (dryRun) return { status: "would-rewrite", from: current, to: newPath };
+
+  saveObsidianVaultPath(newPath);
+  return { status: "rewritten", from: current, to: newPath };
+}
+
 export function registerConfigCommands(configCmd: Command): void {
   configCmd
     .command("path")
@@ -380,8 +409,11 @@ export function registerConfigCommands(configCmd: Command): void {
     .option("--dry-run", "Print the plan without writing anything")
     .option(
       "--logs",
-      "Also move ~/.claude/logs/workers into PAI_HOME (refuses while any worker\n" +
-        "      other than the interactive session is RUNNING — see `pai worker ps`)"
+      "Also move ~/.claude/logs/workers into PAI_HOME: an atomic rename plus a\n" +
+        "      symlink left at the old path, so any worker still writing there\n" +
+        "      keeps landing in the new directory (falls back to copy+verify\n" +
+        "      across volumes, refusing while a worker is RUNNING — see\n" +
+        "      `pai worker ps` — only in that fallback case)"
     )
     .option(
       "--history",
@@ -449,6 +481,30 @@ export function registerConfigCommands(configCmd: Command): void {
       report("registry.db", () => migrateRegistryDb(dryRun));
       report("federation.db (live)", () => migrateFederationDbLive(dryRun));
       reportDir("obsidian-vault/", () => migrateObsidianVaultDir({ dryRun }));
+      try {
+        const r = migrateObsidianVaultPathConfig(dryRun);
+        const label = "obsidian-vault path in config.json";
+        switch (r.status) {
+          case "not-set":
+            console.log(dim(`  ${label}: not set`));
+            break;
+          case "already-new":
+            console.log(dim(`  ${label}: already at new location`));
+            break;
+          case "custom":
+            console.log(dim(`  ${label}: custom, left alone`));
+            break;
+          case "would-rewrite":
+            console.log(dim(`  ${label}: would rewrite ${r.from} → ${r.to}`));
+            break;
+          case "rewritten":
+            console.log(ok(`  ${label}: `) + `${r.from} → ${r.to}`);
+            break;
+        }
+      } catch (e) {
+        hadError = true;
+        console.error(err("  obsidian-vault path in config.json: ") + (e instanceof Error ? e.message : String(e)));
+      }
       report("scheduler-state.json", () => migrateSchedulerState({ dryRun }));
       report("identity.txt", () => migrateIdentityFile({ dryRun }));
       report("registry-scan.json", () => migrateScanConfig({ dryRun }));
