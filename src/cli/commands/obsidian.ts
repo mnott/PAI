@@ -22,10 +22,10 @@ import { checkHealth } from "../../obsidian/status.js";
 import {
   loadConfig,
   expandHome,
-  CONFIG_FILE,
+  readMainConfigRaw,
+  writeMainConfigRaw,
 } from "../../daemon/config.js";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
 import chalk from "chalk";
 
 // ---------------------------------------------------------------------------
@@ -33,15 +33,14 @@ import chalk from "chalk";
 // ---------------------------------------------------------------------------
 
 /**
- * Read obsidianVaultPath from CONFIG_FILE.
- * Falls back to defaultVaultPath() if not set.
+ * Read obsidianVaultPath from the main config (config.yaml if it exists,
+ * else config.json). Falls back to defaultVaultPath() if not set.
  */
 function getVaultPath(override?: string): string {
   if (override) return expandHome(override);
 
   try {
-    const raw = readFileSync(CONFIG_FILE, "utf-8");
-    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    const cfg = readMainConfigRaw();
     if (typeof cfg.obsidianVaultPath === "string" && cfg.obsidianVaultPath) {
       return expandHome(cfg.obsidianVaultPath);
     }
@@ -52,15 +51,14 @@ function getVaultPath(override?: string): string {
 }
 
 /**
- * Read obsidianVaultPath from CONFIG_FILE without falling back to
+ * Read obsidianVaultPath from the main config without falling back to
  * defaultVaultPath() — undefined means "not set", distinct from getVaultPath's
  * "give me something usable". Used by `pai config migrate` to decide whether
  * the stored path still points at the pre-2026-09-19 default.
  */
 export function getConfigObsidianVaultPathRaw(): string | undefined {
   try {
-    const raw = readFileSync(CONFIG_FILE, "utf-8");
-    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    const cfg = readMainConfigRaw();
     if (typeof cfg.obsidianVaultPath === "string" && cfg.obsidianVaultPath) {
       return expandHome(cfg.obsidianVaultPath);
     }
@@ -70,19 +68,17 @@ export function getConfigObsidianVaultPathRaw(): string | undefined {
   return undefined;
 }
 
-/**
- * Persist obsidianVaultPath into config.json so future syncs use the same path.
- */
+/** Persist obsidianVaultPath into the main config so future syncs use the
+ *  same path (config.yaml if it exists, else config.json). */
 export function saveVaultPath(vaultPath: string): void {
   let cfg: Record<string, unknown> = {};
   try {
-    cfg = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;
+    cfg = readMainConfigRaw();
   } catch {
     // Start fresh if file is missing/corrupt
   }
   cfg.obsidianVaultPath = vaultPath;
-  mkdirSync(dirname(CONFIG_FILE), { recursive: true });
-  writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+  writeMainConfigRaw(cfg);
 }
 
 // ---------------------------------------------------------------------------

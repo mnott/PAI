@@ -6,11 +6,12 @@
  * Enhanced with agent instance metadata extraction
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync, writeFileSync } from 'fs';
+import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { historyDir, agentSessionsPath } from './lib/pai-paths';
 import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction';
 import { isProbeSession } from './lib/project-utils';
+import { writeJsonAtomic } from '../../config/json-store.js';
 
 interface HookEvent {
   source_app: string;
@@ -80,11 +81,17 @@ function setAgentForSession(sessionId: string, agentName: string): void {
     let mappings: Record<string, string> = {};
 
     if (existsSync(mappingFile)) {
-      mappings = JSON.parse(readFileSync(mappingFile, 'utf-8'));
+      try {
+        mappings = JSON.parse(readFileSync(mappingFile, 'utf-8'));
+      } catch {
+        // If file exists but is corrupt, start fresh with the new mapping
+        mappings = {};
+      }
     }
 
     mappings[sessionId] = agentName;
-    writeFileSync(mappingFile, JSON.stringify(mappings, null, 2), 'utf-8');
+    // Fires concurrently across sessions; non-atomic write truncated the file on 2026-09-20
+    writeJsonAtomic(mappingFile, mappings, { backup: false, label: 'agent-sessions.json' });
   } catch (error) {
     // Silently fail - don't block
   }

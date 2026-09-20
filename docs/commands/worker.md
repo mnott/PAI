@@ -44,6 +44,7 @@ pai worker <subcommand> [options]
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
+| [`pai worker capability [name] [providers]`](#pai-worker-capability-name-providers) | Which provider(s) serve a capability (e.g. image), independent of any one |
 | [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check, inline-keys |
 
 ### pai worker run [args...]
@@ -75,6 +76,11 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--provider <name>` | Provider to run on (default: active, else routing order) |  |
 | `--class <name>` | Use the provider of this class (draft, implement, review, research, spotcheck, simple, complex, image) |  |
 | `--role <name>` | Alias of --class (roles were renamed to classes) |  |
+| `--capability <name>` | Run on whichever configured provider serves this capability (see `pai worker capability`), not the active provider or --class's own one — e.g. --capability image runs an `engine: image` provider directly, POSTing a prompt and writing the PNG instead of spawning claude |  |
+| `--for <name>` | Alias of --capability |  |
+| `--out <file>` | Where an image-capability run writes its PNG (default: <logDir>/<worker-id>.png) |  |
+| `--size <WxH>` | Image size for an image-capability run, e.g. 1024x1024 (default: 1024x1024) |  |
+| `--timeout-ms <n>` | Timeout for an image-capability run's HTTP request (default: 120000) |  |
 | `--chain <stages>` | Comma-separated stage classes, e.g. draft,implement or draft,implement,review |  |
 | `--agent <name>` | Run the agent definition ~/.claude/agents/<name>.md on a worker |  |
 | `--model <model>` | Override the model for this run. Headless (-p) workers default to the --class model; an interactive launch (no -p) with no --model uses the harness default model from settings.json. |  |
@@ -391,6 +397,8 @@ Example: pai worker providers add glm --url https://…/anthropic \
 --key-file writes only a path to a 0600 file holding it — use one or the other.
 OpenAI-protocol: --protocol openai --upstream-url https://…/v1 (runs via the PAI proxy).
 Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.
+Image generation: --engine image — `pai worker run --capability image` then POSTs
+straight to {url}/images/generations instead of spawning claude.
 
 **Arguments**
 
@@ -412,7 +420,7 @@ Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.
 | `--note <text>` | Human note shown in `providers list` |  |
 | `--protocol <proto>` | anthropic (default) or openai — openai runs through the local PAI proxy |  |
 | `--upstream-url <url>` | Chat Completions base URL (required for --protocol openai) |  |
-| `--engine <engine>` | claude (default) or codex — codex runs `codex exec --json` |  |
+| `--engine <engine>` | claude (default), codex, or image — codex runs `codex exec --json`, image POSTs {url}/images/generations |  |
 | `--context-window <tokens>` | Context window for the meter (default 200000; init event overrides) |  |
 | `--quota-probe <url>` | URL whose JSON first number is the quota percent (0-100) |  |
 | `--cost-tier <1-5>` | Cost tier 1 (cheapest) … 5 (most expensive; default 3) |  |
@@ -543,7 +551,9 @@ Model ids per provider: no args lists them,
 
 `model <model-id>` sets the active provider's default model (back-compat),
 `model <capability>` shows one capability, `model <capability> <model-id>` sets it.
-Capabilities: default, fast, image. --provider targets another provider.
+Capability names are open (default, fast, image, … — any ^[a-z][a-z0-9-]*$ name);
+`pai worker capability` picks which provider serves one across the whole config.
+--provider targets another provider.
 
 **Arguments**
 
@@ -557,6 +567,31 @@ Capabilities: default, fast, image. --provider targets another provider.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--provider <name>` | Provider to read or change (default: the active one) |  |
+
+
+### pai worker capability [name] [providers]
+
+Which provider(s) serve a capability (e.g. image), independent of any one
+
+provider's own model table: no args lists every preference and what it
+resolves to; `capability <name> <provider>[,<provider>…]` sets the
+preference list (first usable one wins); `capability <name> --unset`
+removes it. An `engine: image` provider preferred for "image" runs
+`pai worker run --capability image` directly against its images API.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[name]` | optional |
+| `[providers]` | optional |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--unset` | Remove the preference for <name> |  |
+| `--json` | Machine-readable output |  |
 
 
 ### pai worker config

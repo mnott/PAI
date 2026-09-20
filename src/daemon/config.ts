@@ -8,7 +8,7 @@
  * Expands ~ in path values at runtime.
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join, dirname } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
@@ -23,6 +23,12 @@ import {
   PaiFileMigrationError,
   type MigrateFileResult,
 } from "../config/pai-home.js";
+import {
+  yamlSiblingPath,
+  readDualFormatConfigRaw,
+  writeDualFormatConfigRaw,
+  MainConfigError,
+} from "../config/main-config.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,6 +64,39 @@ export interface PostgresConfig {
   maxConnections?: number;
   /** Connection timeout in ms (default: 5000) */
   connectionTimeoutMs?: number;
+}
+
+/**
+ * Idle-triggered prompt-cache keepalive for interactive Claude Code sessions
+ * (see docs/cache-keepalive.md, "Interactive sessions"). Distinct from
+ * `workers.cacheKeepaliveSecs` (src/workers/config.ts), which re-arms a
+ * *worker provider's* cache via trivial worker spawns on a fixed timer: this
+ * beats a live interactive session only when it has actually gone idle long
+ * enough to risk its 1h ephemeral cache expiring, and only within working
+ * hours — a fixed timer would beat while the user is active (no-op, wasted
+ * quota) or overnight (never pays back before the next real prompt anyway).
+ */
+export interface SessionsCacheKeepaliveConfig {
+  /** Off by default — arming it is the operator's explicit call. */
+  enabled: boolean;
+  /** Beat a session once it has been idle at least this long. Must be < the
+   *  provider's cache TTL (60 for the 1h ephemeral cache) or the beat is too
+   *  late to matter. */
+  idleMinutes: number;
+  /** Cap on consecutive beats per idle stretch; resets when the user prompts
+   *  the session again for real (not with the keepalive word itself). */
+  maxBeats: number;
+  /** Local time window "HH:MM-HH:MM" outside which no beats are sent. */
+  activeHours: string;
+  /** Skip sessions whose context is too small to be worth a beat. */
+  minContextTokens: number;
+  /** The exact word typed into the session; kept to one word so the
+   *  UserPromptSubmit hook can recognise it and answer minimally. */
+  prompt: string;
+}
+
+export interface SessionsConfig {
+  cacheKeepalive: SessionsCacheKeepaliveConfig;
 }
 
 export interface PaiDaemonConfig {
@@ -109,6 +148,9 @@ export interface PaiDaemonConfig {
 
   /** Who "me" is — addresses that count as the user's own. */
   identity: IdentityConfig;
+
+  /** Interactive-session settings (currently just the cache keepalive). */
+  sessions: SessionsConfig;
 }
 
 /**
@@ -175,6 +217,22 @@ function perUserConnectionString(): string {
 // Defaults
 // ---------------------------------------------------------------------------
 
+/**
+ * idleMinutes=50 sits under the 60-minute ephemeral-1h TTL with margin for
+ * scheduler jitter; maxBeats=6 (~5h of coverage at one beat per idle stretch)
+ * and activeHours 08:00-22:00 keep an unattended overnight machine from
+ * beating all night for a session nobody will return to before the cache
+ * would have expired anyway.
+ */
+export const DEFAULT_SESSIONS_CACHE_KEEPALIVE: SessionsCacheKeepaliveConfig = {
+  enabled: false,
+  idleMinutes: 50,
+  maxBeats: 6,
+  activeHours: "08:00-22:00",
+  minContextTokens: 20_000,
+  prompt: "keepalive",
+};
+
 export const DEFAULTS: PaiDaemonConfig = {
   socketPath: paiSocketPath(),
   indexIntervalSecs: 300,
@@ -193,6 +251,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   // Deliberately empty. An install must not guess who the user is: a wrong
   // guess here is an address that can be mailed without review.
   identity: { selfEmails: [] },
+  sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
   search: {
     mode: "keyword",
     rerank: true,
@@ -268,6 +327,43 @@ export function paiConfigFilePath(): string {
 export const CONFIG_FILE = paiConfigFilePath();
 export const CONFIG_DIR = dirname(CONFIG_FILE);
 
+/** config.yaml — the canonical main config once `pai config yaml` has run,
+ *  read/written by readMainConfigRaw/writeMainConfigRaw instead of
+ *  CONFIG_FILE whenever it exists (see src/config/main-config.ts). */
+export function paiConfigYamlFilePath(): string {
+  return yamlSiblingPath(CONFIG_FILE);
+}
+
+/**
+ * Read the raw main config object exactly as every non-typed writer
+ * (identity, notifications, obsidian, setup, workers, memory settings) needs
+ * it: config.yaml when it exists, else CONFIG_FILE. `path` overrides the
+ * JSON location (tests, or workers/config.ts's parametrized CONFIG_FILE) —
+ * its YAML sibling (same dir, `config.yaml`) is what gets preferred.
+ */
+export function readMainConfigRaw(path: string = CONFIG_FILE): Record<string, unknown> {
+  try {
+    return readDualFormatConfigRaw(path);
+  } catch (e) {
+    throw e instanceof MainConfigError ? new Error(e.message) : e;
+  }
+}
+
+/**
+ * Write the raw main config object back through the same seam: a
+ * comment-preserving sync into config.yaml when it exists, else a plain
+ * writeJsonAtomic to `path`. Every writer of the main config must call this
+ * instead of touching CONFIG_FILE directly, so a config.yaml on disk is
+ * honored no matter which of them made the change.
+ */
+export function writeMainConfigRaw(raw: Record<string, unknown>, path: string = CONFIG_FILE): void {
+  try {
+    writeDualFormatConfigRaw(path, raw);
+  } catch (e) {
+    throw e instanceof MainConfigError ? new Error(e.message) : e;
+  }
+}
+
 export const ConfigMigrationError = PaiFileMigrationError;
 export type ConfigMigrateResult = MigrateFileResult;
 
@@ -317,30 +413,21 @@ function deepMerge<T extends object>(
 // ---------------------------------------------------------------------------
 
 /**
- * Load configuration from CONFIG_FILE (see paiConfigFilePath).
- * Returns defaults merged with any values found in the file.
+ * Load configuration: config.yaml (see paiConfigYamlFilePath) if it exists,
+ * else CONFIG_FILE (see paiConfigFilePath), else defaults. Returns defaults
+ * deep-merged with any values found in the file.
  */
 export function loadConfig(): PaiDaemonConfig {
-  if (!existsSync(CONFIG_FILE)) {
-    return { ...DEFAULTS };
-  }
-
-  let raw: string;
-  try {
-    raw = readFileSync(CONFIG_FILE, "utf-8");
-  } catch (e) {
-    process.stderr.write(
-      `[pai-daemon] Could not read config file at ${CONFIG_FILE}: ${e}\n`
-    );
+  if (!existsSync(CONFIG_FILE) && !existsSync(paiConfigYamlFilePath())) {
     return { ...DEFAULTS };
   }
 
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = readMainConfigRaw();
   } catch (e) {
     process.stderr.write(
-      `[pai-daemon] Config file is not valid JSON: ${e}\n`
+      `[pai-daemon] Could not read config: ${e instanceof Error ? e.message : String(e)}\n`
     );
     return { ...DEFAULTS };
   }
@@ -369,7 +456,7 @@ export function ensureConfigDir(): void {
     );
   }
 
-  if (!existsSync(CONFIG_FILE)) {
+  if (!existsSync(CONFIG_FILE) && !existsSync(paiConfigYamlFilePath())) {
     try {
       writeFileSync(CONFIG_FILE, configTemplate(), "utf-8");
       process.stderr.write(

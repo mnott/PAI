@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js";
 import { whisperRulesPath, advisorModePath } from "../../../config/pai-files.js";
+import { loadConfig } from "../../../daemon/config.js";
 
 const WHISPER_FILE = whisperRulesPath();
 const ADVISOR_FILE = advisorModePath();
@@ -181,6 +182,24 @@ function resetReinjectCounter(sessionId: string): void {
  * several times per turn during worker-heavy work, so injecting the ~5KB rule
  * block on each one was landing it 3-5 times in a single turn.
  */
+/**
+ * True when this prompt is the daemon's own idle-triggered cache-keepalive
+ * beat (sessions.cacheKeepalive, src/daemon/config.ts): the daemon typed the
+ * configured word into this session purely to refresh its prompt-cache TTL,
+ * not to ask anything. The whole point is a beat that costs as little output
+ * as possible, so this bypasses every other rule/advisor injection below —
+ * adding ~5KB of context to answer nothing would erase the saving the beat
+ * exists to capture.
+ */
+export function isCacheKeepaliveBeat(prompt: string): boolean {
+  try {
+    const { enabled, prompt: word } = loadConfig().sessions.cacheKeepalive;
+    return enabled && prompt.trim() === word;
+  } catch {
+    return false;
+  }
+}
+
 export function isRelayedPrompt(prompt: string): boolean {
   return (
     /^\s*\[Session:[^\]]+\]/.test(prompt) ||
@@ -203,6 +222,11 @@ function main() {
   } catch { /* malformed/empty stdin — treat as no session, no prompt */ }
 
   resetReinjectCounter(sessionId);
+
+  if (isCacheKeepaliveBeat(prompt)) {
+    console.log("<system-reminder>\nReply with a single period and nothing else. Do not call tools.\n</system-reminder>");
+    return;
+  }
 
   if (isRelayedPrompt(prompt)) return;
 

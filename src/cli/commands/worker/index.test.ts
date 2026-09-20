@@ -14,11 +14,21 @@ import { Command } from "commander";
 const mocks = vi.hoisted(() => ({
   runWorker: vi.fn(),
   runChain: vi.fn(),
+  setCapabilityPreference: vi.fn(),
+  unsetCapabilityPreference: vi.fn(),
   logDir: "",
 }));
 
 vi.mock("../../../workers/run.js", () => ({ runWorker: mocks.runWorker }));
 vi.mock("../../../workers/chain.js", () => ({ runChain: mocks.runChain }));
+vi.mock("../../../workers/providers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../workers/providers.js")>();
+  return {
+    ...actual,
+    setCapabilityPreference: mocks.setCapabilityPreference,
+    unsetCapabilityPreference: mocks.unsetCapabilityPreference,
+  };
+});
 vi.mock("../../../workers/config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../workers/config.js")>();
   return {
@@ -224,6 +234,76 @@ describe("worker run: long inline -p hint", () => {
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildCli().parseAsync(["node", "pai", "worker", "run", "--label", "short", "-p", "print OK"]);
     expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
+
+describe("worker run --capability", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+  });
+
+  it("passes --capability, --out, --size and --timeout-ms through to runWorker", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run",
+      "--capability", "image",
+      "--out", "/tmp/out.png",
+      "--size", "512x512",
+      "--timeout-ms", "5000",
+      "-p", "a red circle",
+    ]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    const opts = mocks.runWorker.mock.calls[0][0];
+    expect(opts.capabilityFlag).toBe("image");
+    expect(opts.imageOut).toBe("/tmp/out.png");
+    expect(opts.imageSize).toBe("512x512");
+    expect(opts.imageTimeoutMs).toBe(5000);
+  });
+
+  it("--for is an alias for --capability", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync(["node", "pai", "worker", "run", "--for", "image", "-p", "x"]);
+    expect(mocks.runWorker.mock.calls[0][0].capabilityFlag).toBe("image");
+  });
+});
+
+describe("worker capability", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+  });
+
+  it("lists preferences with no args", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await buildCli().parseAsync(["node", "pai", "worker", "capability"]);
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("no capability preferences set"))).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("sets a preference list, comma-split and trimmed", async () => {
+    mocks.setCapabilityPreference.mockReturnValue({ capabilities: { image: ["pictures", "glm"] } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await buildCli().parseAsync(["node", "pai", "worker", "capability", "image", "pictures, glm"]);
+    expect(mocks.setCapabilityPreference).toHaveBeenCalledWith("image", ["pictures", "glm"]);
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("image"))).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("unsets a preference with --unset", async () => {
+    mocks.unsetCapabilityPreference.mockReturnValue({});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await buildCli().parseAsync(["node", "pai", "worker", "capability", "image", "--unset"]);
+    expect(mocks.unsetCapabilityPreference).toHaveBeenCalledWith("image");
+    logSpy.mockRestore();
+  });
+
+  it("errors when a name is given with no provider list and no --unset", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildCli().parseAsync(["node", "pai", "worker", "capability", "image"]);
+    expect(mocks.setCapabilityPreference).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
     errSpy.mockRestore();
   });
 });

@@ -18,13 +18,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+  type WorkerEngine,
   type WorkerProvider,
   type WorkersConfig,
   type ProviderTag,
   WORKER_CLASSES,
   WorkersConfigError,
+  classModelCapability,
   providerCostTier,
   getProviderOrNative,
+  resolveCapability,
 } from "./config.js";
 import { routingStatePath } from "./paths.js";
 
@@ -305,4 +308,78 @@ export function nextAutoProvider(
  */
 export function isQuotaFailure(resultText: string): boolean {
   return /usage limit reached|rate limit|quota/i.test(resultText);
+}
+
+export interface CapabilityRunResolution {
+  providerName: string;
+  provider: WorkerProvider;
+  model: string;
+  engine: WorkerEngine;
+  fellBack: boolean;
+  capability: string;
+}
+
+/**
+ * Whether a run should resolve through `resolveCapability` instead of
+ * `resolveTarget`: an explicit `--capability` always does. A `--class`
+ * whose implied capability is not "default" (e.g. `image`) does too, but
+ * only when the class itself names no provider — a class already pinned to
+ * one (`image: glm/image`) always wins unchanged, same as any other class.
+ */
+export function capabilityForRun(
+  config: WorkersConfig,
+  opts: { capabilityFlag?: string; className?: string }
+): string | null {
+  if (opts.capabilityFlag) return opts.capabilityFlag;
+  if (!opts.className) return null;
+  const capability = classModelCapability(opts.className);
+  if (capability === "default") return null;
+  const clsTarget = config.classes[opts.className];
+  const namesProvider = typeof clsTarget === "string" ? true : Boolean(clsTarget?.provider);
+  return namesProvider ? null : capability;
+}
+
+/**
+ * resolveCapability, turned into a runnable provider (NoProviderError-shaped
+ * on failure). Unlike resolveCapability itself — which falls back to the
+ * active provider's default model so `describeCapabilities` has something to
+ * report — an actual run refuses the fallback: silently running a normal
+ * model on a prompt written for a capability it does not have (an image
+ * prompt fed to a text model, say) produces a confusing non-answer instead
+ * of a clear error naming the config key to set.
+ */
+export function resolveCapabilityRun(config: WorkersConfig, capability: string): CapabilityRunResolution {
+  const r = resolveCapability(config, capability);
+  if (r.fellBack) {
+    throw new NoProviderError(
+      `no provider declares the "${capability}" capability — configure one with: ` +
+        `pai worker capability ${capability} <provider>[,<provider>…], or ` +
+        `pai worker model ${capability} <model-id> --provider <name>`
+    );
+  }
+  // "image" specifically promises real pixel output — a provider whose only
+  // claim to it is a `models.image` entry from the classes-based idiom
+  // (`image: glm/image`, a plain model choice on an unchanged claude/codex
+  // engine) cannot deliver that through this cross-provider run path, so a
+  // run refuses it rather than spawning claude on a prompt it cannot answer.
+  if (capability === "image" && r.engine !== "image") {
+    throw new NoProviderError(
+      `provider "${r.provider}" has no image engine (it would run "${r.model}" on its normal ` +
+        `${r.engine} engine, not generate an image) — configure an engine=image provider with: ` +
+        `pai worker providers add <name> --engine image --url <url> --key <key> --model <id>, then ` +
+        `pai worker capability image <name>`
+    );
+  }
+  const provider = getProviderOrNative(config, r.provider);
+  if (!provider) {
+    throw new NoProviderError(`capability "${capability}" resolved to unknown provider "${r.provider}"`);
+  }
+  return {
+    providerName: r.provider,
+    provider,
+    model: r.model,
+    engine: r.engine,
+    fellBack: r.fellBack,
+    capability,
+  };
 }

@@ -303,4 +303,71 @@ describe("parseSessionUsage", () => {
     ]);
     expect(report.turns).toBe(2);
   });
+
+  it("counts a gap between two assistant turns over 60 minutes as one idle gap", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        usageLine("msg_1", {}, { timestamp: "2026-01-01T10:00:00Z" }),
+        // 90 minutes later
+        usageLine("msg_2", {}, { timestamp: "2026-01-01T11:30:00Z" }),
+        // 5 minutes later — not idle
+        usageLine("msg_3", {}, { timestamp: "2026-01-01T11:35:00Z" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.idleGapsOver60min).toBe(1);
+    expect(report.lastTurnAtMs).toBe(Date.parse("2026-01-01T11:35:00Z"));
+  });
+
+  it("does not count keepaliveBeats when no keepalive word is given", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(path, JSON.stringify({ type: "user", message: { content: "keepalive" } }) + "\n", "utf8");
+
+    const report = await parseSessionUsage(path);
+    expect(report.keepaliveBeats).toBeNull();
+  });
+
+  it("counts real user prompts matching the keepalive word, ignoring other prompts", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        JSON.stringify({ type: "user", message: { content: "keepalive" } }),
+        JSON.stringify({ type: "user", message: { content: "please fix the login bug" } }),
+        JSON.stringify({ type: "user", message: { content: "keepalive" } }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path, 200_000, "keepalive");
+    expect(report.keepaliveBeats).toBe(2);
+    expect(report.userPrompts).toBe(3);
+  });
+
+  it("combines idle gaps and keepalive beats on one synthetic transcript with a 90-minute gap and two beats", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    writeFileSync(
+      path,
+      [
+        usageLine("msg_1", {}, { timestamp: "2026-01-01T10:00:00Z" }),
+        JSON.stringify({ type: "user", message: { content: "keepalive" } }),
+        usageLine("msg_2", {}, { timestamp: "2026-01-01T11:30:00Z" }),
+        JSON.stringify({ type: "user", message: { content: "keepalive" } }),
+        usageLine("msg_3", {}, { timestamp: "2026-01-01T11:35:00Z" }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path, 200_000, "keepalive");
+    expect(report.idleGapsOver60min).toBe(1);
+    expect(report.keepaliveBeats).toBe(2);
+  });
 });

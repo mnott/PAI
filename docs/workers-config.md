@@ -2,25 +2,32 @@
 
 One hand-editable file: which providers PAI can run workers on, the model
 each provider uses per role, and which provider every `--class` goes to.
-Before this, that lived inside `~/.config/pai/config.json`'s `workers`
+Before this, that lived inside `~/.claude/pai/config.json`'s `workers`
 section — JSON, unrelated to the rest of that file, and undocumented in
 place. Adding a provider meant reading code to find out what fields existed.
 
 ## Where it lives
 
 `~/.claude/pai/workers.yaml` — under the PAI_HOME namespace dir, beside
-PAI's other per-user files (`config.json`, `whisper-rules.md`,
+PAI's other per-user files (`config.yaml`, `whisper-rules.md`,
 `advisor-mode.json`), so nothing PAI writes can collide with a file Claude
 Code itself introduces under `~/.claude`. Set `PAI_WORKERS_YAML=<path>` to
 override this — tests and power users only, and `PAI_HOME=<dir>` to move
 the whole namespace. Only providers, model roles, class routing and MCP
 sets live here. Everything else worker-related — the follow-pane profile,
 log dir, routing cooldown, sub-worker caps, cache-keepalive cadence, the
-machine-wide fallback switch — stays in `config.json`'s `workers` section;
+machine-wide fallback switch — stays in `config.yaml` (or `config.json` until you run `pai config yaml`)'s `workers` section;
 none of it is provider-specific enough to want hand comments.
 
 This file is per-user state: it can hold API keys (`key:`, below), is kept
 mode 0600, and is never committed or shared.
+
+The non-provider settings mentioned above — `pane`, `routing`, `tree`,
+`cacheKeepaliveSecs`, `logDir`, the machine-wide fallback switch — live in
+the main PAI config instead, under its `workers` section: see
+[docs/config.md](config.md) for `config.yaml`'s layout and `pai config
+get workers.cacheKeepaliveSecs` / `pai config set workers.pane.rows 40`
+style access.
 
 Before 2026-09-19 it lived at `~/.config/pai/workers.yaml`, and briefly at
 `~/.claude/workers.yaml` in between. If yours is still at either old
@@ -65,6 +72,18 @@ providers:
       default: k3[1m]
       fast: kimi-for-coding[1m]
 
+# An `engine: image` provider does not spawn Claude — `pai worker run
+# --capability image` POSTs straight to its OpenAI-compatible images API and
+# writes the PNG it gets back. Uncomment and point it at a real provider
+# (still nested under providers:, above) to enable `--capability image`:
+#   pictures:
+#     engine: image
+#     url: https://api.example.com/v1
+#     key: "<your-api-key>"
+#     models:
+#       default: example-image-model
+#       image: example-image-model
+
 # A class names a provider, or provider/role to pick a non-default model.
 # Workers exist to parallelise and to save cost: the default is Sonnet,
 # Haiku for the mechanical classes, and nothing here inherits the
@@ -79,6 +98,13 @@ classes:
   spotcheck: anthropic/fast
   simple: anthropic/fast
   image: glm/image
+
+# Cross-provider capability preference: which provider serves a --capability
+# request, in order, when more than one declares it. Unlisted capabilities
+# fall back to the active provider, then any provider that declares them.
+# capabilities:
+#   image: [pictures, glm]
+#   fast: [anthropic]
 
 mcp_sets:
   desktop: [clickr]
@@ -107,8 +133,10 @@ init` writes on a machine with no workers.yaml yet.
 - **`providers.<name>.tier`** — cost/quality tier, 1 (cheapest) … 5 (most
   expensive), default 3. Classes can constrain auto-routing to a max tier.
 - **`providers.<name>.models`** — model id per capability. `default` is
-  required; `fast` and `image` are optional and fall back to `default` when
-  a class asks for them and the provider has none.
+  required; every other name is open (`fast`, `image`, or a name of your own
+  choosing, matching `^[a-z][a-z0-9-]*$`) and falls back to `default` when a
+  class or run asks for it and the provider has none — see "Capabilities"
+  below.
 - **`classes.<name>`** — `provider` or `provider/role` (`role` one of
   `default`, `fast`, `image`). An object form
   (`{provider, mcp, maxCostTier, requireTags, order}`) is also accepted for
@@ -123,10 +151,75 @@ Not in the starter, but read when present (same names `pai worker providers
 add` accepts, snake_cased): `enabled: false` (skip in auto-routing without
 deleting the entry), `protocol: openai` + `upstream_url` (routes through the
 built-in Anthropic↔OpenAI proxy), `engine: codex` (runs the provider on the
-Codex CLI instead of Claude Code), `env` (extra environment for runs through
-this provider), `note` (shown in `pai worker providers`), `quota_probe` +
-`quota_skip_at`, `context_window`, `tags`, `usage`, `model_tiers`. Full field
-semantics: `src/workers/config.ts`.
+Codex CLI instead of Claude Code) or `engine: image` (see "Capabilities"
+below), `env` (extra environment for runs through this provider), `note`
+(shown in `pai worker providers`), `quota_probe` + `quota_skip_at`,
+`context_window`, `tags`, `usage`, `model_tiers`. Full field semantics:
+`src/workers/config.ts`.
+
+## Capabilities
+
+A provider's `models` table (above) picks a model *within* that provider —
+`glm/image` runs on whatever `glm.models.image` names. The top-level
+`capabilities:` map instead picks *which provider* serves a capability at
+all, across the whole config:
+
+```yaml
+capabilities:
+  image: [pictures, glm]   # first usable one wins
+  fast: [anthropic]
+```
+
+`pai worker run --capability image -p '<prompt>'` (alias `--for`) resolves
+through this list: the first entry that is enabled, declares an `image`
+model, and passes the same runnable checks as any other provider. A `--class`
+whose implied capability is not `default` (e.g. a class named `image` with no
+provider of its own) resolves the same way; a class already pinned to a
+provider (`image: glm/image`, the starter default) is unaffected — it always
+runs that provider unchanged. An explicit `--provider` always wins over both.
+
+Without a `capabilities:` entry, resolution falls back to the active
+provider (if it declares the capability), then any provider that declares it
+(stable order). If nothing anywhere does, the run refuses to guess: it
+errors naming the config key to set, rather than silently running a normal
+model on a prompt it cannot answer. `pai worker capability` (no args) lists
+every preference and what it resolves to right now; `describeCapabilities`
+truthfully reports "unresolved" or "fallback" in the same situation without
+throwing, so listing your config never fails just because you have not
+finished it.
+
+### The image engine
+
+A provider with `engine: image` (see the commented `pictures:` example
+above) does not spawn Claude Code at all. `pai worker run --capability
+image -p "<prompt>" [--size WxH] [--out <file>]` POSTs one
+OpenAI-compatible request straight to `{url}/images/generations`:
+
+```json
+{"model": "<the resolved model>", "prompt": "<prompt>", "size": "1024x1024", "n": 1, "response_format": "b64_json"}
+```
+
+...decodes the base64 PNG it gets back, and writes it to `--out` (default:
+`<logDir>/<worker-id>.png`). No worktree, no MCP, no follow pane — one
+request, one file. stdout is the same JSON shape `pai worker run` always
+prints for a headless run: `{ok, path, model, provider, durationMs, bytes}`.
+Asking a `claude`/`codex`-engine provider to run `--capability image` is not
+an error by itself — it just means no image-generating provider is
+configured, which the "nothing anywhere does" case above already reports
+clearly.
+
+CLI and MCP agree on the same preferences:
+
+```
+pai worker capability                       # list every preference
+pai worker capability image pictures,glm    # set (first usable wins)
+pai worker capability image --unset         # remove it
+```
+
+The `worker_capability` MCP tool takes the same `action: list|set|unset`,
+`capability`, `providers` shape; `worker_run`'s `capability` field and
+`worker_model`'s `capability` field (now an open set, not just `default` /
+`fast` / `image`) round out the chat-side surface.
 
 ## Provider protocol shapes
 
@@ -311,7 +404,7 @@ that resolves `anthropic` or `anthropic/fast` picks up the override.
    all come from here, validated as a whole (an unknown provider named by a
    class is a load error naming the file and line, not a spawn-time
    surprise).
-2. Else the JSON `workers` section in `config.json` (`providers`, `classes`
+2. Else the JSON `workers` section in `config.json` (or `config.yaml` if it exists) (`providers`, `classes`
    — or the pre-rename `roles` — `mcpSets`, `active`), unchanged from
    before this file existed. Nothing breaks on a machine that has not
    migrated yet.
@@ -346,7 +439,7 @@ pai worker config inline-keys # move every key_file's contents inline as key: (q
 - **no workers.yaml yet**: reads the JSON `workers` section, writes
   workers.yaml with the same header/section comments as the starter, backs
   the pre-migration JSON section up to `workers.json.migrated-<date>` next
-  to `config.json`, and strips `providers`/`classes`/`roles`/`mcpSets`/
+  to `config.json` (or `config.yaml` if it exists), and strips `providers`/`classes`/`roles`/`mcpSets`/
   `active` from the JSON (everything else in that section — pane, log dir,
   routing, tree, cache-keepalive, fallback — stays).
 
@@ -363,7 +456,7 @@ writing anything.
 
 PAI is not a Claude Code plugin — it is a self-contained system that Claude
 Code happens to be the first harness for. `~/.claude/pai/` (`PAI_HOME`) is
-the single home for everything PAI owns: `config.json`, `workers.yaml`,
+the single home for everything PAI owns: `config.yaml`, `workers.yaml`,
 `whisper-rules.md`, `advisor-mode.json`, `session-state/`, `queries/`,
 `logs/workers/` and the rest of PAI's per-user state and caches. `pai config
 path` prints where every one of these currently resolves to; `pai config

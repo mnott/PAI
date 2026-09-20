@@ -1,24 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost" session-id="4a6abde6-59d9-4b82-8aa9-fd01abac7465" ts="2026-09-20T15:45:00.000Z" -->
+<!-- pai:checkpoint authored="model" session="0135 - 2026-09-20 - Config YAML, capabilities, session keepalive" session-id="2a834788-fb04-49f8-bf3a-e7b2a621d20e" ts="2026-09-20T18:05:00.000Z" -->
 
-> **Last session:** 0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost
-> **Paused at:** 2026-09-20T15:45:00.000Z
+> **Last session:** 0135 - 2026-09-20 - Config YAML, capabilities, session keepalive
+> **Paused at:** 2026-09-20T18:05:00.000Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 4a6abde6-59d9-4b82-8aa9-fd01abac7465`
+> Resume with: `claude --resume 2a834788-fb04-49f8-bf3a-e7b2a621d20e`
 
 T
-i=token-waste-cycle-run12
-g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run11.md`, fixes RED/AMBER, records run 12. Do NOT run or paste `/context`.
-d=Run 10 and run 11 are both uncommitted on main (runs 10/11 md+json, src/audit/first-turn.ts + test, session.ts, severity.ts, audit.ts, reviewprompt.md, docs/commands/audit.md). Run 11: 0 RED, 0 AMBER, 13 GREEN; first turn 28,144 (run 10: 37,559). `/context` run in-session costs 9,139 billed on the landing call (raw ANSI stdout 1,664 + expanded table 3,825, both sent) and rides every later call. Run 10 corrections: slash-command stdout is sent (not display-only); cl100k undercounts the billing tokenizer 1.3-1.5x, so "remainder" is system prompt + 30-50% of transcript-side. New: `pai audit tokens session [path] --turn <n>` attributes any call's growth.
-t=src/audit 111 pass (+3), tsc 80 unchanged, built.
-@1=audits/token-waste/2026-09-20-run11.md
-@2=audits/token-waste/reviewprompt.md
-@3=src/audit/first-turn.ts
-@4=src/cli/commands/audit.ts
-z=Ask before committing: two runs of work sit uncommitted. Open levers (unchanged): skill listing 3,455 + own MCP instructions 1,626 ride every call; CLAUDE.md 1,037; whisper 592/prompt; four legacy `~/.claude/commands` files; 10 duplicate plugin skill names. Instrument gap: tokenizer factor is measured, not exact; `ladder --live` could calibrate it if asked.
+i=config-yaml-capabilities-keepalive
+g=Released as v0.50.0 (cpp on 2026-09-20 ~20:05): config.yaml canonical, open-set capabilities + engine:image, session cache keepalive, model catalogue, statusline reads workers.yaml. Worker branches worker/20260920-1838{35-57646,43-58519,46-59109} and worker/20260920-183924-61391 can be deleted.
+d=Live state: ~/.claude/pai/config.yaml (0600) canonical, config.json.migrated-2026-09-20 kept. Keepalive enabled and proven working after the pane-id fix: AIBroker reports iTerm pane ids, the tick now maps them to Claude session ids via claude-session-map.json (ledger shows session=<claudeId> pane=<paneId> and skips only for idle < 50 min). Daemon ensureConfigDir no longer recreates config.json next to config.yaml (it did at 19:29; stray file removed). Statusline converts workers.yaml providers via node+yaml into a 0600 cache holding only models/usage/keyFile (first version leaked inline keys world-readable to /tmp/claude; fixed, tests assert no secret and mode 600). Daemon restarted 19:59. Tests 1577 -> 1739, tsc 80 unchanged.
+t=bunx vitest run: 121 files / 1739 pass; npx tsc --noEmit: 80 (baseline); npm run build OK
+@1=docs/config.md
+@2=docs/workers-config.md
+@3=docs/cache-keepalive.md
+@4=docs/model-catalogue.md
+@5=src/daemon/session-keepalive.ts
+z=Open: no engine:image provider configured yet (image runs fail fast with the config hint; pick one from docs/model-catalogue.md section 3). OpenAI-protocol proxy path has 0 real runs in 495 ledger entries; first real run would be the proof. Keepalive payoff unproven: read `idle gaps > 60min` and `keepalive beats` in `pai audit tokens session` after a day, and `pai daemon keepalive` for beats sent.
 
 <!-- /pai:checkpoint -->
 
@@ -46,6 +47,32 @@ Note: agent-browser uninstalled + deregistered (its install ALSO clobbers
 ~/.claude.json; memory entry exists). Claude-in-chrome itself: auth-bound, dead
 under token auth - we build instead.
 ## Previous handovers
+
+<!-- pai:archived-handover session="0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost" ts="2026-09-20T15:45:00.000Z" -->
+
+### 0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost — checkpointed 2026-09-20T15:45:00.000Z
+
+
+
+> **Last session:** 0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost
+> **Paused at:** 2026-09-20T15:45:00.000Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 4a6abde6-59d9-4b82-8aa9-fd01abac7465`
+
+T
+i=token-waste-cycle-run12
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run11.md`, fixes RED/AMBER, records run 12. Do NOT run or paste `/context`.
+d=Run 10 and run 11 are both uncommitted on main (runs 10/11 md+json, src/audit/first-turn.ts + test, session.ts, severity.ts, audit.ts, reviewprompt.md, docs/commands/audit.md). Run 11: 0 RED, 0 AMBER, 13 GREEN; first turn 28,144 (run 10: 37,559). `/context` run in-session costs 9,139 billed on the landing call (raw ANSI stdout 1,664 + expanded table 3,825, both sent) and rides every later call. Run 10 corrections: slash-command stdout is sent (not display-only); cl100k undercounts the billing tokenizer 1.3-1.5x, so "remainder" is system prompt + 30-50% of transcript-side. New: `pai audit tokens session [path] --turn <n>` attributes any call's growth.
+t=src/audit 111 pass (+3), tsc 80 unchanged, built.
+@1=audits/token-waste/2026-09-20-run11.md
+@2=audits/token-waste/reviewprompt.md
+@3=src/audit/first-turn.ts
+@4=src/cli/commands/audit.ts
+z=Ask before committing: two runs of work sit uncommitted. Open levers (unchanged): skill listing 3,455 + own MCP instructions 1,626 ride every call; CLAUDE.md 1,037; whisper 592/prompt; four legacy `~/.claude/commands` files; 10 duplicate plugin skill names. Instrument gap: tokenizer factor is measured, not exact; `ladder --live` could calibrate it if asked.
+
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup" ts="2026-09-20T12:58:00.000Z" -->
 
@@ -248,97 +275,6 @@ publish).
 
 <!-- /pai:archived-handover -->
 
-<!-- pai:archived-handover session="0022 - 2026-08-04 - Checkpoint Authorship Investigation" ts="2026-08-04T09:30:27.869Z" -->
-
-### 0022 - 2026-08-04 - Checkpoint Authorship Investigation — checkpointed 2026-08-04T09:30:27.869Z
-
-
-
-> **Last session:** 0022 - 2026-08-04 - Checkpoint Authorship Investigation
-> **Paused at:** 2026-08-04T09:30:27.869Z
->
-> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume 046bb712-ab1f-429f-8f73-014f33f58f83`
-
-### CLEARED — AIBroker landed and released; nothing here is blocked
-
-*(Replaces the STOP notice written earlier today. That notice was correct when
-written and is now stale — leaving it would keep this session avoiding files
-nobody is holding.)*
-
-The AIBroker session's in-flight work is **committed, pushed and published**:
-
-- `@tekmidian/pai@0.30.1` — commit `8796a26`, working tree clean, 307 tests pass.
-- `aibroker@0.30.0` — commit `62c81fc`, working tree clean, 505 tests pass.
-
-Every file that was off-limits is now landed. Edit freely.
-
-### The `isSameSession` thread is DONE, not blocked
-
-That item — "`isSameSession` is probabilistic and wants `--session-id` threaded
-through by every caller" — was completed by the AIBroker session and released in
-PAI 0.30.0.
-
-The comparison logic was already correct: the UUID wins whenever both sides carry
-one. The gap was that the ONE writer firing at session end never supplied an id,
-so the mutable note-title fallback was the live path in practice — and `pai pause`
-renames the note as it writes, which is why a session stopped recognising its own
-checkpoint seconds after writing it.
-
-`sessionIdFromTranscript()` (`src/hooks/ts/lib/project-utils/todo.ts`) reads the
-UUID off the transcript filename, which is what Claude Code names it, and
-shape-checks it: anything that is not a UUID returns undefined, because a wrong id
-is worse than none — it would make two different sessions compare equal.
-`updateTodoContinue` now takes that id and passes it through, and both callers
-(`stop-hook.ts`, `daemon/work-queue-worker.ts`) supply it. All four writers now
-carry identity.
-
-Pinned by `describe("session identity survives a renamed note")` in
-`src/hooks/ts/lib/project-utils/todo.test.ts` — same session, renamed note,
-checkpoint old enough that recency cannot be what saves it. Removing the
-pass-through fails it.
-
-The earlier open question — whether `authored: 'auto'` correctly protects model
-checkpoints — is answered: it did not. Hence `hasSubstance()`.
-
-### Finding this session — `pai memory status` is already fixed, TODO is stale
-
-`Notes/TODO.md:76-89` still lists "`pai memory status` hangs" as open. Two of its three
-checkboxes are satisfied in code, in `src/cli/commands/memory/stats.ts`:
-
-- `stats.ts:50` — `pragma("busy_timeout = 4000")`, so it can no longer block silently on a
-  lock the daemon holds. (Covers "add a busy timeout + fail-fast error path".)
-- `stats.ts:67-84` — reads `storageBackend` and, when it is not `sqlite`, stops and points
-  at `pai daemon status` rather than printing a confident wrong count from the near-empty
-  SQLite file. (Covers "route through the same storage abstraction / don't assume SQLite".)
-
-Still genuinely open from that block:
-- [ ] `pai memory stats` errors with "unknown command" — the file is `stats.ts`, the command
-      is `status`. Alias or rename.
-- [ ] Investigate why `restart: unless-stopped` did not revive `pai-pgvector`.
-- [ ] Cosmetic: `stats.ts:55-66` has the same explanation written out twice in two
-      consecutive comment paragraphs. Delete one.
-
-**The two fixed checkboxes were deliberately NOT ticked** — `Notes/TODO.md` is itself in
-AIBroker's modified set, so editing it would land in their diff. Tick them once the tree
-is clean.
-
-### Next step, decided but not started
-
-Take the **`pai daemon status` storage-health** item (`Notes/TODO.md:71-74`): report
-"waiting for Postgres, N retries, queue depth M" instead of "idle", and escalate after N
-failed retries instead of looping silently (144 retries over ~2 days went unnoticed).
-Chosen specifically because it touches `src/cli/commands/daemon/` and the daemon retry
-loop — neither is in AIBroker's 11 files, so both sessions can work the same checkout
-without colliding.
-
-### Session log
-
-Renamed this session to **PAI** via `aibroker_rename`. No code was written, no files were
-edited, nothing was committed. The work above is investigation and verification only.
-
-<!-- /pai:archived-handover -->
 
 ---
 

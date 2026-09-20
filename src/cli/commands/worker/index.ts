@@ -35,6 +35,7 @@ import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
+import { registerWorkerCapabilityCommand } from "./capability.js";
 import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
@@ -77,6 +78,16 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--provider <name>", "Provider to run on (default: active, else routing order)")
     .option("--class <name>", "Use the provider of this class (draft, implement, review, research, spotcheck, simple, complex, image)")
     .option("--role <name>", "Alias of --class (roles were renamed to classes)")
+    .option(
+      "--capability <name>",
+      "Run on whichever configured provider serves this capability (see `pai worker capability`), " +
+        "not the active provider or --class's own one — e.g. --capability image runs an `engine: image` " +
+        "provider directly, POSTing a prompt and writing the PNG instead of spawning claude"
+    )
+    .option("--for <name>", "Alias of --capability")
+    .option("--out <file>", "Where an image-capability run writes its PNG (default: <logDir>/<worker-id>.png)")
+    .option("--size <WxH>", "Image size for an image-capability run, e.g. 1024x1024 (default: 1024x1024)")
+    .option("--timeout-ms <n>", "Timeout for an image-capability run's HTTP request (default: 120000)", parseIntArg)
     .option("--chain <stages>", "Comma-separated stage classes, e.g. draft,implement or draft,implement,review")
     .option("--agent <name>", "Run the agent definition ~/.claude/agents/<name>.md on a worker")
     .option(
@@ -114,6 +125,11 @@ export function registerWorkerCommands(workerCmd: Command): void {
           printCmd?: boolean;
           report?: string;
           reportRetry?: boolean;
+          capability?: string;
+          for?: string;
+          out?: string;
+          size?: string;
+          timeoutMs?: number;
         }
       ) => {
         try {
@@ -197,6 +213,10 @@ export function registerWorkerCommands(workerCmd: Command): void {
             printCmd: opts.printCmd,
             reportFormatFlag,
             noReportRetry: opts.reportRetry === false,
+            capabilityFlag: opts.capability ?? opts.for,
+            imageOut: opts.out,
+            imageSize: opts.size,
+            imageTimeoutMs: opts.timeoutMs,
             claudeArgs,
           });
           process.exitCode = rc;
@@ -699,6 +719,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerProviderCommands(providersCmd);
   registerWorkerClassCommands(workerCmd);
   registerWorkerModelCommand(workerCmd);
+  registerWorkerCapabilityCommand(workerCmd);
   registerWorkerConfigCommands(workerCmd);
 }
 

@@ -8,13 +8,24 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  ANTHROPIC_NATIVE,
   classModelCapability,
+  NATIVE_ANTHROPIC_MODELS,
   parseWorkersConfig,
+  resolveCapability,
   resolveModelCapability,
   WorkersConfigError,
   type WorkerProvider,
+  type WorkersConfig,
 } from "./config.js";
-import { describeModels, resolveProviderName, setProviderModel } from "./providers.js";
+import {
+  describeCapabilities,
+  describeModels,
+  resolveProviderName,
+  setCapabilityPreference,
+  setProviderModel,
+  unsetCapabilityPreference,
+} from "./providers.js";
 import { buildRunEnv } from "./run-env.js";
 
 let dir: string;
@@ -127,10 +138,15 @@ describe("model capabilities", () => {
     expect(readModels().fast).toBe("example-5.3-flash"); // untouched
   });
 
-  it("rejects a capability outside MODEL_CAPABILITIES", () => {
+  it("accepts an open-set capability name outside MODEL_CAPABILITIES", () => {
+    const c = setProviderModel("glm", "vision", "m", configPath);
+    expect(c.providers.glm!.models.vision).toBe("m");
+  });
+
+  it("rejects a capability name that does not match the naming rule", () => {
     expect(() =>
-      setProviderModel("glm", "vision" as never, "m", configPath)
-    ).toThrow(/not a model capability/);
+      setProviderModel("glm", "Bad Name", "m", configPath)
+    ).toThrow(/not a valid capability name/);
   });
 
   it("parses an image preference from the config file", () => {
@@ -151,7 +167,7 @@ describe("model capabilities", () => {
     expect(c.providers.glm!.models.fast).toBeUndefined();
   });
 
-  it("rejects an unknown or empty capability key at parse time", () => {
+  it("accepts an open-set capability key at parse time", () => {
     const withVision = {
       ...FIXTURE,
       providers: {
@@ -159,8 +175,20 @@ describe("model capabilities", () => {
         glm: { ...FIXTURE.providers.glm, models: { default: "m", vision: "v" } },
       },
     };
-    expect(() => parseWorkersConfig(withVision)).toThrow(
-      /models\.vision.*not a model capability/
+    const c = parseWorkersConfig(withVision);
+    expect(c.providers.glm!.models.vision).toBe("v");
+  });
+
+  it("rejects a badly named or empty capability key at parse time", () => {
+    const withBadName = {
+      ...FIXTURE,
+      providers: {
+        ...FIXTURE.providers,
+        glm: { ...FIXTURE.providers.glm, models: { default: "m", "Bad Name": "v" } },
+      },
+    };
+    expect(() => parseWorkersConfig(withBadName)).toThrow(
+      /not a valid capability name/
     );
     const withEmpty = {
       ...FIXTURE,
@@ -242,5 +270,121 @@ describe("describeModels", () => {
     const lines = describeModels(parseWorkersConfig({}));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/no providers configured/);
+  });
+});
+
+describe("resolveCapability", () => {
+  const base = (): Pick<WorkersConfig, "providers" | "active" | "capabilities" | "nativeModels"> => ({
+    active: "glm",
+    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    capabilities: {},
+    providers: {
+      glm: provider({ default: "glm-default" }),
+      pictures: { ...provider({ default: "p-default", image: "p-paint" }), enabled: true },
+      disabled: { ...provider({ default: "d-default", image: "d-paint" }), enabled: false },
+    },
+  });
+
+  it("walks an explicit preference list, skipping providers that don't declare the capability", () => {
+    const w = base();
+    w.capabilities.image = ["glm", "pictures"]; // glm has no image model
+    const r = resolveCapability(w, "image");
+    expect(r).toEqual({ provider: "pictures", model: "p-paint", engine: "claude", fellBack: false });
+  });
+
+  it("skips a disabled provider in the preference list", () => {
+    const w = base();
+    w.capabilities.image = ["disabled", "pictures"];
+    const r = resolveCapability(w, "image");
+    expect(r.provider).toBe("pictures");
+  });
+
+  it("throws naming every checked provider when the whole list is unusable", () => {
+    const w = base();
+    w.capabilities.image = ["glm", "disabled"];
+    expect(() => resolveCapability(w, "image")).toThrow(/glm, disabled/);
+  });
+
+  it("falls back to the active provider when it declares the capability and no preference is set", () => {
+    const w = base();
+    w.active = "pictures";
+    const r = resolveCapability(w, "image");
+    expect(r).toEqual({ provider: "pictures", model: "p-paint", engine: "claude", fellBack: false });
+  });
+
+  it("falls back to any enabled provider (stable name order) when the active one doesn't declare it", () => {
+    const w = base(); // active is "glm", which has no image model
+    const r = resolveCapability(w, "image");
+    expect(r.provider).toBe("pictures");
+    expect(r.fellBack).toBe(false);
+  });
+
+  it("falls back to the active provider's default model, flagged, when nothing declares the capability", () => {
+    const w = base();
+    delete w.capabilities.image;
+    w.providers = { glm: w.providers.glm }; // no provider declares "image" now
+    const r = resolveCapability(w, "image");
+    expect(r).toEqual({ provider: "glm", model: "glm-default", engine: "claude", fellBack: true });
+  });
+
+  it("resolves the built-in anthropic provider by name when it wins a preference list", () => {
+    const w = base();
+    w.capabilities.fast = [ANTHROPIC_NATIVE];
+    const r = resolveCapability(w, "fast");
+    expect(r).toEqual({
+      provider: ANTHROPIC_NATIVE,
+      model: NATIVE_ANTHROPIC_MODELS.fast,
+      engine: "claude",
+      fellBack: false,
+    });
+  });
+
+  it("reports the engine an image-capable provider carries", () => {
+    const w = base();
+    w.providers.pictures.engine = "image";
+    w.capabilities.image = ["pictures"];
+    const r = resolveCapability(w, "image");
+    expect(r.engine).toBe("image");
+  });
+});
+
+describe("capability preference set/unset/describe", () => {
+  it("sets and persists a preference list, rejecting an unknown provider", () => {
+    setProviderModel("other", "image", "other-paint", configPath);
+    const c = setCapabilityPreference("image", ["other", "glm"], configPath);
+    expect(c.capabilities.image).toEqual(["other", "glm"]);
+    expect(() => setCapabilityPreference("image", ["nope"], configPath)).toThrow(/no provider named "nope"/);
+  });
+
+  it("rejects a badly named capability and an empty provider list", () => {
+    expect(() => setCapabilityPreference("Bad Name", ["glm"], configPath)).toThrow(
+      /not a valid capability name/
+    );
+    expect(() => setCapabilityPreference("image", [], configPath)).toThrow(/at least one provider/);
+  });
+
+  it("unsets a preference, erroring when none was set", () => {
+    setProviderModel("other", "image", "other-paint", configPath);
+    setCapabilityPreference("image", ["other"], configPath);
+    const c = unsetCapabilityPreference("image", configPath);
+    expect(c.capabilities.image).toBeUndefined();
+    expect(() => unsetCapabilityPreference("image", configPath)).toThrow(/no capability preference set/);
+  });
+
+  it("describes each preference and what it resolves to, including an unresolved one", () => {
+    const c = parseWorkersConfig(FIXTURE);
+    c.capabilities = { image: ["other"], fast: ["glm"] };
+    c.providers.other!.models.image = "other-paint";
+    c.providers.glm!.enabled = false; // makes the "fast" preference unusable
+    const lines = describeCapabilities(c);
+    expect(lines.find((l) => l.startsWith("image:"))).toContain("other/other-paint  engine claude");
+    expect(lines.find((l) => l.startsWith("fast:"))).toMatch(/unresolved/);
+  });
+
+  it("says so when no preferences are configured", () => {
+    const c = parseWorkersConfig(FIXTURE);
+    expect(describeCapabilities(c)).toEqual([
+      "no capability preferences set — set one with `pai worker capability <name> <provider>[,<provider>…]`",
+    ]);
   });
 });

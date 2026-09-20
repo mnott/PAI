@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig, type WorkerProvider } from "./config.js";
-import { NoProviderError, resolveTarget, setCooldown } from "./routing.js";
+import { capabilityForRun, NoProviderError, resolveCapabilityRun, resolveTarget, setCooldown } from "./routing.js";
 import { parseRunnerArgs } from "./args.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-workers-routing-"));
@@ -219,5 +219,75 @@ describe("parseRunnerArgs", () => {
     expect(p.callerModel).toBe(true);
     expect(p.callerMcpConfig).toBe(true);
     expect(p.headless).toBe(false);
+  });
+});
+
+describe("capabilityForRun", () => {
+  it("an explicit --capability always applies, --provider aside", () => {
+    expect(capabilityForRun(config(), { capabilityFlag: "image" })).toBe("image");
+  });
+
+  it("a class with an implied non-default capability and no provider of its own routes by capability", () => {
+    // "image" is not configured as a class here, so it names no provider
+    expect(capabilityForRun(config(), { className: "image" })).toBe("image");
+  });
+
+  it("a class already pinned to a provider (even one with a non-default alias) is left alone", () => {
+    expect(capabilityForRun(config(), { className: "spotcheck" })).toBeNull(); // glm/fast
+  });
+
+  it("a class implying the default capability is left alone", () => {
+    expect(capabilityForRun(config(), { className: "implement" })).toBeNull();
+  });
+
+  it("no flag and no class resolves nothing", () => {
+    expect(capabilityForRun(config(), {})).toBeNull();
+  });
+});
+
+describe("resolveCapabilityRun", () => {
+  it("resolves to a runnable provider and passes through the engine", () => {
+    const c = config({
+      providers: {
+        glm: { ...GLM },
+        pictures: { ...GLM, engine: "image", models: { default: "p-default", image: "p-paint" } },
+      },
+      capabilities: { image: ["pictures"] },
+    });
+    const r = resolveCapabilityRun(c, "image");
+    expect(r).toEqual({
+      providerName: "pictures",
+      provider: c.providers.pictures,
+      model: "p-paint",
+      engine: "image",
+      fellBack: false,
+      capability: "image",
+    });
+  });
+
+  it("throws naming every checked provider when nothing in the preference list is usable", () => {
+    const c = config({ capabilities: { image: ["glm"] } }); // glm has no image model
+    expect(() => resolveCapabilityRun(c, "image")).toThrow(/glm/);
+  });
+
+  it("refuses a provider whose only claim to image is a classes-idiom models.image entry, not a real image engine", () => {
+    // glm declares an "image" model (the classes-based `image: glm/image`
+    // idiom) but has no engine: image — a run must not silently spawn
+    // claude on that model and call it done
+    const c = config({
+      providers: { glm: { ...GLM, models: { default: "example-4.7", image: "example-paint" } } },
+      capabilities: { image: ["glm"] },
+    });
+    expect(() => resolveCapabilityRun(c, "image")).toThrow(/has no image engine/);
+    expect(() => resolveCapabilityRun(c, "image")).toThrow(/--engine image/);
+  });
+
+  it("refuses the active-provider fallback a run would otherwise silently get", () => {
+    // no capabilities preference and no provider anywhere declares "image" —
+    // resolveCapability alone would fall back to glm's default model, but a
+    // run must not silently treat a text model as an image generator
+    const c = config();
+    expect(() => resolveCapabilityRun(c, "image")).toThrow(/no provider declares the "image" capability/);
+    expect(() => resolveCapabilityRun(c, "image")).toThrow(/pai worker capability image/);
   });
 });

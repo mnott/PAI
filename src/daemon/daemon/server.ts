@@ -26,7 +26,7 @@ import {
   cacheKeepaliveTimer,
   storageBackend,
 } from "./state.js";
-import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive } from "./scheduler.js";
+import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -159,6 +159,11 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // backend dependency (observations store opportunistically when Postgres
   // is up), so it starts with the IPC server too.
   startCacheKeepalive();
+
+  // Interactive-session cache keepalive: also no backend dependency (reads
+  // AIBroker + transcript files, writes the workers ledger + its own state
+  // file), so it starts with the IPC server too.
+  startSessionKeepalive();
 
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so

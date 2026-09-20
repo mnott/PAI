@@ -60,10 +60,16 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai backup` | Backup registry, config, and Postgres database to PAI_HOME/backups/ |
 | `pai clear-names` | Recovery: wipe corrupted iTerm2 session name state. |
 | `pai config` | PAI_HOME namespace dir: path, migrate |
+| `pai config get <path>` | Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON. |
+| `pai config list` | Print the main PAI config as YAML (secrets masked). Defaults to what the file explicitly sets. |
 | `pai config migrate` | Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/, |
 | `pai config path` | Print the PAI_HOME namespace dir and each resolved per-user file |
+| `pai config set <path> <value>` | Set one config value (dotted path). Value parsing: true/false, null, numbers, |
+| `pai config unset <path>` | Remove one config value (dotted path), reverting it to the built-in default |
+| `pai config yaml` | Convert config.json → config.yaml (and voices.json → voices.yaml), with a short |
 | `pai daemon` | PAI daemon management: serve, status, restart, install, uninstall, logs |
 | `pai daemon install` | Install daemon as a launchd service and update ~/.claude.json to use the shim |
+| `pai daemon keepalive` | Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines |
 | `pai daemon logs` | Tail the daemon log (/tmp/pai-daemon.log) |
 | `pai daemon migrate` | Migrate federation data from SQLite to PostgreSQL |
 | `pai daemon restart` | Send SIGTERM to the running daemon (launchd will restart it) |
@@ -214,6 +220,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai topic check <context>` | Check whether context text has drifted to a different project. |
 | `pai update` | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |
 | `pai worker` | Run subagents on configured worker providers: run, ps, follow, replay, |
+| `pai worker capability [name] [providers]` | Which provider(s) serve a capability (e.g. image), independent of any one |
 | `pai worker classes` | Classes: which provider serves draft / implement / review / … |
 | `pai worker classes list` | List classes and their targets (default action) |
 | `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |

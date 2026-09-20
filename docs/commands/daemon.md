@@ -20,6 +20,7 @@ pai daemon <subcommand> [options]
 | [`pai daemon restart`](#pai-daemon-restart) | Send SIGTERM to the running daemon (launchd will restart it) |
 | [`pai daemon install`](#pai-daemon-install) | Install daemon as a launchd service and update ~/.claude.json to use the shim |
 | [`pai daemon uninstall`](#pai-daemon-uninstall) | Remove the launchd service and revert to direct MCP |
+| [`pai daemon keepalive`](#pai-daemon-keepalive) | Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines |
 | [`pai daemon logs`](#pai-daemon-logs) | Tail the daemon log (/tmp/pai-daemon.log) |
 
 ### pai daemon serve
@@ -56,6 +57,11 @@ Install daemon as a launchd service and update ~/.claude.json to use the shim
 ### pai daemon uninstall
 
 Remove the launchd service and revert to direct MCP
+
+
+### pai daemon keepalive
+
+Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines
 
 
 ### pai daemon logs

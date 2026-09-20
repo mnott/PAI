@@ -114,15 +114,90 @@ if [ ! -f "$pai_config" ]; then
         pai_config="${XDG_CONFIG_HOME:-$HOME/.config}/pai/config.json"
     fi
 fi
+
+# Providers moved to $pai_home_dir/workers.yaml (top-level `providers:`; see
+# src/workers/config.ts readWorkersSection) on 2026-09-19 — jq never sees the
+# YAML directly (no yq on this machine), so a small node script converts it
+# via the `yaml` package sitting next to this script's own real location
+# (readlink -f "$0": this file is usually reached through a symlink at
+# ~/.claude/statusline-command.sh). The conversion is cached under
+# pai_cache_dir, the cache kept only while it is newer than workers.yaml's own
+# mtime, so node is spawned only when the YAML actually changed. Resolved once
+# into $providers_file (holding just the providers object, unwrapped) so both
+# this lookup and the usage block below read the same data — never re-derived.
+# Any failure (no workers.yaml, no node, parse error) falls back silently to
+# the legacy `.workers.providers` of $pai_config, then to anthropic.
+providers_file=""
+_workers_yaml="${pai_home_dir}/workers.yaml"
+if [ -f "$_workers_yaml" ] && command -v node >/dev/null 2>&1; then
+    _sl_script="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+    _sl_script_dir="$(dirname "$_sl_script")"
+    _providers_cache="${pai_cache_dir}/statusline-providers.json"
+    _yaml_mtime=$(stat -f %m "$_workers_yaml" 2>/dev/null || echo 0)
+    _cache_mtime=$(stat -f %m "$_providers_cache" 2>/dev/null || echo -1)
+    if [ ! -s "$_providers_cache" ] || [ "$_cache_mtime" -lt "$_yaml_mtime" ] 2>/dev/null; then
+        mkdir -p "$pai_cache_dir" 2>/dev/null
+        # umask 077 so the temp file is born 0600 — it must never exist at a
+        # world-readable mode even transiently, since providers carry inline
+        # `key:` secrets and only the allow-listed fields below leave this
+        # subshell.
+        (
+            umask 077
+            NODE_PATH="${_sl_script_dir}/node_modules" node - "$_workers_yaml" \
+                > "${_providers_cache}.tmp" 2>/dev/null <<'PAI_YAML_PROVIDERS'
+const fs = require("fs");
+try {
+    const YAML = require("yaml");
+    const doc = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+    const providers = (doc && doc.providers) || {};
+    // Allow-list: only what the status line ever reads from a provider.
+    // workers.yaml is 0600 because providers carry inline `key:` secrets —
+    // this cache must never repeat them (or `env`, `url`, `headers`, …).
+    const safe = {};
+    for (const [name, p] of Object.entries(providers || {})) {
+        safe[name] = {
+            models: (p && p.models) || {},
+            usage: (p && p.usage) || undefined,
+            keyFile: (p && p.keyFile) || undefined,
+        };
+    }
+    process.stdout.write(JSON.stringify(safe));
+} catch {
+    process.exit(1);
+}
+PAI_YAML_PROVIDERS
+        )
+        if [ -s "${_providers_cache}.tmp" ]; then
+            mv "${_providers_cache}.tmp" "$_providers_cache"
+        else
+            rm -f "${_providers_cache}.tmp"
+        fi
+    fi
+    [ -s "$_providers_cache" ] && providers_file="$_providers_cache"
+fi
+if [ -z "$providers_file" ] && [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
+    _providers_legacy="${pai_cache_dir}/statusline-providers-legacy.json"
+    mkdir -p "$pai_cache_dir" 2>/dev/null
+    # Same allow-list and 0600-from-birth handling as the YAML path above:
+    # this legacy config can carry the same inline `key:` secrets.
+    if (umask 077; jq -c '(.workers.providers // {}) | with_entries(.value |= {models, usage, keyFile})' "$pai_config" > "${_providers_legacy}.tmp" 2>/dev/null) \
+        && [ -s "${_providers_legacy}.tmp" ]; then
+        mv "${_providers_legacy}.tmp" "$_providers_legacy"
+        providers_file="$_providers_legacy"
+    else
+        rm -f "${_providers_legacy}.tmp"
+    fi
+fi
+
 model_base="${model_id%%\[*}"
 session_provider=anthropic
-if [ -n "$model_base" ] && [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
+if [ -n "$model_base" ] && [ -n "$providers_file" ] && command -v jq >/dev/null 2>&1; then
     _matched_provider=$(jq -r --arg mb "$model_base" '
-        (.workers.providers // {}) | to_entries[] as $p
+        (. // {}) | to_entries[] as $p
         | (($p.value.models // {}) | to_entries[]) as $m
         | ($m.value | tostring) as $v
         | select($v == $mb or ($v | split("[")[0]) == $mb)
-        | $p.key' "$pai_config" 2>/dev/null | head -1)
+        | $p.key' "$providers_file" 2>/dev/null | head -1)
     [ -n "$_matched_provider" ] && session_provider="$_matched_provider"
 fi
 
@@ -738,9 +813,9 @@ _fetch_provider_usage() {
 if [ "$session_provider" != "anthropic" ]; then
     provider_usage=""
     provider_keyfile=""
-    if [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
-        provider_usage=$(jq -c --arg p "$session_provider" '.workers.providers[$p].usage // empty' "$pai_config" 2>/dev/null)
-        provider_keyfile=$(jq -r --arg p "$session_provider" '.workers.providers[$p].keyFile // empty' "$pai_config" 2>/dev/null)
+    if [ -n "$providers_file" ] && command -v jq >/dev/null 2>&1; then
+        provider_usage=$(jq -c --arg p "$session_provider" '.[$p].usage // empty' "$providers_file" 2>/dev/null)
+        provider_keyfile=$(jq -r --arg p "$session_provider" '.[$p].keyFile // empty' "$providers_file" 2>/dev/null)
         case "$provider_keyfile" in "~/"*) provider_keyfile="$HOME/${provider_keyfile#\~/}" ;; esac
     fi
 

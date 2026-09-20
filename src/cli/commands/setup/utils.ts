@@ -4,13 +4,12 @@
  */
 
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readJsonStrict, writeJsonAtomic } from "../../../config/json-store.js";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
-import { CONFIG_DIR, CONFIG_FILE } from "../../../daemon/config.js";
+import { readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 import { exitAfterFlush } from "../../lib/exit.js";
 
 // ---------------------------------------------------------------------------
@@ -132,11 +131,11 @@ export async function promptYesNo(
  * current command happened to be setting.
  */
 export function readConfigRaw(): Record<string, unknown> {
-  return readJsonStrict(CONFIG_FILE, CONFIG_FILE);
+  return readMainConfigRaw();
 }
 
 export function writeConfigRaw(data: Record<string, unknown>): void {
-  writeJsonAtomic(CONFIG_FILE, data, { label: CONFIG_FILE });
+  writeMainConfigRaw(data);
 }
 
 export function mergeConfig(updates: Record<string, unknown>): void {

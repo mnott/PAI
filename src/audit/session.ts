@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { parseSessionUsage, totalUsageTokens, type SessionUsageReport } from "./session-usage.js";
 import { encodeDir } from "../cli/utils.js";
 import { firstTurnBreakdown, type FirstTurnBreakdown } from "./first-turn.js";
+import { loadConfig } from "../daemon/config.js";
 
 /** Newest *.jsonl under ~/.claude/projects, excluding subagents/. */
 export function newestSessionLog(): string | null {
@@ -54,7 +55,8 @@ export interface SessionReportOutput extends SessionUsageReport {
 export async function auditSession(path?: string, threshold?: number): Promise<SessionReportOutput | null> {
   const target = path ?? newestSessionLog();
   if (!target) return null;
-  const report = await parseSessionUsage(target, threshold);
+  const keepaliveWord = loadConfig().sessions.cacheKeepalive.prompt;
+  const report = await parseSessionUsage(target, threshold, keepaliveWord);
   const total = totalUsageTokens(report.totals) || 1;
   const percentages: Record<string, number> = {};
   for (const [key, value] of Object.entries(report.totals)) {

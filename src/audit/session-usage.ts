@@ -84,6 +84,15 @@ export interface SessionUsageReport {
   lastModel: string | null;
   modelSwitches: ModelSwitch[];
   fallbacks: FallbackEvent[];
+  /** Timestamp (ms) of the last folded assistant turn; drives idle-gap detection. */
+  lastTurnAtMs: number | null;
+  /** Gaps between consecutive assistant turns exceeding 60 minutes — evidence
+   *  for whether the session ever went idle long enough to risk its cache TTL
+   *  (see sessions.cacheKeepalive, src/daemon/config.ts). */
+  idleGapsOver60min: number;
+  /** Real user prompts whose text is exactly the configured keepalive word
+   *  (set only when parseSessionUsage is called with one); null otherwise. */
+  keepaliveBeats: number | null;
 }
 
 const USAGE_KEYS: (keyof UsageTotals)[] = [
@@ -97,7 +106,7 @@ function emptyTotals(): UsageTotals {
   return { cache_read_input_tokens: 0, cache_creation_input_tokens: 0, input_tokens: 0, output_tokens: 0 };
 }
 
-interface AssistantLine {
+export interface AssistantLine {
   type?: string;
   uuid?: string;
   subtype?: string;
@@ -118,6 +127,7 @@ interface AssistantLine {
       cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
     };
     content?: string | Array<{ type?: string }>;
+    stop_reason?: string | null;
   };
 }
 
@@ -178,6 +188,8 @@ export function foldAssistantLine(
     | "firstTurnAt"
     | "lastModel"
     | "modelSwitches"
+    | "lastTurnAtMs"
+    | "idleGapsOver60min"
   >,
   seenIds: Set<string>,
   line: AssistantLine,
@@ -204,6 +216,13 @@ export function foldAssistantLine(
   if (report.firstTurnContext === null) {
     report.firstTurnContext = context;
     report.firstTurnAt = line.timestamp ?? null;
+  }
+  const atMs = line.timestamp ? Date.parse(line.timestamp) : NaN;
+  if (!Number.isNaN(atMs)) {
+    if (report.lastTurnAtMs !== null && atMs - report.lastTurnAtMs > 60 * 60 * 1000) {
+      report.idleGapsOver60min++;
+    }
+    report.lastTurnAtMs = atMs;
   }
   report.lastTurnContext = context;
   report.maxContext = report.maxContext === null ? context : Math.max(report.maxContext, context);
@@ -245,8 +264,28 @@ export function isRealUserPrompt(line: AssistantLine): boolean {
   return false;
 }
 
-/** Parse a session/subagent/worker-event JSONL file into a usage report. */
-export async function parseSessionUsage(path: string, threshold = 200_000): Promise<SessionUsageReport> {
+/** Plain text of a real user prompt: the string content, or its first text block. */
+export function extractUserPromptText(line: AssistantLine): string {
+  const content = line.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const block = content.find((b) => b?.type === "text") as { text?: string } | undefined;
+    return block?.text ?? "";
+  }
+  return "";
+}
+
+/**
+ * Parse a session/subagent/worker-event JSONL file into a usage report.
+ * `keepaliveWord`, when given, counts real user prompts whose text exactly
+ * matches it (trimmed) — the sessions.cacheKeepalive beat prompt — into
+ * `keepaliveBeats`; omitted, `keepaliveBeats` stays null.
+ */
+export async function parseSessionUsage(
+  path: string,
+  threshold = 200_000,
+  keepaliveWord?: string
+): Promise<SessionUsageReport> {
   const report: SessionUsageReport = {
     path,
     sizeBytes: existsSync(path) ? readFileSync(path).byteLength : 0,
@@ -267,6 +306,9 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     lastModel: null,
     modelSwitches: [],
     fallbacks: [],
+    lastTurnAtMs: null,
+    idleGapsOver60min: 0,
+    keepaliveBeats: keepaliveWord ? 0 : null,
   };
   const seenIds = new Set<string>();
   let contextSum = 0;
@@ -281,7 +323,12 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
       continue;
     }
     if (obj.type === "user") {
-      if (isRealUserPrompt(obj)) report.userPrompts++;
+      if (isRealUserPrompt(obj)) {
+        report.userPrompts++;
+        if (keepaliveWord && extractUserPromptText(obj).trim() === keepaliveWord) {
+          report.keepaliveBeats = (report.keepaliveBeats ?? 0) + 1;
+        }
+      }
       continue;
     }
     if (isCompactBoundary(obj)) {

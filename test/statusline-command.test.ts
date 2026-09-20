@@ -20,7 +20,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -245,6 +245,66 @@ describe("provider isolation", () => {
   it("still reports Anthropic windows for a model the config does not claim", () => {
     const r = run(payload({ rate_limits: rateLimits(9, 2) }), { paiConfig: config });
     expect(r.usage).toContain("7d: 2%");
+  });
+});
+
+describe("workers.yaml providers", () => {
+  const SECRET = "sk-test-secret-value";
+
+  it("reads providers from workers.yaml when it exists, and caches the conversion", () => {
+    const paiHome = mkdtempSync(join(tmpdir(), "pai-sl-workers-home-"));
+    writeFileSync(
+      join(paiHome, "workers.yaml"),
+      `providers:\n  glm:\n    models:\n      default: glm-5.3\n    usage:\n      label: glm\n    key: ${SECRET}\n    env:\n      X: y\n`,
+    );
+
+    const r = run(payload({ model: { id: "glm-5.3", display_name: "GLM 5.3" } }), {
+      env: { PAI_HOME: paiHome },
+    });
+
+    const usage = r.lines.find((l) => l.includes("glm")) ?? "";
+    expect(usage).toContain("glm");
+    // PAI_CACHE_DIR is run()'s own temp cache dir (home/cache); the derived
+    // JSON must land there, never under paiHome or anywhere else.
+    const cacheDir = join(r.home, "cache");
+    const cachePath = join(cacheDir, "statusline-providers.json");
+    expect(existsSync(cachePath)).toBe(true);
+
+    // The cache used to emit `doc.providers` verbatim — inline `key:` and
+    // `env:` secrets landed in a world-readable file. It must carry only the
+    // allow-listed fields the status line actually reads.
+    const cacheContent = readFileSync(cachePath, "utf-8");
+    expect(cacheContent).not.toContain(SECRET);
+    expect(cacheContent).not.toContain('"key"');
+    expect(cacheContent).not.toContain('"env"');
+    expect(statSync(cachePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("falls back to the JSON .workers.providers when no workers.yaml exists", () => {
+    const jsonConfig = {
+      workers: {
+        providers: {
+          glm: { models: { implement: "glm-5.3" }, key: SECRET, env: { X: "y" } },
+        },
+      },
+    };
+    const r = run(
+      payload({
+        model: { id: "glm-5.3", display_name: "GLM 5.3" },
+        rate_limits: rateLimits(9, 2),
+      }),
+      { paiConfig: jsonConfig },
+    );
+    expect(r.usage).not.toContain("5h:");
+    expect(r.usage).toContain("glm");
+
+    const cachePath = join(r.home, "cache", "statusline-providers-legacy.json");
+    expect(existsSync(cachePath)).toBe(true);
+    const cacheContent = readFileSync(cachePath, "utf-8");
+    expect(cacheContent).not.toContain(SECRET);
+    expect(cacheContent).not.toContain('"key"');
+    expect(cacheContent).not.toContain('"env"');
+    expect(statSync(cachePath).mode & 0o777).toBe(0o600);
   });
 });
 

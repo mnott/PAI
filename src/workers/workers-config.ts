@@ -15,19 +15,20 @@
  * byte-for-byte across `add`, `use`, `disable`, and every other mutation.
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Document, Scalar, parseDocument, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
+import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import {
   ANTHROPIC_NATIVE,
-  MODEL_CAPABILITIES,
   NATIVE_ANTHROPIC_MODELS,
   WorkersConfigError,
   expandHome,
   isModelCapability,
+  parseCapabilitiesValue,
   parseClassesValue,
   parseMcpSetsValue,
   parseModelsBlock,
@@ -100,6 +101,7 @@ export interface WorkersYamlData {
   active: string | null;
   providers: Record<string, WorkerProvider>;
   classes: Record<string, ClassTarget>;
+  capabilities: Record<string, string[]>;
   mcpSets: Record<string, string[]>;
   nativeModels: WorkerProvider["models"];
 }
@@ -244,14 +246,16 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
       withLine(doc, ["classes"], yamlPath, e);
     }
     // Cross-validate: every class must name a known provider (or "anthropic")
-    // and, if it names a role, a real model capability. Unlike the JSON path
-    // (where a provider can be removed out from under a class and the error
-    // surfaces at spawn time), workers.yaml catches this at load time.
+    // and, if it names a role, a capability that provider actually declares.
+    // Unlike the JSON path (where a provider can be removed out from under a
+    // class and the error surfaces at spawn time), workers.yaml catches this
+    // at load time.
     for (const [cls, target] of Object.entries(classes)) {
       const provider = typeof target === "string" ? target.split("/")[0] : target.provider;
       const alias = typeof target === "string" ? target.split("/")[1] : undefined;
       if (provider !== undefined) {
-        if (provider !== ANTHROPIC_NATIVE && !providers[provider]) {
+        const native = provider === ANTHROPIC_NATIVE;
+        if (!native && !providers[provider]) {
           withLine(
             doc,
             ["classes", cls],
@@ -261,17 +265,37 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
             )
           );
         }
-        if (alias !== undefined && !isModelCapability(alias)) {
-          withLine(
-            doc,
-            ["classes", cls],
-            yamlPath,
-            new WorkersConfigError(
-              `classes.${cls}: unknown model role "${alias}" (from: ${MODEL_CAPABILITIES.join(", ")})`
-            )
-          );
+        if (alias !== undefined) {
+          if (!isModelCapability(alias)) {
+            withLine(
+              doc,
+              ["classes", cls],
+              yamlPath,
+              new WorkersConfigError(
+                `classes.${cls}: "${alias}" is not a valid capability name (must match ^[a-z][a-z0-9-]*$)`
+              )
+            );
+          } else if (!native && providers[provider] && alias !== "default" && !providers[provider].models[alias]) {
+            // the native provider has no configurable model slots — any
+            // alias resolves through resolveModelCapability's own fallback
+            withLine(
+              doc,
+              ["classes", cls],
+              yamlPath,
+              new WorkersConfigError(`classes.${cls}: provider "${provider}" has no "${alias}" model configured`)
+            );
+          }
         }
       }
+    }
+  }
+
+  let capabilities: Record<string, string[]> = {};
+  if (r.capabilities !== undefined) {
+    try {
+      capabilities = parseCapabilitiesValue(r.capabilities, "capabilities");
+    } catch (e) {
+      withLine(doc, ["capabilities"], yamlPath, e);
     }
   }
 
@@ -298,7 +322,7 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     );
   }
 
-  return { active, providers, classes, mcpSets, nativeModels };
+  return { active, providers, classes, capabilities, mcpSets, nativeModels };
 }
 
 /** Read + parse workers.yaml. Returns null if the file does not exist. */
@@ -378,6 +402,16 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
     if (!(cls in after.classes)) doc.deleteIn(["classes", cls]);
   }
 
+  // capabilities: same add/update/remove diff
+  for (const [cap, prefs] of Object.entries(after.capabilities)) {
+    if (!shallowEqual(before.capabilities[cap], prefs)) {
+      doc.setIn(["capabilities", cap], [...prefs]);
+    }
+  }
+  for (const cap of Object.keys(before.capabilities)) {
+    if (!(cap in after.capabilities)) doc.deleteIn(["capabilities", cap]);
+  }
+
   // mcp_sets: same add/update/remove diff
   for (const [set, servers] of Object.entries(after.mcpSets)) {
     if (!shallowEqual(before.mcpSets[set], servers)) {
@@ -406,12 +440,22 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
   const doc = existing ? existing.doc : new Document({});
   const before: WorkersYamlData = existing
     ? existing.data
-    : { active: null, providers: {}, classes: {}, mcpSets: {}, nativeModels: { ...NATIVE_ANTHROPIC_MODELS } };
+    : {
+        active: null,
+        providers: {},
+        classes: {},
+        capabilities: {},
+        mcpSets: {},
+        nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+      };
   syncWorkersYamlDocument(doc, before, after);
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
-/** Atomic write with a .bak-pai backup and a re-validate-or-restore guard. */
+/** Atomic write with a .bak-pai backup and a re-validate-or-restore guard.
+ *  The file-I/O tail (backup, temp write at 0600, rename, chmod) is shared
+ *  with every other PAI YAML file via writeYamlFileAtomic; only the
+ *  workers.yaml-specific validation (parseWorkersYamlDocument) lives here. */
 export function writeWorkersYamlText(yamlPath: string, text: string): void {
   // Validate before committing anything to disk.
   const probe = parseDocument(text);
@@ -425,31 +469,10 @@ export function writeWorkersYamlText(yamlPath: string, text: string): void {
     throw new WorkersConfigError(`refusing to write ${yamlPath}: ${msg} (previous file left unchanged)`);
   }
 
-  const dir = dirname(yamlPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  if (existsSync(yamlPath)) {
-    try {
-      copyFileSync(yamlPath, `${yamlPath}.bak-pai`);
-    } catch (e) {
-      throw new WorkersConfigError(
-        `Could not back up ${yamlPath}: ${e instanceof Error ? e.message : String(e)}\nRefusing to write without a backup.`
-      );
-    }
-  }
-  const tmp = `${yamlPath}.tmp-pai-${process.pid}`;
   try {
-    writeFileSync(tmp, text, { encoding: "utf8", mode: 0o600 });
-    renameSync(tmp, yamlPath);
-    // this file can carry API keys (the `key:` field) and is never
-    // committed — every write keeps it private, key or no key.
-    chmodSync(yamlPath, 0o600);
+    writeYamlFileAtomic(yamlPath, text, { label: yamlPath });
   } catch (e) {
-    try {
-      if (existsSync(tmp)) unlinkSync(tmp);
-    } catch {
-      /* best effort */
-    }
-    throw new WorkersConfigError(`Failed to write ${yamlPath}: ${e instanceof Error ? e.message : String(e)}`);
+    throw new WorkersConfigError(e instanceof YamlStoreError ? e.message : String(e instanceof Error ? e.message : e));
   }
 }
 
@@ -492,6 +515,18 @@ providers:
       default: k3[1m]
       fast: kimi-for-coding[1m]
 
+# An \`engine: image\` provider does not spawn Claude — \`pai worker run
+# --capability image\` POSTs straight to its OpenAI-compatible images API and
+# writes the PNG it gets back. Uncomment and point it at a real provider
+# (still nested under providers:, above) to enable \`--capability image\`:
+#   pictures:
+#     engine: image
+#     url: https://api.example.com/v1
+#     key: "<your-api-key>"
+#     models:
+#       default: example-image-model
+#       image: example-image-model
+
 # A class names a provider, or provider/role to pick a non-default model.
 # Workers exist to parallelise and to save cost: the default is Sonnet,
 # Haiku for the mechanical classes, and nothing here inherits the
@@ -506,6 +541,13 @@ classes:
   spotcheck: anthropic/fast
   simple: anthropic/fast
   image: glm/image
+
+# Cross-provider capability preference: which provider serves a --capability
+# request, in order, when more than one declares it. Unlisted capabilities
+# fall back to the active provider, then any provider that declares them.
+# capabilities:
+#   image: [pictures, glm]
+#   fast: [anthropic]
 
 mcp_sets:
   desktop: [clickr]
@@ -560,6 +602,12 @@ export function buildWorkersYamlText(data: WorkersYamlData): string {
     lines.push(`  ${cls}: ${typeof target === "string" ? target : yamlScalar(target)}`);
   }
   lines.push("");
+  const capEntries = Object.entries(data.capabilities);
+  if (capEntries.length) {
+    lines.push("capabilities:");
+    for (const [cap, prefs] of capEntries) lines.push(`  ${cap}: [${prefs.join(", ")}]`);
+    lines.push("");
+  }
   const mcpEntries = Object.entries(data.mcpSets);
   lines.push(mcpEntries.length ? "mcp_sets:" : "mcp_sets: {}");
   for (const [set, servers] of mcpEntries) {
@@ -617,6 +665,7 @@ export function migrateWorkersToYaml(
     active: workers.active,
     providers: workers.providers,
     classes: workers.classes,
+    capabilities: workers.capabilities,
     mcpSets: workers.mcpSets,
     nativeModels: workers.nativeModels,
   };

@@ -15,11 +15,95 @@ pai config <subcommand> [options]
 | Command | Description |
 |---------|-------------|
 | [`pai config path`](#pai-config-path) | Print the PAI_HOME namespace dir and each resolved per-user file |
+| [`pai config yaml`](#pai-config-yaml) | Convert config.json → config.yaml (and voices.json → voices.yaml), with a short |
+| [`pai config list`](#pai-config-list) | Print the main PAI config as YAML (secrets masked). Defaults to what the file explicitly sets. |
+| [`pai config get <path>`](#pai-config-get-path) | Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON. |
+| [`pai config set <path> <value>`](#pai-config-set-path-value) | Set one config value (dotted path). Value parsing: true/false, null, numbers, |
+| [`pai config unset <path>`](#pai-config-unset-path) | Remove one config value (dotted path), reverting it to the built-in default |
 | [`pai config migrate`](#pai-config-migrate) | Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/, |
 
 ### pai config path
 
 Print the PAI_HOME namespace dir and each resolved per-user file
+
+
+### pai config yaml
+
+Convert config.json → config.yaml (and voices.json → voices.yaml), with a short
+
+# comment above every top-level section and any "_comment"/"_...Note" JSON-
+      workaround key re-attached as a real comment. Verifies the generated YAML
+      re-parses to the exact same data before writing anything; the JSON is then
+      renamed to <name>.migrated-<YYYY-MM-DD> (never deleted). Every writer keeps
+      working unmodified afterwards — see docs/config.md.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Print the plan without writing anything |  |
+| `--force` | Regenerate config.yaml (or voices.yaml) even if it already exists |  |
+
+
+### pai config list
+
+Print the main PAI config as YAML (secrets masked). Defaults to what the file explicitly sets.
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--all` | Include every default value, not just what the file sets |  |
+| `--json` | Print JSON instead of YAML |  |
+
+
+### pai config get <path>
+
+Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<path>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--json` | Print an object/array value as JSON instead of YAML |  |
+
+
+### pai config set <path> <value>
+
+Set one config value (dotted path). Value parsing: true/false, null, numbers,
+
+[...] / {...} as JSON, else a string. Creates config.yaml (from config.json,
+      if any) on first use, then writes comment-preserving.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<path>` | required |
+| `<value>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--force` | Set an unknown top-level key, or a value of a different type than the default |  |
+
+
+### pai config unset <path>
+
+Remove one config value (dotted path), reverting it to the built-in default
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<path>` | required |
 
 
 ### pai config migrate

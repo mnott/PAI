@@ -200,7 +200,7 @@ describe("provider/role resolution, including fast", () => {
     expect(workers.providers.real.models.default).toBe("real-default");
   });
 
-  it("rejects a role that names no known model capability", () => {
+  it("rejects a role whose provider has no such model configured", () => {
     const dir = newDir();
     const jsonPath = join(dir, "config.json");
     const yamlPath = isolateYaml(dir);
@@ -223,7 +223,30 @@ describe("provider/role resolution, including fast", () => {
       ].join("\n"),
       "utf8"
     );
-    expect(() => readWorkersSection(jsonPath)).toThrow(/unknown model role "turbo"/);
+    expect(() => readWorkersSection(jsonPath)).toThrow(/provider "real" has no "turbo" model configured/);
+  });
+
+  it("rejects a role name that is not well-formed, even though the set of names is open", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeFileSync(
+      yamlPath,
+      [
+        "active: real",
+        "providers:",
+        "  real:",
+        "    url: https://real.example.com",
+        "    models:",
+        "      default: real-default",
+        "classes:",
+        "  spotcheck: real/Turbo",
+        "mcp_sets: {}",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    expect(() => readWorkersSection(jsonPath)).toThrow(/not a valid capability name/);
   });
 });
 

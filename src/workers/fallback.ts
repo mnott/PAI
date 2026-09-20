@@ -55,7 +55,7 @@ export function fallbackNotePath(logDir: string): string {
 export interface FallbackPaths {
   /** settings.json to switch (default: fallbackSettingsPath()). */
   settingsPath?: string;
-  /** pai config.json holding the workers section (default: the real one). */
+  /** pai config.yaml (or config.json) holding the workers section (default: the real one). */
   configPath?: string;
 }
 

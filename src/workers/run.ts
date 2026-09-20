@@ -39,6 +39,7 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { join } from "node:path";
 import {
   existsSync,
   mkdirSync,
@@ -76,7 +77,16 @@ import {
   UNLABELED,
 } from "./status.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
-import { isQuotaFailure, nextAutoProvider, resolveTarget, setCooldown } from "./routing.js";
+import {
+  capabilityForRun,
+  isQuotaFailure,
+  nextAutoProvider,
+  resolveCapabilityRun,
+  resolveTarget,
+  setCooldown,
+  type CapabilityRunResolution,
+} from "./routing.js";
+import { runImageCapability } from "./engines/image.js";
 import { openPaneForWorker } from "./pane.js";
 import { assertChildAllowed, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
@@ -147,6 +157,14 @@ export interface RunOptions {
   reportFormatFlag?: "json" | "ag2";
   /** --no-report-retry: skip the one bounded re-ask on an invalid AG2 final message. */
   noReportRetry?: boolean;
+  /** --capability/--for: run through resolveCapability instead of resolveTarget. */
+  capabilityFlag?: string;
+  /** --out: image-engine output path (default: <logDir>/<id>.png). */
+  imageOut?: string;
+  /** --size: image-engine "WIDTHxHEIGHT" (default: 1024x1024). */
+  imageSize?: string;
+  /** --timeout-ms: image-engine request timeout (default: 120000). */
+  imageTimeoutMs?: number;
 }
 
 /**
@@ -406,10 +424,28 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const parent = launchParent(opts.parent);
   if (parent) assertChildAllowed(logDir, parent, config.tree);
 
-  const target = resolveTarget(config, logDir, {
-    flagProvider: opts.providerFlag,
-    className: opts.className,
-  });
+  // An explicit --provider always bypasses capability resolution entirely;
+  // otherwise --capability, or a class whose implied capability is not
+  // "default" and names no provider of its own, resolves cross-provider.
+  const capability = opts.providerFlag
+    ? null
+    : capabilityForRun(config, { capabilityFlag: opts.capabilityFlag, className: opts.className });
+  const capabilityResolution: CapabilityRunResolution | null = capability
+    ? resolveCapabilityRun(config, capability)
+    : null;
+
+  const target = capabilityResolution
+    ? {
+        providerName: capabilityResolution.providerName,
+        provider: capabilityResolution.provider,
+        modelAlias: null,
+        classMcp: null,
+        via: "class" as const,
+      }
+    : resolveTarget(config, logDir, {
+        flagProvider: opts.providerFlag,
+        className: opts.className,
+      });
   assertProviderRunnable(target.providerName, target.provider);
 
   const parsed = parseRunnerArgs(opts.claudeArgs);
@@ -417,10 +453,33 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
 
-  const model = resolveRunModel(target, opts.className, opts.modelFlag);
+  const model = capabilityResolution
+    ? capabilityResolution.model
+    : resolveRunModel(target, opts.className, opts.modelFlag);
   const reportFormat = resolveReportFormat(opts.reportFormatFlag);
 
   try {
+    if (target.provider.engine === "image") {
+      return await executeImageRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        capability: capability ?? "image",
+        outPath: opts.imageOut,
+        size: opts.imageSize,
+        timeoutMs: opts.imageTimeoutMs,
+        cwd: opts.cwd,
+        specPath: opts.specPath,
+        parent: parent ?? undefined,
+        stage: opts.stage,
+        quiet: opts.quiet,
+        onWorkerStart: opts.onWorkerStart,
+        id: opts.id,
+      });
+    }
     if (target.provider.engine === "codex") {
       return await executeCodexRun({
         config,
@@ -441,6 +500,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         worktreeFlag: opts.worktreeFlag,
         className: opts.className,
         reportFormat,
+        capability: capability ?? undefined,
       });
     }
     return await executeRun({
@@ -460,6 +520,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       quiet: opts.quiet,
       onWorkerStart: opts.onWorkerStart,
       id: opts.id,
+      capability: capability ?? undefined,
       worktreeFlag: opts.worktreeFlag,
       className: opts.className,
       reroutes: opts._reroutes ?? 0,
@@ -589,6 +650,132 @@ export function interactiveMcpTools(
   };
 }
 
+// ---------------------------------------------------------------------------
+// image engine (2i) — no process spawn: one HTTP request, one file written.
+// ---------------------------------------------------------------------------
+
+interface ImageExecuteArgs {
+  logDir: string;
+  target: ReturnType<typeof resolveTarget>;
+  model: string;
+  label: string;
+  parsed: ReturnType<typeof parseRunnerArgs>;
+  capability: string;
+  outPath?: string;
+  size?: string;
+  timeoutMs?: number;
+  cwd?: string;
+  specPath?: string;
+  parent?: string;
+  stage?: string;
+  quiet?: boolean;
+  onWorkerStart?: (wid: string) => void;
+  id?: string;
+}
+
+async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof readWorkersSection>["workers"] }): Promise<number> {
+  const { logDir, target, model, label, parsed } = a;
+  if (!parsed.headless || parsed.prompt === null) {
+    throw new Error(
+      `provider "${target.providerName}" (engine image) supports headless runs only: ` +
+        `pass the task with -p '<prompt>'`
+    );
+  }
+  const wid = a.id ?? newWorkerId();
+  const cwd = a.cwd ?? process.cwd();
+  const term = process.env.ITERM_SESSION_ID ?? "";
+  const outPath = a.outPath ?? join(logDir, `${wid}.png`);
+
+  const status: WorkerStatus = {
+    id: wid,
+    pid: process.pid,
+    label,
+    cwd,
+    term,
+    provider: target.providerName,
+    model,
+    state: "running",
+    started: nowStamp(),
+    updated: nowStamp(),
+    turns: 0,
+    tools: 0,
+    last: "generating image",
+    rc: null,
+    secs: null,
+    origin: "spawn",
+    outputFormat: parsed.outputFormat,
+    reportFormat: "json",
+    ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
+    ...(a.specPath ? { spec: a.specPath } : {}),
+  };
+  saveStatus(logDir, status);
+  a.onWorkerStart?.(wid);
+  const ledger = ledgerPath(logDir);
+  appendLedger(ledger, "WORKER-START", {
+    id: wid,
+    provider: target.providerName,
+    mode: "headless",
+    engine: "image",
+    model,
+    cwd,
+    label,
+    capability: a.capability,
+    ...(a.specPath ? { spec: a.specPath } : {}),
+  });
+
+  const t0 = Date.now();
+  try {
+    const result = await runImageCapability({
+      providerName: target.providerName,
+      provider: target.provider,
+      model,
+      prompt: parsed.prompt,
+      outPath,
+      size: a.size,
+      timeoutMs: a.timeoutMs,
+    });
+    const secs = Math.round((Date.now() - t0) / 1000);
+    status.state = "done";
+    status.rc = 0;
+    status.secs = secs;
+    status.last = `wrote ${result.path}`;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-END", {
+      id: wid,
+      provider: target.providerName,
+      mode: "headless",
+      engine: "image",
+      model,
+      rc: 0,
+      secs,
+      label,
+      capability: a.capability,
+    });
+    if (!a.quiet) process.stdout.write(JSON.stringify(result) + "\n");
+    return 0;
+  } catch (e) {
+    const secs = Math.round((Date.now() - t0) / 1000);
+    const message = e instanceof Error ? e.message : String(e);
+    status.state = "failed";
+    status.rc = 1;
+    status.secs = secs;
+    status.last = message;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-END", {
+      id: wid,
+      provider: target.providerName,
+      mode: "headless",
+      engine: "image",
+      model,
+      rc: 1,
+      secs,
+      label,
+      capability: a.capability,
+    });
+    throw e;
+  }
+}
+
 interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
@@ -612,6 +799,8 @@ interface ExecuteArgs {
   printCmd?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
+  /** Capability name this run resolved through (--capability, or an implied class capability), when it did. */
+  capability?: string;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
@@ -762,6 +951,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     model,
     cwd,
     label,
+    ...(a.capability ? { capability: a.capability } : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
@@ -1193,6 +1383,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     model,
     cwd,
     label,
+    ...(a.capability ? { capability: a.capability } : {}),
   });
   const dropped = codexDroppedFlags(a.claudeArgs);
   if (dropped.length) {

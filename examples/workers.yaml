@@ -31,6 +31,18 @@ providers:
       default: k3[1m]
       fast: kimi-for-coding[1m]
 
+# An `engine: image` provider does not spawn Claude — `pai worker run
+# --capability image` POSTs straight to its OpenAI-compatible images API and
+# writes the PNG it gets back. Uncomment and point it at a real provider
+# (still nested under providers:, above) to enable `--capability image`:
+#   pictures:
+#     engine: image
+#     url: https://api.example.com/v1
+#     key: "<your-api-key>"
+#     models:
+#       default: example-image-model
+#       image: example-image-model
+
 # A class names a provider, or provider/role to pick a non-default model.
 # Workers exist to parallelise and to save cost: the default is Sonnet,
 # Haiku for the mechanical classes, and nothing here inherits the
@@ -45,6 +57,13 @@ classes:
   spotcheck: anthropic/fast
   simple: anthropic/fast
   image: glm/image
+
+# Cross-provider capability preference: which provider serves a --capability
+# request, in order, when more than one declares it. Unlisted capabilities
+# fall back to the active provider, then any provider that declares them.
+# capabilities:
+#   image: [pictures, glm]
+#   fast: [anthropic]
 
 mcp_sets:
   desktop: [clickr]

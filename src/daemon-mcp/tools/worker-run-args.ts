@@ -15,6 +15,14 @@ export const workerRunShape = {
     .describe('Path to a file (or "-" for stdin) whose contents become the prompt. Mutually exclusive with prompt.'),
   chain: z.string().optional().describe("Comma-separated stages, e.g. draft,implement or draft,implement,review."),
   class: z.string().optional().describe("Task class (draft, implement, review, research, spotcheck, simple, complex, image)."),
+  capability: z
+    .string()
+    .optional()
+    .describe(
+      "Run on whichever provider serves this capability instead of the active one — e.g. " +
+        "\"image\" runs an engine=image provider directly (POSTs the prompt, writes a PNG " +
+        "under the worker's log dir) instead of spawning claude. Wins over class."
+    ),
   label: z.string().min(1).describe("Short task label shown in worker_ps / the status line and worker pane."),
   cwd: z.string().optional().describe("Working directory (default: here)."),
   allowed_tools: z.string().optional().describe("Comma-separated tool allowlist passed to the worker."),
