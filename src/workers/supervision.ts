@@ -11,9 +11,12 @@
  *   failed   — the run ended badly (state failed/killed/lost, or rc != 0,
  *              or the runner pid vanished while state was still running)
  *   stalled  — state running, runner alive, but no new turn for longer than
- *              the stall threshold (PAI_WORKER_STALL_MINUTES, default 10);
- *              never emitted for the interactive chat pane (origin "chat"),
- *              which idles between sessions by design
+ *              the stall threshold (PAI_WORKER_STALL_MINUTES, default 10)
+ *
+ * The interactive chat pane (origin "chat") is never supervised: it is the
+ * operator's own session, not a task worker. Its status file flips to done
+ * when the session ends, and reporting that as "worker finished" to whoever
+ * next opens the same tab is noise, not an outcome.
  *
  * Delivery, in order of preference, never both counted as required:
  *   1. AIBroker `send_to_session` into the orchestrator's terminal — the
@@ -151,6 +154,9 @@ export function detectSupervisionEvents(
   for (const s of statuses) {
     const session = ownershipKey(s);
     if (!session) continue;
+    // the operator's own pane: ending it is not a worker outcome, idling is
+    // not a stall — nothing here is worth a push into anybody's terminal
+    if (isChatPane(s)) continue;
     let kind: SupervisionKind | null = null;
     let rc: number | null = null;
     let stalledMin: number | null = null;
@@ -169,9 +175,7 @@ export function detectSupervisionEvents(
       // status will never get its rc, so supervision is the only witness
       kind = "failed";
       rc = null;
-    } else if (!isChatPane(s) && ageMs(s.updated, opts.now) > opts.stallMs) {
-      // an interactive chat pane idles by design — no turns is its healthy
-      // state, not a stall; finished/failed above still apply to it
+    } else if (ageMs(s.updated, opts.now) > opts.stallMs) {
       kind = "stalled";
       stalledMin = Math.floor(ageMs(s.updated, opts.now) / 60_000);
     }
