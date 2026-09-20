@@ -1,24 +1,24 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0127 - 2026-09-20 - Token Waste Run 8 Handover Budget And Worker Pid Ownership" session-id="058f5c05-5f9f-44dd-9229-27e347e52a14" ts="2026-09-20T14:26:50.268Z" -->
+<!-- pai:checkpoint authored="model" session="0128 - 2026-09-20 - Token Waste Run 9 Model Switch Finding" session-id="805e0472-9049-401a-97ca-7eb17643a400" ts="2026-09-20T15:00:00.000Z" -->
 
-> **Last session:** 0127 - 2026-09-20 - Token Waste Run 8 Handover Budget And Worker Pid Ownership
-> **Paused at:** 2026-09-20T14:26:50.268Z
+> **Last session:** 0128 - 2026-09-20 - Token Waste Run 9 Model Switch Finding
+> **Paused at:** 2026-09-20T15:00:00.000Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 058f5c05-5f9f-44dd-9229-27e347e52a14`
+> Resume with: `claude --resume 805e0472-9049-401a-97ca-7eb17643a400`
 
 T
-i=token-waste-cycle-run9
-g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run8.md`, fixes RED/AMBER, records run 9. First reading of interest: turn-1 context (run 8 measured 30,665; expected ≈ 30,100 after the run-8 hook trims).
-d=Run 8: hook handover budget (1,600 chars, elides d=/t=), core-context wrapper 314→198, Session Commands lines removed, MEMORY.md 1,312→1,187, per-prompt hook cost now share of input sent, worker pid ownership (`ownsPid`, kill marks reused pid `lost`), trigger test env pin. Shipped as v0.47.0.
-t=1,101 pass in touched suites (+33), tsc 80 unchanged.
+i=token-waste-cycle-run10
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run9.md`, fixes RED/AMBER, records run 10. First: run `/context` in the fresh session and paste its output into the run file, so the unexplained ≈5,800-token turn-1 drop (30,665 → 24,248, only ≈620 attributed) becomes a line item.
+d=Run 9: per-prompt hook cost AMBER was an instrument overcount (isMeta/origin lines counted as prompts); fixed, 11.8% → 1.9%. New finding "mid-session model switches" with safeguard-fallback parse; today's `cyber` fallback fable → opus-5 did NOT rebuild the cache (cache_creation 0), return was manual. `pai audit tokens session --history [n]` added. Shipped as v0.48.0.
+t=src/audit 104 pass (+5), tsc 80 unchanged.
 @1=audits/token-waste/reviewprompt.md
-@2=audits/token-waste/2026-09-20-run8.md
-@3=src/hooks/ts/lib/handover-budget.ts
-@4=src/workers/status.ts
-z=Watch: (a) this block must arrive unelided (under 1,600 chars) and the project hook must read under 1,000 in `pai audit tokens hooks`; (b) `pai worker ps` must still show live panes as RUNNING after the `ownsPid` change; if a real worker shows `lost`, the ±120 s ps-start tolerance is too tight. Remaining turn-1 levers: CLAUDE.md 1,037, whisper 592, four legacy files in `~/.claude/commands`.
+@2=audits/token-waste/2026-09-20-run9.md
+@3=src/audit/session-usage.ts
+@4=src/audit/severity.ts
+z=Watch: (a) model-switch finding should read GREEN in a session without a fallback; (b) worker specs must give paths relative to the worker cwd and mandate a branch commit (memory worker-spec-no-repo-cd), else the worktree stays empty and merge refuses. Turn-1 levers still open: CLAUDE.md 1,037, whisper 592, four legacy files in `~/.claude/commands`, 10 duplicate plugin skill names.
 
 <!-- /pai:checkpoint -->
 
