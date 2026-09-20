@@ -9,3 +9,4 @@ and session notes of 2026-09-20, summarised in `2026-09-20-run4.md`.
 - 2026-09-20 run3 (10:45-12:30): live ladder decomposition of the 31,603 first turn; worker per-class contracts (10 turns/250k → 2 turns/36k for one `wc`); AG2 reports. No table kept.
 - 2026-09-20 run4: 1 RED, 4 AMBER, 8 GREEN — `2026-09-20-run4.md`
 - 2026-09-20 run5: 1 RED, 1 AMBER, 8 GREEN — 2026-09-20-run5.md
+- 2026-09-20 run6: 0 RED, 2 AMBER, 8 GREEN — 2026-09-20-run6.md

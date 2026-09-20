@@ -195,12 +195,21 @@ function normalizeLine(line: string): string {
     .replace(/\s+/g, " ");
 }
 
-function extractKeyLines(content: string, maxChars: number, seen: Set<string> = new Set()): string {
+function extractKeyLines(
+  content: string,
+  maxChars: number,
+  seen: Set<string> = new Set(),
+  seenLabels: Set<string> = new Set()
+): string {
   const lines = content.split("\n");
   const selected: string[] = [];
   let inTargetSection = false;
   let currentSection = "";
   let charCount = 0;
+  // Heading text seen since the last line was emitted. Buffered rather than
+  // pushed immediately: a heading with no surviving lines under it (every
+  // line deduped against an earlier note) must not appear at all.
+  let pendingLabel: string | null = null;
 
   // First pass: collect lines from priority sections
   for (const line of lines) {
@@ -212,16 +221,13 @@ function extractKeyLines(content: string, maxChars: number, seen: Set<string> = 
       inTargetSection = EXTRACT_SECTIONS.some((s) =>
         currentSection.toLowerCase().includes(s.toLowerCase())
       );
+      pendingLabel = null;
       continue;
     }
     if (h3Match) {
-      // Checkpoints / sub-sections — include heading as label
+      // Checkpoints / sub-sections — buffer as a candidate label.
       if (inTargetSection) {
-        const label = `[${h3Match[1]}]`;
-        if (charCount + label.length < maxChars) {
-          selected.push(label);
-          charCount += label.length + 1;
-        }
+        pendingLabel = h3Match[1];
       }
       continue;
     }
@@ -241,7 +247,25 @@ function extractKeyLines(content: string, maxChars: number, seen: Set<string> = 
     ) {
       const normalized = normalizeLine(trimmed);
       if (seen.has(normalized)) continue;
-      if (charCount + trimmed.length + 1 > maxChars) break;
+
+      let labelText = "";
+      let labelKey = "";
+      if (pendingLabel !== null) {
+        labelKey = pendingLabel.toLowerCase().trim();
+        if (!seenLabels.has(labelKey)) {
+          labelText = `[${pendingLabel}]`;
+        }
+      }
+
+      if (charCount + labelText.length + trimmed.length + 2 > maxChars) break;
+
+      if (labelText) {
+        selected.push(labelText);
+        seenLabels.add(labelKey);
+        charCount += labelText.length + 1;
+      }
+      pendingLabel = null;
+
       seen.add(normalized);
       selected.push(trimmed);
       charCount += trimmed.length + 1;
@@ -274,6 +298,7 @@ export function buildL1EssentialStory(
 
   const sections: string[] = [];
   const seen = new Set<string>();
+  const seenLabels = new Set<string>();
   let remaining = charBudget;
 
   for (const noteFile of noteFiles) {
@@ -296,8 +321,14 @@ export function buildL1EssentialStory(
 
     // Skip if nothing useful extracted from this note
     const perNoteChars = Math.min(remaining, Math.floor(charBudget / noteFiles.length) + 200);
-    const extracted = extractKeyLines(content, perNoteChars, seen);
-    if (!extracted) continue;
+    const extracted = extractKeyLines(content, perNoteChars, seen, seenLabels);
+    // A note whose every extracted line survived only as a label (all its
+    // real lines deduped against an earlier, newer note) contributes nothing
+    // — including its title.
+    const hasContentLine = extracted
+      .split("\n")
+      .some((l) => !/^\[.*\]$/.test(l));
+    if (!extracted || !hasContentLine) continue;
 
     const noteBlock = `[${dateLabel} - ${titleLabel}]\n${extracted}`;
     sections.push(noteBlock);
@@ -321,13 +352,17 @@ export function buildL1EssentialStory(
  *
  * @param rootPath   Project root path for L1 note lookup. Optional.
  * @param tokenBudget  L1 token budget. Default 800.
+ * @param opts.skipStory  Skip the L1 essential story. Set when a handover
+ *   checkpoint was already injected — the story re-summarises the same note
+ *   the handover came from, at lower quality.
  */
 export function buildWakeupContext(
   rootPath?: string,
-  tokenBudget = L1_TOKEN_BUDGET
+  tokenBudget = L1_TOKEN_BUDGET,
+  opts: { skipStory?: boolean } = {}
 ): string {
   const identity = loadL0Identity();
-  const essentialStory = rootPath
+  const essentialStory = rootPath && !opts.skipStory
     ? buildL1EssentialStory(rootPath, tokenBudget)
     : "";
 

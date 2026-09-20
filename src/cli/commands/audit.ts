@@ -138,6 +138,10 @@ function printSession(report: SessionReportOutput): void {
       `turns above threshold: ${report.turnsAboveThreshold}, cache-rebuild turns: ${report.cacheRebuildTurns}, ` +
       `user prompts: ${report.userPrompts}`
   );
+  console.log(`compactions: ${report.compactions.length}`);
+  for (const c of report.compactions) {
+    console.log(dim(`  ${c.trigger} at turn ${c.turnIndex}: preTokens=${c.preTokens}`));
+  }
 }
 
 async function cmdSession(

@@ -503,10 +503,12 @@ Session Commands:
   // knew the magic word. Writing a handover nobody delivers is not a
   // handover. Inject it, and say plainly that it is the previous session's
   // state rather than an instruction to act on.
+  let handoverInjected = false;
   if (existsSync(todoPath)) {
     try {
       const checkpoint = readContinueCheckpoint(readFileSync(todoPath, 'utf-8'));
       if (checkpoint) {
+        handoverInjected = true;
         const from = checkpoint.meta?.session
           ? `\nFrom session: ${checkpoint.meta.session}`
           : '';
@@ -579,7 +581,9 @@ THE ABOVE INSTRUCTIONS ARE MANDATORY. Follow them exactly.
       wakeupRootPath = cwd;
     }
 
-    const wakeupBlock = buildWakeupContext(wakeupRootPath);
+    // Handover supersedes the L1 story: both summarise the same recent note,
+    // and the handover is a curated message while the story is auto-extracted.
+    const wakeupBlock = buildWakeupContext(wakeupRootPath, undefined, { skipStory: handoverInjected });
     if (wakeupBlock) {
       const wakeupReminder = `\n<system-reminder>\nWAKEUP CONTEXT\n\n${wakeupBlock}\n</system-reminder>\n`;
       console.log(wakeupReminder);

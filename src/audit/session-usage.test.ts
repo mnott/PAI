@@ -196,4 +196,29 @@ describe("parseSessionUsage", () => {
     expect(isRealUserPrompt(mixedWithToolResult)).toBe(false);
     expect(isRealUserPrompt({ type: "assistant", message: { content: "hi" } })).toBe(false);
   });
+
+  it("parses compact_boundary events with turnIndex counted from assistant turns already seen", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    const compactBoundary = (trigger: string, preTokens: number) =>
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        compactMetadata: { trigger, preTokens },
+      });
+    writeFileSync(
+      path,
+      [usageLine("msg_1"), compactBoundary("auto", 784000), usageLine("msg_2"), compactBoundary("manual", 150000)].join(
+        "\n"
+      ) + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.turns).toBe(2);
+    expect(report.compactions).toEqual([
+      { trigger: "auto", preTokens: 784000, turnIndex: 1 },
+      { trigger: "manual", preTokens: 150000, turnIndex: 2 },
+    ]);
+  });
 });

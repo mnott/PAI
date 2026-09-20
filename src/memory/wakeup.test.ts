@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildL1EssentialStory, loadL0Identity, migrateIdentityFile } from "./wakeup.js";
+import { buildL1EssentialStory, buildWakeupContext, loadL0Identity, migrateIdentityFile } from "./wakeup.js";
 
 let root: string;
 
@@ -116,6 +116,125 @@ describe("buildL1EssentialStory — cross-note deduplication", () => {
     expect(story.split("Shared bullet one").length - 1).toBe(1);
     expect(story.split("Shared bullet two").length - 1).toBe(1);
     expect(story).toContain("Unique bullet from second note");
+  });
+});
+
+describe("buildL1EssentialStory — heading labels", () => {
+  /**
+   * A heading whose only lines were all deduped against an earlier, newer
+   * note has nothing to introduce, so it must not appear at all.
+   */
+  it("emits no label when every line under the heading was already deduped", () => {
+    const dir = join(root, "Notes", "2026", "08");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "0002 - 2026-08-02 - First.md"),
+      ["# Session", "", "## Work Done", "", "- [x] Common bullet", ""].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(dir, "0001 - 2026-08-01 - Second.md"),
+      [
+        "# Session",
+        "",
+        "## Work Done",
+        "",
+        "### Only Duplicates",
+        "",
+        "- [x] Common bullet",
+        "",
+        "### Fresh Section",
+        "",
+        "- [x] Unique bullet in second",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const story = buildL1EssentialStory(root);
+
+    expect(story).not.toContain("Only Duplicates");
+    expect(story).toContain("[Fresh Section]");
+    expect(story).toContain("Unique bullet in second");
+  });
+
+  /** The same heading title recurring across notes must introduce once, not per note. */
+  it("emits an identical label shared by two notes only once", () => {
+    const dir = join(root, "Notes", "2026", "08");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "0002 - 2026-08-02 - First.md"),
+      [
+        "# Session",
+        "",
+        "## Work Done",
+        "",
+        "### Shared Heading",
+        "",
+        "- [x] Bullet A",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(dir, "0001 - 2026-08-01 - Second.md"),
+      [
+        "# Session",
+        "",
+        "## Work Done",
+        "",
+        "### Shared Heading",
+        "",
+        "- [x] Bullet B",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const story = buildL1EssentialStory(root);
+
+    expect(story.split("[Shared Heading]").length - 1).toBe(1);
+    expect(story).toContain("Bullet A");
+    expect(story).toContain("Bullet B");
+  });
+
+  /** A note contributing zero surviving lines must not contribute its title either. */
+  it("omits the title of a note that contributes no surviving lines", () => {
+    const dir = join(root, "Notes", "2026", "08");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "0002 - 2026-08-02 - Alpha.md"),
+      ["# Session", "", "## Work Done", "", "- [x] Only bullet", ""].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(dir, "0001 - 2026-08-01 - Beta.md"),
+      ["# Session", "", "## Work Done", "", "- [x] Only bullet", ""].join("\n"),
+      "utf8"
+    );
+
+    const story = buildL1EssentialStory(root);
+
+    expect(story).toContain("Alpha");
+    expect(story).not.toContain("Beta");
+  });
+});
+
+describe("buildWakeupContext — skipStory", () => {
+  /**
+   * A handover checkpoint already carries the same recent-note material, at
+   * higher quality (curated vs. auto-extracted bullets). Skip the L1 story
+   * to avoid duplicating it.
+   */
+  it("omits the L1 Essential Story heading when skipStory is set", () => {
+    writeNote("2026", "08", "0001 - 2026-08-01 - Only.md", "MARKER");
+
+    const withStory = buildWakeupContext(root);
+    const withoutStory = buildWakeupContext(root, undefined, { skipStory: true });
+
+    expect(withStory).toContain("## L1 Essential Story");
+    expect(withoutStory).not.toContain("## L1 Essential Story");
+    expect(withoutStory).not.toContain("MARKER");
   });
 });
 
