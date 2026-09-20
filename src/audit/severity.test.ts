@@ -63,6 +63,7 @@ function sessionWith(compactions: CompactionEvent[]): SessionReportOutput {
     turnsAboveThreshold: 0,
     cacheRebuildTurns: 0,
     userPrompts: 0,
+    promptExposure: 0,
     compactions,
     totalTokens: 1,
     percentages: {},
@@ -86,22 +87,33 @@ function perPromptFinding(hooksReport: HooksReport, session: SessionReportOutput
   return findings.find((f) => f.finding === "per-prompt hook cost");
 }
 
+function sessionWithInputSent(inputSent: number, prompts: number, promptExposure: number): SessionReportOutput {
+  return {
+    ...sessionWith([]),
+    userPrompts: prompts,
+    promptExposure,
+    totals: { cache_read_input_tokens: 0, cache_creation_input_tokens: 0, input_tokens: inputSent, output_tokens: 0 },
+  };
+}
+
 describe("buildFindings — per-prompt hook cost", () => {
-  it("is GREEN when cumulative cost is under 5% of last-turn context", () => {
-    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+  it("is GREEN when cumulative cost is under 5% of input tokens sent", () => {
+    const session = sessionWithInputSent(100_000, 10, 10);
     const finding = perPromptFinding(hooksWith(400), session);
     expect(finding!.severity).toBe("GREEN");
-    expect(finding!.evidence).toBe("400 tokens/prompt x 10 prompts = 4000 tokens (4.0% of last-turn context 100000)");
+    expect(finding!.evidence).toBe(
+      "400 tokens/prompt x 10 prompts, carried over 2 turns = 4000 tokens (4.0% of 100000 input tokens sent)"
+    );
   });
 
-  it("is AMBER between 5% and 15% of last-turn context", () => {
-    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+  it("is AMBER between 5% and 15% of input tokens sent", () => {
+    const session = sessionWithInputSent(100_000, 10, 10);
     const finding = perPromptFinding(hooksWith(1000), session);
     expect(finding!.severity).toBe("AMBER");
   });
 
-  it("is RED above 15% of last-turn context", () => {
-    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+  it("is RED above 15% of input tokens sent", () => {
+    const session = sessionWithInputSent(100_000, 10, 10);
     const finding = perPromptFinding(hooksWith(2000), session);
     expect(finding!.severity).toBe("RED");
   });
@@ -112,9 +124,23 @@ describe("buildFindings — per-prompt hook cost", () => {
   });
 
   it("is omitted when the hooks report has no UserPromptSubmit reading", () => {
-    const session = { ...sessionWith([]), userPrompts: 10, lastTurnContext: 100_000 };
+    const session = sessionWithInputSent(100_000, 10, 10);
     const finding = perPromptFinding(hooksWith(undefined), session);
     expect(finding).toBeUndefined();
+  });
+
+  it("reads the same share in a short and a long session with the same prompt density", () => {
+    // Session A: 4 turns, 9 prompt-exposure units, 34_075 input tokens sent.
+    // Session B: same density scaled x2 (8 turns, 18 exposure, 68_150 input tokens).
+    const sessionA = { ...sessionWithInputSent(34_075, 3, 9), turns: 4 };
+    const sessionB = { ...sessionWithInputSent(68_150, 6, 18), turns: 8 };
+    const findingA = perPromptFinding(hooksWith(596), sessionA)!;
+    const findingB = perPromptFinding(hooksWith(596), sessionB)!;
+    expect(findingA.severity).toBe(findingB.severity);
+    const pctA = findingA.evidence.match(/\(([\d.]+)% of/)![1];
+    const pctB = findingB.evidence.match(/\(([\d.]+)% of/)![1];
+    expect(pctA).toBe(pctB);
+    expect(pctA).toBe("15.7");
   });
 });
 

@@ -136,7 +136,7 @@ function printSession(report: SessionReportOutput): void {
   console.log(
     `avg context: ${report.avgContext ?? "n/a"}, max context: ${report.maxContext ?? "n/a"}, ` +
       `turns above threshold: ${report.turnsAboveThreshold}, cache-rebuild turns: ${report.cacheRebuildTurns}, ` +
-      `user prompts: ${report.userPrompts}`
+      `user prompts: ${report.userPrompts}, prompt exposure: ${report.promptExposure}`
   );
   console.log(`compactions: ${report.compactions.length}`);
   for (const c of report.compactions) {

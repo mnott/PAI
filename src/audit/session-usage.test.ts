@@ -197,6 +197,28 @@ describe("parseSessionUsage", () => {
     expect(isRealUserPrompt({ type: "assistant", message: { content: "hi" } })).toBe(false);
   });
 
+  it("accumulates promptExposure as userPrompts-seen-so-far summed over each turn", async () => {
+    const dir = newDir();
+    const path = join(dir, "session.jsonl");
+    const realPrompt = { type: "user", message: { content: "real prompt" } };
+    writeFileSync(
+      path,
+      [
+        JSON.stringify(realPrompt),
+        JSON.stringify(realPrompt),
+        usageLine("msg_1"),
+        usageLine("msg_2"),
+        usageLine("msg_3"),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const report = await parseSessionUsage(path);
+    expect(report.userPrompts).toBe(2);
+    expect(report.turns).toBe(3);
+    expect(report.promptExposure).toBe(6);
+  });
+
   it("parses compact_boundary events with turnIndex counted from assistant turns already seen", async () => {
     const dir = newDir();
     const path = join(dir, "session.jsonl");

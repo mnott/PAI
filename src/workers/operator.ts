@@ -13,7 +13,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { loadStatus, alive } from "./status.js";
+import { loadStatus, isLive } from "./status.js";
 
 export function operatorSocketPath(logDir: string, id: string): string {
   return join(logDir, `${id}.sock`);
@@ -68,7 +68,7 @@ export function sayToWorker(logDir: string, id: string, text: string, timeoutMs 
   if (!status) {
     return Promise.reject(new Error(`no worker named "${id}"`));
   }
-  if (status.state !== "running" || !alive(status.pid)) {
+  if (!isLive(status)) {
     return Promise.reject(
       new Error(
         `worker ${id} is not running (state: ${status.state}) — ` +

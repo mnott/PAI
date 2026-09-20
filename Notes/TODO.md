@@ -1,25 +1,24 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup" session-id="0adeabcc-6a4a-45d4-a4f1-1a22599025f6" ts="2026-09-20T12:58:00.000Z" -->
+<!-- pai:checkpoint authored="model" session="0127 - 2026-09-20 - Token Waste Run 8 Handover Budget And Worker Pid Ownership" session-id="058f5c05-5f9f-44dd-9229-27e347e52a14" ts="2026-09-20T14:26:50.268Z" -->
 
-> **Last session:** 0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup
-> **Paused at:** 2026-09-20T12:58:00.000Z
+> **Last session:** 0127 - 2026-09-20 - Token Waste Run 8 Handover Budget And Worker Pid Ownership
+> **Paused at:** 2026-09-20T14:26:50.268Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 0adeabcc-6a4a-45d4-a4f1-1a22599025f6`
+> Resume with: `claude --resume 058f5c05-5f9f-44dd-9229-27e347e52a14`
 
 T
-i=token-waste-cycle-run8
-g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run7.md`, fixes what is RED/AMBER, records run 8. First reading of interest: turn-1 context after the run-7 prose trims (expected ≈ 31,150; run 7 measured 31,486).
-d=Run 7 (2026-09-20): 0 RED, 1 AMBER at record. Fixed: MEMORY.md index 1,579 → 1,312 (14 memory files duplicating CLAUDE.md/repo deleted, 4 reference files added); CLAUDE.md 1,377 → 1,037; whisper rules 743 → 592 per prompt; CORE 239 → 224; six skill descriptions −108. New instrument finding "per-prompt hook cost" (UserPromptSubmit tokens × prompts vs last-turn context). "logs at an old location" nag gone: `pai config migrate --logs` guard now checks pid liveness and moves by rename + symlink. Migration exposed three old-path writers, all fixed: AIBroker budget hook/CLI read `~/.claude/advisor-mode.json` (now PAI_HOME first; AIBroker repo committed separately); `config.json obsidianVaultPath` pinned to `~/.pai` (migrate rewrites it now); stale registry stub at `~/.pai/registry.db` (creator UNKNOWN, renamed aside). `--history` migrated too; `~/.claude/History` and `logs/workers` are gone from the old paths (renamed `.migrated-20260920` / symlink).
-t=vitest src/audit 97, src/workers/logs-migrate 12, src/cli/commands/config.test.ts 5 (new); 114 in the touched suites pass. tsc: 80 pre-existing errors, none new. Hooks: `pai audit tokens hooks` error column empty after the History move.
+i=token-waste-cycle-run9
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run8.md`, fixes RED/AMBER, records run 9. First reading of interest: turn-1 context (run 8 measured 30,665; expected ≈ 30,100 after the run-8 hook trims).
+d=Run 8: hook handover budget (1,600 chars, elides d=/t=), core-context wrapper 314→198, Session Commands lines removed, MEMORY.md 1,312→1,187, per-prompt hook cost now share of input sent, worker pid ownership (`ownsPid`, kill marks reused pid `lost`), trigger test env pin. Shipped as v0.47.0.
+t=1,101 pass in touched suites (+33), tsc 80 unchanged.
 @1=audits/token-waste/reviewprompt.md
-@2=audits/token-waste/2026-09-20-run7.md
-@3=src/audit/severity.ts
-@4=src/workers/logs-migrate.ts
-@5=src/cli/commands/config.ts
-z=Watch: (a) first compaction of a 1M session under override 20, expected preTokens ≈ 196,000; the "compaction trigger" finding reports it. (b) whether anything recreates `~/.pai/registry.db` or `~/.claude/advisor-mode.json` (both renamed aside 2026-09-20; if they reappear, the creator is still unfixed). (c) `~/.claude/logs/workers` is a symlink now; `pai worker ps` must keep showing history. Backups: `~/.claude/backups/prose-20260920/`, `~/.claude/backups/memory-20260920/`. Shipped as v0.46.0.
+@2=audits/token-waste/2026-09-20-run8.md
+@3=src/hooks/ts/lib/handover-budget.ts
+@4=src/workers/status.ts
+z=Watch: (a) this block must arrive unelided (under 1,600 chars) and the project hook must read under 1,000 in `pai audit tokens hooks`; (b) `pai worker ps` must still show live panes as RUNNING after the `ownsPid` change; if a real worker shows `lost`, the ±120 s ps-start tolerance is too tight. Remaining turn-1 levers: CLAUDE.md 1,037, whisper 592, four legacy files in `~/.claude/commands`.
 
 <!-- /pai:checkpoint -->
 
@@ -47,6 +46,33 @@ Note: agent-browser uninstalled + deregistered (its install ALSO clobbers
 ~/.claude.json; memory entry exists). Claude-in-chrome itself: auth-bound, dead
 under token auth - we build instead.
 ## Previous handovers
+
+<!-- pai:archived-handover session="0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup" ts="2026-09-20T12:58:00.000Z" -->
+
+### 0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup — checkpointed 2026-09-20T12:58:00.000Z
+
+
+
+> **Last session:** 0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup
+> **Paused at:** 2026-09-20T12:58:00.000Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 0adeabcc-6a4a-45d4-a4f1-1a22599025f6`
+
+T
+i=token-waste-cycle-run8
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run7.md`, fixes what is RED/AMBER, records run 8. First reading of interest: turn-1 context after the run-7 prose trims (expected ≈ 31,150; run 7 measured 31,486).
+d=Run 7 (2026-09-20): 0 RED, 1 AMBER at record. Fixed: MEMORY.md index 1,579 → 1,312 (14 memory files duplicating CLAUDE.md/repo deleted, 4 reference files added); CLAUDE.md 1,377 → 1,037; whisper rules 743 → 592 per prompt; CORE 239 → 224; six skill descriptions −108. New instrument finding "per-prompt hook cost" (UserPromptSubmit tokens × prompts vs last-turn context). "logs at an old location" nag gone: `pai config migrate --logs` guard now checks pid liveness and moves by rename + symlink. Migration exposed three old-path writers, all fixed: AIBroker budget hook/CLI read `~/.claude/advisor-mode.json` (now PAI_HOME first; AIBroker repo committed separately); `config.json obsidianVaultPath` pinned to `~/.pai` (migrate rewrites it now); stale registry stub at `~/.pai/registry.db` (creator UNKNOWN, renamed aside). `--history` migrated too; `~/.claude/History` and `logs/workers` are gone from the old paths (renamed `.migrated-20260920` / symlink).
+t=vitest src/audit 97, src/workers/logs-migrate 12, src/cli/commands/config.test.ts 5 (new); 114 in the touched suites pass. tsc: 80 pre-existing errors, none new. Hooks: `pai audit tokens hooks` error column empty after the History move.
+@1=audits/token-waste/reviewprompt.md
+@2=audits/token-waste/2026-09-20-run7.md
+@3=src/audit/severity.ts
+@4=src/workers/logs-migrate.ts
+@5=src/cli/commands/config.ts
+z=Watch: (a) first compaction of a 1M session under override 20, expected preTokens ≈ 196,000; the "compaction trigger" finding reports it. (b) whether anything recreates `~/.pai/registry.db` or `~/.claude/advisor-mode.json` (both renamed aside 2026-09-20; if they reappear, the creator is still unfixed). (c) `~/.claude/logs/workers` is a symlink now; `pai worker ps` must keep showing history. Backups: `~/.claude/backups/prose-20260920/`, `~/.claude/backups/memory-20260920/`. Shipped as v0.46.0.
+
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0124 - 2026-09-20 - Token Waste Audit Run 6" ts="2026-09-20T11:52:00.000Z" -->
 

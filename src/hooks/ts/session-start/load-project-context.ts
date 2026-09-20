@@ -23,6 +23,7 @@ import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { buildWakeupContext } from '../../../memory/wakeup.js';
 import { readContinueCheckpoint } from '../../../session/checkpoint-block.js';
+import { applyHandoverBudget } from '../lib/handover-budget.js';
 import { sessionRoutingPath } from '../lib/pai-paths.js';
 import {
   findNotesDir,
@@ -485,10 +486,6 @@ ${claudeMdPaths.length > 0 ? `CLAUDE.md: ${claudeMdPaths.join(', ')}` : 'No CLAU
 ${activeNotePath ? `Active Note: ${basename(activeNotePath)}` : ''}
 ${routedPath ? `\nNote Routing: ACTIVE (pai route is set - notes go to Obsidian vault)` : ''}
 ${paiProjectBlock ? `\n${paiProjectBlock}` : ''}
-Session Commands:
-- "pause session" → Save checkpoint, update TODO, exit (no compact)
-- "end session" → Finalize note, commit if needed, start fresh next time
-- "pai route clear" → Clear note routing (in a new session)
 </system-reminder>
 `;
 
@@ -516,6 +513,7 @@ Session Commands:
         const resume = checkpoint.meta?.sessionId
           ? `\nResume that session with: claude --resume ${checkpoint.meta.sessionId}`
           : '';
+        const budgeted = applyHandoverBudget(checkpoint.body, todoPath);
 
         console.log(`
 <system-reminder>
@@ -523,14 +521,19 @@ HANDOVER FROM THE PREVIOUS SESSION
 
 Source: ${todoPath} (## Continue)${from}${when}${resume}
 
-${checkpoint.body}
+${budgeted.body}
 
 ---
 This is recorded state, not a new instruction. Do not start acting on it
 unprompted. If the user says "go", "continue", or "weiter", resume from here.
 </system-reminder>
 `);
-        console.error(`Injected pause checkpoint (${checkpoint.body.length} chars)`);
+        const budgetNote = budgeted.truncated
+          ? ', truncated'
+          : budgeted.elided.length > 0
+            ? `, elided: ${budgeted.elided.join(',')}`
+            : '';
+        console.error(`Injected pause checkpoint (${checkpoint.body.length} chars${budgetNote})`);
       } else {
         console.error('No pause checkpoint body in TODO.md — nothing to hand over');
       }

@@ -36,7 +36,7 @@ import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerConfigCommands } from "./config.js";
-import { loadStatus, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
+import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
@@ -442,6 +442,16 @@ export function registerWorkerCommands(workerCmd: Command): void {
         }
         if (!status.pid || status.pid <= 0) {
           fail(new Error(`worker ${id} has no pid recorded`));
+          return;
+        }
+        if (!ownsPid(status)) {
+          status.state = "lost";
+          status.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
+          status.rc = null;
+          saveStatus(logDir, status);
+          console.log(
+            `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`
+          );
           return;
         }
         try {

@@ -18,7 +18,7 @@
  */
 
 import type { WorkersTreeConfig } from "./config.js";
-import { alive, loadStatus, loadStatuses, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, type WorkerStatus } from "./status.js";
 
 /** The env var the runner sets in every worker's environment. */
 export const WORKER_ID_ENV = "PAI_WORKER_ID";
@@ -58,7 +58,7 @@ export function workerDepth(
 
 /** Children of `parent` that are still running, oldest first. */
 export function runningChildren(statuses: WorkerStatus[], parent: string): WorkerStatus[] {
-  return statuses.filter((s) => s.parent === parent && s.state === "running" && alive(s.pid));
+  return statuses.filter((s) => s.parent === parent && isLive(s));
 }
 
 /**

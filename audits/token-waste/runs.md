@@ -11,3 +11,4 @@ and session notes of 2026-09-20, summarised in `2026-09-20-run4.md`.
 - 2026-09-20 run5: 1 RED, 1 AMBER, 8 GREEN — 2026-09-20-run5.md
 - 2026-09-20 run6: 0 RED, 2 AMBER, 8 GREEN — 2026-09-20-run6.md
 - 2026-09-20 run7: 0 RED, 1 AMBER, 10 GREEN — 2026-09-20-run7.md
+- 2026-09-20 run8: 0 RED, 3 AMBER, 9 GREEN — 2026-09-20-run8.md
