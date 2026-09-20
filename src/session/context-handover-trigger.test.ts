@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,24 @@ import { join } from "node:path";
 // A headless worker running this suite carries the launcher's PAI_WORKER=1;
 // the code under test must not mistake the test process for a worker.
 delete process.env.PAI_WORKER;
+
+// contextFillThresholds (called via checkAndEnqueueContextHandover) reads
+// CLAUDE_AUTOCOMPACT_PCT_OVERRIDE straight from process.env, not from
+// HandoverTriggerDeps — this machine's ~/.claude/settings.json sets it to 20,
+// which the test process inherits and which shifts warmupTokens/refreshTokens
+// (fractions of a 1,000,000-token window here) enough to change which fixed
+// usedTokens fixtures below count as "above warmup". Removed for every test
+// in this suite so the thresholds match the DEFAULT_AUTOCOMPACT_PCT (80) the
+// fixtures were written against, regardless of the host machine's env.
+let previousAutocompactOverride: string | undefined;
+beforeEach(() => {
+  previousAutocompactOverride = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  delete process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+});
+afterEach(() => {
+  if (previousAutocompactOverride === undefined) delete process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
+  else process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = previousAutocompactOverride;
+});
 import {
   checkAndEnqueueContextHandover,
   loadTriggerState,

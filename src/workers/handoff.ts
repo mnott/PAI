@@ -13,7 +13,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { alive, loadStatus } from "./status.js";
+import { isLive, loadStatus } from "./status.js";
 import { sayToWorker } from "./operator.js";
 
 export const HANDOFF_KINDS = ["proposal", "result", "question", "blocker"] as const;
@@ -126,7 +126,7 @@ export async function deliverHandoff(
   appendHandoff(logDir, h, now);
   const say = deps.say ?? ((id: string, text: string) => sayToWorker(logDir, id, text));
   const parent = loadStatus(logDir, h.to);
-  if (parent && parent.state === "running" && alive(parent.pid)) {
+  if (parent && isLive(parent)) {
     try {
       await say(h.to, handoffMessage(h));
     } catch {

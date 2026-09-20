@@ -181,11 +181,15 @@ export function buildFindings(input: {
     });
 
     const perPromptHookCost = input.hooks.totalsByEvent.UserPromptSubmit;
-    if (perPromptHookCost !== undefined && input.session.lastTurnContext !== null) {
+    const inputSent =
+      input.session.totals.cache_read_input_tokens +
+      input.session.totals.cache_creation_input_tokens +
+      input.session.totals.input_tokens;
+    if (perPromptHookCost !== undefined && inputSent > 0) {
       const prompts = input.session.userPrompts;
-      const ctx = input.session.lastTurnContext;
-      const total = perPromptHookCost * prompts;
-      const pct = ctx > 0 ? (total / ctx) * 100 : 0;
+      const turns = input.session.turns;
+      const total = perPromptHookCost * input.session.promptExposure;
+      const pct = (total / inputSent) * 100;
       findings.push({
         finding: "per-prompt hook cost",
         severity:
@@ -194,7 +198,7 @@ export function buildFindings(input: {
             : pct > PER_PROMPT_HOOK_COST_AMBER * 100
               ? "AMBER"
               : "GREEN",
-        evidence: `${perPromptHookCost} tokens/prompt x ${prompts} prompts = ${total} tokens (${pct.toFixed(1)}% of last-turn context ${ctx})`,
+        evidence: `${perPromptHookCost} tokens/prompt x ${prompts} prompts, carried over ${turns} turns = ${total} tokens (${pct.toFixed(1)}% of ${inputSent} input tokens sent)`,
       });
     }
 

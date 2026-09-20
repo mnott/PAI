@@ -30,6 +30,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { SKILLS_DIR } from '../lib/pai-paths';
 import { isProbeSession } from '../lib/project-utils';
+import { stripFrontmatter } from '../lib/frontmatter.js';
 
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
@@ -80,23 +81,13 @@ async function main() {
 
     console.error(`Read ${coreContent.length} characters from CORE SKILL.md (Personalized for ${engineerName} & ${daName})`);
 
-    // Determine the local timezone dynamically
-    const localTimeZone = process.env.TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-    // Output the CORE content as a system-reminder
-    // This will be injected into Claude's context at session start
+    // Output the CORE content as a system-reminder, minus the frontmatter
+    // (catalogue metadata the session already has from its skill list) —
+    // this will be injected into Claude's context at session start
     const message = `<system-reminder>
-PAI CORE CONTEXT (Auto-loaded at Session Start)
+PAI CORE CONTEXT
 
-CURRENT DATE/TIME: ${new Date().toLocaleString('en-US', { timeZone: localTimeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' })}
-
-The following context has been loaded from ${coreSkillPath}:
-
----
-${coreContent}
----
-
-This context is now active for this session. Follow all instructions, preferences, and guidelines contained above.
+${stripFrontmatter(coreContent)}
 </system-reminder>`;
 
     // Write to stdout (will be captured by Claude Code)

@@ -26,7 +26,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath } from "./paths.js";
-import { alive, loadStatuses, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
@@ -510,8 +510,7 @@ export async function followWorkers(
     loadStatuses(logDir)
       .filter(
         (s) =>
-          s.state === "running" &&
-          alive(s.pid) &&
+          isLive(s) &&
           (target !== null || showAll || (scopeTab ? workerInScope(s, term) : true))
       )
       .map((s) => s.id);

@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,9 +20,21 @@ import {
   parseHandoff,
   readInbox,
 } from "./handoff.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-handoff-test-"));
+
+// isLive/ownsPid (see status.ts) compares `started` against this test
+// process's real ps start time, so fixtures posing as "alive" (pid:
+// process.pid) need that real stamp, not an arbitrary fixed date.
+const REAL_STARTED = nowStamp(
+  new Date(
+    execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+    }).trim()
+  )
+);
 
 function status(id: string, over: Partial<WorkerStatus> = {}): WorkerStatus {
   const s: WorkerStatus = {
@@ -33,7 +46,7 @@ function status(id: string, over: Partial<WorkerStatus> = {}): WorkerStatus {
     provider: "testprov",
     model: "test-1",
     state: "running",
-    started: "2026-09-17 10:00:00",
+    started: REAL_STARTED,
     updated: "2026-09-17 10:00:00",
     turns: 0,
     tools: 0,

@@ -55,6 +55,12 @@ export interface SessionUsageReport {
   cacheRebuildTurns: number;
   /** Real human-authored user prompts (excludes tool-result-only "user" lines). */
   userPrompts: number;
+  /**
+   * Sum over assistant turns of the real user prompts seen before that turn;
+   * multiplied by per-prompt hook tokens it gives the tokens UserPromptSubmit
+   * output occupied across the whole session.
+   */
+  promptExposure: number;
   compactions: CompactionEvent[];
 }
 
@@ -186,6 +192,7 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
     turnsAboveThreshold: 0,
     cacheRebuildTurns: 0,
     userPrompts: 0,
+    promptExposure: 0,
     compactions: [],
   };
   const seenIds = new Set<string>();
@@ -210,7 +217,10 @@ export async function parseSessionUsage(path: string, threshold = 200_000): Prom
       continue;
     }
     const context = foldAssistantLine(report, seenIds, obj, threshold);
-    if (context !== null) contextSum += context;
+    if (context !== null) {
+      contextSum += context;
+      report.promptExposure += report.userPrompts;
+    }
   }
   report.avgContext = report.turns > 0 ? Math.round(contextSum / report.turns) : null;
   return report;

@@ -3,7 +3,7 @@
  * 2i, 2j). Pure functions; no claude, no osascript.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   blankBetween,
   chatStatusRow,
@@ -29,6 +29,19 @@ import { statusLineOutput } from "./viewer.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// isLive's real ownsPid does a ps start-time comparison (see status.test.ts
+// for that unit test); these fixtures use fabricated `started` stamps with
+// fixed `now` values for exact age assertions, so isLive here falls back to
+// the pid-existence check it replaced (alive-only), which is what these
+// rendering tests actually mean by "alive".
+vi.mock("./status.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./status.js")>();
+  return {
+    ...actual,
+    isLive: (s: { pid: number; state: string }) => s.state === "running" && actual.alive(s.pid),
+  };
+});
 
 const plain = makeColor(false);
 const color = makeColor(true);

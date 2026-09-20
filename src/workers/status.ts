@@ -7,6 +7,7 @@
  * (the AIBroker identity of the launching session, see scope.ts).
  */
 
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -281,6 +282,39 @@ export function alive(pid: number | null | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether `status.pid` still names the process that was started as this
+ * worker, not a later, unrelated process the OS handed the same pid to after
+ * the worker exited. `alive()` alone can't tell these apart — a pid observed
+ * live on 2026-09-19 (worker 20260919-083549-90913) had been reused, and
+ * `pai worker kill` signalled the wrong, unrelated process. `ps -o lstart=`
+ * reads the running process's actual start time and compares it against the
+ * status file's own `started` stamp; a reused pid almost never starts within
+ * 120s of the original, so a wider drift means "different process".
+ */
+export function ownsPid(status: Pick<WorkerStatus, "pid" | "started">): boolean {
+  if (status.pid <= 0 || !alive(status.pid)) return false;
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(status.pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+    }).trim();
+    const psStart = Date.parse(out);
+    const started = Date.parse(status.started.replace(" ", "T"));
+    if (Number.isNaN(psStart) || Number.isNaN(started)) return alive(status.pid);
+    return Math.abs(psStart - started) <= 120_000;
+  } catch {
+    // pid exited between the alive() check and the ps call, or ps failed for
+    // another reason — the pid-existence check is still better than nothing.
+    return alive(status.pid);
+  }
+}
+
+/** Whether a status is both marked "running" and still owns its recorded pid. */
+export function isLive(status: Pick<WorkerStatus, "pid" | "started" | "state">): boolean {
+  return status.state === "running" && ownsPid(status);
 }
 
 /** "42s" under 90s, "7m" above — the coarse age the table and bar show. */

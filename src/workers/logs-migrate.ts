@@ -14,13 +14,13 @@
 
 import { existsSync, mkdirSync, cpSync, renameSync, symlinkSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadStatuses, isChatPane, alive } from "./status.js";
+import { loadStatuses, isChatPane, isLive } from "./status.js";
 
 export class WorkerLogsMigrationError extends Error {}
 
 /** RUNNING-and-alive statuses in logDir, excluding the terminal's own interactive pane. */
 export function activeSpawnedWorkerCount(logDir: string): number {
-  return loadStatuses(logDir).filter((s) => s.state === "running" && alive(s.pid) && !isChatPane(s)).length;
+  return loadStatuses(logDir).filter((s) => isLive(s) && !isChatPane(s)).length;
 }
 
 function totalFileCount(dir: string): number {

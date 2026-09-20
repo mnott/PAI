@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, alive, UNLABELED } from "./status.js";
+import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -441,7 +441,7 @@ export function renderTable(
   const running: WorkerStatus[] = [];
   const done: WorkerStatus[] = [];
   for (const s of statuses) {
-    if (s.state === "running" && alive(s.pid)) running.push(s);
+    if (isLive(s)) running.push(s);
     else {
       if (s.state === "running") s.state = "lost";
       done.push(s);
@@ -641,8 +641,8 @@ export function renderStatusLine(
   // isChatPane carries the migration shim for pre-`origin` entries (see
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
   const isChat = isChatPane;
-  const chat = mine.find((s) => isChat(s) && s.state === "running" && alive(s.pid));
-  const running = mine.filter((s) => !isChat(s) && s.state === "running" && alive(s.pid));
+  const chat = mine.find((s) => isChat(s) && isLive(s));
+  const running = mine.filter((s) => !isChat(s) && isLive(s));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;

@@ -5,7 +5,7 @@
  * with "error: unknown option --cwd".
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,13 +14,25 @@ import { Command } from "commander";
 const mocks = vi.hoisted(() => ({
   runWorker: vi.fn(),
   runChain: vi.fn(),
+  logDir: "",
 }));
 
 vi.mock("../../../workers/run.js", () => ({ runWorker: mocks.runWorker }));
 vi.mock("../../../workers/chain.js", () => ({ runChain: mocks.runChain }));
+vi.mock("../../../workers/config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../workers/config.js")>();
+  return {
+    ...actual,
+    readWorkersSection: () => ({
+      raw: {},
+      workers: { ...actual.parseWorkersConfig(undefined), logDir: mocks.logDir },
+    }),
+  };
+});
 
 import { registerWorkerCommands } from "./index.js";
 import { workerRunArgv } from "../../lib/launch.js";
+import { loadStatus, saveStatus, nowStamp, type WorkerStatus } from "../../../workers/status.js";
 
 function buildCli(): Command {
   const pai = new Command();
@@ -213,5 +225,53 @@ describe("worker run: long inline -p hint", () => {
     await buildCli().parseAsync(["node", "pai", "worker", "run", "--label", "short", "-p", "print OK"]);
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+});
+
+describe("worker kill: reused-pid protection", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-kill-"));
+    mocks.logDir = dir;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("marks a stale/reused pid lost and signals nothing", async () => {
+    const status: WorkerStatus = {
+      id: "kill-test",
+      pid: 999999,
+      label: "x",
+      cwd: dir,
+      term: "",
+      provider: "anthropic",
+      model: "sonnet",
+      state: "running",
+      started: nowStamp(),
+      updated: nowStamp(),
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+    };
+    saveStatus(dir, status);
+    // pid 999999 does not exist, so ownsPid's own alive() check already
+    // returns false — this spy only proves the real SIGTERM (not the
+    // liveness-probe signal 0) was never sent.
+    const killSpy = vi.spyOn(process, "kill");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await buildCli().parseAsync(["node", "pai", "worker", "kill", "kill-test"]);
+    expect(killSpy.mock.calls.some((c) => c[1] === "SIGTERM")).toBe(false);
+    const after = loadStatus(dir, "kill-test");
+    expect(after?.state).toBe("lost");
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("marked lost"))).toBe(true);
+    killSpy.mockRestore();
+    logSpy.mockRestore();
   });
 });

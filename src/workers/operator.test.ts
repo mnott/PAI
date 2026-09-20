@@ -4,15 +4,28 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:net";
 import { createOperatorServer, operatorSocketPath, sayToWorker } from "./operator.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-operator-test-"));
 let server: Server | null = null;
+
+// isLive/ownsPid (see status.ts) compares `started` against this test
+// process's real ps start time, so fixtures posing as "alive" (pid:
+// process.pid) need that real stamp, not an arbitrary fixed date.
+const REAL_STARTED = nowStamp(
+  new Date(
+    execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+    }).trim()
+  )
+);
 
 function runningWorker(id: string, state: WorkerStatus["state"] = "running", pid = process.pid): WorkerStatus {
   const s: WorkerStatus = {
@@ -24,7 +37,7 @@ function runningWorker(id: string, state: WorkerStatus["state"] = "running", pid
     provider: "testprov",
     model: "test-1",
     state,
-    started: "2026-09-17 10:00:00",
+    started: REAL_STARTED,
     updated: "2026-09-17 10:00:00",
     turns: 0,
     tools: 0,
