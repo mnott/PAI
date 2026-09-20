@@ -163,12 +163,12 @@ describe("condition detection", () => {
     expect(ev.stalledMin).toBe(816);
   });
 
-  it("keeps finished and failed detection for the interactive chat pane", () => {
-    const [fin] = detect([fake({ origin: "chat", state: "done", rc: 0 })]);
-    expect(fin.kind).toBe("finished");
-    const [bad] = detect([fake({ origin: "chat", state: "running", pid: 0, updatedMinsAgo: 20 })]);
-    expect(bad.kind).toBe("failed");
-    expect(bad.text).toContain("runner gone");
+  it("never reports the interactive chat pane as finished or failed either", () => {
+    // ending an interactive session flips its status to done; pushing
+    // "worker finished" into the next session in that tab is noise
+    expect(detect([fake({ origin: "chat", state: "done", rc: 0 })])).toHaveLength(0);
+    expect(detect([fake({ origin: "chat", state: "running", pid: 0, updatedMinsAgo: 20 })])).toHaveLength(0);
+    expect(detect([fake({ origin: "chat", state: "failed", rc: 1 })])).toHaveLength(0);
   });
 
   it("ignores workers no session owns", () => {

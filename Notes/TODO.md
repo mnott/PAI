@@ -1,25 +1,23 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0135 - 2026-09-20 - Config YAML, capabilities, session keepalive" session-id="2a834788-fb04-49f8-bf3a-e7b2a621d20e" ts="2026-09-20T18:05:00.000Z" -->
+<!-- pai:checkpoint authored="auto" session="0136 - 2026-09-20 - V0510 Release Completed" session-id="14d25d16-5ff6-49cb-a6bb-f241473d1109" ts="2026-09-20T19:56:51.656Z" -->
 
-> **Last session:** 0135 - 2026-09-20 - Config YAML, capabilities, session keepalive
-> **Paused at:** 2026-09-20T18:05:00.000Z
+> **Last session:** 0136 - 2026-09-20 - V0510 Release Completed
+> **Paused at:** 2026-09-20T19:56:51.656Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 2a834788-fb04-49f8-bf3a-e7b2a621d20e`
+> Resume with: `claude --resume 14d25d16-5ff6-49cb-a6bb-f241473d1109`
 
 T
-i=config-yaml-capabilities-keepalive
-g=Released v0.50.0 then v0.51.0 (2026-09-20 ~20:45). v0.51.0: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE restored to 80 (audit run 4 had set 20, so 1M sessions compacted at ~196k; user rejected). Audit is window-aware (statusline state -> transcript field -> model id -> compaction history -> 200k), context-growth severities are ratios of the trigger, reviewprompt forbids lowering the override. Statusline: context left computed on the real window in tokens, 1d budget is flat 100/7. context-fill discards compaction samples from another regime and uses pct x (window - 20k).
-d=Live state: ~/.claude/pai/config.yaml (0600) canonical, config.json.migrated-2026-09-20 kept. Keepalive enabled and proven working after the pane-id fix: AIBroker reports iTerm pane ids, the tick now maps them to Claude session ids via claude-session-map.json (ledger shows session=<claudeId> pane=<paneId> and skips only for idle < 50 min). Daemon ensureConfigDir no longer recreates config.json next to config.yaml (it did at 19:29; stray file removed). Statusline converts workers.yaml providers via node+yaml into a 0600 cache holding only models/usage/keyFile (first version leaked inline keys world-readable to /tmp/claude; fixed, tests assert no secret and mode 600). Daemon restarted 19:59. Tests 1577 -> 1739, tsc 80 unchanged.
-t=bunx vitest run: 122 files / 1756 pass; npx tsc --noEmit: 80 (baseline); npm run build OK
-@1=docs/config.md
-@2=docs/workers-config.md
-@3=docs/cache-keepalive.md
-@4=docs/model-catalogue.md
-@5=src/daemon/session-keepalive.ts
-z=Open: no engine:image provider configured yet (image runs fail fast with the config hint; pick one from docs/model-catalogue.md section 3). OpenAI-protocol proxy path has 0 real runs in 495 ledger entries; first real run would be the proof. Keepalive payoff unproven: read `idle gaps > 60min` and `keepalive beats` in `pai audit tokens session` after a day, and `pai daemon keepalive` for beats sent.
+i=ckpt-2026-09-20T19-56-51.535Z
+g=/Name PAI
+d=?
+t=?
+@1=Notes/TODO.md
+@2=src/workers/supervision.test.ts
+@3=src/workers/supervision.ts
+z=auto ckpt (no model); main@4511284 fix: 1M sessions keep their window: autocompact override back to 80, window-aware audit, statusline context and 1d budget, regime-safe handover trigger; 3 dirty; git
 
 <!-- /pai:checkpoint -->
 
@@ -47,6 +45,33 @@ Note: agent-browser uninstalled + deregistered (its install ALSO clobbers
 ~/.claude.json; memory entry exists). Claude-in-chrome itself: auth-bound, dead
 under token auth - we build instead.
 ## Previous handovers
+
+<!-- pai:archived-handover session="0135 - 2026-09-20 - Config YAML, capabilities, session keepalive" ts="2026-09-20T18:05:00.000Z" -->
+
+### 0135 - 2026-09-20 - Config YAML, capabilities, session keepalive — checkpointed 2026-09-20T18:05:00.000Z
+
+
+
+> **Last session:** 0135 - 2026-09-20 - Config YAML, capabilities, session keepalive
+> **Paused at:** 2026-09-20T18:05:00.000Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 2a834788-fb04-49f8-bf3a-e7b2a621d20e`
+
+T
+i=config-yaml-capabilities-keepalive
+g=Released v0.50.0 then v0.51.0 (2026-09-20 ~20:45). v0.51.0: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE restored to 80 (audit run 4 had set 20, so 1M sessions compacted at ~196k; user rejected). Audit is window-aware (statusline state -> transcript field -> model id -> compaction history -> 200k), context-growth severities are ratios of the trigger, reviewprompt forbids lowering the override. Statusline: context left computed on the real window in tokens, 1d budget is flat 100/7. context-fill discards compaction samples from another regime and uses pct x (window - 20k).
+d=Live state: ~/.claude/pai/config.yaml (0600) canonical, config.json.migrated-2026-09-20 kept. Keepalive enabled and proven working after the pane-id fix: AIBroker reports iTerm pane ids, the tick now maps them to Claude session ids via claude-session-map.json (ledger shows session=<claudeId> pane=<paneId> and skips only for idle < 50 min). Daemon ensureConfigDir no longer recreates config.json next to config.yaml (it did at 19:29; stray file removed). Statusline converts workers.yaml providers via node+yaml into a 0600 cache holding only models/usage/keyFile (first version leaked inline keys world-readable to /tmp/claude; fixed, tests assert no secret and mode 600). Daemon restarted 19:59. Tests 1577 -> 1739, tsc 80 unchanged.
+t=bunx vitest run: 122 files / 1756 pass; npx tsc --noEmit: 80 (baseline); npm run build OK
+@1=docs/config.md
+@2=docs/workers-config.md
+@3=docs/cache-keepalive.md
+@4=docs/model-catalogue.md
+@5=src/daemon/session-keepalive.ts
+z=Open: no engine:image provider configured yet (image runs fail fast with the config hint; pick one from docs/model-catalogue.md section 3). OpenAI-protocol proxy path has 0 real runs in 495 ledger entries; first real run would be the proof. Keepalive payoff unproven: read `idle gaps > 60min` and `keepalive beats` in `pai audit tokens session` after a day, and `pai daemon keepalive` for beats sent.
+
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0131 - 2026-09-20 - Token Waste Run 11 Context Command Cost" ts="2026-09-20T15:45:00.000Z" -->
 
@@ -160,120 +185,6 @@ z=Uncommitted: 8 modified + 3 new files (run6.md/json, severity.test.ts); user d
 
 <!-- /pai:archived-handover -->
 
-<!-- pai:archived-handover session="0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging" ts="2026-08-04T18:37:48.986Z" -->
-
-### 0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging — checkpointed 2026-08-04T18:37:48.986Z
-
-
-
-> **Last session:** 0028 - 2026-08-04 - Obsidian Sync Infrastructure Investigation And Hook Debugging
-> **Paused at:** 2026-08-04T18:37:48.986Z
->
-> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
->
-> Resume with: `claude --resume e5070a2f-b6ba-4713-aeb5-0ca20d711dc7`
-
-Long three-session day (PAI · AIBroker · Home) on session resumption, registry hygiene,
-and a class of bug we ended up cataloguing ~20 times: **a true observation licensing a
-false conclusion.** Everything below is measured unless marked otherwise.
-
-## Shipped — `@tekmidian/pai` 0.31.0 → 0.32.3, all published and pushed
-
-| version | what |
-|---|---|
-| `0.31.0` | joint release with AIBroker's resume-path work (`dd5a751`) |
-| `0.32.0` | `pai project merge` + `pai project unregister`; `health` reports four states |
-| `0.32.1` | Postgres search **throws** instead of returning `[]` on an unreachable index |
-| `0.32.2` | same fix for the SQLite keyword path; `docker/init.sql` now actually ships |
-| `0.32.3` | **stop doing session-end work after every turn** — 19,840 ms → 304 ms |
-
-Earlier in the day: `7817d75` queue depth in `pai daemon status`; `2efcb30` adopted a third
-session's orphaned `triggeredSlotMs` fix; `f9586ba` dedup stops preferring an empty session;
-`61655f7` **archive transcripts by hardlink instead of moving them**; `4cd9d4c` `pai session
-restore`; `fa687ef`/`e1a27aa` recover projects orphaned by a renamed ancestor.
-
-HEAD == origin == `6b7cb6d`. 444 tests green. tsc 79 errors — unchanged pre-existing baseline,
-none in touched files.
-
-## Open decisions — all Matthias's, none blocked on code
-
-1. **Tailscale ingress is OFF at the control plane.** This is why Todoist ingress is dead. The
-   node holds `funnel` and `cap/funnel-ports?ports=443,8443,10000` but **not**
-   `https://tailscale.com/cap/ingress`, and `tailscaled` logs `peerapi: ingress: denied; no
-   ingress cap`. AIBroker's ACL `nodeAttrs` edit propagated (the control plane names the three
-   ports back), so policy is done — the remaining switch is in the **Tailscale admin console**.
-   No local remedy will fix it; AIBroker tried them all. Neither session should touch network config.
-2. **webfetch-mcp rate limiter** — patched locally (`web_search` exempted from `checkCallLimit`,
-   `web_fetch` still limited). It is a **vendored third-party file** with hardcoded constants, so
-   this is now a local fork that will conflict on the next upstream pull. Decide whether to keep it.
-3. **`obsidian sync` debounce interval** — currently 30 min. Session notes are unaffected (they
-   reach Obsidian through the existing project symlink); only generated index/topic/master pages
-   lag. Lower `PAI_HOUSEKEEPING_INTERVAL` if you read those aggregate pages right after a session.
-4. **searxng — keep or drop.** Kept and running. Buys three things nothing else does: non-US
-   search (`WebSearch` is US-only), verbatim page text (`WebFetch` returns a model's summary),
-   and no third party seeing queries. I said "probably redundant" earlier and **retracted it** —
-   see below.
-5. **`docker/init.sql` in `files`** — shipped as a whitelist entry rather than inlined, because
-   the container bind-mounts the file and inlining would create a second copy of the schema.
-
-## Watch items — effects that need observing
-
-- **`Stop` fires every assistant turn, not at session end.** That was the root of the ~25 s pause
-  between messages. Two whole-machine sweeps (`session cleanup --execute` 17.7 s, `obsidian sync`
-  2.8 s) now debounce behind `~/.config/pai/.last-housekeeping`. **Watch that cleanup still
-  actually runs** — the stamp is written *before* the work to prevent concurrent 20 s sweeps.
-- **A long-running daemon does not pick up a fix because the build succeeded.** The daemon ran
-  pre-fix code for 6 hours and re-displaced **757 transcripts (436 MB)**, undoing a restore I had
-  already reported as complete. Restarted it; re-restored; now **0 real transcripts displaced,
-  2086 genuine stubs deliberately left archived-only**. If transcripts go missing again, check the
-  daemon's vintage first (`Archived …` in the log = fixed, `Moved …` = stale).
-- **AIBroker's MCP servers still predate their fix.** One per session, vintage invisible; only a
-  session restart clears it. They shipped an `mcp` staleness block in `aibroker_status` for next time.
-
-## In flight / not done
-
-- **`registerProjectCommands` in `src/cli/commands/project/index.ts` is dead code** — exported,
-  re-exported, called by nobody. `program.ts` uses `registerProjectsCommands` (plural,
-  `projects-index.ts`) for both `pai project` and `pai projects`. It now carries a banner. Deleting
-  it is the real fix and wants doing when someone can watch the CLI surface after.
-- **`/hook/` and `/hook/test` return 404** locally and through the Funnel, while `tailscale serve`
-  proxies `/hook` and `HOOK_PREFIX = "/hook/"` exists in AIBroker's `todoist-webhook.ts:584` and
-  `inbound.ts:41`. Not Todoist's path (that is `/todoist`, healthy), so a separate defect. AIBroker
-  is not touching it.
-- **`mcp__webfetch__web_search` fix needs a new session** to take effect — the running MCP server
-  predates the edit.
-- **Re-run any `memory_search` from between 13:39Z and ~15:50Z today.** `pai-pgvector` was down and
-  every search returned cleanly empty. Home told Matthias a DMARC note did not exist on the strength
-  of one of those. Specifically worth redoing: the open DMARC point.
-
-## The finding worth keeping
-
-**Every duplicated helper bit — four for four:** `probeResume` ×3 (`pai <name>` broken a day *after*
-being fixed), the archiver ×2, `hasConversation` ×2 (153 real sessions written off as empty),
-and the project-command registration ×2 (two commands built successfully and did not exist).
-
-**And the meta-lesson, ~20 instances across three sessions and four repos:** a port answered, a
-name normalised alike, a transcript existed, `git commit` exited 0, a component was present but a
-stub, `grep` found the string, `npm view` reported a version from cache, a tool name appeared in
-2951 transcripts because it was *registered*, and my "public internet" curl resolved to the tailnet.
-Each observation was true; each licensed a false conclusion.
-
-**The rule:** the check has to *identify the thing*, not merely elicit a response from something.
-And its corollary, learned the hard way tonight: **before believing a negative, check the check** —
-a false negative makes you undo correct work, which is worse than a false positive that merely
-ships something broken.
-
-Both sessions independently recommended dropping searxng as "redundant with the built-ins", reasoning
-from *"a built-in exists"* without reading what it does. That is the only instance today that reached
-Matthias as advice, and it was wrong in the same direction from both of us — which is why agreement
-between two sessions is worth much less than it feels like.
-
-Memories saved: `exit-zero-is-not-done`, `two-project-registrations`,
-`duplicated-helpers-always-bit`, `rerun-the-measurement-not-the-conclusion`, `one-package-one-release`.
-Also corrected `MEMORY.md`, which had the cpp release order **backwards** (it said commit before
-publish).
-
-<!-- /pai:archived-handover -->
 
 
 ---
