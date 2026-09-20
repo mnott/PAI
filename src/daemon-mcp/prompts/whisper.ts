@@ -7,7 +7,7 @@ USE WHEN user says 'whisper', 'add whisper rule', 'remove whisper rule', 'list w
 
 Manage the rules that PAI injects into every prompt via the whisper-rules hook.
 
-Rules are stored in \`~/.claude/whisper-rules.md\` — one rule per line, plain text.
+Rules are stored in \`~/.claude/pai/whisper-rules.md\` — one rule per line, plain text.
 The hook reads this file on every UserPromptSubmit and injects it as a \`<system-reminder>\`.
 Rules survive compaction, /clear, and session restarts.
 
@@ -22,11 +22,11 @@ Rules survive compaction, /clear, and session restarts.
 ### Workflow
 
 **Show current rules:**
-Read \`~/.claude/whisper-rules.md\` and display each rule with a line number.
+Read \`~/.claude/pai/whisper-rules.md\` and display each rule with a line number.
 If the file doesn't exist, say "No whisper rules configured."
 
 **Add a rule:**
-Append the rule as a new line to \`~/.claude/whisper-rules.md\`.
+Append the rule as a new line to \`~/.claude/pai/whisper-rules.md\`.
 Create the file if it doesn't exist.
 Do NOT add duplicate rules — check if a similar rule already exists.
 

@@ -8,11 +8,19 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expandHome, type WorkersConfig } from "./config.js";
+import { expandHome, DEFAULT_LOG_DIR, type WorkersConfig } from "./config.js";
+import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
 
-/** Absolute logDir for the given config. */
+/**
+ * Absolute logDir for the given config. An explicit `logDir` in workers.yaml
+ * is honored verbatim (the user chose it). Otherwise this resolves like every
+ * other PAI_HOME file: PAI_HOME/logs/workers if it exists, else the old
+ * ~/.claude/logs/workers (with a one-time notice), else the new path.
+ */
 export function workersLogDir(config: WorkersConfig): string {
-  return expandHome(config.logDir);
+  const expanded = expandHome(config.logDir);
+  if (config.logDir !== DEFAULT_LOG_DIR) return expanded;
+  return resolvePaiFile(paiHomePath("logs", "workers"), [expanded], "pai config migrate --logs");
 }
 
 /** The strict empty MCP config for headless runs, written on demand. */

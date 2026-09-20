@@ -1,7 +1,8 @@
 /**
  * config.ts — Notification config persistence helpers
  *
- * Reads and writes the `notifications` section of ~/.config/pai/config.json.
+ * Reads and writes the `notifications` section of CONFIG_FILE (see
+ * src/daemon/config.ts's paiConfigFilePath).
  * Deep-merges with defaults so partial configs work fine.
  *
  * This module is intentionally separate from the daemon's config loader
@@ -106,7 +107,7 @@ export function loadNotificationConfig(): NotificationConfig {
 
 /**
  * Persist the notification config by merging it into the existing
- * ~/.config/pai/config.json. Creates the file if it does not exist.
+ * CONFIG_FILE. Creates the file if it does not exist.
  */
 export function saveNotificationConfig(config: NotificationConfig): void {
   // Ensure the config dir exists

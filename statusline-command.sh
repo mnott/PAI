@@ -38,6 +38,27 @@ DA_COLOR="${DA_COLOR:-purple}"  # Color for the assistant name
 # can point the whole lot somewhere private.
 pai_cache_dir="${PAI_CACHE_DIR:-/tmp/claude}"
 
+# PAI's per-user namespace dir — see src/config/pai-home.ts (paiHomeDir) for
+# the canonical (TypeScript) version of this same resolver; this script
+# can't import that module, so the new/old fallback logic is duplicated here.
+pai_home_dir="${PAI_HOME:-$HOME/.claude/pai}"
+
+# Resolve a PAI per-user file: the new PAI_HOME path if it exists, else the
+# first existing old candidate (args 2+), else the new path. Mirrors
+# resolvePaiFile() in src/config/pai-home.ts.
+_pai_resolve_file() {
+    _new="$1"; shift
+    [ -f "$_new" ] && { printf '%s' "$_new"; return; }
+    for _old in "$@"; do
+        if [ -f "$_old" ]; then
+            printf 'pai: %s is at an old location — run `pai config migrate` to move it to %s\n' "$_old" "$_new" >&2
+            printf '%s' "$_old"
+            return
+        fi
+    done
+    printf '%s' "$_new"
+}
+
 # Extract data from JSON input.
 #
 # `.workspace.current_dir` is the documented field and a full session always
@@ -80,7 +101,19 @@ fi
 # Any [...] suffix (e.g. the [1m] context marker) is stripped on both sides,
 # so a session on "glm-5.3[1m]" matches a configured "glm-5.3" and vice versa.
 # No config, no jq, unreadable JSON or no match => anthropic, silently.
-pai_config="${PAI_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/pai/config.json}"
+# PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts) first;
+# else fall back through the pre-2026-09-19 locations in the same order
+# paiConfigFilePath() in src/daemon/config.ts does, since a shell script
+# can't import that resolver.
+pai_home_dir="${PAI_HOME:-$HOME/.claude/pai}"
+pai_config="${PAI_CONFIG:-$pai_home_dir/config.json}"
+if [ ! -f "$pai_config" ]; then
+    if [ -f "$HOME/.claude/pai.json" ]; then
+        pai_config="$HOME/.claude/pai.json"
+    elif [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/pai/config.json" ]; then
+        pai_config="${XDG_CONFIG_HOME:-$HOME/.config}/pai/config.json"
+    fi
+fi
 model_base="${model_id%%\[*}"
 session_provider=anthropic
 if [ -n "$model_base" ] && [ -f "$pai_config" ] && command -v jq >/dev/null 2>&1; then
@@ -626,7 +659,8 @@ if [ "$session_provider" = "anthropic" ]; then
     # little as possible"), so a number that stopped being refreshed must stop
     # being obeyed rather than quietly harden into a permanent constraint.
     # Nothing is written at all while the percentage is unknown.
-    _advisor_file="${HOME}/.claude/advisor-mode.json"
+    _advisor_file=$(_pai_resolve_file "${pai_home_dir}/advisor-mode.json" "${HOME}/.claude/advisor-mode.json")
+    mkdir -p "$(dirname "$_advisor_file")" 2>/dev/null
     _existing_mode="auto"
     _existing_force=""
     if [ -f "$_advisor_file" ]; then
@@ -827,6 +861,10 @@ fi
 # step, plus today's finished count). Empty when this session has none.
 # Prefers the standalone built script (plain node, no CLI startup); falls back
 # to the pai CLI.
+# PAI_QUIET_NOTICES=1: this call's stderr already goes to /dev/null below, but
+# set it anyway so a caller of worker-status-line.mjs outside this script
+# stays quiet too.
+export PAI_QUIET_NOTICES=1
 worker_status_cmd=""
 if [ -x "${claude_dir}/worker-status-line.mjs" ]; then
     worker_status_cmd="${claude_dir}/worker-status-line.mjs"

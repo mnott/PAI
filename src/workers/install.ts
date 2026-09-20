@@ -152,19 +152,31 @@ case "\${1-}" in
 esac
 `;
 
-function shim(name: string, pai: string): string {
+/**
+ * Names whose shim starts the harness itself on that provider (`pai launch`)
+ * rather than a subagent worker — the historical meaning of typing "glm":
+ * an interactive session pinned to the glm endpoint, not whatever provider
+ * happens to be `active` in workers.yaml right now.
+ */
+const LAUNCH_SHIM_PROVIDERS = ["glm", "kimi"];
+
+export function shim(name: string, pai: string): string {
   if (name === "glm-ps") return GLM_PS_SHIM(pai);
   if (name === "glm-log") return `#!/bin/sh\n# pai worker shim — replaces the shell glm-log of the same name\nexec ${pai} worker log "$@"\n`;
   if (name === "worker-say") return `#!/bin/sh\n# pai worker shim — say one line to a running worker\nexec ${pai} worker say "$@"\n`;
-  // glm / glm-run: pass everything through; `pai worker run` forwards unknown
-  // options to claude and drops --output-format/--verbose itself
+  if (LAUNCH_SHIM_PROVIDERS.includes(name)) {
+    return `#!/bin/sh\n# pai launch shim — starts an interactive Claude Code session pinned to the ${name} provider\nexec ${pai} launch --provider ${name} "$@"\n`;
+  }
+  // glm-run: pass everything through to a headless/worker run; `pai worker
+  // run` forwards unknown options to claude and drops --output-format/
+  // --verbose itself
   return `#!/bin/sh\n# pai worker shim — replaces the previous ${name} of the same name\nexec ${pai} worker run "$@"\n`;
 }
 
 function installShims(lines: string[]): boolean {
   const pai = paiPath();
   let changed = false;
-  for (const name of ["glm", "glm-run", "glm-ps", "glm-log", "worker-say"]) {
+  for (const name of ["glm", "glm-run", "glm-ps", "glm-log", "worker-say", "kimi"]) {
     const path = join(LOCAL_BIN, name);
     const ours = `# pai worker shim`;
     let current: string | null = null;
@@ -199,7 +211,8 @@ function installShims(lines: string[]): boolean {
     } catch {
       /* mode set on create where supported */
     }
-    lines.push(`${name}: shim installed → ${pai} worker …`);
+    const target = LAUNCH_SHIM_PROVIDERS.includes(name) ? `${pai} launch --provider ${name}` : `${pai} worker …`;
+    lines.push(`${name}: shim installed → ${target}`);
   }
   return changed;
 }

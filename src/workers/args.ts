@@ -27,6 +27,8 @@ export interface ParsedRunnerArgs {
   callerMcpConfig: boolean;
   /** Caller passed --append-system-prompt: the contract is added alongside. */
   callerSystemPrompt: boolean;
+  /** Caller passed --tools (or --tools=…): a project's `pai project tools` pin does not apply. */
+  callerTools: boolean;
   /** --mcp values (repeatable, comma-separated inside one flag). */
   mcp: string[];
   /** --allowedTools values (repeatable, comma-separated inside one flag). */
@@ -41,6 +43,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
   let callerModel = false;
   let callerMcpConfig = false;
   let callerSystemPrompt = false;
+  let callerTools = false;
   const mcp: string[] = [];
   const allowedTools: string[] = [];
 
@@ -91,6 +94,8 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
       if (a.startsWith("--mcp-config=")) callerMcpConfig = true;
       if (a === "--append-system-prompt") callerSystemPrompt = true;
       if (a.startsWith("--append-system-prompt=")) callerSystemPrompt = true;
+      if (a === "--tools") callerTools = true;
+      if (a.startsWith("--tools=")) callerTools = true;
       if (
         prompt === null && !a.startsWith("-") && rest.length > 0 &&
         (rest[rest.length - 1] === "-p" || rest[rest.length - 1] === "--print")
@@ -110,6 +115,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
     callerModel,
     callerMcpConfig,
     callerSystemPrompt,
+    callerTools,
     mcp,
     allowedTools,
   };
@@ -132,6 +138,20 @@ export function stripPromptValues(argv: string[]): string[] {
     }
   }
   return out;
+}
+
+/**
+ * A one-line stderr hint (never blocking) for an inline -p prompt long or
+ * multi-line enough to be a shell-quoting risk — write it to a file and pass
+ * --spec instead. null when the prompt is short/simple enough to be fine.
+ */
+export function longInlinePromptHint(prompt: string | null): string | null {
+  if (!prompt) return null;
+  const newlines = (prompt.match(/\n/g) ?? []).length;
+  if (prompt.length > 600 || newlines > 3) {
+    return "hint: long inline prompts break on shell quoting — write the spec to a file and use --spec <file>";
+  }
+  return null;
 }
 
 /** Collapse whitespace and cut to n chars with an ellipsis (label rendering). */

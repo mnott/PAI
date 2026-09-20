@@ -20,6 +20,16 @@
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
 import { isProbeSession } from '../lib/project-utils.js';
+import { isWorkerSession } from '../lib/worker-session.js';
+
+// ---------------------------------------------------------------------------
+// Tuning
+// ---------------------------------------------------------------------------
+
+const MAX_TIMELINE_ENTRIES = 6;
+const MAX_ENTRY_LENGTH = 80;
+const MIN_FILTERED_ENTRIES = 3;
+const NOISE_PREFIXES = ['Ran:', 'MCP:'];
 
 // ---------------------------------------------------------------------------
 // Types
@@ -134,11 +144,15 @@ function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + '\u2026' : s;
 }
 
+export function isNoiseEntry(title: string): boolean {
+  return NOISE_PREFIXES.some(prefix => title.startsWith(prefix));
+}
+
 // ---------------------------------------------------------------------------
 // Format observations as progressive disclosure context
 // ---------------------------------------------------------------------------
 
-function formatContext(
+export function formatContext(
   projectSlug: string,
   observations: ObservationRow[]
 ): string {
@@ -152,19 +166,22 @@ function formatContext(
   const newest = new Date(observations[0].created_at);
   const lastActivity = timeAgo(newest);
 
-  // Timeline: show most recent 15, keep titles to 80 chars
-  const timelineObs = observations.slice(0, 15);
+  // Drop low-signal "Ran:"/"MCP:" entries, unless that leaves too few to show.
+  const filtered = observations.filter(o => !isNoiseEntry(o.title));
+  const source = filtered.length >= MIN_FILTERED_ENTRIES ? filtered : observations;
+
+  // Timeline: show at most MAX_TIMELINE_ENTRIES, each line capped to MAX_ENTRY_LENGTH.
+  const timelineObs = source.slice(0, MAX_TIMELINE_ENTRIES);
   const timeline = timelineObs
     .map(o => {
       const t = timeAgo(new Date(o.created_at));
       const label = typeLabel(o.type);
-      const title = truncate(o.title, 80);
-      return `- [${t}] ${label} ${title}`;
+      return truncate(`- [${t}] ${label} ${o.title}`, MAX_ENTRY_LENGTH);
     })
     .join('\n');
 
-  const showingNote = observations.length > 15
-    ? `(showing most recent 15 of ${observations.length}, use observation_search for more)`
+  const showingNote = observations.length > timelineObs.length
+    ? `(showing ${timelineObs.length} most recent of ${observations.length}, use observation_search for more)`
     : `(showing ${observations.length} observation${observations.length !== 1 ? 's' : ''})`;
 
   const lines: string[] = [
@@ -188,6 +205,7 @@ function formatContext(
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     // Skip probe/health-check sessions
     if (isProbeSession()) {
@@ -251,4 +269,6 @@ async function main() {
   }
 }
 
-main();
+if (!process.env.VITEST) {
+  main();
+}

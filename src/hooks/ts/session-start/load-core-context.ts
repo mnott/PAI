@@ -13,9 +13,9 @@
  * - Bypass skill activation logic by directly injecting context
  *
  * Setup:
- * 1. Customize your ${PAI_DIR}/skills/CORE/SKILL.md with your personal context
+ * 1. Customize your ${ADAPTER_DIR}/skills/CORE/SKILL.md with your personal context
  * 2. Add this hook to settings.json SessionStart hooks
- * 3. Ensure PAI_DIR environment variable is set (defaults to $HOME/.claude)
+ * 3. Ensure ADAPTER_DIR environment variable is set (defaults to $HOME/.claude)
  *
  * How it works:
  * - Runs at the start of every Claude Code session
@@ -28,7 +28,7 @@
 import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { PAI_DIR, SKILLS_DIR } from '../lib/pai-paths';
+import { SKILLS_DIR } from '../lib/pai-paths';
 import { isProbeSession } from '../lib/project-utils';
 
 async function main() {
@@ -57,7 +57,7 @@ async function main() {
     // Verify CORE skill file exists
     if (!existsSync(coreSkillPath)) {
       console.error(`CORE skill not found at: ${coreSkillPath}`);
-      console.error(`Ensure CORE/SKILL.md exists or check PAI_DIR environment variable`);
+      console.error(`Ensure CORE/SKILL.md exists or check ADAPTER_DIR environment variable`);
       process.exit(1);
     }
 

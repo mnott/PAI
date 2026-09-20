@@ -137,7 +137,7 @@ function commandStem(cmd: string): string {
 /**
  * Collect every command string already registered for a given hookType.
  * Stores full command, basename, AND extension-stripped stem for flexible
- * matching (handles ${PAI_DIR}/Hooks/foo.sh vs /Users/.../Hooks/foo.sh,
+ * matching (handles ${ADAPTER_DIR}/Hooks/foo.sh vs /Users/.../Hooks/foo.sh,
  * and .ts → .mjs migrations).
  */
 function existingCommandsForHookType(rules: HookRule[]): Set<string> {

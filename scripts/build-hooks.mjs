@@ -6,8 +6,10 @@
  * Output: dist/hooks/<name>.mjs with #!/usr/bin/env node shebang.
  *
  * With --sync: also creates/updates symlinks (or copies on Windows) from
- * ~/.claude/Hooks/ and ~/.claude/ to the built/source files. This ensures
- * that `bun run build` is the only step needed to deploy hook updates.
+ * ~/.claude/Hooks/ and ~/.claude/ to the built/source files, plus the
+ * PAI_HOME/agents and PAI_HOME/commands adapter symlinks at ~/.claude/Agents
+ * and ~/.claude/Commands (once `pai config migrate` has populated them once).
+ * This ensures that `bun run build` is the only step needed to deploy updates.
  */
 
 import { buildSync } from "esbuild";
@@ -40,8 +42,15 @@ const doSync = process.argv.includes("--sync");
 // only exists at runtime if the module defines it — plain .mjs run via node
 // has no `require`, so the call throws "Dynamic require of ... is not
 // supported". createRequire gives every bundle a real one.
+//
+// PAI_QUIET_NOTICES=1 silences one-time stderr notices (e.g. the PAI_DIR
+// deprecation warning in pai-paths.ts) for every hook and standalone script
+// built here — their stderr is machinery Claude Code inspects for errors and
+// the statusline pipes through, never a human terminal, so it must stay
+// clean. Set only if unset, so a caller that deliberately wants the notices
+// (debugging) can still get them.
 const REQUIRE_SHIM = {
-  js: "import { createRequire as __paiCreateRequire } from 'node:module';\nconst require = __paiCreateRequire(import.meta.url);",
+  js: "import { createRequire as __paiCreateRequire } from 'node:module';\nconst require = __paiCreateRequire(import.meta.url);\nif (!process.env.PAI_QUIET_NOTICES) process.env.PAI_QUIET_NOTICES = '1';",
 };
 
 // Collect all .ts entry points (skip lib/ — those are bundled into each hook)
@@ -246,6 +255,39 @@ if (doSync && isInsideWorkerWorktree(process.cwd())) {
 
   // 4. Standalone worker status-line: dist/worker-status-line.mjs → ~/.claude/
   syncFile(join(HOOKS_OUT, "worker-status-line.mjs"), join(claudeDir, "worker-status-line.mjs"));
+
+  // 5. Content dirs with an adapter symlink: PAI_HOME/agents, PAI_HOME/commands
+  // → ~/.claude/Agents, ~/.claude/Commands. Only acts once `pai config migrate`
+  // has populated the PAI_HOME copy on this machine — a real (non-symlink)
+  // Agents/Commands dir is the operator's un-migrated authored content and is
+  // never touched here, same rule as syncFile() above.
+  function syncContentDirSymlink(paiHomeSubdir, targetDir) {
+    if (!existsSync(paiHomeSubdir)) return; // not migrated yet — nothing to link to
+
+    try {
+      const stat = lstatSync(targetDir);
+      if (stat.isSymbolicLink()) {
+        if (resolve(readlinkSync(targetDir)) === resolve(paiHomeSubdir)) {
+          current++;
+          return;
+        }
+        unlinkSync(targetDir);
+        symlinkSync(resolve(paiHomeSubdir), targetDir);
+        updated++;
+        return;
+      }
+      // Real directory — leave it alone (`pai config migrate` is what moves it).
+      return;
+    } catch {
+      // Target doesn't exist — fresh symlink.
+      symlinkSync(resolve(paiHomeSubdir), targetDir);
+      created++;
+    }
+  }
+
+  const paiHomeDir = process.env.PAI_HOME || join(homedir(), ".claude", "pai");
+  syncContentDirSymlink(join(paiHomeDir, "agents"), join(claudeDir, "Agents"));
+  syncContentDirSymlink(join(paiHomeDir, "commands"), join(claudeDir, "Commands"));
 
   const parts = [];
   if (created > 0) parts.push(`${created} created`);

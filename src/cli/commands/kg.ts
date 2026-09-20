@@ -14,7 +14,7 @@ import type { Command } from "commander";
 import type { Pool } from "pg";
 
 import { ok, warn, err, dim, bold, header } from "../utils.js";
-import { loadConfig } from "../../daemon/config.js";
+import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
 import { createStorageBackend } from "../../storage/factory.js";
 import { kgQuery } from "../../memory/kg.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
@@ -27,7 +27,7 @@ async function getPool(): Promise<{ pool: Pool; close: () => Promise<void> }> {
   const config = loadConfig();
   if (config.storageBackend !== "postgres") {
     console.error(err("  KG commands require Postgres backend."));
-    console.error(dim('  Set "storageBackend": "postgres" in ~/.config/pai/config.json'));
+    console.error(dim(`  Set "storageBackend": "postgres" in ${CONFIG_FILE}`));
     process.exit(1);
   }
   const backend = await createStorageBackend(config);

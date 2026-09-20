@@ -5,16 +5,19 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { parseRunnerArgs, stripPromptValues } from "./args.js";
+import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
   bumpContextTokens,
   chromeGrantArgs,
   headlessToolGrants,
+  headlessToolsFlag,
   initContextWindow,
+  interactiveMcpTools,
   isCompactBoundary,
   isoStamp,
   modelArgs,
+  modelFlagArgs,
   operatorUserText,
   resetContextTokensOnCompact,
   resolveRunModel,
@@ -42,6 +45,51 @@ describe("headlessToolGrants", () => {
   });
 });
 
+describe("headlessToolsFlag", () => {
+  it("no --tools when the caller granted nothing (today's default-grant behavior)", () => {
+    expect(headlessToolsFlag([])).toEqual([]);
+  });
+
+  it("built-in names pass through, deduplicated", () => {
+    const args = headlessToolsFlag(["Read,Edit,Write,Bash,Grep,Glob"]);
+    expect(args[0]).toBe("--tools");
+    expect(args[1].split(",")).toEqual(["Read", "Edit", "Write", "Bash", "Grep", "Glob"]);
+  });
+
+  it("maps a Bash(pattern) grant to the bare tool name, deduplicated", () => {
+    expect(headlessToolsFlag(["Bash(git *)", "Read", "Bash(npm *)"])).toEqual([
+      "--tools",
+      "Bash,Read",
+    ]);
+  });
+
+  it("drops mcp__ grants — they load via --mcp-config, not --tools (verified 2026-09-20)", () => {
+    expect(headlessToolsFlag(["Read,mcp__pai__memory_search"])).toEqual(["--tools", "Read"]);
+  });
+
+  it("multiple --allowedTools flags all contribute", () => {
+    expect(headlessToolsFlag(["Read", "Bash,Grep"])).toEqual(["--tools", "Read,Bash,Grep"]);
+  });
+});
+
+describe("modelFlagArgs", () => {
+  it("interactive + no explicit --model: no --model arg (settings.json model applies)", () => {
+    expect(modelFlagArgs(false, "claude-sonnet-5", false)).toEqual([]);
+  });
+
+  it("interactive + caller's own --model: still nothing here (it is already in the passthrough args)", () => {
+    expect(modelFlagArgs(false, "claude-sonnet-5", true)).toEqual([]);
+  });
+
+  it("headless: the resolved class model is present", () => {
+    expect(modelFlagArgs(true, "claude-sonnet-5", false)).toEqual(["--model", "claude-sonnet-5"]);
+  });
+
+  it("headless + caller's own --model: not duplicated here either", () => {
+    expect(modelFlagArgs(true, "claude-sonnet-5", true)).toEqual([]);
+  });
+});
+
 describe("chromeGrantArgs", () => {
   // the bridge is off in a spawned claude; without the flag the grant names a
   // tool that is simply not there, and the run reports TOOL_NOT_AVAILABLE
@@ -60,6 +108,34 @@ describe("chromeGrantArgs", () => {
     expect(
       chromeGrantArgs(["mcp__claude-in-chrome__tabs_context_mcp"], ["-p", "task", "--chrome"])
     ).toEqual([]);
+  });
+});
+
+describe("interactiveMcpTools — the interactive launch's project-pin vs. explicit-flag decision", () => {
+  it("a project with both mcp and tools pinned: both apply", () => {
+    const launch = { mcp: ["aibroker", "pai"], tools: ["Read", "Bash"] };
+    expect(interactiveMcpTools([], false, launch)).toEqual({
+      mcpNames: ["aibroker", "pai"],
+      tools: ["Read", "Bash"],
+    });
+  });
+
+  it("a project with no pin: neither applies", () => {
+    expect(interactiveMcpTools([], false, null)).toEqual({ mcpNames: [], tools: [] });
+    expect(interactiveMcpTools([], false, {})).toEqual({ mcpNames: [], tools: [] });
+  });
+
+  it("an explicit --mcp on the command line overrides the project's mcp pin", () => {
+    const launch = { mcp: ["aibroker", "pai"], tools: ["Read"] };
+    expect(interactiveMcpTools(["clickr"], false, launch)).toEqual({
+      mcpNames: ["clickr"],
+      tools: ["Read"], // the mcp override does not touch the tools pin
+    });
+  });
+
+  it("a caller --tools suppresses the project's tools pin, leaving mcp alone", () => {
+    const launch = { mcp: ["aibroker"], tools: ["Read"] };
+    expect(interactiveMcpTools([], true, launch)).toEqual({ mcpNames: ["aibroker"], tools: [] });
   });
 });
 
@@ -340,6 +416,33 @@ describe("parseRunnerArgs", () => {
     expect(p.callerSystemPrompt).toBe(false);
     expect(p.mcp).toEqual([]);
     expect(p.allowedTools).toEqual([]);
+  });
+});
+
+describe("longInlinePromptHint", () => {
+  it("null for a short single-line prompt", () => {
+    expect(longInlinePromptHint("print OK")).toBeNull();
+  });
+
+  it("null for null/empty", () => {
+    expect(longInlinePromptHint(null)).toBeNull();
+    expect(longInlinePromptHint("")).toBeNull();
+  });
+
+  it("hints when the prompt is over ~600 characters", () => {
+    const hint = longInlinePromptHint("x".repeat(601));
+    expect(hint).toBe(
+      "hint: long inline prompts break on shell quoting — write the spec to a file and use --spec <file>"
+    );
+  });
+
+  it("hints when the prompt has more than 3 newlines, even if short", () => {
+    expect(longInlinePromptHint("a\nb\nc\nd\ne")).not.toBeNull();
+  });
+
+  it("no hint at or under the thresholds", () => {
+    expect(longInlinePromptHint("x".repeat(600))).toBeNull();
+    expect(longInlinePromptHint("a\nb\nc\nd")).toBeNull();
   });
 });
 

@@ -50,5 +50,7 @@ ${params.sessionContent}
 GIT COMMITS:
 ${params.gitLog}
 
+Output ONLY the JSON object with no surrounding prose, no code fences, no trailing commas, and no comments.
+
 JSON object (entities + relations):`;
 }

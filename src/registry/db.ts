@@ -11,16 +11,26 @@ import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
 import { initializeSchema, runMigrations } from "./schema.js";
+import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
 
 export type { Database };
 
-/** Default registry path inside the ~/.pai/ directory. */
-const DEFAULT_REGISTRY_PATH = join(homedir(), ".pai", "registry.db");
+/** Old registry path, inside the ~/.pai/ directory (pre-2026-09-19). */
+export function oldRegistryPath(): string {
+  return join(homedir(), ".pai", "registry.db");
+}
+
+/** Registry path: PAI_HOME/registry.db if present, else the old
+ *  ~/.pai/registry.db (one-time stderr notice), else the new path. */
+export function registryDbPath(): string {
+  return resolvePaiFile(paiHomePath("registry.db"), [oldRegistryPath()], "pai config migrate --registry");
+}
 
 /**
  * Open (or create) the PAI registry database.
  *
- * @param path  Absolute path to registry.db.  Defaults to ~/.pai/registry.db.
+ * @param path  Absolute path to registry.db.  Defaults to PAI_HOME/registry.db
+ *              (falling back to the pre-2026-09-19 ~/.pai/registry.db).
  * @returns     An open better-sqlite3 Database instance.
  *
  * Side effects on first call:
@@ -28,7 +38,7 @@ const DEFAULT_REGISTRY_PATH = join(homedir(), ".pai", "registry.db");
  *  - Enables WAL journal mode.
  *  - Runs initializeSchema() if schema_version is empty.
  */
-export function openRegistry(path: string = DEFAULT_REGISTRY_PATH): Database {
+export function openRegistry(path: string = registryDbPath()): Database {
   // Ensure the directory exists before SQLite tries to create the file
   mkdirSync(dirname(path), { recursive: true });
 

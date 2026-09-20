@@ -1,19 +1,28 @@
 /**
  * config.ts — Configuration loader for PAI Daemon
  *
- * Loads config from ~/.config/pai/config.json (XDG convention).
+ * Loads config from ~/.claude/pai/config.json (the pre-2026-09-19 location
+ * was ~/.config/pai/config.json, briefly ~/.claude/pai.json in between —
+ * see paiConfigFilePath/migrateConfigFile).
  * Deep-merges with defaults so partial configs work fine.
  * Expands ~ in path values at runtime.
  */
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
 import { DEFAULT_TASK_CONFIG } from "../tasks/types.js";
 import { paiSocketPath } from "../runtime-paths.js";
+import {
+  paiHomePath,
+  resolvePaiFile,
+  migratePaiFile,
+  PaiFileMigrationError,
+  type MigrateFileResult,
+} from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -232,8 +241,45 @@ export function expandHome(p: string): string {
   return p;
 }
 
-export const CONFIG_DIR = join(homedir(), ".config", "pai");
-export const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+/** Canonical location since 2026-09-19: under the PAI_HOME namespace dir,
+ *  so nothing PAI writes can collide with a file Claude Code itself owns. */
+const NEW_CONFIG_FILE = paiHomePath("config.json");
+
+/** Briefly the canonical location between 2026-09-19's two migrations —
+ *  read during the transition, never written to again. */
+const OLD_CONFIG_FILE = join(homedir(), ".claude", "pai.json");
+
+/** Where the config lived before 2026-09-19 — read during the transition,
+ *  never written to once NEW_CONFIG_FILE exists (see `pai config migrate`). */
+const LEGACY_CONFIG_FILE = join(homedir(), ".config", "pai", "config.json");
+
+/**
+ * The path any read/write of the PAI config actually uses: PAI_CONFIG_FILE
+ * (tests, power users) first, else the new PAI_HOME location if it exists,
+ * else the most recent old location that is actually on disk (printing a
+ * one-time notice), else the new location (the target a first write creates).
+ */
+export function paiConfigFilePath(): string {
+  const override = process.env.PAI_CONFIG_FILE;
+  if (override) return override;
+  return resolvePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], "pai config migrate");
+}
+
+export const CONFIG_FILE = paiConfigFilePath();
+export const CONFIG_DIR = dirname(CONFIG_FILE);
+
+export const ConfigMigrationError = PaiFileMigrationError;
+export type ConfigMigrateResult = MigrateFileResult;
+
+/**
+ * `pai config migrate`: move config.json (from ~/.claude/pai.json or
+ * ~/.config/pai/config.json, whichever is found) to ~/.claude/pai/config.json
+ * byte-for-byte, verify the copy, then rename the old file aside as
+ * config.json.migrated-<YYYYMMDD> (never deleted).
+ */
+export function migrateConfigFile(opts: { dryRun?: boolean } = {}): ConfigMigrateResult {
+  return migratePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], opts);
+}
 
 // ---------------------------------------------------------------------------
 // Deep merge (handles nested objects, not arrays)
@@ -271,7 +317,7 @@ function deepMerge<T extends object>(
 // ---------------------------------------------------------------------------
 
 /**
- * Load configuration from ~/.config/pai/config.json.
+ * Load configuration from CONFIG_FILE (see paiConfigFilePath).
  * Returns defaults merged with any values found in the file.
  */
 export function loadConfig(): PaiDaemonConfig {
@@ -312,7 +358,7 @@ export function loadConfig(): PaiDaemonConfig {
 }
 
 /**
- * Ensure ~/.config/pai/ exists and write a default config.json template
+ * Ensure CONFIG_DIR exists and write a default config template to CONFIG_FILE
  * if none exists yet. Call this only from the `serve` command.
  */
 export function ensureConfigDir(): void {

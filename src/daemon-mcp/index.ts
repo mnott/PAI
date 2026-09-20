@@ -52,6 +52,7 @@ import {
   advisor,
   tasks,
   worker,
+  providers,
 } from "./prompts/index.js";
 import {
   aesthetic,
@@ -84,6 +85,7 @@ import {
 import { testProvider, runWorker } from "../workers/run.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
 import { runChain } from "../workers/chain.js";
+import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/status.js";
 import { sayToWorker } from "../workers/operator.js";
@@ -188,6 +190,7 @@ async function startShim(): Promise<void> {
     "advisor": advisor,
     "tasks": tasks,
     "worker": worker,
+    "providers": providers,
   };
 
   for (const [promptName, skill] of Object.entries(SKILL_PROMPTS)) {
@@ -271,7 +274,7 @@ async function startShim(): Promise<void> {
       "",
       "Recency boost optionally down-weights older results (recency_boost=90 means scores halve every 90 days).",
       "",
-      "Defaults come from ~/.config/pai/config.json (search section). Per-call parameters override config defaults.",
+      "Defaults come from ~/.claude/pai/config.json (search section). Per-call parameters override config defaults.",
       "",
       "Returns ranked snippets with project slug, file path, line range, and score.",
       "Higher score = more relevant.",
@@ -859,7 +862,7 @@ async function startShim(): Promise<void> {
       "action=add needs name, model — and either key_file or key, plus:",
       "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
       "  through the local PAI proxy). A raw key is written to",
-      "  ~/.config/pai/keys/<name> (mode 0600); only the path lands in the config.",
+      "  ~/.claude/pai/keys/<name> (mode 0600); only the path lands in the config.",
       "  engine=codex runs the Codex CLI instead of Claude Code.",
       "action=update changes cost_tier / tags of an existing provider.",
       "action=test runs a one-word pong probe through the provider",
@@ -877,7 +880,7 @@ async function startShim(): Promise<void> {
       engine: z.enum(["claude", "codex"]).optional().describe("Runner engine (add). Default: claude."),
       context_window: z.number().int().positive().optional().describe("Context window for the meter (add). No default: unset hides the meter unless the init event announces one."),
       key_file: z.string().optional().describe("File holding the API token, 0600 (add)."),
-      key: z.string().optional().describe("Raw API token (add) — parked in ~/.config/pai/keys/<name>."),
+      key: z.string().optional().describe("Raw API token (add) — parked in ~/.claude/pai/keys/<name>."),
       model: z.string().optional().describe("Default model id (add)."),
       fast_model: z.string().optional().describe("Cheaper model for spotchecks (add, optional)."),
       env: z.record(z.string(), z.string()).optional().describe("Extra env for runs (add, optional)."),
@@ -1095,24 +1098,26 @@ async function startShim(): Promise<void> {
     [
       "Start a worker (or a chain) and return its id immediately.",
       "",
-      "This is the chat-side face of `pai worker run`: prompt is required,",
-      "chain (e.g. \"draft,implement\") runs spec-first stages, class picks the",
-      "provider (default: active). Check on it with worker_ps / worker_replay,",
-      "talk to it with worker_say.",
+      "This is the chat-side face of `pai worker run`: label is required, and",
+      "exactly one of prompt/specPath (the -p value, or a file/stdin '-' to read",
+      "it from — avoids quoting long prompts through JSON-RPC). chain (e.g.",
+      "\"draft,implement\") runs spec-first stages, class picks the provider",
+      "(default: active). Check on it with worker_ps / worker_replay, talk to",
+      "it with worker_say.",
     ].join("\n"),
-    {
-      prompt: z.string().min(1).describe("The task (the -p value)."),
-      chain: z.string().optional().describe("Comma-separated stages, e.g. draft,implement or draft,implement,review."),
-      class: z.string().optional().describe("Task class (draft, implement, review, research, spotcheck, simple, complex, image)."),
-      label: z.string().optional().describe("Short task label shown in worker_ps."),
-      cwd: z.string().optional().describe("Working directory (default: here)."),
-      allowed_tools: z.string().optional().describe("Comma-separated tool allowlist passed to the worker."),
-      mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
-    },
+    workerRunShape,
     async (args) => {
       try {
+        const cwd = args.cwd ?? process.cwd();
+        let promptText: string;
+        let specPath: string | undefined;
+        try {
+          ({ promptText, specPath } = resolveWorkerRunPrompt(args, cwd));
+        } catch (e) {
+          return workerError(e);
+        }
         const claudeArgs = [
-          "-p", args.prompt,
+          "-p", promptText,
           ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
         ];
         // the id resolves the moment the worker (or chain) exists; config
@@ -1130,7 +1135,8 @@ async function startShim(): Promise<void> {
               label: args.label,
               noPane: false,
               mcpFlag: args.mcp,
-              brief: args.prompt,
+              specPath,
+              brief: promptText,
               claudeArgs,
               ...(args.cwd ? { cwd: args.cwd } : {}),
               onChainStart: (id) => startedIdResolve(id),
@@ -1142,6 +1148,7 @@ async function startShim(): Promise<void> {
             label: args.label,
             noPane: false,
             mcpFlag: args.mcp,
+            specPath,
             claudeArgs,
             ...(args.cwd ? { cwd: args.cwd } : {}),
             onWorkerStart: (wid) => startedIdResolve(wid),

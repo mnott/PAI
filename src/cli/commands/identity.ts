@@ -7,7 +7,7 @@
  * it changed and the command warns rather than staying quiet when a setting
  * looks like it will not work.
  *
- * Edits the same `~/.config/pai/config.json` the daemon reads, preserving
+ * Edits the same PAI config file (`pai config path`) the daemon reads, preserving
  * everything else in the file — including the `_comment` keys a user may have
  * left for themselves.
  */

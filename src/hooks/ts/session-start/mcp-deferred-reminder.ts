@@ -16,8 +16,10 @@
  */
 
 import { decideMcpDeferredReminder, type ReminderHookInput } from "../lib/mcp-deferred-reminder.js";
+import { isWorkerSession } from "../lib/worker-session.js";
 
 async function main() {
+  if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   let input: ReminderHookInput = {};
 
   try {

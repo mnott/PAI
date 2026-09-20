@@ -11,7 +11,7 @@
  * and pins the top-level `model` to the provider's default model.
  *
  * What settings.json carried before the switch is saved under
- * `workers.fallback.saved` in ~/.config/pai/config.json; `fallback off`
+ * `workers.fallback.saved` in the PAI config file (CONFIG_FILE); `fallback off`
  * restores it exactly and removes the added keys. Both files are written
  * atomically; nothing else in them is touched. While fallback is on the
  * Agent hook keeps routing subagents to workers, unchanged — those runs set
@@ -32,9 +32,9 @@ import { join } from "node:path";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import {
   WorkersConfigError,
-  providerKeyPath,
   readWorkersSection,
   resolveModelCapability,
+  resolveProviderKey,
   writeWorkersSection,
   type WorkerProvider,
   type WorkersFallback,
@@ -81,12 +81,7 @@ export interface FallbackOffResult {
  * buildRunEnv uses), the provider's own env, and the two fallback constants.
  */
 export function fallbackEnv(provider: WorkerProvider): Record<string, string> {
-  let token = "local";
-  const keyPath = providerKeyPath(provider);
-  if (keyPath) {
-    token = readFileSync(keyPath, "utf8").trim();
-    if (!token) throw new WorkersConfigError(`key file is empty: ${keyPath}`);
-  }
+  const token = resolveProviderKey(provider) ?? "local";
   return {
     ANTHROPIC_BASE_URL: provider.baseUrl,
     ANTHROPIC_AUTH_TOKEN: token,

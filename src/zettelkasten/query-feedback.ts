@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { paiHomePath, resolvePaiFile, migratePaiDir, type MigrateDirResult } from "../config/pai-home.js";
 
 export interface QueryRecord {
   /** The original query string. */
@@ -27,14 +28,28 @@ export interface QueryRecord {
   resultCount: number;
 }
 
-const QUERIES_DIR = join(homedir(), ".config", "pai", "queries");
+function oldQueriesDir(): string {
+  return join(homedir(), ".config", "pai", "queries");
+}
+
+/** Where queries live: the new PAI_HOME dir if it has anything in it or was
+ *  already created, else the pre-2026-09-19 ~/.config/pai/queries (printing
+ *  a one-time notice), else the new dir (the target a first write creates). */
+export function queriesDirPath(): string {
+  return resolvePaiFile(paiHomePath("queries"), [oldQueriesDir()], "pai config migrate");
+}
+
+export function migrateQueriesDir(opts: { dryRun?: boolean } = {}): MigrateDirResult {
+  return migratePaiDir(paiHomePath("queries"), [oldQueriesDir()], opts);
+}
 
 /**
  * Ensure the queries directory exists.
  */
 function ensureQueriesDir(): void {
-  if (!existsSync(QUERIES_DIR)) {
-    mkdirSync(QUERIES_DIR, { recursive: true });
+  const dir = paiHomePath("queries");
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -55,7 +70,7 @@ function querySlug(query: string, timestamp: number): string {
 /**
  * Save a query + result record as a markdown file with YAML frontmatter.
  *
- * The file is written to ~/.config/pai/queries/ and will be picked up by
+ * The file is written to PAI_HOME's queries/ dir and will be picked up by
  * the daemon indexer on the next cycle.
  */
 export function saveQueryResult(record: QueryRecord): string | null {
@@ -63,7 +78,7 @@ export function saveQueryResult(record: QueryRecord): string | null {
     ensureQueriesDir();
 
     const filename = querySlug(record.query, record.timestamp) + ".md";
-    const filepath = join(QUERIES_DIR, filename);
+    const filepath = join(paiHomePath("queries"), filename);
 
     // Don't overwrite if the exact file already exists
     if (existsSync(filepath)) return filepath;

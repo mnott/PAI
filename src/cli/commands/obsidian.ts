@@ -33,7 +33,7 @@ import chalk from "chalk";
 // ---------------------------------------------------------------------------
 
 /**
- * Read obsidianVaultPath from ~/.config/pai/config.json.
+ * Read obsidianVaultPath from CONFIG_FILE.
  * Falls back to defaultVaultPath() if not set.
  */
 function getVaultPath(override?: string): string {

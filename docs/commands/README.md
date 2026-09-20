@@ -8,14 +8,17 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 
 | Area | Description |
 |------|-------------|
-| [`pai backup`](backup.md) | Backup registry, config, and Postgres database to ~/.pai/backups/ |
+| [`pai audit`](audit.md) | Diagnostic audits: token-waste report and friends |
+| [`pai backup`](backup.md) | Backup registry, config, and Postgres database to PAI_HOME/backups/ |
 | [`pai clear-names`](clear-names.md) | Recovery: wipe corrupted iTerm2 session name state. |
+| [`pai config`](config.md) | PAI_HOME namespace dir: path, migrate |
 | [`pai daemon`](daemon.md) | PAI daemon management: serve, status, restart, install, uninstall, logs |
 | [`pai db`](db.md) | Database inspection: query, tables, schema (sqlite or postgres) |
 | [`pai end`](end.md) | Finalize a session: save state, mark note Completed, display safe-exit instructions. |
 | [`pai help`](help.md) | Show the man page for a command area (pai help <area>), or list all areas |
 | [`pai identity`](identity.md) | Declare who you are: self addresses and where mail is delivered |
 | [`pai kg`](kg.md) | Temporal knowledge graph: backfill, query, list, stats |
+| [`pai launch`](launch.md) | Start the Claude Code harness on any provider/model from workers.yaml. |
 | [`pai mcp`](mcp.md) | MCP server management: install and status |
 | [`pai memory`](memory.md) | Memory engine: index, search, and status |
 | [`pai notify`](notify.md) | Notification config: status, get, set, test, send |
@@ -41,8 +44,20 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 
 | Command | Description |
 |---------|-------------|
-| `pai backup` | Backup registry, config, and Postgres database to ~/.pai/backups/ |
+| `pai audit` | Diagnostic audits: token-waste report and friends |
+| `pai audit tokens` | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule |
+| `pai audit tokens daemon` | LLM spawns, KG-extraction parse failures, work-queue counts from the daemon log |
+| `pai audit tokens env` | ANTHROPIC_BASE_URL / model-override env on every live claude process |
+| `pai audit tokens files [paths...]` | Token count per memory file (CLAUDE.md chain, CORE skill, whisper rules, auto-memory) |
+| `pai audit tokens hooks` | Token cost of every SessionStart / UserPromptSubmit hook |
+| `pai audit tokens schedule` | Launchd agents / crontab entries that outpace the measured prompt-cache TTL |
+| `pai audit tokens session [path]` | Cache/input/output token split for a session transcript (default: newest) |
+| `pai audit tokens spawn` | Spawn-overhead comparison: Agent-tool subagents vs. pai workers |
+| `pai backup` | Backup registry, config, and Postgres database to PAI_HOME/backups/ |
 | `pai clear-names` | Recovery: wipe corrupted iTerm2 session name state. |
+| `pai config` | PAI_HOME namespace dir: path, migrate |
+| `pai config migrate` | Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/, |
+| `pai config path` | Print the PAI_HOME namespace dir and each resolved per-user file |
 | `pai daemon` | PAI daemon management: serve, status, restart, install, uninstall, logs |
 | `pai daemon install` | Install daemon as a launchd service and update ~/.claude.json to use the shim |
 | `pai daemon logs` | Tail the daemon log (/tmp/pai-daemon.log) |
@@ -67,6 +82,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai kg list` | List currently-valid triples |
 | `pai kg query` | Query KG triples by subject, predicate, object, time, or project |
 | `pai kg stats` | Show triple counts and contradiction count |
+| `pai launch` | Start the Claude Code harness on any provider/model from workers.yaml. |
 | `pai mcp` | MCP server management: install and status |
 | `pai mcp install` | Register the PAI MCP server (pai) in ~/.claude.json (restart Claude Code to activate) |
 | `pai mcp status` | Show whether the PAI MCP server (pai) is registered and the binary exists |
@@ -74,7 +90,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai memory embed [project-slug]` | Generate embeddings for un-embedded chunks (Phase 2.5) |
 | `pai memory index [project-slug]` | Index memory files for one project or all projects |
 | `pai memory search <query>` | Search indexed memory (BM25 keyword, semantic, or hybrid) |
-| `pai memory settings [key] [value]` | View or modify search settings in ~/.config/pai/config.json |
+| `pai memory settings [key] [value]` | View or modify search settings in the PAI config file (`pai config path`) |
 | `pai memory sources` | Show what the indexer has taken in: composition by source, which roots |
 | `pai memory status [project-slug]` | Show memory index statistics |
 | `pai notify` | Notification config: status, get, set, test, send |
@@ -107,6 +123,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project info <slug>` | Show full details for a project |
 | `pai project list` | Show the unified deduped listing (same as `pai`). |
 | `pai project list-raw` | Raw registry listing with slug, path, status, last_active columns |
+| `pai project mcp [names...]` | View or set the MCP servers this project's interactive supervisor session |
 | `pai project merge <from> <into>` | Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given. |
 | `pai project move <slug> <new-path>` | Update the root path for a project |
 | `pai project name <identifier> <shortname>` | Give a project a short name for quick access |
@@ -114,6 +131,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project promote` | Promote a session note into a new standalone project |
 | `pai project rebind <slug> <new-path>` | Manually update the root_path for a project (for when auto-detect found multiple matches). |
 | `pai project tag <slug> <tags...>` | Add one or more tags to a project |
+| `pai project tools [names...]` | View or set the built-in tool schemas this project's interactive |
 | `pai project unarchive <slug>` | Restore an archived project to active status |
 | `pai project unname <shortname>` | Remove a project's short name |
 | `pai project unregister <slug>` | Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched. |
@@ -132,6 +150,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects info <slug>` | Show full details for a project |
 | `pai projects list` | Show the unified deduped listing (same as `pai`). |
 | `pai projects list-raw` | Raw registry listing with slug, path, status, last_active columns |
+| `pai projects mcp [names...]` | View or set the MCP servers this project's interactive supervisor session |
 | `pai projects merge <from> <into>` | Fold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given. |
 | `pai projects move <slug> <new-path>` | Update the root path for a project |
 | `pai projects name <identifier> <shortname>` | Give a project a short name for quick access |
@@ -139,6 +158,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects promote` | Promote a session note into a new standalone project |
 | `pai projects rebind <slug> <new-path>` | Manually update the root_path for a project (for when auto-detect found multiple matches). |
 | `pai projects tag <slug> <tags...>` | Add one or more tags to a project |
+| `pai projects tools [names...]` | View or set the built-in tool schemas this project's interactive |
 | `pai projects unarchive <slug>` | Restore an archived project to active status |
 | `pai projects unname <shortname>` | Remove a project's short name |
 | `pai projects unregister <slug>` | Remove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched. |
@@ -194,10 +214,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker classes list` | List classes and their targets (default action) |
 | `pai worker classes set <class> [target]` | Point a class at a provider (or provider/fast), or give only constraints: |
 | `pai worker classes unset <class>` | Remove a class (runs then use the active provider) |
-| `pai worker config` | workers.yaml itself: path, init, migrate, check |
+| `pai worker config` | workers.yaml itself: path, init, migrate, check, inline-keys |
 | `pai worker config check [path]` | Validate workers.yaml (or the file at [path]); exits non-zero with file:line on error |
 | `pai worker config init` | Write the commented starter workers.yaml (refuses if one already exists) |
-| `pai worker config migrate` | Move providers/classes/mcp_sets/active out of the JSON config into workers.yaml. |
+| `pai worker config inline-keys` | Move each provider's key_file contents inline as `key:` (quoted); key files are left on disk |
+| `pai worker config migrate` | Two things this can mean, chosen from what is on disk: |
 | `pai worker config path` | Print the resolved workers.yaml path |
 | `pai worker controls <id> <who>` | Hand the desktop controls (clickr) to a worker or take them back. |
 | `pai worker discard <id>` | Drop a worker's worktree and branch, keeping nothing |

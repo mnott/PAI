@@ -10,6 +10,7 @@ import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } f
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 import { upsertProject, upsertSession } from "./utils.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
 import type { Database } from "better-sqlite3";
 
 // ---------------------------------------------------------------------------
@@ -56,25 +57,40 @@ function buildClcDirMap(): Map<string, string> {
 // ---------------------------------------------------------------------------
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
-const PAI_CONFIG_DIR = join(homedir(), ".pai");
-const PAI_CONFIG_FILE = join(PAI_CONFIG_DIR, "config.json");
+
+/** Old registry-scan config path: ~/.pai/config.json (pre-2026-09-19). Named
+ *  "config.json" there, but that name is taken at PAI_HOME by the daemon
+ *  config, so the new location is registry-scan.json instead. */
+function oldScanConfigFile(): string {
+  return join(homedir(), ".pai", "config.json");
+}
+
+function scanConfigFilePath(): string {
+  return resolvePaiFile(paiHomePath("registry-scan.json"), [oldScanConfigFile()], "pai config migrate --registry-scan");
+}
+
+export function migrateScanConfig(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("registry-scan.json"), [oldScanConfigFile()], opts);
+}
 
 interface PaiConfig {
   scan_dirs: string[];
 }
 
 export function loadScanConfig(): PaiConfig {
-  if (!existsSync(PAI_CONFIG_FILE)) return { scan_dirs: [] };
+  const file = scanConfigFilePath();
+  if (!existsSync(file)) return { scan_dirs: [] };
   try {
-    return JSON.parse(readFileSync(PAI_CONFIG_FILE, "utf8")) as PaiConfig;
+    return JSON.parse(readFileSync(file, "utf8")) as PaiConfig;
   } catch {
     return { scan_dirs: [] };
   }
 }
 
 export function saveScanConfig(config: PaiConfig): void {
-  mkdirSync(PAI_CONFIG_DIR, { recursive: true });
-  writeFileSync(PAI_CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", "utf8");
+  const file = paiHomePath("registry-scan.json");
+  mkdirSync(paiHomePath(), { recursive: true });
+  writeFileSync(file, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 /**

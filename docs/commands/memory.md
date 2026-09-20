@@ -18,7 +18,7 @@ pai memory <subcommand> [options]
 | [`pai memory embed [project-slug]`](#pai-memory-embed-project-slug) | Generate embeddings for un-embedded chunks (Phase 2.5) |
 | [`pai memory search <query>`](#pai-memory-search-query) | Search indexed memory (BM25 keyword, semantic, or hybrid) |
 | [`pai memory status [project-slug]`](#pai-memory-status-project-slug) | Show memory index statistics |
-| [`pai memory settings [key] [value]`](#pai-memory-settings-key-value) | View or modify search settings in ~/.config/pai/config.json |
+| [`pai memory settings [key] [value]`](#pai-memory-settings-key-value) | View or modify search settings in the PAI config file (`pai config path`) |
 | [`pai memory sources`](#pai-memory-sources) | Show what the indexer has taken in: composition by source, which roots |
 
 ### pai memory index [project-slug]
@@ -92,7 +92,7 @@ Show memory index statistics
 
 ### pai memory settings [key] [value]
 
-View or modify search settings in ~/.config/pai/config.json
+View or modify search settings in the PAI config file (`pai config path`)
 
 **Arguments**
 
@@ -134,7 +134,7 @@ pai memory status
 
 ## See also
 
-[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

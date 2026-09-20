@@ -1,6 +1,6 @@
 # PAI Agent Preferences (Personal Configuration)
 
-Copy this file to `~/.config/pai/agent-prefs.md` and customize for your workflow. This file is **NOT** committed to any repository and contains your personal preferences.
+Copy this file to `~/.claude/pai/agent-prefs.md` and customize for your workflow. This file is **NOT** committed to any repository and contains your personal preferences.
 
 ---
 
@@ -115,7 +115,7 @@ researcher       | [researcher-voice-id]    | Research summaries, findings
 - No API key needed — runs entirely locally
 - Better for privacy-sensitive workflows
 
-**Configuration**: Store voice preferences in `~/.config/pai/voices.json` (see voices.example.json).
+**Configuration**: Store voice preferences in `~/.claude/pai/voices.json` (see voices.example.json). Currently unused — no code reads this file's contents yet.
 
 ---
 
@@ -306,14 +306,14 @@ Always Use: ~/dev, ~/Projects, ~/.claude
 
 1. **Copy to config directory**:
    ```bash
-   cp ~/dev/ai/PAI/templates/agent-prefs.example.md ~/.config/pai/agent-prefs.md
+   cp ~/dev/ai/PAI/templates/agent-prefs.example.md ~/.claude/pai/agent-prefs.md
    ```
 
-2. **Customize for your workflow**: Edit `~/.config/pai/agent-prefs.md` with your settings.
+2. **Customize for your workflow**: Edit `~/.claude/pai/agent-prefs.md` with your settings.
 
 3. **Make it executable** (optional):
    ```bash
-   chmod 600 ~/.config/pai/agent-prefs.md  # Restrict permissions if sensitive
+   chmod 600 ~/.claude/pai/agent-prefs.md  # Restrict permissions if sensitive
    ```
 
 4. **Load in your scripts**: Your PAI daemon/CLI reads this automatically on startup.
@@ -326,13 +326,13 @@ This file contains personal preferences and may reference sensitive information:
 
 ```bash
 # Recommended permissions (user read/write only)
-chmod 600 ~/.config/pai/agent-prefs.md
+chmod 600 ~/.claude/pai/agent-prefs.md
 ```
 
 Keep it **out of version control** — add to `.gitignore`:
 ```
-~/.config/pai/
-.config/pai/
+~/.claude/pai/
+.claude/pai/
 ```
 
 ---

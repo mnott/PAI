@@ -19,6 +19,7 @@
 
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
+import { securityEventsPath } from '../lib/pai-paths.js';
 
 // ============================================================================
 // ATTACK PATTERNS - CUSTOMIZE THESE FOR YOUR ENVIRONMENT
@@ -130,7 +131,7 @@ function detectAttack(content: string): DetectionResult {
 // ============================================================================
 
 function logSecurityEvent(event: Record<string, unknown>): void {
-  const logPath = `${process.env.PAI_DIR || '~/.claude'}/history/security/security-events.jsonl`;
+  const logPath = securityEventsPath();
   const entry = JSON.stringify({ timestamp: new Date().toISOString(), ...event }) + '\n';
 
   try {

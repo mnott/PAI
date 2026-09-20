@@ -10,14 +10,17 @@
 PAI_OS="pai"
 
 # Set tab color to working state while compacting
-TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"
+TAB_COLOR="${ADAPTER_DIR:-${PAI_DIR:-$HOME/.claude}}/tab-color-command.sh"
 [[ -x "$TAB_COLOR" ]] && "$TAB_COLOR" working
 
 # Bail gracefully if pai is not installed
 command -v "$PAI_OS" &>/dev/null || exit 0
 command -v sqlite3 &>/dev/null || exit 0
 
-REGISTRY_DB="$HOME/.pai/registry.db"
+# PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts), falling
+# back to the pre-2026-09-19 ~/.pai/registry.db.
+REGISTRY_DB="${PAI_HOME:-$HOME/.claude/pai}/registry.db"
+[ -f "$REGISTRY_DB" ] || REGISTRY_DB="$HOME/.pai/registry.db"
 [ -f "$REGISTRY_DB" ] || exit 0
 
 # ---------------------------------------------------------------------------

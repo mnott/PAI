@@ -52,6 +52,52 @@ All notable changes to PAI Knowledge OS are documented here.
   hook keeps routing subagents to workers while on. MCP `worker_fallback`
   (on/off/status) and the Worker skill phrases ("switch everything to glm",
   "fallback on", "back to anthropic", "fallback off", "is fallback on").
+- **`workers.yaml`** — providers, per-role model ids and class routing move
+  out of `config.json`'s undocumented `workers` JSON section into one
+  hand-editable, commented file under `PAI_HOME` (`~/.claude/pai/`), kept
+  mode 0600 and never committed. `pai worker config path|init|check|migrate
+  [--dry-run|--force]|inline-keys` manage it; `key_file:` keeps a secret out
+  of the file, `inline-keys` moves it back in. Adding a provider — including
+  an OpenAI-protocol remote (`protocol: openai` + `upstream_url`, routed
+  through the built-in proxy) or a Codex-CLI one (`engine: codex`) — is a
+  YAML edit, never code. The built-in `anthropic` provider now states its
+  model hierarchy as policy in the starter file: Sonnet for every class,
+  Haiku for `spotcheck`/`simple`, no worker inherits the orchestrating
+  session's model, and Opus has no default slot — only `--model` per run.
+  See `docs/workers-config.md`.
+- **Pane and bar status lines** — each worker pane's bottom line now reads
+  `<goal> · <model> · started HH:MM · <age>`; the statusline's 🐝 worker bar
+  collapsed from one row per running worker to a summary,
+  `<provider> ▶N · <models ×count> · oldest <age>   ✓ok ✗bad today`. `pai
+  worker goal <id> "<text>"` (or `worker say --goal "<text>" <id> <msg>`)
+  relabels a running worker's goal without sending it a message.
+- **`--chrome` passthrough** — allowlisting any `mcp__claude-in-chrome__*`
+  tool in `--allowedTools` appends `--chrome` to the worker's launch
+  automatically; it is not a configured MCP server.
+- **Whisper rule tags** — a `# @orchestrator` / `# @worker` comment line in
+  whisper-rules.md marks every following rule as orchestrator-only or
+  worker-only until the next section header; untagged sections reach both.
+  Workers are distinguished by `PAI_WORKER=1` in their environment. See
+  `docs/worker.md`.
+
+### Fixed
+
+- **`pai worker kill`** — `kill <id>` raced the run's own SIGTERM handler
+  and could overwrite its terminal status with a half-empty `killed
+  rc=null ?s` row; it now waits for the run to self-report and only writes
+  a status itself when that never arrives.
+- **Status line live usage** — the statusline's usage gauge reads the
+  Keychain item scoped to the current user (`security find-generic-password
+  -a "$(id -un)"`); a stale, unscoped duplicate `Claude Code-credentials`
+  item was shadowing the real one and freezing the reading at a stale
+  value.
+
+### Docs
+
+- **Agent-tool gate** — documented in `docs/worker.md`: with workers on, a
+  PreToolUse hook denies every `Agent` call and points the orchestrator at
+  `pai worker run` instead; `pai worker off` or `ALLOW_ANTHROPIC_AGENTS=1`
+  bypass it. Pre-existing behavior, not newly changed.
 
 ## [0.38.0] — 2026-09-17
 

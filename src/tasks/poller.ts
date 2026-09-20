@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import type { TodoistProvider } from "./providers/todoist.js";
 import type { Transport } from "./dispatch.js";
 import { dispatchTask } from "./dispatch.js";
@@ -36,7 +37,22 @@ import {
 } from "./scheduler.js";
 import type { Task } from "./types.js";
 
-export const STATE_FILE = join(homedir(), ".pai", "scheduler-state.json");
+/** Old scheduler-state.json path, inside ~/.pai/ (pre-2026-09-19). */
+function oldStateFilePath(): string {
+  return join(homedir(), ".pai", "scheduler-state.json");
+}
+
+/** Scheduler state path: PAI_HOME/scheduler-state.json if present, else the
+ *  old ~/.pai/scheduler-state.json (one-time stderr notice), else the new path. */
+export const STATE_FILE = resolvePaiFile(
+  paiHomePath("scheduler-state.json"),
+  [oldStateFilePath()],
+  "pai config migrate --scheduler-state"
+);
+
+export function migrateSchedulerState(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("scheduler-state.json"), [oldStateFilePath()], opts);
+}
 
 /** How many past durations to keep per task. */
 const HISTORY_LIMIT = 5;

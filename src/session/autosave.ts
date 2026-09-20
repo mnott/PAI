@@ -311,8 +311,13 @@ export interface DigestInput {
  * nothing asked". The handover survives in the session note either way, but
  * `## Continue` is what the next session is shown, so what sits there matters.
  */
-/** Cap on `@n=` file-declaration lines, so the whole message stays ≤25 lines. */
-const MAX_AT_LINES = 17;
+/**
+ * Cap on `@n=` file-declaration lines. A handover reader gets no value from a
+ * long file list — five paths are enough to identify what kind of change
+ * happened, and the exact count and full list are always one `git status`
+ * away via the `z=` trailer.
+ */
+const MAX_AT_LINES = 5;
 
 /** Flatten a prompt (or any field value) to a single trimmed line. */
 function flattenField(text: string): string {

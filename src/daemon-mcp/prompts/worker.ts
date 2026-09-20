@@ -52,7 +52,7 @@ pai worker run --label "short task label" --class research \\
 - \`worker_status\` — on/off, active provider, providers, run tally.
 - \`worker_providers\` — list/add/update/remove/use/enable/disable/test. Adding
   needs name, base_url, model and a key (key file path, or a raw key which is
-  parked in ~/.config/pai/keys/<name>, mode 0600). update changes cost_tier
+  parked in ~/.claude/pai/keys/<name>, mode 0600). update changes cost_tier
   (1 cheapest … 5 most expensive) and tags (code, vision, image-gen,
   long-context, fast, reasoning).
 - \`worker_classes\` — list/set/unset class → provider[/<capability>], or constraints

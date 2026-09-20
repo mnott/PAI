@@ -115,6 +115,8 @@ export interface ChainOptions {
   label?: string;
   noPane?: boolean;
   mcpFlag?: string;
+  /** --spec value, resolved for display/recording ("-" for stdin). */
+  specPath?: string;
   /** The operator's brief — the -p value of the run. */
   brief: string;
   /** The caller's claude args (allowedTools etc.); the -p value is swapped. */
@@ -175,6 +177,7 @@ export async function runChain(opts: ChainOptions, deps: ChainDeps = {}): Promis
       label: `${baseLabel} · ${stage}`,
       noPane: opts.noPane,
       mcpFlag: opts.mcpFlag,
+      specPath: opts.specPath,
       claudeArgs: swapPromptArg(opts.claudeArgs, prompt),
       cwd: opts.cwd,
       parent: chainId,

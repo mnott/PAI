@@ -16,6 +16,7 @@ import {
   updateTodoContinue, sessionIdFromTranscript,
   WorkItem
 } from '../lib/project-utils';
+import { paiHomePath, sessionStateDir } from '../../../config/pai-files.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,20 +58,13 @@ const AUTO_SAVE_INTERVAL = (() => {
 // Session-state helpers (mid-session auto-save)
 // ---------------------------------------------------------------------------
 
-const SESSION_STATE_DIR = join(
-  process.env.HOME ?? '/tmp',
-  '.config',
-  'pai',
-  'session-state'
-);
-
 interface SessionState {
   humanMessageCount: number;
 }
 
 function readSessionState(sessionId: string): SessionState {
   try {
-    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    const stateFile = join(sessionStateDir(), `${sessionId}.json`);
     if (!existsSync(stateFile)) return { humanMessageCount: 0 };
     const raw = readFileSync(stateFile, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<SessionState>;
@@ -84,8 +78,9 @@ function readSessionState(sessionId: string): SessionState {
 
 function writeSessionState(sessionId: string, state: SessionState): void {
   try {
-    mkdirSync(SESSION_STATE_DIR, { recursive: true });
-    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    const dir = paiHomePath('session-state');
+    mkdirSync(dir, { recursive: true });
+    const stateFile = join(dir, `${sessionId}.json`);
     writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
   } catch (e) {
     console.error(`STOP-HOOK: Could not write session state: ${e}`);
@@ -94,7 +89,7 @@ function writeSessionState(sessionId: string, state: SessionState): void {
 
 function deleteSessionState(sessionId: string): void {
   try {
-    const stateFile = join(SESSION_STATE_DIR, `${sessionId}.json`);
+    const stateFile = join(sessionStateDir(), `${sessionId}.json`);
     if (existsSync(stateFile)) {
       unlinkSync(stateFile);
     }

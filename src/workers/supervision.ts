@@ -314,6 +314,18 @@ export const aibrokerPush: PushFn = async (logDir, target, ev) => {
   }
 };
 
+/**
+ * Whether a finished/failed/stalled event should be relayed into the owner's
+ * terminal. A caller launched with --output-format json|stream-json reads
+ * the run's result itself, and the harness already notifies it on process
+ * exit — pushing the one-liner too would cost that caller a full extra turn
+ * for information it already has. Interactive/pane launches and the default
+ * text format are unaffected: only json and stream-json ever skip the relay.
+ */
+export function shouldRelay(outputFormat: WorkerStatus["outputFormat"] | undefined): boolean {
+  return outputFormat !== "json" && outputFormat !== "stream-json";
+}
+
 function appendEventFile(logDir: string, ev: SupervisionEvent): void {
   const path = supervisionEventsPath(logDir, ev.session);
   const dir = supervisionDirPath(logDir);
@@ -381,6 +393,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   for (const ev of written) {
     // the owner's iTerm identity is in its worker status, not the event
     const owner = statuses.find((s) => s.id === ev.worker);
+    if (!shouldRelay(owner?.outputFormat)) continue; // caller reads its own JSON result
     const target: PushTarget = {
       claudeSession: owner?.spawnerSession ?? null,
       iterm: owner?.session?.id ?? null,

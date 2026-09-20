@@ -4,7 +4,9 @@
 
 > Run subagents on configured worker providers: run, ps, follow, replay,
 
-pane, log, status-line, providers, roles, on, off, install
+pane, log, status-line, providers, roles, goal, config, on, off, install.
+run takes --spec <file> (or --spec -) to read the prompt from a file/stdin
+instead of an inline -p '<prompt>', which breaks on shell quoting.
 
 ## Synopsis
 
@@ -42,7 +44,7 @@ pai worker <subcommand> [options]
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
-| [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check |
+| [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check, inline-keys |
 
 ### pai worker run [args...]
 
@@ -50,6 +52,12 @@ Run one claude-code worker through the configured provider.
 
 Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);
 --output-format/--verbose are handled here.
+--label "<goal>" is optional — it is the row shown in ps / follow /
+the status line; when absent it is derived from the prompt's first line
+(--chain/--agent derive their own instead).
+--spec <file> (or --spec -) reads the prompt from a file/stdin instead of
+an inline -p '<prompt>', which breaks on shell quoting; mutually
+exclusive with -p.
 Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically);
 --chain draft,implement[,review] runs a spec-first pipeline;
 --agent <name> runs an agent definition from ~/.claude/agents.
@@ -69,13 +77,15 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--role <name>` | Alias of --class (roles were renamed to classes) |  |
 | `--chain <stages>` | Comma-separated stage classes, e.g. draft,implement or draft,implement,review |  |
 | `--agent <name>` | Run the agent definition ~/.claude/agents/<name>.md on a worker |  |
-| `--model <model>` | Override the provider's model for this run |  |
-| `--label <text>` | Short task label shown in ps / follow / status line |  |
+| `--model <model>` | Override the model for this run. Headless (-p) workers default to the --class model; an interactive launch (no -p) with no --model uses the harness default model from settings.json. |  |
+| `--label <text>` | Short task label shown in ps / follow / status line (default: first line of the prompt) |  |
+| `--spec <path>` | Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p |  |
 | `--cwd <dir>` | Directory the worker runs in (default: this process's cwd) |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
 | `--no-pane` | Do not open a follow pane for this worker |  |
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
 | `--no-worktree` | Run in place, no worktree |  |
+| `--print-cmd` | Print the assembled claude argv as JSON and exit, without spawning (audit tool) |  |
 
 
 ### pai worker ps
@@ -373,8 +383,10 @@ Providers: list (default), add, remove, use, enable, disable, test
 
 Add a provider; the first one also turns workers on and seeds classes.
 
-Example: pai worker providers add glm --base-url https://…/anthropic \
-           --key-file ~/.config/zai/api_key --model glm-5.3 --fast-model glm-5.3-flash
+Example: pai worker providers add glm --url https://…/anthropic \
+           --key sk-… --model glm-5.3 --fast-model glm-5.3-flash
+--key writes the token inline as `key:` in workers.yaml (quoted, file kept 0600);
+--key-file writes only a path to a 0600 file holding it — use one or the other.
 OpenAI-protocol: --protocol openai --upstream-url https://…/v1 (runs via the PAI proxy).
 Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.
 
@@ -389,7 +401,9 @@ Codex (ChatGPT plan): --engine codex — runs through the Codex CLI.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--base-url <url>` | Anthropic-compatible API base URL (required unless --protocol openai) |  |
+| `--url <url>` | Alias of --base-url |  |
 | `--model <model>` | Default model id for this provider |  |
+| `--key <token>` | API token, written inline as `key:` (quoted); use instead of --key-file |  |
 | `--key-file <path>` | File holding the API token (0600); omit for token "local" |  |
 | `--fast-model <model>` | Cheaper model for spotchecks and routing |  |
 | `--env <name=value>` | Extra env for runs (repeatable) | `` |
@@ -545,7 +559,7 @@ Capabilities: default, fast, image. --provider targets another provider.
 
 ### pai worker config
 
-workers.yaml itself: path, init, migrate, check
+workers.yaml itself: path, init, migrate, check, inline-keys
 
 
 ### pai worker config path
@@ -560,16 +574,20 @@ Write the commented starter workers.yaml (refuses if one already exists)
 
 ### pai worker config migrate
 
-Move providers/classes/mcp_sets/active out of the JSON config into workers.yaml.
+Two things this can mean, chosen from what is on disk:
 
-Backs the JSON section up to workers.json.migrated-<date> next to it.
+- workers.yaml still at an old location (~/.claude/workers.yaml or
+    ~/.config/pai/workers.yaml): moved byte-for-byte to ~/.claude/pai/workers.yaml
+    (no JSON involved); the old file is renamed to workers.yaml.migrated-<date>.
+  - no workers.yaml yet: built from the JSON `workers` section, which is
+    backed up to workers.json.migrated-<date> next to config.json.
 
 **Options**
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--force` | Overwrite an existing workers.yaml |  |
-| `--dry-run` | Print the would-be workers.yaml without writing anything |  |
+| `--dry-run` | Print the plan without writing anything |  |
 
 
 ### pai worker config check [path]
@@ -583,9 +601,20 @@ Validate workers.yaml (or the file at [path]); exits non-zero with file:line on 
 | `[path]` | optional |
 
 
+### pai worker config inline-keys
+
+Move each provider's key_file contents inline as `key:` (quoted); key files are left on disk
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Print the plan (provider names and key file paths, never key values); write nothing |  |
+
+
 ## See also
 
-[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

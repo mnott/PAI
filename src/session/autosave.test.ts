@@ -6,6 +6,8 @@ import {
   recentPrompts,
   findTranscripts,
   buildAutosaveBody,
+  ag2Checkpoint,
+  type WorkingTree,
 } from "./autosave.js";
 
 const SESSION_ID = "6db6ce0a-39ba-4f35-a93b-32dbf379f3a6";
@@ -191,5 +193,27 @@ describe("buildAutosaveBody", () => {
 
     const body = buildAutosaveBody({ cwd: root, transcriptPaths: [p] });
     expect(body).toContain("g=line one line two");
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("ag2Checkpoint", () => {
+  it("caps @n= lines at MAX_AT_LINES and reports the rest via the z= trailer", () => {
+    const tree: WorkingTree = {
+      branch: "main",
+      head: "abc1234",
+      changes: Array.from({ length: 8 }, (_, i) => `M file${i}.ts`),
+      overflow: 0,
+    };
+
+    const body = ag2Checkpoint(["do the thing"], tree, "2026-08-01T13:00:00.000Z");
+    const atLines = body.split("\n").filter((l) => /^@\d+=/.test(l));
+
+    expect(atLines.length).toBe(5);
+    expect(body).toContain("@5=");
+    expect(body).not.toContain("@6=");
+    expect(body).toContain("+3 paths");
+    expect(body).toContain("git status for detail");
   });
 });

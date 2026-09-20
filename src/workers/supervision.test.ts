@@ -19,6 +19,7 @@ import {
   pruneState,
   runSupervisionTick,
   saveSupervisionState,
+  shouldRelay,
   stallMinutesFromEnv,
   supervisionEventsPath,
   type SupervisionEvent,
@@ -50,6 +51,7 @@ interface FakeOptions {
   pid?: number;
   origin?: WorkerStatus["origin"];
   label?: string;
+  outputFormat?: WorkerStatus["outputFormat"];
 }
 
 /** One ledger row with everything defaulted to "healthy and owned". */
@@ -79,6 +81,7 @@ function fake(o: FakeOptions = {}): WorkerStatus {
     ...(o.parent ? { parent: o.parent, stage: "implement" } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
     ...(o.label !== undefined ? { label: o.label } : {}),
+    ...(o.outputFormat ? { outputFormat: o.outputFormat } : {}),
   };
 }
 
@@ -322,6 +325,13 @@ describe("tick delivery", () => {
     expect(repeat.events).toHaveLength(0);
   });
 
+  it("a json-format launch is never pushed, even though a text one would be", async () => {
+    await prime("w-json");
+    const r = await tick([fake({ id: "w-json", state: "done", rc: 0, outputFormat: "json" })], async () => true);
+    expect(r.events).toHaveLength(1); // the event file still records it
+    expect(r.pushed).toHaveLength(0); // but the caller reads its own JSON result
+  });
+
   it("a push that throws is treated as not delivered", async () => {
     await prime("w-throw");
     const r = await tick(
@@ -330,6 +340,24 @@ describe("tick delivery", () => {
     );
     expect(r.events).toHaveLength(1);
     expect(r.pushed).toHaveLength(0);
+  });
+});
+
+describe("shouldRelay", () => {
+  it("skips the relay for a json launch", () => {
+    expect(shouldRelay("json")).toBe(false);
+  });
+
+  it("skips the relay for a stream-json launch", () => {
+    expect(shouldRelay("stream-json")).toBe(false);
+  });
+
+  it("relays a default text launch", () => {
+    expect(shouldRelay("text")).toBe(true);
+  });
+
+  it("relays when no format was recorded (interactive/pane launches)", () => {
+    expect(shouldRelay(undefined)).toBe(true);
   });
 });
 

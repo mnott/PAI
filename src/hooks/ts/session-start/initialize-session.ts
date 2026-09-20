@@ -14,7 +14,7 @@
  * Setup:
  * 1. Set environment variables in settings.json:
  *    - DA: Your AI's name (e.g., "Kai", "Nova", "Assistant")
- *    - PAI_DIR: Path to your PAI directory (defaults to $HOME/.claude)
+ *    - ADAPTER_DIR: Path to your Claude Code harness adapter dir (defaults to $HOME/.claude)
  * 2. Ensure load-core-context.ts exists in hooks/session-start/ directory
  * 3. Add all three SessionStart hooks to settings.json in this order:
  *    initialize-session.ts, load-core-context.ts, load-project-context.ts
@@ -24,7 +24,7 @@ import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, statSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { PAI_DIR } from '../lib/pai-paths';
+import { ADAPTER_DIR } from '../lib/pai-paths';
 import { sendNtfyNotification, isWhatsAppEnabled, isProbeSession } from '../lib/project-utils';
 
 // Debounce duration in milliseconds (prevents duplicate SessionStart events)
@@ -61,7 +61,7 @@ function shouldDebounce(): boolean {
 }
 
 async function testStopHook() {
-  const stopHookPath = join(PAI_DIR, 'hooks/stop-hook.ts');
+  const stopHookPath = join(ADAPTER_DIR, 'hooks/stop-hook.ts');
 
   console.error('\nTesting stop-hook configuration...');
 

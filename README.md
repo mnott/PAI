@@ -98,8 +98,26 @@ Only the outer orchestrator session runs on Anthropic. Every worker PAI spawns �
 ### How
 
 - **Managed providers.** `pai worker providers add` registers one, `pai worker providers use <name>` switches the fleet, `pai worker off` disables routing entirely (the Agent tool runs on Anthropic again), `pai worker on` re-enables it. The reserved name `anthropic` needs no `add` step — it's Claude Code's own login; `pai worker providers use anthropic` switches straight to it.
+- **Start the harness itself on any provider.** `pai launch` (numbered picker, or `--provider <name> [--model <model>]`) starts a fresh Claude Code session on any provider/model in `workers.yaml` — a running session can't switch providers (base URL and auth are fixed at start), so this always begins a new one. Claude Code's own `/model` only lists the current endpoint's models; `pai launch --list` (or the `/providers` skill, from inside a session) lists every provider configured here.
 - **Classes route work to the right model.** `--class` picks the provider and model for the job: `draft`, `plan`, `implement`, `review`, `research`, `spotcheck`, `simple`, `complex`, `image`. `pai worker classes` shows and edits the mapping; `--provider` / `--model` override for a single run.
 - **Every worker spawn stands alone.** The orchestrator's API key is stripped and the spawn gets the provider's base URL, token and model ids instead — proven live: a worker answers with the parent's credentials gone. No inherited billing, no fallback to the vendor login.
+- **One file to configure it.** Providers, per-role model ids and class routing live in one hand-editable `workers.yaml` — adding a provider (Anthropic-compatible, OpenAI-compatible, or local) is a YAML edit, never code. Full reference: [docs/workers-config.md](docs/workers-config.md).
+
+```yaml
+active: anthropic
+providers:
+  anthropic:
+    builtin: true                 # Claude Code's own login
+    models: { default: claude-sonnet-5, fast: claude-haiku-4-5-20251001 }
+  glm:
+    url: https://api.z.ai/api/anthropic
+    key: "<your-api-key>"         # or key_file: <path to a 0600 file>
+    tier: 3
+    models: { default: glm-5.3[1m], fast: glm-5.3-flash }
+classes:
+  implement: anthropic
+  spotcheck: anthropic/fast       # cheap classes default to the fast model
+```
 
 ### What
 
@@ -282,7 +300,7 @@ PAI tracks your weekly Claude usage and automatically adjusts subagent model sel
 
 ### How it works
 
-The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.claude/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
+The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.claude/pai/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
 
 ### Automatic thresholds
 
@@ -427,7 +445,7 @@ Run `pai` with no arguments to open a self-contained terminal selector (no `fzf`
   project   Glidr        2d    …/apps/glidr          claude pai research
 
   ────────────────────────────────────────
-  Chenarlier   /Users/…/Raspi/Chenarlier
+  Chenarlier   ~/…/Raspi/Chenarlier
   recent notes:
     10 - Samba Setup/01 - Samba Server Setup.md   1mo
     00 - Monster/00 - Monster.md                  3mo
@@ -740,7 +758,7 @@ When a session ends, PAI generates a structured summary capturing what was reque
 
 PAI provides a hook that injects user-defined rules into every prompt via `UserPromptSubmit`. Rules survive compaction, `/clear`, and session restarts — they fire on every single turn, making them the most reliable way to enforce behavioral constraints.
 
-**PAI ships the mechanism. You provide the rules.** The file `~/.claude/whisper-rules.md` does not exist by default. Use the `/whisper` skill to manage your rules:
+**PAI ships the mechanism. You provide the rules.** The file `~/.claude/pai/whisper-rules.md` does not exist by default. Use the `/whisper` skill to manage your rules:
 
 ```
 /whisper                          — show current rules
@@ -749,7 +767,7 @@ PAI provides a hook that injects user-defined rules into every prompt via `UserP
 /whisper list                     — list with line numbers
 ```
 
-Or edit `~/.claude/whisper-rules.md` directly — one rule per line, plain text.
+Or edit `~/.claude/pai/whisper-rules.md` directly — one rule per line, plain text.
 
 **Keep rules focused.** Every rule is injected on every prompt. Too many rules dilute effectiveness and waste tokens. Reserve whisper rules for truly critical constraints that keep getting violated despite being in CLAUDE.md.
 
@@ -911,7 +929,7 @@ Recency boost is applied after cross-encoder reranking, so relevance is scored f
 
 ### Search Settings
 
-All search defaults are configurable via `~/.config/pai/config.json` and can be viewed or changed from the command line.
+All search defaults are configurable via `~/.claude/pai/config.json` and can be viewed or changed from the command line.
 
 ```bash
 # View all search settings
@@ -934,7 +952,7 @@ pai memory settings rerank false
 | `defaultLimit` | `10` | Default number of results |
 | `snippetLength` | `200` | Max characters per snippet in MCP results |
 
-Settings live in the `search` section of `~/.config/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
+Settings live in the `search` section of `~/.claude/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
 
 ### Using Search from Within Claude
 
@@ -978,7 +996,7 @@ You can ask Claude to adjust search behavior per-query:
 | `rerank` | boolean | Cross-encoder reranking (default: true from config) |
 | `recency_boost` | integer | Recency half-life in days (0 = off, default from config) |
 
-All parameters except `query` are optional. Omitted values fall back to your `~/.config/pai/config.json` defaults.
+All parameters except `query` are optional. Omitted values fall back to your `~/.claude/pai/config.json` defaults.
 
 **Changing defaults permanently:**
 
@@ -990,7 +1008,7 @@ Tell Claude to change your search settings:
 "Change the recency boost to 60 days"
 ```
 
-Claude runs `pai memory settings <key> <value>` to update `~/.config/pai/config.json`. Changes take effect on the next search — no restart needed.
+Claude runs `pai memory settings <key> <value>` to update `~/.claude/pai/config.json`. Changes take effect on the next search — no restart needed.
 
 ---
 

@@ -2,6 +2,10 @@
 # Providers PAI can run workers on, the model each role uses, and which
 # provider every --class goes to. Edit by hand; `pai worker providers` shows
 # the effective result. Comments are preserved when PAI writes this file.
+#
+# Per-user state, kept 0600: this file can hold API keys (`key:`, below).
+# Never commit it or share it. `key_file: <path>` keeps a secret in its own
+# 0600 file instead, if you'd rather not put it here.
 
 active: anthropic          # provider for `pai worker run` without --provider or --class
 
@@ -13,7 +17,7 @@ providers:
       fast: claude-haiku-4-5-20251001
   glm:
     url: https://api.z.ai/api/anthropic
-    key_file: ~/.config/zai/api_key
+    key: "<your-api-key>"   # or key_file: <path to a 0600 file>
     tier: 3
     models:
       default: glm-5.3[1m]
@@ -21,7 +25,7 @@ providers:
       image: example-paint
   kimi:
     url: https://api.kimi.ai/coding/
-    key_file: ~/.config/kimi/api_key
+    key: "<your-api-key>"   # or key_file: <path to a 0600 file>
     tier: 3
     models:
       default: k3[1m]

@@ -38,6 +38,8 @@ pai projects <subcommand> [options]
 | [`pai projects unname <shortname>`](#pai-projects-unname-shortname) | Remove a project's short name |
 | [`pai projects names`](#pai-projects-names) | List named projects (your curated shortlist) |
 | [`pai projects config [identifier]`](#pai-projects-config-identifier) | View or modify session launch config for a project. |
+| [`pai projects mcp [names...]`](#pai-projects-mcp-names) | View or set the MCP servers this project's interactive supervisor session |
+| [`pai projects tools [names...]`](#pai-projects-tools-names) | View or set the built-in tool schemas this project's interactive |
 
 ### pai projects list
 
@@ -398,6 +400,49 @@ Use --options to discover available keys and presets.
 | `--reset` | Reset config to empty (inherit global defaults) |  |
 
 
+### pai projects mcp [names...]
+
+View or set the MCP servers this project's interactive supervisor session
+
+loads (run from inside the project, like `pai projects here`).
+No names: print the current value. Names (comma-separated or repeated
+args): set it, validated against ~/.claude.json's mcpServers.
+--clear: unset (all servers load — today's default).
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[names...]` | variadic |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--clear` | Unset — all MCP servers load again |  |
+
+
+### pai projects tools [names...]
+
+View or set the built-in tool schemas this project's interactive
+
+supervisor session loads (run from inside the project, like `pai projects
+here`). No names: print the current value. Names (comma-separated or
+repeated args): set it. --clear: unset (all tools load — today's default).
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[names...]` | variadic |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--clear` | Unset — all built-in tools load again |  |
+
+
 ## Examples
 
 ```bash
@@ -419,7 +464,7 @@ pai projects health --fix
 
 ## See also
 
-[`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

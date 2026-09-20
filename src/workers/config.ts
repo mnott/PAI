@@ -1,5 +1,7 @@
 /**
- * config.ts — the `workers` section of ~/.config/pai/config.json
+ * config.ts — the `workers` section of the PAI config file (CONFIG_FILE,
+ * see src/daemon/config.ts's paiConfigFilePath — ~/.claude/pai/config.json
+ * today, pre-2026-09-19 ~/.config/pai/config.json).
  *
  * Everything that knows about worker providers reads this module: the CLI
  * (`pai worker …`), the MCP tools (worker_*), and the Agent-routing hook.
@@ -15,11 +17,12 @@
  * Code.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { CONFIG_FILE } from "../daemon/config.js";
+import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
@@ -77,6 +80,14 @@ export interface WorkerProvider {
   baseUrl: string;
   /** 0600 file holding the auth token; null for local servers ("local"). */
   keyFile: string | null;
+  /**
+   * The auth token itself, inline in workers.yaml. Wins over keyFile when
+   * both are set (`pai worker config check` notices this). Keeping the key
+   * out of a separate file is the operator's explicit call — the file this
+   * lives in must be 0600 (writeWorkersYamlText enforces that) and is never
+   * committed. See resolveProviderKey for the one place this is read.
+   */
+  key?: string;
   /** Model id per capability; see MODEL_CAPABILITIES. Only default is required. */
   models: { default: string } & Partial<Record<ModelCapability, string>>;
   /**
@@ -481,6 +492,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     p.keyFile === undefined || p.keyFile === null || str(p.keyFile) === ""
       ? null
       : str(p.keyFile);
+  const key = str(p.key) || undefined;
 
   const models = parseModelsBlock(`.providers.${name}.models`, p.models);
 
@@ -602,6 +614,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     protocol,
     baseUrl,
     keyFile,
+    ...(key ? { key } : {}),
     models,
     ...(modelTiers ? { modelTiers } : {}),
     env,
@@ -892,7 +905,7 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
  * callers can rewrite it preserving every other section, the parsed+validated
  * workers section. Unreadable config throws (readJsonStrict), missing is fine.
  * `path` overrides the config location (tests, CLAUDE_SETTINGS_PATH-style
- * dry runs); default ~/.config/pai/config.json.
+ * dry runs); default CONFIG_FILE (see paiConfigFilePath).
  *
  * Providers, classes, mcpSets and active load from workers.yaml (next to
  * `path`) when it exists; otherwise they fall back to the JSON `workers`
@@ -904,9 +917,9 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
-  const raw = readJsonStrict(path, "~/.config/pai/config.json");
+  const raw = readJsonStrict(path, path);
   const workers = parseWorkersConfig(raw.workers);
-  const yaml = readWorkersYaml(workersYamlPath(path));
+  const yaml = readWorkersYaml(workersYamlPath());
   if (yaml) {
     workers.active = yaml.data.active;
     workers.providers = yaml.data.providers;
@@ -928,7 +941,7 @@ export function writeWorkersSection(
   workers: WorkersConfig,
   path: string = CONFIG_FILE
 ): void {
-  const yamlPath = workersYamlPath(path);
+  const yamlPath = workersYamlPath();
   const usingYaml = existsSync(yamlPath);
   if (usingYaml) {
     writeWorkersYaml(yamlPath, workersYamlDataOf(workers));
@@ -947,7 +960,7 @@ export function writeWorkersSection(
       ? workers
       : { ...workers, fallback: undefined };
   raw.workers = jsonWorkers;
-  writeJsonAtomic(path, raw, { label: "~/.config/pai/config.json" });
+  writeJsonAtomic(path, raw, { label: path });
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */
@@ -973,6 +986,35 @@ export function assertProviderRunnable(name: string, p: WorkerProvider): void {
 /** Where a provider's key file lives, or null. Shared by run + test + add. */
 export function providerKeyPath(p: WorkerProvider): string | null {
   return p.keyFile ? expandHome(p.keyFile) : null;
+}
+
+/**
+ * The provider's auth token: inline `key` wins when set, else `key_file`
+ * read and trimmed, else null (native/local providers use the "local"
+ * placeholder). The one place a provider's key value is resolved — every
+ * spawn path (buildRunEnv, the codex runner, the openai proxy, the
+ * machine-wide fallback) reads through this instead of its own
+ * readFileSync, so inline keys work everywhere a key file already did.
+ */
+export function resolveProviderKey(p: WorkerProvider): string | null {
+  if (p.key) return p.key;
+  const keyPath = providerKeyPath(p);
+  if (!keyPath) return null;
+  let content: string;
+  try {
+    content = readFileSync(keyPath, "utf8");
+  } catch {
+    throw new WorkersConfigError(`key file not readable: ${keyPath}`);
+  }
+  const token = content.trim();
+  if (!token) throw new WorkersConfigError(`key file is empty: ${keyPath}`);
+  return token;
+}
+
+/** `key: ****` + last 4 chars — never the full value. Used everywhere a
+ *  provider's key would otherwise be echoed (`providers`, `config check`). */
+export function maskKey(key: string): string {
+  return `****${key.slice(-4)}`;
 }
 
 export { DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
@@ -1006,5 +1048,5 @@ export function providerContextWindow(p: WorkerProvider): number {
 
 /** Directory under which inline keys (MCP `key` field) are stored, 0600. */
 export function keysDir(): string {
-  return join(homedir(), ".config", "pai", "keys");
+  return paiHomePath("keys");
 }

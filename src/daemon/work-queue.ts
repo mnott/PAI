@@ -5,7 +5,8 @@
  * Items are processed sequentially to avoid concurrent writes to the same
  * session note. Failed items are retried with exponential backoff.
  *
- * Queue file: ~/.config/pai/work-queue.json
+ * Queue file: under PAI_HOME (~/.claude/pai/work-queue.json), falling back
+ * to the pre-2026-09-19 ~/.config/pai/work-queue.json location.
  * Written atomically (write temp → rename) to prevent corruption.
  */
 
@@ -20,6 +21,7 @@ import {
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,7 +68,15 @@ export interface WorkQueueStats {
 // Constants
 // ---------------------------------------------------------------------------
 
-const QUEUE_FILE = join(homedir(), ".config", "pai", "work-queue.json");
+function oldQueueFile(): string {
+  return join(homedir(), ".config", "pai", "work-queue.json");
+}
+
+const QUEUE_FILE = resolvePaiFile(paiHomePath("work-queue.json"), [oldQueueFile()], "pai config migrate");
+
+export function migrateWorkQueue(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("work-queue.json"), [oldQueueFile()], opts);
+}
 const MAX_QUEUE_SIZE = 1000;
 const MAX_QUEUE_FILE_BYTES = 1024 * 1024; // 1 MB
 const COMPLETED_TTL_MS = 60 * 60 * 1000;           // 1 hour

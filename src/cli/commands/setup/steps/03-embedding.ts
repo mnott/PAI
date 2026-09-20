@@ -1,6 +1,7 @@
 /** Step 3: Embedding model selection for semantic search. */
 
 import { c, line, section, type Rl, promptMenu, readConfigRaw } from "../utils.js";
+import { CONFIG_FILE } from "../../../../daemon/config.js";
 
 export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   section("Step 3: Embedding Model");
@@ -50,7 +51,7 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
     console.log(c.dim("  The model will be downloaded on first use of `pai memory embed`."));
   } else {
     console.log(c.ok("Skipping embeddings. Keyword search will still work."));
-    console.log(c.dim("  Add later: update embeddingModel in ~/.config/pai/config.json"));
+    console.log(c.dim(`  Add later: update embeddingModel in ${CONFIG_FILE}`));
   }
 
   return { embeddingModel: selectedModel ?? "none" };

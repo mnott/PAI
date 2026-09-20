@@ -1,5 +1,5 @@
 {
-  "comment": "PAI Voice Configuration Template. Copy to ~/.config/pai/voices.json and customize.",
+  "comment": "PAI Voice Configuration Template. Copy to ~/.claude/pai/voices.json and customize. Currently unused — no code reads this file's contents yet.",
   "comment_privacy": "This file is NOT committed to any repository. Keep it out of version control.",
 
   "voiceSystem": {
@@ -231,10 +231,10 @@
   },
 
   "notes": {
-    "setup": "Copy this file to ~/.config/pai/voices.json and customize for your preferences.",
+    "setup": "Copy this file to ~/.claude/pai/voices.json and customize for your preferences.",
     "kokoro_first_run": "First use downloads ~160MB model (~30 seconds). Runs entirely offline afterward.",
     "elevenlabs_cost": "ElevenLabs has usage limits and costs. Check your account for pricing.",
-    "privacy": "This file is NOT committed to version control. Add ~/.config/pai/ to .gitignore.",
+    "privacy": "This file is NOT committed to version control. Add ~/.claude/pai/ to .gitignore.",
     "reloading": "Changes take effect immediately. No daemon restart required.",
     "fallback_behavior": "If primary system fails or voice not found, falls back to alternate system.",
     "environment_variables": "Can also set ELEVENLABS_API_KEY and KOKORO_CACHE_DIR via environment.",

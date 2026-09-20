@@ -27,7 +27,7 @@ import {
 import { existsSync } from "node:fs";
 import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../utils.js";
 import { basename } from "node:path";
-import { cmdName, cmdUnname, cmdNames, cmdConfig } from "./session-config.js";
+import { cmdName, cmdUnname, cmdNames, cmdConfig, cmdMcp, cmdTools } from "./session-config.js";
 import { cmdHealth } from "./health.js";
 import { cmdMerge } from "./merge.js";
 import { cmdHere } from "./here.js";
@@ -404,4 +404,33 @@ export function registerProjectsCommands(
         cmdConfig(getDb(), identifier, opts);
       }
     );
+
+  // pai projects mcp [names...]
+  projectsCmd
+    .command("mcp [names...]")
+    .description(
+      "View or set the MCP servers this project's interactive supervisor session\n" +
+        "loads (run from inside the project, like `pai projects here`).\n" +
+        "No names: print the current value. Names (comma-separated or repeated\n" +
+        "args): set it, validated against ~/.claude.json's mcpServers.\n" +
+        "--clear: unset (all servers load — today's default)."
+    )
+    .option("--clear", "Unset — all MCP servers load again")
+    .action((names: string[], opts: { clear?: boolean }) => {
+      cmdMcp(getDb(), names, opts);
+    });
+
+  // pai projects tools [names...]
+  projectsCmd
+    .command("tools [names...]")
+    .description(
+      "View or set the built-in tool schemas this project's interactive\n" +
+        "supervisor session loads (run from inside the project, like `pai projects\n" +
+        "here`). No names: print the current value. Names (comma-separated or\n" +
+        "repeated args): set it. --clear: unset (all tools load — today's default)."
+    )
+    .option("--clear", "Unset — all built-in tools load again")
+    .action((names: string[], opts: { clear?: boolean }) => {
+      cmdTools(getDb(), names, opts);
+    });
 }

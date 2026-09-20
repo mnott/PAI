@@ -873,9 +873,11 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
 // implementation. end.ts now imports these rather than carrying its own copy.
 // ---------------------------------------------------------------------------
 
-/** PAI_DIR — mirrors pai-paths.ts resolution. */
+/** ADAPTER_DIR (harness adapter root) — mirrors pai-paths.ts's resolveAdapterDir(),
+ *  kept self-contained here to avoid importing pai-paths.ts's process.exit(1)
+ *  validation side effect. PAI_DIR is the deprecated alias, same as there. */
 function getPaiDir(): string {
-  const envDir = process.env.PAI_DIR;
+  const envDir = process.env.ADAPTER_DIR || process.env.PAI_DIR;
   if (envDir) {
     try {
       return realpathSync(envDir);

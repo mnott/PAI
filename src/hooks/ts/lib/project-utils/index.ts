@@ -4,6 +4,7 @@
  */
 
 export {
+  ADAPTER_DIR,
   PAI_DIR,
   PROJECTS_DIR,
   isProbeSession,

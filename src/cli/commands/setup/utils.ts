@@ -132,11 +132,11 @@ export async function promptYesNo(
  * current command happened to be setting.
  */
 export function readConfigRaw(): Record<string, unknown> {
-  return readJsonStrict(CONFIG_FILE, "~/.config/pai/config.json");
+  return readJsonStrict(CONFIG_FILE, CONFIG_FILE);
 }
 
 export function writeConfigRaw(data: Record<string, unknown>): void {
-  writeJsonAtomic(CONFIG_FILE, data, { label: "~/.config/pai/config.json" });
+  writeJsonAtomic(CONFIG_FILE, data, { label: CONFIG_FILE });
 }
 
 export function mergeConfig(updates: Record<string, unknown>): void {

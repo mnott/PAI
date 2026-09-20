@@ -26,7 +26,12 @@
  *     (context meter included), ledger lines, result printed in the caller's
  *     --output-format (json adds the parsed `report`), and the follow pane
  *     (unless --no-pane).
- *   - interactive: no MCP restriction, no pane, ENABLE_TOOL_SEARCH=true.
+ *   - interactive: no MCP/tool restriction by default, no pane,
+ *     ENABLE_TOOL_SEARCH=true. A project that pinned a list with `pai
+ *     project mcp` / `pai project tools` gets `--strict-mcp-config
+ *     --mcp-config <filtered>` / `--tools <list>` built the same way a
+ *     headless run's allowlist is; an explicit --mcp or --tools on this
+ *     command line still wins over the project's pin.
  *
  * Auto-routed runs that die of a quota error before the first tool call are
  * restarted on the next provider in routing order (WORKER-REROUTE ledger line).
@@ -84,6 +89,7 @@ import {
 } from "./worktree.js";
 import { OPERATOR_MARK, WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
+import { projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
@@ -103,6 +109,8 @@ export interface RunOptions {
   modelFlag?: string;
   label?: string;
   noPane?: boolean;
+  /** --spec value, resolved for display/recording ("-" for stdin). */
+  specPath?: string;
   /** --mcp value: server/set names, comma-separated. */
   mcpFlag?: string;
   /** Everything after `--` (the claude args). */
@@ -121,6 +129,8 @@ export interface RunOptions {
   id?: string;
   /** --worktree/--no-worktree; undefined lets the class default decide. */
   worktreeFlag?: boolean;
+  /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
+  printCmd?: boolean;
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
@@ -267,6 +277,22 @@ export function modelArgs(model: string, callerPinned: boolean): string[] {
   return !callerPinned && model ? ["--model", model] : [];
 }
 
+/**
+ * Whether the run's assembled cmd gets a forced --model. Headless workers
+ * always take the resolved class/provider model — that table exists so
+ * spawned subagents stay cheap. An interactive launch (`pai worker run` with
+ * no -p) IS the chat pane, not a subagent: with no --model of the caller's
+ * own it gets none here either, so Claude Code's own settings.json model
+ * applies, exactly as launching `claude` by hand would (2026-09-20: an
+ * interactive supervisor came up on the class model instead of the
+ * settings.json [1m] variant, then needed a manual /model switch that
+ * rebuilt the whole cache). A caller's own --model, headless or not, is
+ * already in the passthrough args and must not be duplicated here.
+ */
+export function modelFlagArgs(headless: boolean, model: string, callerPinned: boolean): string[] {
+  return headless ? modelArgs(model, callerPinned) : [];
+}
+
 /** Context window announced by the init event, when the endpoint sends one. */
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
@@ -331,6 +357,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         claudeArgs: opts.claudeArgs,
         noPane: opts.noPane ?? false,
         cwd: opts.cwd,
+        specPath: opts.specPath,
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
@@ -351,6 +378,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       noPane: opts.noPane ?? false,
       mcpFlag: opts.mcpFlag,
       cwd: opts.cwd,
+      specPath: opts.specPath,
       parent: parent ?? undefined,
       stage: opts.stage,
       quiet: opts.quiet,
@@ -359,6 +387,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       worktreeFlag: opts.worktreeFlag,
       className: opts.className,
       reroutes: opts._reroutes ?? 0,
+      printCmd: opts.printCmd,
     });
   } catch (e) {
     if (e instanceof Error && e.message.startsWith("key file")) {
@@ -387,6 +416,36 @@ export function headlessToolGrants(allowedTools: string[]): string[] {
 }
 
 /**
+ * `--tools` narrows which built-in tool *schemas* claude loads into the
+ * system prompt — distinct from `--allowedTools`, which narrows which of
+ * those loaded tools may run without asking. A headless worker with a small
+ * grant (say, just Read) still pays for every built-in schema (Bash, Web*,
+ * NotebookEdit, …) it never uses: ~9k tokens per spawn (29,270 -> 20,352,
+ * measured 2026-09-20). Passing --tools built from the same grant removes
+ * the unused schemas.
+ *
+ * MCP grants (`mcp__server__tool` / `mcp__server__*`) are left out of the
+ * --tools list: they are not built-in tool names, --tools does not
+ * recognize them, and the MCP server's tools load through --mcp-config
+ * regardless. Tested 2026-09-20: with an --allowedTools grant of
+ * `Read,mcp__pai__memory_search`, passing `--tools Read` (mcp name
+ * omitted) still let the worker call memory_search successfully; the tool
+ * loads from the filtered MCP config, not from --tools.
+ */
+export function headlessToolsFlag(allowedTools: string[]): string[] {
+  const names: string[] = [];
+  for (const entry of allowedTools) {
+    for (const raw of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (raw.startsWith("mcp__")) continue; // loads via --mcp-config, not --tools
+      const patterned = raw.match(/^([A-Za-z]+)\(.*\)$/); // e.g. Bash(git *) -> Bash
+      const name = patterned ? patterned[1] : raw;
+      if (!names.includes(name)) names.push(name);
+    }
+  }
+  return names.length ? ["--tools", names.join(",")] : [];
+}
+
+/**
  * The claude flag that turns on the browser bridge, when the run asked for it.
  *
  * The bridge is not an MCP server — it rides the Chrome native-host channel,
@@ -401,6 +460,23 @@ export function chromeGrantArgs(wanted: string[], rest: string[] = []): string[]
   return grantsChrome(wanted) ? ["--chrome"] : [];
 }
 
+/**
+ * Which MCP server names and --tools list an interactive launch (`pai
+ * worker run`, no -p) uses: an explicit --mcp on this command line beats
+ * the project's `pai project mcp` pin; an explicit --tools beats `pai
+ * project tools`. Neither given: [] — today's "everything loads" default.
+ */
+export function interactiveMcpTools(
+  explicitMcp: string[],
+  callerTools: boolean,
+  projectLaunch: ProjectLaunchConfig | null
+): { mcpNames: string[]; tools: string[] } {
+  return {
+    mcpNames: explicitMcp.length ? explicitMcp : (projectLaunch?.mcp ?? []),
+    tools: !callerTools && projectLaunch?.tools?.length ? projectLaunch.tools : [],
+  };
+}
+
 interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
@@ -412,6 +488,7 @@ interface ExecuteArgs {
   noPane: boolean;
   mcpFlag?: string;
   cwd?: string;
+  specPath?: string;
   parent?: string;
   stage?: string;
   quiet?: boolean;
@@ -420,6 +497,7 @@ interface ExecuteArgs {
   worktreeFlag?: boolean;
   className?: string;
   reroutes: number;
+  printCmd?: boolean;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
@@ -445,8 +523,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // One worktree per writing run (implement/complex/plan, a git cwd, a prompt
   // that is not read-only; --worktree/--no-worktree override). A git refusal
   // degrades to an in-place run — the worker itself must still run.
+  // Skipped for --print-cmd: it is a dry-run and must not touch git.
   let worktree: WorktreeInfo | null = null;
-  if (headless && worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })) {
+  if (
+    headless &&
+    !a.printCmd &&
+    worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })
+  ) {
     try {
       worktree = addWorktree(logDir, wid, cwd);
     } catch (e) {
@@ -457,6 +540,65 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   }
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+
+  const chromeArgs = chromeGrantArgs(
+    [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp, ...(target.classMcp ?? []), ...parsed.allowedTools],
+    parsed.rest
+  );
+
+  // MCP / tools: caller config > allowlist (--mcp flag / --mcp args / role /
+  // mcp__ grants in --allowedTools) > project pin (interactive only, `pai
+  // project mcp` / `pai project tools`) > the strict empty set (headless) /
+  // everything (interactive, today's default).
+  let mcpArgs: string[] = [];
+  let toolsFlag: string[] = headless ? headlessToolsFlag(parsed.allowedTools) : [];
+  if (headless && !parsed.callerMcpConfig) {
+    const wanted = [
+      ...(a.mcpFlag ? [a.mcpFlag] : []),
+      ...parsed.mcp,
+      ...(target.classMcp ?? []),
+      ...mcpServersFromToolGrants(parsed.allowedTools),
+    ];
+    if (wanted.length) {
+      const names = expandMcpNames(wanted, config); // unknown names fail fast
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
+    } else {
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir)];
+    }
+  } else if (!headless && !parsed.callerMcpConfig) {
+    const explicitMcp = [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp];
+    const projectLaunch = projectLaunchConfig(cwd);
+    const picked = interactiveMcpTools(explicitMcp, parsed.callerTools, projectLaunch);
+    if (picked.mcpNames.length) {
+      const names = expandMcpNames(picked.mcpNames, config);
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
+    }
+    if (picked.tools.length) toolsFlag = ["--tools", picked.tools.join(",")];
+  }
+
+  // In stdin mode the prompt moves to the first user message on stdin, so it
+  // must come off the command line (bare -p stays: stream-json needs --print).
+  const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
+  const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
+  const cmd: string[] = ["claude"];
+  cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
+  cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...restArgs);
+  if (headless) {
+    cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
+    if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
+    if (worktree) {
+      cmd.push(
+        "--append-system-prompt",
+        worktreeSystemPrompt(wid, worktree.branch, worktree.dir)
+      );
+    }
+  }
+
+  // Dry run: the argv audit, no status/ledger/pane, no spawn.
+  if (a.printCmd) {
+    console.log(JSON.stringify({ cmd, cwd: worktree?.dir ?? cwd }));
+    return 0;
+  }
 
   const status: WorkerStatus = {
     id: wid,
@@ -476,12 +618,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     secs: null,
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
+    outputFormat: parsed.outputFormat,
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
     // meter stays hidden until one is announced (never a guessed default)
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
+    ...(a.specPath ? { spec: a.specPath } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -493,52 +637,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     model,
     cwd,
     label,
+    ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
   // Follow pane: headless only, best effort, never blocking the worker.
   if (headless && !noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
     void openPaneForWorker(logDir, config, wid, term).catch(() => {});
-  }
-
-  const chromeArgs = chromeGrantArgs(
-    [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp, ...(target.classMcp ?? []), ...parsed.allowedTools],
-    parsed.rest
-  );
-
-  // MCP: caller config > allowlist (--mcp flag / --mcp args / role / mcp__
-  // grants in --allowedTools) > the strict empty set.
-  let mcpArgs: string[] = [];
-  if (headless && !parsed.callerMcpConfig) {
-    const wanted = [
-      ...(a.mcpFlag ? [a.mcpFlag] : []),
-      ...parsed.mcp,
-      ...(target.classMcp ?? []),
-      ...mcpServersFromToolGrants(parsed.allowedTools),
-    ];
-    if (wanted.length) {
-      const names = expandMcpNames(wanted, config); // unknown names fail fast
-      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
-    } else {
-      mcpArgs = ["--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir)];
-    }
-  }
-
-  // In stdin mode the prompt moves to the first user message on stdin, so it
-  // must come off the command line (bare -p stays: stream-json needs --print).
-  const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
-  const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
-  const cmd: string[] = ["claude"];
-  cmd.push(...modelArgs(model, Boolean(parsed.callerModel)));
-  cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...restArgs);
-  if (headless) {
-    cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
-    if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
-    if (worktree) {
-      cmd.push(
-        "--append-system-prompt",
-        worktreeSystemPrompt(wid, worktree.branch, worktree.dir)
-      );
-    }
   }
 
   const t0 = Date.now();
@@ -763,6 +867,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         noPane: a.noPane,
         mcpFlag: a.mcpFlag,
         cwd: a.cwd,
+        specPath: a.specPath,
         parent: a.parent,
         stage: a.stage,
         claudeArgs: a.claudeArgs,
@@ -860,6 +965,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     rc: null,
     secs: null,
     origin: "spawn",
+    outputFormat: parsed.outputFormat,
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // codex has no init event of its own: the synthetic one below announces
@@ -867,6 +973,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
+    ...(a.specPath ? { spec: a.specPath } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
