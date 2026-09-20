@@ -52,9 +52,28 @@ function getVaultPath(override?: string): string {
 }
 
 /**
+ * Read obsidianVaultPath from CONFIG_FILE without falling back to
+ * defaultVaultPath() — undefined means "not set", distinct from getVaultPath's
+ * "give me something usable". Used by `pai config migrate` to decide whether
+ * the stored path still points at the pre-2026-09-19 default.
+ */
+export function getConfigObsidianVaultPathRaw(): string | undefined {
+  try {
+    const raw = readFileSync(CONFIG_FILE, "utf-8");
+    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof cfg.obsidianVaultPath === "string" && cfg.obsidianVaultPath) {
+      return expandHome(cfg.obsidianVaultPath);
+    }
+  } catch {
+    // Config missing or unreadable — nothing set.
+  }
+  return undefined;
+}
+
+/**
  * Persist obsidianVaultPath into config.json so future syncs use the same path.
  */
-function saveVaultPath(vaultPath: string): void {
+export function saveVaultPath(vaultPath: string): void {
   let cfg: Record<string, unknown> = {};
   try {
     cfg = JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Record<string, unknown>;

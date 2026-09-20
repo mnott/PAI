@@ -1,25 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0124 - 2026-09-20 - Token Waste Audit Run 6" session-id="e529977a-9024-4a5b-8fbd-8594058ac46f" ts="2026-09-20T11:52:00.000Z" -->
+<!-- pai:checkpoint authored="model" session="0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup" session-id="0adeabcc-6a4a-45d4-a4f1-1a22599025f6" ts="2026-09-20T12:58:00.000Z" -->
 
-> **Last session:** 0124 - 2026-09-20 - Token Waste Audit Run 6
-> **Paused at:** 2026-09-20 13:53 local
+> **Last session:** 0126 - 2026-09-20 - Token Waste Run 7 And PAI_HOME Cleanup
+> **Paused at:** 2026-09-20T12:58:00.000Z
 >
-> Resume with a FRESH session (not --resume) so turn 1 carries the smaller
-> SessionStart hook; but first read this session's first compaction if it
-> happened (`pai audit tokens session` on e529977a…).
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
+>
+> Resume with: `claude --resume 0adeabcc-6a4a-45d4-a4f1-1a22599025f6`
 
 T
-i=token-waste-cycle-run7
-g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run6.md`, fixes what is RED/AMBER, records run 7.
-d=Run 6 (2026-09-20): 0 RED, 2 AMBER at record. Fixed: load-project-context hook 1,103 → 791 tokens (wakeup label dedupe + L1 story skipped when a handover is injected; `src/memory/wakeup.ts`, `load-project-context.ts`). Instrument: `pai audit tokens session` parses compact_boundary events, new "compaction trigger" finding (RED if auto compaction > 1.25 × configured). Compaction formula established from all logs: pct × (window − 20k); override 20 is honoured, applies to every launch (settings.json env beats process env), and headless workers never compact at it (Haiku probe: 81k context, 0 compactions). Memory note compaction-trigger-moved corrected. Shipped as v0.45.0.
-t=vitest src/audit 92, src/memory wakeup 16, src/hooks unchanged; all 312 in audit+hooks+memory pass. tsc: 80 pre-existing errors, none new.
+i=token-waste-cycle-run8
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run7.md`, fixes what is RED/AMBER, records run 8. First reading of interest: turn-1 context after the run-7 prose trims (expected ≈ 31,150; run 7 measured 31,486).
+d=Run 7 (2026-09-20): 0 RED, 1 AMBER at record. Fixed: MEMORY.md index 1,579 → 1,312 (14 memory files duplicating CLAUDE.md/repo deleted, 4 reference files added); CLAUDE.md 1,377 → 1,037; whisper rules 743 → 592 per prompt; CORE 239 → 224; six skill descriptions −108. New instrument finding "per-prompt hook cost" (UserPromptSubmit tokens × prompts vs last-turn context). "logs at an old location" nag gone: `pai config migrate --logs` guard now checks pid liveness and moves by rename + symlink. Migration exposed three old-path writers, all fixed: AIBroker budget hook/CLI read `~/.claude/advisor-mode.json` (now PAI_HOME first; AIBroker repo committed separately); `config.json obsidianVaultPath` pinned to `~/.pai` (migrate rewrites it now); stale registry stub at `~/.pai/registry.db` (creator UNKNOWN, renamed aside). `--history` migrated too; `~/.claude/History` and `logs/workers` are gone from the old paths (renamed `.migrated-20260920` / symlink).
+t=vitest src/audit 97, src/workers/logs-migrate 12, src/cli/commands/config.test.ts 5 (new); 114 in the touched suites pass. tsc: 80 pre-existing errors, none new. Hooks: `pai audit tokens hooks` error column empty after the History move.
 @1=audits/token-waste/reviewprompt.md
-@2=audits/token-waste/runs.md
-@3=audits/token-waste/2026-09-20-run6.md
-@4=src/audit/session-usage.ts
-@5=src/memory/wakeup.ts
-z=Uncommitted: 8 modified + 3 new files (run6.md/json, severity.test.ts); user decides on commit/cpp. Expected next-session turn 1 ≈ 31,600 (still AMBER; floor 25,848 is Claude Code's own prompt + tools, remaining user lever is the 1,561-token MEMORY.md index). First compaction of a 1M session under override 20 expected at preTokens ≈ 196,000; the instrument reports it now.
+@2=audits/token-waste/2026-09-20-run7.md
+@3=src/audit/severity.ts
+@4=src/workers/logs-migrate.ts
+@5=src/cli/commands/config.ts
+z=Watch: (a) first compaction of a 1M session under override 20, expected preTokens ≈ 196,000; the "compaction trigger" finding reports it. (b) whether anything recreates `~/.pai/registry.db` or `~/.claude/advisor-mode.json` (both renamed aside 2026-09-20; if they reappear, the creator is still unfixed). (c) `~/.claude/logs/workers` is a symlink now; `pai worker ps` must keep showing history. Backups: `~/.claude/backups/prose-20260920/`, `~/.claude/backups/memory-20260920/`. Shipped as v0.46.0.
 
 <!-- /pai:checkpoint -->
 
@@ -47,6 +47,33 @@ Note: agent-browser uninstalled + deregistered (its install ALSO clobbers
 ~/.claude.json; memory entry exists). Claude-in-chrome itself: auth-bound, dead
 under token auth - we build instead.
 ## Previous handovers
+
+<!-- pai:archived-handover session="0124 - 2026-09-20 - Token Waste Audit Run 6" ts="2026-09-20T11:52:00.000Z" -->
+
+### 0124 - 2026-09-20 - Token Waste Audit Run 6 — checkpointed 2026-09-20T11:52:00.000Z
+
+
+
+> **Last session:** 0124 - 2026-09-20 - Token Waste Audit Run 6
+> **Paused at:** 2026-09-20 13:53 local
+>
+> Resume with a FRESH session (not --resume) so turn 1 carries the smaller
+> SessionStart hook; but first read this session's first compaction if it
+> happened (`pai audit tokens session` on e529977a…).
+
+T
+i=token-waste-cycle-run7
+g=Run the token-waste audit cycle again: give the fresh session `audits/token-waste/reviewprompt.md` verbatim. It runs `pai audit tokens --record audits/token-waste`, compares against `2026-09-20-run6.md`, fixes what is RED/AMBER, records run 7.
+d=Run 6 (2026-09-20): 0 RED, 2 AMBER at record. Fixed: load-project-context hook 1,103 → 791 tokens (wakeup label dedupe + L1 story skipped when a handover is injected; `src/memory/wakeup.ts`, `load-project-context.ts`). Instrument: `pai audit tokens session` parses compact_boundary events, new "compaction trigger" finding (RED if auto compaction > 1.25 × configured). Compaction formula established from all logs: pct × (window − 20k); override 20 is honoured, applies to every launch (settings.json env beats process env), and headless workers never compact at it (Haiku probe: 81k context, 0 compactions). Memory note compaction-trigger-moved corrected. Shipped as v0.45.0.
+t=vitest src/audit 92, src/memory wakeup 16, src/hooks unchanged; all 312 in audit+hooks+memory pass. tsc: 80 pre-existing errors, none new.
+@1=audits/token-waste/reviewprompt.md
+@2=audits/token-waste/runs.md
+@3=audits/token-waste/2026-09-20-run6.md
+@4=src/audit/session-usage.ts
+@5=src/memory/wakeup.ts
+z=Uncommitted: 8 modified + 3 new files (run6.md/json, severity.test.ts); user decides on commit/cpp. Expected next-session turn 1 ≈ 31,600 (still AMBER; floor 25,848 is Claude Code's own prompt + tools, remaining user lever is the 1,561-token MEMORY.md index). First compaction of a 1M session under override 20 expected at preTokens ≈ 196,000; the instrument reports it now.
+
+<!-- /pai:archived-handover -->
 
 <!-- pai:archived-handover session="0007 - 2026-09-10 - Pre Compact Checkpoint Emission (agentish Format)" ts="2026-09-10T16:46:49.901Z" -->
 

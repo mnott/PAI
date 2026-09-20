@@ -2,19 +2,25 @@
  * logs-migrate.ts — moving ~/.claude/logs/workers (status files, event
  * mirrors, pane registry, routing state — everything under one run's logDir)
  * into PAI_HOME. Directory-level counterpart to pai-home.ts's per-file
- * migratePaiFile: refuses while any worker other than the interactive pane
- * is RUNNING, since that worker is writing into the old directory right now.
+ * migratePaiFile, but simpler: an atomic renameSync of the whole directory
+ * followed by a symlink left at the old path, so any process still holding an
+ * fd open into the old directory (or writing to the old path by name) keeps
+ * landing in the new one — every held fd follows the inode across a rename,
+ * and the symlink covers new opens by path. Only falls back to copy + verify
+ * + rename-aside (and only there does it need to refuse while a worker is
+ * RUNNING against the old directory) when old and new are on different
+ * volumes and the rename itself fails with EXDEV.
  */
 
-import { existsSync, mkdirSync, cpSync, renameSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, renameSync, symlinkSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadStatuses, isChatPane } from "./status.js";
+import { loadStatuses, isChatPane, alive } from "./status.js";
 
 export class WorkerLogsMigrationError extends Error {}
 
-/** RUNNING statuses in logDir excluding the terminal's own interactive pane. */
+/** RUNNING-and-alive statuses in logDir, excluding the terminal's own interactive pane. */
 export function activeSpawnedWorkerCount(logDir: string): number {
-  return loadStatuses(logDir).filter((s) => s.state === "running" && !isChatPane(s)).length;
+  return loadStatuses(logDir).filter((s) => s.state === "running" && alive(s.pid) && !isChatPane(s)).length;
 }
 
 function totalFileCount(dir: string): number {
@@ -36,11 +42,15 @@ export interface MigrateLogsResult {
 }
 
 /**
- * Move the whole logDir tree into PAI_HOME: recursive copy, verify the file
- * count matches, then rename the old directory aside to
- * `<name>.migrated-<YYYYMMDD>` (never deleted). Refuses while any spawned
- * worker is RUNNING against the old directory — check `pai worker ps` and
- * retry once idle.
+ * Move the whole logDir tree into PAI_HOME. Normal case: renameSync the
+ * directory (atomic, and every fd already open into it — including run.ts's
+ * append-mode events file — follows the inode), then leave a symlink at the
+ * old path so writes still addressed there land in the new directory too.
+ * Falls back to recursive copy + verified file count + rename-aside (never
+ * deleted) only on EXDEV, when old and new are on different volumes — that
+ * path refuses while any spawned worker is RUNNING against the old
+ * directory (check `pai worker ps` and retry once idle), since a copy can't
+ * see writes still landing in the old tree.
  */
 export function migrateWorkerLogs(
   oldPath: string,
@@ -66,6 +76,16 @@ export function migrateWorkerLogs(
 
   if (opts.dryRun) return { fromPath: oldPath, toPath: newPath, dryRun: true };
 
+  mkdirSync(dirname(newPath), { recursive: true });
+
+  try {
+    renameSync(oldPath, newPath);
+    symlinkSync(newPath, oldPath);
+    return { fromPath: oldPath, toPath: newPath, dryRun: false, filesMoved: totalFileCount(newPath) };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+  }
+
   const active = activeSpawnedWorkerCount(oldPath);
   if (active > 0) {
     throw new WorkerLogsMigrationError(
@@ -75,7 +95,6 @@ export function migrateWorkerLogs(
   }
 
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  mkdirSync(dirname(newPath), { recursive: true });
   cpSync(oldPath, newPath, { recursive: true });
 
   const fromCount = totalFileCount(oldPath);
