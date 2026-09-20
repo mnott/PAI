@@ -7,16 +7,24 @@
  *            plus which PreToolUse hooks rewrite Bash commands
  * session  — cache/input/output token split for one session transcript
  * spawn    — first-turn context overhead: Agent-tool subagents vs. pai
- *            workers (interactive/pane vs. headless)
+ *            workers (interactive/pane vs. headless); `--detail` adds
+ *            per-log prompt-token/overhead rows and a median-overhead column
  * daemon   — LLM spawns, KG-extraction parse failures, work-queue counts
  *            from the daemon log
  * env      — ANTHROPIC_BASE_URL / model-override env on every live claude
  *            process, MCP server count, configured model/effort
  * schedule — launchd agents / crontab entries that wake up more often than
  *            the measured prompt-cache TTL
+ * skills   — token cost of the SKILL.md/command/plugin catalogue, top
+ *            entries by tokens, per-source subtotals, case-insensitive
+ *            duplicate names
+ * ladder   — LIVE (spawns `claude -p`, requires `--live`): first-turn context
+ *            at increasing headless-worker configuration (empty MCP/no
+ *            tools → tools → real MCP → plain)
  *
- * With no section, all seven run and one combined RED/AMBER/GREEN table is
- * printed. `--json` prints the same data as JSON instead of a table.
+ * With no section, all eight non-live sections run and one combined
+ * RED/AMBER/GREEN table is printed. `--json` prints the same data as JSON
+ * instead of a table.
  */
 
 import type { Command } from "commander";
@@ -30,6 +38,11 @@ import { auditDaemon, type DaemonReport } from "../../audit/daemon.js";
 import { auditEnv, type EnvReport } from "../../audit/env.js";
 import { auditSchedule, cacheTtlSeconds } from "../../audit/schedule.js";
 import { buildFindings, type Finding, type Severity } from "../../audit/severity.js";
+import { auditSkills, topByTokens, type SkillsReport } from "../../audit/skills.js";
+import { auditLadder, type LadderReport } from "../../audit/ladder.js";
+import { shortenPath } from "../utils.js";
+import { readWorkersSection } from "../../workers/config.js";
+import { workersLogDir } from "../../workers/paths.js";
 
 function severityColor(sev: Severity, text: string): string {
   if (sev === "RED") return err(text);
@@ -139,25 +152,44 @@ function printSpawnGroup(name: string, stats: SpawnGroupStats): string[] {
     stats.min === null ? "n/a" : String(stats.min),
     stats.median === null ? "n/a" : String(stats.median),
     stats.max === null ? "n/a" : String(stats.max),
+    stats.medianOverhead === null ? "n/a" : String(stats.medianOverhead),
     stats.models.join(", "),
   ];
 }
 
-function printSpawn(report: SpawnReport): void {
+const SPAWN_GROUP_LABELS: Record<string, string> = {
+  agentSubagents: "Agent-tool subagents",
+  workersInteractive: "pai workers (interactive/pane)",
+  workersHeadless: "pai workers (headless -p)",
+};
+
+function printSpawn(report: SpawnReport, detail?: boolean): void {
+  if (detail) {
+    console.log(header("Spawn overhead — per-log detail"));
+    const rows = report.readings.map((r) => [
+      SPAWN_GROUP_LABELS[r.group] ?? r.group,
+      r.firstTurnContext === null ? "n/a" : String(r.firstTurnContext),
+      r.promptTokens === null ? "n/a" : String(r.promptTokens),
+      r.overhead === null ? "n/a" : String(r.overhead),
+      r.model ?? "",
+      shortenPath(r.path, 70),
+    ]);
+    console.log(renderTable(["group", "first-turn ctx", "prompt tok", "overhead", "model", "path"], rows));
+  }
   console.log(header("Spawn overhead (first-turn context tokens)"));
   const rows = [
     printSpawnGroup("Agent-tool subagents", report.agentSubagents),
     printSpawnGroup("pai workers (interactive/pane)", report.workersInteractive),
     printSpawnGroup("pai workers (headless -p)", report.workersHeadless),
   ];
-  console.log(renderTable(["group", "count", "min", "median", "max", "models"], rows));
+  console.log(renderTable(["group", "count", "min", "median", "max", "median overhead", "models"], rows));
 }
 
-async function cmdSpawn(opts: { json?: boolean; n?: string }): Promise<void> {
+async function cmdSpawn(opts: { json?: boolean; n?: string; detail?: boolean }): Promise<void> {
   const n = opts.n ? parseInt(opts.n, 10) : 10;
   const report = await auditSpawn(n);
   if (opts.json) return printJson(report);
-  printSpawn(report);
+  printSpawn(report, opts.detail);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,12 +232,23 @@ function printEnv(report: EnvReport): void {
     p.authTokenPresent ? "present" : "absent",
     JSON.stringify(p.defaultModels),
     p.enableToolSearch ?? "",
+    String(p.mcpServers),
+    p.deferral === "OFF" ? err(p.deferral) : p.deferral === "n/a" ? dim(p.deferral) : p.deferral,
     p.workerId ?? "",
     p.age ?? "",
   ]);
-  console.log(renderTable(["pid", "base url", "auth token", "default models", "tool search", "worker id", "age"], rows));
+  console.log(
+    renderTable(
+      ["pid", "base url", "auth token", "default models", "tool search", "tools", "deferral", "worker id", "age"],
+      rows
+    )
+  );
   for (const p of report.processes) {
     if (p.baseUrl) console.log(err(`  RED: claude process ${p.pid} is routed through ${p.baseUrl}`));
+    const mcpCount = p.mcpServers === "default" ? report.mcpServerCount : p.mcpServers;
+    if (p.deferral === "OFF" && mcpCount > 0) {
+      console.log(err(`  RED: claude process ${p.pid} has --tools without ToolSearch (${mcpCount} MCP servers registered)`));
+    }
   }
   console.log(dim(`MCP servers registered: ${report.mcpServerCount}`));
   console.log(dim(`settings.json model: ${report.settingsModel ?? "unset"}, effortLevel: ${report.settingsEffortLevel ?? "unset"}`));
@@ -249,6 +292,75 @@ async function cmdSchedule(opts: { json?: boolean }): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// skills
+// ---------------------------------------------------------------------------
+
+function printSkills(report: SkillsReport, top: number): void {
+  console.log(header(`Skill/command/plugin catalogue (encoding: ${report.encoding})`));
+  console.log(dim(`${report.entries.length} entries, ${report.enabledTotal} tokens loaded (${report.total} on disk)`));
+  const subtotalRows = (["skills", "commands", "plugins"] as const).map((source) => [
+    source,
+    String(report.countsBySource[source]),
+    String(report.totalsBySource[source]),
+    String(report.enabledTotalsBySource[source]),
+  ]);
+  console.log(renderTable(["source", "entries", "tokens", "enabled"], subtotalRows));
+
+  console.log(header(`Top ${top} by tokens`));
+  const topRows = topByTokens(report, top).map((e) => [String(e.tokens), e.source, e.enabled ? "yes" : "no", e.name, e.path]);
+  console.log(renderTable(["tokens", "source", "on", "name", "path"], topRows));
+
+  console.log(header("Case-insensitive duplicate names"));
+  if (report.duplicates.length === 0) {
+    console.log(dim("none"));
+  } else {
+    for (const dup of report.duplicates) {
+      console.log(`${bold(dup.name)}:`);
+      for (const path of dup.paths) console.log(`  ${path}`);
+    }
+  }
+}
+
+function cmdSkills(opts: { json?: boolean; top?: string }): void {
+  const top = opts.top ? parseInt(opts.top, 10) : 15;
+  const report = auditSkills();
+  if (opts.json) return printJson({ ...report, top: topByTokens(report, top) });
+  printSkills(report, top);
+}
+
+// ---------------------------------------------------------------------------
+// ladder
+// ---------------------------------------------------------------------------
+
+function printLadder(report: LadderReport): void {
+  console.log(header(`Context ladder (model: ${report.model}, mcp config: ${report.mcpConfigPath})`));
+  const rows = report.readings.map((r) => [
+    r.id,
+    r.description,
+    r.timedOut ? "TIMEOUT" : r.firstTurnContext === null ? `n/a${r.error ? ` (${r.error})` : ""}` : String(r.firstTurnContext),
+    r.delta === null ? "n/a" : String(r.delta),
+  ]);
+  console.log(renderTable(["rung", "description", "first-turn tokens", "delta"], rows));
+}
+
+async function cmdLadder(opts: { json?: boolean; live?: boolean; model?: string; mcpConfig?: string }): Promise<void> {
+  if (!opts.live) {
+    console.log(
+      warn(
+        "Refusing to run: `pai audit tokens ladder` spawns several real `claude -p` calls " +
+          "(billed API traffic). Pass --live to run it."
+      )
+    );
+    return;
+  }
+  const { workers } = readWorkersSection();
+  const logDir = workersLogDir(workers);
+  const report = await auditLadder({ model: opts.model, mcpConfigPath: opts.mcpConfig, logDir });
+  if (opts.json) return printJson(report);
+  printLadder(report);
+}
+
+// ---------------------------------------------------------------------------
 // combined
 // ---------------------------------------------------------------------------
 
@@ -262,11 +374,12 @@ async function cmdCombined(opts: { json?: boolean }): Promise<void> {
   const spawn = await auditSpawn();
   const ttl = cacheTtlSeconds(session?.cacheCreationSplit);
   const schedule = auditSchedule(ttl);
+  const skills = auditSkills();
 
-  const findings: Finding[] = buildFindings({ files, hooks, session, daemon, env });
+  const findings: Finding[] = buildFindings({ files, hooks, session, daemon, env, skills });
 
   if (opts.json) {
-    return printJson({ encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule });
+    return printJson({ encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule, skills });
   }
 
   console.log(header("pai audit tokens — combined report"));
@@ -290,7 +403,9 @@ async function cmdCombined(opts: { json?: boolean }): Promise<void> {
 export function registerAuditCommands(auditCmd: Command): void {
   const tokensCmd = auditCmd
     .command("tokens")
-    .description("Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule")
+    .description(
+      "Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue"
+    )
     .option("--json", "Print JSON instead of a table")
     .action(async () => {
       await cmdCombined(jsonOpt());
@@ -323,7 +438,8 @@ export function registerAuditCommands(auditCmd: Command): void {
     .command("spawn")
     .description("Spawn-overhead comparison: Agent-tool subagents vs. pai workers")
     .option("-n, --n <count>", "How many of the newest logs per group to read (default 10)")
-    .action(async (opts: { n?: string }) => {
+    .option("--detail", "Print one row per log (first-turn ctx, prompt tokens, overhead, model, path)")
+    .action(async (opts: { n?: string; detail?: boolean }) => {
       await cmdSpawn({ ...jsonOpt(), ...opts });
     });
 
@@ -342,5 +458,23 @@ export function registerAuditCommands(auditCmd: Command): void {
     .description("Launchd agents / crontab entries that outpace the measured prompt-cache TTL")
     .action(async () => {
       await cmdSchedule(jsonOpt());
+    });
+
+  tokensCmd
+    .command("skills")
+    .description("Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate names")
+    .option("--top <n>", "How many top-by-tokens entries to show (default 15)")
+    .action((opts: { top?: string }) => {
+      cmdSkills({ ...jsonOpt(), ...opts });
+    });
+
+  tokensCmd
+    .command("ladder")
+    .description("LIVE: first-turn context at increasing headless-worker configuration (spawns real claude -p calls)")
+    .option("--live", "Actually spawn claude -p (billed API traffic); refuses without this flag")
+    .option("--model <model>", "Model to probe with (default haiku)")
+    .option("--mcp-config <path>", "MCP config for the L2 rung (default: newest *.mcp.json in the workers log dir)")
+    .action(async (opts: { live?: boolean; model?: string; mcpConfig?: string }) => {
+      await cmdLadder({ ...jsonOpt(), ...opts });
     });
 }

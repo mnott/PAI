@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildL1EssentialStory } from "./wakeup.js";
+import { buildL1EssentialStory, loadL0Identity, migrateIdentityFile } from "./wakeup.js";
 
 let root: string;
 
@@ -116,5 +116,89 @@ describe("buildL1EssentialStory — cross-note deduplication", () => {
     expect(story.split("Shared bullet one").length - 1).toBe(1);
     expect(story.split("Shared bullet two").length - 1).toBe(1);
     expect(story).toContain("Unique bullet from second note");
+  });
+});
+
+describe("migrateIdentityFile", () => {
+  it("reports nothing to migrate when the legacy file is absent", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const target = join(root, "new", "identity.txt");
+
+    const r = migrateIdentityFile({ from: legacy, to: target });
+
+    expect(r.fromPath).toBeNull();
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("dry run leaves both the source and target untouched", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const target = join(root, "new", "identity.txt");
+    mkdirSync(join(root, "legacy"), { recursive: true });
+    writeFileSync(legacy, "I am the user.", "utf8");
+
+    const r = migrateIdentityFile({ dryRun: true, from: legacy, to: target });
+
+    expect(r.dryRun).toBe(true);
+    expect(r.fromPath).toBe(legacy);
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(legacy)).toBe(true);
+  });
+
+  it("migrates the legacy file to the new location and renames the source aside", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const target = join(root, "new", "identity.txt");
+    mkdirSync(join(root, "legacy"), { recursive: true });
+    writeFileSync(legacy, "I am the user.", "utf8");
+
+    const r = migrateIdentityFile({ from: legacy, to: target });
+
+    expect(r.fromPath).toBe(legacy);
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe("I am the user.");
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it("reports already-migrated on a second run", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const target = join(root, "new", "identity.txt");
+    mkdirSync(join(root, "legacy"), { recursive: true });
+    mkdirSync(join(root, "new"), { recursive: true });
+    writeFileSync(legacy, "I am the user.", "utf8");
+    writeFileSync(target, "I am the user.", "utf8");
+
+    const r = migrateIdentityFile({ from: legacy, to: target });
+
+    expect(r.fromPath).toBe(legacy);
+    expect(r.note).toContain("identical");
+    expect(readFileSync(target, "utf8")).toBe("I am the user.");
+  });
+});
+
+describe("loadL0Identity", () => {
+  it("prefers the new PAI_HOME path over the legacy path", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const newPath = join(root, "new", "identity.txt");
+    mkdirSync(join(root, "legacy"), { recursive: true });
+    mkdirSync(join(root, "new"), { recursive: true });
+    writeFileSync(legacy, "LEGACY IDENTITY", "utf8");
+    writeFileSync(newPath, "NEW IDENTITY", "utf8");
+
+    expect(loadL0Identity({ newPath, legacyPath: legacy })).toBe("NEW IDENTITY");
+  });
+
+  it("falls back to the legacy path when the new path does not exist", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const newPath = join(root, "new", "identity.txt");
+    mkdirSync(join(root, "legacy"), { recursive: true });
+    writeFileSync(legacy, "LEGACY IDENTITY", "utf8");
+
+    expect(loadL0Identity({ newPath, legacyPath: legacy })).toBe("LEGACY IDENTITY");
+  });
+
+  it("returns empty when neither path exists", () => {
+    const legacy = join(root, "legacy", "identity.txt");
+    const newPath = join(root, "new", "identity.txt");
+
+    expect(loadL0Identity({ newPath, legacyPath: legacy })).toBe("");
   });
 });

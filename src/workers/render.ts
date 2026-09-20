@@ -400,12 +400,19 @@ export function headerLine(
     provider?: string;
     session?: { name?: string } | null;
     spec?: string | null;
+    reportFormat?: "json" | "ag2";
+    reportValid?: boolean;
+    reportErrors?: string[];
   }
 ): string {
   const bits = [s.provider ? `[${s.provider}]` : "", sessionTag(s)].filter(Boolean).join(" ");
   const sep = bits ? `  ${bits}` : "";
   const specBit = s.spec ? `  spec: ${s.spec}` : "";
-  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}`);
+  const reportBit =
+    s.reportFormat === "ag2" && s.reportValid === false
+      ? "  " + c("red", (s.reportErrors ?? []).length ? "R!" : "R?")
+      : "";
+  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}${reportBit}`);
 }
 
 /** The chain label behind a stage label: strip the trailing " · <stage>". */
@@ -460,6 +467,12 @@ export function renderTable(
     s.branch && !s.merged ? "  " + c("yellow", "⎇" + (s.commits ? String(s.commits) : "")) : "";
   const inboxMark = (s: WorkerStatus): string =>
     inbox[s.id] ? " " + c("mag", `◆${inbox[s.id]}`) : "";
+  // "R!" no proof/gate/test-set failure, "R?" the aibroker validator itself
+  // could not confirm it (missing/unreadable CLI) — never shown for json reports
+  const reportMark = (s: WorkerStatus): string =>
+    s.reportFormat === "ag2" && s.reportValid === false
+      ? "  " + c("red", (s.reportErrors ?? []).length ? "R!" : "R?")
+      : "";
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
@@ -517,7 +530,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${reportMark(s)}  ${s.label}`,
         chain,
         last
       )

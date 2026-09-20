@@ -1,21 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update" session-id="5e55c2db-e49f-40a6-9104-bf24a702656a" ts="2026-09-20T08:44:05.508Z" -->
+<!-- pai:checkpoint authored="auto" session="0120 - 2026-09-20 - New Session" session-id="87659197-4bcc-4e43-9bee-4badf4a0c997" ts="2026-09-20T10:15:12.922Z" -->
 
-> **Last session:** 0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update
-> **Paused at:** 2026-09-20T08:44:05.508Z
+> **Last session:** 0120 - 2026-09-20 - New Session
+> **Paused at:** 2026-09-20T10:15:12.922Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 5e55c2db-e49f-40a6-9104-bf24a702656a`
+> Resume with: `claude --resume 87659197-4bcc-4e43-9bee-4badf4a0c997`
 
 T
-i=ckpt-2026-09-20T08-44-05.456Z
-g=you wrote it as a table and now that table is as lines. do again as a table
-d=ok merge and cpp all, Ill then exit and restart to remeasure | /Name PAI | do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table | ok merge and cpp all, Ill then exit and restart to remeasure
+i=ckpt-2026-09-20T10-15-12.803Z
+g=so proposal you run that allow antrhropic agents yourself in a fable worker and have that one then call an agent for some controllable work. and then you do the same with the worker spawned from you.…
+d=so that means to your second point that we need to optimize the scaffolding / overhead for the workers? also I think worker invocations and their responses should strictly use agentish (aibroker has t… | /Name PAI | do the following inside of this session; you also have pai tools for that. report in a table.   Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to me… | so proposal you run that allow antrhropic agents yourself in a fable worker and have that one then call an agent for some controllable work. and then you do the same with the worker spawned from you.… | so that means to your second point that we need to optimize the scaffolding / overhead for the workers? also I think worker invocations and their responses should strictly use agentish (aibroker has t…
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@8ff0287 feat(audit): pai audit tokens command and prefix token cuts; 1 dirty; git status for detail
+@2=docs/commands/README.md
+@3=docs/commands/audit.md
+@4=docs/commands/worker.md
+@5=scripts/build-hooks.mjs
+z=auto ckpt (no model); main@3f8a5bb Handover.; 20 dirty; +26 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

@@ -15,6 +15,8 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export type Deferral = "on" | "OFF" | "n/a";
+
 export interface ClaudeProcessEnv {
   pid: number;
   baseUrl: string | null;
@@ -23,6 +25,9 @@ export interface ClaudeProcessEnv {
   enableToolSearch: string | null;
   workerId: string | null;
   age: string | null;
+  toolsArg: string | null;
+  mcpServers: number | "default";
+  deferral: Deferral;
 }
 
 export interface EnvReport {
@@ -78,6 +83,50 @@ function extract(pattern: RegExp, text: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * `--tools A,B` and `--tools=A,B` are both valid on the argv this process was
+ * launched with; an explicit but empty value (`--tools ""` / `--tools=`)
+ * means "no tools at all", distinct from the flag being absent entirely.
+ */
+export function extractToolsArg(line: string): string | null {
+  const eq = line.match(/--tools=(?:"([^"]*)"|(\S*))/);
+  if (eq) return eq[1] !== undefined ? eq[1] : eq[2];
+  const sp = line.match(/--tools\s+(?:"([^"]*)"|(\S+))/);
+  if (sp) return sp[1] !== undefined ? sp[1] : sp[2];
+  return null;
+}
+
+export function extractMcpConfigArg(line: string): string | null {
+  const eq = line.match(/--mcp-config=(?:"([^"]*)"|(\S*))/);
+  if (eq) return eq[1] !== undefined ? eq[1] : eq[2];
+  const sp = line.match(/--mcp-config\s+(?:"([^"]*)"|(\S+))/);
+  if (sp) return sp[1] !== undefined ? sp[1] : sp[2];
+  return null;
+}
+
+/**
+ * No `--tools` flag: the CLI default tool set applies, which includes
+ * ToolSearch, so deferral is on. An explicit but empty list means no tools
+ * at all, so deferral doesn't apply. Otherwise deferral is on only if the
+ * explicit list still names ToolSearch.
+ */
+export function classifyDeferral(toolsArg: string | null): Deferral {
+  if (toolsArg === null) return "on";
+  if (toolsArg.trim() === "") return "n/a";
+  const tools = toolsArg.split(",").map((t) => t.trim());
+  return tools.includes("ToolSearch") ? "on" : "OFF";
+}
+
+function countMcpServersInFile(path: string): number {
+  try {
+    const resolved = path.startsWith("~") ? join(homedir(), path.slice(1)) : path;
+    const parsed = JSON.parse(readFileSync(resolved, "utf8")) as { mcpServers?: Record<string, unknown> };
+    return Object.keys(parsed.mcpServers ?? {}).length;
+  } catch {
+    return 0;
+  }
+}
+
 function readProcessEnvLine(pid: number): string | null {
   try {
     return execFileSync("ps", ["-Eww", "-p", String(pid), "-o", "command="], { encoding: "utf8" });
@@ -105,6 +154,8 @@ export function auditEnv(): EnvReport {
     while ((modelMatch = modelPattern.exec(line))) {
       defaultModels[modelMatch[1]] = modelMatch[2];
     }
+    const toolsArg = extractToolsArg(line);
+    const mcpConfigPath = extractMcpConfigArg(line);
     processes.push({
       pid,
       baseUrl: extract(/ANTHROPIC_BASE_URL=(\S*)/, line),
@@ -113,6 +164,9 @@ export function auditEnv(): EnvReport {
       enableToolSearch: extract(/ENABLE_TOOL_SEARCH=(\S*)/, line),
       workerId: extract(/PAI_WORKER_ID=(\S*)/, line),
       age: readProcessAge(pid),
+      toolsArg,
+      mcpServers: mcpConfigPath ? countMcpServersInFile(mcpConfigPath) : "default",
+      deferral: classifyDeferral(toolsArg),
     });
   }
 

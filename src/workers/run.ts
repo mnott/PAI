@@ -87,7 +87,15 @@ import {
   worktreeWanted,
   type WorktreeInfo,
 } from "./worktree.js";
-import { OPERATOR_MARK, WORKER_CONTRACT_PROMPT, parseWorkerReport, type WorkerReport } from "./report.js";
+import {
+  OPERATOR_MARK,
+  AG2_REASK_TEXT,
+  promptTrailer,
+  workerContractPrompt,
+  parseWorkerReport,
+  type WorkerReport,
+} from "./report.js";
+import { validateAg2 } from "./agentish.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
@@ -135,6 +143,22 @@ export interface RunOptions {
   _reroutes?: number;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
   _planner?: boolean;
+  /** --report json|ag2: which contract/parser the run uses (default: ag2, or PAI_WORKER_REPORT). */
+  reportFormatFlag?: "json" | "ag2";
+  /** --no-report-retry: skip the one bounded re-ask on an invalid AG2 final message. */
+  noReportRetry?: boolean;
+}
+
+/**
+ * ag2 unless the caller passed --report json or PAI_WORKER_REPORT=json is
+ * set in the environment; an explicit flag always wins over the env default.
+ */
+export function resolveReportFormat(
+  flag: "json" | "ag2" | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): "json" | "ag2" {
+  if (flag) return flag;
+  return env.PAI_WORKER_REPORT === "json" ? "json" : "ag2";
 }
 
 /** The strict empty MCP config for headless workers, written on demand. */
@@ -293,6 +317,39 @@ export function modelFlagArgs(headless: boolean, model: string, callerPinned: bo
   return headless ? modelArgs(model, callerPinned) : [];
 }
 
+/**
+ * The prompt text actually sent to the worker and whether the trailer got
+ * appended. An instruction at the END of the user turn outweighs one buried
+ * in the system prompt (measured 2026-09-20: the AG2 contract alone was
+ * ignored by both Haiku and Sonnet). Never applied to an interactive launch
+ * (no -p) or when the caller brought its own --append-system-prompt — the
+ * trailer's "format in system prompt" would then point at nothing.
+ */
+export function headlessPromptText(
+  prompt: string | null,
+  headless: boolean,
+  callerSystemPrompt: boolean,
+  format: "ag2" | "json"
+): { text: string | null; applied: boolean } {
+  const applied = headless && prompt !== null && !callerSystemPrompt;
+  return { text: applied ? prompt! + promptTrailer(format) : prompt, applied };
+}
+
+/**
+ * Whether an invalid final report earns the one bounded re-ask: only when a
+ * real validator caught the problem (a missing/broken aibroker must never
+ * block the run further), the caller did not opt out, and there is a session
+ * to resume into. Cap of exactly one is enforced by the caller never calling
+ * this twice for the same run.
+ */
+export function shouldRetryReport(
+  validation: { ok: boolean; validator: "aibroker" | "none" },
+  noReportRetry: boolean,
+  hasSession: boolean
+): boolean {
+  return !validation.ok && validation.validator === "aibroker" && !noReportRetry && hasSession;
+}
+
 /** Context window announced by the init event, when the endpoint sends one. */
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
@@ -344,6 +401,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     shortText(parsed.prompt ?? UNLABELED, 70);
 
   const model = resolveRunModel(target, opts.className, opts.modelFlag);
+  const reportFormat = resolveReportFormat(opts.reportFormatFlag);
 
   try {
     if (target.provider.engine === "codex") {
@@ -365,6 +423,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         id: opts.id,
         worktreeFlag: opts.worktreeFlag,
         className: opts.className,
+        reportFormat,
       });
     }
     return await executeRun({
@@ -388,6 +447,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       className: opts.className,
       reroutes: opts._reroutes ?? 0,
       printCmd: opts.printCmd,
+      reportFormat,
+      noReportRetry: opts.noReportRetry ?? false,
     });
   } catch (e) {
     if (e instanceof Error && e.message.startsWith("key file")) {
@@ -446,6 +507,40 @@ export function headlessToolsFlag(allowedTools: string[]): string[] {
 }
 
 /**
+ * A `--tools` value with no ToolSearch silently disables MCP tool deferral
+ * (measured 2026-09-20: a run with `--tools "Bash,Read,Grep,Glob,Agent"` paid
+ * 65,300 first-turn tokens with 5 MCP servers, 230,448 with 16, versus
+ * 24,889 / 37,133 with ToolSearch present). Applied to the fully-assembled
+ * argv so it catches a `--tools` from any source — the computed
+ * `headlessToolsFlag`/project-pin flag, or one the caller put directly on
+ * the command line.
+ */
+export function ensureToolSearch(cmd: string[]): string[] {
+  const flagIdx = cmd.findIndex((a) => a === "--tools");
+  if (flagIdx >= 0 && flagIdx + 1 < cmd.length) {
+    const value = cmd[flagIdx + 1];
+    if (value && !value.split(",").includes("ToolSearch")) {
+      const out = [...cmd];
+      out[flagIdx + 1] = `${value},ToolSearch`;
+      process.stderr.write("pai: added ToolSearch to --tools (keeps MCP tool deferral on)\n");
+      return out;
+    }
+    return cmd;
+  }
+  const eqIdx = cmd.findIndex((a) => a.startsWith("--tools="));
+  if (eqIdx >= 0) {
+    const value = cmd[eqIdx].slice("--tools=".length);
+    if (value && !value.split(",").includes("ToolSearch")) {
+      const out = [...cmd];
+      out[eqIdx] = `--tools=${value},ToolSearch`;
+      process.stderr.write("pai: added ToolSearch to --tools (keeps MCP tool deferral on)\n");
+      return out;
+    }
+  }
+  return cmd;
+}
+
+/**
  * The claude flag that turns on the browser bridge, when the run asked for it.
  *
  * The bridge is not an MCP server — it rides the Chrome native-host channel,
@@ -498,6 +593,8 @@ interface ExecuteArgs {
   className?: string;
   reroutes: number;
   printCmd?: boolean;
+  reportFormat: "json" | "ag2";
+  noReportRetry?: boolean;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
@@ -580,12 +677,20 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // must come off the command line (bare -p stays: stream-json needs --print).
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
   const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
-  const cmd: string[] = ["claude"];
+  const { text: promptText, applied: trailerApplied } = headlessPromptText(
+    parsed.prompt,
+    headless,
+    parsed.callerSystemPrompt,
+    a.reportFormat
+  );
+  let cmd: string[] = ["claude"];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
-    if (!parsed.callerSystemPrompt) cmd.push("--append-system-prompt", WORKER_CONTRACT_PROMPT);
+    if (!parsed.callerSystemPrompt) {
+      cmd.push("--append-system-prompt", workerContractPrompt(a.className, a.reportFormat));
+    }
     if (worktree) {
       cmd.push(
         "--append-system-prompt",
@@ -593,6 +698,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       );
     }
   }
+  cmd = ensureToolSearch(cmd);
 
   // Dry run: the argv audit, no status/ledger/pane, no spawn.
   if (a.printCmd) {
@@ -619,6 +725,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
     outputFormat: parsed.outputFormat,
+    ...(headless ? { reportFormat: a.reportFormat } : {}),
+    ...(trailerApplied ? { promptTrailer: true } : {}),
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
@@ -748,9 +856,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   if (headless) {
     // the first user message carries the prompt (the -p value was stripped)
-    if (parsed.prompt !== null) {
+    if (promptText !== null) {
       try {
-        proc.stdin!.write(stdinUserMessage(parsed.prompt) + "\n");
+        proc.stdin!.write(stdinUserMessage(promptText) + "\n");
       } catch {
         /* child died instantly; the close handler reports it */
       }
@@ -822,6 +930,40 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   status.secs = secs;
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
   if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
+  if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
+    const v = validateAg2(resultEvent.result);
+    status.reportValid = v.ok;
+    status.reportErrors = v.errors;
+    // one bounded re-ask, cap exactly one — see shouldRetryReport
+    if (shouldRetryReport(v, a.noReportRetry ?? false, Boolean(status.claudeSession))) {
+      status.reportRetried = true;
+      saveStatus(logDir, status);
+      appendLedger(ledger, "WORKER-REPORT-RETRY", { id: wid, reason: v.errors.join("; ") || "invalid AG2 message" });
+      try {
+        const reaskText = await reaskAg2Report({
+          env,
+          cwd: worktree?.dir ?? cwd,
+          model,
+          callerPinnedModel: Boolean(parsed.callerModel),
+          chromeArgs,
+          mcpArgs,
+          toolArgs,
+          toolsFlag,
+          sessionId: status.claudeSession!,
+        });
+        const v2 = validateAg2(reaskText);
+        status.reportValid = v2.ok;
+        status.reportErrors = v2.errors;
+        if (v2.ok) {
+          resultEvent.result = reaskText;
+          ctx.resultReport = parseWorkerReport(reaskText);
+          if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
+        }
+      } catch {
+        // the re-ask is best effort; the original invalid report stands
+      }
+    }
+  }
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", {
     id: wid,
@@ -913,6 +1055,52 @@ function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undefined {
   return s.branch ? { branch: s.branch, commits: s.commits ?? 0 } : undefined;
 }
 
+export interface Ag2ReaskArgs {
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  model: string;
+  callerPinnedModel: boolean;
+  chromeArgs: string[];
+  mcpArgs: string[];
+  toolArgs: string[];
+  toolsFlag: string[];
+  sessionId: string;
+  timeoutMs?: number;
+}
+
+/**
+ * The one bounded re-ask, cap exactly one: `claude --resume <session>` with
+ * AG2_REASK_TEXT, single-shot `--output-format json` (one turn, no streaming
+ * plumbing needed). Same env/model/mcp/tool flags as the original launch —
+ * only --resume and the fixed re-ask prompt are new — so the resumed turn
+ * sees the same grants the worker ran with.
+ */
+export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
+  let cmd: string[] = ["claude"];
+  cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
+  cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag);
+  cmd.push("--resume", a.sessionId, "-p", AG2_REASK_TEXT, "--output-format", "json");
+  cmd = ensureToolSearch(cmd);
+  const proc = spawn(cmd[0], cmd.slice(1), { env: a.env, cwd: a.cwd, stdio: ["ignore", "pipe", "inherit"] });
+  const timer = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }, a.timeoutMs ?? 60_000);
+  let out = "";
+  proc.stdout.on("data", (chunk: Buffer) => {
+    out += chunk.toString("utf8");
+  });
+  await new Promise<void>((resolve) => {
+    proc.on("error", () => resolve());
+    proc.on("close", () => resolve());
+  });
+  clearTimeout(timer);
+  return resultFromOutput(out);
+}
+
 // ---------------------------------------------------------------------------
 // codex engine (2d)
 // ---------------------------------------------------------------------------
@@ -966,6 +1154,8 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     secs: null,
     origin: "spawn",
     outputFormat: parsed.outputFormat,
+    // codex takes instructions through the prompt, not the AG2 contract flag
+    reportFormat: "json",
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // codex has no init event of its own: the synthetic one below announces

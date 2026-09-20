@@ -1,11 +1,20 @@
 /**
- * Tests for the worker contract report — parsing the final JSON message and
- * rendering the compact block. Pure functions only.
+ * Tests for the worker contract report — the per-class/per-format contract
+ * prompt, parsing the final message (AG2 or JSON) and rendering the compact
+ * block. Pure functions only.
  */
 
 import { describe, it, expect } from "vitest";
 import { makeColor } from "./render.js";
-import { OPERATOR_MARK, parseWorkerReport, renderReport, WORKER_CONTRACT_PROMPT } from "./report.js";
+import { validateAg2 } from "./agentish.js";
+import {
+  OPERATOR_MARK,
+  parseWorkerReport,
+  promptTrailer,
+  renderReport,
+  workerContractPrompt,
+  WORKER_CONTRACT_PROMPT,
+} from "./report.js";
 
 const sample = {
   changed: [{ path: "src/a.ts", summary: "added the guard" }],
@@ -18,7 +27,7 @@ const sample = {
   notes: "guard added, lint needs a look",
 };
 
-describe("parseWorkerReport", () => {
+describe("parseWorkerReport — JSON fallback", () => {
   it("parses a bare JSON final message", () => {
     expect(parseWorkerReport(JSON.stringify(sample))?.notes).toBe("guard added, lint needs a look");
   });
@@ -28,6 +37,7 @@ describe("parseWorkerReport", () => {
     const r = parseWorkerReport(text);
     expect(r?.changed).toEqual([{ path: "src/a.ts", summary: "added the guard" }]);
     expect(r?.checks?.[1]).toEqual({ name: "lint", ok: false, detail: "1 new error" });
+    expect(r?.format).toBe("json");
   });
 
   it("parses JSON embedded in prose (first { to last })", () => {
@@ -48,6 +58,49 @@ describe("parseWorkerReport", () => {
   it("returns null for plain prose", () => {
     expect(parseWorkerReport("All done, tests green.")).toBeNull();
     expect(parseWorkerReport("")).toBeNull();
+  });
+});
+
+describe("parseWorkerReport — AG2 precedence", () => {
+  it("parses an AG2 R message before ever trying JSON", () => {
+    const text = [
+      "R",
+      "i=fix-flaky-retry",
+      "r=+",
+      "z=widened the jitter window",
+      "c=src/net/retry.ts widened jitter",
+      "t=RegressionAdded+ RetryTest+",
+      "p=npx vitest run src/net",
+    ].join("\n");
+    const r = parseWorkerReport(text);
+    expect(r?.format).toBe("ag2");
+    expect(r?.result).toBe("+");
+    expect(r?.notes).toBe("widened the jitter window");
+    expect(r?.changed).toEqual([{ path: "src/net/retry.ts", summary: "widened jitter" }]);
+    expect(r?.checks).toEqual([
+      { name: "RegressionAdded", ok: true, detail: "+" },
+      { name: "RetryTest", ok: true, detail: "+" },
+    ]);
+    expect(r?.commands).toEqual(["npx vitest run src/net"]);
+  });
+
+  it("an R with a failing test and a next-step falls through to open[]", () => {
+    const text = ["R", "i=x", "r=-", "y=one test still flakes", "t=RetryTest-", "c=a.ts fix", "p=vitest", "x=investigate timeout"].join(
+      "\n"
+    );
+    const r = parseWorkerReport(text);
+    expect(r?.result).toBe("-");
+    expect(r?.why).toBe("one test still flakes");
+    expect(r?.checks).toEqual([{ name: "RetryTest", ok: false, detail: "-" }]);
+    expect(r?.open).toContain("investigate timeout");
+  });
+
+  it("a non-R kind (T, S, Q, A, X) does not parse as a report", () => {
+    expect(parseWorkerReport("T\ni=x\ng=do it")).toBeNull();
+  });
+
+  it("still falls back to JSON when the text is not AG2 at all", () => {
+    expect(parseWorkerReport(JSON.stringify(sample))?.format).toBe("json");
   });
 });
 
@@ -80,12 +133,111 @@ describe("renderReport", () => {
   });
 });
 
-describe("WORKER_CONTRACT_PROMPT", () => {
-  it("names the exact JSON keys the parser expects", () => {
-    expect(WORKER_CONTRACT_PROMPT).toContain('"changed"');
-    expect(WORKER_CONTRACT_PROMPT).toContain('"checks"');
-    expect(WORKER_CONTRACT_PROMPT).toContain('"notes"');
-    expect(WORKER_CONTRACT_PROMPT).toContain("final message");
+describe("workerContractPrompt — class selection", () => {
+  it("spotcheck and simple get the short contract (json format: under 1200 chars)", () => {
+    // the ag2 format's own floor is the fixed AG2 spec text plus the mandated
+    // R-message field list — this is the token-ish check on the contract's
+    // own prose, isolated from that fixed external blob (see below for the
+    // ag2 comparison, which checks relative shortness instead)
+    for (const cls of ["spotcheck", "simple"]) {
+      const p = workerContractPrompt(cls, "json");
+      expect(p.length).toBeLessThan(1200);
+      expect(p).not.toMatch(/PARALLELISING/);
+      expect(p).toContain("No child workers, no handoff");
+    }
+  });
+
+  it("spotcheck/simple stay shorter than the full contract in both formats", () => {
+    for (const format of ["json", "ag2"] as const) {
+      const short = workerContractPrompt("spotcheck", format).length;
+      const full = workerContractPrompt("implement", format).length;
+      expect(short).toBeLessThan(full);
+    }
+  });
+
+  it("every other class, and no class, gets the full contract", () => {
+    for (const cls of ["implement", "complex", "draft", "review", undefined]) {
+      const p = workerContractPrompt(cls, "ag2");
+      expect(p).toMatch(/PARALLELISING/);
+      expect(p).toMatch(/You are the worker/);
+    }
+  });
+
+  it("both lengths carry the file-not-inline rule", () => {
+    for (const p of [workerContractPrompt("spotcheck", "ag2"), workerContractPrompt("implement", "ag2")]) {
+      expect(p).toMatch(/heredoc/i);
+      expect(p).toMatch(/Write tool/);
+      expect(p).toMatch(/\$\(cat /);
+      expect(p).toMatch(/python3 -c/);
+    }
+  });
+
+  it("format ag2 ends with the AG2 spec and the R-message instructions", () => {
+    for (const cls of ["spotcheck", "implement"]) {
+      const p = workerContractPrompt(cls, "ag2");
+      expect(p).toMatch(/^AG2\./m);
+      expect(p).toContain("AG2 `R` message");
+      expect(p).toContain("every t entry +");
+    }
+  });
+
+  // aibroker's real R schema (verified against `aibroker agentish check`
+  // 2026-09-20): i/r/t/c required, r=+ needs gate+proof+all-t-passing, and R
+  // has no u/out field at all (u is T-only) — the answer goes in z instead.
+  it("format ag2 carries the real R field set and a literal, validator-passing example block", () => {
+    for (const cls of ["spotcheck", "implement"]) {
+      const p = workerContractPrompt(cls, "ag2");
+      expect(p).toMatch(/R requires i \(id\), r/);
+      expect(p).not.toMatch(/\bu= /);
+      expect(p).toContain("Example:");
+      expect(p).toMatch(
+        /\nR\ni=count-audit-ts\nr=\+\nG=\+\nc=src\/audit summary of files counted\nt=Count\+\np=wc -l src\/audit\/\*\.ts\nz=19 files, 2523 lines/
+      );
+    }
+  });
+
+  it("the short contract in ag2 format stays under 1500 characters", () => {
+    expect(workerContractPrompt("spotcheck", "ag2").length).toBeLessThan(1500);
+    expect(workerContractPrompt("simple", "ag2").length).toBeLessThan(1500);
+  });
+
+  it("the example block itself passes the real aibroker validator, when it is available", () => {
+    const p = workerContractPrompt("spotcheck", "ag2");
+    const example = p.slice(p.indexOf("\nR\n") + 1);
+    const v = validateAg2(example);
+    if (v.validator === "aibroker") expect(v).toEqual({ ok: true, errors: [], validator: "aibroker" });
+  });
+
+  it("format json ends with the JSON contract instead", () => {
+    for (const cls of ["spotcheck", "implement"]) {
+      const p = workerContractPrompt(cls, "json");
+      expect(p).toContain('"changed"');
+      expect(p).toContain('"checks"');
+      expect(p).not.toMatch(/^AG2\./m);
+    }
+  });
+});
+
+describe("promptTrailer", () => {
+  it("ag2 format names the AG2 R message, one final line", () => {
+    const t = promptTrailer("ag2");
+    expect(t.startsWith("\n\n")).toBe(true);
+    expect(t.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(t).toMatch(/AG2 R message only/);
+  });
+
+  it("json format names a JSON object, one final line", () => {
+    const t = promptTrailer("json");
+    expect(t.startsWith("\n\n")).toBe(true);
+    expect(t.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(t).toMatch(/JSON object only/);
+  });
+});
+
+describe("WORKER_CONTRACT_PROMPT — full-contract AG2 baseline (keepalive path)", () => {
+  it("is the full contract in AG2 format", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/You are the worker/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/^AG2\./m);
   });
 
   it("tells the worker to answer [operator] messages first, then continue", () => {

@@ -86,6 +86,8 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
 | `--no-worktree` | Run in place, no worktree |  |
 | `--print-cmd` | Print the assembled claude argv as JSON and exit, without spawning (audit tool) |  |
+| `--report <format>` | Final-report contract/parser: json or ag2 (default: ag2, or PAI_WORKER_REPORT) |  |
+| `--no-report-retry` | Skip the one bounded re-ask when the final AG2 message fails validation |  |
 
 
 ### pai worker ps

@@ -4,12 +4,15 @@
  * functions — no claude, no osascript.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
 import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
   bumpContextTokens,
   chromeGrantArgs,
+  ensureToolSearch,
+  headlessPromptText,
   headlessToolGrants,
   headlessToolsFlag,
   initContextWindow,
@@ -19,16 +22,25 @@ import {
   modelArgs,
   modelFlagArgs,
   operatorUserText,
+  reaskAg2Report,
   resetContextTokensOnCompact,
+  resolveReportFormat,
   resolveRunModel,
+  shouldRetryReport,
   stdinUserMessage,
   usageContextTokens,
   printResult,
   type StreamEvent,
 } from "./run.js";
-import { OPERATOR_MARK } from "./report.js";
+import { AG2_REASK_TEXT, OPERATOR_MARK, promptTrailer } from "./report.js";
 import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
 import { describeProviders } from "./providers.js";
+import * as childProcess from "node:child_process";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn() };
+});
 
 describe("headlessToolGrants", () => {
   it("grants the core tool set when the caller brings no allowedTools", () => {
@@ -72,6 +84,46 @@ describe("headlessToolsFlag", () => {
   });
 });
 
+describe("ensureToolSearch", () => {
+  it("appends ToolSearch to an existing --tools value", () => {
+    const out = ensureToolSearch(["claude", "--tools", "Bash,Read,Grep,Glob,Agent"]);
+    expect(out).toEqual(["claude", "--tools", "Bash,Read,Grep,Glob,Agent,ToolSearch"]);
+  });
+
+  it("leaves the argv untouched when ToolSearch is already present", () => {
+    const argv = ["claude", "--tools", "Read,ToolSearch"];
+    expect(ensureToolSearch(argv)).toEqual(argv);
+  });
+
+  it("handles the --tools=value form", () => {
+    expect(ensureToolSearch(["claude", "--tools=Read,Bash"])).toEqual(["claude", "--tools=Read,Bash,ToolSearch"]);
+  });
+
+  it("does nothing when there is no --tools flag at all", () => {
+    const argv = ["claude", "-p", "task", "--allowedTools", "Read"];
+    expect(ensureToolSearch(argv)).toEqual(argv);
+  });
+
+  it("does not touch an empty --tools value", () => {
+    expect(ensureToolSearch(["claude", "--tools", ""])).toEqual(["claude", "--tools", ""]);
+  });
+});
+
+describe("resolveReportFormat", () => {
+  it("defaults to ag2 with no flag and no env", () => {
+    expect(resolveReportFormat(undefined, {})).toBe("ag2");
+  });
+
+  it("PAI_WORKER_REPORT=json selects json when no flag was passed", () => {
+    expect(resolveReportFormat(undefined, { PAI_WORKER_REPORT: "json" })).toBe("json");
+  });
+
+  it("an explicit flag always wins over the env default", () => {
+    expect(resolveReportFormat("ag2", { PAI_WORKER_REPORT: "json" })).toBe("ag2");
+    expect(resolveReportFormat("json", {})).toBe("json");
+  });
+});
+
 describe("modelFlagArgs", () => {
   it("interactive + no explicit --model: no --model arg (settings.json model applies)", () => {
     expect(modelFlagArgs(false, "claude-sonnet-5", false)).toEqual([]);
@@ -87,6 +139,124 @@ describe("modelFlagArgs", () => {
 
   it("headless + caller's own --model: not duplicated here either", () => {
     expect(modelFlagArgs(true, "claude-sonnet-5", true)).toEqual([]);
+  });
+});
+
+describe("headlessPromptText", () => {
+  it("appends the ag2 trailer for a headless run", () => {
+    const r = headlessPromptText("do the task", true, false, "ag2");
+    expect(r.applied).toBe(true);
+    expect(r.text).toBe("do the task" + promptTrailer("ag2"));
+  });
+
+  it("appends the json trailer for a headless json-format run", () => {
+    const r = headlessPromptText("do the task", true, false, "json");
+    expect(r.applied).toBe(true);
+    expect(r.text).toContain("JSON object only");
+  });
+
+  it("never applies to an interactive launch (no -p)", () => {
+    const r = headlessPromptText(null, false, false, "ag2");
+    expect(r.applied).toBe(false);
+    expect(r.text).toBeNull();
+  });
+
+  it("never applies when the caller brought its own system prompt", () => {
+    const r = headlessPromptText("do the task", true, true, "ag2");
+    expect(r.applied).toBe(false);
+    expect(r.text).toBe("do the task");
+  });
+
+  it("never applies to a headless run with no prompt text", () => {
+    const r = headlessPromptText(null, true, false, "ag2");
+    expect(r.applied).toBe(false);
+    expect(r.text).toBeNull();
+  });
+});
+
+describe("shouldRetryReport", () => {
+  it("retries an invalid report caught by a real validator, with a session and no opt-out", () => {
+    expect(shouldRetryReport({ ok: false, validator: "aibroker" }, false, true)).toBe(true);
+  });
+
+  it("never retries a valid report", () => {
+    expect(shouldRetryReport({ ok: true, validator: "aibroker" }, false, true)).toBe(false);
+  });
+
+  it("never retries when no validator ran (a missing aibroker must not block further)", () => {
+    expect(shouldRetryReport({ ok: false, validator: "none" }, false, true)).toBe(false);
+  });
+
+  it("never retries when the caller opted out with --no-report-retry", () => {
+    expect(shouldRetryReport({ ok: false, validator: "aibroker" }, true, true)).toBe(false);
+  });
+
+  it("never retries with no session to resume into", () => {
+    expect(shouldRetryReport({ ok: false, validator: "aibroker" }, false, false)).toBe(false);
+  });
+});
+
+describe("reaskAg2Report", () => {
+  function fakeProc() {
+    const proc = new EventEmitter() as EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> };
+    proc.stdout = new EventEmitter();
+    proc.kill = vi.fn();
+    return proc;
+  }
+
+  afterEach(() => {
+    vi.mocked(childProcess.spawn).mockReset();
+  });
+
+  it("resumes the session with the fixed re-ask text and returns the parsed result", async () => {
+    const proc = fakeProc();
+    vi.mocked(childProcess.spawn).mockReturnValue(proc as unknown as ReturnType<typeof childProcess.spawn>);
+
+    const promise = reaskAg2Report({
+      env: { PATH: "/bin" },
+      cwd: "/work",
+      model: "claude-sonnet-5",
+      callerPinnedModel: false,
+      chromeArgs: [],
+      mcpArgs: ["--strict-mcp-config", "--mcp-config", "/tmp/none.json"],
+      toolArgs: [],
+      toolsFlag: [],
+      sessionId: "sess-123",
+    });
+
+    const [cmd, cmdArgs] = vi.mocked(childProcess.spawn).mock.calls[0] as unknown as [string, string[]];
+    expect(cmd).toBe("claude");
+    expect(cmdArgs).toContain("--resume");
+    expect(cmdArgs[cmdArgs.indexOf("--resume") + 1]).toBe("sess-123");
+    expect(cmdArgs).toContain(AG2_REASK_TEXT);
+    expect(cmdArgs).toEqual(expect.arrayContaining(["--model", "claude-sonnet-5"]));
+
+    proc.stdout.emit("data", Buffer.from(JSON.stringify({ type: "result", result: "R\nr=+\nu=fixed" })));
+    proc.emit("close", 0);
+
+    expect(await promise).toBe("R\nr=+\nu=fixed");
+  });
+
+  it("does not force --model when the caller pinned one", async () => {
+    const proc = fakeProc();
+    vi.mocked(childProcess.spawn).mockReturnValue(proc as unknown as ReturnType<typeof childProcess.spawn>);
+
+    const promise = reaskAg2Report({
+      env: {},
+      cwd: "/work",
+      model: "claude-opus-5",
+      callerPinnedModel: true,
+      chromeArgs: [],
+      mcpArgs: [],
+      toolArgs: [],
+      toolsFlag: [],
+      sessionId: "sess-456",
+    });
+    const [, cmdArgs] = vi.mocked(childProcess.spawn).mock.calls[0] as unknown as [string, string[]];
+    expect(cmdArgs).not.toContain("--model");
+
+    proc.emit("close", 1);
+    await promise;
   });
 });
 
