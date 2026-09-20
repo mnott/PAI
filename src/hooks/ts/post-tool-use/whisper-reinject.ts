@@ -24,6 +24,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { isWorkerSession } from "../lib/worker-session.js";
 
 /** Stay silent below this many tool calls — a short turn has not drifted yet. */
 const QUIET_BELOW = 6;
@@ -68,6 +69,8 @@ function main(): void {
     const raw = readStdin();
     if (raw.trim()) sessionId = (JSON.parse(raw) as { session_id?: string }).session_id ?? "";
   } catch { /* no session id — fall back to a shared counter */ }
+
+  if (isWorkerSession()) return;
 
   const n = bump(counterFile(sessionId));
   if (n < QUIET_BELOW || n % EVERY !== 0) return;

@@ -11,6 +11,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import { paiHomePath, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,17 +42,36 @@ const IDENTITY_FILE = join(homedir(), ".pai", "identity.txt");
 // ---------------------------------------------------------------------------
 
 /**
- * Load L0 identity from ~/.pai/identity.txt.
- * Returns the file content, or an empty string if the file does not exist.
- * Never throws.
+ * Load L0 identity. Prefers the PAI_HOME location (identity.txt migrated by
+ * `pai config migrate`), falling back to the legacy ~/.pai/identity.txt so a
+ * not-yet-migrated file keeps working. Returns "" if neither exists. Never
+ * throws.
  */
-export function loadL0Identity(): string {
-  if (!existsSync(IDENTITY_FILE)) return "";
+export function loadL0Identity(
+  opts: { newPath?: string; legacyPath?: string } = {}
+): string {
+  const newPath = opts.newPath ?? paiHomePath("identity.txt");
+  const legacyPath = opts.legacyPath ?? IDENTITY_FILE;
+  const path = existsSync(newPath) ? newPath : legacyPath;
+  if (!existsSync(path)) return "";
   try {
-    return readFileSync(IDENTITY_FILE, "utf-8").trim();
+    return readFileSync(path, "utf-8").trim();
   } catch {
     return "";
   }
+}
+
+/**
+ * Move ~/.pai/identity.txt into PAI_HOME, following the same copy /
+ * verify-byte-identical / rename-aside semantics as every other per-user
+ * file (see migratePaiFile). `from`/`to` are overridable for tests.
+ */
+export function migrateIdentityFile(
+  opts: { dryRun?: boolean; from?: string; to?: string } = {}
+): MigrateFileResult {
+  const toPath = opts.to ?? paiHomePath("identity.txt");
+  const fromPath = opts.from ?? IDENTITY_FILE;
+  return migratePaiFile(toPath, [fromPath], { dryRun: opts.dryRun });
 }
 
 // ---------------------------------------------------------------------------

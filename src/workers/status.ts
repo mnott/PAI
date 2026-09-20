@@ -86,6 +86,16 @@ export interface WorkerStatus {
    * on statuses written before the flag existed — read as a spawn.
    */
   origin?: "spawn" | "chat";
+  /** Which contract/parser this run used for its final report (see report.ts). */
+  reportFormat?: "json" | "ag2";
+  /** Whether the final AG2 report passed `aibroker agentish check`; unset for json reports or when no validator ran. */
+  reportValid?: boolean;
+  /** Validation error messages, when reportValid is false. */
+  reportErrors?: string[];
+  /** Whether the headless prompt got the end-of-turn "final message must be…" trailer line. */
+  promptTrailer?: boolean;
+  /** Whether an invalid AG2 final message triggered the one bounded re-ask (see run.ts). */
+  reportRetried?: boolean;
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */

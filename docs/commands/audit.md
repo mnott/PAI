@@ -14,11 +14,11 @@ pai audit <subcommand> [options]
 
 | Command | Description |
 |---------|-------------|
-| [`pai audit tokens`](#pai-audit-tokens) | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule |
+| [`pai audit tokens`](#pai-audit-tokens) | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue |
 
 ### pai audit tokens
 
-Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule
+Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue
 
 **Options**
 
@@ -63,6 +63,7 @@ Spawn-overhead comparison: Agent-tool subagents vs. pai workers
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-n, --n <count>` | How many of the newest logs per group to read (default 10) |  |
+| `--detail` | Print one row per log (first-turn ctx, prompt tokens, overhead, model, path) |  |
 
 
 ### pai audit tokens daemon
@@ -78,6 +79,30 @@ ANTHROPIC_BASE_URL / model-override env on every live claude process
 ### pai audit tokens schedule
 
 Launchd agents / crontab entries that outpace the measured prompt-cache TTL
+
+
+### pai audit tokens skills
+
+Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate names
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--top <n>` | How many top-by-tokens entries to show (default 15) |  |
+
+
+### pai audit tokens ladder
+
+LIVE: first-turn context at increasing headless-worker configuration (spawns real claude -p calls)
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--live` | Actually spawn claude -p (billed API traffic); refuses without this flag |  |
+| `--model <model>` | Model to probe with (default haiku) |  |
+| `--mcp-config <path>` | MCP config for the L2 rung (default: newest *.mcp.json in the workers log dir) |  |
 
 
 ## See also

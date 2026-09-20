@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isClaudeProcess } from "./env.js";
+import { isClaudeProcess, extractToolsArg, extractMcpConfigArg, classifyDeferral } from "./env.js";
 
 describe("isClaudeProcess", () => {
   it("accepts a valid claude process", () => {
@@ -44,5 +44,57 @@ describe("isClaudeProcess", () => {
   it("rejects lines with too few fields", () => {
     const line = "  12345    1:23";
     expect(isClaudeProcess(line)).toBe(false);
+  });
+});
+
+describe("extractToolsArg", () => {
+  it("parses a space-separated --tools value", () => {
+    expect(extractToolsArg("/bin/claude --tools Bash,Read,Grep,Glob,Agent -p hi")).toBe("Bash,Read,Grep,Glob,Agent");
+  });
+
+  it("parses an --tools=value form including ToolSearch", () => {
+    expect(extractToolsArg("/bin/claude --tools=A,B,ToolSearch")).toBe("A,B,ToolSearch");
+  });
+
+  it("returns null when --tools is missing", () => {
+    expect(extractToolsArg("/bin/claude -p hi")).toBeNull();
+  });
+
+  it("returns an empty string for an explicit empty --tools value", () => {
+    expect(extractToolsArg('/bin/claude --tools "" -p hi')).toBe("");
+    expect(extractToolsArg("/bin/claude --tools= -p hi")).toBe("");
+  });
+});
+
+describe("extractMcpConfigArg", () => {
+  it("parses a space-separated --mcp-config value", () => {
+    expect(extractMcpConfigArg("/bin/claude --mcp-config /tmp/foo.json -p hi")).toBe("/tmp/foo.json");
+  });
+
+  it("parses an --mcp-config=value form", () => {
+    expect(extractMcpConfigArg("/bin/claude --mcp-config=/tmp/foo.json")).toBe("/tmp/foo.json");
+  });
+
+  it("returns null when --mcp-config is missing", () => {
+    expect(extractMcpConfigArg("/bin/claude -p hi")).toBeNull();
+  });
+});
+
+describe("classifyDeferral", () => {
+  it("is on when --tools is absent (CLI default includes ToolSearch)", () => {
+    expect(classifyDeferral(null)).toBe("on");
+  });
+
+  it("is on when the explicit list includes ToolSearch", () => {
+    expect(classifyDeferral("Bash,Read,ToolSearch")).toBe("on");
+  });
+
+  it("is OFF when an explicit non-empty list omits ToolSearch", () => {
+    expect(classifyDeferral("Bash,Read,Grep,Glob,Agent")).toBe("OFF");
+  });
+
+  it("is n/a when --tools is explicitly empty", () => {
+    expect(classifyDeferral("")).toBe("n/a");
+    expect(classifyDeferral("   ")).toBe("n/a");
   });
 });

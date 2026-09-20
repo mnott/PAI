@@ -92,6 +92,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
     .option("--print-cmd", "Print the assembled claude argv as JSON and exit, without spawning (audit tool)")
+    .option("--report <format>", "Final-report contract/parser: json or ag2 (default: ag2, or PAI_WORKER_REPORT)")
+    .option("--no-report-retry", "Skip the one bounded re-ask when the final AG2 message fails validation")
     .argument("[args...]", "claude arguments, e.g. -p '<task>' --allowedTools 'Read,Edit,Bash'")
     .action(
       async (
@@ -110,10 +112,16 @@ export function registerWorkerCommands(workerCmd: Command): void {
           pane?: boolean;
           worktree?: boolean;
           printCmd?: boolean;
+          report?: string;
+          reportRetry?: boolean;
         }
       ) => {
         try {
           const className = opts.class ?? opts.role;
+          if (opts.report !== undefined && opts.report !== "json" && opts.report !== "ag2") {
+            throw new Error(`--report: expected "json" or "ag2", got "${opts.report}"`);
+          }
+          const reportFormatFlag = opts.report as "json" | "ag2" | undefined;
           // The picker passes the project dir; fail loudly rather than spawn elsewhere.
           if (opts.cwd !== undefined) {
             if (!existsSync(opts.cwd)) throw new Error(`--cwd: directory does not exist: ${opts.cwd}`);
@@ -187,6 +195,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
             noPane: opts.pane === false,
             worktreeFlag: opts.worktree,
             printCmd: opts.printCmd,
+            reportFormatFlag,
+            noReportRetry: opts.reportRetry === false,
             claudeArgs,
           });
           process.exitCode = rc;

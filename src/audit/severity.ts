@@ -9,7 +9,9 @@ import type { HooksReport } from "./hooks.js";
 import type { SessionReportOutput } from "./session.js";
 import type { DaemonReport } from "./daemon.js";
 import type { EnvReport } from "./env.js";
+import type { SkillsReport } from "./skills.js";
 import { SINGLE_FILE_LIMIT, TOTAL_LIMIT } from "./files.js";
+import { SKILL_CATALOGUE_AMBER, SKILL_CATALOGUE_RED } from "./skills.js";
 
 export const HOOK_TOKEN_LIMIT = 1000;
 export const FIRST_TURN_CONTEXT_LIMIT = 30_000;
@@ -35,6 +37,7 @@ export function buildFindings(input: {
   session: SessionReportOutput | null;
   daemon: DaemonReport;
   env: EnvReport;
+  skills: SkillsReport;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -101,6 +104,29 @@ export function buildFindings(input: {
       evidence: `${input.env.processes.length} claude process(es), none proxied`,
     });
   }
+
+  const deferralOff = input.env.processes.filter((p) => {
+    const mcpCount = p.mcpServers === "default" ? input.env.mcpServerCount : p.mcpServers;
+    return p.deferral === "OFF" && mcpCount > 0;
+  });
+  findings.push({
+    finding: "tool deferral on live processes",
+    severity: deferralOff.length > 0 ? "RED" : "GREEN",
+    evidence:
+      deferralOff.length > 0
+        ? deferralOff
+            .map((p) => `pid ${p.pid}: ${p.mcpServers === "default" ? input.env.mcpServerCount : p.mcpServers} mcp servers, tools=${p.toolsArg}`)
+            .join("; ")
+        : `${input.env.processes.length} claude process(es) checked, none with an explicit --tools list missing ToolSearch and MCP servers registered`,
+  });
+
+  const skillTokens = input.skills.enabledTotal;
+  findings.push({
+    finding: "skill catalogue tokens",
+    severity: skillTokens > SKILL_CATALOGUE_RED ? "RED" : skillTokens > SKILL_CATALOGUE_AMBER ? "AMBER" : "GREEN",
+    evidence: `${skillTokens} tokens loaded (${input.skills.total} on disk) across ${input.skills.entries.length} entries` +
+      (input.skills.duplicates.length ? `, ${input.skills.duplicates.length} case-insensitive duplicate name(s)` : ""),
+  });
 
   return sortFindings(findings);
 }
