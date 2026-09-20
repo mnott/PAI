@@ -34,7 +34,7 @@ PAI adapted these patterns for its Zettelkasten and vault intelligence layer:
 
 - **God-note detection** (`zettel_god_notes`) — Surfaces notes with disproportionately high in-degree link counts — the notes that have become hubs rather than nodes, which often indicates they should be split or restructured.
 - **Confidence tagging on vault links** — The `vault_links` table carries a `confidence` column on each directed link, allowing the system to distinguish high-confidence wikilinks (explicit `[[Note Name]]` syntax) from lower-confidence inferred connections.
-- **Query feedback loop** — Queries and their results are logged to `~/.config/pai/queries/` so that repeated searches on the same concept improve future retrieval through accumulated signal.
+- **Query feedback loop** — Queries and their results are logged to `~/.claude/pai/queries/` so that repeated searches on the same concept improve future retrieval through accumulated signal.
 - **Community detection** — Louvain community detection (`zettel_communities`) partitions the vault link graph into thematic clusters. graphify uses the Leiden algorithm; PAI uses Louvain for its simpler implementation surface while achieving comparable quality on typical vault sizes.
 
 ---
@@ -47,7 +47,7 @@ PAI adapted these patterns for its Zettelkasten and vault intelligence layer:
 
 Letta's claude-subconscious demonstrated the `UserPromptSubmit` hook pattern for persistent rule injection — the insight that rules injected only at session start can be forgotten after compaction or `/clear`, but a hook that fires before every prompt cannot be evaded.
 
-PAI's **whisper rules** system (`src/hooks/ts/user-prompt/whisper-rules.ts`) applies this pattern directly. Rules from `~/.claude/whisper-rules.md` are injected as a system reminder before every user prompt. They survive compaction, `/clear`, and session restarts.
+PAI's **whisper rules** system (`src/hooks/ts/user-prompt/whisper-rules.ts`) applies this pattern directly. Rules from `~/.claude/pai/whisper-rules.md` are injected as a system reminder before every user prompt. They survive compaction, `/clear`, and session restarts.
 
 ---
 

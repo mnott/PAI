@@ -2,9 +2,10 @@
  * `pai worker providers` and `pai worker classes` — configuration commands.
  *
  * The actual mutations live in src/workers/providers.ts so the MCP tools run
- * the same code. The CLI only parses options (and deliberately accepts no
- * inline API keys — keys enter via --key-file; the MCP `add` tool is the one
- * place a raw key is accepted, and it parks it in ~/.config/pai/keys itself).
+ * the same code. The CLI only parses options. --key writes the token
+ * verbatim as `key:` in workers.yaml (quoted, file kept 0600); --key-file
+ * writes only a path. The MCP `add` tool takes a third route — a raw key it
+ * parks in ~/.claude/pai/keys itself, storing only the path.
  *
  * `pai worker roles` stays as an alias of `classes` over the same data (the
  * config key was renamed; old configs migrate on first write).
@@ -18,6 +19,7 @@ import {
   type ClassTarget,
 } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
+import { workersYamlLegacyNotice } from "../../../workers/workers-config.js";
 import { testProvider } from "../../../workers/run.js";
 import {
   addProvider,
@@ -130,6 +132,8 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
       for (const line of describeProviders(workers)) console.log(`  ${line}`);
       console.log();
       console.log(dim(`  workers are ${workers.enabled ? "on" : "off"} — pai worker ${workers.enabled ? "off" : "on"}`));
+      const legacyNotice = workersYamlLegacyNotice();
+      if (legacyNotice) console.log(dim(`  ${legacyNotice}`));
       console.log();
     });
 
@@ -137,13 +141,17 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
     .command("add <name>")
     .description(
       "Add a provider; the first one also turns workers on and seeds classes.\n" +
-        "Example: pai worker providers add glm --base-url https://…/anthropic \\\n" +
-        "           --key-file ~/.config/zai/api_key --model glm-5.3 --fast-model glm-5.3-flash\n" +
+        "Example: pai worker providers add glm --url https://…/anthropic \\\n" +
+        "           --key sk-… --model glm-5.3 --fast-model glm-5.3-flash\n" +
+        "--key writes the token inline as `key:` in workers.yaml (quoted, file kept 0600);\n" +
+        "--key-file writes only a path to a 0600 file holding it — use one or the other.\n" +
         "OpenAI-protocol: --protocol openai --upstream-url https://…/v1 (runs via the PAI proxy).\n" +
         "Codex (ChatGPT plan): --engine codex — runs through the Codex CLI."
     )
     .option("--base-url <url>", "Anthropic-compatible API base URL (required unless --protocol openai)")
+    .option("--url <url>", "Alias of --base-url")
     .requiredOption("--model <model>", "Default model id for this provider")
+    .option("--key <token>", "API token, written inline as `key:` (quoted); use instead of --key-file")
     .option("--key-file <path>", "File holding the API token (0600); omit for token \"local\"")
     .option("--fast-model <model>", "Cheaper model for spotchecks and routing")
     .option("--env <name=value>", "Extra env for runs (repeatable)", (v: string, acc: string[]) => [...acc, v], [] as string[])
@@ -160,7 +168,9 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
         name: string,
         opts: {
           baseUrl?: string;
+          url?: string;
           model: string;
+          key?: string;
           keyFile?: string;
           fastModel?: string;
           env?: string[];
@@ -183,14 +193,19 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
           if (engine && engine !== "claude" && engine !== "codex") {
             throw new WorkersConfigError(`--engine must be claude or codex, got "${engine}"`);
           }
-          if (protocol !== "openai" && !opts.baseUrl) {
-            throw new WorkersConfigError("--base-url is required (only --protocol openai goes without it)");
+          const baseUrl = opts.baseUrl ?? opts.url;
+          if (protocol !== "openai" && !baseUrl) {
+            throw new WorkersConfigError("--base-url (or --url) is required (only --protocol openai goes without it)");
+          }
+          if (opts.key && opts.keyFile) {
+            throw new WorkersConfigError("--key and --key-file are alternatives — pass one, not both");
           }
           const tags = collectTags(opts.tags);
           addProvider({
             name,
-            baseUrl: opts.baseUrl ?? "",
+            baseUrl: baseUrl ?? "",
             keyFile: opts.keyFile ?? null,
+            ...(opts.key ? { inlineKey: opts.key } : {}),
             model: opts.model,
             fastModel: opts.fastModel,
             env: collectEnv(opts.env),

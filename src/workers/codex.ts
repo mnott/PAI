@@ -15,8 +15,8 @@
  */
 
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, readFileSync as readKey } from "node:fs";
-import { providerKeyPath, type WorkerProvider } from "./config.js";
+import { existsSync } from "node:fs";
+import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /** Build the codex exec argument vector (without the binary itself). */
 export function buildCodexArgs(prompt: string, model: string | undefined): string[] {
@@ -39,11 +39,13 @@ export function buildCodexEnv(provider: WorkerProvider): NodeJS.ProcessEnv {
   delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
   delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
   delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-  // API-key providers: OpenAI env from keyFile/baseUrl; ChatGPT-login codex
-  // (no keyFile) keeps its own auth from ~/.codex.
+  // API-key providers: OpenAI env from key/keyFile/baseUrl; ChatGPT-login
+  // codex (neither set) keeps its own auth from ~/.codex. A key_file that
+  // does not exist is tolerated here (unlike resolveProviderKey's other
+  // callers) — that is the ChatGPT-login shape, not a broken config.
   const keyPath = providerKeyPath(provider);
-  if (keyPath && existsSync(keyPath)) {
-    env.OPENAI_API_KEY = readKey(keyPath, "utf8").trim();
+  if (provider.key || (keyPath && existsSync(keyPath))) {
+    env.OPENAI_API_KEY = resolveProviderKey(provider) ?? "";
   }
   if (provider.upstreamUrl) env.OPENAI_BASE_URL = provider.upstreamUrl;
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;

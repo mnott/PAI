@@ -49,6 +49,7 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import type { Database } from "better-sqlite3";
 import { smartDecodeDir } from "../utils.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,7 +203,17 @@ function buildRegistryRootPathMap(db: Database): Map<string, string> {
  * not changed since the last parse — the same freshness check make and rsync
  * use. So parse results are cached on disk and only changed files re-read.
  */
-const SCAN_CACHE_FILE = join(homedir(), ".config", "pai", "session-scan-cache.json");
+function oldScanCacheFile(): string {
+  return join(homedir(), ".config", "pai", "session-scan-cache.json");
+}
+
+export function scanCacheFilePath(): string {
+  return resolvePaiFile(paiHomePath("session-scan-cache.json"), [oldScanCacheFile()], "pai config migrate");
+}
+
+export function migrateSessionScanCache(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("session-scan-cache.json"), [oldScanCacheFile()], opts);
+}
 
 interface ScanCacheFile {
   v: 1;
@@ -222,7 +233,7 @@ const touchedTr = new Set<string>();
 function loadScanCache(): ScanCacheFile {
   if (scanCache) return scanCache;
   try {
-    const raw = JSON.parse(readFileSync(SCAN_CACHE_FILE, "utf8")) as ScanCacheFile;
+    const raw = JSON.parse(readFileSync(scanCacheFilePath(), "utf8")) as ScanCacheFile;
     if (raw && raw.v === 1 && typeof raw.top === "object" && typeof raw.tr === "object") {
       scanCache = raw;
       return scanCache;
@@ -257,10 +268,11 @@ function flushScanCache(prune: boolean): void {
           ),
         }
       : scanCache;
-    mkdirSync(join(homedir(), ".config", "pai"), { recursive: true });
-    const tmp = SCAN_CACHE_FILE + ".tmp";
+    const target = paiHomePath("session-scan-cache.json");
+    mkdirSync(paiHomePath(), { recursive: true });
+    const tmp = target + ".tmp";
     writeFileSync(tmp, JSON.stringify(out));
-    renameSync(tmp, SCAN_CACHE_FILE);
+    renameSync(tmp, target);
   } catch {
     // Unwritable cache location — next run parses cold, which is exactly
     // what the no-cache behaviour was.

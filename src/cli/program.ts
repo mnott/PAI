@@ -22,6 +22,7 @@ import { basename } from "node:path";
 import { registerRegistryCommands } from "./commands/registry.js";
 import { registerMemoryCommands } from "./commands/memory.js";
 import { registerIdentityCommands } from "./commands/identity.js";
+import { registerConfigCommands } from "./commands/config.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerBackupCommands } from "./commands/backup.js";
@@ -30,6 +31,7 @@ import { registerSetupCommand } from "./commands/setup.js";
 import { registerObsidianCommands } from "./commands/obsidian.js";
 import { registerZettelCommands } from "./commands/zettel.js";
 import { registerObservationCommands } from "./commands/observation.js";
+import { registerAuditCommands } from "./commands/audit.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
@@ -40,6 +42,7 @@ import { registerDbCommands } from "./commands/db.js";
 import { registerHelpCommand } from "./commands/help.js";
 import { registerSessionCommands } from "./commands/session/index.js";
 import { registerWorkerCommands } from "./commands/worker/index.js";
+import { registerLaunchCommand } from "./commands/launch.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup/index.js";
 import { err, warn, ok, dim, shortenPath, encodeDir, now } from "./utils.js";
 import { cmdPause } from "./commands/session/pause.js";
@@ -183,10 +186,18 @@ Examples:
     .command("worker")
     .description(
       "Run subagents on configured worker providers: run, ps, follow, replay,\n" +
-        "pane, log, status-line, providers, roles, on, off, install"
+        "pane, log, status-line, providers, roles, goal, config, on, off, install.\n" +
+        "run takes --spec <file> (or --spec -) to read the prompt from a file/stdin\n" +
+        "instead of an inline -p '<prompt>', which breaks on shell quoting."
     );
 
   registerWorkerCommands(workerCmd);
+
+  // -------------------------------------------------------------------------
+  // pai launch — start the harness itself (not a subagent) on any provider
+  // -------------------------------------------------------------------------
+
+  registerLaunchCommand(program);
 
   program
     .command("sessions")
@@ -226,6 +237,16 @@ Examples:
     .description("Declare who you are: self addresses and where mail is delivered");
 
   registerIdentityCommands(identityCmd);
+
+  // -------------------------------------------------------------------------
+  // pai config
+  // -------------------------------------------------------------------------
+
+  const configCmd = program
+    .command("config")
+    .description("PAI_HOME namespace dir: path, migrate");
+
+  registerConfigCommands(configCmd);
 
   // -------------------------------------------------------------------------
   // pai mcp
@@ -341,6 +362,14 @@ Examples:
     .description("Observation capture: list, search, and stats");
 
   registerObservationCommands(observationCmd);
+
+  // -------------------------------------------------------------------------
+  // pai audit
+  // -------------------------------------------------------------------------
+
+  const auditCmd = program.command("audit").description("Diagnostic audits: token-waste report and friends");
+
+  registerAuditCommands(auditCmd);
 
   // -------------------------------------------------------------------------
   // pai skill

@@ -11,16 +11,26 @@ import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
 import { initializeFederationSchema } from "./schema.js";
+import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
 
 export type { Database };
 
-/** Default federation DB path inside the ~/.pai/ directory. */
-const DEFAULT_FEDERATION_PATH = join(homedir(), ".pai", "federation.db");
+/** Old federation.db path, inside the ~/.pai/ directory (pre-2026-09-19). */
+export function oldFederationPath(): string {
+  return join(homedir(), ".pai", "federation.db");
+}
+
+/** Federation DB path: PAI_HOME/federation.db if present, else the old
+ *  ~/.pai/federation.db (one-time stderr notice), else the new path. */
+export function federationDbPath(): string {
+  return resolvePaiFile(paiHomePath("federation.db"), [oldFederationPath()], "pai config migrate --federation");
+}
 
 /**
  * Open (or create) the PAI federation database.
  *
- * @param path  Absolute path to federation.db.  Defaults to ~/.pai/federation.db.
+ * @param path  Absolute path to federation.db.  Defaults to PAI_HOME/federation.db
+ *              (falling back to the pre-2026-09-19 ~/.pai/federation.db).
  * @returns     An open better-sqlite3 Database instance.
  *
  * Side effects on first call:
@@ -28,7 +38,7 @@ const DEFAULT_FEDERATION_PATH = join(homedir(), ".pai", "federation.db");
  *  - Enables WAL journal mode.
  *  - Runs initializeFederationSchema() to ensure tables exist.
  */
-export function openFederation(path: string = DEFAULT_FEDERATION_PATH): Database {
+export function openFederation(path: string = federationDbPath()): Database {
   // Ensure the directory exists before SQLite tries to create the file
   mkdirSync(dirname(path), { recursive: true });
 

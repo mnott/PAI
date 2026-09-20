@@ -324,12 +324,12 @@ export const THRESHOLD_MARGIN_TOKENS = {
 //
 // Deliberately re-implements the tiny bit of path encoding it needs (below)
 // rather than importing project-utils/paths.ts's encodePath: that module
-// chain ends in pai-paths.ts, which calls process.exit(1) if PAI_DIR does
+// chain ends in pai-paths.ts, which calls process.exit(1) if ADAPTER_DIR does
 // not resolve to an existing directory. context-fill.ts is specifically the
 // module a hook falls back on when its environment is unreliable — pulling
 // in a dependency that can kill the process on import would defeat that.
 // Claude Code's transcript directory is a fixed, home-relative convention
-// (~/.claude/projects/<encoded-cwd>/), not something PAI_DIR governs, so
+// (~/.claude/projects/<encoded-cwd>/), not something ADAPTER_DIR governs, so
 // resolving it directly here is also just the more correct dependency, not
 // only the safer one.
 

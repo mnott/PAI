@@ -168,7 +168,7 @@ daemon can run the bus without a Claude session attached.
 **Do not scrape the key out of `~/.claude.json`.** A shipped feature must not read another
 tool's config. Resolution order:
 
-1. `tasks.providers.todoist.apiKey` in `~/.config/pai/config.json`
+1. `tasks.providers.todoist.apiKey` in `~/.claude/pai/config.json`
 2. `TODOIST_API_KEY` environment variable
 3. not configured → `isConfigured()` false → provider disabled, PAI degrades cleanly
 

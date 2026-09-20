@@ -20,20 +20,24 @@ import {
   mkdirSync,
   readFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ok, warn, err, dim, bold } from "../utils.js";
+import { paiConfigFilePath } from "../../daemon/config.js";
+import { registryDbPath } from "../../registry/db.js";
+import { federationDbPath } from "../../memory/db.js";
+import { backupsDirPath } from "./backup.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const REGISTRY_DB = join(HOME, ".pai", "registry.db");
-const CONFIG_FILE = join(HOME, ".config", "pai", "config.json");
-const BACKUPS_DIR = join(HOME, ".pai", "backups");
+const REGISTRY_DB = registryDbPath();
+const CONFIG_FILE = paiConfigFilePath();
+const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
 const PG_DATABASE = "pai";
 const PG_USER = "pai";
@@ -173,7 +177,7 @@ export function registerRestoreCommands(program: Command): void {
 
       if (hasRegistry) {
         try {
-          mkdirSync(join(HOME, ".pai"), { recursive: true });
+          mkdirSync(dirname(REGISTRY_DB), { recursive: true });
           copyFileSync(join(resolvedDir, "registry.db"), REGISTRY_DB);
           results.push({ label: "Registry DB", status: ok("restored") });
         } catch (e) {
@@ -189,7 +193,7 @@ export function registerRestoreCommands(program: Command): void {
 
       if (hasConfig) {
         try {
-          mkdirSync(join(HOME, ".config", "pai"), { recursive: true });
+          mkdirSync(dirname(CONFIG_FILE), { recursive: true });
           copyFileSync(join(resolvedDir, "config.json"), CONFIG_FILE);
           results.push({ label: "Config", status: ok("restored") });
         } catch (e) {
@@ -205,7 +209,7 @@ export function registerRestoreCommands(program: Command): void {
 
       if (hasFed) {
         try {
-          copyFileSync(join(resolvedDir, "federation.db"), join(HOME, ".pai", "federation.db"));
+          copyFileSync(join(resolvedDir, "federation.db"), federationDbPath());
           results.push({ label: "Federation DB (legacy)", status: ok("restored") });
         } catch (e) {
           results.push({ label: "Federation DB (legacy)", status: warn(`skipped: ${e}`) });

@@ -22,5 +22,6 @@ export { consolidate } from "./consolidate.js";
 export { advisor } from "./advisor.js";
 export { tasks } from "./tasks.js";
 export { worker } from "./worker.js";
+export { providers } from "./providers.js";
 export { pause } from "./pause.js";
 export { end } from "./end.js";

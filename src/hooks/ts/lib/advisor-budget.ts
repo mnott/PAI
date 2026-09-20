@@ -4,7 +4,7 @@
  * Deciding how much of the weekly Anthropic budget is gone, and whether that
  * answer is current enough to act on.
  *
- * The statusline writes `~/.claude/advisor-mode.json` on every render of an
+ * The statusline writes `~/.claude/pai/advisor-mode.json` on every render of an
  * Anthropic session; the whisper hook reads it and injects an instruction about
  * how much work to do. That makes this the one number in PAI that changes the
  * assistant's behaviour rather than merely describing it, which is why it is

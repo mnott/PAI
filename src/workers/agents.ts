@@ -177,3 +177,21 @@ export function agentClaudeArgs(def: AgentDef): string[] {
 export function agentLabel(name: string, prompt: string | null | undefined): string {
   return `${name}: ${prompt ?? UNLABELED}`.slice(0, name.length + 2 + 50);
 }
+
+/**
+ * Default `--label` for a bare `pai worker run` (no --chain/--agent, which
+ * derive their own): the prompt's first non-blank line, whitespace-collapsed,
+ * stripped of a leading markdown marker (#, *, -, >), truncated to 48 chars
+ * with "…" appended if it was cut. An empty/whitespace-only prompt falls back
+ * to "worker <class>" so the row is never blank.
+ */
+export function deriveLabel(prompt: string | null | undefined, klass: string): string {
+  const firstLine = (prompt ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return `worker ${klass}`;
+  const stripped = firstLine.replace(/^[#*\->]+\s*/, "").replace(/\s+/g, " ").trim();
+  if (!stripped) return `worker ${klass}`;
+  return stripped.length > 48 ? `${stripped.slice(0, 48)}…` : stripped;
+}

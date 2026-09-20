@@ -144,9 +144,9 @@ describe("the parse cache", () => {
     expect(second).toEqual(first);
   });
 
-  it("persists the cache under the (sandboxed) PAI config dir", async () => {
+  it("persists the cache under the (sandboxed) PAI_HOME dir", async () => {
     await scan("named");
-    expect(existsSync(join(home, ".config", "pai", "session-scan-cache.json"))).toBe(true);
+    expect(existsSync(join(home, ".claude", "pai", "session-scan-cache.json"))).toBe(true);
   });
 
   it("re-parses a file whose content changed", async () => {

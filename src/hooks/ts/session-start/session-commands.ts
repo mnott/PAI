@@ -10,6 +10,10 @@
  * even when the full CORE skill gets truncated.
  */
 
+import { isWorkerSession } from "../lib/worker-session.js";
+
+if (isWorkerSession()) process.exit(0); // disposable worker: no per-session bookkeeping
+
 const commands = `<system-reminder>
 SESSION COMMANDS (always available):
 

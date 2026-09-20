@@ -21,16 +21,31 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
-import { loadConfig } from "../../daemon/config.js";
+import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
+import { registryDbPath } from "../../registry/db.js";
+import { federationDbPath } from "../../memory/db.js";
+import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const REGISTRY_DB = join(HOME, ".pai", "registry.db");
-const CONFIG_FILE = join(HOME, ".config", "pai", "config.json");
-const BACKUPS_DIR = join(HOME, ".pai", "backups");
+const REGISTRY_DB = registryDbPath();
+const CONFIG_FILE = paiConfigFilePath();
+
+/** Old backups dir, inside ~/.pai/ (pre-2026-09-19). */
+export function oldBackupsDir(): string {
+  return join(HOME, ".pai", "backups");
+}
+
+/** Backups dir: PAI_HOME/backups if present, else the old ~/.pai/backups
+ *  (one-time stderr notice), else the new path. */
+export function backupsDirPath(): string {
+  return resolvePaiFile(paiHomePath("backups"), [oldBackupsDir()], "pai config migrate --backups");
+}
+
+const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
 const PG_DATABASE = "pai";
 const PG_USER = "pai";
@@ -71,7 +86,7 @@ function fileSize(path: string): string {
 export function registerBackupCommands(program: Command): void {
   program
     .command("backup")
-    .description("Backup registry, config, and Postgres database to ~/.pai/backups/")
+    .description("Backup registry, config, and Postgres database to PAI_HOME/backups/")
     .option("--no-postgres", "Skip the Postgres pg_dump (faster, registry+config only)")
     .action(async (opts: { postgres: boolean }) => {
       const ts = timestamp();
@@ -118,7 +133,7 @@ export function registerBackupCommands(program: Command): void {
       // 3. Optional: Federation SQLite (legacy)
       // ------------------------------------------------------------------
 
-      const federationDb = join(HOME, ".pai", "federation.db");
+      const federationDb = federationDbPath();
       if (existsSync(federationDb)) {
         const dest = join(backupDir, "federation.db");
         try {

@@ -18,7 +18,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readWorkersSection, providerKeyPath, type WorkerProvider } from "../config.js";
+import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../config.js";
 import { workersLogDir } from "../paths.js";
 import {
   anthropicError,
@@ -119,15 +119,14 @@ async function handleMessages(
   let upstream: Response;
   try {
     const headers: Record<string, string> = { "content-type": "application/json" };
-    const keyPath = providerKeyPath(provider);
-    if (keyPath) {
-      try {
-        headers.authorization = `Bearer ${readFileSync(keyPath, "utf8").trim()}`;
-      } catch {
-        fail(500, `key file not readable: ${keyPath}`);
-        return;
-      }
+    let token: string | null;
+    try {
+      token = resolveProviderKey(provider);
+    } catch (e) {
+      fail(500, e instanceof Error ? e.message : String(e));
+      return;
     }
+    if (token) headers.authorization = `Bearer ${token}`;
     upstream = await fetch(`${provider.upstreamUrl}/chat/completions`, {
       method: "POST",
       headers,

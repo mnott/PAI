@@ -246,7 +246,7 @@ For each reconstructed note, call \`kg_add\` to store key facts. Examples of fac
 - Maximum **15 triples per note** — pick the most important.
 - Never invent project names, versions, or paths. Copy them verbatim.
 
-**Alternative (batch mode):** If reconstructing many notes at once, instead of calling \`kg_add\` interactively you may run \`pai kg backfill --project <slug>\` from the terminal after the notes are written. The backfill walks every note in \`Notes/YYYY/MM/\`, runs the same extractor the session-summary-worker uses, and is idempotent (state file at \`~/.config/pai/kg-backfill-state.json\`).
+**Alternative (batch mode):** If reconstructing many notes at once, instead of calling \`kg_add\` interactively you may run \`pai kg backfill --project <slug>\` from the terminal after the notes are written. The backfill walks every note in \`Notes/YYYY/MM/\`, runs the same extractor the session-summary-worker uses, and is idempotent (state file at \`~/.claude/pai/kg-backfill-state.json\`).
 
 After extraction, append a one-line note to the summary output:
 \`\`\`

@@ -73,3 +73,48 @@ describe("buildL1EssentialStory — note ordering", () => {
     expect(buildL1EssentialStory(root)).toBe("");
   });
 });
+
+describe("buildL1EssentialStory — cross-note deduplication", () => {
+  /**
+   * A daemon sometimes writes the same summary bullets into more than one
+   * note. Without dedup, identical lines were emitted once per note that
+   * carried them.
+   */
+  it("emits a bullet shared by two notes only once, while keeping each note's unique bullets", () => {
+    const dir = join(root, "Notes", "2026", "08");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "0001 - 2026-08-01 - First.md"),
+      [
+        "# Session",
+        "",
+        "## Work Done",
+        "",
+        "- [x] Shared bullet one",
+        "- [x] Shared bullet two",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      join(dir, "0002 - 2026-08-02 - Second.md"),
+      [
+        "# Session",
+        "",
+        "## Work Done",
+        "",
+        "- [x] Shared bullet one",
+        "- [x] Shared bullet two",
+        "- [x] Unique bullet from second note",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const story = buildL1EssentialStory(root);
+
+    expect(story.split("Shared bullet one").length - 1).toBe(1);
+    expect(story.split("Shared bullet two").length - 1).toBe(1);
+    expect(story).toContain("Unique bullet from second note");
+  });
+});

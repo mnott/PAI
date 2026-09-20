@@ -111,7 +111,7 @@ launchd (com.pai.pai-daemon)
 
 ### Configuration
 
-File: `~/.config/pai/config.json`
+File: `~/.claude/pai/config.json`
 
 ```json
 {

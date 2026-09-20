@@ -707,7 +707,7 @@ async function main() {
       // BUG (live): a production digest was found with NO "HANDOVER SOURCE:"
       // line at all — its cause was never pinned down for certain (the
       // deployed hook is a compiled dist/ artifact reached through
-      // ${PAI_DIR}/Hooks/..., a separate build step from editing this
+      // ${ADAPTER_DIR}/Hooks/..., a separate build step from editing this
       // source, which is itself a plausible way for "works when I run the
       // .ts source" and "missing in production" to diverge). Regardless of
       // cause: sourceLabel and handoverBlock are now computed in their own

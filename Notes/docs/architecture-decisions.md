@@ -53,7 +53,7 @@ Premium module source code must never appear in public git history. A single pub
 Two Git repositories:
 
 - **Public:** github.com/mnott/PAI - open source core, MIT licensed, community-visible (stars, issues, pull requests)
-- **Private:** hosted on Matthias Nott's personal Git server - premium module source code, full version history
+- **Private:** hosted on the maintainer's personal Git server - premium module source code, full version history
 
 Two npm packages, both published publicly on npm:
 
@@ -302,7 +302,7 @@ The current public GitHub repository (github.com/mnott/PAI) contains version his
 
 1. Delete the public GitHub repository content and re-initialize with a clean git history
 2. Unpublish the @tekmidian/pai npm package
-3. Create a private repository on Matthias Nott's personal Git server for premium module source code
+3. Create a private repository on the maintainer's personal Git server for premium module source code
 4. Publish fresh at v0.1.0
 
 **Invariants:**
@@ -326,7 +326,7 @@ Critical operating rules defined in `CLAUDE.md` (no email sending, git commit fo
 
 ### Decision
 
-A `UserPromptSubmit` hook (`whisper-rules.mjs`) reads `~/.claude/whisper-rules.md` and injects its contents as a system reminder on every user prompt submission, before Claude processes the message. The rules fire unconditionally — no session state is required.
+A `UserPromptSubmit` hook (`whisper-rules.mjs`) reads `~/.claude/pai/whisper-rules.md` and injects its contents as a system reminder on every user prompt submission, before Claude processes the message. The rules fire unconditionally — no session state is required.
 
 The implementation is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/letta) pattern for persistent rule injection in Claude environments.
 
@@ -334,12 +334,12 @@ The implementation is inspired by [Letta's claude-subconscious](https://github.c
 - Fires on every prompt, not just session start
 - Survives compaction (UserPromptSubmit fires post-compaction)
 - Survives `/clear` (new sessions trigger it immediately on the first prompt)
-- User-customizable: edit `~/.claude/whisper-rules.md` to change the rules
+- User-customizable: edit `~/.claude/pai/whisper-rules.md` to change the rules
 - Zero overhead: file read is fast; injection payload is small
 
 ### Rationale
 
-Session start hooks only fire once per session. A rule injected at session start can be forgotten by the model after a long conversation or a compaction event. `UserPromptSubmit` fires before every model invocation, making it impossible for rules to drift out of context. The file-based approach (`~/.claude/whisper-rules.md`) gives users a single, discoverable location to manage their persistent rules without editing hook source code.
+Session start hooks only fire once per session. A rule injected at session start can be forgotten by the model after a long conversation or a compaction event. `UserPromptSubmit` fires before every model invocation, making it impossible for rules to drift out of context. The file-based approach (`~/.claude/pai/whisper-rules.md`) gives users a single, discoverable location to manage their persistent rules without editing hook source code.
 
 ---
 
@@ -536,6 +536,6 @@ Normalization ensures that very common English words (which appear in every proj
 
 | Date | Event |
 |------|-------|
-| 2026-03-13 | Initial capture from architecture design discussion. All 10 decisions recorded. Author: Matthias Nott. Transcribed by AI assistant. |
+| 2026-03-13 | Initial capture from architecture design discussion. All 10 decisions recorded. Author: the maintainer. Transcribed by AI assistant. |
 | 2026-03-24 | Added ADR-011 (whisper rules), ADR-012 (API key stripping), ADR-013 (topic-based note splitting). Updated ADR-006/007/008 status to "implemented" in prior sections. |
 | 2026-04-07 | Added ADR-014 (four-layer wake-up context), ADR-015 (temporal knowledge graph), ADR-016 (mid-session auto-save), ADR-017 (cross-project tunnel detection). All four inspired by mempalace. |

@@ -16,12 +16,14 @@ import { homedir } from "node:os";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum tokens for the L1 essential story block. Approx 4 chars/token. */
-const L1_TOKEN_BUDGET = 800;
-const L1_CHAR_BUDGET = L1_TOKEN_BUDGET * 4; // ~3200 chars
+/** Maximum tokens for the L1 essential story block. Approx 4 chars/token.
+ * Measured 2026-09-20: 800 tokens was mostly stale bullets. Reduced to 300.
+ */
+const L1_TOKEN_BUDGET = 300;
+const L1_CHAR_BUDGET = L1_TOKEN_BUDGET * 4; // ~1600 chars
 
-/** Maximum session notes to scan when building L1. */
-const L1_MAX_NOTES = 10;
+/** Maximum session notes to scan when building L1. Reduced from 10 to 3 (2026-09-20). */
+const L1_MAX_NOTES = 3;
 
 /** Sections to extract from session notes (in priority order). */
 const EXTRACT_SECTIONS = [
@@ -166,7 +168,14 @@ function findSessionNotes(notesDir: string): string[] {
  * Prioritises: Work Done items, Key Decisions, Next Steps, Checkpoint headings.
  * Returns a condensed string under maxChars.
  */
-function extractKeyLines(content: string, maxChars: number): string {
+function normalizeLine(line: string): string {
+  return line
+    .replace(/^(- \[[ x]\] |- |\* |\d+\.\s)/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function extractKeyLines(content: string, maxChars: number, seen: Set<string> = new Set()): string {
   const lines = content.split("\n");
   const selected: string[] = [];
   let inTargetSection = false;
@@ -210,7 +219,10 @@ function extractKeyLines(content: string, maxChars: number): string {
       trimmed.match(/^\d+\./) ||
       trimmed.startsWith("**")
     ) {
+      const normalized = normalizeLine(trimmed);
+      if (seen.has(normalized)) continue;
       if (charCount + trimmed.length + 1 > maxChars) break;
+      seen.add(normalized);
       selected.push(trimmed);
       charCount += trimmed.length + 1;
     }
@@ -241,6 +253,7 @@ export function buildL1EssentialStory(
   if (noteFiles.length === 0) return "";
 
   const sections: string[] = [];
+  const seen = new Set<string>();
   let remaining = charBudget;
 
   for (const noteFile of noteFiles) {
@@ -263,7 +276,7 @@ export function buildL1EssentialStory(
 
     // Skip if nothing useful extracted from this note
     const perNoteChars = Math.min(remaining, Math.floor(charBudget / noteFiles.length) + 200);
-    const extracted = extractKeyLines(content, perNoteChars);
+    const extracted = extractKeyLines(content, perNoteChars, seen);
     if (!extracted) continue;
 
     const noteBlock = `[${dateLabel} - ${titleLabel}]\n${extracted}`;

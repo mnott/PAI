@@ -9,7 +9,7 @@ Automated documentation of ALL work performed by PAI and specialized agents.
 ## Directory Structure
 
 \`\`\`
-\${PAI_DIR}/History/
+\${PAI_HOME}/History/
 ├── Sessions/YYYY-MM/          # Session summaries
 ├── Learnings/YYYY-MM/         # Problem-solving narratives
 ├── Research/YYYY-MM/          # Investigation reports
@@ -38,13 +38,13 @@ YYYY-MM-DD-HHMMSS_[PROJECT]_[TYPE]_[HIERARCHY]_[DESCRIPTION].md
 
 \`\`\`bash
 # Quick keyword search
-rg -i "keyword" \${PAI_DIR}/History/
+rg -i "keyword" \${PAI_HOME}/History/
 
 # Search sessions
-rg -i "keyword" \${PAI_DIR}/History/sessions/
+rg -i "keyword" \${PAI_HOME}/History/sessions/
 
 # Recent files
-ls -lt \${PAI_DIR}/History/sessions/\$(date +%Y-%m)/ | head -20
+ls -lt \${PAI_HOME}/History/sessions/\$(date +%Y-%m)/ | head -20
 \`\`\`
 `,
 };

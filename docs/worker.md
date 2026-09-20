@@ -60,12 +60,14 @@ main session (Anthropic)          workers (configured provider)
 ## Config
 
 Providers, model roles, class routing and MCP sets live in one hand-editable
-file, `~/.config/pai/workers.yaml` — see **docs/workers-config.md** for the
-full reference (the annotated example, how to add a provider, the load
-order, and `pai worker config migrate` for configs still on the old JSON
-shape). Everything else worker-related (pane, log dir, routing cooldown,
-cache-keepalive cadence, fallback) stays in `~/.config/pai/config.json`'s
-`workers` section.
+file, `~/.claude/pai/workers.yaml` (per-user state, kept 0600, never
+committed — `PAI_WORKERS_YAML` overrides it, `PAI_HOME` moves the whole
+namespace) — see **docs/workers-config.md** for the full reference (the
+annotated example, how to add a provider, the load order, and
+`pai worker config migrate` for configs still on the old JSON shape or an
+old `workers.yaml` location). Everything else worker-related (pane, log
+dir, routing cooldown, cache-keepalive cadence, fallback) stays in
+`~/.claude/pai/config.json`'s `workers` section.
 
 Quick summary of workers.yaml:
 
@@ -80,7 +82,7 @@ providers:
       fast: claude-haiku-4-5-20251001
   glm:
     url: https://api.z.ai/api/anthropic
-    key_file: ~/.config/zai/api_key
+    key: "sk-…"        # or key_file: ~/.config/zai/api_key
     tier: 2
     models:
       default: glm-5.3
@@ -94,7 +96,10 @@ mcp_sets:
   office: [memory, github]
 ```
 
-- `key_file` holds the API token (chmod 600). Keys never go into the config.
+- `key` holds the API token inline (quoted; wins over `key_file` when both
+  are set). `key_file` points at a 0600 file holding it instead, if you'd
+  rather keep the secret out of this file. Either way it is never printed
+  back — `pai worker providers`/`config check` show `key ****`+ last 4.
 - `active` is one provider name, `"auto"` to walk `routing.order` (still in
   the JSON config), or the built-in `anthropic`.
 - `protocol: openai` (plus `upstream_url`) routes the provider through the
@@ -120,7 +125,7 @@ pai worker providers add glm \
   --cost-tier 2 --tags code,long-context
 pai worker providers add oai \
   --upstream-url https://api.openai.com/v1 \
-  --key-file ~/.config/pai/keys/oai --model gpt-5.2
+  --key-file ~/.claude/pai/keys/oai --model gpt-5.2
 pai worker providers update glm --cost-tier 1   # tiers/tags change later
 ```
 
@@ -222,7 +227,9 @@ pai worker ps                    # this session's workers
 pai worker follow [id]           # live transcript (type to talk to it)
 pai worker replay <id>           # transcript of one worker
 pai worker say <id> "<text>"     # message a running worker
+pai worker goal <id> "<text>"    # re-goal a running worker (ps/pane label), no message sent
 pai worker resume <id> "<text>"  # continue a finished one, context intact
+pai worker kill <id>             # SIGTERM a running worker
 pai worker mcp list              # MCP servers + sets usable in --mcp
 pai worker proxy [--port N|stop] # the translating proxy, by hand
 pai worker log [all|tail|<id>]   # raw streams + routing ledger
@@ -311,7 +318,7 @@ What `on` does:
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
 - Pins the top-level `model` key to the provider's default model.
 - Saves the replaced values under `workers.fallback.saved` in
-  `~/.config/pai/config.json` and writes a `FALLBACK-ACTIVE.md` note into the
+  `~/.claude/pai/config.json` and writes a `FALLBACK-ACTIVE.md` note into the
   workers log dir telling running sessions what to do.
 
 Notes:
@@ -355,6 +362,17 @@ Notes:
   `<logDir>/ledger.log`.
 
 ### The worker contract
+
+A worker owns its task: it finishes the work itself in its own process,
+never hands the whole thing to a single child and steps back. Children exist
+for two things only — parallelising independent parts of the task (each a
+self-contained spec), or cheaper bounded sub-tasks (probes, renders, test
+runs, lookups) run one tier down with `--class spotcheck`/`simple`. A worker
+owns its children's results too: run them in the foreground or poll until
+each finishes, verify, fold into the report — ending the parent's turn ends
+the run and kills any child still going, so nothing is ever left running
+unattended. `WORKER_CONTRACT_PROMPT` in `src/workers/report.ts` is the exact
+text appended to every headless run's system prompt.
 
 Headless runs append a system prompt that fixes the shape of the final
 answer: act, verify, then stop with ONE JSON message
@@ -519,6 +537,13 @@ on top. An unknown name fails fast, listing what exists;
 `pai worker mcp list` shows servers and sets. A caller-provided
 `--mcp-config` always wins; MCP is chosen at launch, not mid-run.
 
+`claude-in-chrome` is not an MCP server — it rides the Chrome native-host
+bridge, which no config file loads and which is off in a spawned worker
+until `--chrome` is passed. Allowlisting any
+`mcp__claude-in-chrome__<tool>` (or the bare name) in `--allowedTools`
+appends `--chrome` automatically; a `--chrome` passed by hand is kept
+rather than duplicated.
+
 ## Scoping (who sees whose workers)
 
 `ps`/`follow`/status line show the workers of the asking terminal:
@@ -572,6 +597,21 @@ background instead. Decisions are ledgered (`DENIED-ANTHROPIC-AGENT`,
 - `pai worker off` — Agent subagents run on Anthropic again.
 - `ALLOW_ANTHROPIC_AGENTS=1` — bypass for one session.
 
+## Whisper rules: `@orchestrator` / `@worker` tags
+
+Whisper rules are injected into every claude process, spawned workers
+included, but some rules only make sense for one side — "delegate to
+workers" means nothing inside a worker that cannot spawn more workers past
+the tree cap. A comment line `# @orchestrator` in whisper-rules.md marks
+every rule that follows as orchestrator-only, `# @worker` marks worker-only,
+and the next section header (`# N. TITLE`) resets to untagged (reaches
+both); a section's own header/divider box does not count as that reset. A
+process tells which side it is on from `PAI_WORKER=1` in its environment —
+set by the worker runner on every spawn (see "What a worker is" above) and
+absent on the interactive orchestrating session. Manage tags with the
+Whisper skill (`/whisper`); the parsing lives in
+`src/hooks/ts/user-prompt/whisper-rules.ts`.
+
 ## MCP tools
 
 `worker_status`, `worker_providers`
@@ -583,29 +623,54 @@ worker or chain from chat, returns the id immediately), `worker_toggle`,
 worker: send a proposal/question/blocker up to its parent) — the same library
 the CLI calls.
 `worker_providers add` accepts a raw `key`, parks it in
-`~/.config/pai/keys/<name>` (mode 0600) and stores only the path.
+`~/.claude/pai/keys/<name>` (mode 0600) and stores only the path.
 
 ## Status line
 
-Line 4 of the statusline is the worker bar: the provider and running-worker
-count, one row per running spawned worker, and today's ✓/✗ tally. It prefers
-the standalone `~/.claude/worker-status-line.mjs` (plain node, built by
-`bun run build`) and falls back to `pai worker status-line`.
+Line 4 of the statusline is the worker bar, prefixed 🐝: a summary of every
+running worker plus today's ✓/✗ tally, never one row per worker — three
+workers used to spell out three goals, three ages and three models on one
+line and none of it fit. It prefers the standalone
+`~/.claude/worker-status-line.mjs` (plain node, built by `bun run build`)
+and falls back to `pai worker status-line`.
 
-Example: `glm ▶2 | fix black buttons · 6m · grep … | spotcheck login · 1m · Edit: button.ts   ✓75 ✗4 today`
+Example: `anthropic ▶3 · sonnet-5 ×2 · haiku-4.5 · oldest 7m   ✓35 ✗11 today`
 
-Segment by segment:
+Segment by segment (`renderStatusLine` in `src/workers/render.ts`):
 
-- provider tag (`glm`) — the chat pane's provider; `workers` when there is no tracked chat pane and the running workers are mixed
-- `▶2` — this terminal's running spawned workers: `state=running` **and** a live pid **and** not the chat pane; nothing at zero, so an idle terminal shows just `glm`
-- row `name · age · step` — the worker's `--label` (else the first 70 chars of the prompt, `unlabeled` when the run had neither), time since it started, and the verb of what it is doing; `#id` (the short form `pai worker ps` shows) joins the name only when two running workers share a label
-- step (`grep …`) — the current tool trimmed to its verb: no `Bash:` prefix, no flags, no quotes, ≤24 chars; file tools keep their `Edit: button.ts` shape
-- `✓75 ✗4 today` — today's finished workers: done vs failed
+- head (`anthropic`) — the live routing choice (`workers.active`) when it
+  names one provider; else the chat pane's provider; else `workers` when
+  several providers are running and there is no tracked chat pane
+- `▶3` — this terminal's running spawned workers: `state=running` **and** a
+  live pid **and** not the chat pane; nothing at zero, so an idle terminal
+  shows just the head
+- `sonnet-5 ×2 · haiku-4.5` — distinct short model names of the running
+  workers, most-populous first, each suffixed `×N` past one; a legacy
+  status with no recorded model counts under `?` rather than vanishing;
+  this segment alone shrinks to fit known terminal width, so the head, the
+  `▶N` count and the today tally never get cut
+- `oldest 7m` — age of the longest-running worker
+- `✓35 ✗11 today` — today's finished workers: done vs failed
 
 The chat pane itself contributes only its provider — its age, state and
-inbox live in `pai worker ps`, never in the bar. Rows are flat and
-oldest-first; the worker forest (`↳` depth) and `◆N` inbox marks are `ps`
-territory too. A status file from before the `origin` flag (a running entry
-with no origin, the unlabeled placeholder and zero turns) is treated as the
-chat pane so it does not render as a phantom worker — that shim goes away
-once every pane runs code that writes `origin`.
+inbox live in `pai worker ps`, never in the bar. The per-worker detail that
+used to live in the bar — goal, age, current tool — moved to each worker's
+own pane bottom line and to `pai worker ps`:
+
+```
+<goal> · <model> · started HH:MM · <age>
+```
+
+`paneStatusRow` in `src/workers/render.ts` renders it; the goal is the
+worker's `--label` (else the first chars of the prompt, `unlabeled` when
+the run had neither), shrunk first when the pane is narrow so the fixed
+`model · started · age` tail always survives. Re-goal a running worker
+without sending it a message — `pai worker goal <id> "<text>"` — or relabel
+and message it in one call with `pai worker say --goal "<text>" <id>
+"<message>"`. Both update the row in `ps`, the pane, and the bar's tally.
+
+The worker forest (`↳` depth) and `◆N` inbox marks are `ps` territory too.
+A status file from before the `origin` flag (a running entry with no
+origin, the unlabeled placeholder and zero turns) is treated as the chat
+pane so it does not render as a phantom worker — that shim goes away once
+every pane runs code that writes `origin`.

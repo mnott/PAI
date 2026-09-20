@@ -23,8 +23,8 @@ import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { buildWakeupContext } from '../../../memory/wakeup.js';
 import { readContinueCheckpoint } from '../../../session/checkpoint-block.js';
+import { sessionRoutingPath } from '../lib/pai-paths.js';
 import {
-  PAI_DIR,
   findNotesDir,
   getProjectDir,
   getCurrentNotePath,
@@ -62,7 +62,7 @@ function findPaiBinary(): string {
  * Returns the routed Notes path if set, or null to use default behavior.
  */
 function getRoutedNotesPath(): string | null {
-  const routingFile = join(PAI_DIR, 'session-routing.json');
+  const routingFile = sessionRoutingPath();
   if (!existsSync(routingFile)) return null;
 
   try {

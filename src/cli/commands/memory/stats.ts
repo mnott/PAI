@@ -183,7 +183,7 @@ export function registerStatsCommands(
 
   memoryCmd
     .command("settings [key] [value]")
-    .description("View or modify search settings in ~/.config/pai/config.json")
+    .description("View or modify search settings in the PAI config file (`pai config path`)")
     .action((key: string | undefined, value: string | undefined) => {
       const config = loadConfig();
       const search = config.search;

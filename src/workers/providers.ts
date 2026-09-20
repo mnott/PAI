@@ -6,10 +6,12 @@
  * section, and writes it back atomically — the file is shared with everything
  * else PAI runs, so a torn write is not an option.
  *
- * Keys are never stored in the config and never accepted inline from the CLI:
- * only file paths. (The MCP `add` tool additionally accepts a raw `key`, which
- * it immediately parks in ~/.config/pai/keys/<name>, mode 0600, storing only
- * the path — a chat is not a place to leave a credential lying around.)
+ * The CLI's `--key` writes the token inline as `key:` in workers.yaml
+ * (quoted, and the file is kept 0600 — see workers-config.ts); `--key-file`
+ * still writes only a path. The MCP `add` tool instead accepts a raw `key`
+ * and parks it in ~/.claude/pai/keys/<name>, mode 0600, storing only the
+ * path in the config — a chat is not a place to leave a credential lying
+ * around.
  */
 
 import { existsSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
@@ -22,6 +24,7 @@ import {
   expandHome,
   isModelCapability,
   keysDir,
+  maskKey,
   nativeAnthropicProvider,
   providerCostTier,
   readWorkersSection,
@@ -33,14 +36,17 @@ import {
 } from "./config.js";
 import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
-import { workersYamlPath } from "./workers-config.js";
+import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
 export interface AddProviderInput {
   name: string;
   baseUrl: string;
   keyFile?: string | null;
+  /** Raw token (MCP `add` only): parked in ~/.claude/pai/keys/<name>, only the path stored. */
   key?: string;
+  /** Raw token (CLI `--key` only): written verbatim as `key:` in workers.yaml. */
+  inlineKey?: string;
   model: string;
   fastModel?: string;
   env?: Record<string, string>;
@@ -52,7 +58,7 @@ export interface AddProviderInput {
   contextWindow?: number;
   costTier?: number;
   tags?: string[];
-  /** Config file override (tests, dry runs); default ~/.config/pai/config.json. */
+  /** Config file override (tests, dry runs); default ~/.claude/pai/config.json. */
   configPath?: string;
 }
 
@@ -92,6 +98,7 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
     protocol: input.protocol ?? "anthropic",
     baseUrl: input.baseUrl,
     keyFile,
+    ...(input.inlineKey ? { key: input.inlineKey } : {}),
     models: input.fastModel
       ? { default: input.model, fast: input.fastModel }
       : { default: input.model },
@@ -366,7 +373,7 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
     lines.push(
       `  pai worker providers add <name> --base-url <url> --key-file <path> --model <model>`
     );
-    lines.push(`config: ${existsSync(workersYamlPath(configPath)) ? workersYamlPath(configPath) : configPath}`);
+    lines.push(`config: ${existsSync(workersYamlPath()) ? workersYamlPath() : configPath}`);
     return lines;
   }
   for (const name of names) {
@@ -381,8 +388,9 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
     lines.push(`${name}  [${flags.join(", ")}]  ${p.baseUrl}`);
     lines.push(`    ${modelPrefsText(p)}${quotaNote}`);
     lines.push(`    ${tierTags}`);
+    if (p.key) lines.push(`    key ${maskKey(p.key)}`);
     if (p.keyFile) lines.push(`    key file ${expandHome(p.keyFile)}`);
-    else lines.push(`    no key file (token "local")`);
+    if (!p.key && !p.keyFile) lines.push(`    no key file (token "local")`);
     if (p.note) lines.push(`    ${p.note}`);
     if (p.protocol === "openai") {
       lines.push(`    via PAI proxy ← ${p.upstreamUrl ?? "(upstreamUrl missing)"}`);
@@ -400,6 +408,6 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
   if (workers.active === "auto") {
     lines.push(`routing: auto — order [${workers.routing.order.join(", ")}], cooldown ${workers.routing.cooldownMinutes}m`);
   }
-  lines.push(`config: ${existsSync(workersYamlPath(configPath)) ? workersYamlPath(configPath) : configPath}`);
+  lines.push(`config: ${existsSync(workersYamlPath()) ? workersYamlPath() : configPath}`);
   return lines;
 }

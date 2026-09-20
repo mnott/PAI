@@ -4,8 +4,8 @@
  * whisper-rules.ts
  *
  * UserPromptSubmit hook that injects:
- * 1. User-defined whisper rules from ~/.claude/whisper-rules.md
- * 2. Budget-aware model tiering guidance from ~/.claude/advisor-mode.json
+ * 1. User-defined whisper rules from ~/.claude/pai/whisper-rules.md
+ * 2. Budget-aware model tiering guidance from ~/.claude/pai/advisor-mode.json
  *
  * The advisor mode implements the "advisor strategy" pattern:
  * - Normal (budget < 70%): use any model freely
@@ -21,11 +21,12 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js";
+import { whisperRulesPath, advisorModePath } from "../../../config/pai-files.js";
 
-const WHISPER_FILE = join(homedir(), ".claude", "whisper-rules.md");
-const ADVISOR_FILE = join(homedir(), ".claude", "advisor-mode.json");
+const WHISPER_FILE = whisperRulesPath();
+const ADVISOR_FILE = advisorModePath();
 
 /** A "# N. TITLE" section header: the start of a new section, tag reset. */
 function isSectionHeader(line: string): boolean {
@@ -163,18 +164,47 @@ function currentLocalTime(): string {
  * true after the first turn — a reminder that misstates its own trigger is one
  * the reader learns to discount.
  */
-function resetReinjectCounter(): void {
+function resetReinjectCounter(sessionId: string): void {
   try {
-    const raw = readFileSync(0, "utf-8");
-    const sessionId = raw.trim() ? (JSON.parse(raw) as { session_id?: string }).session_id ?? "" : "";
     const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "nosession";
     const f = join(tmpdir(), "pai-whisper-reinject", `${safe}.count`);
     if (existsSync(f)) unlinkSync(f);
   } catch { /* best effort — a stale count is not worth failing the hook over */ }
 }
 
+/**
+ * True for prompts this hook never authored a human at the keyboard: a
+ * worker-completion relay ("[Session: …] worker … finished …"), a clickr
+ * control-handover line ("your controls." / "my controls."), or a harness
+ * notification (a "[SYSTEM NOTIFICATION" preamble, or a background task
+ * completion carrying a <task-notification> block). All of these fire
+ * several times per turn during worker-heavy work, so injecting the ~5KB rule
+ * block on each one was landing it 3-5 times in a single turn.
+ */
+export function isRelayedPrompt(prompt: string): boolean {
+  return (
+    /^\s*\[Session:[^\]]+\]/.test(prompt) ||
+    /^\s*(your|my) controls\b/i.test(prompt) ||
+    /^\s*\[SYSTEM NOTIFICATION/.test(prompt) ||
+    prompt.includes("<task-notification>")
+  );
+}
+
 function main() {
-  resetReinjectCounter();
+  let sessionId = "";
+  let prompt = "";
+  try {
+    const raw = readFileSync(0, "utf-8");
+    if (raw.trim()) {
+      const input = JSON.parse(raw) as { session_id?: string; prompt?: string };
+      sessionId = input.session_id ?? "";
+      prompt = input.prompt ?? "";
+    }
+  } catch { /* malformed/empty stdin — treat as no session, no prompt */ }
+
+  resetReinjectCounter(sessionId);
+
+  if (isRelayedPrompt(prompt)) return;
 
   const isWorker = process.env.PAI_WORKER === "1";
   const parts: string[] = [];

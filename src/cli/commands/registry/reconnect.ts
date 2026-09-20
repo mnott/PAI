@@ -13,7 +13,6 @@
  */
 
 import type { Database } from "better-sqlite3";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import {
@@ -23,6 +22,7 @@ import {
   claudeProjectsDir,
   type RegistryProjectRow,
 } from "../../../registry/moved.js";
+import { registryDbPath } from "../../../registry/db.js";
 import { encodeDir } from "../../utils.js";
 import { dim, ok, warn } from "../../utils.js";
 
@@ -95,4 +95,4 @@ export function cmdReconnect(db: Database, opts: { execute?: boolean }): void {
 }
 
 /** Path to the registry, for callers that want to back it up first. */
-export const REGISTRY_PATH = join(homedir(), ".pai", "registry.db");
+export const REGISTRY_PATH = registryDbPath();

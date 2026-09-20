@@ -43,12 +43,12 @@ Claude Code Session
 | Layer | Backend | Location | Purpose |
 |-------|---------|----------|---------|
 | **Registry** | SQLite (always) | `~/.pai/registry.db` | Projects, sessions, tags, aliases, links. Single-writer is fine — only the CLI and daemon write. Uses `better-sqlite3`. |
-| **Memory / Embeddings** | Factory-switchable | PostgreSQL (full) or SQLite (simple) | Text chunks, vector embeddings, file metadata. Chosen at setup time via `~/.config/pai/config.json`. |
+| **Memory / Embeddings** | Factory-switchable | PostgreSQL (full) or SQLite (simple) | Text chunks, vector embeddings, file metadata. Chosen at setup time via `~/.claude/pai/config.json`. |
 
 - **Simple mode (SQLite)**: Zero dependencies. Keyword search (BM25 via FTS5) works immediately. No Docker needed. Best for trying PAI or smaller setups.
 - **Full mode (PostgreSQL + pgvector)**: Semantic search via HNSW vector indexes (768-dim, Snowflake Arctic). GIN indexes for full-text search. Runs in Docker (`pai-pgvector` container, `restart: unless-stopped`). Best for large knowledge bases (100K+ documents).
 
-The storage backend is selected during `pai setup` and configured in `~/.config/pai/config.json` (`storageBackend: "sqlite"` or `"postgres"`). The factory pattern (`src/storage/factory.ts`) instantiates the correct backend at runtime. Both backends implement the same `StorageInterface` (`src/storage/interface.ts`), so all higher-level code (indexer, search, MCP tools) is backend-agnostic.
+The storage backend is selected during `pai setup` and configured in `~/.claude/pai/config.json` (`storageBackend: "sqlite"` or `"postgres"`). The factory pattern (`src/storage/factory.ts`) instantiates the correct backend at runtime. Both backends implement the same `StorageInterface` (`src/storage/interface.ts`), so all higher-level code (indexer, search, MCP tools) is backend-agnostic.
 
 **Embeddings** — Snowflake Arctic Embed produces 768-dimensional embeddings (PostgreSQL mode only). The daemon generates embeddings asynchronously in the background after initial text indexing, so keyword search is available immediately and semantic search follows within minutes. The embedding process runs at reduced CPU priority (`setPriority(pid, 10)`).
 
@@ -138,9 +138,9 @@ If both commands return healthy output, PAI is running. Open a new Claude Code s
     obsidian-vault/      # Symlinked Obsidian vault (if configured)
     backups/             # Timestamped backups from `pai backup`
 
-~/.config/pai/
+~/.claude/pai/
     config.json          # Daemon runtime configuration
-    voices.json          # Voice TTS configuration (optional)
+    voices.json          # Voice TTS configuration (optional, currently unused)
 
 /tmp/
     pai.sock             # Unix socket (daemon)
@@ -272,7 +272,7 @@ L0 and L1 are injected automatically via the `SessionStart` hook. L2 and L3 are 
 ```
 ~/.pai/identity.txt          # L0 identity — edit this to describe yourself
 Notes/                       # L1 source — the most recent session notes are read here
-~/.config/pai/config.json    # wakeupL1Count: N controls how many notes are read for L1
+~/.claude/pai/config.json    # wakeupL1Count: N controls how many notes are read for L1
 ```
 
 ### Temporal Knowledge Graph
@@ -343,7 +343,7 @@ The Stop hook normally fires once at the end of a session. The auto-save feature
 PAI_AUTO_SAVE_INTERVAL=15   # default: 15 human messages between saves
 ```
 
-Set in `~/.config/pai/config.json` as `autoSaveInterval` or via the environment variable. Set to `0` to disable mid-session saves.
+Set in `~/.claude/pai/config.json` as `autoSaveInterval` or via the environment variable. Set to `0` to disable mid-session saves.
 
 **Loop prevention:** The hook sets a `stop_hook_active` flag in the work item. The daemon checks this flag before re-queuing save work. This prevents an auto-save from triggering another auto-save in a feedback loop.
 
@@ -623,7 +623,7 @@ The daemon runs under the label `com.pai.pai-daemon`. The plist is installed to 
 
 ## Work Queue and Session Summary Pipeline
 
-The daemon owns a persistent work queue (`~/.config/pai/work-queue.json`) that decouples hook triggers from actual work. Hooks push lightweight work items to the queue and exit immediately. The daemon processes items sequentially from a background worker loop.
+The daemon owns a persistent work queue (`~/.claude/pai/work-queue.json`) that decouples hook triggers from actual work. Hooks push lightweight work items to the queue and exit immediately. The daemon processes items sequentially from a background worker loop.
 
 ### Work Item Types
 
@@ -898,7 +898,7 @@ A publishable CLAUDE.md template containing generic agent orchestration patterns
 
 ### `templates/agent-prefs.example.md`
 
-Personal preferences template covering identity, project mappings, notifications, voice, and git rules. Copy to `~/.config/pai/agent-prefs.md` and customize.
+Personal preferences template covering identity, project mappings, notifications, voice, and git rules. Copy to `~/.claude/pai/agent-prefs.md` and customize.
 
 ### `templates/voices.example.json`
 
@@ -915,7 +915,7 @@ Voice configuration for TTS integration. Supports Kokoro (local, no API key) and
 }
 ```
 
-Copy to `~/.config/pai/voices.json` and configure your preferred backend.
+Copy to `~/.claude/pai/voices.json` and configure your preferred backend. Currently unused — no code reads this file's contents yet.
 
 ---
 

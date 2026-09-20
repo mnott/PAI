@@ -4,6 +4,7 @@
  */
 export type { WorkItem, TodoItem } from "./project-utils/index.js";
 export {
+  ADAPTER_DIR,
   PAI_DIR,
   PROJECTS_DIR,
   isProbeSession,

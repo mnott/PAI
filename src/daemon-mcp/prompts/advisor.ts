@@ -12,13 +12,13 @@ ALSO USE WHEN user says plain-language budget/mode phrases like:
 - "go full power", "use whatever model", "no budget constraints", "normal mode", "unrestricted" → set mode to normal
 - "back to auto", "reset advisor", "let the budget decide" → set mode to auto
 
-When you detect these, write the appropriate mode to \`~/.claude/advisor-mode.json\` and confirm what you did.
+When you detect these, write the appropriate mode to \`~/.claude/pai/advisor-mode.json\` and confirm what you did.
 
 Advisor mode controls which models subagents use, based on weekly budget consumption.
 
 ### Configuration
 
-The config file is at \`~/.claude/advisor-mode.json\`:
+The config file is at \`~/.claude/pai/advisor-mode.json\`:
 \`\`\`json
 {
   "weeklyBudgetPercent": 90,
@@ -48,7 +48,7 @@ The config file is at \`~/.claude/advisor-mode.json\`:
 ### Workflow
 
 **Show current status:**
-Read \`~/.claude/advisor-mode.json\`. Display the mode, budget percentage, and what model constraints are active.
+Read \`~/.claude/pai/advisor-mode.json\`. Display the mode, budget percentage, and what model constraints are active.
 
 **Update budget percentage:**
 The user reads their weekly budget from the statusline (e.g., "7d: 63% → Fr. 08:00").

@@ -11,6 +11,7 @@ import { cmdMigrate } from "./migrate.js";
 import { cmdDedupe } from "./dedupe.js";
 import { cmdReconnect } from "./reconnect.js";
 import { join } from "node:path";
+import { registryDbPath } from "../../../registry/db.js";
 
 // ---------------------------------------------------------------------------
 // stats
@@ -197,7 +198,7 @@ export function registerRegistryCommands(
     .action((opts: { execute?: boolean }) => {
       cmdDedupe(getDb(), {
         execute: opts.execute,
-        dbPath: join(homedir(), ".pai", "registry.db"),
+        dbPath: registryDbPath(),
       });
     });
 

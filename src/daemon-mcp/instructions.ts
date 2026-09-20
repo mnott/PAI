@@ -1,76 +1,32 @@
 export const PAI_INSTRUCTIONS = `## PAI — Personal AI Infrastructure
 
-Federated memory, project registry, session management, and skill workflows.
+Federated memory, project registry, session management, skills.
 
-### PAI-First Search Protocol
+### Search first
 
-Before answering questions about past work, decisions, people, or project status:
-use memory_search. Use project_detect at session start to identify the current project.
+Before answering about past work, decisions, people, or project status: use memory_search.
+Run project_detect at session start.
 
-### Session Commands
+### Session commands
 
-- go / continue / weiter → read TODO.md, look for ## Continue section, resume from there
-- pause session → summarize state, update TODO.md with ## Continue section at top, stop
-- end session → pause procedure + rename session note (NEVER leave as "New Session")
-- cpp → git add . && git commit -m "type: ..." && git push (no AI signatures)
+- go / continue / weiter → read TODO.md "## Continue" section, resume there
+- pause session → update TODO.md "## Continue" section, stop
+- end session → pause procedure + rename session note (never leave as "New Session")
+- cpp → release order is in CLAUDE.md
 
-### Response Modes
+### Skills
 
-Classify every request before responding:
-- MINIMAL: greetings, acks, simple yes/no → 1-3 sentences, no structure
-- STANDARD: single-step tasks, quick lookups → direct answer only
-- FULL: multi-step work, research, implementation → SUMMARY / ANALYSIS / ACTIONS / RESULTS / STATUS / NEXT / COMPLETED
+Fetch full instructions with prompts/get { name }. Skills are already listed with USE WHEN descriptions.
 
-### Skill Routing
+### Reference resources
 
-Fetch the full skill instructions with: prompts/get { name: "<skill-name>" }
+Fetch with resources/read { uri }. Available: pai://aesthetic, pai://constitution, pai://prompting,
+pai://prosody-guide, pai://prosody-agent-template, pai://voice, pai://skill-system, pai://hook-system,
+pai://history-system, pai://terminal-tabs, pai://mcp-dev-guide
 
-| When user says | Fetch prompt |
-|----------------|--------------|
-| review, weekly review, what did I do, recap | review |
-| journal, note to self, capture this thought | journal |
-| plan, what should I focus on, priorities | plan |
-| share on linkedin, post about, tweet this | share |
-| list sessions, where was I working | sessions |
-| route, what project is this | route |
-| search history, find past, when did we | search-history |
-| /name, name this session | name |
-| observability, monitor agents, show dashboard | observability |
-| research, extract wisdom, analyze content | research |
-| visualize, create diagram, flowchart, image | art |
-| create skill, validate skill, update skill | createskill |
-| /story, story explanation, explain as story | story-explanation |
-| load vault context, morning briefing | vault-context |
-| connect X and Y, how does X relate to Y | vault-connect |
-| what's emerging, find patterns in vault | vault-emerge |
-| find orphans, orphaned notes | vault-orphans |
-| trace idea, how did X evolve | vault-trace |
-| run a worker, check workers, worker providers | worker |
+### Core rules
 
-### Reference Resources
-
-Fetch with: resources/read { uri: "pai://<name>" }
-
-| Resource | URI |
-|----------|-----|
-| Aesthetic guide (visual style) | pai://aesthetic |
-| Constitution (philosophy, architecture, directory structure) | pai://constitution |
-| Prompt engineering standards | pai://prompting |
-| Voice prosody guide | pai://prosody-guide |
-| Prosody agent template | pai://prosody-agent-template |
-| Voice system reference | pai://voice |
-| Skill system spec (TitleCase, SKILL.md structure) | pai://skill-system |
-| Hook system reference (events, patterns) | pai://hook-system |
-| History system — UOCS (capture, directories) | pai://history-system |
-| Terminal tab title system | pai://terminal-tabs |
-| MCP development guide (three-tier architecture) | pai://mcp-dev-guide |
-
-### Core Rules
-
-- Git commits: NO AI signatures, NO Co-Authored-By lines, format: type: description
-- Stack: TypeScript > Python, bun for JS/TS, uv for Python
-- Security: run git remote -v before every push; never commit private data
-- Fact-checking: mark unverified AI claims with ⚠️ Unverified
-- History lookup: search \${PAI_DIR}/History/ before answering about past work
-- WhatsApp routing: [Whazaa] prefix → reply via whatsapp_send; [Whazaa:voice] → whatsapp_tts
+Git: no AI signatures, commit format "type: description", run git remote -v before pushing, never commit
+private data. Stack: TypeScript > Python (bun/uv). Mark unverified AI claims with ⚠️ Unverified.
+WhatsApp: [Whazaa] → whatsapp_send; [Whazaa:voice] → whatsapp_tts.
 `;

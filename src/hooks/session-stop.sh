@@ -39,7 +39,10 @@ if [ ! -t 0 ]; then
   fi
 fi
 
-REGISTRY_DB="$HOME/.pai/registry.db"
+# PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts), falling
+# back to the pre-2026-09-19 ~/.pai/registry.db.
+REGISTRY_DB="${PAI_HOME:-$HOME/.claude/pai}/registry.db"
+[ -f "$REGISTRY_DB" ] || REGISTRY_DB="$HOME/.pai/registry.db"
 [ -f "$REGISTRY_DB" ] || exit 0
 
 # ---------------------------------------------------------------------------
@@ -60,8 +63,24 @@ REGISTRY_DB="$HOME/.pai/registry.db"
 # primitive available in POSIX sh. If the lock is held, skip entirely — the next
 # turn runs it, and every step here is idempotent and derives from current state
 # rather than accumulating.
-LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
+#
+# Location: PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts).
+# A shell script can't import that resolver, so this mirrors its two-path
+# logic inline: new location, else the pre-2026-09-19 ~/.config/pai one if a
+# fresh lock is already sitting there (an in-flight hook from before this
+# script updated) — never both, that would defeat the mutex.
+PAI_HOME_DIR="${PAI_HOME:-$HOME/.claude/pai}"
+LOCK_DIR="$PAI_HOME_DIR/.session-stop.lock"
+OLD_LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
 mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
+
+if [ -d "$OLD_LOCK_DIR" ] && [ ! -d "$LOCK_DIR" ]; then
+  OLD_LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$OLD_LOCK_DIR" 2>/dev/null || echo 0) ))
+  if [ "$OLD_LOCK_AGE" -le 600 ]; then
+    echo "pai: honoring in-flight lock at old location $OLD_LOCK_DIR" >&2
+    LOCK_DIR="$OLD_LOCK_DIR"
+  fi
+fi
 
 # A crashed run must not wedge this forever: treat a lock older than 10 minutes
 # as abandoned. Longer than any observed tail, shorter than a working session.
@@ -149,8 +168,14 @@ fi
 # (seconds, 0 disables the debounce and restores per-turn behaviour).
 
 HOUSEKEEP_INTERVAL="${PAI_HOUSEKEEPING_INTERVAL:-1800}"
-HOUSEKEEP_STAMP="$HOME/.config/pai/.last-housekeeping"
+# Same PAI_HOME two-path logic as LOCK_DIR above.
+HOUSEKEEP_STAMP="$PAI_HOME_DIR/.last-housekeeping"
+OLD_HOUSEKEEP_STAMP="$HOME/.config/pai/.last-housekeeping"
 mkdir -p "$(dirname "$HOUSEKEEP_STAMP")" 2>/dev/null || true
+if [ ! -f "$HOUSEKEEP_STAMP" ] && [ -f "$OLD_HOUSEKEEP_STAMP" ]; then
+  echo "pai: $OLD_HOUSEKEEP_STAMP is at an old location — run \`pai config migrate\` to move it to $HOUSEKEEP_STAMP" >&2
+  HOUSEKEEP_STAMP="$OLD_HOUSEKEEP_STAMP"
+fi
 
 housekeeping_due() {
   [ "$HOUSEKEEP_INTERVAL" = "0" ] && return 0
@@ -205,7 +230,7 @@ else
 fi
 
 # Set tab color to completed state when session ends
-TAB_COLOR="${PAI_DIR:-$HOME/.claude}/tab-color-command.sh"
+TAB_COLOR="${ADAPTER_DIR:-${PAI_DIR:-$HOME/.claude}}/tab-color-command.sh"
 [[ -x "$TAB_COLOR" ]] && "$TAB_COLOR" completed
 
 } >/dev/null 2>&1 &

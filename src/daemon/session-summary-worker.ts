@@ -19,13 +19,14 @@
 
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 
 import {
@@ -43,6 +44,7 @@ import {
 import { openFederation } from "../memory/db.js";
 import { registryDb, storageBackend, daemonConfig } from "./daemon/state.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,8 +64,19 @@ const MAX_JSONL_CHARS: Record<string, number> = {
 /** Maximum user messages to include in the prompt. */
 const MAX_USER_MESSAGES = 30;
 
-/** File tracking last summary timestamps per project. */
-const COOLDOWN_FILE = join(homedir(), ".config", "pai", "summary-cooldowns.json");
+/** File tracking last summary timestamps per project — resolved under
+ *  PAI_HOME, falling back to the pre-2026-09-19 ~/.config/pai location. */
+function oldCooldownFile(): string {
+  return join(homedir(), ".config", "pai", "summary-cooldowns.json");
+}
+
+function cooldownFilePath(): string {
+  return resolvePaiFile(paiHomePath("summary-cooldowns.json"), [oldCooldownFile()], "pai config migrate");
+}
+
+export function migrateSummaryCooldowns(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("summary-cooldowns.json"), [oldCooldownFile()], opts);
+}
 
 /** Claude Code projects directory. */
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
@@ -93,8 +106,9 @@ export interface SessionSummaryPayload {
 
 function loadCooldowns(): Record<string, number> {
   try {
-    if (existsSync(COOLDOWN_FILE)) {
-      return JSON.parse(readFileSync(COOLDOWN_FILE, "utf-8"));
+    const file = cooldownFilePath();
+    if (existsSync(file)) {
+      return JSON.parse(readFileSync(file, "utf-8"));
     }
   } catch { /* ignore */ }
   return {};
@@ -102,7 +116,9 @@ function loadCooldowns(): Record<string, number> {
 
 function saveCooldowns(cooldowns: Record<string, number>): void {
   try {
-    writeFileSync(COOLDOWN_FILE, JSON.stringify(cooldowns, null, 2), "utf-8");
+    const file = paiHomePath("summary-cooldowns.json");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(cooldowns, null, 2), "utf-8");
   } catch { /* ignore */ }
 }
 

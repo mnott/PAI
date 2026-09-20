@@ -13,21 +13,32 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { Pool } from "pg";
 
 import { openRegistry } from "../registry/db.js";
-import { loadConfig } from "../daemon/config.js";
+import { loadConfig, CONFIG_FILE } from "../daemon/config.js";
 import { createStorageBackend } from "../storage/factory.js";
 import { extractAndStoreTriples } from "./kg-extraction.js";
 import { openFederation } from "./db.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // State file
 // ---------------------------------------------------------------------------
 
-const STATE_FILE = join(homedir(), ".config", "pai", "kg-backfill-state.json");
+function oldStateFile(): string {
+  return join(homedir(), ".config", "pai", "kg-backfill-state.json");
+}
+
+function statePath(): string {
+  return resolvePaiFile(paiHomePath("kg-backfill-state.json"), [oldStateFile()], "pai config migrate");
+}
+
+export function migrateKgBackfillState(opts: { dryRun?: boolean } = {}): MigrateFileResult {
+  return migratePaiFile(paiHomePath("kg-backfill-state.json"), [oldStateFile()], opts);
+}
 
 interface BackfillState {
   /** Map of absolute note path -> ISO timestamp of when it was processed. */
@@ -36,8 +47,9 @@ interface BackfillState {
 
 function loadState(): BackfillState {
   try {
-    if (existsSync(STATE_FILE)) {
-      const raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+    const file = statePath();
+    if (existsSync(file)) {
+      const raw = JSON.parse(readFileSync(file, "utf-8"));
       if (raw && typeof raw === "object" && raw.processed) return raw as BackfillState;
     }
   } catch { /* ignore */ }
@@ -46,9 +58,10 @@ function loadState(): BackfillState {
 
 function saveState(state: BackfillState): void {
   try {
-    const dir = join(homedir(), ".config", "pai");
+    const file = paiHomePath("kg-backfill-state.json");
+    const dir = dirname(file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+    writeFileSync(file, JSON.stringify(state, null, 2), "utf-8");
   } catch (e) {
     process.stderr.write(`[kg-backfill] failed to save state: ${e}\n`);
   }
@@ -154,7 +167,7 @@ export async function backfillKgFromNotes(
   if (config.storageBackend !== "postgres") {
     throw new Error(
       "kg backfill requires the Postgres backend. " +
-      'Set "storageBackend": "postgres" in ~/.config/pai/config.json.'
+      `Set "storageBackend": "postgres" in ${CONFIG_FILE}.`
     );
   }
 

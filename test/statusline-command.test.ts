@@ -5,7 +5,7 @@
  * payload on stdin and read back line by line.
  *
  * It is worth testing at all because one of its numbers is not decoration. The
- * 7-day percentage is written to ~/.claude/advisor-mode.json and injected into
+ * 7-day percentage is written to ~/.claude/pai/advisor-mode.json and injected into
  * every session as an instruction about how much work to do. On 2026-09-19 it
  * had been reading 97% against a true 2% for a day and a half — the Keychain
  * OAuth token it fetched with had been emptied, the fetch failed silently, and
@@ -101,7 +101,7 @@ function run(payload: unknown, opts: RunOptions = {}): RunResult {
   });
 
   const lines = out.replace(ANSI, "").split("\n").filter((l) => l.length > 0);
-  const advisorPath = join(paiDir, "advisor-mode.json");
+  const advisorPath = join(paiDir, "pai", "advisor-mode.json");
   return {
     lines,
     header: lines[0] ?? "",

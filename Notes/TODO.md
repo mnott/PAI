@@ -1,21 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration" session-id="6faa172d-31e2-4baa-b112-7cf393cf4894" ts="2026-09-19T12:42:23.117Z" -->
+<!-- pai:checkpoint authored="auto" session="0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update" session-id="5e55c2db-e49f-40a6-9104-bf24a702656a" ts="2026-09-20T08:35:33.079Z" -->
 
-> **Last session:** 0088 - 2026-09-19 - Worker Pane Display, Status Rendering, And Label Integration
-> **Paused at:** 2026-09-19T12:42:23.117Z
+> **Last session:** 0111 - 2026-09-20 - Token Usage Monitoring And Memory File Update
+> **Paused at:** 2026-09-20T08:35:33.079Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 6faa172d-31e2-4baa-b112-7cf393cf4894`
+> Resume with: `claude --resume 5e55c2db-e49f-40a6-9104-bf24a702656a`
 
 T
-i=ckpt-2026-09-19T12-42-23.057Z
-g=And use clicker to take a screenshot of my screen. will see what kind of status line these guys have. One of them is basically just giving me some message back that I don't understand. two of them are…
-d=I was talking about the status line of the workers, not about your own status line. That own status line of yours where the little B is that's anyway not really readable because of all of the text in… | [Session:pai-cli] worker 20260919-140121-27403 role-probe finished rc=0 - see pai worker replay 20260919-140121-27403 | [Session:pai-cli] worker 20260919-140654-56239 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140654-56239 | [Session:pai-cli] worker 20260919-140746-58288 re-goaled by operator failed rc=143 - see pai worker replay 20260919-140746-58288 | Use a worker then to merge all so that at the same time I can see it.
+i=ckpt-2026-09-20T08-35-32.951Z
+g=/Name PAI
+d=do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table | /Name PAI | do the following yourself, not in a worker!  Audit this setup for token waste. Do not fix anything. Report only.  Use your shell and file tools to measure each item. If you cannot invoke slash command… | you wrote it as a table and now that table is as lines. do again as a table
 t=?
-@1=scripts/build-hooks.mjs
-z=auto ckpt (no model); main@68e01a6 merge: workers.yaml configuration for providers, models and classes; 1 dirty; git status for detail
+@1=.aibroker/session-PAI.md
+@2=ARCHITECTURE.md
+@3=CHANGELOG.md
+@4=Notes/TODO.md
+@5=Notes/docs/architecture-decisions.md
+z=auto ckpt (no model); main@3d99742 fix(build): give bundled hooks a real require for CJS interop; 20 dirty; +181 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

@@ -35,12 +35,14 @@ function writeConfig(workers: Record<string, unknown>): void {
 }
 
 /** The containment slice of a plan's args: strict empty MCP + empty tool grant. */
-function containmentOf(args: string[]): { mcpConfig: string; allowedTools: string } {
+function containmentOf(args: string[]): { mcpConfig: string; allowedTools: string; tools: string } {
   const mcp = args.indexOf("--mcp-config");
-  const tools = args.indexOf("--allowedTools");
+  const allowedTools = args.indexOf("--allowedTools");
+  const tools = args.indexOf("--tools");
   return {
     mcpConfig: mcp === -1 ? "" : args[mcp + 1],
-    allowedTools: tools === -1 ? "<absent>" : args[tools + 1],
+    allowedTools: allowedTools === -1 ? "<absent>" : args[allowedTools + 1],
+    tools: tools === -1 ? "<absent>" : args[tools + 1],
   };
 }
 
@@ -74,6 +76,7 @@ describe("planLlmSpawn — provider configured", () => {
       "--model", "example-5.3",
       "--strict-mcp-config", "--mcp-config", join(dir, "logs", "no-mcp.json"),
       "--allowedTools", "",
+      "--tools", "",
       "-p", "--no-session-persistence",
     ]);
     // the provider env the worker runner would set
@@ -103,11 +106,12 @@ describe("planLlmSpawn — no provider configured", () => {
     const plan = await planLlmSpawn("sonnet", join(dir, "missing.json"));
     expect(plan.provider).toBeNull();
     expect(plan.model).toBe("sonnet");
-    const { mcpConfig, allowedTools } = containmentOf(plan.args);
+    const { mcpConfig, allowedTools, tools } = containmentOf(plan.args);
     // containment survives the fallback: no tools, no MCP servers, ever
     expect(plan.args).toContain("--strict-mcp-config");
     expect(mcpConfig.endsWith("no-mcp.json")).toBe(true);
     expect(allowedTools).toBe("");
+    expect(tools).toBe("");
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(plan.env.PATH).toBe(process.env.PATH);
     expect(plan.timeoutMs).toBe(LLM_TIMEOUT_MS.sonnet);
@@ -144,8 +148,9 @@ describe("planLlmSpawn — containment (the 2026-09-18 config-corruption fix)", 
       await planLlmSpawn("sonnet", configPath),
       await planLlmSpawn("opus", configPath),
     ]) {
-      const { allowedTools } = containmentOf(plan.args);
+      const { allowedTools, tools } = containmentOf(plan.args);
       expect(allowedTools).toBe("");
+      expect(tools).toBe("");
       // no file, shell or search tool can hide in an empty grant
       for (const t of ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]) {
         expect(allowedTools).not.toContain(t);
@@ -169,8 +174,9 @@ describe("planLlmSpawn — containment (the 2026-09-18 config-corruption fix)", 
   it("carries the same containment on the no-provider fallback", async () => {
     writeConfig({ enabled: true, active: null, providers: {} });
     const plan = await planLlmSpawn("haiku", configPath);
-    const { mcpConfig, allowedTools } = containmentOf(plan.args);
+    const { mcpConfig, allowedTools, tools } = containmentOf(plan.args);
     expect(mcpConfig.startsWith(dir)).toBe(true);
     expect(allowedTools).toBe("");
+    expect(tools).toBe("");
   });
 });

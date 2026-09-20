@@ -4,11 +4,12 @@
 
 import { existsSync, mkdirSync, readdirSync, linkSync, copyFileSync } from 'fs';
 import { join, basename } from 'path';
-import { PAI_DIR } from '../pai-paths.js';
+import { ADAPTER_DIR, PAI_DIR } from '../pai-paths.js';
 
-// Re-export PAI_DIR for consumers
-export { PAI_DIR };
-export const PROJECTS_DIR = join(PAI_DIR, 'projects');
+// Re-export for consumers. PROJECTS_DIR is a harness-adjacent data dir, not
+// PAI_HOME state — out of scope for the PAI_DIR→PAI_HOME fold (see pai-paths.ts).
+export { ADAPTER_DIR, PAI_DIR };
+export const PROJECTS_DIR = join(ADAPTER_DIR, 'projects');
 
 /**
  * Directories known to be automated health-check / probe sessions.

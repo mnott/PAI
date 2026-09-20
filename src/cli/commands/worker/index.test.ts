@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -71,5 +71,147 @@ describe("worker run --cwd", () => {
     await buildCli().parseAsync(["node", "pai", "worker", "run", "--label", "x"]);
     expect(mocks.runWorker).toHaveBeenCalledTimes(1);
     expect(mocks.runWorker.mock.calls[0][0].cwd).toBeUndefined();
+  });
+});
+
+describe("worker run --label is optional, derived from the prompt", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+  });
+
+  it("derives the label from the prompt's first line when --label is missing", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync(["node", "pai", "worker", "run", "-p", "Reply with exactly one word: pong."]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).not.toBe(2);
+    expect(mocks.runWorker.mock.calls[0][0].label).toBe("Reply with exactly one word: pong.");
+  });
+
+  it("derives the label when --label is given but empty", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync(["node", "pai", "worker", "run", "--label", "", "-p", "print OK"]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).not.toBe(2);
+    expect(mocks.runWorker.mock.calls[0][0].label).toBe("print OK");
+  });
+
+  it("an explicit --label wins verbatim over the derived one", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "my exact label", "-p", "some other first line",
+    ]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    expect(mocks.runWorker.mock.calls[0][0].label).toBe("my exact label");
+  });
+
+  it("does not require --label when --chain is used (the chain labels its own stages)", async () => {
+    mocks.runChain.mockResolvedValue(0);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--chain", "draft,implement", "-p", "add a thing",
+    ]);
+    expect(mocks.runChain).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).not.toBe(2);
+  });
+});
+
+describe("worker run --spec", () => {
+  let dir: string;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads the prompt from the file, byte-for-byte, and passes it as -p", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-spec-"));
+    const specPath = join(dir, "spec.txt");
+    const content = "line one\nline two\nline three\n";
+    writeFileSync(specPath, content, "utf8");
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "spec probe", "--spec", specPath,
+    ]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    const opts = mocks.runWorker.mock.calls[0][0];
+    expect(opts.claudeArgs).toEqual(["-p", content]);
+    expect(opts.specPath).toBe(specPath);
+  });
+
+  it("errors naming the path when the spec file does not exist", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-spec-"));
+    const missing = join(dir, "missing.txt");
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "x", "--spec", missing,
+    ]);
+    expect(mocks.runWorker).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes(missing))).toBe(true);
+    errSpy.mockRestore();
+  });
+
+  it("errors naming the path when the spec file is empty", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-spec-"));
+    const empty = join(dir, "empty.txt");
+    writeFileSync(empty, "", "utf8");
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "x", "--spec", empty,
+    ]);
+    expect(mocks.runWorker).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes(empty))).toBe(true);
+    errSpy.mockRestore();
+  });
+
+  it("errors when --spec and -p are both given", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-spec-"));
+    const specPath = join(dir, "spec.txt");
+    writeFileSync(specPath, "content", "utf8");
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "x", "--spec", specPath, "-p", "also inline",
+    ]);
+    expect(mocks.runWorker).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(
+      errSpy.mock.calls.some((c) => String(c[0]).includes("mutually exclusive"))
+    ).toBe(true);
+    errSpy.mockRestore();
+  });
+});
+
+describe("worker run: long inline -p hint", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+  });
+
+  it("prints a stderr hint (not an error) for a long inline prompt, and still runs", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const longPrompt = "print OK. " + "x".repeat(650);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "run", "--label", "hint probe", "-p", longPrompt,
+    ]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).not.toBe(1);
+    expect(process.exitCode).not.toBe(2);
+    expect(
+      errSpy.mock.calls.some((c) =>
+        String(c[0]).includes("hint: long inline prompts break on shell quoting")
+      )
+    ).toBe(true);
+    errSpy.mockRestore();
+  });
+
+  it("no hint for a short inline prompt", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildCli().parseAsync(["node", "pai", "worker", "run", "--label", "short", "-p", "print OK"]);
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

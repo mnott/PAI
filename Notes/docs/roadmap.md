@@ -64,7 +64,7 @@ Users can customize their PAI installation. Disable the UI module if you don't w
 - `pai plugins disable <module>` removes hook registrations from `~/.claude/settings.json` and unlinks skills from `~/.claude/skills/`
 - Core module cannot be disabled (required: true)
 - Dependency resolution prevents disabling a module that other enabled modules depend on
-- State stored in `~/.config/pai/plugins.json`
+- State stored in `~/.claude/pai/plugins.json`
 
 ### Aligned Marketing
 
@@ -84,7 +84,7 @@ Users can customize their PAI installation. Disable the UI module if you don't w
 - **`pai license status`** - Show current license tier and expiration
 - **`pai license deactivate`** - Remove license from this machine
 - **Signed JWT** for offline validation (no phone-home required)
-- **License file** at `~/.config/pai/license.json`
+- **License file** at `~/.claude/pai/license.json`
 - **Tier gating** - Premium features check license at invocation time
 - **Graceful degradation** - Premium features return "upgrade to Pro/Enterprise" messages, never crash
 - **Upgrade prompts** - Contextual suggestions when free users try premium features

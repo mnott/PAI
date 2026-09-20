@@ -1,5 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { patchAgentHookSettings, AGENT_MATCHER, NEW_AGENT_HOOK } from "./install.js";
+import { patchAgentHookSettings, AGENT_MATCHER, NEW_AGENT_HOOK, shim } from "./install.js";
+
+describe("shell shims", () => {
+  const pai = "/usr/local/bin/pai";
+
+  it("glm is a thin alias of `pai launch --provider glm`", () => {
+    expect(shim("glm", pai)).toContain(`exec ${pai} launch --provider glm "$@"`);
+  });
+
+  it("kimi is a thin alias of `pai launch --provider kimi`", () => {
+    expect(shim("kimi", pai)).toContain(`exec ${pai} launch --provider kimi "$@"`);
+  });
+
+  it("glm-run still runs a headless/worker run, not pai launch", () => {
+    const body = shim("glm-run", pai);
+    expect(body).toContain(`exec ${pai} worker run "$@"`);
+    expect(body).not.toContain("launch");
+  });
+
+  it("glm-ps, glm-log and worker-say keep their existing behaviour", () => {
+    expect(shim("glm-ps", pai)).toContain(`exec ${pai} worker ps`);
+    expect(shim("glm-log", pai)).toContain(`exec ${pai} worker log "$@"`);
+    expect(shim("worker-say", pai)).toContain(`exec ${pai} worker say "$@"`);
+  });
+});
 
 /** The rule as a previous PAI version wrote it: correct command, narrow matcher. */
 function settingsWithNarrowMatcher(): Record<string, unknown> {

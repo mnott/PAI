@@ -58,6 +58,14 @@ export interface WorkerStatus {
   contextTokens?: number | null;
   /** Context meter: window size (init model info or provider default). */
   contextWindow?: number | null;
+  /** Path the prompt was read from via --spec ("-" for stdin), when it was. */
+  spec?: string | null;
+  /**
+   * Caller's --output-format, when the run was headless. A json/stream-json
+   * caller reads its own result and is notified on process exit by the
+   * harness — supervision.ts uses this to skip the duplicate relay send.
+   */
+  outputFormat?: "text" | "json" | "stream-json";
   /** Chain this stage belongs to (the chain id), when it is a chain stage. */
   parent?: string;
   /** Class name of the chain stage ("draft", "implement", …). */

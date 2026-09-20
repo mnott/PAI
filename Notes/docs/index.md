@@ -37,7 +37,7 @@
 
 Claude Code has a memory problem. Every session starts cold. PAI fixes this with persistent memory, session continuity, and a knowledge management system that runs entirely on your machine.
 
-**Author:** Matthias Nott
+**Author:** the maintainer
 **License:** MIT (core is open source)
 **Runtime:** Bun/Node.js 20+, TypeScript
 **Platforms:** Claude Code (full), Cursor (MCP), Gemini CLI (MCP)

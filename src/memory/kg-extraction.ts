@@ -120,6 +120,33 @@ export async function spawnClaude(
 // Triple extraction
 // ---------------------------------------------------------------------------
 
+/**
+ * Slice text down to the outermost JSON structure, dropping any surrounding
+ * prose or code-fence artifacts the LLM added around the JSON object/array.
+ * Returns the input unchanged if no opening brace/bracket is found.
+ */
+export function extractJsonSpan(text: string): string {
+  const firstBrace = text.indexOf("{");
+  const firstBracket = text.indexOf("[");
+
+  let start = -1;
+  let closeChar = "";
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    start = firstBrace;
+    closeChar = "}";
+  } else if (firstBracket !== -1) {
+    start = firstBracket;
+    closeChar = "]";
+  }
+
+  if (start === -1) return text;
+
+  const end = text.lastIndexOf(closeChar);
+  if (end === -1 || end <= start) return text;
+
+  return text.slice(start, end + 1);
+}
+
 export interface ExtractTriplesParams {
   summaryText: string;
   projectSlug: string;
@@ -164,11 +191,16 @@ export async function extractAndStoreTriples(
   if (!jsonOutput) return stats;
 
   // Strip markdown code fences if Claude wrapped the JSON
-  const cleaned = jsonOutput
+  let cleaned = jsonOutput
     .replace(/^```json\s*/m, "")
     .replace(/^```\s*/m, "")
     .replace(/\s*```$/m, "")
     .trim();
+
+  // Some outputs still carry leading/trailing prose or fences the regexes
+  // above miss (e.g. fence not at line start); slice to the outermost
+  // JSON structure before parsing.
+  cleaned = extractJsonSpan(cleaned);
 
   // Support both legacy array format and new structured format
   type LegacyTriple = { subject: string; predicate: string; object: string };
@@ -215,7 +247,12 @@ export async function extractAndStoreTriples(
       return stats;
     }
   } catch (e) {
-    process.stderr.write(`[kg-extraction] JSON parse failed: ${e}\n`);
+    const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+    const head200 = collapse(jsonOutput.slice(0, 200));
+    const tail200 = collapse(jsonOutput.slice(-200));
+    process.stderr.write(
+      `[kg-extraction] JSON parse failed: ${e}. head200="${head200}" tail200="${tail200}"\n`
+    );
     return stats;
   }
 

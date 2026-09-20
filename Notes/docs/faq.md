@@ -67,7 +67,7 @@ PAI indexes your Claude Code session notes and project files from registered pro
 
 ### 9. How often does indexing happen?
 
-Every 5 minutes by default. Configurable via `indexIntervalSecs` in `~/.config/pai/config.json`. You can also trigger manual indexing with `pai memory index`.
+Every 5 minutes by default. Configurable via `indexIntervalSecs` in `~/.claude/pai/config.json`. You can also trigger manual indexing with `pai memory index`.
 
 ### 10. What is context preservation and why do I need it?
 

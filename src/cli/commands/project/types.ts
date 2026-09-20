@@ -34,6 +34,10 @@ export interface SessionConfig {
   autoStart?: boolean;  // whether to auto-start with 'go' prompt
   prompt?: string;      // initial prompt, e.g. 'go' or 'continue'
   model?: string;       // model override, e.g. 'opus', 'sonnet'
+  /** MCP servers this project's interactive supervisor loads (unset = all). Set with `pai project mcp`. */
+  mcp?: string[];
+  /** Built-in tools this project's interactive supervisor loads (unset = all). Set with `pai project tools`. */
+  tools?: string[];
 }
 
 export interface ConfigOption {

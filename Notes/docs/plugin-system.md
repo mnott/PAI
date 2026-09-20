@@ -385,7 +385,7 @@ Future versions (v0.8.0+) will add `pai plugins list`, `pai plugins enable/disab
 Currently (v0.7.0): all features ship as free. Tier annotations are informational only.
 
 Planned approach:
-1. License key stored in `~/.config/pai/license.json`
+1. License key stored in `~/.claude/pai/license.json`
 2. Signed JWT for offline validation (no phone-home)
 3. Checked at daemon startup and premium tool invocation
 4. Graceful degradation: premium features return "upgrade required"

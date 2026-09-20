@@ -67,6 +67,9 @@ function containmentArgs(logDir: string): string[] {
     "--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir),
     // the empty grant allows no tool at all — not Read, not Bash, nothing
     "--allowedTools", "",
+    // --tools "" drops the built-in tool schemas from the static prefix too:
+    // 29,270 tokens with only --allowedTools "" vs 14,049 with --tools "" as well
+    "--tools", "",
   ];
 }
 

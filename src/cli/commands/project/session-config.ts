@@ -6,12 +6,15 @@
 
 import type { Database } from "better-sqlite3";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { dirname } from "node:path";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header, shortenPath, fmtDate, now, renderTable } from "../../utils.js";
 import type { ProjectRow, SessionConfig, ConfigOption } from "./types.js";
-import { resolveIdentifier, requireProject, getProjectAliases } from "./helpers.js";
+import { resolveIdentifier, requireProject, getProjectAliases, getProject } from "./helpers.js";
+import { paiConfigFilePath } from "../../../daemon/config.js";
+import { detectProject } from "../detect.js";
+import { expandMcpNames } from "../../../workers/mcp.js";
+import { readWorkersSection } from "../../../workers/config.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -42,7 +45,7 @@ export function getSessionConfig(project: ProjectRow): SessionConfig {
 
 export function getGlobalDefaults(): SessionConfig {
   try {
-    const configPath = join(homedir(), '.config', 'pai', 'config.json');
+    const configPath = paiConfigFilePath();
     if (existsSync(configPath)) {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       return config.sessionDefaults ?? {};
@@ -52,7 +55,7 @@ export function getGlobalDefaults(): SessionConfig {
 }
 
 export function saveGlobalDefaults(defaults: SessionConfig): void {
-  const configPath = join(homedir(), '.config', 'pai', 'config.json');
+  const configPath = paiConfigFilePath();
   let config: Record<string, unknown> = {};
   try {
     if (existsSync(configPath)) {
@@ -60,7 +63,7 @@ export function saveGlobalDefaults(defaults: SessionConfig): void {
     }
   } catch { /* ignore */ }
   config.sessionDefaults = defaults;
-  mkdirSync(join(homedir(), '.config', 'pai'), { recursive: true });
+  mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 }
 
@@ -70,6 +73,22 @@ function applyPreset(config: SessionConfig, preset: string): SessionConfig {
     return { ...config, permission: 'custom', flags: preset };
   }
   return { ...config, ...presetConfig };
+}
+
+/** The registered project whose root_path covers `cwd` (default: process.cwd()). */
+function currentProject(db: Database, cwd?: string): ProjectRow | undefined {
+  const detected = detectProject(db, cwd);
+  if (!detected) return undefined;
+  return getProject(db, detected.slug);
+}
+
+function saveSessionConfig(db: Database, project: ProjectRow, config: SessionConfig): void {
+  db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify(config), now(), project.id);
+}
+
+function splitNames(names: string[]): string[] {
+  return names.flatMap((n) => n.split(",").map((s) => s.trim()).filter(Boolean));
 }
 
 function parseConfigValue(key: string, value: string): unknown {
@@ -454,4 +473,86 @@ export function cmdConfig(
     console.log(`    ${bold(key.padEnd(14))} ${display}`);
   }
   console.log();
+}
+
+// ---------------------------------------------------------------------------
+// MCP / tools pin for the interactive supervisor launch (pai worker run, no -p)
+// ---------------------------------------------------------------------------
+
+/**
+ * `pai project mcp [names...]` — the MCP servers this project's interactive
+ * supervisor session loads. Operates on whichever registered project's
+ * root_path covers `opts.cwd` (default: process.cwd()) — run it from inside
+ * the project, same as `pai projects here`. Unset (the default) means every
+ * configured server loads, today's behavior. Names are validated against
+ * ~/.claude.json's mcpServers / workers.mcpSets the same way `--mcp` is.
+ */
+export function cmdMcp(
+  db: Database,
+  names: string[],
+  opts: { clear?: boolean; cwd?: string } = {}
+): void {
+  const project = currentProject(db, opts.cwd);
+  if (!project) {
+    console.error(err("No registered project matches the current directory."));
+    console.error(dim("  Register it first: pai projects here <name>"));
+    process.exitCode = 1;
+    return;
+  }
+  const config = getSessionConfig(project);
+
+  if (opts.clear) {
+    delete config.mcp;
+    saveSessionConfig(db, project, config);
+    console.log(ok(`MCP servers unset for ${bold(project.slug)} — all servers load again.`));
+    return;
+  }
+
+  if (!names.length) {
+    console.log(config.mcp?.length ? config.mcp.join(",") : "unset (all)");
+    return;
+  }
+
+  const { workers } = readWorkersSection();
+  config.mcp = expandMcpNames(splitNames(names), workers); // unknown names fail fast
+  saveSessionConfig(db, project, config);
+  console.log(ok(`MCP servers set for ${bold(project.slug)}: ${config.mcp.join(", ")}`));
+}
+
+/**
+ * `pai project tools [names...]` — the built-in tool schemas this project's
+ * interactive supervisor session loads (Read, Edit, Bash, …). Same cwd-based
+ * project resolution and unset semantics as `cmdMcp`. Unlike MCP names, tool
+ * names are not validated against a fixed list — the harness itself rejects
+ * an unrecognised one at launch.
+ */
+export function cmdTools(
+  db: Database,
+  names: string[],
+  opts: { clear?: boolean; cwd?: string } = {}
+): void {
+  const project = currentProject(db, opts.cwd);
+  if (!project) {
+    console.error(err("No registered project matches the current directory."));
+    console.error(dim("  Register it first: pai projects here <name>"));
+    process.exitCode = 1;
+    return;
+  }
+  const config = getSessionConfig(project);
+
+  if (opts.clear) {
+    delete config.tools;
+    saveSessionConfig(db, project, config);
+    console.log(ok(`Tools unset for ${bold(project.slug)} — all built-in tools load again.`));
+    return;
+  }
+
+  if (!names.length) {
+    console.log(config.tools?.length ? config.tools.join(",") : "unset (all)");
+    return;
+  }
+
+  config.tools = splitNames(names);
+  saveSessionConfig(db, project, config);
+  console.log(ok(`Tools set for ${bold(project.slug)}: ${config.tools.join(", ")}`));
 }

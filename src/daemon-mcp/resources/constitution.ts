@@ -14,7 +14,7 @@ The foundational philosophy, architecture, and operations of PAI (Personal AI In
 4. **Skills as Containers** — Each skill is a self-contained unit with SKILL.md, workflows/, and tools/.
 5. **CLI-First** — Every capability should be accessible from the command line before being wrapped in prompts.
 6. **Two-Tier MCP** — Thin routing shim (daemon-mcp) + full capability daemon. Never merge them.
-7. **History as Memory** — All work is captured automatically to \${PAI_DIR}/History/. Work normally, docs handle themselves.
+7. **History as Memory** — All work is captured automatically to \${PAI_HOME}/History/. Work normally, docs handle themselves.
 8. **Fail Gracefully** — Hooks and automations must never block the AI. Always exit 0.
 
 ## Architecture Layers
@@ -34,8 +34,8 @@ User
 |-----------|----------|---------|
 | Memory | \${PAI_DIR}/projects/*/Notes/ | Session notes, todos |
 | Skills | ~/.claude/Skills/ | Workflow instructions |
-| History | \${PAI_DIR}/History/ | Automated capture |
-| Config | ~/.config/pai/ | Agent preferences, voices |
+| History | \${PAI_HOME}/History/ | Automated capture |
+| Config | ~/.claude/pai/ | Agent preferences (config.json, workers.yaml) |
 
 ## Two-Tier MCP Strategy
 

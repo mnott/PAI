@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.42.5",
+  "version": "0.42.6",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -71,6 +71,7 @@
     "better-sqlite3": "^12.6.2",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
+    "js-tiktoken": "^1.0.21",
     "pg": "^8.13.3",
     "yaml": "^2.9.1"
   },

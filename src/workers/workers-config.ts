@@ -15,15 +15,18 @@
  * byte-for-byte across `add`, `use`, `disable`, and every other mutation.
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Document, parseDocument, type Node } from "yaml";
+import { Document, Scalar, parseDocument, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
+import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import {
   ANTHROPIC_NATIVE,
   MODEL_CAPABILITIES,
   NATIVE_ANTHROPIC_MODELS,
   WorkersConfigError,
+  expandHome,
   isModelCapability,
   parseClassesValue,
   parseMcpSetsValue,
@@ -36,9 +39,61 @@ import {
 
 export const WORKERS_YAML_FILENAME = "workers.yaml";
 
-/** workers.yaml lives next to the JSON config, in whatever dir it resolves to. */
-export function workersYamlPath(jsonConfigPath: string): string {
-  return join(dirname(jsonConfigPath), WORKERS_YAML_FILENAME);
+/**
+ * Where workers.yaml lives since 2026-09-19: under the PAI_HOME namespace
+ * dir (~/.claude/pai by default) — this file is per-user state that can
+ * carry API keys and must never be committed, same as the rest of PAI_HOME.
+ */
+function defaultWorkersYamlPath(): string {
+  return paiHomePath(WORKERS_YAML_FILENAME);
+}
+
+/** Briefly the canonical location between 2026-09-19's two migrations —
+ *  read during the transition, never written to again. */
+function oldWorkersYamlPath(): string {
+  return join(homedir(), ".claude", WORKERS_YAML_FILENAME);
+}
+
+/** Where workers.yaml lived before 2026-09-19 — read during the transition,
+ *  never written to (see `pai worker config migrate`). */
+function legacyWorkersYamlPath(): string {
+  return join(homedir(), ".config", "pai", WORKERS_YAML_FILENAME);
+}
+
+/**
+ * The path any read/write of workers.yaml actually uses: PAI_WORKERS_YAML
+ * (tests, power users) first, else the new PAI_HOME location if it exists,
+ * else the most recent old location that is actually on disk (printing a
+ * one-time notice), else the new location (the target a first write creates).
+ */
+export function workersYamlPath(): string {
+  const override = process.env.PAI_WORKERS_YAML;
+  if (override) return override;
+  return resolvePaiFile(
+    defaultWorkersYamlPath(),
+    [oldWorkersYamlPath(), legacyWorkersYamlPath()],
+    "pai worker config migrate"
+  );
+}
+
+/** Where a fresh write (init, migrate, relocate's destination) always
+ *  targets — the new location, or PAI_WORKERS_YAML for test isolation.
+ *  Never an old path: nothing is ever written there again. */
+function writeTargetWorkersYamlPath(): string {
+  return process.env.PAI_WORKERS_YAML ?? defaultWorkersYamlPath();
+}
+
+/**
+ * One-line notice for `pai worker config check` and `pai worker providers`
+ * when workers.yaml is still sitting at an old location. Null once it has
+ * moved (or PAI_WORKERS_YAML is set — that always wins, nothing to migrate).
+ */
+export function workersYamlLegacyNotice(): string | null {
+  if (process.env.PAI_WORKERS_YAML) return null;
+  if (existsSync(defaultWorkersYamlPath())) return null;
+  const found = [oldWorkersYamlPath(), legacyWorkersYamlPath()].find((p) => existsSync(p));
+  if (!found) return null;
+  return `workers.yaml is still at the old location (${found}) — run \`pai worker config migrate\` to move it to ${defaultWorkersYamlPath()}`;
 }
 
 export interface WorkersYamlData {
@@ -59,6 +114,7 @@ function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> 
   if (y.enabled !== undefined) raw.enabled = y.enabled;
   if (y.url !== undefined) raw.baseUrl = y.url;
   if (y.key_file !== undefined) raw.keyFile = y.key_file;
+  if (y.key !== undefined) raw.key = y.key;
   if (y.tier !== undefined) raw.costTier = y.tier;
   if (y.models !== undefined) raw.models = y.models;
   if (y.protocol !== undefined) raw.protocol = y.protocol;
@@ -81,6 +137,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (!p.enabled) y.enabled = false;
   if (p.baseUrl) y.url = p.baseUrl;
   if (p.keyFile) y.key_file = p.keyFile;
+  if (p.key) y.key = p.key;
   if (p.costTier !== undefined) y.tier = p.costTier;
   y.models = { ...p.models };
   if (p.protocol && p.protocol !== "anthropic") y.protocol = p.protocol;
@@ -109,7 +166,7 @@ function parseBuiltinAnthropic(raw: unknown, pathPrefix: string): WorkerProvider
         `set "builtin: true" (optionally with a "models" override) or rename this provider`
     );
   }
-  const disallowed = ["url", "key_file", "engine", "protocol", "upstream_url"].filter(
+  const disallowed = ["url", "key_file", "key", "engine", "protocol", "upstream_url"].filter(
     (k) => p[k] !== undefined
   );
   if (disallowed.length) {
@@ -272,6 +329,19 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * A `key:` value as an explicit double-quoted YAML scalar. A key is an
+ * opaque token, not YAML-authored text — plain-scalar auto-styling could
+ * read one back as a number or boolean (an all-digit token, "true", "no", …)
+ * if it were ever left unquoted, so every write forces the quoted form
+ * regardless of what the plain style would otherwise pick.
+ */
+function quotedKeyNode(value: string): Scalar {
+  const s = new Scalar(value);
+  s.type = Scalar.QUOTE_DOUBLE;
+  return s;
+}
+
+/**
  * Apply the changes between `before` and `after` onto `doc`, touching only
  * the providers/classes/mcp_sets/active entries that actually differ. This is
  * what makes comment preservation possible: an untouched provider's node
@@ -282,7 +352,17 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
   for (const [name, p] of Object.entries(after.providers)) {
     const beforeP = before.providers[name];
     const changed = !beforeP || !shallowEqual(providerToYamlPlain(beforeP), providerToYamlPlain(p));
-    if (changed) doc.setIn(["providers", name], providerToYamlPlain(p));
+    if (changed) {
+      // a fresh (or wholesale-replaced) provider entry is set in one shot as
+      // a plain object — the yaml lib only turns it into real Map/Scalar
+      // nodes lazily at stringify time, so a follow-up setIn/deleteIn into
+      // the same not-yet-a-collection value would fail. Embedding the `key`
+      // as an actual Scalar node here rides along: stringify leaves already-
+      // Node values alone (see stringifyPair.js), quoting only that field.
+      const y: Record<string, unknown> = providerToYamlPlain(p);
+      if (typeof y.key === "string") y.key = quotedKeyNode(y.key);
+      doc.setIn(["providers", name], y);
+    }
   }
   for (const name of Object.keys(before.providers)) {
     if (!(name in after.providers)) doc.deleteIn(["providers", name]);
@@ -358,8 +438,11 @@ export function writeWorkersYamlText(yamlPath: string, text: string): void {
   }
   const tmp = `${yamlPath}.tmp-pai-${process.pid}`;
   try {
-    writeFileSync(tmp, text, "utf8");
+    writeFileSync(tmp, text, { encoding: "utf8", mode: 0o600 });
     renameSync(tmp, yamlPath);
+    // this file can carry API keys (the `key:` field) and is never
+    // committed — every write keeps it private, key or no key.
+    chmodSync(yamlPath, 0o600);
   } catch (e) {
     try {
       if (existsSync(tmp)) unlinkSync(tmp);
@@ -380,6 +463,10 @@ export function starterWorkersYamlText(): string {
 # Providers PAI can run workers on, the model each role uses, and which
 # provider every --class goes to. Edit by hand; \`pai worker providers\` shows
 # the effective result. Comments are preserved when PAI writes this file.
+#
+# Per-user state, kept 0600: this file can hold API keys (\`key:\`, below).
+# Never commit it or share it. \`key_file: <path>\` keeps a secret in its own
+# 0600 file instead, if you'd rather not put it here.
 
 active: anthropic          # provider for \`pai worker run\` without --provider or --class
 
@@ -391,7 +478,7 @@ providers:
       fast: ${NATIVE_ANTHROPIC_MODELS.fast}
   glm:
     url: https://api.z.ai/api/anthropic
-    key_file: ~/.config/zai/api_key
+    key: "<your-api-key>"   # or key_file: <path to a 0600 file>
     tier: 3
     models:
       default: glm-5.3[1m]
@@ -399,7 +486,7 @@ providers:
       image: example-paint
   kimi:
     url: https://api.kimi.ai/coding/
-    key_file: ~/.config/kimi/api_key
+    key: "<your-api-key>"   # or key_file: <path to a 0600 file>
     tier: 3
     models:
       default: k3[1m]
@@ -455,7 +542,9 @@ export function buildWorkersYamlText(data: WorkersYamlData): string {
     lines.push(`  ${name}:`);
     for (const [k, v] of Object.entries(y)) {
       if (k === "models") continue;
-      lines.push(`    ${k}: ${yamlScalar(v)}`);
+      // a key is an opaque token, not YAML-authored text — always quoted so
+      // it never round-trips as a number or boolean (see quotedKeyNode).
+      lines.push(k === "key" ? `    key: ${JSON.stringify(String(v))}` : `    ${k}: ${yamlScalar(v)}`);
     }
     lines.push("    models:");
     for (const [k, v] of Object.entries(p.models)) lines.push(`      ${k}: ${yamlScalar(v)}`);
@@ -515,12 +604,13 @@ export function migrateWorkersToYaml(
   jsonPath: string,
   opts: { force?: boolean; dryRun?: boolean } = {}
 ): MigrateResult {
-  const yamlPath = workersYamlPath(jsonPath);
-  if (existsSync(yamlPath) && !opts.force) {
+  const existing = workersYamlPath();
+  if (existsSync(existing) && !opts.force) {
     throw new WorkersConfigError(
-      `${yamlPath} already exists — refusing to overwrite without --force`
+      `${existing} already exists — refusing to overwrite without --force`
     );
   }
+  const yamlPath = writeTargetWorkersYamlPath();
   const raw = readJsonStrict(jsonPath, jsonPath);
   const workers = parseWorkersConfig(raw.workers);
   const data: WorkersYamlData = {
@@ -555,13 +645,95 @@ export function migrateWorkersToYaml(
  * carry over — that is what `migrate` is for). Refuses if workers.yaml
  * already exists.
  */
-export function initWorkersYaml(jsonPath: string): string {
-  const yamlPath = workersYamlPath(jsonPath);
-  if (existsSync(yamlPath)) {
+export function initWorkersYaml(): string {
+  const existing = workersYamlPath();
+  if (existsSync(existing)) {
     throw new WorkersConfigError(
-      `${yamlPath} already exists — edit it directly, or run \`pai worker config migrate --force\` to regenerate it from the JSON config`
+      `${existing} already exists — edit it directly, or run \`pai worker config migrate --force\` to regenerate it from the JSON config`
     );
   }
+  const yamlPath = writeTargetWorkersYamlPath();
   writeWorkersYamlText(yamlPath, starterWorkersYamlText());
   return yamlPath;
+}
+
+// ---------------------------------------------------------------------------
+// Relocating from an old location
+// ---------------------------------------------------------------------------
+
+export type RelocateResult = MigrateFileResult;
+
+/** True when an old-location workers.yaml exists and nothing is at the new one yet. */
+export function needsWorkersYamlRelocation(): boolean {
+  return (
+    !process.env.PAI_WORKERS_YAML &&
+    !existsSync(defaultWorkersYamlPath()) &&
+    [oldWorkersYamlPath(), legacyWorkersYamlPath()].some((p) => existsSync(p))
+  );
+}
+
+/**
+ * `pai worker config migrate` when workers.yaml is still at an old location
+ * (~/.claude/workers.yaml or, older still, ~/.config/pai/workers.yaml): a
+ * byte-for-byte copy to the new path (comments, keys, everything — this only
+ * changes where the file lives), verified, then the old file is renamed
+ * aside as workers.yaml.migrated-<YYYYMMDD> (never deleted). No JSON
+ * involved, and no secrets are read or transformed beyond copying bytes.
+ */
+export function relocateWorkersYaml(opts: { force?: boolean; dryRun?: boolean } = {}): RelocateResult {
+  const toPath = writeTargetWorkersYamlPath();
+  const result = migratePaiFile(toPath, [oldWorkersYamlPath(), legacyWorkersYamlPath()], opts);
+  if (!result.dryRun && result.fromPath) chmodSync(toPath, 0o600);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Inlining key_file contents as `key:`
+// ---------------------------------------------------------------------------
+
+export interface InlineKeysResult {
+  yamlPath: string;
+  inlined: { provider: string; keyFilePath: string }[];
+  dryRun: boolean;
+}
+
+/**
+ * `pai worker config inline-keys`: for every provider with a `key_file` and
+ * no `key`, read the file, write its trimmed contents as a quoted `key:`,
+ * and remove `key_file`. The key file itself is left on disk — this only
+ * changes what workers.yaml reads from, never deletes a credential the
+ * operator might still want. `dryRun` computes the plan (provider names and
+ * key file paths only — never the key values) without writing anything.
+ */
+export function inlineWorkersYamlKeys(opts: { dryRun?: boolean } = {}): InlineKeysResult {
+  const yamlPath = workersYamlPath();
+  const existing = readWorkersYaml(yamlPath);
+  if (!existing) {
+    throw new WorkersConfigError(`${yamlPath} does not exist — run \`pai worker config init\` first`);
+  }
+  const { doc, data } = existing;
+  const inlined: { provider: string; keyFilePath: string }[] = [];
+  for (const [name, p] of Object.entries(data.providers)) {
+    if (p.key || !p.keyFile) continue;
+    const keyPath = expandHome(p.keyFile);
+    let content: string;
+    try {
+      content = readFileSync(keyPath, "utf8");
+    } catch (e) {
+      throw new WorkersConfigError(
+        `providers.${name}.key_file: could not read ${keyPath}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    const token = content.trim();
+    if (!token) throw new WorkersConfigError(`providers.${name}.key_file: ${keyPath} is empty`);
+    inlined.push({ provider: name, keyFilePath: p.keyFile });
+    if (!opts.dryRun) {
+      doc.setIn(["providers", name, "key"], quotedKeyNode(token));
+      doc.deleteIn(["providers", name, "key_file"]);
+    }
+  }
+  if (!opts.dryRun && inlined.length) {
+    writeWorkersYamlText(yamlPath, String(doc));
+  }
+  return { yamlPath, inlined, dryRun: !!opts.dryRun };
 }

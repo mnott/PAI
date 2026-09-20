@@ -61,10 +61,18 @@ describe("session-start/mcp-deferred-reminder entrypoint", () => {
   const ENTRYPOINT = "src/hooks/ts/session-start/mcp-deferred-reminder.ts";
 
   function runHook(stdin: string): { status: number; stdout: string } {
+    // Explicitly unset PAI_WORKER: this suite may itself be running inside a
+    // worker (PAI_WORKER=1 inherited from process.env), which would make the
+    // session-start worker guard swallow output regardless of `source` and
+    // give a false negative here — these cases are about the source-based
+    // decision, not the worker guard (see session-start-worker-guard.test.ts
+    // for that).
+    const { PAI_WORKER: _unused, ...env } = process.env;
     const stdout = execFileSync("bun", [ENTRYPOINT], {
       input: stdin,
       encoding: "utf8",
       timeout: 15_000,
+      env,
     });
     return { status: 0, stdout };
   }

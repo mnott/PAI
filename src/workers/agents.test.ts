@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { modelTier, modelToClass } from "./agents.js";
+import { deriveLabel, modelTier, modelToClass } from "./agents.js";
 import { parseWorkersConfig } from "./config.js";
 
 const providers = parseWorkersConfig({
@@ -63,5 +63,35 @@ describe("modelToClass", () => {
     expect(modelToClass("mystery-9")).toBe("implement"); // second call: no new log
     expect(errSpy).toHaveBeenCalledTimes(1);
     expect(errSpy.mock.calls[0][0]).toContain('model "mystery-9"');
+  });
+});
+
+describe("deriveLabel", () => {
+  it("truncates a long first line to 48 chars and appends an ellipsis", () => {
+    const prompt = "x".repeat(60);
+    const label = deriveLabel(prompt, "implement");
+    expect(label).toBe(`${"x".repeat(48)}…`);
+  });
+
+  it("strips a leading markdown marker (#, *, -, >)", () => {
+    expect(deriveLabel("# Fix the login bug", "implement")).toBe("Fix the login bug");
+    expect(deriveLabel("- do the thing", "implement")).toBe("do the thing");
+    expect(deriveLabel("> quoted brief", "implement")).toBe("quoted brief");
+    expect(deriveLabel("* starred item", "implement")).toBe("starred item");
+  });
+
+  it("collapses internal whitespace in the first line", () => {
+    expect(deriveLabel("fix   the    thing", "implement")).toBe("fix the thing");
+  });
+
+  it("a multi-line prompt takes the first non-empty line", () => {
+    expect(deriveLabel("\n\n  \nSecond real line\nmore text", "implement")).toBe("Second real line");
+  });
+
+  it("falls back to 'worker <class>' for an empty/whitespace-only prompt", () => {
+    expect(deriveLabel("", "simple")).toBe("worker simple");
+    expect(deriveLabel("   \n  \n", "simple")).toBe("worker simple");
+    expect(deriveLabel(null, "simple")).toBe("worker simple");
+    expect(deriveLabel(undefined, "simple")).toBe("worker simple");
   });
 });

@@ -6,8 +6,7 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
-import { readFileSync as readKey } from "node:fs";
-import { providerKeyPath, resolveModelCapability, type WorkerProvider } from "./config.js";
+import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /**
  * Session-identity variables the SPAWNING session leaves in the environment.
@@ -83,16 +82,8 @@ export function buildRunEnv(
     // needs a placeholder so Claude Code sends an auth header at all
     env.ANTHROPIC_BASE_URL = proxyUrl;
   } else {
-    const keyPath = providerKeyPath(provider);
-    if (keyPath) {
-      try {
-        token = readKey(keyPath, "utf8").trim();
-      } catch {
-        // the caller turns this into a clear error before spawning
-        throw new Error(`key file not readable: ${keyPath}`);
-      }
-      if (!token) throw new Error(`key file is empty: ${keyPath}`);
-    }
+    const resolved = resolveProviderKey(provider);
+    if (resolved) token = resolved;
     env.ANTHROPIC_BASE_URL = provider.baseUrl;
   }
 

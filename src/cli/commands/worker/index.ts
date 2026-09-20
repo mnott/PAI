@@ -23,10 +23,11 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readWorkersSection, type WorkerProvider } from "../../../workers/config.js";
 import { workersLogDir, eventsPath, ledgerPath } from "../../../workers/paths.js";
-import { parseRunnerArgs } from "../../../workers/args.js";
+import { longInlinePromptHint, parseRunnerArgs } from "../../../workers/args.js";
 import { runWorker } from "../../../workers/run.js";
 import { runChain } from "../../../workers/chain.js";
-import { agentClaudeArgs, agentLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
+import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
+import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
 import { openFollowPane, openPaneForWorker, checkPaneForWorker } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
@@ -62,6 +63,12 @@ export function registerWorkerCommands(workerCmd: Command): void {
       "Run one claude-code worker through the configured provider.\n" +
         "Unknown options are passed to claude verbatim (e.g. -p, --allowedTools);\n" +
         "--output-format/--verbose are handled here.\n" +
+        "--label \"<goal>\" is optional — it is the row shown in ps / follow /\n" +
+        "the status line; when absent it is derived from the prompt's first line\n" +
+        "(--chain/--agent derive their own instead).\n" +
+        "--spec <file> (or --spec -) reads the prompt from a file/stdin instead of\n" +
+        "an inline -p '<prompt>', which breaks on shell quoting; mutually\n" +
+        "exclusive with -p.\n" +
         "Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically);\n" +
         "--chain draft,implement[,review] runs a spec-first pipeline;\n" +
         "--agent <name> runs an agent definition from ~/.claude/agents."
@@ -72,13 +79,19 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--role <name>", "Alias of --class (roles were renamed to classes)")
     .option("--chain <stages>", "Comma-separated stage classes, e.g. draft,implement or draft,implement,review")
     .option("--agent <name>", "Run the agent definition ~/.claude/agents/<name>.md on a worker")
-    .option("--model <model>", "Override the provider's model for this run")
-    .option("--label <text>", "Short task label shown in ps / follow / status line")
+    .option(
+      "--model <model>",
+      "Override the model for this run. Headless (-p) workers default to the --class model; " +
+        "an interactive launch (no -p) with no --model uses the harness default model from settings.json."
+    )
+    .option("--label <text>", "Short task label shown in ps / follow / status line (default: first line of the prompt)")
+    .option("--spec <path>", "Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p")
     .option("--cwd <dir>", "Directory the worker runs in (default: this process's cwd)")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
     .option("--no-pane", "Do not open a follow pane for this worker")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
+    .option("--print-cmd", "Print the assembled claude argv as JSON and exit, without spawning (audit tool)")
     .argument("[args...]", "claude arguments, e.g. -p '<task>' --allowedTools 'Read,Edit,Bash'")
     .action(
       async (
@@ -91,10 +104,12 @@ export function registerWorkerCommands(workerCmd: Command): void {
           agent?: string;
           model?: string;
           label?: string;
+          spec?: string;
           cwd?: string;
           mcp?: string;
           pane?: boolean;
           worktree?: boolean;
+          printCmd?: boolean;
         }
       ) => {
         try {
@@ -105,13 +120,27 @@ export function registerWorkerCommands(workerCmd: Command): void {
             if (!statSync(opts.cwd).isDirectory()) throw new Error(`--cwd: not a directory: ${opts.cwd}`);
           }
           let claudeArgs = args;
+          let specPath: string | undefined;
+          if (opts.spec !== undefined) {
+            if (parseRunnerArgs(args).headless) {
+              throw new Error("--spec and -p/--print are mutually exclusive — pass the prompt one way, not both");
+            }
+            const cwdForSpec = opts.cwd ?? process.cwd();
+            specPath = resolveSpecPath(opts.spec, cwdForSpec);
+            const promptText = readSpecPrompt(opts.spec, cwdForSpec);
+            claudeArgs = ["-p", promptText, ...args];
+          } else {
+            const hint = longInlinePromptHint(parseRunnerArgs(args).prompt);
+            if (hint) process.stderr.write(hint + "\n");
+          }
+
           let label = opts.label;
           let agentClass: string | undefined;
           if (opts.agent) {
             // agent definition: system prompt + tools come from the file, the
             // model maps to a class, the label defaults to "<agent>: <prompt>"
             const def = loadAgent(opts.agent);
-            claudeArgs = [...agentClaudeArgs(def), ...args];
+            claudeArgs = [...agentClaudeArgs(def), ...claudeArgs];
             // provider models map into the tier table so routing survives
             // non-Anthropic ids; an unreadable config still resolves aliases
             let agentProviders: Record<string, WorkerProvider> | undefined;
@@ -121,7 +150,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
               agentProviders = undefined;
             }
             agentClass = modelToClass(def.model, agentProviders);
-            if (!label) label = agentLabel(opts.agent, parseRunnerArgs(args).prompt);
+            if (!label) label = agentLabel(opts.agent, parseRunnerArgs(claudeArgs).prompt);
           }
           if (opts.chain) {
             const brief = parseRunnerArgs(claudeArgs).prompt;
@@ -136,6 +165,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
               label,
               noPane: opts.pane === false,
               mcpFlag: opts.mcp,
+              specPath,
               cwd: opts.cwd,
               brief,
               claudeArgs,
@@ -143,15 +173,20 @@ export function registerWorkerCommands(workerCmd: Command): void {
             process.exitCode = rc;
             return;
           }
+          if (!label) {
+            label = deriveLabel(parseRunnerArgs(claudeArgs).prompt, className ?? agentClass ?? "default");
+          }
           const rc = await runWorker({
             providerFlag: opts.provider,
             className: className ?? agentClass,
             modelFlag: opts.model,
             label,
             mcpFlag: opts.mcp,
+            specPath,
             cwd: opts.cwd,
             noPane: opts.pane === false,
             worktreeFlag: opts.worktree,
+            printCmd: opts.printCmd,
             claudeArgs,
           });
           process.exitCode = rc;

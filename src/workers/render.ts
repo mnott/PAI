@@ -393,11 +393,19 @@ export function renderEvent(
 /** Transcript header: id, provider, label, session name, project dir. */
 export function headerLine(
   c: Paint,
-  s: { id: string; label: string; cwd: string; provider?: string; session?: { name?: string } | null }
+  s: {
+    id: string;
+    label: string;
+    cwd: string;
+    provider?: string;
+    session?: { name?: string } | null;
+    spec?: string | null;
+  }
 ): string {
   const bits = [s.provider ? `[${s.provider}]` : "", sessionTag(s)].filter(Boolean).join(" ");
   const sep = bits ? `  ${bits}` : "";
-  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})`);
+  const specBit = s.spec ? `  spec: ${s.spec}` : "";
+  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}`);
 }
 
 /** The chain label behind a stage label: strip the trailing " · <stage>". */

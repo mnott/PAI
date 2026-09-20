@@ -7,6 +7,7 @@ import type { Database } from "better-sqlite3";
 import { fmtDate } from "../../cli/utils.js";
 import type { ProjectRow, SessionStats, TagRow } from "./types.js";
 import { findNotesDir, findClaudeNotesDir } from "./symlinks.js";
+import { paiHomePath, resolvePaiFile, migratePaiDir, type MigrateDirResult } from "../../config/pai-home.js";
 
 /**
  * Generate _index.md listing all projects with session counts, tags, and
@@ -143,9 +144,19 @@ export function generateTopicPages(vaultPath: string, db: Database): number {
   return written;
 }
 
+/** Old default vault path, inside ~/.pai/ (pre-2026-09-19). */
+function oldDefaultVaultPath(): string {
+  return join(homedir(), ".pai", "obsidian-vault");
+}
+
 /**
- * Default vault path: ~/.pai/obsidian-vault
+ * Default vault path: PAI_HOME/obsidian-vault if present, else the old
+ * ~/.pai/obsidian-vault (one-time stderr notice), else the new path.
  */
 export function defaultVaultPath(): string {
-  return join(homedir(), ".pai", "obsidian-vault");
+  return resolvePaiFile(paiHomePath("obsidian-vault"), [oldDefaultVaultPath()], "pai config migrate --obsidian-vault");
+}
+
+export function migrateObsidianVaultDir(opts: { dryRun?: boolean } = {}): MigrateDirResult {
+  return migratePaiDir(paiHomePath("obsidian-vault"), [oldDefaultVaultPath()], opts);
 }

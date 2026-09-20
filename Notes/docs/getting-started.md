@@ -97,7 +97,7 @@ The interactive wizard walks through 15 steps:
 10. **Claude Code settings** - Configure settings.json
 11. **Daemon installation** - Register launchd service
 12. **MCP server** - Register PAI as an MCP server in ~/.claude.json
-13. **Directory creation** - Create ~/.pai/ and ~/.config/pai/
+13. **Directory creation** - Create ~/.pai/ and ~/.claude/pai/
 14. **Initial indexing** - Index your existing Claude Code projects
 15. **Verification** - Confirm everything is working
 
@@ -159,9 +159,9 @@ This ensures context compaction triggers at 80% and PAI's preservation hooks kee
     obsidian-vault/      # Symlinked Obsidian vault (if configured)
     backups/             # Timestamped backups
 
-~/.config/pai/
+~/.claude/pai/
     config.json          # Runtime configuration
-    voices.json          # Voice TTS configuration (optional)
+    voices.json          # Voice TTS configuration (optional, currently unused)
 
 ~/.claude/
     Hooks/               # Compiled lifecycle hooks (.mjs)
