@@ -21,8 +21,14 @@ export const PER_PROMPT_HOOK_COST_AMBER = 0.05;
 export const PER_PROMPT_HOOK_COST_RED = 0.15;
 export const FIRST_TURN_CONTEXT_LIMIT = 30_000;
 export const DAEMON_FAILURE_RATE_LIMIT = 0.05;
-export const CONTEXT_GROWTH_AVG_RED = 100_000;
-export const CONTEXT_GROWTH_MAX_AMBER = 150_000;
+/** Ratios of the session's own derived trigger (SessionReportOutput.trigger
+ *  — see context-trigger.ts), NOT absolute token counts: a 1M-window session
+ *  and a 200k-window session have different triggers, and rating both
+ *  against one constant is the exact defect these were changed to fix (a
+ *  200k-yardstick audit drove a wrong config change on 2026-09-20 — see
+ *  audits/token-waste/reviewprompt.md). */
+export const CONTEXT_GROWTH_AVG_RED_RATIO = 0.5;
+export const CONTEXT_GROWTH_MAX_AMBER_RATIO = 0.75;
 export const MODEL_SWITCH_REBUILD_LIMIT = 20_000;
 
 export type Severity = "RED" | "AMBER" | "GREEN";
@@ -177,16 +183,20 @@ export function buildFindings(input: {
   if (input.session) {
     const avg = input.session.avgContext ?? 0;
     const max = input.session.maxContext ?? 0;
+    const trigger = input.ctxThreshold;
     const severity: Severity =
-      avg > CONTEXT_GROWTH_AVG_RED || input.session.turnsAboveThreshold > 0
+      avg > CONTEXT_GROWTH_AVG_RED_RATIO * trigger || input.session.turnsAboveThreshold > 0
         ? "RED"
-        : max > CONTEXT_GROWTH_MAX_AMBER
+        : max > CONTEXT_GROWTH_MAX_AMBER_RATIO * trigger
           ? "AMBER"
           : "GREEN";
     findings.push({
       finding: "context growth",
       severity,
-      evidence: `avg ${avg}, max ${max}, ${input.session.turnsAboveThreshold} turns > ${input.ctxThreshold}, ${input.session.turns} turns`,
+      evidence:
+        `avg ${avg.toLocaleString("en-US")}, max ${max.toLocaleString("en-US")} of trigger ${trigger.toLocaleString("en-US")} ` +
+        `(window ${input.session.window.toLocaleString("en-US")}, override ${input.session.autocompactPct}), ` +
+        `${input.session.turnsAboveThreshold} turns above`,
     });
 
     const perPromptHookCost = input.hooks.totalsByEvent.UserPromptSubmit;

@@ -11,9 +11,9 @@
 
 T
 i=config-yaml-capabilities-keepalive
-g=Released as v0.50.0 (cpp on 2026-09-20 ~20:05): config.yaml canonical, open-set capabilities + engine:image, session cache keepalive, model catalogue, statusline reads workers.yaml. Worker branches worker/20260920-1838{35-57646,43-58519,46-59109} and worker/20260920-183924-61391 can be deleted.
+g=Released v0.50.0 then v0.51.0 (2026-09-20 ~20:45). v0.51.0: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE restored to 80 (audit run 4 had set 20, so 1M sessions compacted at ~196k; user rejected). Audit is window-aware (statusline state -> transcript field -> model id -> compaction history -> 200k), context-growth severities are ratios of the trigger, reviewprompt forbids lowering the override. Statusline: context left computed on the real window in tokens, 1d budget is flat 100/7. context-fill discards compaction samples from another regime and uses pct x (window - 20k).
 d=Live state: ~/.claude/pai/config.yaml (0600) canonical, config.json.migrated-2026-09-20 kept. Keepalive enabled and proven working after the pane-id fix: AIBroker reports iTerm pane ids, the tick now maps them to Claude session ids via claude-session-map.json (ledger shows session=<claudeId> pane=<paneId> and skips only for idle < 50 min). Daemon ensureConfigDir no longer recreates config.json next to config.yaml (it did at 19:29; stray file removed). Statusline converts workers.yaml providers via node+yaml into a 0600 cache holding only models/usage/keyFile (first version leaked inline keys world-readable to /tmp/claude; fixed, tests assert no secret and mode 600). Daemon restarted 19:59. Tests 1577 -> 1739, tsc 80 unchanged.
-t=bunx vitest run: 121 files / 1739 pass; npx tsc --noEmit: 80 (baseline); npm run build OK
+t=bunx vitest run: 122 files / 1756 pass; npx tsc --noEmit: 80 (baseline); npm run build OK
 @1=docs/config.md
 @2=docs/workers-config.md
 @3=docs/cache-keepalive.md

@@ -130,6 +130,13 @@ function cmdHooks(opts: { json?: boolean }): void {
 function printSession(report: SessionReportOutput): void {
   console.log(header(`Session usage: ${report.path}`));
   console.log(dim(`size: ${report.sizeBytes} bytes, assistant turns with usage: ${report.turns}`));
+  console.log(
+    dim(
+      `window: ${report.window.toLocaleString("en-US")} (${report.windowSource}), ` +
+        `trigger: ${report.trigger.toLocaleString("en-US")} (${report.triggerSource}, ` +
+        `override ${report.autocompactPct}%)`
+    )
+  );
   const rows = Object.entries(report.totals).map(([key, value]) => [
     key,
     value.toLocaleString("en-US"),
@@ -546,7 +553,11 @@ async function gatherCombined(): Promise<CombinedData> {
   const cwd = process.cwd();
   const files = auditFiles(defaultFileSet(cwd));
   const hooks = auditHooks(cwd);
-  const session = await auditSession(newestSessionLog() ?? undefined, DEFAULT_CTX_THRESHOLD).catch(() => null);
+  // No threshold override here: auditSession derives window+trigger from the
+  // session's own transcript (see context-trigger.ts) instead of rating
+  // every session against a fixed 200k — DEFAULT_CTX_THRESHOLD is only the
+  // last-resort fallback when a session has no transcript to derive from.
+  const session = await auditSession(newestSessionLog() ?? undefined).catch(() => null);
   const daemon = auditDaemon();
   const env = auditEnv();
   const spawn = await auditSpawn();
@@ -556,7 +567,8 @@ async function gatherCombined(): Promise<CombinedData> {
   const subagents = auditSubagents(homedir(), cwd);
   const mcp = await auditMcp({ cwd, homeDir: homedir() });
 
-  const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold: DEFAULT_CTX_THRESHOLD });
+  const ctxThreshold = session?.trigger ?? DEFAULT_CTX_THRESHOLD;
+  const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold });
 
   return { encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule, skills, subagents, mcp };
 }
@@ -721,7 +733,7 @@ export function registerAuditCommands(auditCmd: Command): void {
     .command("session")
     .description("Cache/input/output token split for a session transcript (default: newest)")
     .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
-    .option("--ctx-threshold <n>", "Per-turn context size above which a turn counts as 'above threshold' (default 200000)")
+    .option("--ctx-threshold <n>", "Override the derived compaction trigger (default: derived from the session's own window and measured/configured trigger — see 'window'/'trigger' in the report header)")
     .option("--history [n]", "List first-turn context of the newest n sessions in this project's transcript directory (default 20)")
     .option("--turn <n>", "Attribute API call n's context growth to the transcript lines injected since the previous call")
     .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean; turn?: string }) => {

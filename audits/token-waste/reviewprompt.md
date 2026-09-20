@@ -75,3 +75,11 @@ cannot yet check gets a check added to `src/audit/`. Do not commit.
 Rules: measure, do not estimate. Write UNKNOWN rather than guessing. Compare
 against the previous run file; a finding that survived its fix is reported as
 "fix did not hold". No personal data in the run file: home directory as `~`.
+
+## Rules the audit may not break
+
+Never lower `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` below 80, and never treat a 1M-
+window session as a 200k one. The user wants the full window. A RED "context
+growth" finding on a 1M-window session is a finding about the instrument
+(it is rating the session against the wrong yardstick), not about the
+session — fix the instrument's derivation, not the session's configuration.

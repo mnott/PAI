@@ -15,3 +15,4 @@ and session notes of 2026-09-20, summarised in `2026-09-20-run4.md`.
 - 2026-09-20 run9: 0 RED, 1 AMBER, 11 GREEN — 2026-09-20-run9.md
 - 2026-09-20 run10: 0 RED, 1 AMBER, 12 GREEN — 2026-09-20-run10.md
 - 2026-09-20 run11: 0 RED, 0 AMBER, 13 GREEN — 2026-09-20-run11.md
+- 2026-09-20 20:16: run4's `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` change reverted 20 → 80 (backup `~/.claude/pai/backups/settings.json.2026-09-20T2016`). Root cause: the audit rated a 1M-window session against a hardcoded 200k threshold, called the resulting RED "context growth" finding real, and lowered the override to make the 1M session compact near 196k — the user wants the full 1M window. Fixed by deriving window/trigger per session (`src/audit/context-trigger.ts`) instead of assuming 200k; see reviewprompt.md, "Rules the audit may not break".

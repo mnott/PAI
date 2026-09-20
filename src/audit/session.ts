@@ -12,6 +12,7 @@ import { parseSessionUsage, totalUsageTokens, type SessionUsageReport } from "./
 import { encodeDir } from "../cli/utils.js";
 import { firstTurnBreakdown, type FirstTurnBreakdown } from "./first-turn.js";
 import { loadConfig } from "../daemon/config.js";
+import { deriveSessionTrigger, type WindowSource, type SessionTriggerSource } from "./context-trigger.js";
 
 /** Newest *.jsonl under ~/.claude/projects, excluding subagents/. */
 export function newestSessionLog(): string | null {
@@ -50,19 +51,50 @@ export interface SessionReportOutput extends SessionUsageReport {
   totalTokens: number;
   percentages: Record<string, number>;
   firstTurn: FirstTurnBreakdown | null;
+  /** The session's own context window (from its transcript, or the last
+   *  assistant model id — see context-trigger.ts), never a constant assumed
+   *  for every session. */
+  window: number;
+  windowSource: WindowSource;
+  /** The compaction trigger this window derives to — what `threshold`
+   *  (turnsAboveThreshold, and the caller's ctxThreshold for severity) was
+   *  actually set from, unless `--ctx-threshold` overrode it. */
+  trigger: number;
+  autocompactPct: number;
+  triggerSource: SessionTriggerSource;
 }
 
+/**
+ * `threshold`, when given (`--ctx-threshold`), is an explicit override for
+ * both the per-turn "above threshold" count and the trigger reported below.
+ * Left undefined, the trigger — and the threshold used to parse the
+ * transcript — are DERIVED from the session's own window and this project's
+ * own measured/configured compaction trigger (deriveSessionTrigger), never
+ * assumed to be 200k regardless of the session.
+ */
 export async function auditSession(path?: string, threshold?: number): Promise<SessionReportOutput | null> {
   const target = path ?? newestSessionLog();
   if (!target) return null;
   const keepaliveWord = loadConfig().sessions.cacheKeepalive.prompt;
-  const report = await parseSessionUsage(target, threshold, keepaliveWord);
+  const derived = deriveSessionTrigger(target);
+  const effectiveThreshold = threshold ?? derived.trigger;
+  const report = await parseSessionUsage(target, effectiveThreshold, keepaliveWord);
   const total = totalUsageTokens(report.totals) || 1;
   const percentages: Record<string, number> = {};
   for (const [key, value] of Object.entries(report.totals)) {
     percentages[key] = (100 * value) / total;
   }
-  return { ...report, totalTokens: total, percentages, firstTurn: firstTurnBreakdown(target) };
+  return {
+    ...report,
+    totalTokens: total,
+    percentages,
+    firstTurn: firstTurnBreakdown(target),
+    window: derived.window,
+    windowSource: derived.windowSource,
+    trigger: effectiveThreshold,
+    autocompactPct: derived.autocompactPct,
+    triggerSource: threshold !== undefined ? "override" : derived.triggerSource,
+  };
 }
 
 export interface SessionHistoryRow {

@@ -357,3 +357,69 @@ describe("working directory", () => {
     expect(r.header).not.toMatch(/@\s*$/);
   });
 });
+
+describe("auto-compact remaining", () => {
+  // Claude Code fires auto-compact at pct/100 * (window - 20000) tokens, not
+  // at pct% of the raw window. A plain (threshold - context_pct) subtraction
+  // reads "0% left" on a 1M-token session with 800K of real capacity free.
+  it("expresses the trigger distance in tokens of the real window, not raw percent", () => {
+    const r = run(
+      payload({
+        model: { id: "claude-fable-5-1[1m]", display_name: "Fable 5.1 (1M context)" },
+        context_window: { used_percentage: 20, context_window_size: 1_000_000 },
+      }),
+      { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" } },
+    );
+    // trigger = 80% * (1,000,000 - 20,000) = 784,000; used = 200,000;
+    // left = 584,000 tokens = 58% of the 1M window.
+    expect(r.usage).toContain("(58% left, 584K)");
+  });
+
+  it("floors at 0 once used tokens pass the trigger", () => {
+    const r = run(
+      payload({
+        model: { id: "claude-fable-5-1[1m]", display_name: "Fable 5.1 (1M context)" },
+        context_window: { used_percentage: 20, context_window_size: 1_000_000 },
+      }),
+      { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "20" } },
+    );
+    // trigger = 20% * 980,000 = 196,000, already below the 200,000 used.
+    expect(r.usage).toContain("(0% left, 0K)");
+  });
+});
+
+describe("1d pace budget", () => {
+  // The daily figure is the flat weekly share (100/7 = 14%), the amount the
+  // user may spend today — not the remaining capacity divided by the
+  // remaining days, which shrinks as the week is used and double-counts
+  // overspend.
+  it("renders the flat 14% share alongside the actual daily spend", () => {
+    const rateLimitsAt = (sevenUsed: number, remainingDaysX10: number) => ({
+      five_hour: { used_percentage: 9, resets_at: NOW() + 3 * 3600 },
+      seven_day: {
+        used_percentage: sevenUsed,
+        resets_at: NOW() + Math.round((remainingDaysX10 / 10) * 86400),
+      },
+    });
+    // 1.5 days elapsed of 7, 37% spent: spend_per_day = 37*10/15 = 24.
+    const r = run(payload({ rate_limits: rateLimitsAt(37, 55) }));
+    expect(r.usage).toContain("1d: 24% / 14%");
+  });
+
+  it("keeps the budget at 14% regardless of how much of the week remains", () => {
+    const rateLimitsAt = (sevenUsed: number, remainingDaysX10: number) => ({
+      five_hour: { used_percentage: 9, resets_at: NOW() + 3 * 3600 },
+      seven_day: {
+        used_percentage: sevenUsed,
+        resets_at: NOW() + Math.round((remainingDaysX10 / 10) * 86400),
+      },
+    });
+    // 6 days elapsed, 1 day left, 42% spent: spend_per_day = 42*10/60 = 7.
+    const rOneDayLeft = run(payload({ rate_limits: rateLimitsAt(42, 10) }));
+    expect(rOneDayLeft.usage).toContain("/ 14%");
+
+    // 2 days elapsed, 5 days left, 20% spent: spend_per_day = 20*10/20 = 10.
+    const rFiveDaysLeft = run(payload({ rate_limits: rateLimitsAt(20, 50) }));
+    expect(rFiveDaysLeft.usage).toContain("/ 14%");
+  });
+});
