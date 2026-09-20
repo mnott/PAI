@@ -12,8 +12,12 @@ to `runs.md`. Its subcommands cover the items below one by one:
 `subagents`, `mcp`, `ladder --live` (billed, only when asked). Use them for
 detail; use your shell and file tools only for what the instrument marks
 UNKNOWN, and add that measurement to `src/audit/` afterwards so the next run
-does not need the shell. If you cannot invoke slash commands yourself, ask me
-to run /context and /usage and paste the output, then continue.
+does not need the shell. Do not run or paste `/context`: run in-session it
+cost 9,139 billed tokens on the turn it landed in run 11 (raw stdout with
+ANSI codes and the expanded per-tool table are both sent, and both ride every
+later turn); before the first API call its total under-reports (17.6k shown,
+37,559 billed in run 10). `session` prints the first-turn breakdown and
+`session --turn <n>` attributes any later turn's growth.
 
 1. MEMORY
    Find every CLAUDE.md in scope: this project, parent directories, the user

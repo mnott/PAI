@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseSessionUsage, totalUsageTokens, type SessionUsageReport } from "./session-usage.js";
 import { encodeDir } from "../cli/utils.js";
+import { firstTurnBreakdown, type FirstTurnBreakdown } from "./first-turn.js";
 
 /** Newest *.jsonl under ~/.claude/projects, excluding subagents/. */
 export function newestSessionLog(): string | null {
@@ -47,6 +48,7 @@ export function newestSessionLog(): string | null {
 export interface SessionReportOutput extends SessionUsageReport {
   totalTokens: number;
   percentages: Record<string, number>;
+  firstTurn: FirstTurnBreakdown | null;
 }
 
 export async function auditSession(path?: string, threshold?: number): Promise<SessionReportOutput | null> {
@@ -58,7 +60,7 @@ export async function auditSession(path?: string, threshold?: number): Promise<S
   for (const [key, value] of Object.entries(report.totals)) {
     percentages[key] = (100 * value) / total;
   }
-  return { ...report, totalTokens: total, percentages };
+  return { ...report, totalTokens: total, percentages, firstTurn: firstTurnBreakdown(target) };
 }
 
 export interface SessionHistoryRow {

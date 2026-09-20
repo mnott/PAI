@@ -12,6 +12,7 @@ import type { EnvReport } from "./env.js";
 import type { SkillsReport } from "./skills.js";
 import type { SubagentsReport } from "./subagents.js";
 import type { McpReport } from "./mcp.js";
+import { firstTurnEvidence } from "./first-turn.js";
 import { SINGLE_FILE_LIMIT, TOTAL_LIMIT } from "./files.js";
 import { SKILL_CATALOGUE_AMBER, SKILL_CATALOGUE_RED } from "./skills.js";
 
@@ -93,10 +94,17 @@ export function buildFindings(input: {
 
   if (input.session) {
     const first = input.session.firstTurnContext ?? 0;
+    // A session whose first prompt was abandoned (Escape, re-submit) reads
+    // low here because its skill listing sits on the dead branch; the
+    // dead-branch figure in the evidence says so.
+    const evidence =
+      typeof input.session.firstTurn?.apiContext === "number"
+        ? `${first} tokens: ${firstTurnEvidence(input.session.firstTurn)} (${input.session.path})`
+        : `${first} tokens (${input.session.path})`;
     findings.push({
       finding: "first-turn context size",
       severity: first > FIRST_TURN_CONTEXT_LIMIT ? "AMBER" : "GREEN",
-      evidence: `${first} tokens (${input.session.path})`,
+      evidence,
     });
   }
 

@@ -5,9 +5,17 @@
  *            whisper rules, project auto-memory) and their total
  * hooks    — token cost of every SessionStart / UserPromptSubmit hook,
  *            plus which PreToolUse hooks rewrite Bash commands
- * session  — cache/input/output token split for one session transcript;
- *            `--history [n]` lists the first-turn context of the newest n
- *            sessions in this project's transcript directory, newest first
+ * session  — cache/input/output token split for one session transcript,
+ *            plus a first-turn breakdown attributing turn-1 tokens to the
+ *            live-lineage transcript lines (hooks, skill listing, deferred
+ *            tools, MCP instructions, prompt) with dead-branch tokens
+ *            (abandoned prompts, persisted but never sent) reported
+ *            separately; `--history [n]` lists the first-turn context of
+ *            the newest n sessions in this project's transcript directory,
+ *            newest first; `--turn <n>` attributes API call n's context
+ *            growth to the lines injected since the previous call (hooks,
+ *            prompts, tool results, the previous call's re-sent output)
+ *            plus the cl100k residual against the billing tokenizer
  * spawn    — first-turn context overhead: Agent-tool subagents vs. pai
  *            workers (interactive/pane vs. headless); `--detail` adds
  *            per-log prompt-token/overhead rows and a median-overhead column
@@ -38,6 +46,7 @@ import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
 import { auditHooks, type HooksReport } from "../../audit/hooks.js";
 import { auditSession, newestSessionLog, sessionHistory, type SessionReportOutput, type SessionHistoryRow } from "../../audit/session.js";
+import { turnBreakdown, type TurnBreakdown } from "../../audit/first-turn.js";
 import { auditSpawn, type SpawnGroupStats, type SpawnReport } from "../../audit/spawn.js";
 import { auditDaemon, type DaemonReport } from "../../audit/daemon.js";
 import { auditEnv, type EnvReport } from "../../audit/env.js";
@@ -129,6 +138,15 @@ function printSession(report: SessionReportOutput): void {
   rows.push(["TOTAL", report.totalTokens.toLocaleString("en-US"), "100.0%"]);
   console.log(renderTable(["metric", "tokens", "share"], rows));
   console.log(`context on first turn: ${report.firstTurnContext ?? "n/a"}`);
+  if (report.firstTurn && report.firstTurn.apiContext !== null) {
+    const ft = report.firstTurn;
+    console.log(header("first-turn breakdown (live lineage, cl100k)"));
+    const ftRows = ft.items.filter((i) => i.tokens > 0).map((i) => [i.kind, String(i.tokens), i.label]);
+    console.log(renderTable(["kind", "tokens", "label"], ftRows));
+    console.log(`transcript-side: ${ft.transcriptTokens}`);
+    console.log(`remainder (system prompt + tool schemas + agents + memory): ${ft.remainder}`);
+    console.log(`dead-branch: ${ft.deadBranchTokens} tokens on ${ft.deadBranchLines} lines, persisted but never sent`);
+  }
   console.log(`context on last turn:  ${report.lastTurnContext ?? "n/a"}`);
   console.log(
     `cache_creation split: ephemeral_5m=${report.cacheCreationSplit.ephemeral5m}, ` +
@@ -156,6 +174,23 @@ function printSession(report: SessionReportOutput): void {
   }
 }
 
+function printTurnBreakdown(tb: TurnBreakdown): void {
+  console.log(header(`turn ${tb.turn} attribution (live lineage, cl100k)`));
+  const rows = tb.items
+    .filter((i) => i.tokens > 0)
+    .map((i) => [String(i.tokens), i.kind, i.label.replace(/\s+/g, " ").slice(0, 60)]);
+  console.log(renderTable(["tokens", "kind", "label"], rows));
+  console.log(`transcript-side ${tb.transcriptTokens}`);
+  console.log(`billed delta ${tb.billedDelta ?? "n/a"} (context ${tb.apiContext ?? "n/a"} after ${tb.prevApiContext})`);
+  console.log(`previous call output ${tb.prevOutputTokens} (includes thinking, re-sent on tool turns)`);
+  console.log(
+    `previous call visible output ${tb.prevVisibleTokens} (cl100k, listed as assistant:prev, not in transcript-side)`
+  );
+  console.log(
+    `residual ${tb.residual ?? "n/a"}: positive = cl100k undercount vs the billing tokenizer (1.2-1.45x measured on tool output and markdown tables); negative = the previous call's thinking was not re-sent (only re-sent inside a tool loop)`
+  );
+}
+
 function printSessionHistory(rows: SessionHistoryRow[]): void {
   console.log(header("Session history (newest first)"));
   const tableRows = rows.map((r) => [
@@ -173,13 +208,30 @@ function printSessionHistory(rows: SessionHistoryRow[]): void {
 
 async function cmdSession(
   path: string | undefined,
-  opts: { json?: boolean; ctxThreshold?: string; history?: string | boolean }
+  opts: { json?: boolean; ctxThreshold?: string; history?: string | boolean; turn?: string }
 ): Promise<void> {
   if (opts.history !== undefined) {
     const limit = typeof opts.history === "string" ? parseInt(opts.history, 10) : 20;
     const rows = await sessionHistory(process.cwd(), limit);
     if (opts.json) return printJson(rows);
     printSessionHistory(rows);
+    return;
+  }
+  if (opts.turn !== undefined) {
+    const target = path ?? newestSessionLog();
+    if (!target) {
+      console.error(err("  No session transcript found."));
+      process.exitCode = 1;
+      return;
+    }
+    const tb = turnBreakdown(target, parseInt(opts.turn, 10));
+    if (!tb) {
+      console.error(err(`  Turn ${opts.turn} not found in ${target}.`));
+      process.exitCode = 1;
+      return;
+    }
+    if (opts.json) return printJson(tb);
+    printTurnBreakdown(tb);
     return;
   }
   const threshold = opts.ctxThreshold ? parseInt(opts.ctxThreshold, 10) : undefined;
@@ -666,7 +718,8 @@ export function registerAuditCommands(auditCmd: Command): void {
     .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
     .option("--ctx-threshold <n>", "Per-turn context size above which a turn counts as 'above threshold' (default 200000)")
     .option("--history [n]", "List first-turn context of the newest n sessions in this project's transcript directory (default 20)")
-    .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean }) => {
+    .option("--turn <n>", "Attribute API call n's context growth to the transcript lines injected since the previous call")
+    .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean; turn?: string }) => {
       await cmdSession(path, { ...jsonOpt(), ...opts });
     });
 
