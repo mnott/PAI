@@ -26,6 +26,7 @@ import {
   resetContextTokensOnCompact,
   resolveReportFormat,
   resolveRunModel,
+  runSucceeded,
   shouldRetryReport,
   stdinUserMessage,
   usageContextTokens,
@@ -708,5 +709,23 @@ describe("printResult", () => {
     } finally {
       log.mockRestore();
     }
+  });
+});
+
+describe("runSucceeded", () => {
+  it("interactive: a clean exit is done even without a result event", () => {
+    // the chat pane never emits stream-json, so rc is the whole verdict
+    expect(runSucceeded(false, 0, null)).toBe(true);
+  });
+  it("interactive: a non-zero exit is still a failure", () => {
+    expect(runSucceeded(false, 143, null)).toBe(false);
+  });
+  it("headless: rc 0 without a result event is a failure", () => {
+    expect(runSucceeded(true, 0, null)).toBe(false);
+    expect(runSucceeded(true, 0, { is_error: true })).toBe(false);
+  });
+  it("headless: rc 0 with a clean result event is done", () => {
+    expect(runSucceeded(true, 0, { is_error: false })).toBe(true);
+    expect(runSucceeded(true, 1, { is_error: false })).toBe(false);
   });
 });

@@ -498,9 +498,9 @@ Session Commands:
   // 8.5. INJECT THE PAUSE CHECKPOINT
   //
   // `pai pause` writes the handover to TODO.md under `## Continue`. Until now
-  // nothing read it back: the session-commands hook only told the model to look
-  // there *if the user typed "go"*, so a resumed session started blind unless
-  // the user knew the magic word. Writing a handover nobody delivers is not a
+  // nothing read it back: CORE SKILL.md only told the model to look there *if
+  // the user typed "go"*, so a resumed session started blind unless the user
+  // knew the magic word. Writing a handover nobody delivers is not a
   // handover. Inject it, and say plainly that it is the previous session's
   // state rather than an instruction to act on.
   if (existsSync(todoPath)) {

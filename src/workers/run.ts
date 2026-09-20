@@ -351,6 +351,23 @@ export function shouldRetryReport(
 }
 
 /** Context window announced by the init event, when the endpoint sends one. */
+/**
+ * Did the run end well? A headless run must have produced a stream-json
+ * result event that is not an error; an interactive launch IS the chat pane
+ * and never emits one, so its clean exit (rc 0) is the whole verdict —
+ * without this every interactive session that ends normally was recorded
+ * as `failed rc=0` and supervision pinged the spawner about a non-failure.
+ */
+export function runSucceeded(
+  headless: boolean,
+  rc: number,
+  resultEvent: Pick<StreamEvent, "is_error"> | null,
+): boolean {
+  if (rc !== 0) return false;
+  if (!headless) return true;
+  return resultEvent !== null && !resultEvent.is_error;
+}
+
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
   if (e.model_info && typeof e.model_info.context_window === "number" && e.model_info.context_window > 0) {
@@ -924,7 +941,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = ctx.resultEvent;
-  const ok = rc === 0 && resultEvent !== null && !resultEvent.is_error;
+  const ok = runSucceeded(headless, rc, resultEvent);
   status.state = ok ? "done" : "failed";
   status.rc = rc;
   status.secs = secs;

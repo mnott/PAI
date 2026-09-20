@@ -28,6 +28,9 @@
  */
 
 import type { Command } from "commander";
+import { homedir } from "node:os";
+import { mkdirSync, readdirSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { header, ok, warn, err, dim, bold, renderTable } from "../utils.js";
 import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
@@ -40,6 +43,8 @@ import { auditSchedule, cacheTtlSeconds } from "../../audit/schedule.js";
 import { buildFindings, type Finding, type Severity } from "../../audit/severity.js";
 import { auditSkills, topByTokens, type SkillsReport } from "../../audit/skills.js";
 import { auditLadder, type LadderReport } from "../../audit/ladder.js";
+import { auditSubagents, type SubagentsReport } from "../../audit/subagents.js";
+import { auditMcp, type McpReport } from "../../audit/mcp.js";
 import { shortenPath } from "../utils.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -128,10 +133,19 @@ function printSession(report: SessionReportOutput): void {
       `ephemeral_1h=${report.cacheCreationSplit.ephemeral1h}`
   );
   console.log(dim(`models: ${JSON.stringify(report.models)}`));
+  console.log(
+    `avg context: ${report.avgContext ?? "n/a"}, max context: ${report.maxContext ?? "n/a"}, ` +
+      `turns above threshold: ${report.turnsAboveThreshold}, cache-rebuild turns: ${report.cacheRebuildTurns}, ` +
+      `user prompts: ${report.userPrompts}`
+  );
 }
 
-async function cmdSession(path: string | undefined, opts: { json?: boolean }): Promise<void> {
-  const report = await auditSession(path);
+async function cmdSession(
+  path: string | undefined,
+  opts: { json?: boolean; ctxThreshold?: string }
+): Promise<void> {
+  const threshold = opts.ctxThreshold ? parseInt(opts.ctxThreshold, 10) : undefined;
+  const report = await auditSession(path, threshold);
   if (!report) {
     console.error(err("  No session transcript found."));
     process.exitCode = 1;
@@ -361,31 +375,212 @@ async function cmdLadder(opts: { json?: boolean; live?: boolean; model?: string;
 }
 
 // ---------------------------------------------------------------------------
+// subagents
+// ---------------------------------------------------------------------------
+
+function printSubagents(report: SubagentsReport): void {
+  console.log(header(`Subagent definitions (encoding: ${report.encoding})`));
+  if (report.entries.length === 0) {
+    console.log(dim("no agent files"));
+    return;
+  }
+  const rows = report.entries.map((e) => [String(e.tokens), e.model === "inherits" ? dim("inherits") : e.model, e.path]);
+  console.log(renderTable(["tokens", "model", "path"], rows));
+  const inheriting = report.entries.filter((e) => e.model === "inherits").length;
+  console.log(dim(`${inheriting} of ${report.entries.length} inherit the caller's model`));
+}
+
+function cmdSubagents(opts: { json?: boolean }): void {
+  const report = auditSubagents(homedir(), process.cwd());
+  if (opts.json) return printJson(report);
+  printSubagents(report);
+}
+
+// ---------------------------------------------------------------------------
+// mcp
+// ---------------------------------------------------------------------------
+
+function printMcp(report: McpReport): void {
+  console.log(header("MCP servers: configured vs. loaded vs. used"));
+  const rows = report.servers.map((s) => [
+    s.server + (s.disabled ? dim(" (disabled)") : ""),
+    s.configuredIn.join(", ") || dim("-"),
+    s.pinned ?? dim("all"),
+    s.loadedLive,
+    String(s.toolsExposed),
+    String(s.toolsUsed30d),
+    String(s.calls30d),
+  ]);
+  console.log(
+    renderTable(
+      ["server", "configured-in", "pinned", "loaded-live", "tools-exposed", "tools-used-30d", "calls-30d"],
+      rows
+    )
+  );
+  console.log(dim(`live claude processes: ${report.liveProcesses.length}`));
+}
+
+async function cmdMcp(opts: { json?: boolean; connect?: boolean }): Promise<void> {
+  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect });
+  if (opts.json) return printJson(report);
+  printMcp(report);
+}
+
+// ---------------------------------------------------------------------------
 // combined
 // ---------------------------------------------------------------------------
 
-async function cmdCombined(opts: { json?: boolean }): Promise<void> {
+const DEFAULT_CTX_THRESHOLD = 200_000;
+
+export interface CombinedData {
+  encoding: string;
+  findings: Finding[];
+  files: FilesReport;
+  hooks: HooksReport;
+  session: SessionReportOutput | null;
+  spawn: SpawnReport;
+  daemon: DaemonReport;
+  env: EnvReport;
+  schedule: Awaited<ReturnType<typeof auditSchedule>>;
+  skills: SkillsReport;
+  subagents: SubagentsReport;
+  mcp: McpReport;
+}
+
+async function gatherCombined(): Promise<CombinedData> {
   const cwd = process.cwd();
   const files = auditFiles(defaultFileSet(cwd));
   const hooks = auditHooks(cwd);
-  const session = await auditSession(newestSessionLog() ?? undefined).catch(() => null);
+  const session = await auditSession(newestSessionLog() ?? undefined, DEFAULT_CTX_THRESHOLD).catch(() => null);
   const daemon = auditDaemon();
   const env = auditEnv();
   const spawn = await auditSpawn();
   const ttl = cacheTtlSeconds(session?.cacheCreationSplit);
   const schedule = auditSchedule(ttl);
   const skills = auditSkills();
+  const subagents = auditSubagents(homedir(), cwd);
+  const mcp = await auditMcp({ cwd, homeDir: homedir() });
 
-  const findings: Finding[] = buildFindings({ files, hooks, session, daemon, env, skills });
+  const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold: DEFAULT_CTX_THRESHOLD });
+
+  return { encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule, skills, subagents, mcp };
+}
+
+/** Strip ANSI escape sequences (chalk colour codes) from captured console output. */
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/** Run `fn`, capturing everything it sends through `console.log` as plain text. */
+function captureOutput(fn: () => void): string {
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(stripAnsi(args.map((a) => String(a)).join(" ")));
+  };
+  try {
+    fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n");
+}
+
+function combinedSectionOutputs(data: CombinedData): { name: string; text: string }[] {
+  const sections: { name: string; text: string }[] = [];
+  sections.push({ name: "files", text: captureOutput(() => printFiles(data.files)) });
+  sections.push({ name: "hooks", text: captureOutput(() => printHooks(data.hooks)) });
+  if (data.session) sections.push({ name: "session", text: captureOutput(() => printSession(data.session!)) });
+  sections.push({ name: "spawn", text: captureOutput(() => printSpawn(data.spawn)) });
+  sections.push({ name: "daemon", text: captureOutput(() => printDaemon(data.daemon)) });
+  sections.push({ name: "env", text: captureOutput(() => printEnv(data.env)) });
+  sections.push({ name: "schedule", text: captureOutput(() => printSchedule(data.schedule)) });
+  sections.push({ name: "skills", text: captureOutput(() => printSkills(data.skills, 15)) });
+  sections.push({ name: "subagents", text: captureOutput(() => printSubagents(data.subagents)) });
+  sections.push({ name: "mcp", text: captureOutput(() => printMcp(data.mcp)) });
+  return sections;
+}
+
+/**
+ * Replace the home directory with `~` in both its plain form and the encoded
+ * form Claude Code uses for transcript directories (`/Users/name/x` →
+ * `-Users-name-x`), so a recorded run carries no account name.
+ */
+export function redactHome(text: string, home = homedir()): string {
+  const encoded = home.replace(/[\/\\]/g, "-");
+  return text.split(home).join("~").split(encoded).join("~");
+}
+
+/** `--record <dir>`: write a dated, numbered markdown+JSON snapshot of the combined report, plus one summary line in `runs.md`. */
+export function recordCombinedReport(dir: string, data: CombinedData): void {
+  mkdirSync(dir, { recursive: true });
+
+  // Next number is max(existing)+1, not count+1: a directory holding only
+  // run4 (earlier runs recorded elsewhere) must produce run5, not run2.
+  const existingNumbers = existsSync(dir)
+    ? readdirSync(dir).map((f) => /-run(\d+)\.md$/.exec(f)?.[1]).filter((n): n is string => n !== undefined).map(Number)
+    : [];
+  const runNumber = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1;
+  const date = new Date().toISOString().slice(0, 10);
+  const baseName = `${date}-run${runNumber}`;
+
+  const findingsTable = [
+    "| FINDING | SEVERITY | EVIDENCE |",
+    "|---------|----------|----------|",
+    ...data.findings.map((f) => `| ${f.finding} | ${f.severity} | ${f.evidence} |`),
+  ].join("\n");
+
+  const sections = combinedSectionOutputs(data);
+  const sectionBlocks = sections.map((s) => `### ${s.name}\n\n\`\`\`\n${s.text}\n\`\`\`\n`).join("\n");
+
+  const md = [
+    "# pai audit tokens — recorded run",
+    "",
+    `date: ${date}`,
+    `encoding: ${data.encoding}`,
+    "",
+    findingsTable,
+    "",
+    sectionBlocks,
+  ].join("\n");
+
+  const json = JSON.stringify(data, null, 2);
+
+  const mdRedacted = redactHome(md);
+  const jsonRedacted = redactHome(json);
+
+  writeFileSync(join(dir, `${baseName}.md`), mdRedacted, "utf8");
+  writeFileSync(join(dir, `${baseName}.json`), jsonRedacted, "utf8");
+
+  const runsPath = join(dir, "runs.md");
+  if (!existsSync(runsPath)) {
+    writeFileSync(runsPath, "# Audit token-waste runs\n\n", "utf8");
+  }
+  const counts = { RED: 0, AMBER: 0, GREEN: 0 } as Record<Severity, number>;
+  for (const f of data.findings) counts[f.severity]++;
+  appendFileSync(
+    runsPath,
+    `- ${date} run${runNumber}: ${counts.RED} RED, ${counts.AMBER} AMBER, ${counts.GREEN} GREEN — ${baseName}.md\n`,
+    "utf8"
+  );
+}
+
+async function cmdCombined(opts: { json?: boolean; record?: string }): Promise<void> {
+  const data = await gatherCombined();
 
   if (opts.json) {
-    return printJson({ encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule, skills });
+    printJson(data);
+  } else {
+    console.log(header("pai audit tokens — combined report"));
+    console.log(dim(`token encoding: ${data.encoding}`));
+    const rows = data.findings.map((f) => [severityColor(f.severity, f.finding), severityColor(f.severity, f.severity), f.evidence]);
+    console.log(renderTable(["FINDING", "SEVERITY", "EVIDENCE"], rows));
   }
 
-  console.log(header("pai audit tokens — combined report"));
-  console.log(dim(`token encoding: ${TOKEN_ENCODING}`));
-  const rows = findings.map((f) => [severityColor(f.severity, f.finding), severityColor(f.severity, f.severity), f.evidence]);
-  console.log(renderTable(["FINDING", "SEVERITY", "EVIDENCE"], rows));
+  if (opts.record) {
+    recordCombinedReport(opts.record, data);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -404,11 +599,12 @@ export function registerAuditCommands(auditCmd: Command): void {
   const tokensCmd = auditCmd
     .command("tokens")
     .description(
-      "Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue"
+      "Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP"
     )
     .option("--json", "Print JSON instead of a table")
+    .option("--record <dir>", "Write a dated, numbered markdown+JSON snapshot of the combined report to <dir>")
     .action(async () => {
-      await cmdCombined(jsonOpt());
+      await cmdCombined(jsonOpt() as { json?: boolean; record?: string });
     });
 
   const jsonOpt = (): { json?: boolean } => tokensCmd.opts() as { json?: boolean };
@@ -430,8 +626,9 @@ export function registerAuditCommands(auditCmd: Command): void {
     .command("session")
     .description("Cache/input/output token split for a session transcript (default: newest)")
     .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
-    .action(async (path: string | undefined) => {
-      await cmdSession(path, jsonOpt());
+    .option("--ctx-threshold <n>", "Per-turn context size above which a turn counts as 'above threshold' (default 200000)")
+    .action(async (path: string | undefined, opts: { ctxThreshold?: string }) => {
+      await cmdSession(path, { ...jsonOpt(), ...opts });
     });
 
   tokensCmd
@@ -466,6 +663,19 @@ export function registerAuditCommands(auditCmd: Command): void {
     .option("--top <n>", "How many top-by-tokens entries to show (default 15)")
     .action((opts: { top?: string }) => {
       cmdSkills({ ...jsonOpt(), ...opts });
+    });
+
+  tokensCmd
+    .command("subagents")
+    .description("Token cost of Claude Code subagent definitions (~/.claude/agents, <cwd>/.claude/agents) and their model pinning")
+    .action(() => cmdSubagents(jsonOpt()));
+
+  tokensCmd
+    .command("mcp")
+    .description("MCP servers: configured vs. pinned vs. loaded-live vs. used in the last 30 days")
+    .option("--connect", "Actually connect to every stdio MCP server to count exposed tools (side-effecting; never on by default)")
+    .action(async (opts: { connect?: boolean }) => {
+      await cmdMcp({ ...jsonOpt(), ...opts });
     });
 
   tokensCmd

@@ -59,7 +59,7 @@ export function isClaudeProcess(line: string): boolean {
   return !isMcpChild;
 }
 
-function findClaudePids(): number[] {
+export function findClaudePids(): number[] {
   try {
     const out = execFileSync("ps", ["-axo", "pid=,etime=,comm=,args="], {
       encoding: "utf8",
@@ -127,7 +127,7 @@ function countMcpServersInFile(path: string): number {
   }
 }
 
-function readProcessEnvLine(pid: number): string | null {
+export function readProcessEnvLine(pid: number): string | null {
   try {
     return execFileSync("ps", ["-Eww", "-p", String(pid), "-o", "command="], { encoding: "utf8" });
   } catch {

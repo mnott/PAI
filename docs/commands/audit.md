@@ -14,17 +14,18 @@ pai audit <subcommand> [options]
 
 | Command | Description |
 |---------|-------------|
-| [`pai audit tokens`](#pai-audit-tokens) | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue |
+| [`pai audit tokens`](#pai-audit-tokens) | Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP |
 
 ### pai audit tokens
 
-Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue
+Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP
 
 **Options**
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--json` | Print JSON instead of a table |  |
+| `--record <dir>` | Write a dated, numbered markdown+JSON snapshot of the combined report to <dir> |  |
 
 
 ### pai audit tokens files [paths...]
@@ -52,6 +53,12 @@ Cache/input/output token split for a session transcript (default: newest)
 | Argument | Kind | Description |
 |----------|------|-------------|
 | `[path]` | optional | Session JSONL path (default: newest under ~/.claude/projects) |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--ctx-threshold <n>` | Per-turn context size above which a turn counts as 'above threshold' (default 200000) |  |
 
 
 ### pai audit tokens spawn
@@ -90,6 +97,22 @@ Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--top <n>` | How many top-by-tokens entries to show (default 15) |  |
+
+
+### pai audit tokens subagents
+
+Token cost of Claude Code subagent definitions (~/.claude/agents, <cwd>/.claude/agents) and their model pinning
+
+
+### pai audit tokens mcp
+
+MCP servers: configured vs. pinned vs. loaded-live vs. used in the last 30 days
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--connect` | Actually connect to every stdio MCP server to count exposed tools (side-effecting; never on by default) |  |
 
 
 ### pai audit tokens ladder

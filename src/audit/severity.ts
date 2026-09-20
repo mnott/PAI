@@ -10,12 +10,16 @@ import type { SessionReportOutput } from "./session.js";
 import type { DaemonReport } from "./daemon.js";
 import type { EnvReport } from "./env.js";
 import type { SkillsReport } from "./skills.js";
+import type { SubagentsReport } from "./subagents.js";
+import type { McpReport } from "./mcp.js";
 import { SINGLE_FILE_LIMIT, TOTAL_LIMIT } from "./files.js";
 import { SKILL_CATALOGUE_AMBER, SKILL_CATALOGUE_RED } from "./skills.js";
 
 export const HOOK_TOKEN_LIMIT = 1000;
 export const FIRST_TURN_CONTEXT_LIMIT = 30_000;
 export const DAEMON_FAILURE_RATE_LIMIT = 0.05;
+export const CONTEXT_GROWTH_AVG_RED = 100_000;
+export const CONTEXT_GROWTH_MAX_AMBER = 150_000;
 
 export type Severity = "RED" | "AMBER" | "GREEN";
 
@@ -38,6 +42,9 @@ export function buildFindings(input: {
   daemon: DaemonReport;
   env: EnvReport;
   skills: SkillsReport;
+  subagents: SubagentsReport;
+  mcp: McpReport;
+  ctxThreshold: number;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -127,6 +134,50 @@ export function buildFindings(input: {
     evidence: `${skillTokens} tokens loaded (${input.skills.total} on disk) across ${input.skills.entries.length} entries` +
       (input.skills.duplicates.length ? `, ${input.skills.duplicates.length} case-insensitive duplicate name(s)` : ""),
   });
+
+  const inheriting = input.subagents.entries.filter((e) => e.model === "inherits");
+  if (input.subagents.entries.length === 0) {
+    findings.push({ finding: "subagent model pinning", severity: "GREEN", evidence: "no agent files" });
+  } else {
+    findings.push({
+      finding: "subagent model pinning",
+      severity: inheriting.length > 0 ? "AMBER" : "GREEN",
+      evidence: `${inheriting.length} of ${input.subagents.entries.length} inherit`,
+    });
+  }
+
+  const configuredCount = input.mcp.servers.filter((s) => s.configuredIn.length > 0).length;
+  const plainLaunch = input.mcp.liveProcesses.find((p) => p.mcpConfigPath === null);
+  if (!plainLaunch) {
+    findings.push({
+      finding: "MCP servers loaded vs. used",
+      severity: "GREEN",
+      evidence: `${configuredCount} configured, no plain launch found`,
+    });
+  } else {
+    const zeroCallServers = input.mcp.servers.filter((s) => s.configuredIn.length > 0 && s.calls30d === 0);
+    findings.push({
+      finding: "MCP servers loaded vs. used",
+      severity: zeroCallServers.length > 0 ? "AMBER" : "GREEN",
+      evidence: `${configuredCount} configured, ${zeroCallServers.length} loaded by pid ${plainLaunch.pid}`,
+    });
+  }
+
+  if (input.session) {
+    const avg = input.session.avgContext ?? 0;
+    const max = input.session.maxContext ?? 0;
+    const severity: Severity =
+      avg > CONTEXT_GROWTH_AVG_RED || input.session.turnsAboveThreshold > 0
+        ? "RED"
+        : max > CONTEXT_GROWTH_MAX_AMBER
+          ? "AMBER"
+          : "GREEN";
+    findings.push({
+      finding: "context growth",
+      severity,
+      evidence: `avg ${avg}, max ${max}, ${input.session.turnsAboveThreshold} turns > ${input.ctxThreshold}, ${input.session.turns} turns`,
+    });
+  }
 
   return sortFindings(findings);
 }
