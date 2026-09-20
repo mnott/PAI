@@ -11,6 +11,7 @@ import {
   formatContextFill,
   statuslineStateFilePath,
   contextFillThresholds,
+  configuredTrigger,
   resolveAutocompactPct,
   measureCompactionTrigger,
   modelFamily,
@@ -269,40 +270,33 @@ function readingAt(windowSize: number, source: ContextFillReading["source"] = "s
 }
 
 describe("contextFillThresholds", () => {
-  // Fixture requested verbatim: override=80 explicit, 1M window → warmUp
-  // 684,000. That does not hold up: effectiveTrigger = 1,000,000 * 80/100 =
-  // 800,000, and warmUp = effectiveTrigger - 100,000 = 700,000 by the stated
-  // formula — 684,000 has no derivation from these inputs, and an EXPLICIT
-  // override of 80 cannot legitimately produce a different effectiveTrigger
-  // than an ABSENT override that defaults to the same 80, which the next
-  // fixture below requires to be 700,000. Asserting 684,000 here would only
-  // be possible by special-casing "override was explicitly set" versus
-  // "override defaulted", which the formula gives no basis for. Testing the
-  // formula as specified instead: both explicit-80 and absent-defaults-to-80
-  // must agree, and they do.
-  it("derives warmup from windowSize * (override/100) - 100k, for an explicit override", () => {
+  // effectiveTrigger = configuredTrigger(windowSize, pct) = pct/100 *
+  // (windowSize - 20,000) — NOT windowSize * pct/100. An EXPLICIT override
+  // of 80 and an ABSENT override that defaults to the same 80 must agree,
+  // and they do: both give 784,000 on a 1M window, warmUp 684,000.
+  it("derives warmup from configuredTrigger(windowSize, override) - 100k, for an explicit override", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" });
-    expect(t.effectiveTriggerTokens).toBe(800_000);
-    expect(t.warmupTokens).toBe(700_000);
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+    expect(t.warmupTokens).toBe(684_000);
   });
 
   it("derives the same effective trigger when the override is absent (defaults to 80)", () => {
     const t = contextFillThresholds(readingAt(1_000_000), {});
     expect(t.autocompactPct).toBe(80);
-    expect(t.effectiveTriggerTokens).toBe(800_000);
-    expect(t.warmupTokens).toBe(700_000);
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+    expect(t.warmupTokens).toBe(684_000);
   });
 
   it("scales down correctly for a 200k window with the override absent", () => {
     const t = contextFillThresholds(readingAt(200_000), {});
-    expect(t.effectiveTriggerTokens).toBe(160_000);
-    expect(t.warmupTokens).toBe(60_000);
+    expect(t.effectiveTriggerTokens).toBe(144_000);
+    expect(t.warmupTokens).toBe(44_000);
   });
 
   it("computes refresh 40k and immediate 15k below the effective trigger", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" });
-    expect(t.refreshTokens).toBe(760_000);
-    expect(t.immediateTokens).toBe(785_000);
+    expect(t.refreshTokens).toBe(744_000);
+    expect(t.immediateTokens).toBe(769_000);
   });
 
   it("marks the window confirmed only for a statusline-sourced reading", () => {
@@ -313,8 +307,15 @@ describe("contextFillThresholds", () => {
   it("clamps a threshold that would go negative instead of returning it", () => {
     // A tiny window where even the trigger itself is below the warmup margin.
     const t = contextFillThresholds(readingAt(50_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" });
-    expect(t.effectiveTriggerTokens).toBe(40_000);
-    expect(t.warmupTokens).toBe(0); // 40,000 - 100,000 would be negative
+    expect(t.effectiveTriggerTokens).toBe(24_000); // 0.8 * (50,000 - 20,000)
+    expect(t.warmupTokens).toBe(0); // 24,000 - 100,000 would be negative
+  });
+});
+
+describe("configuredTrigger", () => {
+  it("is pct/100 * (windowSize - 20,000), not windowSize * pct/100", () => {
+    expect(configuredTrigger(1_000_000, 80)).toBe(784_000);
+    expect(configuredTrigger(200_000, 80)).toBe(144_000);
   });
 });
 
@@ -570,8 +571,8 @@ describe("contextFillThresholds — trigger source", () => {
   it("reports triggerSource 'configured' and falls back to the env chain when there is no measured value", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" }, { measuredTrigger: null });
     expect(t.triggerSource).toBe("configured");
-    expect(t.effectiveTriggerTokens).toBe(800_000);
-    expect(t.warmupTokens).toBe(700_000);
+    expect(t.effectiveTriggerTokens).toBe(784_000);
+    expect(t.warmupTokens).toBe(684_000);
   });
 
   it("falls back to configured when cwd is given but the project has no compaction history (real scan, empty fixture)", () => {
@@ -583,7 +584,7 @@ describe("contextFillThresholds — trigger source", () => {
         measuredTrigger: measureCompactionTrigger(cwd, projectsDir),
       });
       expect(t.triggerSource).toBe("configured");
-      expect(t.effectiveTriggerTokens).toBe(800_000);
+      expect(t.effectiveTriggerTokens).toBe(784_000);
     } finally {
       rmSync(projectsDir, { recursive: true, force: true });
     }
@@ -600,27 +601,27 @@ describe("contextFillThresholds — trigger source", () => {
 
   it("CLAMPS a stale-HIGH measured value down to the configured one — the real CaseLeaf case", () => {
     // measured=998,267 (this project's real, but stale, most-recent trigger)
-    // configured=800,000 (80% of a 1,000,000 window)
+    // configured=784,000 (80% of a 1,000,000 window, platform formula)
     const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 998_267 });
     expect(t.measuredTriggerTokens).toBe(998_267);
-    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.configuredTriggerTokens).toBe(784_000);
     expect(t.triggerSource).toBe("measured-clamped");
-    expect(t.effectiveTriggerTokens).toBe(800_000); // min(998267, 800000)
-    expect(t.warmupTokens).toBe(700_000); // fires well before the real ~784,000 boundary
-  });
-
-  it("uses the measured value directly when it is LOWER than configured — no clamp needed", () => {
-    // measured=784,000, configured=800,000 -> measured wins, tighter warm-up.
-    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 784_000 });
-    expect(t.triggerSource).toBe("measured");
-    expect(t.effectiveTriggerTokens).toBe(784_000);
+    expect(t.effectiveTriggerTokens).toBe(784_000); // min(998267, 784000)
     expect(t.warmupTokens).toBe(684_000);
   });
 
-  it("uses measured directly when it exactly equals configured (boundary case, not clamped)", () => {
-    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 800_000 });
+  it("uses the measured value directly when it is LOWER than configured — no clamp needed", () => {
+    // measured=700,000, configured=784,000 -> measured wins, tighter warm-up.
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 700_000 });
     expect(t.triggerSource).toBe("measured");
-    expect(t.effectiveTriggerTokens).toBe(800_000);
+    expect(t.effectiveTriggerTokens).toBe(700_000);
+    expect(t.warmupTokens).toBe(600_000);
+  });
+
+  it("uses measured directly when it exactly equals configured (boundary case, not clamped)", () => {
+    const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 784_000 });
+    expect(t.triggerSource).toBe("measured");
+    expect(t.effectiveTriggerTokens).toBe(784_000);
   });
 
   it("reports both raw values on the result even when one of them wasn't used, so the clamp is visible", () => {
@@ -628,7 +629,7 @@ describe("contextFillThresholds — trigger source", () => {
     // Both numbers are on the object — a caller can see what was measured
     // AND what was configured, not just the winner.
     expect(t.measuredTriggerTokens).toBe(998_267);
-    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.configuredTriggerTokens).toBe(784_000);
   });
 });
 
@@ -642,33 +643,110 @@ describe("contextFillThresholds — trigger source", () => {
 // ---------------------------------------------------------------------------
 
 describe("contextFillThresholds — 2026-09-20 regime change (override 80 -> 20)", () => {
-  it("measured 784k + configured 200k (override=20, 1M window) -> clamps to 200k", () => {
+  it("measured 784k + configured 196k (override=20, 1M window) -> clamps to 196k", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "20" }, { measuredTrigger: 784_000 });
-    expect(t.configuredTriggerTokens).toBe(200_000);
+    expect(t.configuredTriggerTokens).toBe(196_000); // 0.2 * (1,000,000 - 20,000)
     expect(t.triggerSource).toBe("measured-clamped");
-    expect(t.effectiveTriggerTokens).toBe(200_000);
-    expect(t.warmupTokens).toBe(100_000); // 200,000 - 100,000
+    expect(t.effectiveTriggerTokens).toBe(196_000);
+    expect(t.warmupTokens).toBe(96_000); // 196,000 - 100,000
   });
 
-  it("measured 784k + configured 800k (override=80, 1M window) -> measured wins at 784k", () => {
+  it("measured 784k + configured 784k (override=80, 1M window) -> measured wins at 784k", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" }, { measuredTrigger: 784_000 });
-    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.configuredTriggerTokens).toBe(784_000);
     expect(t.triggerSource).toBe("measured");
     expect(t.effectiveTriggerTokens).toBe(784_000);
   });
 
-  it("measured null + configured 200k (override=20, no compaction history yet) -> 200k", () => {
+  it("measured null + configured 196k (override=20, no compaction history yet) -> 196k", () => {
     const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "20" }, { measuredTrigger: null });
     expect(t.triggerSource).toBe("configured");
-    expect(t.effectiveTriggerTokens).toBe(200_000);
+    expect(t.effectiveTriggerTokens).toBe(196_000);
   });
 
-  it("measured 784k + override unset (defaults to 80, configured 800k) -> measured wins at 784k", () => {
+  it("measured 784k + override unset (defaults to 80, configured 784k) -> measured wins at 784k", () => {
     const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 784_000 });
     expect(t.autocompactPct).toBe(80);
-    expect(t.configuredTriggerTokens).toBe(800_000);
+    expect(t.configuredTriggerTokens).toBe(784_000);
     expect(t.triggerSource).toBe("measured");
     expect(t.effectiveTriggerTokens).toBe(784_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// measureCompactionTrigger — admissibility filter (Fault 1, 2026-09-20):
+// samples from a different override regime must not win just because they
+// are numerically <= the CURRENT configured trigger. A compaction that
+// fired far below the current configured trigger came from a lower
+// override or a smaller window; it is discarded, not averaged in.
+// ---------------------------------------------------------------------------
+
+describe("measureCompactionTrigger — other-regime samples are discarded", () => {
+  it("discards all samples below half of configured and falls back to configured (measured=null, source configured)", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/other-regime-all-discarded";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "a.jsonl"),
+      [
+        compactBoundaryLine(196_765, "2026-09-20T13:10:00.000Z", "u1"),
+        compactBoundaryLine(195_075, "2026-09-20T15:00:00.000Z", "u2"),
+        compactBoundaryLine(197_902, "2026-09-20T19:00:00.000Z", "u3"),
+      ].join("\n") + "\n"
+    );
+    try {
+      // configured = configuredTrigger(1,000,000, 80) = 784,000; floor = 392,000.
+      const measured = measureCompactionTrigger(cwd, projectsDir, undefined, 784_000);
+      expect(measured).toBeNull();
+
+      const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" }, { measuredTrigger: measured });
+      expect(t.triggerSource).toBe("configured");
+      expect(t.effectiveTriggerTokens).toBe(784_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps admissible samples and discards only the other-regime one (measured=780,000, source measured)", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/other-regime-partial";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "a.jsonl"),
+      [
+        compactBoundaryLine(780_000, "2026-09-19T09:00:00.000Z", "u1"),
+        compactBoundaryLine(790_000, "2026-09-19T10:00:00.000Z", "u2"),
+        compactBoundaryLine(195_000, "2026-09-20T15:00:00.000Z", "u3"), // other-regime, discarded
+      ].join("\n") + "\n"
+    );
+    try {
+      const measured = measureCompactionTrigger(cwd, projectsDir, undefined, 784_000);
+      expect(measured).toBe(780_000);
+
+      const t = contextFillThresholds(readingAt(1_000_000), { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80" }, { measuredTrigger: measured });
+      expect(t.triggerSource).toBe("measured");
+      expect(t.effectiveTriggerTokens).toBe(780_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("applies no filter at all when configuredTriggerTokens is omitted (back-compat with the raw scan)", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-measured-trigger-test-"));
+    const cwd = "/fake/project/no-filter";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "a.jsonl"),
+      compactBoundaryLine(195_000, "2026-09-20T15:00:00.000Z", "u1") + "\n"
+    );
+    try {
+      expect(measureCompactionTrigger(cwd, projectsDir)).toBe(195_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+    }
   });
 });
 

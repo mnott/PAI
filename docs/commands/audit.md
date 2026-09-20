@@ -58,7 +58,7 @@ Cache/input/output token split for a session transcript (default: newest)
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--ctx-threshold <n>` | Per-turn context size above which a turn counts as 'above threshold' (default 200000) |  |
+| `--ctx-threshold <n>` | Override the derived compaction trigger (default: derived from the session's own window and measured/configured trigger — see 'window'/'trigger' in the report header) |  |
 | `--history [n]` | List first-turn context of the newest n sessions in this project's transcript directory (default 20) |  |
 | `--turn <n>` | Attribute API call n's context growth to the transcript lines injected since the previous call |  |
 

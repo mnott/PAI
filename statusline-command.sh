@@ -699,8 +699,12 @@ if [ "$session_provider" = "anthropic" ]; then
         remaining_secs=$((seven_reset_epoch - now_epoch))
         [ "$remaining_secs" -lt 0 ] && remaining_secs=0
         elapsed_secs=$((window_secs - remaining_secs))
-        # Daily pace: actual spend/day vs dynamic budget
-        # Budget = remaining capacity / remaining days (not static 100/7)
+        # Daily pace: actual spend/day vs the flat weekly share.
+        # Budget = static 100/7 (not remaining capacity / remaining days): the
+        # user reads "1d" as "what I may spend today", a fixed share of the
+        # week, not a figure that shrinks as the week is used — dividing the
+        # shrinking remainder by the shrinking remaining days double-counted
+        # overspend and drove the pace red for no new reason.
         elapsed_days_x10=$((elapsed_secs * 10 / 86400))
         # A per-day rate divided by a fraction of a day is not a rate, it is an
         # extrapolation from noise: an hour into a fresh window the old clamp to
@@ -708,10 +712,7 @@ if [ "$session_provider" = "anthropic" ]; then
         # Below half a day there is nothing to pace against yet — say nothing.
         if [ "$elapsed_days_x10" -ge 5 ]; then
             spend_per_day=$((seven_day_int * 10 / elapsed_days_x10))
-            remaining_days_x10=$((remaining_secs * 10 / 86400))
-            [ "$remaining_days_x10" -lt 1 ] && remaining_days_x10=1
-            remaining_budget=$((100 - seven_day_int))
-            budget_per_day=$((remaining_budget * 10 / remaining_days_x10))
+            budget_per_day=$((100 / 7))
             # Color: green = under budget, orange = near budget, red = over budget
             overspend=$((spend_per_day - budget_per_day))
             if [ "$overspend" -le -3 ] 2>/dev/null; then
@@ -903,10 +904,21 @@ if [ "$session_provider" != "anthropic" ]; then
 fi
 
 # LINE 3 - Context meter + usage limits
-# Auto-compact remaining: how much context left until compaction triggers
+# Auto-compact remaining: how much context left until compaction triggers.
+# Claude Code fires the auto-compact hook at pct/100 * (window - 20000)
+# tokens, not at pct% of the raw window — the first 20k tokens of any window
+# are reserved and never count toward the trigger. Computing "% left" against
+# the raw window (as a plain threshold-context_pct subtraction did) reads as
+# "the window is full" on a 1M-token session that still has 80% of its real
+# capacity free. Work in tokens, then re-express as a percent of the real
+# window so the figure is comparable across window sizes.
 ac_threshold="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-80}"
-ac_remaining=$((ac_threshold - context_pct))
-[ "$ac_remaining" -lt 0 ] && ac_remaining=0
+ac_trigger_tokens=$((ac_threshold * (context_size - 20000) / 100))
+ac_used_tokens=$((context_pct * context_size / 100))
+ac_left_tokens=$((ac_trigger_tokens - ac_used_tokens))
+[ "$ac_left_tokens" -lt 0 ] && ac_left_tokens=0
+ac_remaining=$((ac_left_tokens * 100 / context_size))
+ac_left_k=$((ac_left_tokens / 1000))
 # Color the remaining %: red ≤5, yellow ≤15, green otherwise
 if [ "$ac_remaining" -le 5 ] 2>/dev/null; then
     ac_color="$BRIGHT_RED"
@@ -915,7 +927,7 @@ elif [ "$ac_remaining" -le 15 ] 2>/dev/null; then
 else
     ac_color="$BRIGHT_GREEN"
 fi
-ac_suffix=" ${ac_color}(${ac_remaining}%% left)${RESET}"
+ac_suffix=" ${ac_color}(${ac_remaining}%% left, ${ac_left_k}K)${RESET}"
 
 if [ "$context_pct" -gt 0 ] 2>/dev/null; then
     # Color based on usage: green < 50%, yellow 50-75%, red > 75%

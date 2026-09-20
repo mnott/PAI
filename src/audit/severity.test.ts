@@ -75,6 +75,11 @@ function sessionWith(compactions: CompactionEvent[]): SessionReportOutput {
     totalTokens: 1,
     percentages: {},
     firstTurn: null,
+    window: 200_000,
+    windowSource: "default",
+    trigger: 200_000,
+    autocompactPct: 80,
+    triggerSource: "configured",
   };
 }
 
@@ -149,6 +154,38 @@ describe("buildFindings — per-prompt hook cost", () => {
     const pctB = findingB.evidence.match(/\(([\d.]+)% of/)![1];
     expect(pctA).toBe(pctB);
     expect(pctA).toBe("15.7");
+  });
+});
+
+function contextGrowthFinding(overrides: Partial<SessionReportOutput>, ctxThreshold: number) {
+  const session: SessionReportOutput = { ...sessionWith([]), ...overrides };
+  const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold });
+  return findings.find((f) => f.finding === "context growth")!;
+}
+
+describe("buildFindings — context growth", () => {
+  it("is GREEN on a 1M-window session whose avg/max sit well under its own trigger", () => {
+    // trigger 784,000 = 80% of a 1,000,000 window (this project's own
+    // measured/configured derivation) — avg 300k is far below 0.5x that,
+    // and max 500k is far below 0.75x that. The exact defect this replaces:
+    // rating this session against a flat 200k would have called it RED.
+    const finding = contextGrowthFinding(
+      { avgContext: 300_000, maxContext: 500_000, turnsAboveThreshold: 0, window: 1_000_000, autocompactPct: 80 },
+      784_000
+    );
+    expect(finding.severity).toBe("GREEN");
+    expect(finding.evidence).toContain("trigger 784,000");
+    expect(finding.evidence).toContain("window 1,000,000");
+  });
+
+  it("is RED on a 200k-window session whose avg exceeds half its own trigger", () => {
+    // trigger 144,000 = 80% of a 200,000 window — avg 90k is above 0.5x
+    // that (72k).
+    const finding = contextGrowthFinding(
+      { avgContext: 90_000, maxContext: 130_000, turnsAboveThreshold: 0, window: 200_000, autocompactPct: 80 },
+      144_000
+    );
+    expect(finding.severity).toBe("RED");
   });
 });
 

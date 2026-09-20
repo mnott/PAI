@@ -294,7 +294,8 @@ export function formatContextFill(reading: ContextFillReading): FillDisplay {
 // The configured chain — env override, then a default — is the fallback,
 // used ONLY when a project has no compaction history yet:
 //
-//   effectiveTrigger = measured ?? (windowSize * (override ?? 80) / 100)
+//   effectiveTrigger = measured ?? configuredTrigger(windowSize, override ?? 80)
+//   configuredTrigger(windowSize, pct) = pct/100 * (windowSize - 20,000)
 //
 // DEFAULT IS 80, NOT 100, WHEN NOTHING IS KNOWN. 100 was considered — it
 // matches the FIRST regime above — and rejected: the costs are asymmetric.
@@ -312,6 +313,17 @@ export function formatContextFill(reading: ContextFillReading): FillDisplay {
 // is "no time left for a clean crossing" and fires immediately rather than
 // waiting for one.
 export const DEFAULT_AUTOCOMPACT_PCT = 80;
+
+/**
+ * The platform's actual compaction trigger for a window/pct pair. NOT
+ * windowSize * pct/100 — that formula gives 800,000 on 1M/80 and 160,000 on
+ * 200k/80, but the platform fires at pct/100 * (windowSize - 20,000):
+ * 784,000 and 144,000, measured on every compact_boundary on this machine,
+ * 2026-09-20 (see the module comment above).
+ */
+export function configuredTrigger(windowSize: number, pct: number): number {
+  return Math.round((pct / 100) * (windowSize - 20_000));
+}
 
 /** How many of the most recent compact_boundary events to consider, and to
  *  take the minimum of. */
@@ -575,26 +587,57 @@ export function selectedCompactionSamples(
 
 /**
  * The measured compaction trigger for a project, or null when it has no
- * compaction history yet (a brand-new project, or one whose transcripts
- * this process cannot read). Minimum of the most recent
- * MEASURED_TRIGGER_SAMPLE_SIZE DISTINCT compact_boundary events, ordered by
- * the events' own timestamps across every transcript the project has
- * (live and archived) — see the module comment above for why minimum, not
- * mean, and readCompactBoundarySamples for why "distinct" and "own
- * timestamp" both matter (a file-mtime-ordered, non-deduplicated version of
- * this returned a stale pre-regime-change trigger on real project data).
+ * compaction history yet (a brand-new project, one whose transcripts this
+ * process cannot read, or one whose only recent samples belong to a
+ * different override regime — see the admissibility filter below).
+ * Minimum of the most recent MEASURED_TRIGGER_SAMPLE_SIZE DISTINCT
+ * compact_boundary events, ordered by the events' own timestamps across
+ * every transcript the project has (live and archived) — see the module
+ * comment above for why minimum, not mean, and readCompactBoundarySamples
+ * for why "distinct" and "own timestamp" both matter (a file-mtime-ordered,
+ * non-deduplicated version of this returned a stale pre-regime-change
+ * trigger on real project data).
+ *
+ * When `configuredTriggerTokens` is given, a sample is admissible only when
+ * preTokens >= 0.5 * configuredTriggerTokens — a compaction that fired far
+ * below the currently configured trigger came from a lower override or a
+ * smaller window, a different regime than the one in force now, and must
+ * not drag the trigger down with it. Real case, 2026-09-20:
+ * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE was 20 for seven hours, this project
+ * compacted three times at ~195k-198k under it, then the override went
+ * back to 80 (configured ~784k) — those three samples are inadmissible and
+ * must be discarded, not averaged into the new regime's trigger, or the
+ * handover would fire at ~155k for days until three fresh ~784k
+ * compactions pushed them out on their own.
  */
 export function measureCompactionTrigger(
   cwd: string,
   projectsDir: string = CLAUDE_PROJECTS_DIR,
-  configPath?: string
+  configPath?: string,
+  configuredTriggerTokens?: number
 ): number | null {
   const samples = selectedCompactionSamples(cwd, projectsDir, configPath);
   if (samples.length === 0) return null;
-  const trigger = Math.min(...samples.map((s) => s.preTokens));
+
+  let admissible = samples;
+  if (configuredTriggerTokens !== undefined) {
+    const floor = 0.5 * configuredTriggerTokens;
+    admissible = samples.filter((s) => s.preTokens >= floor);
+    const discarded = samples.length - admissible.length;
+    if (discarded > 0) {
+      console.error(
+        `[context-fill] discarded ${discarded} compaction sample(s) as other-regime for ${cwd} ` +
+        `(preTokens below ${Math.round(floor)}, half of configured=${configuredTriggerTokens}): ` +
+        samples.filter((s) => s.preTokens < floor).map((s) => `${s.preTokens}@${s.timestamp}`).join(", ")
+      );
+    }
+    if (admissible.length === 0) return null;
+  }
+
+  const trigger = Math.min(...admissible.map((s) => s.preTokens));
   console.error(
     `[context-fill] measured trigger for ${cwd}: ${trigger} (minimum of ` +
-    samples.map((s) => `${s.preTokens}@${s.timestamp}`).join(", ") + ")"
+    admissible.map((s) => `${s.preTokens}@${s.timestamp}`).join(", ") + ")"
   );
   return trigger;
 }
@@ -717,12 +760,12 @@ export function contextFillThresholds(
 ): ContextFillThresholds {
   const windowConfirmed = reading.source === "statusline";
   const autocompactPct = resolveAutocompactPct(env);
-  const configuredTriggerTokens = Math.round(reading.windowSize * (autocompactPct / 100));
+  const configuredTriggerTokens = configuredTrigger(reading.windowSize, autocompactPct);
 
   const measuredTriggerTokens = opts.measuredTrigger !== undefined
     ? opts.measuredTrigger
     : opts.cwd
-      ? measureCompactionTrigger(opts.cwd)
+      ? measureCompactionTrigger(opts.cwd, CLAUDE_PROJECTS_DIR, undefined, configuredTriggerTokens)
       : null;
 
   let effectiveTriggerTokens: number;
