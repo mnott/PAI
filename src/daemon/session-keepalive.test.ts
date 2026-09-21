@@ -6,7 +6,7 @@
  * ~/.claude/projects, no live config.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -363,5 +363,24 @@ describe("runSessionKeepaliveTick", () => {
       baseDeps({ findTranscript: () => "/Users/tester/.claude/projects/-Users-tester-repo/sess-1.jsonl" })
     );
     expect(results).toEqual([{ sessionId: "sess-1", result: "sent" }]);
+  });
+
+  it("the default sendBeat calls the AIBroker client with noReply: true", async () => {
+    // Everything but sendBeat is overridden below, so this exercises defaultDeps()'s
+    // real sendBeat, which must reach the (mocked) AIBroker client module.
+    vi.resetModules();
+    const sendToSession = vi.fn(async () => ({ ok: true }));
+    vi.doMock("../cli/lib/aibroker-client.js", () => ({
+      fetchLiveSessions: vi.fn(async () => []),
+      sendToSession,
+    }));
+    const { runSessionKeepaliveTick: freshRunTick } = await import("./session-keepalive.js");
+    const deps = baseDeps();
+    const { sendBeat: _unused, ...noSendBeat } = deps;
+    const results = await freshRunTick(config(), noSendBeat);
+    expect(results).toEqual([{ sessionId: "sess-1", result: "sent" }]);
+    expect(sendToSession).toHaveBeenCalledWith("sess-1", "keepalive", undefined, { noReply: true });
+    vi.doUnmock("../cli/lib/aibroker-client.js");
+    vi.resetModules();
   });
 });

@@ -190,15 +190,26 @@ function resetReinjectCounter(sessionId: string): void {
  * as possible, so this bypasses every other rule/advisor injection below —
  * adding ~5KB of context to answer nothing would erase the saving the beat
  * exists to capture.
+ *
+ * The daemon never types the bare word: it delivers the beat through
+ * AIBroker's send_to_session, which wraps it as "[Session:<sender>] <word>".
+ * That wrapper is stripped before comparing, because otherwise it reads as a
+ * relayed peer message (isRelayedPrompt) and the receiving session wastes a
+ * turn and a tool call trying to reply to a sender that isn't a registered
+ * session.
  */
 export function isCacheKeepaliveBeat(prompt: string): boolean {
   try {
     const { enabled, prompt: word } = loadConfig().sessions.cacheKeepalive;
-    return enabled && prompt.trim() === word;
+    const bare = prompt.replace(/^\s*\[Session:[^\]]+\]\s*/, "").trim();
+    return enabled && bare === word;
   } catch {
     return false;
   }
 }
+
+export const KEEPALIVE_BEAT_INSTRUCTION =
+  "<system-reminder>\nCache keepalive beat, a no-op. Reply with a single period and nothing else. Do not call tools. Do not reply to the sender.\n</system-reminder>";
 
 export function isRelayedPrompt(prompt: string): boolean {
   return (
@@ -224,7 +235,7 @@ function main() {
   resetReinjectCounter(sessionId);
 
   if (isCacheKeepaliveBeat(prompt)) {
-    console.log("<system-reminder>\nReply with a single period and nothing else. Do not call tools.\n</system-reminder>");
+    console.log(KEEPALIVE_BEAT_INSTRUCTION);
     return;
   }
 
