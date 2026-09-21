@@ -74,9 +74,34 @@ describe("user-prompt/whisper-rules entrypoint", () => {
         env,
       });
       expect(stdout).toBe(
-        "<system-reminder>\nReply with a single period and nothing else. Do not call tools.\n</system-reminder>\n"
+        "<system-reminder>\nCache keepalive beat, a no-op. Reply with a single period and nothing else. Do not call tools. Do not reply to the sender.\n</system-reminder>\n"
       );
       expect(stdout).not.toContain("CURRENT LOCAL TIME");
+    });
+
+    it("treats a beat wrapped as [Session:<sender>] keepalive as the same no-op", () => {
+      const env = configuredEnv({ sessions: { cacheKeepalive: { enabled: true, prompt: "keepalive" } } });
+      const stdout = execFileSync("bun", [ENTRYPOINT], {
+        input: JSON.stringify({ prompt: "[Session:pai-cli] keepalive" }),
+        encoding: "utf8",
+        timeout: 15_000,
+        env,
+      });
+      expect(stdout).toBe(
+        "<system-reminder>\nCache keepalive beat, a no-op. Reply with a single period and nothing else. Do not call tools. Do not reply to the sender.\n</system-reminder>\n"
+      );
+      expect(stdout).not.toContain("CURRENT LOCAL TIME");
+    });
+
+    it("still emits nothing for a [Session:] relay that is not the beat", () => {
+      const env = configuredEnv({ sessions: { cacheKeepalive: { enabled: true, prompt: "keepalive" } } });
+      const stdout = execFileSync("bun", [ENTRYPOINT], {
+        input: JSON.stringify({ prompt: "[Session:peer] R z=alive r=idle" }),
+        encoding: "utf8",
+        timeout: 15_000,
+        env,
+      });
+      expect(stdout).toBe("");
     });
 
     it("falls through to the normal rule block when the feature is disabled", () => {

@@ -106,6 +106,18 @@ describe("sendToSession wire format", () => {
     expect(sentRequest().params.message).not.toMatch(/\n$/);
   });
 
+  it("sends params.noReply true when opts.noReply is set", async () => {
+    const { sendToSession } = await import("./aibroker-client.js");
+    await sendToSession("uuid-1", "keepalive", undefined, { noReply: true });
+    expect(sentRequest().params.noReply).toBe(true);
+  });
+
+  it("omits params.noReply when opts is not passed", async () => {
+    const { sendToSession } = await import("./aibroker-client.js");
+    await sendToSession("uuid-1", "pause session");
+    expect(sentRequest().params.noReply).toBeUndefined();
+  });
+
   it("reports the handler's own error rather than throwing", async () => {
     // How the failure surfaced: 15 identical "FAILED: Error: target is required"
     // lines. Worth keeping — a throw here would have aborted the whole loop on

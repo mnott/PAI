@@ -264,20 +264,27 @@ function extractLastUserPrompt(content: string): string | undefined {
 export async function sendToSession(
   sessionId: string,
   text: string,
-  timeoutMs = SEND_TIMEOUT_MS
+  timeoutMs = SEND_TIMEOUT_MS,
+  opts?: { noReply?: boolean }
 ): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
   try {
-    await callAiBroker("send_to_session", { target: sessionId, message: text }, timeoutMs);
+    const params: Record<string, unknown> = { target: sessionId, message: text };
+    if (opts?.noReply) params.noReply = true;
+    await callAiBroker("send_to_session", params, timeoutMs);
     return { ok: true };
   } catch (e) {
     const error = String(e);
+    const timedOut = /timed out/i.test(error);
     // A timeout is NOT a delivery failure, and conflating the two is expensive.
     // The handler deposits into the target's mailbox BEFORE it waits for the
     // submit ack, so a send that times out has still been delivered — only the
     // confirmation is missing. Reported as a plain failure, the natural response
     // is to send again, which is how `pai pause all` produced nested
     // "carried forward" blocks in checkpoints that had already been written.
-    return { ok: false, error, timedOut: /timed out/i.test(error) };
+    // With noReply there is no mailbox deposit at all, so a timeout there really
+    // is an unknown/failed delivery, not just a missing confirmation.
+    if (opts?.noReply && timedOut) return { ok: false, timedOut: true, error };
+    return { ok: false, error, timedOut };
   }
 }
 

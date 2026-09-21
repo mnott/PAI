@@ -4,9 +4,12 @@
  * and docs/cache-keepalive.md, "Interactive sessions").
  *
  * One beat = one trivial prompt typed into a session through AIBroker's
- * send_to_session (src/cli/lib/aibroker-client.ts). A cache READ refreshes
- * the provider's ephemeral prompt-cache TTL at roughly 0.1x the cost of the
- * 2x rewrite a cold cache forces on the next real prompt.
+ * send_to_session (src/cli/lib/aibroker-client.ts), sent with `noReply: true`
+ * so the target sees only the bare word typed into its input line and
+ * nothing is queued into its mailbox as a peer message demanding a reply.
+ * A cache READ refreshes the provider's ephemeral prompt-cache TTL at
+ * roughly 0.1x the cost of the 2x rewrite a cold cache forces on the next
+ * real prompt.
  *
  * Distinct from workers/keepalive.ts, which beats a *worker provider's*
  * cache on a fixed timer regardless of activity: this only beats a session
@@ -328,7 +331,7 @@ function defaultDeps(): SessionKeepaliveDeps {
       }
     },
     readSnapshot: readTranscriptSnapshot,
-    sendBeat: (id, text) => sendToSessionDefault(id, text),
+    sendBeat: (id, text) => sendToSessionDefault(id, text, undefined, { noReply: true }),
     loadState: () => loadSessionKeepaliveState(),
     saveState: (s) => saveSessionKeepaliveState(s),
     ledger: (kv) => appendLedger(sessionKeepaliveLedgerPath(), SESSION_KEEPALIVE_EVENT, kv),

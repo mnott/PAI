@@ -1,23 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0136 - 2026-09-20 - V0510 Release Completed" session-id="14d25d16-5ff6-49cb-a6bb-f241473d1109" ts="2026-09-20T19:56:51.656Z" -->
+<!-- pai:checkpoint authored="auto" session="0142 - 2026-09-21 - Keepalive Analysis, Test Validation, And Skill Generation" session-id="3e8f7265-4086-47d8-a473-20a351dbc54a" ts="2026-09-21T18:04:16.087Z" -->
 
-> **Last session:** 0136 - 2026-09-20 - V0510 Release Completed
-> **Paused at:** 2026-09-20T19:56:51.656Z
+> **Last session:** 0142 - 2026-09-21 - Keepalive Analysis, Test Validation, And Skill Generation
+> **Paused at:** 2026-09-21T18:04:16.087Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 14d25d16-5ff6-49cb-a6bb-f241473d1109`
+> Resume with: `claude --resume 3e8f7265-4086-47d8-a473-20a351dbc54a`
 
 T
-i=ckpt-2026-09-20T19-56-51.535Z
+i=ckpt-2026-09-21T18-04-15.963Z
 g=/Name PAI
-d=?
+d=I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | /Name PAI | I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into…
 t=?
 @1=Notes/TODO.md
-@2=src/workers/supervision.test.ts
-@3=src/workers/supervision.ts
-z=auto ckpt (no model); main@4511284 fix: 1M sessions keep their window: autocompact override back to 80, window-aware audit, statusline context and 1d budget, regime-safe handover trigger; 3 dirty; git
+@2=src/cli/commands/main-resolver.test.ts
+@3=src/cli/commands/main-resolver.ts
+@4=src/cli/lib/aibroker-client.test.ts
+@5=src/cli/lib/aibroker-client.ts
+z=auto ckpt (no model); main@299051e fix(workers): v0.51.1 - never supervise the interactive chat pane; ending a session is not a worker outcome; 10 dirty; +5 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

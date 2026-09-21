@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveSessionDir } from "./main-resolver.js";
+import { resolveSessionDir, resumeTargetFor } from "./main-resolver.js";
 
 /**
  * A session carries up to three ideas of where it lives, and the preferred one
@@ -105,5 +105,43 @@ describe("symlinked parents", () => {
 
     expect(dir).toBe(realpathSync(child));
     expect(dir).not.toContain("link");
+  });
+});
+
+/**
+ * `pai <name>` used to resume the newest transcript for the name whenever one
+ * existed, which pinned the launch to claude under an active worker provider
+ * and brought a dead session back at its autocompact threshold. A name now
+ * means the directory; a transcript is reopened only when asked for.
+ */
+describe("resumeTargetFor", () => {
+  const A = "aaaaaaaa-0000-0000-0000-000000000000";
+  const B = "bbbbbbbb-0000-0000-0000-000000000000";
+  const C = "cccccccc-0000-0000-0000-000000000000";
+  const catalog = [
+    { uuid: A, resumable: true, encodedDir: "-proj", mtime: 100 },
+    { uuid: B, resumable: true, encodedDir: "-proj", mtime: 300 },
+    { uuid: C, resumable: false, encodedDir: "-proj", mtime: 900 },
+  ];
+
+  it("a plain name never resumes, even when the session itself is resumable", () => {
+    expect(resumeTargetFor(catalog[0], catalog, false)).toBeUndefined();
+  });
+
+  it("a plain name never resumes a sibling transcript either", () => {
+    expect(resumeTargetFor(catalog[2], catalog, false)).toBeUndefined();
+  });
+
+  it("an explicit resume takes the session's own transcript when it has one", () => {
+    expect(resumeTargetFor(catalog[0], catalog, true)).toBe(A);
+  });
+
+  it("an explicit resume of a stub falls back to the newest resumable sibling", () => {
+    expect(resumeTargetFor(catalog[2], catalog, true)).toBe(B);
+  });
+
+  it("an explicit resume with nothing on disk yields fresh", () => {
+    expect(resumeTargetFor({ uuid: C, resumable: false, encodedDir: "" }, catalog, true)).toBeUndefined();
+    expect(resumeTargetFor({ uuid: C, resumable: false, encodedDir: "-other" }, catalog, true)).toBeUndefined();
   });
 });

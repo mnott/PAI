@@ -8,8 +8,9 @@
  *   2. UUID prefix     → universal filesystem scan; auto-launch the match
  *   3. Any string:
  *      a. Live match (by normalized paiName) → aibroker_switch → iTerm tab to front. Done.
- *      b. Resumable match                    → probe + claude --resume <uuid>
- *      c. Transcript/stub match              → fresh claude in same project dir
+ *      b. Any disk/project match             → fresh launch in the project dir, on the
+ *                                              configured route (worker or claude)
+ *      c. --resume                           → probe + claude --resume <newest uuid>
  *      d. No name match                      → free-text history search → picker
  *
  * Dedup + name normalization logic: src/cli/lib/dedup-sessions.ts (shared with listing).
@@ -91,24 +92,45 @@ export function resolveSessionDir(session: {
   return { dir: undefined, tried };
 }
 
+/**
+ * Which transcript a launch resumes, if any.
+ *
+ * `pai <name>` used to resume the newest transcript for the name whenever one
+ * existed. That is the wrong default twice over. A wanted resume pins the
+ * engine to claude, so with a worker provider active the same name opened on
+ * different engines depending on whether an old transcript happened to be on
+ * disk. And a resumed transcript arrives with its whole context window, so a
+ * long-dead session came back already at the autocompact threshold and spent
+ * its first turn compacting - while the handover it was resumed FOR lives in
+ * TODO.md and is read by the `go` prompt of a fresh session anyway.
+ *
+ * So a name means the directory: fresh, on the configured route, exactly what
+ * `cd <dir> && pai worker run` does. Resume is an explicit ask - a UUID query,
+ * `--resume`, or `pai resume <name>` - and only then does the transcript hunt
+ * below run.
+ */
+export function resumeTargetFor(
+  session: Pick<ScannedSession, "uuid" | "resumable" | "encodedDir">,
+  allSessions: Pick<ScannedSession, "uuid" | "resumable" | "encodedDir" | "mtime">[],
+  resume: boolean
+): string | undefined {
+  if (!resume) return undefined;
+  if (session.resumable) return session.uuid;
+  if (!session.encodedDir) return undefined;
+  const sameProject = allSessions.filter(
+    (s) => s.encodedDir === session.encodedDir && s.resumable
+  );
+  sameProject.sort((a, b) => b.mtime - a.mtime);
+  return sameProject[0]?.uuid;
+}
+
 function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
-  dryRun: boolean
+  dryRun: boolean,
+  resume: boolean
 ): boolean {
-  let resumableUuid: string | undefined;
-
-  if (session.resumable) {
-    resumableUuid = session.uuid;
-  } else if (session.encodedDir) {
-    const sameProject = allSessions.filter(
-      (s) => s.encodedDir === session.encodedDir && s.resumable
-    );
-    sameProject.sort((a, b) => b.mtime - a.mtime);
-    if (sameProject.length > 0) {
-      resumableUuid = sameProject[0].uuid;
-    }
-  }
+  const resumableUuid = resumeTargetFor(session, allSessions, resume);
 
   const { dir: projectDir } = resolveSessionDir(session);
 
@@ -272,7 +294,8 @@ async function doSwitch(
 async function openMatch(
   entry: UnifiedSession,
   allSessions: ScannedSession[],
-  dryRun: boolean
+  dryRun: boolean,
+  resume: boolean
 ): Promise<boolean> {
   if (entry.status === "live") {
     if (await doSwitch(entry, dryRun)) return true;
@@ -281,7 +304,7 @@ async function openMatch(
   // A transcript whose directory is gone is not an answer. Fall through to the
   // registered project below, whose path the registry keeps current — that is
   // the difference between "your project moved" and "cannot open anything".
-  if (entry.diskSession && launchSession(entry.diskSession, allSessions, dryRun)) {
+  if (entry.diskSession && launchSession(entry.diskSession, allSessions, dryRun, resume)) {
     return true;
   }
   if (entry.project && existsSync(entry.project)) {
@@ -300,6 +323,7 @@ export interface MainResolverOpts {
   dryRun?: boolean;  // --dry-run: show what would happen
   n?: string;        // --n <count>: max candidates for history search
   all?: boolean;     // --all: show cold / 0-session / archived projects too
+  resume?: boolean;  // --resume: reopen the newest transcript instead of starting fresh
 }
 
 function getRegisteredProjects(db: Database, all = false): RegisteredProject[] {
@@ -360,7 +384,8 @@ export async function cmdMain(
   if (UUID_PREFIX_RE.test(query)) {
     const byUuid = allSessions.filter((s) => s.uuid.startsWith(query.toLowerCase()));
     if (byUuid.length === 1) {
-      launchSession(byUuid[0], allSessions, opts.dryRun ?? false);
+      // A UUID names a transcript, so resuming it is the whole request.
+      launchSession(byUuid[0], allSessions, opts.dryRun ?? false, true);
       return;
     }
     if (byUuid.length > 1) {
@@ -414,7 +439,7 @@ export async function cmdMain(
     // candidate turned "this name is ambiguous" into "this name is broken".
     const exactMatches = deduped.filter((e) => nameMatches(e, qNorm)).sort(newestFirst);
     for (const match of exactMatches) {
-      if (await openMatch(match, allSessions, opts.dryRun ?? false)) return;
+      if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
     }
 
     // Partial normalized-name match (display_name or slug)
@@ -440,7 +465,7 @@ export async function cmdMain(
     partialMatches.sort(newestFirst);
 
     if (partialMatches.length === 1) {
-      if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false)) return;
+      if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
     }
 
     if (partialMatches.length > 1) {
@@ -467,7 +492,7 @@ export async function cmdMain(
       console.log();
 
       const pickMatch = async (match: UnifiedSession) => {
-        if (await openMatch(match, allSessions, opts.dryRun ?? false)) return;
+        if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
         console.error(err(`Nothing to open for "${match.name}" — no live session, no transcript, no directory.`));
         process.exitCode = 1;
       };
@@ -575,7 +600,8 @@ export async function cmdMain(
       process.exitCode = 1;
       return;
     }
-    launchSession(session, allSessions, opts.dryRun ?? false);
+    // A picked history row IS a conversation, so it is resumed like a UUID.
+    launchSession(session, allSessions, opts.dryRun ?? false, true);
   };
 
   if (pickN !== undefined) {

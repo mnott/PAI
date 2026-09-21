@@ -114,7 +114,7 @@ export function buildProgram(): Command {
       `
 Daily commands:
   pai                     Show your work: live tabs + recent sessions + recent projects
-  pai <name>              Switch / resume / fresh — universal
+  pai <name>              Switch live tab, else fresh in its directory — universal
   pai pause [all]         Pause current (or all live) sessions
   pai end                 Finalize current session
 
@@ -691,7 +691,7 @@ claude() {
     .description(
       "Find and launch a session by topic, name, or UUID.\n" +
         "No arg → deduped session listing\n" +
-        "Name   → switch live tab, or resume, or start fresh\n" +
+        "Name   → switch live tab, or start fresh in its directory (--resume reopens the newest transcript)\n" +
         "UUID   → direct resume via filesystem scan\n" +
         "Topic  → history search → candidate list → pick #"
     )
@@ -700,7 +700,8 @@ claude() {
     .option("-n, --n <count>", "Max candidates for history search", "20")
     .option("--all", "Show all entries including cold / zero-session / archived projects")
     .option("--list", "Skip the interactive picker; print the static session listing")
-    .action(async (query: string | undefined, pick: string | undefined, opts: { auto?: boolean; dryRun?: boolean; n?: string; all?: boolean; list?: boolean }) => {
+    .option("--resume", "Reopen the name's newest transcript instead of starting fresh")
+    .action(async (query: string | undefined, pick: string | undefined, opts: { auto?: boolean; dryRun?: boolean; n?: string; all?: boolean; list?: boolean; resume?: boolean }) => {
       // No query → interactive fzf picker (projects + sessions, go where you pick).
       // `--list` (or a non-TTY pipe, handled inside cmdPick) falls back to the
       // static listing. Any query still goes through the name/UUID/topic resolver.
