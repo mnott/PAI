@@ -255,7 +255,7 @@ describe("launch route - which engine a picker launch runs on", () => {
 });
 
 describe("worker launch argv", () => {
-  it("is an interactive run: label, cwd, no prompt", () => {
+  it("is an interactive run: label, cwd, and the same --name + opener as the claude path", () => {
     expect(workerRunArgv("fix login timeout", "/Users/someone/dev/A Project")).toEqual([
       "worker",
       "run",
@@ -263,6 +263,9 @@ describe("worker launch argv", () => {
       "fix login timeout",
       "--cwd",
       "/Users/someone/dev/A Project",
+      "--name",
+      "fix login timeout",
+      "/Name fix login timeout\ngo",
     ]);
   });
 });

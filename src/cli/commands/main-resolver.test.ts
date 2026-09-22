@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveSessionDir, resumeTargetFor } from "./main-resolver.js";
+import { resolveSessionDir, resumeTargetFor, resumeCandidateFor } from "./main-resolver.js";
 
 /**
  * A session carries up to three ideas of where it lives, and the preferred one
@@ -143,5 +143,30 @@ describe("resumeTargetFor", () => {
   it("an explicit resume with nothing on disk yields fresh", () => {
     expect(resumeTargetFor({ uuid: C, resumable: false, encodedDir: "" }, catalog, true)).toBeUndefined();
     expect(resumeTargetFor({ uuid: C, resumable: false, encodedDir: "-other" }, catalog, true)).toBeUndefined();
+  });
+});
+
+describe("resumeCandidateFor", () => {
+  const A = "aaaaaaaa-0000-0000-0000-000000000000";
+  const B = "bbbbbbbb-0000-0000-0000-000000000000";
+  const C = "cccccccc-0000-0000-0000-000000000000";
+  const catalog = [
+    { uuid: A, resumable: true, encodedDir: "-proj", mtime: 100 },
+    { uuid: B, resumable: true, encodedDir: "-proj", mtime: 300 },
+    { uuid: C, resumable: false, encodedDir: "-proj", mtime: 900 },
+  ];
+
+  it("a resumable session returns itself", () => {
+    expect(resumeCandidateFor(catalog[0], catalog)).toBe(catalog[0]);
+  });
+
+  it("a stub returns the newest resumable sibling object", () => {
+    expect(resumeCandidateFor(catalog[2], catalog)).toBe(catalog[1]);
+  });
+
+  it("nothing on disk returns undefined", () => {
+    expect(
+      resumeCandidateFor({ uuid: C, resumable: false, encodedDir: "" }, catalog)
+    ).toBeUndefined();
   });
 });

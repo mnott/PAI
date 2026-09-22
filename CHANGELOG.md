@@ -89,6 +89,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Fixed
 
+- **Worker-path launch names the session** — a fresh `pai <name>` through
+  `pai worker run` now carries `--name` and the `/Name … / go` opener like
+  the claude path; sessions no longer open unnamed.
+- **Resume is offered** — `pai <name>` asks `Resume it? [y/N]` when a
+  transcript exists; default fresh; `-y`, `--resume`, non-TTY skip the
+  question.
 - **`pai worker kill`** — `kill <id>` raced the run's own SIGTERM handler
   and could overwrite its terminal status with a half-empty `killed
   rc=null ?s` row; it now waits for the run to self-report and only writes
