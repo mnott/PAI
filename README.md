@@ -403,14 +403,13 @@ Two ways in, both forgiving:
 - **`pai`** (no args) — opens the **interactive picker**: type to search across projects *and* sessions, then act on the highlighted row with a single key.
 - **`pai <name>`** — the universal session command when you already know the name. It does the right thing based on session state:
   - **Live session** — switches the iTerm2 tab to front (no new Claude launched)
-  - **Resumable session** — probes `claude --resume`, launches with the saved UUID
-  - **Transcript/stub** — starts a fresh Claude in the same project directory
+  - **Otherwise** — starts a fresh Claude in the project directory, on the configured route. If a resumable transcript exists it asks `Resume it? [y/N]` first (Enter keeps fresh); `--resume` or `pai resume <name>` resume without asking; `-y` skips the question.
   - **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
 
 ```bash
 pai                 # Interactive picker — search, then go / new / cd / finder / remove
 pai aibroker        # Switch to the live AIBroker tab (iTerm comes to front)
-pai youdrill        # Resume the youdrill session, or fresh if snapshot is stale
+pai youdrill        # Fresh youdrill session; offers to resume the last transcript
 pai mdf             # Free-text search across your prompt history
 pai 0856d40b        # Resume by UUID prefix
 pai --list          # Static deduped table (the old no-args behaviour)

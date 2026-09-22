@@ -124,6 +124,51 @@ export function resumeTargetFor(
   return sameProject[0]?.uuid;
 }
 
+/**
+ * The session object behind `resumeTargetFor` — used to show the operator
+ * WHAT they would resume (age, last prompt) before asking, rather than just
+ * a uuid.
+ */
+export function resumeCandidateFor<
+  S extends Pick<ScannedSession, "uuid" | "resumable" | "encodedDir">,
+  T extends Pick<ScannedSession, "uuid" | "resumable" | "encodedDir" | "mtime">
+>(session: S, allSessions: T[]): T | S | undefined {
+  const uuid = resumeTargetFor(session, allSessions, true);
+  if (!uuid) return undefined;
+  return allSessions.find((s) => s.uuid === uuid) ?? (session.resumable ? session : undefined);
+}
+
+/**
+ * A plain name starts fresh on purpose — context window, route — but that
+ * default left the resumable transcript invisible unless the operator already
+ * knew `--resume` existed. This keeps the default and makes the option seen.
+ */
+async function offerResume(
+  session: ScannedSession,
+  allSessions: ScannedSession[],
+  auto: boolean,
+  dryRun: boolean
+): Promise<boolean> {
+  if (auto || dryRun || !process.stdin.isTTY) return false;
+  const candidate = resumeCandidateFor(session, allSessions);
+  if (!candidate) return false;
+
+  const prompt = candidate.lastUserPrompt.trim().slice(0, 60);
+  console.log(
+    dim(
+      `\n  Resumable transcript ${candidate.shortId} (${fmtAge(candidate.mtime)}): "${prompt}"`
+    )
+  );
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(chalk.dim("  Resume it? [y/N] "), (answer) => {
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      resolve(a === "y" || a === "yes");
+    });
+  });
+}
+
 function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
@@ -295,7 +340,8 @@ async function openMatch(
   entry: UnifiedSession,
   allSessions: ScannedSession[],
   dryRun: boolean,
-  resume: boolean
+  resume: boolean,
+  auto: boolean
 ): Promise<boolean> {
   if (entry.status === "live") {
     if (await doSwitch(entry, dryRun)) return true;
@@ -304,8 +350,10 @@ async function openMatch(
   // A transcript whose directory is gone is not an answer. Fall through to the
   // registered project below, whose path the registry keeps current — that is
   // the difference between "your project moved" and "cannot open anything".
-  if (entry.diskSession && launchSession(entry.diskSession, allSessions, dryRun, resume)) {
-    return true;
+  if (entry.diskSession) {
+    const wantResume =
+      resume || (await offerResume(entry.diskSession, allSessions, auto, dryRun));
+    if (launchSession(entry.diskSession, allSessions, dryRun, wantResume)) return true;
   }
   if (entry.project && existsSync(entry.project)) {
     launchInDir(entry.project, entry.name, { dryRun });
@@ -439,7 +487,7 @@ export async function cmdMain(
     // candidate turned "this name is ambiguous" into "this name is broken".
     const exactMatches = deduped.filter((e) => nameMatches(e, qNorm)).sort(newestFirst);
     for (const match of exactMatches) {
-      if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
+      if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false, opts.auto ?? false)) return;
     }
 
     // Partial normalized-name match (display_name or slug)
@@ -465,7 +513,7 @@ export async function cmdMain(
     partialMatches.sort(newestFirst);
 
     if (partialMatches.length === 1) {
-      if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
+      if (await openMatch(partialMatches[0], allSessions, opts.dryRun ?? false, opts.resume ?? false, opts.auto ?? false)) return;
     }
 
     if (partialMatches.length > 1) {
@@ -492,7 +540,7 @@ export async function cmdMain(
       console.log();
 
       const pickMatch = async (match: UnifiedSession) => {
-        if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false)) return;
+        if (await openMatch(match, allSessions, opts.dryRun ?? false, opts.resume ?? false, opts.auto ?? false)) return;
         console.error(err(`Nothing to open for "${match.name}" — no live session, no transcript, no directory.`));
         process.exitCode = 1;
       };

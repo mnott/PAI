@@ -293,11 +293,21 @@ export function resolveLaunchRoute(
 }
 
 /**
- * Interactive worker run, same shape as the ~/.local/bin/glm shim: a label,
- * the directory, and no prompt — the run names itself from the label/dir.
+ * `/Name` labels the tab/statusline through AIBroker; `go` reads the
+ * TODO.md handover. Shared by both the claude and worker launch paths.
+ */
+export function launchPrompt(name: string): string {
+  return `/Name ${name}\ngo`;
+}
+
+/**
+ * Interactive worker run. Like the claude path, it carries `--name` and the
+ * opening prompt — `pai worker run` is declared with `.allowUnknownOption`,
+ * so both pass straight through to claude. Without them, this path left
+ * every fresh session unnamed and the operator typed /Name by hand.
  */
 export function workerRunArgv(label: string, cwd: string): string[] {
-  return ["worker", "run", "--label", label, "--cwd", cwd];
+  return ["worker", "run", "--label", label, "--cwd", cwd, "--name", label, launchPrompt(label)];
 }
 
 /**
@@ -320,7 +330,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     return;
   }
 
-  const promptArg = `/Name ${name}\ngo`;
+  const promptArg = launchPrompt(name);
 
   // A broken workers config must degrade to claude, never crash the picker.
   let workers: Pick<WorkersConfig, "enabled" | "active" | "providers"> = {
@@ -340,7 +350,9 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     if (route.engine === "worker") {
       console.log("\n" + chalk.bold("Dry run — would exec (WORKER path):") + "\n");
       console.log(`  cwd:  ${chalk.cyan(cwd)}`);
-      console.log(`  argv: pai worker run --label "${name}" --cwd ${cwd}`);
+      console.log(
+        `  argv: pai worker run --label "${name}" --cwd ${cwd} --name "${name}" "/Name ${name}\\ngo"`
+      );
       console.log();
       return;
     }
