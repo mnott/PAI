@@ -244,8 +244,21 @@ end run`;
 // osascript / ps / defaults helpers
 // ---------------------------------------------------------------------------
 
-/** Run an AppleScript with argv. Rejects when osascript itself cannot run. */
-function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+/**
+ * True for the transient "every window doesn't understand the count message"
+ * (-1708) failure iTerm throws while enumerating windows during a race with
+ * window/session churn — seen to succeed on immediate retry. No other error
+ * matches: a retry here only re-runs the enumeration, before any split, so it
+ * cannot double-create a pane.
+ */
+export function isRetryableIterm2Error(stderr: string): boolean {
+  return stderr.includes("every window doesn") && stderr.includes("(-1708)");
+}
+
+const OSASCRIPT_MAX_ATTEMPTS = 6;
+const OSASCRIPT_RETRY_DELAY_MS = 500;
+
+function runOsascriptOnce(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", ["-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -257,6 +270,16 @@ function osascript(script: string, args: string[]): Promise<{ stdout: string; st
     proc.stdin.write(script);
     proc.stdin.end();
   });
+}
+
+/** Run an AppleScript with argv. Rejects when osascript itself cannot run. */
+async function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  let result = await runOsascriptOnce(script, args);
+  for (let attempt = 1; attempt < OSASCRIPT_MAX_ATTEMPTS && isRetryableIterm2Error(result.stderr); attempt++) {
+    await new Promise((r) => setTimeout(r, OSASCRIPT_RETRY_DELAY_MS));
+    result = await runOsascriptOnce(script, args);
+  }
+  return result;
 }
 
 function psOutput(format: string): string {

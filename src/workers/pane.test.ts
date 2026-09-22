@@ -23,6 +23,7 @@ import {
   dynamicProfilePath,
   followCommand,
   followProfile,
+  isRetryableIterm2Error,
   itermPrefs,
   paneFont,
   readItermPlist,
@@ -300,5 +301,22 @@ describe("split scripts never steal input focus", () => {
     }
     expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/select/);
     expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/activate/);
+  });
+});
+
+describe("isRetryableIterm2Error", () => {
+  it("matches the transient -1708 window-enumeration error", () => {
+    expect(
+      isRetryableIterm2Error(
+        `execution error: iTerm got an error: every window doesn't understand the "count" message. (-1708)`,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects other osascript errors", () => {
+    expect(isRetryableIterm2Error("")).toBe(false);
+    expect(isRetryableIterm2Error("execution error: some other failure (-2700)")).toBe(false);
+    expect(isRetryableIterm2Error("every window doesn't understand the count message.")).toBe(false);
+    expect(isRetryableIterm2Error("(-1708)")).toBe(false);
   });
 });

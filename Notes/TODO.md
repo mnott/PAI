@@ -1,21 +1,24 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0143 - 2026-09-21 - Keepalive Handler Implementation, Session Features, And Release" session-id="3e8f7265-4086-47d8-a473-20a351dbc54a" ts="2026-09-21T19:36:31.543Z" -->
+<!-- pai:checkpoint authored="auto" session="0148 - 2026-09-22 - Worker Pane Ledger Instrumentation, Plist Handling Fix, And Test Verification" session-id="3ff4940f-41c4-4866-b8a9-6086974fffbf" ts="2026-09-22T19:44:44.809Z" -->
 
-> **Last session:** 0143 - 2026-09-21 - Keepalive Handler Implementation, Session Features, And Release
-> **Paused at:** 2026-09-21T19:36:31.543Z
+> **Last session:** 0148 - 2026-09-22 - Worker Pane Ledger Instrumentation, Plist Handling Fix, And Test Verification
+> **Paused at:** 2026-09-22T19:44:44.809Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
-> Resume with: `claude --resume 3e8f7265-4086-47d8-a473-20a351dbc54a`
+> Resume with: `claude --resume 3ff4940f-41c4-4866-b8a9-6086974fffbf`
 
 T
-i=ckpt-2026-09-21T19-36-31.389Z
-g=/Name PAI
-d=I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | [PAILot] Cpp | /Name PAI | I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | [PAILot] Cpp
+i=ckpt-2026-09-22T19-44-44.677Z
+g=while he is implementing, why exactly did it fail? only thing we did was update the os, but not iterm afaik
+d=/Name PAI go | ok Opus 5.5 came out. we need to update our rules to use that by default. | no what I meant was not for the workers. it was for the orchestrator session which previously was fable 5.1 | this is so wrong  [2026-09-22 21:28] The worker is running in the background (task brq5sxwrk) and has up to an hour. It is building:  - Capture: microphone plus a Core Audio process tap on system outp… | while he is implementing, why exactly did it fail? only thing we did was update the os, but not iterm afaik
 t=?
 @1=Notes/TODO.md
-z=auto ckpt (no model); main@c222a4b feat: v0.52.0 - pai <name> starts fresh on the configured route, --resume reopens a transcript; keepalive beats sent no-reply and recognised behind the session wrapp
+@2=src/workers/pane.test.ts
+@3=src/workers/pane.ts
+@4=src/workers/run.ts
+z=auto ckpt (no model); main@2792f1e fix(launch): v0.54.0 - worker-routed pai <name> carries --name and the /Name opener; offer Resume [y/N] when a transcript exists; 4 dirty; git status for detail
 
 <!-- /pai:checkpoint -->
 
