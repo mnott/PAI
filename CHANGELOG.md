@@ -74,6 +74,13 @@ All notable changes to PAI Knowledge OS are documented here.
 - **`--chrome` passthrough** — allowlisting any `mcp__claude-in-chrome__*`
   tool in `--allowedTools` appends `--chrome` to the worker's launch
   automatically; it is not a configured MCP server.
+- **`workers.caveman` and route pinning** — every Claude Code spawn (worker
+  run, AG2 re-ask, `providers test`) repeats its `ANTHROPIC_BASE_URL` with
+  `--settings`, which outranks the user settings' `env` block; a machine-wide
+  proxy route there had been swallowing worker routes and sending provider
+  tokens to Anthropic. Native-Anthropic runs are pinned to
+  `api.anthropic.com`, or launched as `caveman claude` when
+  `workers.caveman: true` in `config.yaml` (default off).
 - **Whisper rule tags** — a `# @orchestrator` / `# @worker` comment line in
   whisper-rules.md marks every following rule as orchestrator-only or
   worker-only until the next section header; untagged sections reach both.

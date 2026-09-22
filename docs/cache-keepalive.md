@@ -161,6 +161,13 @@ Off by default. Enable by editing the PAI config file directly (there is no
   beat is a cheap round trip, and injecting the usual ~5KB of rules into it
   would erase most of the saving.
 
+The beat travels through AIBroker's `send_to_session` with `noReply: true`
+(AIBroker ≥ 0.57): it is typed bare — no `[Session:…]` prefix that would ask
+the target to route a reply to a sender that is not a session — and nothing
+is deposited in the target's mailbox, so the drain hook cannot repeat that
+demand on the next real turn. A beat that cannot be typed is dropped, not
+queued; it has no value later.
+
 ### State file
 
 Per-session beat counters live at `~/.claude/pai/session-keepalive.json`

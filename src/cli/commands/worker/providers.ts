@@ -319,7 +319,13 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
           );
         }
         console.log(dim(`  probing ${pname} (${workers.providers[pname].models.default}) …`));
-        const r = await testProvider(pname, workers.providers[pname], workersLogDir(workers));
+        const r = await testProvider(
+          pname,
+          workers.providers[pname],
+          workersLogDir(workers),
+          undefined,
+          workers.caveman
+        );
         const head = `${r.provider} ${r.model}  ${(r.latencyMs / 1000).toFixed(1)}s`;
         if (r.skipped) {
           // e.g. engine codex without the CLI installed: report, do not fail

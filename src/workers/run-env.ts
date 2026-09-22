@@ -6,6 +6,9 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
+
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /**
@@ -99,4 +102,32 @@ export function buildRunEnv(
     env.ENABLE_TOOL_SEARCH = "true";
   }
   return env;
+}
+
+/** First-party route a native run is pinned to when caveman is off. */
+export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
+
+/**
+ * The argv head every Claude Code spawn starts from, for an env built by
+ * buildRunEnv. The user settings' env block outranks the process env
+ * (measured 2026-09-22: an unreachable ANTHROPIC_BASE_URL in the process env
+ * was ignored while settings.json carried a caveman proxy route, and a glm
+ * worker's bearer token ended at Anthropic with a 401), so a route set in
+ * `env` is not enough once a machine-wide proxy is installed — it is pinned
+ * again with `--settings`, which outranks user settings. A native run goes
+ * through `caveman claude` when workers.caveman is on and the CLI is on
+ * PATH; off, it is pinned to api.anthropic.com so a global route cannot
+ * pull it in either.
+ */
+export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean): string[] {
+  const route = env.ANTHROPIC_BASE_URL;
+  if (!route && caveman) {
+    if (onPath("caveman", env)) return ["caveman", "claude"];
+    process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
+  }
+  return ["claude", "--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: route || ANTHROPIC_FIRST_PARTY_URL } })];
+}
+
+function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
+  return (env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, bin)));
 }

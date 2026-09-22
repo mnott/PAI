@@ -23,7 +23,7 @@ This file is per-user state: it can hold API keys (`key:`, below), is kept
 mode 0600, and is never committed or shared.
 
 The non-provider settings mentioned above — `pane`, `routing`, `tree`,
-`cacheKeepaliveSecs`, `logDir`, the machine-wide fallback switch — live in
+`cacheKeepaliveSecs`, `caveman`, `logDir`, the machine-wide fallback switch — live in
 the main PAI config instead, under its `workers` section: see
 [docs/config.md](config.md) for `config.yaml`'s layout and `pai config
 get workers.cacheKeepaliveSecs` / `pai config set workers.pane.rows 40`

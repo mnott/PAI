@@ -111,6 +111,10 @@ identity:
 workers:
   enabled: true
   cacheKeepaliveSecs: 15
+  # Run native-Anthropic workers through `caveman claude`. Off (default) pins
+  # them to api.anthropic.com even when settings.json routes claude through a
+  # proxy; see docs/worker.md, "What a worker is".
+  caveman: false
 ```
 
 `postgres.connectionString` and anything under a `key`/`token`/`secret`/
