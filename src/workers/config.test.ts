@@ -268,6 +268,12 @@ describe("parseWorkersConfig", () => {
     const off = parseWorkersConfig({ mcpSets: { desktop: [] } });
     expect(off.mcpSets.desktop).toEqual([]);
   });
+
+  it("defaults caveman to false and reads a boolean, names the field on a bad one", () => {
+    expect(parseWorkersConfig(undefined).caveman).toBe(false);
+    expect(parseWorkersConfig({ caveman: true }).caveman).toBe(true);
+    expect(() => parseWorkersConfig({ caveman: "yes" })).toThrow(/\.caveman/);
+  });
 });
 
 describe("assertProviderRunnable", () => {

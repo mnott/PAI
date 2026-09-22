@@ -57,7 +57,7 @@ import {
   resolveModelCapability,
   type WorkerProvider,
 } from "./config.js";
-import { buildRunEnv } from "./run-env.js";
+import { buildRunEnv, claudeCommand } from "./run-env.js";
 
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
@@ -889,7 +889,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     parsed.callerSystemPrompt,
     a.reportFormat
   );
-  let cmd: string[] = ["claude"];
+  const claudeCmd = claudeCommand(env, config.caveman);
+  let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...restArgs);
   if (headless) {
@@ -1157,6 +1158,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           toolArgs,
           toolsFlag,
           sessionId: status.claudeSession!,
+          claudeCmd,
         });
         const v2 = validateAg2(reaskText);
         status.reportValid = v2.ok;
@@ -1273,6 +1275,8 @@ export interface Ag2ReaskArgs {
   toolsFlag: string[];
   sessionId: string;
   timeoutMs?: number;
+  /** Argv head of the original launch (claudeCommand); defaults to plain claude. */
+  claudeCmd?: string[];
 }
 
 /**
@@ -1283,7 +1287,7 @@ export interface Ag2ReaskArgs {
  * sees the same grants the worker ran with.
  */
 export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
-  let cmd: string[] = ["claude"];
+  let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
   cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
   cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag);
   cmd.push("--resume", a.sessionId, "-p", AG2_REASK_TEXT, "--output-format", "json");
@@ -1582,7 +1586,8 @@ export async function testProvider(
   providerName: string,
   provider: WorkerProvider,
   logDir: string,
-  timeoutMs = 90_000
+  timeoutMs = 90_000,
+  caveman = false
 ): Promise<ProviderTestResult> {
   assertProviderRunnable(providerName, provider);
   const model = provider.models.default;
@@ -1605,10 +1610,12 @@ export async function testProvider(
     proxyUrl = `${base}/${providerName}`;
   }
   const env = buildRunEnv(provider, true, proxyUrl);
+  const [bin, ...head] = claudeCommand(env, caveman);
   const t0 = Date.now();
   const proc = spawn(
-    "claude",
+    bin,
     [
+      ...head,
       "--model", model,
       "--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir),
       "-p", "Reply with exactly one word: pong",

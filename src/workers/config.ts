@@ -369,6 +369,12 @@ export interface WorkersConfig {
    * (src/workers/keepalive.ts). 0 = off.
    */
   cacheKeepaliveSecs: number;
+  /**
+   * Run native-Anthropic workers through `caveman claude` (workers.caveman).
+   * Off pins them to api.anthropic.com even when the user settings route
+   * every claude through a proxy; see claudeCommand in run-env.ts.
+   */
+  caveman: boolean;
   /** Machine-wide Claude Code fallback; null = off. */
   fallback: WorkersFallback | null;
   /**
@@ -438,6 +444,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
+    caveman: false,
     fallback: null,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
   };
@@ -877,6 +884,11 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     cacheKeepaliveSecs = w.cacheKeepaliveSecs;
   }
 
+  if (w.caveman !== undefined && typeof w.caveman !== "boolean") {
+    bad(".caveman", "must be true or false");
+  }
+  const caveman = w.caveman === true;
+
   const active = w.active === undefined || w.active === null ? null : str(w.active);
   if (active !== null && active !== "auto" && !(active in providers)) {
     // Tolerated at parse time (a provider may have been removed while active
@@ -929,6 +941,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     routing,
     tree,
     cacheKeepaliveSecs,
+    caveman,
     fallback,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
   };
@@ -1007,6 +1020,7 @@ export function writeWorkersSection(
         routing: workers.routing,
         tree: workers.tree,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
+        caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),
       }
     : workers.fallback

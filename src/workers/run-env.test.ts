@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildRunEnv } from "./run-env.js";
+import { delimiter, join } from "node:path";
+import { buildRunEnv, claudeCommand } from "./run-env.js";
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
@@ -116,5 +116,40 @@ describe("buildRunEnv native anthropic", () => {
       }
       for (const [k, v] of Object.entries(saved)) process.env[k] = v;
     }
+  });
+});
+
+describe("claudeCommand", () => {
+  it("pins a set route again with --settings regardless of caveman", () => {
+    const env: NodeJS.ProcessEnv = { ANTHROPIC_BASE_URL: "http://127.0.0.1:9911/glm" };
+    for (const caveman of [true, false]) {
+      const cmd = claudeCommand(env, caveman);
+      expect(cmd[0]).toBe("claude");
+      expect(cmd[1]).toBe("--settings");
+      const parsed = JSON.parse(cmd[2]);
+      expect(parsed.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:9911/glm");
+    }
+  });
+
+  it("routes through `caveman claude` when caveman is on and it is on PATH", () => {
+    const binDir = mkdtempSync(join(tmpdir(), "pai-caveman-bin-"));
+    const binPath = join(binDir, "caveman");
+    writeFileSync(binPath, "#!/bin/sh\n", "utf8");
+    chmodSync(binPath, 0o755);
+    try {
+      const env: NodeJS.ProcessEnv = { PATH: [binDir, process.env.PATH ?? ""].join(delimiter) };
+      expect(claudeCommand(env, true)).toEqual(["caveman", "claude"]);
+    } finally {
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it("pins to api.anthropic.com when there is no route and caveman is off", () => {
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "" };
+    const cmd = claudeCommand(env, false);
+    expect(cmd[0]).toBe("claude");
+    expect(cmd[1]).toBe("--settings");
+    const parsed = JSON.parse(cmd[2]);
+    expect(parsed.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
   });
 });

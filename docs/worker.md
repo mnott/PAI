@@ -382,6 +382,16 @@ Notes:
   the local proxy instead), `ANTHROPIC_API_KEY` stripped so nothing can fall
   back to Anthropic billing, the three `ANTHROPIC_DEFAULT_*_MODEL` vars, the
   provider's `env`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+- Route pinning: the `env` block of `~/.claude/settings.json` outranks the
+  process env (measured 2026-09-22: a machine-wide caveman proxy route in
+  settings.json swallowed a glm worker's `ANTHROPIC_BASE_URL`, and its
+  bearer token ended at Anthropic with a 401). So every spawn repeats the
+  route with `--settings '{"env":{"ANTHROPIC_BASE_URL":…}}'`, which outranks
+  user settings. A native-Anthropic run with no route is pinned to
+  `https://api.anthropic.com`, unless `workers.caveman: true` in
+  `config.yaml`, in which case it launches as `caveman claude` (falls back to
+  plain `claude` with a stderr note when the CLI is not on PATH). The AG2
+  re-ask and `pai worker providers test` use the same argv head.
 - Headless runs get `--strict-mcp-config --mcp-config <config>` and
   `PAI_WORKER=1` so PAI's per-session hooks leave them alone. Interactive
   runs keep full MCP and get `ENABLE_TOOL_SEARCH=true`.
