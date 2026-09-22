@@ -1,25 +1,21 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0142 - 2026-09-21 - Keepalive Analysis, Test Validation, And Skill Generation" session-id="3e8f7265-4086-47d8-a473-20a351dbc54a" ts="2026-09-21T18:04:16.087Z" -->
+<!-- pai:checkpoint authored="auto" session="0143 - 2026-09-21 - Keepalive Handler Implementation, Session Features, And Release" session-id="3e8f7265-4086-47d8-a473-20a351dbc54a" ts="2026-09-21T19:36:31.543Z" -->
 
-> **Last session:** 0142 - 2026-09-21 - Keepalive Analysis, Test Validation, And Skill Generation
-> **Paused at:** 2026-09-21T18:04:16.087Z
+> **Last session:** 0143 - 2026-09-21 - Keepalive Handler Implementation, Session Features, And Release
+> **Paused at:** 2026-09-21T19:36:31.543Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3e8f7265-4086-47d8-a473-20a351dbc54a`
 
 T
-i=ckpt-2026-09-21T18-04-15.963Z
+i=ckpt-2026-09-21T19-36-31.389Z
 g=/Name PAI
-d=I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | /Name PAI | I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into…
+d=I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | [PAILot] Cpp | /Name PAI | I just noticed that e.g. pai CaseLeaf starts a session that was there in a way that it says out of 5 hour window and starts autocompacting, probably an old session it tries to resume, while going into… | [PAILot] Cpp
 t=?
 @1=Notes/TODO.md
-@2=src/cli/commands/main-resolver.test.ts
-@3=src/cli/commands/main-resolver.ts
-@4=src/cli/lib/aibroker-client.test.ts
-@5=src/cli/lib/aibroker-client.ts
-z=auto ckpt (no model); main@299051e fix(workers): v0.51.1 - never supervise the interactive chat pane; ending a session is not a worker outcome; 10 dirty; +5 paths; git status for detail
+z=auto ckpt (no model); main@c222a4b feat: v0.52.0 - pai <name> starts fresh on the configured route, --resume reopens a transcript; keepalive beats sent no-reply and recognised behind the session wrapp
 
 <!-- /pai:checkpoint -->
 
