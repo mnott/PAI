@@ -89,6 +89,11 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Fixed
 
+- **Worker follow panes open reliably** — iTerm intermittently fails window
+  enumeration with -1708 ("every window doesn't understand count", ~5% of
+  calls, in bursts up to ~2 s), and the swallowed error left headless workers
+  without a pane. The AppleScript helper retries that one error (6 attempts,
+  500 ms apart); a pane that still fails writes `PANE-FAIL` to the ledger.
 - **Worker-path launch names the session** — a fresh `pai <name>` through
   `pai worker run` now carries `--name` and the `/Name … / go` opener like
   the claude path; sessions no longer open unnamed.

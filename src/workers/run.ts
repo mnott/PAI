@@ -958,7 +958,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Follow pane: headless only, best effort, never blocking the worker.
   if (headless && !noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
-    void openPaneForWorker(logDir, config, wid, term).catch(() => {});
+    void openPaneForWorker(logDir, config, wid, term).catch((e) => {
+      const message = e instanceof Error ? e.message : String(e);
+      appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
+    });
   }
 
   const t0 = Date.now();
@@ -1398,7 +1401,10 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
 
   if (!noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
-    void openPaneForWorker(logDir, config, wid, term).catch(() => {});
+    void openPaneForWorker(logDir, config, wid, term).catch((e) => {
+      const message = e instanceof Error ? e.message : String(e);
+      appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
+    });
   }
 
   const t0 = Date.now();
