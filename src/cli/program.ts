@@ -13,8 +13,7 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openRegistry } from "../registry/db.js";
-import type { Database } from "better-sqlite3";
+import { getRegistryBackend } from "../storage/factory.js";
 import { registerProjectsCommands } from "./commands/project/projects-index.js";
 import { findMovedPath } from "./commands/project/commands.js";
 import { existsSync } from "node:fs";
@@ -25,6 +24,7 @@ import { registerIdentityCommands } from "./commands/identity.js";
 import { registerConfigCommands } from "./commands/config.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
+import { registerHooksDbCommands } from "./commands/hooks-db.js";
 import { registerBackupCommands } from "./commands/backup.js";
 import { registerRestoreCommands } from "./commands/restore.js";
 import { registerSetupCommand } from "./commands/setup.js";
@@ -69,29 +69,6 @@ function getVersion(): string {
   } catch {
     return "0.0.0";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Lazy database singleton
-// ---------------------------------------------------------------------------
-
-let _db: Database | null = null;
-
-function getDb(): Database {
-  if (!_db) {
-    try {
-      _db = openRegistry();
-    } catch (e) {
-      // Throw instead of process.exit(1): the throw propagates up through
-      // the calling action and parseAsync() to the top-level catch in
-      // cli/index.ts, which prints the message and sets process.exitCode.
-      // That lets the process exit naturally, which flushes stdout/stderr
-      // even when either is a pipe (process.exit() does not — see
-      // src/cli/lib/exit.ts).
-      throw new Error(`Failed to open PAI registry: ${e}`);
-    }
-  }
-  return _db;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,14 +119,14 @@ Examples:
     .command("projects")
     .description("Manage registered projects (list, cd, add, info, ...)");
 
-  registerProjectsCommands(projectsCmd, getDb);
+  registerProjectsCommands(projectsCmd);
 
   // Singular alias: `pai project` → `pai projects`
   const projectCmd = program
     .command("project")
     .description("Alias for `pai projects`");
 
-  registerProjectsCommands(projectCmd, getDb);
+  registerProjectsCommands(projectCmd);
 
   // -------------------------------------------------------------------------
   // pai sessions  (alias for the unified `pai` listing)
@@ -175,8 +152,8 @@ Examples:
         "Short forms: `pai pause`, `pai end`, `pai resume <name>`."
     );
 
-  registerSessionCommands(sessionCmd, getDb);
-  registerSessionCleanupCommand(sessionCmd, getDb);
+  registerSessionCommands(sessionCmd);
+  registerSessionCleanupCommand(sessionCmd);
 
   // -------------------------------------------------------------------------
   // pai worker — subagent runs on configured providers (glm et al.)
@@ -205,7 +182,7 @@ Examples:
     .option("--all", "Show all entries including cold / zero-session / archived projects")
     .option("-n, --n <count>", "Max candidates for history search", "20")
     .action(async (opts: { all?: boolean; n?: string }) => {
-      await cmdMain(getDb(), undefined, undefined, opts);
+      await cmdMain(undefined, undefined, opts);
     });
 
   // -------------------------------------------------------------------------
@@ -216,7 +193,7 @@ Examples:
     .command("registry")
     .description("Registry maintenance: scan, migrate, stats, rebuild");
 
-  registerRegistryCommands(registryCmd, getDb);
+  registerRegistryCommands(registryCmd);
 
   // -------------------------------------------------------------------------
   // pai memory
@@ -226,7 +203,7 @@ Examples:
     .command("memory")
     .description("Memory engine: index, search, and status");
 
-  registerMemoryCommands(memoryCmd, getDb);
+  registerMemoryCommands(memoryCmd);
 
   // -------------------------------------------------------------------------
   // pai identity
@@ -267,6 +244,16 @@ Examples:
     .description("PAI daemon management: serve, status, restart, install, uninstall, logs");
 
   registerDaemonCommands(daemonCmd);
+
+  // -------------------------------------------------------------------------
+  // pai hooks-db — registry updates for the shell hooks
+  // -------------------------------------------------------------------------
+
+  const hooksDbCmd = program
+    .command("hooks-db")
+    .description("Registry updates for the shell hooks (session-stop, pre-compact)");
+
+  registerHooksDbCommands(hooksDbCmd);
 
   // -------------------------------------------------------------------------
   // pai backup / pai restore
@@ -341,7 +328,7 @@ Examples:
     .command("obsidian")
     .description("Obsidian vault: sync project notes, view status, open in Obsidian");
 
-  registerObsidianCommands(obsidianCmd, getDb);
+  registerObsidianCommands(obsidianCmd);
 
   // -------------------------------------------------------------------------
   // pai zettel
@@ -351,7 +338,7 @@ Examples:
     .command("zettel")
     .description("Zettelkasten intelligence: explore, surprise, converse, themes, health, suggest");
 
-  registerZettelCommands(zettelCmd, getDb);
+  registerZettelCommands(zettelCmd);
 
   // -------------------------------------------------------------------------
   // pai observation
@@ -443,7 +430,7 @@ Examples:
           return;
         }
         // Commander maps `--no-body` to opts.body === false.
-        cmdPause(getDb(), {
+        cmdPause({
           dryRun: opts.dryRun,
           bodyFile: opts.bodyFile,
           sessionId: opts.sessionId,
@@ -472,7 +459,7 @@ Examples:
       "Deliberately write a metadata-only checkpoint (no content)"
     )
     .action((opts: { dryRun?: boolean; bodyFile?: string; sessionId?: string; body?: boolean }) => {
-      cmdEnd(getDb(), {
+      cmdEnd({
         dryRun: opts.dryRun,
         bodyFile: opts.bodyFile,
         sessionId: opts.sessionId,
@@ -502,17 +489,16 @@ Examples:
     .command("resume <name>", { hidden: true })
     .description("Go to a session by name or UUID (prefer: pai <name>)")
     .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
-    .action((name: string, opts: { dryRun?: boolean }) => {
-      cmdGoto(getDb(), name, { dryRun: opts.dryRun });
+    .action(async (name: string, opts: { dryRun?: boolean }) => {
+      await cmdGoto(name, { dryRun: opts.dryRun });
     });
 
   // pai cd <identifier>  — hidden; shell wrapper uses this
   program
     .command("cd <identifier>", { hidden: true })
     .description("cd to a project directory (shell wrapper handles the actual cd)")
-    .action((identifier: string) => {
-      const db = getDb();
-      const project = resolveIdentifier(db, identifier);
+    .action(async (identifier: string) => {
+      const project = await resolveIdentifier(identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
         process.exitCode = 1;
@@ -535,9 +521,8 @@ Examples:
         const newPath = result.found;
         const newEncoded = encodeDir(newPath);
         const ts = now();
-        db.prepare(
-          "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-        ).run(newPath, newEncoded, ts, project.id);
+        const registry = await getRegistryBackend();
+        await registry.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
         process.stderr.write(
           ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
           dim(`  → ${newPath}\n`) +
@@ -581,8 +566,8 @@ Examples:
     .option("--limit <n>", "Maximum number of notes to show", "20")
     .option("--status <status>", "Filter by status: open | completed | compacted")
     .action(
-      (projectSlug: string | undefined, opts: { limit?: string; status?: string }) => {
-        cmdNotesList(getDb(), projectSlug, opts);
+      async (projectSlug: string | undefined, opts: { limit?: string; status?: string }) => {
+        await cmdNotesList(projectSlug, opts);
       }
     );
 
@@ -592,8 +577,8 @@ Examples:
     .option("--limit <n>", "Maximum number of notes to show", "20")
     .option("--status <status>", "Filter by status: open | completed | compacted")
     .action(
-      (projectSlug: string | undefined, opts: { limit?: string; status?: string }) => {
-        cmdNotesList(getDb(), projectSlug, opts);
+      async (projectSlug: string | undefined, opts: { limit?: string; status?: string }) => {
+        await cmdNotesList(projectSlug, opts);
       }
     );
 
@@ -706,11 +691,11 @@ claude() {
       // `--list` (or a non-TTY pipe, handled inside cmdPick) falls back to the
       // static listing. Any query still goes through the name/UUID/topic resolver.
       if (query === undefined && !opts.list) {
-        await cmdPick(getDb(), { all: opts.all, dryRun: opts.dryRun });
+        await cmdPick({ all: opts.all, dryRun: opts.dryRun });
         return;
       }
       const pickN = pick !== undefined ? parseInt(pick, 10) : undefined;
-      await cmdMain(getDb(), query, pickN, opts);
+      await cmdMain(query, pickN, opts);
     });
 
   // -------------------------------------------------------------------------

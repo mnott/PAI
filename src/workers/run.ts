@@ -92,6 +92,7 @@ import { assertChildAllowed, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
   addWorktree,
+  inPlaceSystemPrompt,
   recordWorktree,
   worktreeSystemPrompt,
   worktreeWanted,
@@ -870,7 +871,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     }
   } else if (!headless && !parsed.callerMcpConfig) {
     const explicitMcp = [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp];
-    const projectLaunch = projectLaunchConfig(cwd);
+    const projectLaunch = await projectLaunchConfig(cwd);
     const picked = interactiveMcpTools(explicitMcp, parsed.callerTools, projectLaunch);
     if (picked.mcpNames.length) {
       const names = expandMcpNames(picked.mcpNames, config);
@@ -901,8 +902,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     if (worktree) {
       cmd.push(
         "--append-system-prompt",
-        worktreeSystemPrompt(wid, worktree.branch, worktree.dir)
+        worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)
       );
+    } else {
+      cmd.push("--append-system-prompt", inPlaceSystemPrompt());
     }
   }
   cmd = ensureToolSearch(cmd);
@@ -913,7 +916,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     return 0;
   }
 
-  const status: WorkerStatus = {
+  let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
     label,
@@ -939,7 +942,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // no window seed: contextWindow comes from the init event only, and the
     // meter stays hidden until one is announced (never a guessed default)
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
-    ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
+    ...(worktree
+      ? {
+          worktreeDir: worktree.dir,
+          branch: worktree.branch,
+          worktreeBase: worktree.base,
+          worktreeSnapshot: worktree.snapshot,
+        }
+      : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
   };
   saveStatus(logDir, status);
@@ -1190,7 +1200,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   });
 
   // worktree outcome: keep branch + commit count on success, clean up on failure
-  if (worktree) recordWorktree(logDir, status, worktree, ok);
+  if (worktree) status = recordWorktree(logDir, status, worktree, ok);
 
   if (headless && !a.quiet) {
     printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport, worktreeExtras(status));
@@ -1263,7 +1273,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 }
 
 /** The worktree fields printResult adds to a json payload, when there is one. */
-function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undefined {
+export function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undefined {
   return s.branch ? { branch: s.branch, commits: s.commits ?? 0 } : undefined;
 }
 
@@ -1348,9 +1358,11 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
   env.PAI_WORKER_ID = wid;
   // codex takes instructions through the prompt, not a system prompt flag
-  const prompt = (worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir) + "\n\n" : "") + parsed.prompt;
+  const prompt =
+    (worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) + "\n\n" : "") +
+    parsed.prompt;
 
-  const status: WorkerStatus = {
+  let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
     label,
@@ -1376,7 +1388,14 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     // an explicitly configured window (never a guessed default)
     ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
-    ...(worktree ? { worktreeDir: worktree.dir, branch: worktree.branch, worktreeBase: worktree.base } : {}),
+    ...(worktree
+      ? {
+          worktreeDir: worktree.dir,
+          branch: worktree.branch,
+          worktreeBase: worktree.base,
+          worktreeSnapshot: worktree.snapshot,
+        }
+      : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
   };
   saveStatus(logDir, status);
@@ -1512,7 +1531,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     label,
   });
 
-  if (worktree) recordWorktree(logDir, status, worktree, ok);
+  if (worktree) status = recordWorktree(logDir, status, worktree, ok);
 
   if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report, worktreeExtras(status));
 

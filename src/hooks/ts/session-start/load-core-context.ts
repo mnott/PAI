@@ -93,6 +93,19 @@ ${stripFrontmatter(coreContent)}
     // Write to stdout (will be captured by Claude Code)
     console.log(message);
 
+    // Standing edit-gate notice: this session (isWorkerSession() false, checked
+    // above) will have every Edit/Write on a code file denied by
+    // pre-tool-use/route-edits-to-worker.ts, in this repo or any other — the
+    // gate keys off the target path's own git tree, not this session's cwd.
+    // Told once here so the first denial doesn't read as a one-off to retry.
+    console.log(
+      `<system-reminder>\n` +
+        `Edit/Write on code files is denied in this session by policy (only .md/.txt and Notes/ are editable). ` +
+        `For any code change: write a spec file, then ` +
+        `\`pai worker run --provider anthropic --class implement -p "$(cat <spec>)"\`.\n` +
+        `</system-reminder>`
+    );
+
     console.error('CORE context injected into session');
     process.exit(0);
   } catch (error) {

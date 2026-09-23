@@ -7,8 +7,8 @@
  * (memory_files, memory_chunks) to build a structural overview.
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../storage/interface.js";
+import type { RegistryBackend } from "../storage/registry-interface.js";
 
 // ---------------------------------------------------------------------------
 // Return types
@@ -61,11 +61,11 @@ export interface TaxonomyOptions {
  * Build a taxonomy of stored memory — what projects exist, how much is stored,
  * and what has been active recently.
  *
- * Registry queries (projects, sessions) are synchronous (better-sqlite3).
+ * Registry queries (projects, sessions) go through RegistryBackend (async).
  * Storage backend queries (files, chunks) are async.
  */
 export async function getTaxonomy(
-  registryDb: Database,
+  registry: RegistryBackend,
   storage: StorageBackend,
   options: TaxonomyOptions = {}
 ): Promise<TaxonomyResult> {
@@ -76,26 +76,9 @@ export async function getTaxonomy(
   // 1. Load all (active) projects from the registry
   // -------------------------------------------------------------------------
 
-  const statusFilter = includeArchived
-    ? "status IN ('active', 'archived', 'migrating')"
-    : "status = 'active'";
-
-  const projectRows = registryDb
-    .prepare(
-      `SELECT id, slug, display_name, status, created_at, updated_at
-       FROM projects
-       WHERE ${statusFilter}
-       ORDER BY updated_at DESC
-       LIMIT ?`
-    )
-    .all(limit) as Array<{
-    id: number;
-    slug: string;
-    display_name: string;
-    status: string;
-    created_at: number;
-    updated_at: number;
-  }>;
+  const projectRows = includeArchived
+    ? await registry.listProjects({ orderBy: "updated_desc", limit })
+    : await registry.listProjects({ status: "active", orderBy: "updated_desc", limit });
 
   if (projectRows.length === 0) {
     return {
@@ -106,91 +89,43 @@ export async function getTaxonomy(
   }
 
   const projectIds = projectRows.map((p) => p.id);
+  const projectIdSet = new Set(projectIds);
 
   // -------------------------------------------------------------------------
-  // 2. Session counts per project (registry, synchronous)
+  // 2. Session counts per project (registry, async)
   // -------------------------------------------------------------------------
 
   const sessionCountsByProject = new Map<number, number>();
   const lastSessionDateByProject = new Map<number, string | null>();
 
   for (const projectId of projectIds) {
-    const countRow = registryDb
-      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE project_id = ?")
-      .get(projectId) as { n: number };
-    sessionCountsByProject.set(projectId, countRow.n);
-
-    const lastRow = registryDb
-      .prepare(
-        "SELECT date FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
-      )
-      .get(projectId) as { date: string } | undefined;
-    lastSessionDateByProject.set(projectId, lastRow?.date ?? null);
+    sessionCountsByProject.set(projectId, await registry.countSessionsForProject(projectId));
+    lastSessionDateByProject.set(projectId, await registry.getMostRecentSessionDate(projectId));
   }
 
   // -------------------------------------------------------------------------
-  // 3. Tags per project (registry, synchronous)
+  // 3. Tags per project (registry, async)
   // -------------------------------------------------------------------------
 
   const tagsByProject = new Map<number, string[]>();
 
   for (const projectId of projectIds) {
-    const tags = registryDb
-      .prepare(
-        `SELECT t.name
-         FROM tags t
-         JOIN project_tags pt ON pt.tag_id = t.id
-         WHERE pt.project_id = ?
-         ORDER BY t.name`
-      )
-      .all(projectId) as Array<{ name: string }>;
-    tagsByProject.set(projectId, tags.map((t) => t.name));
+    tagsByProject.set(projectId, await registry.listTagsForProject(projectId));
   }
 
   // -------------------------------------------------------------------------
   // 4. Note and chunk counts per project (storage backend, async)
-  //    We use memory_files for note count (one row per indexed file) and
-  //    memory_chunks for chunk count (may be many per file).
-  //    The StorageBackend interface exposes getStats() for totals but not
-  //    per-project breakdowns, so we cast to the raw DB when it is SQLite
-  //    and fall back to a single getStats() call for Postgres.
+  //    memory_files (one row per indexed file) and memory_chunks (many per
+  //    file), via StorageBackend.getProjectStats() — same on both backends.
   // -------------------------------------------------------------------------
 
   const noteCountsByProject = new Map<number, number>();
   const chunkCountsByProject = new Map<number, number>();
 
-  const isBackend = (x: StorageBackend): boolean => x.backendType === "sqlite";
-
-  if (isBackend(storage)) {
-    // SQLite: access raw DB via the getRawDb() escape hatch present on SQLiteBackend.
-    // We reach through the interface via a duck-type check — getRawDb is not on the
-    // interface but is documented as an escape hatch for exactly this kind of work.
-    const rawDb = (storage as unknown as { getRawDb?: () => Database }).getRawDb?.();
-    if (rawDb) {
-      for (const projectId of projectIds) {
-        const noteRow = rawDb
-          .prepare(
-            "SELECT COUNT(*) AS n FROM memory_files WHERE project_id = ?"
-          )
-          .get(projectId) as { n: number };
-        noteCountsByProject.set(projectId, noteRow.n);
-
-        const chunkRow = rawDb
-          .prepare(
-            "SELECT COUNT(*) AS n FROM memory_chunks WHERE project_id = ?"
-          )
-          .get(projectId) as { n: number };
-        chunkCountsByProject.set(projectId, chunkRow.n);
-      }
-    }
-  } else {
-    // Postgres: the storage backend interface does not expose per-project file/chunk
-    // counts, so we leave them as 0 — totals are still reported via getStats().
-    // Future: add per-project getStats(projectId?) to the interface if needed.
-    for (const projectId of projectIds) {
-      noteCountsByProject.set(projectId, 0);
-      chunkCountsByProject.set(projectId, 0);
-    }
+  for (const projectId of projectIds) {
+    const projectStats = await storage.getProjectStats(projectId);
+    noteCountsByProject.set(projectId, projectStats.files);
+    chunkCountsByProject.set(projectId, projectStats.chunks);
   }
 
   // -------------------------------------------------------------------------
@@ -199,35 +134,28 @@ export async function getTaxonomy(
 
   const stats = await storage.getStats();
 
-  const totalProjects = (
-    registryDb
-      .prepare(
-        `SELECT COUNT(*) AS n FROM projects WHERE ${statusFilter}`
-      )
-      .get() as { n: number }
-  ).n;
+  const totalProjects = includeArchived
+    ? await registry.countProjects()
+    : await registry.countProjects({ status: "active" });
 
-  const totalSessions = (
-    registryDb.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }
-  ).n;
+  // No RegistryBackend method for a global session count (flagged in the
+  // report) — approximate as the sum over the projects already fetched
+  // above (bounded by `limit`), the closest available without raw SQL.
+  const totalSessions = [...sessionCountsByProject.values()].reduce((a, b) => a + b, 0);
 
   // -------------------------------------------------------------------------
-  // 6. Recent activity — last 10 sessions across all projects
+  // 6. Recent activity — last 10 sessions across all (visible) projects
+  //    No RegistryBackend method filters sessions by their project's status
+  //    directly (flagged in the report) — over-fetch and filter client-side
+  //    against the project set already resolved above.
   // -------------------------------------------------------------------------
 
-  const recentSessions = registryDb
-    .prepare(
-      `SELECT s.date, s.title, p.slug
-       FROM sessions s
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.${statusFilter.replace("status", "p.status")}
-       ORDER BY s.created_at DESC
-       LIMIT 10`
-    )
-    .all() as Array<{ date: string; title: string; slug: string }>;
+  const recentSessions = (await registry.listSessions({ limit: Math.max(50, limit) }))
+    .filter((s) => projectIdSet.has(s.project_id))
+    .slice(0, 10);
 
   const recentActivity: TaxonomyRecentActivity[] = recentSessions.map((row) => ({
-    project_slug: row.slug,
+    project_slug: row.project_slug,
     action: `session: ${row.title || "(untitled)"}`,
     timestamp: row.date,
   }));

@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdExplore(
   note: string,
@@ -14,9 +14,9 @@ async function cmdExplore(
   const mode = (opts.mode ?? "all") as "sequential" | "associative" | "all";
 
   const { zettelExplore } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
-  const result = zettelExplore(db, { startNote: note, depth, direction, mode });
+  const result = await zettelExplore(backend, { startNote: note, depth, direction, mode });
 
   console.log();
   console.log(header("  PAI Zettel Explore"));

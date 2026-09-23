@@ -13,7 +13,7 @@
  * See Notes/docs/task-bus.md.
  */
 
-import type { Database } from "better-sqlite3";
+import { getRegistryBackend } from "../storage/factory.js";
 import {
   OWNER_LABEL_PREFIX,
   UNROUTED,
@@ -64,24 +64,16 @@ export function normalize(raw: string): string {
  * directory. That failure is silent, which makes it worse than no match. Bus
  * participation is opt-in via `pai project name <identifier> <shortname>`.
  */
-export function loadAliasMap(db: Database): AliasMap {
-  const rows = db
-    .prepare(
-      `SELECT a.alias    AS alias,
-              p.slug     AS slug,
-              p.root_path AS rootPath
-         FROM aliases a
-         JOIN projects p ON p.id = a.project_id
-        WHERE p.status != 'archived'`
-    )
-    .all() as Array<{ alias: string; slug: string; rootPath: string }>;
+export async function loadAliasMap(): Promise<AliasMap> {
+  const registry = await getRegistryBackend();
+  const rows = await registry.listAliasMap();
 
   const map: AliasMap = new Map();
   for (const row of rows) {
     const target: AliasTarget = {
       alias: row.alias,
       slug: row.slug,
-      rootPath: row.rootPath,
+      rootPath: row.root_path,
     };
     map.set(normalize(row.alias), target);
     // The slug is also addressable, so a task may name either.

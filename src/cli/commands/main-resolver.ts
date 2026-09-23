@@ -16,7 +16,6 @@
  * Dedup + name normalization logic: src/cli/lib/dedup-sessions.ts (shared with listing).
  */
 
-import type { Database } from "better-sqlite3";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
@@ -374,32 +373,20 @@ export interface MainResolverOpts {
   resume?: boolean;  // --resume: reopen the newest transcript instead of starting fresh
 }
 
-function getRegisteredProjects(db: Database, all = false): RegisteredProject[] {
+async function getRegisteredProjects(all = false): Promise<RegisteredProject[]> {
   try {
-    const statusClause = all ? "" : "WHERE p.status = 'active'";
-    return db
-      .prepare(`
-        SELECT
-          p.slug,
-          p.display_name,
-          p.root_path,
-          p.status,
-          COUNT(s.id) AS session_count,
-          MAX(s.created_at) AS last_active
-        FROM projects p
-        LEFT JOIN sessions s ON s.project_id = p.id
-        ${statusClause}
-        GROUP BY p.id
-        ORDER BY last_active DESC NULLS LAST, p.updated_at DESC
-      `)
-      .all() as RegisteredProject[];
+    const { getRegistryBackend } = await import("../../storage/factory.js");
+    const registryBackend = await getRegistryBackend();
+    const rows = await registryBackend.listProjectsWithSessionStats(
+      all ? {} : { status: "active" }
+    );
+    return rows;
   } catch {
     return [];
   }
 }
 
 export async function cmdMain(
-  db: Database,
   query: string | undefined,
   pickN: number | undefined,
   opts: MainResolverOpts
@@ -412,8 +399,8 @@ export async function cmdMain(
   const livePromise = !query
     ? fetchLiveSessions().catch(() => [] as Awaited<ReturnType<typeof fetchLiveSessions>>)
     : Promise.resolve([]);
-  const allSessions = scanSessions(db, { limit: 500, filter: "named" });
-  const registeredProjects = getRegisteredProjects(db, showAll);
+  const allSessions = await scanSessions({ limit: 500, filter: "named" });
+  const registeredProjects = await getRegisteredProjects(showAll);
 
   // -----------------------------------------------------------------------
   // Case 1: No query → deduped session listing (shared renderer)

@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdConverse(
   question: string,
@@ -20,14 +20,14 @@ async function cmdConverse(
   const limit = parseInt(opts.limit ?? "15", 10);
 
   const { zettelConverse } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
   console.log();
   console.log(header("  PAI Zettel Converse"));
   console.log(dim(`  Question: "${question}"`));
   process.stdout.write(dim("  Searching vault for relevant notes...\n"));
 
-  const result = await zettelConverse(db, { question, vaultProjectId, depth, limit });
+  const result = await zettelConverse(backend, { question, vaultProjectId, depth, limit });
 
   if (result.relevantNotes.length === 0) {
     console.log(warn("  No relevant notes found. Try rephrasing your question."));

@@ -5,10 +5,10 @@
  * after prompting for confirmation.
  *
  * Restores:
- *   registry.db          — SQLite registry database
+ *   registry database    — SQLite registry database
  *   config.json          — PAI daemon config
  *   postgres-pai.sql     — Postgres dump (piped into psql via docker exec)
- *   federation.db        — Legacy SQLite federation DB (if present)
+ *   federation database  — Legacy SQLite federation DB (if present)
  */
 
 import type { Command } from "commander";
@@ -25,9 +25,8 @@ import { homedir } from "node:os";
 import { execSync, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ok, warn, err, dim, bold } from "../utils.js";
-import { paiConfigFilePath } from "../../daemon/config.js";
-import { registryDbPath } from "../../registry/db.js";
-import { federationDbPath } from "../../memory/db.js";
+import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
+import { inspectStorageBackup, restoreStorageFiles } from "../../storage/backup.js";
 import { backupsDirPath } from "./backup.js";
 
 // ---------------------------------------------------------------------------
@@ -35,7 +34,6 @@ import { backupsDirPath } from "./backup.js";
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const REGISTRY_DB = registryDbPath();
 const CONFIG_FILE = paiConfigFilePath();
 const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
@@ -139,17 +137,16 @@ export function registerRestoreCommands(program: Command): void {
       // 2. Inventory what's in the backup
       // ------------------------------------------------------------------
 
-      const hasRegistry = existsSync(join(resolvedDir, "registry.db"));
+      const inventory = inspectStorageBackup(resolvedDir);
       const hasConfig   = existsSync(join(resolvedDir, "config.json"));
       const hasSql      = existsSync(join(resolvedDir, "postgres-pai.sql"));
-      const hasFed      = existsSync(join(resolvedDir, "federation.db"));
 
       console.log(`${bold("Backup contents:")}`);
-      console.log(`  registry.db          ${hasRegistry ? ok("present") : warn("missing")}`);
+      console.log(`  Registry DB          ${inventory.hasRegistry ? ok("present") : warn("missing")}`);
       console.log(`  config.json          ${hasConfig   ? ok("present") : warn("missing")}`);
       console.log(`  postgres-pai.sql     ${hasSql && opts.postgres ? ok("present") : hasSql ? warn("present (skipped via --no-postgres)") : warn("missing")}`);
-      if (hasFed) {
-        console.log(`  federation.db        ${ok("present")} ${dim("(legacy)")}`);
+      if (inventory.hasFederation) {
+        console.log(`  Federation DB        ${ok("present")} ${dim("(legacy)")}`);
       }
 
       // ------------------------------------------------------------------
@@ -172,19 +169,14 @@ export function registerRestoreCommands(program: Command): void {
       const results: { label: string; status: string }[] = [];
 
       // ------------------------------------------------------------------
-      // 4. Restore registry.db
+      // 4. Restore registry (+ legacy federation) SQLite DB, sqlite backend only
       // ------------------------------------------------------------------
 
-      if (hasRegistry) {
-        try {
-          mkdirSync(dirname(REGISTRY_DB), { recursive: true });
-          copyFileSync(join(resolvedDir, "registry.db"), REGISTRY_DB);
-          results.push({ label: "Registry DB", status: ok("restored") });
-        } catch (e) {
-          results.push({ label: "Registry DB", status: err(`failed: ${e}`) });
-        }
-      } else {
-        results.push({ label: "Registry DB", status: warn("missing in backup — skipped") });
+      for (const r of restoreStorageFiles(loadConfig(), resolvedDir)) {
+        results.push({
+          label: r.label,
+          status: r.status === "ok" ? ok("restored") : r.status === "skipped" ? warn("missing in backup — skipped") : err(`failed: ${r.error}`),
+        });
       }
 
       // ------------------------------------------------------------------
@@ -204,20 +196,7 @@ export function registerRestoreCommands(program: Command): void {
       }
 
       // ------------------------------------------------------------------
-      // 6. Restore federation.db (legacy)
-      // ------------------------------------------------------------------
-
-      if (hasFed) {
-        try {
-          copyFileSync(join(resolvedDir, "federation.db"), federationDbPath());
-          results.push({ label: "Federation DB (legacy)", status: ok("restored") });
-        } catch (e) {
-          results.push({ label: "Federation DB (legacy)", status: warn(`skipped: ${e}`) });
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // 7. Restore Postgres via docker exec
+      // 6. Restore Postgres via docker exec
       // ------------------------------------------------------------------
 
       if (hasSql && opts.postgres) {

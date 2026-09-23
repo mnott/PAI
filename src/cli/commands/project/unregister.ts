@@ -18,23 +18,24 @@
  * obvious path.
  */
 
-import type { Database } from "better-sqlite3";
 import { ok, warn, err, dim, bold } from "../../utils.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
-export function cmdUnregister(
-  db: Database,
+export async function cmdUnregister(
   slug: string,
   opts: { execute?: boolean; force?: boolean } = {}
-): void {
-  const row = db
-    .prepare(
-      `SELECT p.id, p.slug, p.root_path, p.status,
-              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
-       FROM projects p WHERE p.slug = ?`
-    )
-    .get(slug) as
-    | { id: number; slug: string; root_path: string; status: string; session_count: number }
-    | undefined;
+): Promise<void> {
+  const backend = await getRegistryBackend();
+  const project = await backend.getProjectBySlug(slug);
+  const row = project
+    ? {
+        id: project.id,
+        slug: project.slug,
+        root_path: project.root_path,
+        status: project.status,
+        session_count: await backend.countSessionsForProject(project.id),
+      }
+    : undefined;
 
   if (!row) {
     console.error(err(`  No project with slug "${slug}".`));
@@ -73,18 +74,7 @@ export function cmdUnregister(
 
   // Same five tables as merge. With foreign keys off, deleting only the project
   // row would silently orphan the rest.
-  const run = db.transaction(() => {
-    db.prepare("DELETE FROM links WHERE target_project_id = ?").run(row.id);
-    db.prepare(
-      "DELETE FROM links WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)"
-    ).run(row.id);
-    db.prepare("DELETE FROM compaction_log WHERE project_id = ?").run(row.id);
-    db.prepare("DELETE FROM project_tags WHERE project_id = ?").run(row.id);
-    db.prepare("DELETE FROM aliases WHERE project_id = ?").run(row.id);
-    db.prepare("DELETE FROM sessions WHERE project_id = ?").run(row.id);
-    db.prepare("DELETE FROM projects WHERE id = ?").run(row.id);
-  });
-  run();
+  await backend.deleteProjectCascade(row.id);
 
   console.log(ok(`  Unregistered ${row.slug}.`));
   console.log(dim(`  The directory itself was not touched.`));

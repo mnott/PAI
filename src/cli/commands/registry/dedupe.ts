@@ -32,9 +32,10 @@
  * anything is written, and the whole merge runs in one transaction.
  */
 
-import type { Database } from "better-sqlite3";
 import { realpathSync, copyFileSync, existsSync } from "node:fs";
 import { ok, warn, err, dim, bold } from "../../utils.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 
 interface ProjectRow {
   id: number;
@@ -76,17 +77,14 @@ function safeRealPath(p: string): string | null {
   }
 }
 
-function countRefs(db: Database, projectId: number): Counts {
-  const one = (sql: string): number =>
-    (db.prepare(sql).get(projectId) as { n: number }).n;
-
+async function countRefs(backend: RegistryBackend, projectId: number): Promise<Counts> {
   return {
-    sessions: one("SELECT COUNT(*) AS n FROM sessions WHERE project_id = ?"),
-    compaction: one("SELECT COUNT(*) AS n FROM compaction_log WHERE project_id = ?"),
-    aliases: one("SELECT COUNT(*) AS n FROM aliases WHERE project_id = ?"),
-    links: one("SELECT COUNT(*) AS n FROM links WHERE target_project_id = ?"),
-    tags: one("SELECT COUNT(*) AS n FROM project_tags WHERE project_id = ?"),
-    children: one("SELECT COUNT(*) AS n FROM projects WHERE parent_id = ?"),
+    sessions: await backend.countSessionsForProject(projectId),
+    compaction: await backend.countCompactionLogsForProject(projectId),
+    aliases: await backend.countAliasesForProject(projectId),
+    links: await backend.countLinksForProject(projectId),
+    tags: await backend.countProjectTagsForProject(projectId),
+    children: await backend.countChildProjects(projectId),
   };
 }
 
@@ -98,29 +96,25 @@ function countRefs(db: Database, projectId: number): Counts {
  * external reference to that path keeps resolving. Failing that, the row with
  * the most sessions wins, then the oldest.
  */
-function pickCanonical(rows: ProjectRow[], realPath: string, db: Database): ProjectRow {
+async function pickCanonical(rows: ProjectRow[], realPath: string, backend: RegistryBackend): Promise<ProjectRow> {
   const exact = rows.filter((r) => r.root_path === realPath);
   const pool = exact.length > 0 ? exact : rows;
 
-  return [...pool].sort((a, b) => {
-    const sa = countRefs(db, a.id).sessions;
-    const sb = countRefs(db, b.id).sessions;
-    if (sa !== sb) return sb - sa;
-    return a.created_at - b.created_at;
-  })[0];
+  const withSessions = await Promise.all(
+    pool.map(async (r) => ({ row: r, sessions: (await countRefs(backend, r.id)).sessions }))
+  );
+  withSessions.sort((a, b) => {
+    if (a.sessions !== b.sessions) return b.sessions - a.sessions;
+    return a.row.created_at - b.row.created_at;
+  });
+  return withSessions[0].row;
 }
 
-export function analyzeDuplicates(db: Database): {
+export async function analyzeDuplicates(backend: RegistryBackend): Promise<{
   groups: MergeGroup[];
   stalePaths: ProjectRow[];
-} {
-  const rows = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir, status,
-              claude_notes_dir, session_config, created_at
-         FROM projects ORDER BY id`
-    )
-    .all() as ProjectRow[];
+}> {
+  const rows: ProjectRow[] = await backend.listProjects({ orderBy: "id" });
 
   const byRealPath = new Map<string, ProjectRow[]>();
   const stalePaths: ProjectRow[] = [];
@@ -141,7 +135,7 @@ export function analyzeDuplicates(db: Database): {
   const groups: MergeGroup[] = [];
   for (const [realPath, members] of byRealPath) {
     if (members.length < 2) continue;
-    const canonical = pickCanonical(members, realPath, db);
+    const canonical = await pickCanonical(members, realPath, backend);
     groups.push({
       realPath,
       canonical,
@@ -182,71 +176,35 @@ interface MergeReport {
  * any field the survivor is missing is backfilled from the duplicate before it
  * is deleted.
  */
-function foldSession(db: Database, keepId: number, dropId: number): void {
+async function foldSession(backend: RegistryBackend, keepId: number, dropId: number): Promise<void> {
   // session_tags PK is (session_id, tag_id) — skip tags the survivor has.
-  const tags = db
-    .prepare("SELECT tag_id FROM session_tags WHERE session_id = ?")
-    .all(dropId) as Array<{ tag_id: number }>;
-  for (const t of tags) {
-    const clash = db
-      .prepare(
-        "SELECT 1 FROM session_tags WHERE session_id = ? AND tag_id = ? LIMIT 1"
-      )
-      .get(keepId, t.tag_id);
+  const tagIds = await backend.listSessionTagIds(dropId);
+  for (const tagId of tagIds) {
+    const clash = await backend.sessionHasTag(keepId, tagId);
     if (clash) {
-      db.prepare(
-        "DELETE FROM session_tags WHERE session_id = ? AND tag_id = ?"
-      ).run(dropId, t.tag_id);
+      await backend.deleteSessionTag(dropId, tagId);
     } else {
-      db.prepare(
-        "UPDATE session_tags SET session_id = ? WHERE session_id = ? AND tag_id = ?"
-      ).run(keepId, dropId, t.tag_id);
+      await backend.reassignSessionTag(dropId, keepId, tagId);
     }
   }
 
   // links UNIQUE(session_id, target_project_id)
-  const links = db
-    .prepare("SELECT id, target_project_id FROM links WHERE session_id = ?")
-    .all(dropId) as Array<{ id: number; target_project_id: number }>;
+  const links = await backend.listLinksForSession(dropId);
   for (const l of links) {
-    const clash = db
-      .prepare(
-        "SELECT 1 FROM links WHERE session_id = ? AND target_project_id = ? LIMIT 1"
-      )
-      .get(keepId, l.target_project_id);
-    if (clash) db.prepare("DELETE FROM links WHERE id = ?").run(l.id);
-    else
-      db.prepare("UPDATE links SET session_id = ? WHERE id = ?").run(
-        keepId,
-        l.id
-      );
+    const clash = await backend.linkExists(keepId, l.target_project_id);
+    if (clash) await backend.deleteLink(l.id);
+    else await backend.moveLinkToSession(l.id, keepId);
   }
 
-  db.prepare("UPDATE compaction_log SET session_id = ? WHERE session_id = ?").run(
-    keepId,
-    dropId
-  );
+  await backend.moveCompactionLogsBySession(dropId, keepId);
 
   // Backfill anything the survivor lacks, and prefer a finished status.
-  db.prepare(
-    `UPDATE sessions SET
-       claude_session_id = COALESCE(claude_session_id,
-                                    (SELECT claude_session_id FROM sessions WHERE id = ?)),
-       token_count       = COALESCE(token_count,
-                                    (SELECT token_count FROM sessions WHERE id = ?)),
-       closed_at         = COALESCE(closed_at,
-                                    (SELECT closed_at FROM sessions WHERE id = ?)),
-       status            = CASE WHEN status = 'open'
-                                 AND (SELECT status FROM sessions WHERE id = ?) != 'open'
-                                THEN (SELECT status FROM sessions WHERE id = ?)
-                                ELSE status END
-     WHERE id = ?`
-  ).run(dropId, dropId, dropId, dropId, dropId, keepId);
+  await backend.backfillFoldedSession(keepId, dropId);
 
-  db.prepare("DELETE FROM sessions WHERE id = ?").run(dropId);
+  await backend.deleteSession(dropId);
 }
 
-function mergeGroup(db: Database, group: MergeGroup): MergeReport {
+async function mergeGroup(backend: RegistryBackend, group: MergeGroup): Promise<MergeReport> {
   const report: MergeReport = {
     movedSessions: 0,
     foldedSessions: 0,
@@ -264,149 +222,86 @@ function mergeGroup(db: Database, group: MergeGroup): MergeReport {
 
   // Highest session number already used on the canonical row — collisions are
   // appended above it so no existing number ever has to change.
-  let nextNumber =
-    ((
-      db
-        .prepare("SELECT MAX(number) AS n FROM sessions WHERE project_id = ?")
-        .get(canonicalId) as { n: number | null }
-    ).n ?? 0) + 1;
+  let nextNumber = (await backend.getMaxSessionNumber(canonicalId)) + 1;
 
   for (const dup of group.duplicates) {
-    const sessions = db
-      .prepare(
-        "SELECT id, number, title, filename FROM sessions WHERE project_id = ? ORDER BY number"
-      )
-      .all(dup.id) as Array<{
-      id: number;
-      number: number;
-      title: string;
-      filename: string;
-    }>;
+    const sessions = await backend.listSessionsForProject(dup.id, { orderBy: "number_asc" });
 
     for (const s of sessions) {
       // Same file already registered on the canonical row? Then this is the
       // same session recorded twice, not a second session. Fold, do not move.
-      const twin = db
-        .prepare(
-          "SELECT id FROM sessions WHERE project_id = ? AND filename = ? LIMIT 1"
-        )
-        .get(canonicalId, s.filename) as { id: number } | undefined;
+      const twin = await backend.findSessionByFilename(canonicalId, s.filename);
 
       if (twin) {
-        foldSession(db, twin.id, s.id);
+        await foldSession(backend, twin.id, s.id);
         report.foldedSessions++;
         continue;
       }
 
-      const clash = db
-        .prepare(
-          "SELECT 1 FROM sessions WHERE project_id = ? AND number = ? LIMIT 1"
-        )
-        .get(canonicalId, s.number);
+      const clash = await backend.sessionNumberTaken(canonicalId, s.number);
 
       if (clash) {
         const assigned = nextNumber++;
-        db.prepare(
-          "UPDATE sessions SET project_id = ?, number = ? WHERE id = ?"
-        ).run(canonicalId, assigned, s.id);
+        await backend.moveSessionToProject(s.id, canonicalId, { number: assigned });
         report.renumbered.push({
           from: s.number,
           to: assigned,
           title: s.title,
         });
       } else {
-        db.prepare("UPDATE sessions SET project_id = ? WHERE id = ?").run(
-          canonicalId,
-          s.id
-        );
+        await backend.moveSessionToProject(s.id, canonicalId);
         if (s.number >= nextNumber) nextNumber = s.number + 1;
       }
       report.movedSessions++;
     }
 
-    report.movedCompaction += db
-      .prepare("UPDATE compaction_log SET project_id = ? WHERE project_id = ?")
-      .run(canonicalId, dup.id).changes;
+    report.movedCompaction += await backend.moveCompactionLogsByProject(dup.id, canonicalId);
 
     // aliases.alias is the PK, so an alias already pointing at the canonical
     // row would collide. Repoint what can move, drop only exact duplicates.
-    const dupAliases = db
-      .prepare("SELECT alias FROM aliases WHERE project_id = ?")
-      .all(dup.id) as Array<{ alias: string }>;
-    for (const a of dupAliases) {
-      const existing = db
-        .prepare("SELECT project_id FROM aliases WHERE alias = ?")
-        .get(a.alias) as { project_id: number } | undefined;
-      if (existing && existing.project_id === canonicalId) continue;
-      db.prepare("UPDATE aliases SET project_id = ? WHERE alias = ?").run(
-        canonicalId,
-        a.alias
-      );
+    const dupAliases = await backend.listAliasesForProject(dup.id);
+    for (const alias of dupAliases) {
+      const existingProjectId = await backend.resolveAlias(alias);
+      if (existingProjectId === canonicalId) continue;
+      await backend.reassignAlias(alias, canonicalId);
       report.movedAliases++;
     }
 
     // links has UNIQUE(session_id, target_project_id).
-    const dupLinks = db
-      .prepare("SELECT id, session_id FROM links WHERE target_project_id = ?")
-      .all(dup.id) as Array<{ id: number; session_id: number }>;
+    const dupLinks = await backend.listLinksForProject(dup.id);
     for (const l of dupLinks) {
-      const clash = db
-        .prepare(
-          "SELECT 1 FROM links WHERE session_id = ? AND target_project_id = ? LIMIT 1"
-        )
-        .get(l.session_id, canonicalId);
+      const clash = await backend.linkExists(l.session_id, canonicalId);
       if (clash) {
-        db.prepare("DELETE FROM links WHERE id = ?").run(l.id);
+        await backend.deleteLink(l.id);
         continue;
       }
-      db.prepare("UPDATE links SET target_project_id = ? WHERE id = ?").run(
-        canonicalId,
-        l.id
-      );
+      await backend.retargetLink(l.id, canonicalId);
       report.movedLinks++;
     }
 
     // project_tags has PRIMARY KEY(project_id, tag_id).
-    const dupTags = db
-      .prepare("SELECT tag_id FROM project_tags WHERE project_id = ?")
-      .all(dup.id) as Array<{ tag_id: number }>;
-    for (const t of dupTags) {
-      const clash = db
-        .prepare(
-          "SELECT 1 FROM project_tags WHERE project_id = ? AND tag_id = ? LIMIT 1"
-        )
-        .get(canonicalId, t.tag_id);
+    const dupTagIds = await backend.listProjectTagIds(dup.id);
+    for (const tagId of dupTagIds) {
+      const clash = await backend.projectHasTag(canonicalId, tagId);
       if (clash) {
-        db.prepare(
-          "DELETE FROM project_tags WHERE project_id = ? AND tag_id = ?"
-        ).run(dup.id, t.tag_id);
+        await backend.deleteProjectTag(dup.id, tagId);
         continue;
       }
-      db.prepare(
-        "UPDATE project_tags SET project_id = ? WHERE project_id = ? AND tag_id = ?"
-      ).run(canonicalId, dup.id, t.tag_id);
+      await backend.reassignProjectTag(dup.id, canonicalId, tagId);
       report.movedTags++;
     }
 
-    report.movedChildren += db
-      .prepare("UPDATE projects SET parent_id = ? WHERE parent_id = ?")
-      .run(canonicalId, dup.id).changes;
+    report.movedChildren += await backend.reassignProjectParent(dup.id, canonicalId);
 
     // Carry over settings the canonical row is missing rather than losing them.
     if (!group.canonical.claude_notes_dir && dup.claude_notes_dir) {
-      db.prepare("UPDATE projects SET claude_notes_dir = ? WHERE id = ?").run(
-        dup.claude_notes_dir,
-        canonicalId
-      );
+      await backend.updateProjectClaudeNotesDir(canonicalId, dup.claude_notes_dir);
     }
     if (!group.canonical.session_config && dup.session_config) {
-      db.prepare("UPDATE projects SET session_config = ? WHERE id = ?").run(
-        dup.session_config,
-        canonicalId
-      );
+      await backend.updateProjectSessionConfig(canonicalId, dup.session_config);
     }
 
-    db.prepare("DELETE FROM projects WHERE id = ?").run(dup.id);
+    await backend.deleteProject(dup.id);
     report.deletedRows++;
   }
 
@@ -416,9 +311,7 @@ function mergeGroup(db: Database, group: MergeGroup): MergeReport {
     group.canonical.status === "active" ||
     group.duplicates.some((d) => d.status === "active");
   if (anyActive && group.canonical.status !== "active") {
-    db.prepare("UPDATE projects SET status = 'active' WHERE id = ?").run(
-      canonicalId
-    );
+    await backend.updateProjectStatus(canonicalId, "active");
   }
 
   // Reclaim the good slug.
@@ -435,15 +328,9 @@ function mergeGroup(db: Database, group: MergeGroup): MergeReport {
       ...group.duplicates.map((d) => d.slug).filter((s) => !/-\d+$/.test(s)),
     ];
     for (const candidate of candidates) {
-      const taken = db
-        .prepare("SELECT 1 FROM projects WHERE slug = ? LIMIT 1")
-        .get(candidate);
+      const taken = await backend.getProjectBySlug(candidate);
       if (taken) continue;
-      db.prepare("UPDATE projects SET slug = ?, updated_at = ? WHERE id = ?").run(
-        candidate,
-        Date.now(),
-        canonicalId
-      );
+      await backend.updateProjectSlug(canonicalId, candidate, Date.now());
       report.reclaimedSlugs.push({
         from: group.canonical.slug,
         to: candidate,
@@ -454,13 +341,9 @@ function mergeGroup(db: Database, group: MergeGroup): MergeReport {
 
   // Point the surviving row at the canonical filesystem path.
   if (group.canonical.root_path !== group.realPath) {
-    const taken = db
-      .prepare("SELECT id FROM projects WHERE root_path = ? AND id != ?")
-      .get(group.realPath, canonicalId);
+    const taken = await backend.getProjectByRootPath(group.realPath, { excludeId: canonicalId });
     if (!taken) {
-      db.prepare(
-        "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
-      ).run(group.realPath, Date.now(), canonicalId);
+      await backend.updateProjectPath(canonicalId, { rootPath: group.realPath }, Date.now());
     }
   }
 
@@ -478,13 +361,11 @@ function mergeGroup(db: Database, group: MergeGroup): MergeReport {
  * Only rows whose canonical path is free are touched — a collision would mean
  * a duplicate, and those have already been merged.
  */
-function canonicalizePaths(
-  db: Database,
+async function canonicalizePaths(
+  backend: RegistryBackend,
   dryRun: boolean
-): Array<{ slug: string; from: string; to: string }> {
-  const rows = db
-    .prepare("SELECT id, slug, root_path FROM projects")
-    .all() as Array<{ id: number; slug: string; root_path: string }>;
+): Promise<Array<{ slug: string; from: string; to: string }>> {
+  const rows = await backend.listProjects();
 
   const changed: Array<{ slug: string; from: string; to: string }> = [];
 
@@ -492,16 +373,12 @@ function canonicalizePaths(
     const rp = safeRealPath(row.root_path);
     if (!rp || rp === row.root_path) continue;
 
-    const taken = db
-      .prepare("SELECT 1 FROM projects WHERE root_path = ? AND id != ? LIMIT 1")
-      .get(rp, row.id);
+    const taken = await backend.getProjectByRootPath(rp, { excludeId: row.id });
     if (taken) continue;
 
     changed.push({ slug: row.slug, from: row.root_path, to: rp });
     if (!dryRun) {
-      db.prepare(
-        "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
-      ).run(rp, Date.now(), row.id);
+      await backend.updateProjectPath(row.id, { rootPath: rp }, Date.now());
     }
   }
 
@@ -530,11 +407,11 @@ function backupDb(dbPath: string): string | null {
   }
 }
 
-export function cmdDedupe(
-  db: Database,
+export async function cmdDedupe(
   opts: { execute?: boolean; dbPath?: string }
-): void {
-  const { groups, stalePaths } = analyzeDuplicates(db);
+): Promise<void> {
+  const backend = await getRegistryBackend();
+  const { groups, stalePaths } = await analyzeDuplicates(backend);
 
   console.log();
   console.log(
@@ -552,13 +429,13 @@ export function cmdDedupe(
 
   for (const g of groups) {
     console.log(`  ${bold(g.realPath)}`);
-    const cCounts = countRefs(db, g.canonical.id);
+    const cCounts = await countRefs(backend, g.canonical.id);
     console.log(
       `    ${ok("keep")}  #${g.canonical.id} ${bold(g.canonical.slug)} ` +
         dim(`(${g.canonical.root_path}) — ${cCounts.sessions} sessions, ${g.canonical.status}`)
     );
     for (const d of g.duplicates) {
-      const dc = countRefs(db, d.id);
+      const dc = await countRefs(backend, d.id);
       const moving = [
         dc.sessions ? `${dc.sessions} sessions` : null,
         dc.compaction ? `${dc.compaction} compaction rows` : null,
@@ -590,7 +467,7 @@ export function cmdDedupe(
     );
     console.log(dim("  proven identical to anything else. Listed for review:"));
     for (const s of stalePaths) {
-      const sc = countRefs(db, s.id);
+      const sc = await countRefs(backend, s.id);
       if (sc.sessions === 0 && sc.compaction === 0) continue;
       console.log(
         dim(
@@ -601,7 +478,7 @@ export function cmdDedupe(
     console.log();
   }
 
-  const pathFixes = canonicalizePaths(db, true);
+  const pathFixes = await canonicalizePaths(backend, true);
   if (pathFixes.length > 0) {
     console.log(
       dim(
@@ -664,9 +541,13 @@ export function cmdDedupe(
 
   let canonicalized = 0;
 
-  const run = db.transaction(() => {
+  // Best-effort in sequence: RegistryBackend has no cross-row transaction
+  // primitive, so a failure partway through no longer rolls back everything
+  // the way the old raw-SQL transaction did — it leaves whatever merged
+  // successfully in place and reports the point of failure.
+  try {
     for (const g of groups) {
-      const r = mergeGroup(db, g);
+      const r = await mergeGroup(backend, g);
       totals.movedSessions += r.movedSessions;
       totals.foldedSessions += r.foldedSessions;
       totals.renumbered.push(...r.renumbered);
@@ -680,13 +561,9 @@ export function cmdDedupe(
     }
     // After merging, the remaining collisions are gone, so the rest of the
     // registry can be moved onto canonical paths safely.
-    canonicalized = canonicalizePaths(db, false).length;
-  });
-
-  try {
-    run();
+    canonicalized = (await canonicalizePaths(backend, false)).length;
   } catch (e) {
-    console.error(err(`Merge failed and was rolled back: ${String(e)}`));
+    console.error(err(`Merge failed partway through: ${String(e)}`));
     process.exitCode = 1;
     return;
   }

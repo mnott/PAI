@@ -2,7 +2,7 @@
  * Backend-aware async indexer for PAI federation memory.
  *
  * Provides the same functionality as sync.ts but writes through the
- * StorageBackend interface instead of directly to better-sqlite3.
+ * StorageBackend interface instead of directly to the SQLite driver.
  * Used when the daemon is configured with the Postgres backend.
  *
  * The SQLite path still uses sync.ts directly (which is faster for SQLite
@@ -11,8 +11,8 @@
 
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, basename } from "node:path";
-import type { Database } from "better-sqlite3";
 import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { chunkMarkdown } from "../chunker.js";
 import {
   sha256File,
@@ -409,11 +409,9 @@ export async function embedChunksWithBackend(
 
 export async function indexAllWithBackend(
   backend: StorageBackend,
-  registryDb: Database,
+  registry: RegistryBackend,
 ): Promise<{ projects: number; result: IndexResult }> {
-  const projects = registryDb
-    .prepare("SELECT id, root_path, claude_notes_dir FROM projects WHERE status = 'active'")
-    .all() as Array<{ id: number; root_path: string; claude_notes_dir: string | null }>;
+  const projects = await registry.listProjects({ status: "active" });
 
   const totals: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
 

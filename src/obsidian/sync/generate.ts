@@ -3,9 +3,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { fmtDate } from "../../cli/utils.js";
-import type { ProjectRow, SessionStats, TagRow } from "./types.js";
 import { findNotesDir, findClaudeNotesDir } from "./symlinks.js";
 import { paiHomePath, resolvePaiFile, migratePaiDir, type MigrateDirResult } from "../../config/pai-home.js";
 
@@ -13,26 +12,10 @@ import { paiHomePath, resolvePaiFile, migratePaiDir, type MigrateDirResult } fro
  * Generate _index.md listing all projects with session counts, tags, and
  * indicators for which note sources are available (notes, sessions, or both).
  */
-export function generateIndex(vaultPath: string, db: Database): void {
+export async function generateIndex(vaultPath: string, registry: RegistryBackend): Promise<void> {
   mkdirSync(vaultPath, { recursive: true });
 
-  const rows = db
-    .prepare(
-      `SELECT p.id, p.slug, p.display_name, p.status, p.root_path,
-         p.encoded_dir, p.claude_notes_dir,
-         (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-         (SELECT MAX(s.created_at) FROM sessions s WHERE s.project_id = p.id) AS last_active
-       FROM projects p
-       ORDER BY p.status ASC, p.updated_at DESC`
-    )
-    .all() as (ProjectRow & SessionStats)[];
-
-  const getTagsForProject = db.prepare(
-    `SELECT t.name FROM tags t
-     JOIN project_tags pt ON pt.tag_id = t.id
-     WHERE pt.project_id = ?
-     ORDER BY t.name`
-  );
+  const rows = await registry.listProjectsWithSessionStats();
 
   const active = rows.filter((r) => r.status === "active");
   const archived = rows.filter((r) => r.status !== "active");
@@ -49,7 +32,7 @@ export function generateIndex(vaultPath: string, db: Database): void {
   ];
 
   for (const row of active) {
-    const tags = (getTagsForProject.all(row.id) as TagRow[]).map((t) => `\`${t.name}\``).join(" ");
+    const tags = (await registry.listTagsForProject(row.id)).map((t) => `\`${t}\``).join(" ");
     const lastActive = fmtDate(row.last_active);
 
     const notesDir = findNotesDir(row.root_path);
@@ -73,7 +56,7 @@ export function generateIndex(vaultPath: string, db: Database): void {
       "| ------- | -------- | ---- |"
     );
     for (const row of archived) {
-      const tags = (getTagsForProject.all(row.id) as TagRow[]).map((t) => `\`${t.name}\``).join(" ");
+      const tags = (await registry.listTagsForProject(row.id)).map((t) => `\`${t}\``).join(" ");
       lines.push(
         `| [${row.display_name}](_archive/${row.slug}.md) | ${row.session_count} | ${tags || "—"} |`
       );
@@ -93,27 +76,15 @@ export function generateIndex(vaultPath: string, db: Database): void {
  * Generate per-tag topic pages at _topics/{tag}.md.
  * Returns count of pages written.
  */
-export function generateTopicPages(vaultPath: string, db: Database): number {
+export async function generateTopicPages(vaultPath: string, registry: RegistryBackend): Promise<number> {
   const topicsDir = join(vaultPath, "_topics");
   mkdirSync(topicsDir, { recursive: true });
 
-  const allTags = db
-    .prepare("SELECT id, name FROM tags ORDER BY name")
-    .all() as { id: number; name: string }[];
-
-  const getProjectsForTag = db.prepare(
-    `SELECT p.id, p.slug, p.display_name, p.status,
-       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-       (SELECT MAX(s.created_at) FROM sessions s WHERE s.project_id = p.id) AS last_active
-     FROM projects p
-     JOIN project_tags pt ON pt.project_id = p.id
-     WHERE pt.tag_id = ?
-     ORDER BY p.status ASC, p.updated_at DESC`
-  );
+  const allTags = await registry.listAllTags();
 
   let written = 0;
   for (const tag of allTags) {
-    const projects = getProjectsForTag.all(tag.id) as (ProjectRow & SessionStats)[];
+    const projects = await registry.listProjectsWithSessionStats({ tagId: tag.id });
     if (!projects.length) continue;
 
     const lines: string[] = [

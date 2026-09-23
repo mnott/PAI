@@ -314,9 +314,11 @@ export async function auditMcp(opts: {
   const { configuredIn, disabled, serverDefs } = gatherConfiguredSources(cwd, homeDir);
   const liveProcesses = gatherLiveProcesses(homeDir);
   const usage = await gatherUsage(transcriptsDir, Date.now());
-  const pinned = opts.projectsDbPath
-    ? projectLaunchConfig(resolve(cwd), opts.projectsDbPath)?.mcp ?? null
-    : projectLaunchConfig(resolve(cwd))?.mcp ?? null;
+  // `projectsDbPath` predates the storage-layer conversion, when this call opened
+  // a sqlite file by path; `projectLaunchConfig` now takes an injectable
+  // RegistryBackend instead, and no caller has passed one since, so it can only
+  // fall through to the process-wide backend here too.
+  const pinned = (await projectLaunchConfig(resolve(cwd)))?.mcp ?? null;
 
   const allNames = new Set<string>([...configuredIn.keys(), ...usage.keys()]);
   const allConfiguredNames = [...configuredIn.keys()];

@@ -8,13 +8,12 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { chmodSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
 import { readConfigRaw, writeConfigRaw } from "./setup/utils.js";
-import { openRegistry } from "../../registry/db.js";
+import { getRegistryBackend } from "../../storage/factory.js";
 import { loadAliasMap } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";
 import { dispatchAll } from "../../tasks/dispatch.js";
@@ -44,27 +43,27 @@ import {
  * directory, the registry gives the project at that path. Returns a line worth
  * printing, or null when nothing needed doing.
  */
-function ensureAlias(db: Database, name: string, directory?: string): string | null {
+async function ensureAlias(name: string, directory?: string): Promise<string | null> {
   if (!directory) return `no directory for "${name}" — set the alias by hand`;
 
-  const project = db
-    .prepare("SELECT id, slug FROM projects WHERE root_path = ? AND status = 'active'")
-    .get(directory) as { id: number; slug: string } | undefined;
+  const registry = await getRegistryBackend();
+  const project = await registry.getProjectByRootPath(directory);
+  if (!project || project.status !== "active") {
+    return `no PAI project at ${directory} — tasks here will not route`;
+  }
 
-  if (!project) return `no PAI project at ${directory} — tasks here will not route`;
-
-  const existing = db
-    .prepare("SELECT project_id FROM aliases WHERE lower(alias) = lower(?)")
-    .get(name) as { project_id: number } | undefined;
-
-  if (existing) {
+  // resolveAlias() is case-sensitive; the original SQL compared lower(alias)
+  // — a narrower check (see worker report: resolveAlias needs the same
+  // opts.caseInsensitive that getProjectByAlias already has).
+  const existingProjectId = await registry.resolveAlias(name);
+  if (existingProjectId !== null) {
     // Repointing someone else's alias would silently steal their address.
-    return existing.project_id === project.id
+    return existingProjectId === project.id
       ? null
       : `alias "${name}" already points elsewhere — left alone`;
   }
 
-  db.prepare("INSERT INTO aliases (alias, project_id) VALUES (?, ?)").run(name, project.id);
+  await registry.addAlias(name, project.id);
   return `aliased → ${project.slug}`;
 }
 
@@ -117,12 +116,12 @@ const ok = chalk.green;
 // Wiring
 // ---------------------------------------------------------------------------
 
-function buildProvider(): TodoistProvider | null {
+async function buildProvider(): Promise<TodoistProvider | null> {
   const config = loadConfig();
   const tasks = config.tasks;
   if (!tasks?.enabled) return null;
 
-  const aliases = loadAliasMap(openRegistry());
+  const aliases = await loadAliasMap();
   const provider = new TodoistProvider(tasks.providers.todoist, aliases, {
     defaultOwner: tasks.defaultOwner,
   });
@@ -249,7 +248,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--create <names...>", "Create tracker projects for these session names")
     .option("--create-all", "Create a project for every session that has none")
     .action(async (opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       if (!provider.listSubProjects || !provider.findOrCreateSubProject) {
@@ -299,7 +298,7 @@ export function registerTaskCommands(taskCmd: Command): void {
           // was wired in. The alias is not a separate step a user should have
           // to know about; it is what makes the project mean anything.
           const row = rows.find((r) => normalizeName(r.name) === normalizeName(name));
-          const note = ensureAlias(openRegistry(), name, row?.directory);
+          const note = await ensureAlias(name, row?.directory);
           if (note) console.log(dim(`           ${note}`));
         }
         console.log();
@@ -318,7 +317,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--routed", "Hide tasks with no resolved owner")
     .option("--limit <n>", "Maximum tasks to show", (v) => Number.parseInt(v, 10))
     .action(async (opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       const tasks = await provider.listOpen({
@@ -340,7 +339,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--url <url>", "Reference — prefer a hook:// URL over a file path")
     .option("--into <sub-project>", "File into this sub-project under the bus root, creating it if absent")
     .action(async (title, opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       // A title alone is not actionable months later. Warn rather than block:
@@ -372,7 +371,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--dry-run", "Report what would happen without contacting any session")
     .option("--no-spawn", "Never launch a session; skip owners that are not running")
     .action(async (opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       const config = loadConfig();
@@ -412,7 +411,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .description("One scheduler tick: dispatch what is due, check what is running, report")
     .option("--dry-run", "Show what would happen without touching anything")
     .action(async (opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       const config = loadConfig();
@@ -587,7 +586,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .option("--quiet", "Print nothing (for hook and webhook callers)")
     .option("--no-notify", "Do not tell the owning session where the file landed")
     .action(async (id, opts: { quiet?: boolean; notify?: boolean }) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
       // Notifies by default: this command is the path something OUTSIDE the
       // session took — a checkbox ticked in the tracker — so the session has no
@@ -607,7 +606,7 @@ export function registerTaskCommands(taskCmd: Command): void {
     .description("Mark a task complete on the tracker, keeping its discussion")
     .option("--no-archive", "Complete without saving the comment thread")
     .action(async (id, opts) => {
-      const provider = buildProvider();
+      const provider = await buildProvider();
       if (!provider) return reportUnconfigured();
 
       // Archive BEFORE completing. A completed task is harder to read back on

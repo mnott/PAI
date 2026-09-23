@@ -2,8 +2,8 @@
  * Shared mutable daemon state — module-level singletons used across all daemon sub-modules.
  */
 
-import { openRegistry } from "../../registry/db.js";
 import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { NotificationConfig } from "../../notifications/types.js";
 import type { PaiDaemonConfig } from "../config.js";
 
@@ -11,7 +11,8 @@ import type { PaiDaemonConfig } from "../config.js";
 // Core singletons (assigned at startup by serve())
 // ---------------------------------------------------------------------------
 
-export let registryDb: ReturnType<typeof openRegistry>;
+/** RegistryBackend-based access (projects, sessions, tags, aliases, links, compaction_log). */
+export let registryBackend: RegistryBackend;
 export let storageBackend: StorageBackend;
 export let daemonConfig: PaiDaemonConfig;
 export let startTime = Date.now();
@@ -60,7 +61,7 @@ export let shutdownRequested = false;
 // that need to be mutated across module boundaries)
 // ---------------------------------------------------------------------------
 
-export function setRegistryDb(db: ReturnType<typeof openRegistry>): void { registryDb = db; }
+export function setRegistryBackend(b: RegistryBackend): void { registryBackend = b; }
 export function setStorageBackend(b: StorageBackend): void { storageBackend = b; }
 export function setDaemonConfig(c: PaiDaemonConfig): void { daemonConfig = c; }
 export function setStartTime(t: number): void { startTime = t; }

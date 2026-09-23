@@ -15,13 +15,10 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import type { Pool } from "pg";
 
-import { openRegistry } from "../registry/db.js";
 import { loadConfig, CONFIG_FILE } from "../daemon/config.js";
-import { createStorageBackend } from "../storage/factory.js";
+import { createStorageBackend, getRegistryBackend } from "../storage/factory.js";
 import { extractAndStoreTriples } from "./kg-extraction.js";
-import { openFederation } from "./db.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -172,38 +169,23 @@ export async function backfillKgFromNotes(
   }
 
   const backend = await createStorageBackend(config);
-  if (backend.backendType !== "postgres") {
+  if (!backend.supportsPostgresFeatures) {
     throw new Error(
       "Postgres backend unavailable — fell back to SQLite. Cannot backfill KG."
     );
   }
 
-  const pool: Pool = (backend as unknown as { getPool(): Pool }).getPool();
-
-  // Open federation SQLite for entity upserts (kg_entities table)
-  const federationDb = openFederation();
-
   // -- Load projects -------------------------------------------------------
-  const registry = openRegistry();
+  const registry = await getRegistryBackend();
   let projects: ProjectRow[];
-  try {
-    if (options.projectSlug) {
-      const row = registry
-        .prepare("SELECT id, slug, root_path FROM projects WHERE slug = ?")
-        .get(options.projectSlug) as ProjectRow | undefined;
-      if (!row) {
-        throw new Error(`Project not found: ${options.projectSlug}`);
-      }
-      projects = [row];
-    } else {
-      projects = registry
-        .prepare(
-          "SELECT id, slug, root_path FROM projects WHERE status = 'active' ORDER BY slug"
-        )
-        .all() as ProjectRow[];
+  if (options.projectSlug) {
+    const row = await registry.getProjectBySlug(options.projectSlug);
+    if (!row) {
+      throw new Error(`Project not found: ${options.projectSlug}`);
     }
-  } finally {
-    registry.close();
+    projects = [row];
+  } else {
+    projects = await registry.listProjects({ status: "active", orderBy: "slug" });
   }
 
   // -- Build the work list -------------------------------------------------
@@ -239,14 +221,13 @@ export async function backfillKgFromNotes(
     }
 
     try {
-      const stats = await extractAndStoreTriples(pool, {
+      const stats = await extractAndStoreTriples(backend, {
         summaryText: noteContent,
         projectSlug: project.slug,
         projectId: project.id,
         sessionId: `backfill:${notePath}`,
         gitLog: "",
         model: "sonnet",
-        federationDb,
       });
 
       result.notes_processed++;
@@ -266,7 +247,6 @@ export async function backfillKgFromNotes(
   }
 
   if (!options.dryRun) saveState(state);
-  federationDb.close();
   await backend.close();
 
   return result;

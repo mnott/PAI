@@ -5,8 +5,8 @@
  * surfacing cross-project serendipitous connections in the PAI memory graph.
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { ToolResult } from "./types.js";
 import { findTunnels } from "../../memory/tunnels.js";
 
@@ -24,12 +24,12 @@ export interface MemoryTunnelsParams {
 }
 
 export async function toolMemoryTunnels(
-  registryDb: Database,
+  registry: RegistryBackend,
   backend: StorageBackend,
   params: MemoryTunnelsParams
 ): Promise<ToolResult> {
   try {
-    const result = await findTunnels(backend, registryDb, {
+    const result = await findTunnels(backend, registry, {
       min_projects: params.min_projects,
       min_occurrences: params.min_occurrences,
       limit: params.limit,

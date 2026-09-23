@@ -12,16 +12,12 @@
  */
 
 import { resolve } from "node:path";
-import { openRegistry, registryDbPath } from "../registry/db.js";
+import { getRegistryBackend } from "../storage/factory.js";
+import type { RegistryBackend } from "../storage/registry-interface.js";
 
 export interface ProjectLaunchConfig {
   mcp?: string[];
   tools?: string[];
-}
-
-interface ConfigRow {
-  root_path: string;
-  session_config: string | null;
 }
 
 function asStringArray(v: unknown): string[] | undefined {
@@ -33,37 +29,29 @@ function asStringArray(v: unknown): string[] | undefined {
 /**
  * The launch config of the project whose root_path is `cwd` or an ancestor
  * of it (longest match wins) — null when no registered project covers it,
- * or when the matching project has no mcp/tools pin set. `dbPath` is
- * injectable for tests; production callers take the default.
+ * or when the matching project has no mcp/tools pin set. `registry` is
+ * injectable for tests; production callers take the process-wide backend.
  */
-export function projectLaunchConfig(
+export async function projectLaunchConfig(
   cwd: string,
-  dbPath: string = registryDbPath()
-): ProjectLaunchConfig | null {
+  registry?: RegistryBackend
+): Promise<ProjectLaunchConfig | null> {
   const target = resolve(cwd);
-  const db = openRegistry(dbPath);
-  try {
-    const rows = db
-      .prepare(
-        `SELECT root_path, session_config FROM projects WHERE status != 'archived' ORDER BY LENGTH(root_path) DESC`
-      )
-      .all() as ConfigRow[];
-    for (const row of rows) {
-      const root = resolve(row.root_path);
-      if (target !== root && !target.startsWith(root + "/")) continue;
-      if (!row.session_config) return null;
-      let parsed: { mcp?: unknown; tools?: unknown };
-      try {
-        parsed = JSON.parse(row.session_config);
-      } catch {
-        return null;
-      }
-      const mcp = asStringArray(parsed.mcp);
-      const tools = asStringArray(parsed.tools);
-      return mcp || tools ? { mcp, tools } : null;
+  const backend = registry ?? (await getRegistryBackend());
+  const rows = await backend.listProjectsByPathLengthDesc({ excludeArchived: true });
+  for (const row of rows) {
+    const root = resolve(row.root_path);
+    if (target !== root && !target.startsWith(root + "/")) continue;
+    if (!row.session_config) return null;
+    let parsed: { mcp?: unknown; tools?: unknown };
+    try {
+      parsed = JSON.parse(row.session_config);
+    } catch {
+      return null;
     }
-    return null;
-  } finally {
-    db.close();
+    const mcp = asStringArray(parsed.mcp);
+    const tools = asStringArray(parsed.tools);
+    return mcp || tools ? { mcp, tools } : null;
   }
+  return null;
 }

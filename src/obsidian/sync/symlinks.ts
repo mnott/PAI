@@ -12,8 +12,8 @@ import {
   rmdirSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Database } from "better-sqlite3";
-import type { ProjectRow, SyncStats } from "./types.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
+import type { SyncStats } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -183,19 +183,18 @@ function removeProjectDirIfEmpty(slugPath: string): void {
  *
  * Archived projects get a stub markdown file in {vault}/_archive/.
  */
-export function syncVault(vaultPath: string, db: Database): SyncStats {
+export async function syncVault(vaultPath: string, registry: RegistryBackend): Promise<SyncStats> {
   const stats: SyncStats = { created: 0, updated: 0, removed: 0, stubbed: 0, errors: [] };
 
   mkdirSync(vaultPath, { recursive: true });
   stats.removed += cleanBrokenSymlinks(vaultPath);
 
-  const projects = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir, status, obsidian_link, claude_notes_dir
-       FROM projects
-       ORDER BY status ASC, slug ASC`
-    )
-    .all() as ProjectRow[];
+  // ORDER BY status ASC, slug ASC — RegistryBackend has no combined orderBy
+  // for this pair, so sort client-side (plain string compare matches SQLite's
+  // default ASCII collation for these columns).
+  const projects = (await registry.listProjects()).sort((a, b) =>
+    a.status !== b.status ? a.status.localeCompare(b.status) : a.slug.localeCompare(b.slug)
+  );
 
   const takenSlugs = new Set<string>();
 
@@ -238,11 +237,7 @@ export function syncVault(vaultPath: string, db: Database): SyncStats {
       }
 
       try {
-        db.prepare("UPDATE projects SET obsidian_link = ?, updated_at = ? WHERE id = ?").run(
-          slugPath,
-          Date.now(),
-          project.id
-        );
+        await registry.updateProjectObsidianLink(project.id, slugPath, Date.now());
       } catch {
         // Non-fatal
       }

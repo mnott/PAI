@@ -23,7 +23,7 @@ The foundational philosophy, architecture, and operations of PAI (Personal AI In
 User
   └── Claude Code (+ PAI MCP shim)
         └── PAI Daemon (IPC socket)
-              ├── federation.db (SQLite — memory, projects, sessions, vault)
+              ├── Storage backend (Postgres — memory, projects, sessions, vault)
               ├── Embedding model (singleton)
               └── Project registry
 \`\`\`

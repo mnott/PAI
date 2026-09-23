@@ -14,6 +14,7 @@
 
 import type { PaiDaemonConfig } from "../daemon/config.js";
 import type { StorageBackend } from "./interface.js";
+import type { RegistryBackend } from "./registry-interface.js";
 import { setBackendOutage, clearBackendOutage } from "./outage.js";
 
 export interface StorageBackendOptions {
@@ -43,7 +44,7 @@ export async function createStorageBackend(
   opts: StorageBackendOptions = {}
 ): Promise<StorageBackend> {
   if (config.storageBackend === "postgres") {
-    return await connectPostgres(config, opts.waitForPostgres ?? false);
+    return await getSharedPostgresBackend(config, opts.waitForPostgres ?? false);
   }
 
   // Default: SQLite
@@ -135,52 +136,55 @@ async function notifyBackendRecovered(
   }
 }
 
-async function connectPostgres(
-  config: PaiDaemonConfig,
-  waitForever: boolean
-): Promise<StorageBackend> {
-  let attempt = 0;
-  let lastError = "unknown error";
+/**
+ * Shared retry loop: attempt a connection, back off, escalate, repeat — used
+ * by both the federation and registry Postgres connectors so the retry/outage
+ * behaviour (§6, "never falls back to SQLite silently") stays in one place.
+ */
+async function retryConnect<T>(
+  attempt: () => Promise<{ backend: T } | { error: string }>,
+  waitForever: boolean,
+  label: string
+): Promise<T> {
+  let attemptN = 0;
   let outageSince: number | null = null;
   let escalated = false;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    attempt++;
-    const result = await attemptPostgres(config);
+    attemptN++;
+    const result = await attempt();
     if ("backend" in result) {
-      if (attempt > 1) {
-        process.stderr.write(
-          `[pai-daemon] Connected to PostgreSQL backend (after ${attempt} attempts).\n`
-        );
+      if (attemptN > 1) {
+        process.stderr.write(`[pai-daemon] Connected to ${label} (after ${attemptN} attempts).\n`);
       } else {
-        process.stderr.write("[pai-daemon] Connected to PostgreSQL backend.\n");
+        process.stderr.write(`[pai-daemon] Connected to ${label}.\n`);
       }
       // An outage that ended must stop being reported, or the status command
       // trades one wrong answer for another.
       clearBackendOutage();
-      if (escalated) void notifyBackendRecovered(attempt, outageSince);
+      if (escalated) void notifyBackendRecovered(attemptN, outageSince);
       return result.backend;
     }
 
-    lastError = result.error;
+    const lastError = result.error;
 
-    if (!waitForever && attempt > CLI_RETRY_DELAYS_MS.length) {
+    if (!waitForever && attemptN > CLI_RETRY_DELAYS_MS.length) {
       // Bounded CLI path exhausted — fail loudly, never silently use SQLite.
       throw new Error(
-        `Postgres backend unreachable after ${attempt} attempts: ${lastError}. ` +
+        `${label} unreachable after ${attemptN} attempts: ${lastError}. ` +
           `Is Docker Desktop / Postgres running? Refusing to fall back to SQLite ` +
           `(would split the corpus). Start Postgres and retry.`
       );
     }
 
     const delayMs = waitForever
-      ? Math.min(DAEMON_RETRY_CAP_MS, 1_000 * 2 ** Math.min(attempt - 1, 4))
-      : CLI_RETRY_DELAYS_MS[attempt - 1];
+      ? Math.min(DAEMON_RETRY_CAP_MS, 1_000 * 2 ** Math.min(attemptN - 1, 4))
+      : CLI_RETRY_DELAYS_MS[attemptN - 1];
 
     process.stderr.write(
-      `[pai-daemon] Postgres unavailable (${lastError}). ` +
-        `Retry ${attempt}${waitForever ? "" : `/${CLI_RETRY_DELAYS_MS.length + 1}`} ` +
+      `[pai-daemon] ${label} unavailable (${lastError}). ` +
+        `Retry ${attemptN}${waitForever ? "" : `/${CLI_RETRY_DELAYS_MS.length + 1}`} ` +
         `in ${delayMs}ms...\n`
     );
 
@@ -190,27 +194,168 @@ async function connectPostgres(
     // notes never written, and the one command anyone would run to check
     // reporting that everything was fine.
     setBackendOutage({
-      backend: "postgres",
+      backend: label,
       since: outageSince ?? (outageSince = Date.now()),
-      attempts: attempt,
+      attempts: attemptN,
       lastError: String(lastError),
     });
 
     // And escalate once, out loud, rather than only into a log nobody tails.
     // Once — not per retry — because a notification that repeats every few
     // seconds is filtered within a minute and stops being a signal at all.
-    if (waitForever && attempt === ESCALATE_AFTER_ATTEMPTS && !escalated) {
+    if (waitForever && attemptN === ESCALATE_AFTER_ATTEMPTS && !escalated) {
       escalated = true;
-      void notifyBackendDown(attempt, String(lastError));
+      void notifyBackendDown(attemptN, String(lastError));
     }
 
     await new Promise((r) => setTimeout(r, delayMs));
   }
 }
 
+async function connectPostgres(
+  config: PaiDaemonConfig,
+  waitForever: boolean
+): Promise<StorageBackend> {
+  return retryConnect(() => attemptPostgres(config), waitForever, "PostgreSQL backend");
+}
+
+/**
+ * The process's one Postgres connection: storage and registry share a
+ * single pg Pool (one connection budget) instead of each opening their own.
+ * Whichever of createStorageBackend()/createRegistryBackend() runs first
+ * creates it via connectPostgres()'s retry/outage handling; the other
+ * reuses its pool through PostgresBackend.getPool(). Reset by closeStorage().
+ */
+let pgBackendPromise: Promise<StorageBackend> | null = null;
+
+function getSharedPostgresBackend(
+  config: PaiDaemonConfig,
+  waitForever: boolean
+): Promise<StorageBackend> {
+  if (!pgBackendPromise) {
+    pgBackendPromise = connectPostgres(config, waitForever);
+  }
+  return pgBackendPromise;
+}
+
 async function createSQLiteBackend(): Promise<StorageBackend> {
-  const { openFederation } = await import("../memory/db.js");
+  const { openFederation } = await import("./sqlite/federation-db.js");
   const { SQLiteBackend } = await import("./sqlite.js");
   const db = openFederation();
   return new SQLiteBackend(db);
+}
+
+/**
+ * Create and return the configured RegistryBackend (projects, sessions,
+ * tags, aliases, links, compaction_log). Same auto-behaviour and same
+ * never-fall-back-to-SQLite rule as createStorageBackend().
+ */
+export async function createRegistryBackend(
+  config: PaiDaemonConfig,
+  opts: StorageBackendOptions = {}
+): Promise<RegistryBackend> {
+  if (config.storageBackend === "postgres") {
+    // Reuses the storage backend's pool (getSharedPostgresBackend) rather
+    // than opening a second one against the same database.
+    const storage = await getSharedPostgresBackend(config, opts.waitForPostgres ?? false);
+    const { PostgresRegistryBackend } = await import("./registry-postgres.js");
+    const pool = (storage as unknown as { getPool: () => import("pg").Pool }).getPool();
+    return new PostgresRegistryBackend(pool);
+  }
+  return createSQLiteRegistryBackend();
+}
+
+async function createSQLiteRegistryBackend(): Promise<RegistryBackend> {
+  const { openRegistry } = await import("./sqlite/registry-db.js");
+  const { SQLiteRegistryBackend } = await import("./registry-sqlite.js");
+  const db = openRegistry();
+  return new SQLiteRegistryBackend(db);
+}
+
+/**
+ * Process-wide backend accessors.
+ *
+ * Callers across the codebase must get their StorageBackend/RegistryBackend
+ * from here rather than constructing SQLite or Postgres directly — this is
+ * the one place that decides which backend a process uses, and the one place
+ * that closes it on exit.
+ */
+
+let storagePromise: Promise<StorageBackend> | null = null;
+let registryPromise: Promise<RegistryBackend> | null = null;
+let beforeExitRegistered = false;
+
+function registerBeforeExit(): void {
+  if (beforeExitRegistered) return;
+  beforeExitRegistered = true;
+  process.once("beforeExit", () => {
+    void closeStorage();
+  });
+}
+
+/**
+ * Returns the process-wide StorageBackend, creating it on first call.
+ *
+ * The whole body up to and including the `storagePromise = (async () =>
+ * ...)()` assignment must run synchronously (no `await` before it) — two
+ * calls issued in the same tick (e.g. `Promise.all([get(), get()])`) must
+ * both observe the same cached promise rather than each racing to create
+ * their own backend.
+ */
+export async function getStorageBackend(): Promise<StorageBackend> {
+  if (!storagePromise) {
+    storagePromise = (async () => {
+      const { loadConfig } = await import("../daemon/config.js");
+      registerBeforeExit();
+      return await createStorageBackend(loadConfig());
+    })();
+  }
+  return storagePromise;
+}
+
+/** Returns the process-wide RegistryBackend, creating it on first call. Same synchronous-caching requirement as getStorageBackend(). */
+export async function getRegistryBackend(): Promise<RegistryBackend> {
+  if (!registryPromise) {
+    registryPromise = (async () => {
+      const { loadConfig } = await import("../daemon/config.js");
+      registerBeforeExit();
+      return await createRegistryBackend(loadConfig());
+    })();
+  }
+  return registryPromise;
+}
+
+/** Closes any backends created via getStorageBackend()/getRegistryBackend(). Idempotent. */
+export async function closeStorage(): Promise<void> {
+  const pending = [storagePromise, registryPromise];
+  const pg = pgBackendPromise;
+  storagePromise = null;
+  registryPromise = null;
+  pgBackendPromise = null;
+  for (const p of pending) {
+    if (!p) continue;
+    try {
+      const backend = await p;
+      // Postgres backends share one pool owned by pgBackendPromise (closed
+      // below) — closing them here too would end() it twice.
+      if (backend.backendType === "postgres") continue;
+      await backend.close();
+    } catch {
+      // A backend that never connected has nothing to close.
+    }
+  }
+  if (pg) {
+    try {
+      await (await pg).close();
+    } catch {
+      // Never connected — nothing to close.
+    }
+  }
+}
+
+/** Test-only: clear the process-wide cache without closing (tests own their own lifecycle). */
+export function __resetStorageForTests(): void {
+  storagePromise = null;
+  registryPromise = null;
+  pgBackendPromise = null;
 }

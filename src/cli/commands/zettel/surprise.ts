@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdSurprise(
   note: string,
@@ -21,14 +21,14 @@ async function cmdSurprise(
   const minGraphDistance = parseInt(opts.minDistance ?? "3", 10);
 
   const { zettelSurprise } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
   console.log();
   console.log(header("  PAI Zettel Surprise"));
   console.log(dim(`  Reference note: ${note}`));
   process.stdout.write(dim("  Searching for surprising connections...\n"));
 
-  const results = await zettelSurprise(db, {
+  const results = await zettelSurprise(backend, {
     referencePath: note,
     vaultProjectId,
     limit,

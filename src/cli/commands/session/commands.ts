@@ -2,7 +2,6 @@
  * Session CRUD commands: list, info, rename, slug, tag, route, active, auto-route.
  */
 
-import type { Database } from "better-sqlite3";
 import {
   existsSync,
   readdirSync,
@@ -29,6 +28,7 @@ import {
   readLastMessages,
   generateSlug,
 } from "../../../session/slug-generator.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { SessionRow, ProjectRow } from "./types.js";
 import {
   getProject,
@@ -45,44 +45,30 @@ import {
 // list
 // ---------------------------------------------------------------------------
 
-export function cmdList(
-  db: Database,
+export async function cmdList(
   projectSlug: string | undefined,
   opts: { limit?: string; status?: string }
-): void {
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
   const limit = parseInt(opts.limit ?? "20", 10);
-  const params: unknown[] = [];
 
-  let query = `
-    SELECT s.*, p.slug AS project_slug, p.display_name AS project_name
-    FROM sessions s
-    JOIN projects p ON p.id = s.project_id
-  `;
-
-  const where: string[] = [];
+  let project: ProjectRow | undefined;
   if (projectSlug) {
-    const project = getProject(db, projectSlug);
+    project = await getProject(registryBackend, projectSlug);
     if (!project) {
       console.error(err(`Project not found: ${projectSlug}`));
       process.exitCode = 1;
       return;
     }
-    where.push("s.project_id = ?");
-    params.push(project.id);
-  }
-  if (opts.status) {
-    where.push("s.status = ?");
-    params.push(opts.status);
   }
 
-  if (where.length) query += " WHERE " + where.join(" AND ");
-  query += " ORDER BY s.date DESC, s.number DESC";
-  query += ` LIMIT ${limit}`;
-
-  const rows = db.prepare(query).all(...params) as (SessionRow & {
-    project_slug: string;
-    project_name: string;
-  })[];
+  const rows = await registryBackend.listSessions({
+    projectId: project?.id,
+    status: opts.status,
+    limit,
+  });
 
   if (!rows.length) {
     console.log(warn("No sessions found."));
@@ -112,8 +98,7 @@ export function cmdList(
   });
 
   console.log();
-  if (projectSlug) {
-    const project = getProject(db, projectSlug)!;
+  if (project) {
     console.log(`  ${bold(project.display_name)} sessions:`);
     console.log();
   }
@@ -126,19 +111,21 @@ export function cmdList(
 // info
 // ---------------------------------------------------------------------------
 
-export function cmdInfo(
-  db: Database,
+export async function cmdInfo(
   projectSlug: string,
   sessionNumber: string
-): void {
-  const project = getProject(db, projectSlug);
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = await getProject(registryBackend, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
     process.exitCode = 1;
     return;
   }
 
-  const session = resolveSession(db, project, sessionNumber);
+  const session = await resolveSession(registryBackend, project, sessionNumber);
 
   console.log();
   console.log(header(`  Session #${session.number}: ${session.title}`));
@@ -171,20 +158,30 @@ export function cmdInfo(
 // rename
 // ---------------------------------------------------------------------------
 
-export function cmdRename(
-  db: Database,
+export async function cmdRename(
   projectSlug: string,
   numberOrLatest: string,
   newSlug: string
-): void {
-  const project = getProject(db, projectSlug);
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+  await cmdRenameWith(registryBackend, projectSlug, numberOrLatest, newSlug);
+}
+
+async function cmdRenameWith(
+  registryBackend: RegistryBackend,
+  projectSlug: string,
+  numberOrLatest: string,
+  newSlug: string
+): Promise<void> {
+  const project = await getProject(registryBackend, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
     process.exitCode = 1;
     return;
   }
 
-  const session = resolveSession(db, project, numberOrLatest);
+  const session = await resolveSession(registryBackend, project, numberOrLatest);
   const notesDir = getNotesDir(project);
 
   if (!existsSync(notesDir)) {
@@ -239,9 +236,11 @@ export function cmdRename(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  db.prepare(
-    "UPDATE sessions SET slug = ?, title = ?, filename = ? WHERE id = ?"
-  ).run(normalizedSlug, titleSlug, newFilename, session.id);
+  await registryBackend.updateSessionMeta(session.id, {
+    slug: normalizedSlug,
+    title: titleSlug,
+    filename: newFilename,
+  });
 
   console.log();
   console.log(ok(`  Session #${session.number} renamed.`));
@@ -256,20 +255,22 @@ export function cmdRename(
 // slug
 // ---------------------------------------------------------------------------
 
-export function cmdSlug(
-  db: Database,
+export async function cmdSlug(
   projectSlug: string,
   numberOrLatest: string,
   opts: { apply?: boolean }
-): void {
-  const project = getProject(db, projectSlug);
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = await getProject(registryBackend, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
     process.exitCode = 1;
     return;
   }
 
-  const session = resolveSession(db, project, numberOrLatest);
+  const session = await resolveSession(registryBackend, project, numberOrLatest);
   const transcriptPath = findLatestTranscript(project.encoded_dir);
 
   if (!transcriptPath) {
@@ -294,7 +295,7 @@ export function cmdSlug(
   if (opts.apply) {
     console.log();
     console.log(dim(`  Applying slug to session #${session.number}...`));
-    cmdRename(db, projectSlug, String(session.number), generatedSlug);
+    await cmdRenameWith(registryBackend, projectSlug, String(session.number), generatedSlug);
   }
 }
 
@@ -302,23 +303,25 @@ export function cmdSlug(
 // tag
 // ---------------------------------------------------------------------------
 
-export function cmdTag(
-  db: Database,
+export async function cmdTag(
   projectSlug: string,
   sessionNumber: string,
   rawTags: string[]
-): void {
-  const project = getProject(db, projectSlug);
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = await getProject(registryBackend, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
     process.exitCode = 1;
     return;
   }
 
-  const session = resolveSession(db, project, sessionNumber);
+  const session = await resolveSession(registryBackend, project, sessionNumber);
 
   if (rawTags.length === 0) {
-    const current = getSessionTags(db, session.id);
+    const current = await getSessionTags(registryBackend, session.id);
     console.log();
     if (current.length === 0) {
       console.log(dim(`  Session #${session.number} has no tags.`));
@@ -347,16 +350,12 @@ export function cmdTag(
   const skipped: string[] = [];
 
   for (const tagName of tags) {
-    const tagId = upsertTag(db, tagName);
-    const exists = db
-      .prepare("SELECT 1 FROM session_tags WHERE session_id = ? AND tag_id = ?")
-      .get(session.id, tagId);
+    const tagId = await upsertTag(registryBackend, tagName);
+    const exists = await registryBackend.sessionHasTag(session.id, tagId);
     if (exists) {
       skipped.push(tagName);
     } else {
-      db.prepare(
-        "INSERT INTO session_tags (session_id, tag_id) VALUES (?, ?)"
-      ).run(session.id, tagId);
+      await registryBackend.addSessionTag(session.id, tagId);
       added.push(tagName);
     }
   }
@@ -375,7 +374,7 @@ export function cmdTag(
     console.log(dim(`  Already present: ${skipped.join(", ")}`));
   }
 
-  const allTags = getSessionTags(db, session.id);
+  const allTags = await getSessionTags(registryBackend, session.id);
   console.log(
     `  ${bold("All tags:")} ${allTags.map((t) => chalk.cyan(t)).join(", ")}`
   );
@@ -386,27 +385,25 @@ export function cmdTag(
 // route
 // ---------------------------------------------------------------------------
 
-export function cmdRoute(
-  db: Database,
+export async function cmdRoute(
   projectSlug: string,
   sessionNumber: string,
   targetProjectSlug: string,
   opts: { type?: string }
-): void {
-  const project = getProject(db, projectSlug);
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = await getProject(registryBackend, projectSlug);
   if (!project) {
     console.error(err(`Project not found: ${projectSlug}`));
     process.exitCode = 1;
     return;
   }
 
-  const session = resolveSession(db, project, sessionNumber);
+  const session = await resolveSession(registryBackend, project, sessionNumber);
 
-  const targetProject = db
-    .prepare("SELECT id, slug, display_name FROM projects WHERE slug = ?")
-    .get(targetProjectSlug) as
-    | { id: number; slug: string; display_name: string }
-    | undefined;
+  const targetProject = await getProject(registryBackend, targetProjectSlug);
 
   if (!targetProject) {
     console.error(err(`Target project not found: ${targetProjectSlug}`));
@@ -415,7 +412,7 @@ export function cmdRoute(
   }
 
   const validTypes = ["related", "follow-up", "reference"];
-  const linkType = opts.type ?? "related";
+  const linkType = (opts.type ?? "related") as "related" | "follow-up" | "reference";
   if (!validTypes.includes(linkType)) {
     console.error(
       err(`Invalid link type "${linkType}". Valid: ${validTypes.join(", ")}`)
@@ -424,12 +421,7 @@ export function cmdRoute(
     return;
   }
 
-  try {
-    db.prepare(
-      `INSERT INTO links (session_id, target_project_id, link_type, created_at)
-       VALUES (?, ?, ?, ?)`
-    ).run(session.id, targetProject.id, linkType, Date.now());
-  } catch {
+  if (await registryBackend.linkExists(session.id, targetProject.id)) {
     console.log(
       warn(
         `  Link already exists: session #${session.number} → ${targetProjectSlug}`
@@ -437,6 +429,13 @@ export function cmdRoute(
     );
     return;
   }
+
+  await registryBackend.addLink({
+    sessionId: session.id,
+    targetProjectId: targetProject.id,
+    linkType,
+    createdAt: Date.now(),
+  });
 
   console.log();
   console.log(
@@ -452,10 +451,12 @@ export function cmdRoute(
 // active
 // ---------------------------------------------------------------------------
 
-export function cmdActive(
-  db: Database,
+export async function cmdActive(
   opts: { minutes?: string; json?: boolean }
-): void {
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
   const minutes = parseInt(opts.minutes ?? "60", 10);
   const cutoff = Date.now() - minutes * 60 * 1000;
   const claudeProjectsDir = join(homedir(), ".claude", "projects");
@@ -508,13 +509,7 @@ export function cmdActive(
 
     if (!latestJsonl || latestMtime < cutoff) continue;
 
-    const project = db
-      .prepare(
-        "SELECT slug, display_name, root_path FROM projects WHERE encoded_dir = ?"
-      )
-      .get(entry) as
-      | { slug: string; display_name: string; root_path: string }
-      | undefined;
+    const project = await registryBackend.getProjectByEncodedDir(entry);
 
     active.push({
       slug: project?.slug ?? entry,
@@ -583,20 +578,19 @@ export async function cmdAutoRoute(opts: {
   context?: string;
   json?: boolean;
 }): Promise<void> {
-  const { autoRoute, formatAutoRoute, formatAutoRouteJson } = await import(
+  const { autoRoute, formatAutoRouteJson } = await import(
     "../../../session/auto-route.js"
   );
-  const { openRegistry } = await import("../../../registry/db.js");
-  const { createStorageBackend } = await import("../../../storage/factory.js");
+  const { getRegistryBackend, createStorageBackend } = await import("../../../storage/factory.js");
   const { loadConfig } = await import("../../../daemon/config.js");
 
   const config = loadConfig();
-  const registryDb = openRegistry();
+  const registryBackend = await getRegistryBackend();
   const federation = await createStorageBackend(config);
 
   const targetCwd = opts.cwd ?? process.cwd();
   const result = await autoRoute(
-    registryDb,
+    registryBackend,
     federation,
     targetCwd,
     opts.context

@@ -18,9 +18,9 @@
  *   - Minimal: returns a plain result object, not MCP content arrays
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../storage/interface.js";
-import { searchMemory, populateSlugs } from "../memory/search.js";
+import type { RegistryBackend } from "../storage/registry-interface.js";
+import { populateSlugs } from "../memory/search.js";
 import type { SearchResult } from "../memory/search.js";
 
 // ---------------------------------------------------------------------------
@@ -71,14 +71,10 @@ export interface TopicCheckResult {
 /**
  * Detect whether the provided context text best matches a different project
  * than the session's current routing.
- *
- * Works with either a raw SQLite Database or a StorageBackend.
- * For the StorageBackend path, keyword search is used.
- * For the raw Database path (legacy/direct), searchMemory() is called.
  */
 export async function detectTopicShift(
-  registryDb: Database,
-  federation: Database | StorageBackend,
+  registry: RegistryBackend,
+  federation: StorageBackend,
   params: TopicCheckParams
 ): Promise<TopicCheckResult> {
   const threshold = params.threshold ?? 0.6;
@@ -100,20 +96,9 @@ export async function detectTopicShift(
   // Run memory search across ALL projects (no project filter)
   // -------------------------------------------------------------------------
 
-  let results: SearchResult[];
-
-  const isBackend = (x: Database | StorageBackend): x is StorageBackend =>
-    "backendType" in x;
-
-  if (isBackend(federation)) {
-    results = await federation.searchKeyword(params.context, {
-      maxResults: candidates,
-    });
-  } else {
-    results = searchMemory(federation, params.context, {
-      maxResults: candidates,
-    });
-  }
+  const results: SearchResult[] = await federation.searchKeyword(params.context, {
+    maxResults: candidates,
+  });
 
   if (results.length === 0) {
     return {
@@ -127,7 +112,7 @@ export async function detectTopicShift(
   }
 
   // Populate project slugs from the registry
-  const withSlugs = populateSlugs(results, registryDb);
+  const withSlugs = await populateSlugs(results, registry);
 
   // -------------------------------------------------------------------------
   // Score projects by summing BM25 scores of matching chunks

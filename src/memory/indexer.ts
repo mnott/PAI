@@ -7,9 +7,3 @@
 
 export type { IndexResult, EmbedResult } from "./indexer/types.js";
 export { detectTier } from "./indexer/helpers.js";
-export {
-  indexFile,
-  indexProject,
-  indexAll,
-  embedChunks,
-} from "./indexer/sync.js";

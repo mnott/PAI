@@ -2,7 +2,7 @@
  * MCP tool handler: registry_search
  */
 
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { ToolResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -13,31 +13,12 @@ export interface RegistrySearchParams {
   query: string;
 }
 
-export function toolRegistrySearch(
-  registryDb: Database,
+export async function toolRegistrySearch(
+  registry: RegistryBackend,
   params: RegistrySearchParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
-    const q = `%${params.query}%`;
-    const projects = registryDb
-      .prepare(
-        `SELECT id, slug, display_name, root_path, type, status, updated_at
-         FROM projects
-         WHERE slug LIKE ?
-            OR display_name LIKE ?
-            OR root_path LIKE ?
-         ORDER BY updated_at DESC
-         LIMIT 20`
-      )
-      .all(q, q, q) as Array<{
-      id: number;
-      slug: string;
-      display_name: string;
-      root_path: string;
-      type: string;
-      status: string;
-      updated_at: number;
-    }>;
+    const projects = await registry.searchProjects(params.query, 20);
 
     if (projects.length === 0) {
       return {

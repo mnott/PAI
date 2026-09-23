@@ -8,19 +8,17 @@
  * fresh-start (when the project has no resumable snapshot) in one command.
  */
 
-import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { cmdGoto } from "./goto.js";
 
-export function cmdResume(
-  db: Database,
+export async function cmdResume(
   query: string,
   opts: { noName?: boolean; dryRun?: boolean }
-): void {
+): Promise<void> {
   console.error(
     chalk.yellow(
       "  pai session resume is deprecated — use: pai session goto <name-or-id>"
     )
   );
-  cmdGoto(db, query, opts);
+  await cmdGoto(query, opts);
 }

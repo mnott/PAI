@@ -3,7 +3,6 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import {
   cmdList,
   cmdInfo,
@@ -22,10 +21,7 @@ import { cmdGoto } from "./goto.js";
 import { cmdPause } from "./pause.js";
 import { cmdRestore } from "./restore.js";
 
-export function registerSessionCommands(
-  sessionCmd: Command,
-  getDb: () => Database
-): void {
+export function registerSessionCommands(sessionCmd: Command): void {
   // pai session list [-n N] [--all] [--json]
   // NEW: resumable sessions catalog (was "recent"). Short form: pai sessions.
   sessionCmd
@@ -40,7 +36,7 @@ export function registerSessionCommands(
     .option("--all", "Include unnamed orphan sessions (not in clc registry)")
     .option("--json", "Output raw JSON instead of formatted table")
     .action(async (opts: { n?: string; all?: boolean; json?: boolean }) => {
-      await cmdRecent(getDb(), opts);
+      await cmdRecent(opts);
     });
 
   // pai session restore [--execute]
@@ -83,8 +79,8 @@ export function registerSessionCommands(
   sessionCmd
     .command("info <project-slug> <number>")
     .description("Show full details for a specific session")
-    .action((projectSlug: string, number: string) => {
-      cmdInfo(getDb(), projectSlug, number);
+    .action(async (projectSlug: string, number: string) => {
+      await cmdInfo(projectSlug, number);
     });
 
   // pai session rename <project-slug> <number> <new-slug>
@@ -93,8 +89,8 @@ export function registerSessionCommands(
     .description(
       "Rename a session note — updates file on disk, H1 title, and registry"
     )
-    .action((projectSlug: string, number: string, newSlug: string) => {
-      cmdRename(getDb(), projectSlug, number, newSlug);
+    .action(async (projectSlug: string, number: string, newSlug: string) => {
+      await cmdRename(projectSlug, number, newSlug);
     });
 
   // pai session slug <project-slug> <number|latest>
@@ -105,8 +101,8 @@ export function registerSessionCommands(
     )
     .option("--apply", "Rename the session note using the generated slug")
     .action(
-      (projectSlug: string, number: string, opts: { apply?: boolean }) => {
-        cmdSlug(getDb(), projectSlug, number, opts);
+      async (projectSlug: string, number: string, opts: { apply?: boolean }) => {
+        await cmdSlug(projectSlug, number, opts);
       }
     );
 
@@ -116,8 +112,8 @@ export function registerSessionCommands(
     .description(
       "Set or show tags on a session. Tags can be space-separated or comma-separated."
     )
-    .action((projectSlug: string, number: string, tags: string[]) => {
-      cmdTag(getDb(), projectSlug, number, tags);
+    .action(async (projectSlug: string, number: string, tags: string[]) => {
+      await cmdTag(projectSlug, number, tags);
     });
 
   // pai session route <project-slug> <number> <target-project>
@@ -128,13 +124,13 @@ export function registerSessionCommands(
     )
     .option("--type <type>", "Link type: related | follow-up | reference", "related")
     .action(
-      (
+      async (
         projectSlug: string,
         number: string,
         targetProject: string,
         opts: { type?: string }
       ) => {
-        cmdRoute(getDb(), projectSlug, number, targetProject, opts);
+        await cmdRoute(projectSlug, number, targetProject, opts);
       }
     );
 
@@ -155,12 +151,12 @@ export function registerSessionCommands(
         "hook itself renames — so pass it whenever it is known."
     )
     .action(
-      (
+      async (
         projectSlug: string | undefined,
         numberOrLatest: string | undefined,
         opts: { sessionId?: string }
       ) => {
-        cmdHandover(getDb(), projectSlug, numberOrLatest, opts.sessionId);
+        await cmdHandover(projectSlug, numberOrLatest, opts.sessionId);
       }
     );
 
@@ -192,7 +188,7 @@ export function registerSessionCommands(
     )
     .option(
       "--session-id <uuid>",
-      "Claude session UUID — the key that decides whether an existing authored\n" +
+      "Claude Code session UUID — the key that decides whether an existing authored\n" +
         "checkpoint belongs to this session and must be left alone."
     )
     .option(
@@ -202,7 +198,7 @@ export function registerSessionCommands(
     )
     .option("--dry-run", "Print the block that would be written and exit")
     .action(async (opts: { sessionId?: string; minGap?: string; dryRun?: boolean }) => {
-      await cmdAutosave(getDb(), opts);
+      await cmdAutosave(opts);
     });
 
   // pai session active [--minutes N] [--json]
@@ -219,8 +215,8 @@ export function registerSessionCommands(
       "60"
     )
     .option("--json", "Output raw JSON instead of formatted display")
-    .action((opts: { minutes?: string; json?: boolean }) => {
-      cmdActive(getDb(), opts);
+    .action(async (opts: { minutes?: string; json?: boolean }) => {
+      await cmdActive(opts);
     });
 
   // pai session recent — DEPRECATED alias for `pai session list`
@@ -234,7 +230,7 @@ export function registerSessionCommands(
       process.stderr.write(
         "Deprecated: `pai session recent` — use `pai session list` or `pai sessions` instead.\n"
       );
-      await cmdRecent(getDb(), opts);
+      await cmdRecent(opts);
     });
 
   // pai session goto <name-or-id-or-prefix> [--skip-name] [--skip-go] [--dry-run]
@@ -250,11 +246,11 @@ export function registerSessionCommands(
     .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume (## Continue)")
     .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
     .action(
-      (nameOrId: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
+      async (nameOrId: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {
         process.stderr.write(
           "Note: `pai session goto` works but `pai resume` is the new shorter form.\n"
         );
-        cmdGoto(getDb(), nameOrId, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
+        await cmdGoto(nameOrId, { noName: opts.skipName, noGo: opts.skipGo, dryRun: opts.dryRun });
       }
     );
 
@@ -280,11 +276,11 @@ export function registerSessionCommands(
       "--no-body",
       "Deliberately write a metadata-only checkpoint (no content)"
     )
-    .action((opts: { dryRun?: boolean; bodyFile?: string; sessionId?: string; body?: boolean }) => {
+    .action(async (opts: { dryRun?: boolean; bodyFile?: string; sessionId?: string; body?: boolean }) => {
       process.stderr.write(
         "Note: `pai session pause` works but `pai pause` is the new shorter form.\n"
       );
-      cmdPause(getDb(), {
+      await cmdPause({
         dryRun: opts.dryRun,
         bodyFile: opts.bodyFile,
         sessionId: opts.sessionId,

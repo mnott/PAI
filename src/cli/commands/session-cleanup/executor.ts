@@ -2,7 +2,6 @@
  * Dry-run display, Postgres vector DB path updates, and cleanup execution.
  */
 
-import type { Database } from "better-sqlite3";
 import {
   existsSync,
   readdirSync,
@@ -19,29 +18,23 @@ import type { CleanupPlan, SessionCandidate } from "./types.js";
 import { padNum } from "./rename.js";
 
 // ---------------------------------------------------------------------------
-// Postgres helpers
+// Vector DB (StorageBackend) helpers
 // ---------------------------------------------------------------------------
 
 async function countVectorDbPaths(oldPaths: string[]): Promise<number> {
   if (oldPaths.length === 0) return 0;
   try {
     const { loadConfig } = await import("../../../daemon/config.js");
-    const { PostgresBackend } = await import("../../../storage/postgres.js");
+    const { createStorageBackend } = await import("../../../storage/factory.js");
     const config = loadConfig();
     if (config.storageBackend !== "postgres") return 0;
-    const pgBackend = new PostgresBackend(config.postgres ?? {});
-    const connErr = await pgBackend.testConnection();
-    if (connErr) { await pgBackend.close(); return 0; }
-    const pool = (pgBackend as unknown as {
-      pool: { query: (sql: string, params: string[]) => Promise<{ rows: Array<{ n: string }> }> };
-    }).pool;
-    const placeholders = oldPaths.map((_, i) => `$${i + 1}`).join(", ");
-    const result = await pool.query(
-      `SELECT COUNT(*)::text AS n FROM pai_files WHERE path IN (${placeholders})`,
-      oldPaths
-    );
-    await pgBackend.close();
-    return parseInt(result.rows[0]?.n ?? "0", 10);
+    const backend = await createStorageBackend(config);
+    try {
+      if (!backend.supportsPostgresFeatures) return 0;
+      return await backend.countFilesWithPaths(oldPaths);
+    } finally {
+      await backend.close();
+    }
   } catch {
     return 0;
   }
@@ -53,40 +46,19 @@ async function updateVectorDbPaths(
   if (moves.length === 0) return 0;
   try {
     const { loadConfig } = await import("../../../daemon/config.js");
-    const { PostgresBackend } = await import("../../../storage/postgres.js");
+    const { createStorageBackend } = await import("../../../storage/factory.js");
     const config = loadConfig();
     if (config.storageBackend !== "postgres") return 0;
-    const pgBackend = new PostgresBackend(config.postgres ?? {});
-    const connErr = await pgBackend.testConnection();
-    if (connErr) {
-      process.stderr.write(`[session-cleanup] Postgres unavailable (${connErr}). Skipping vector DB path update.\n`);
-      await pgBackend.close();
-      return 0;
-    }
-    const pool = (pgBackend as unknown as {
-      pool: { connect: () => Promise<{
-        query: (sql: string, params: string[]) => Promise<{ rowCount: number | null }>;
-        release: () => void;
-      }> };
-    }).pool;
-    const client = await pool.connect();
-    let filesUpdated = 0;
+    const backend = await createStorageBackend(config);
     try {
-      await client.query("BEGIN", []);
-      for (const { oldPath, newPath } of moves) {
-        const r = await client.query("UPDATE pai_files SET path = $1 WHERE path = $2", [newPath, oldPath]);
-        filesUpdated += r.rowCount ?? 0;
-        await client.query("UPDATE pai_chunks SET path = $1 WHERE path = $2", [newPath, oldPath]);
+      if (!backend.supportsPostgresFeatures) {
+        process.stderr.write("[session-cleanup] Postgres unavailable. Skipping vector DB path update.\n");
+        return 0;
       }
-      await client.query("COMMIT", []);
-    } catch (e) {
-      await client.query("ROLLBACK", []);
-      throw e;
+      return await backend.renameFilePaths(moves);
     } finally {
-      client.release();
+      await backend.close();
     }
-    await pgBackend.close();
-    return filesUpdated;
   } catch (e) {
     process.stderr.write(`[session-cleanup] Failed to update vector DB paths: ${e}\n`);
     return -1;
@@ -206,10 +178,12 @@ export async function displayDryRun(plans: CleanupPlan[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function executeCleanup(
-  db: Database,
   plans: CleanupPlan[],
   skipReindex: boolean
 ): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
   let deleted = 0;
   let renamed = 0;
   let moved = 0;
@@ -261,7 +235,7 @@ export async function executeCleanup(
         }
         if (c.session) {
           try {
-            db.prepare("DELETE FROM sessions WHERE id = ?").run(c.session.id);
+            await registryBackend.deleteSession(c.session.id);
             dbUpdated++;
           } catch (e) {
             console.log(err(`  FAIL to remove session #${c.number} from DB: ${e}`));
@@ -312,9 +286,11 @@ export async function executeCleanup(
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/^-+|-+$/g, "");
           try {
-            db.prepare(
-              "UPDATE sessions SET slug = ?, title = ?, filename = ? WHERE id = ?"
-            ).run(normalizedSlug, autoName, newFilename, c.session.id);
+            await registryBackend.updateSessionMeta(c.session.id, {
+              slug: normalizedSlug,
+              title: autoName,
+              filename: newFilename,
+            });
             dbUpdated++;
           } catch (e) {
             console.log(err(`  FAIL DB update for session #${c.number}: ${e}`));
@@ -392,21 +368,18 @@ export async function executeCleanup(
           }));
 
         if (dbRenumbers.length > 0) {
-          const renumberDb = db.transaction(() => {
+          try {
+            // Negate first, then set final numbers — same two-pass order as the
+            // old single SQL transaction, so mid-loop UNIQUE(project_id, number)
+            // collisions between swapping sessions are still avoided.
             for (const { session, newNum } of dbRenumbers) {
-              db.prepare("UPDATE sessions SET number = ? WHERE id = ?").run(
-                -newNum,
-                session.id
-              );
+              await registryBackend.updateSessionNumber(session.id, -newNum);
             }
             for (const { session, newNum, newFilename } of dbRenumbers) {
-              db.prepare(
-                "UPDATE sessions SET number = ?, filename = ? WHERE id = ?"
-              ).run(newNum, newFilename, session.id);
+              await registryBackend.updateSessionNumber(session.id, newNum, {
+                filename: newFilename,
+              });
             }
-          });
-          try {
-            renumberDb();
             dbUpdated += dbRenumbers.length;
           } catch (e) {
             console.log(err(`  FAIL DB renumber transaction: ${e}`));
@@ -445,10 +418,7 @@ export async function executeCleanup(
         const newFilenameInDb = `${year}/${month}/${c.filename}`;
         if (c.session) {
           try {
-            db.prepare("UPDATE sessions SET filename = ? WHERE id = ?").run(
-              newFilenameInDb,
-              c.session.id
-            );
+            await registryBackend.updateSessionFilename(c.session.id, newFilenameInDb);
             dbUpdated++;
           } catch (e) {
             console.log(err(`  FAIL DB update path for ${c.filename}: ${e}`));

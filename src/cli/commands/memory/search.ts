@@ -1,16 +1,14 @@
-/** Memory search command: BM25/semantic/hybrid search across federation.db. */
+/** Memory search command: BM25/semantic/hybrid search across the memory store. */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import chalk from "chalk";
-import { openFederation } from "../../../memory/db.js";
-import { searchMemory, populateSlugs, type SearchResult } from "../../../memory/search.js";
+import { applyRecencyBoost, type SearchResult } from "../../../memory/search.js";
 import { dim, bold, ok, warn, err } from "../../utils.js";
 import { loadConfig } from "../../../daemon/config.js";
-import { createStorageBackend } from "../../../storage/factory.js";
+import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
 
 function tierColor(tier: string): string {
@@ -23,14 +21,24 @@ function tierColor(tier: string): string {
   }
 }
 
+/** Populate projectSlug on results by looking up the small set of distinct project ids involved. */
+async function populateSlugsFromRegistry(results: SearchResult[]): Promise<SearchResult[]> {
+  if (results.length === 0) return results;
+  const registry = await getRegistryBackend();
+  const ids = [...new Set(results.map((r) => r.projectId))];
+  const slugMap = new Map<number, string>();
+  for (const id of ids) {
+    const project = await registry.getProjectById(id);
+    if (project) slugMap.set(id, project.slug);
+  }
+  return results.map((r) => ({ ...r, projectSlug: slugMap.get(r.projectId) }));
+}
+
 // ---------------------------------------------------------------------------
 // Commander registration
 // ---------------------------------------------------------------------------
 
-export function registerSearchCommand(
-  memoryCmd: Command,
-  getDb: () => Database,
-): void {
+export function registerSearchCommand(memoryCmd: Command): void {
   memoryCmd
     .command("search <query>")
     .description("Search indexed memory (BM25 keyword, semantic, or hybrid)")
@@ -45,17 +53,6 @@ export function registerSearchCommand(
         query: string,
         opts: { project?: string; source?: string; limit?: string; mode?: string; rerank: boolean; recency?: string },
       ) => {
-        const registryDb = getDb();
-
-        let federation: Database;
-        try {
-          federation = openFederation();
-        } catch (e) {
-          console.error(err(`Failed to open federation database: ${e}`));
-          process.exitCode = 1;
-          return;
-        }
-
         const config = loadConfig();
         const searchConfig = config.search;
 
@@ -70,9 +67,8 @@ export function registerSearchCommand(
 
         let projectIds: number[] | undefined;
         if (opts.project) {
-          const project = registryDb
-            .prepare("SELECT id FROM projects WHERE slug = ?")
-            .get(opts.project) as { id: number } | undefined;
+          const registry = await getRegistryBackend();
+          const project = await registry.getProjectBySlug(opts.project);
 
           if (!project) {
             console.error(warn(`Project not found: ${opts.project} — searching all projects`));
@@ -84,73 +80,69 @@ export function registerSearchCommand(
         const sources = opts.source ? [opts.source] : undefined;
         const searchOpts = { projectIds, sources, maxResults };
 
+        // getStorageBackend() returns the process-wide shared backend, closed
+        // once at process exit (src/storage/factory.ts's beforeExit hook) —
+        // this command must not close it itself.
+        const backend = await getStorageBackend();
         let results: SearchResult[];
 
         if (mode === "keyword") {
-          results = searchMemory(federation, query, searchOpts);
+          results = await backend.searchKeyword(query, searchOpts);
 
-        } else if (mode === "semantic" || mode === "hybrid") {
-          const backend = await createStorageBackend(config);
-
-          try {
-            const { generateEmbedding } = await import("../../../memory/embeddings.js");
-
-            console.log(dim("Generating query embedding..."));
-            const queryEmbedding = await generateEmbedding(query, true);
-
-            if (mode === "semantic") {
-              results = await backend.searchSemantic(queryEmbedding, searchOpts);
-            } else {
-              // Hybrid: combine keyword (BM25) and semantic results with min-max normalization
-              const [keywordResults, semanticResults] = await Promise.all([
-                backend.searchKeyword(query, { ...searchOpts, maxResults: 500 }),
-                backend.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 500 }),
-              ]);
-
-              if (keywordResults.length === 0 && semanticResults.length === 0) {
-                results = [];
-              } else {
-                const keyFor = (r: SearchResult) =>
-                  `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
-
-                function minMaxNormalize(items: SearchResult[]): Map<string, number> {
-                  if (items.length === 0) return new Map();
-                  const min = Math.min(...items.map((r) => r.score));
-                  const max = Math.max(...items.map((r) => r.score));
-                  const range = max - min;
-                  const m = new Map<string, number>();
-                  for (const r of items) {
-                    m.set(keyFor(r), range === 0 ? 1 : (r.score - min) / range);
-                  }
-                  return m;
-                }
-
-                const kwNorm = minMaxNormalize(keywordResults);
-                const semNorm = minMaxNormalize(semanticResults);
-                const allKeys = new Set<string>([
-                  ...keywordResults.map(keyFor),
-                  ...semanticResults.map(keyFor),
-                ]);
-                const metaMap = new Map<string, SearchResult>();
-                for (const r of [...keywordResults, ...semanticResults]) {
-                  metaMap.set(keyFor(r), r);
-                }
-
-                const combined: SearchResult[] = [];
-                for (const key of allKeys) {
-                  const meta = metaMap.get(key)!;
-                  const combinedScore = 0.5 * (kwNorm.get(key) ?? 0) + 0.5 * (semNorm.get(key) ?? 0);
-                  combined.push({ ...meta, score: combinedScore });
-                }
-
-                results = combined.sort((a, b) => b.score - a.score).slice(0, maxResults);
-              }
-            }
-          } finally {
-            await backend.close();
-          }
         } else {
-          results = [];
+          const { generateEmbedding } = await import("../../../memory/embeddings.js");
+
+          console.log(dim("Generating query embedding..."));
+          const queryEmbedding = await generateEmbedding(query, true);
+
+          if (mode === "semantic") {
+            results = await backend.searchSemantic(queryEmbedding, searchOpts);
+          } else {
+            // Hybrid: combine keyword (BM25) and semantic results with min-max normalization
+            const [keywordResults, semanticResults] = await Promise.all([
+              backend.searchKeyword(query, { ...searchOpts, maxResults: 500 }),
+              backend.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 500 }),
+            ]);
+
+            if (keywordResults.length === 0 && semanticResults.length === 0) {
+              results = [];
+            } else {
+              const keyFor = (r: SearchResult) =>
+                `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
+
+              function minMaxNormalize(items: SearchResult[]): Map<string, number> {
+                if (items.length === 0) return new Map();
+                const min = Math.min(...items.map((r) => r.score));
+                const max = Math.max(...items.map((r) => r.score));
+                const range = max - min;
+                const m = new Map<string, number>();
+                for (const r of items) {
+                  m.set(keyFor(r), range === 0 ? 1 : (r.score - min) / range);
+                }
+                return m;
+              }
+
+              const kwNorm = minMaxNormalize(keywordResults);
+              const semNorm = minMaxNormalize(semanticResults);
+              const allKeys = new Set<string>([
+                ...keywordResults.map(keyFor),
+                ...semanticResults.map(keyFor),
+              ]);
+              const metaMap = new Map<string, SearchResult>();
+              for (const r of [...keywordResults, ...semanticResults]) {
+                metaMap.set(keyFor(r), r);
+              }
+
+              const combined: SearchResult[] = [];
+              for (const key of allKeys) {
+                const meta = metaMap.get(key)!;
+                const combinedScore = 0.5 * (kwNorm.get(key) ?? 0) + 0.5 * (semNorm.get(key) ?? 0);
+                combined.push({ ...meta, score: combinedScore });
+              }
+
+              results = combined.sort((a, b) => b.score - a.score).slice(0, maxResults);
+            }
+          }
         }
 
         if (!results || results.length === 0) {
@@ -168,12 +160,11 @@ export function registerSearchCommand(
         // Recency boost (applied after reranking)
         const recencyDays = parseInt(opts.recency ?? String(searchConfig.recencyBoostDays), 10);
         if (recencyDays > 0) {
-          const { applyRecencyBoost } = await import("../../../memory/search.js");
           console.log(dim(`Applying recency boost (half-life: ${recencyDays} days)...`));
           results = applyRecencyBoost(results, recencyDays);
         }
 
-        const withSlugs = populateSlugs(results, registryDb);
+        const withSlugs = await populateSlugsFromRegistry(results);
         const rerankLabel = opts.rerank !== false ? " +rerank" : "";
         const modeLabel = mode !== "keyword" ? ` [${mode}${rerankLabel}]` : (opts.rerank !== false ? ` [rerank]` : "");
 

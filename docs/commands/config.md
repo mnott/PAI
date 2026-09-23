@@ -111,11 +111,11 @@ Remove one config value (dotted path), reverting it to the built-in default
 Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/,
 
 session-scan-cache.json, queries/, summary-cooldowns.json, work-queue.json,
-kg-backfill-state.json, voices.json, the orphaned federation.db,
-~/.pai/registry.db, ~/.pai/federation.db (live), ~/.pai/backups/,
+kg-backfill-state.json, voices.json, the orphaned legacy federation database,
+the legacy registry database, the legacy live federation database, ~/.pai/backups/,
 ~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/Agents/,
 ~/.claude/Commands/ into PAI_HOME.
-registry.db and federation.db each get an extra WAL checkpoint and PRAGMA
+The registry and federation databases each get an extra WAL checkpoint and PRAGMA
 integrity_check (sqlite3 CLI, if present) on top of the byte-identical copy.
 backups/ is copied and sha256-verified file-by-file into
 backups/legacy-pai-backups/ rather than merged in place. Agents/ and Commands/ each
@@ -137,7 +137,7 @@ the new location, or with nothing old to migrate, are skipped.
 
 ## See also
 
-[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

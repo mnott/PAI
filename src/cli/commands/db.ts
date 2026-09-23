@@ -11,7 +11,10 @@
 import type { Command } from "commander";
 import { ok, warn, err, dim, bold, header, renderTable } from "../utils.js";
 import { loadConfig } from "../../daemon/config.js";
-import { openFederation } from "../../memory/db.js";
+import { migrateToPostgres, renderReport } from "../../storage/migrate-to-postgres.js";
+import { createStorageBackend } from "../../storage/factory.js";
+import { runDbQuery, listDbTables, getDbTableSchema } from "../../storage/db-admin.js";
+import type { StorageBackend } from "../../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,170 +28,15 @@ interface CommonOpts {
 }
 
 // ---------------------------------------------------------------------------
-// SQLite helpers (synchronous — better-sqlite3)
+// Backend-agnostic helpers — a one-off backend for the requested target
+// (independent of the process's configured backend, since this tool is for
+// inspecting either engine), created via storage/factory.ts's single entry
+// point so this file never opens its own better-sqlite3/pg connection.
 // ---------------------------------------------------------------------------
 
-function getSqliteDb() {
-  return openFederation();
-}
-
-function sqliteQuery(sql: string): { columns: string[]; rows: unknown[][] } {
-  const db = getSqliteDb();
-  try {
-    const stmt = db.prepare(sql);
-    const raw = stmt.all() as Record<string, unknown>[];
-    if (raw.length === 0) return { columns: [], rows: [] };
-    const columns = Object.keys(raw[0]);
-    const rows = raw.map((r) => columns.map((c) => r[c]));
-    return { columns, rows };
-  } finally {
-    db.close();
-  }
-}
-
-function sqliteTables(): string[] {
-  const db = getSqliteDb();
-  try {
-    const rows = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-      )
-      .all() as { name: string }[];
-    return rows.map((r) => r.name);
-  } finally {
-    db.close();
-  }
-}
-
-function sqliteSchema(table: string): { columns: string[]; rows: unknown[][] } {
-  const db = getSqliteDb();
-  try {
-    // Validate table name — only allow alphanumeric / underscores
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
-      throw new Error(`Invalid table name: ${table}`);
-    }
-    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as {
-      cid: number;
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-      pk: number;
-    }[];
-    if (rows.length === 0) {
-      throw new Error(`Table not found: ${table}`);
-    }
-    const columns = ["cid", "name", "type", "notnull", "default", "pk"];
-    const data = rows.map((r) => [
-      r.cid,
-      r.name,
-      r.type,
-      r.notnull ? "NOT NULL" : "",
-      r.dflt_value ?? "",
-      r.pk ? "PK" : "",
-    ]);
-    return { columns, data: data } as unknown as { columns: string[]; rows: unknown[][] };
-  } finally {
-    db.close();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Postgres helpers (async — pg Pool)
-// ---------------------------------------------------------------------------
-
-async function getPool() {
+async function backendForTarget(target: DbTarget): Promise<StorageBackend> {
   const config = loadConfig();
-  const pgConfig = config.postgres ?? {};
-
-  const { Pool } = await import("pg");
-
-  // Build connection params from config
-  const poolConfig = pgConfig.connectionString
-    ? { connectionString: pgConfig.connectionString }
-    : {
-        host: pgConfig.host ?? "localhost",
-        port: pgConfig.port ?? 5432,
-        database: pgConfig.database ?? "pai",
-        user: pgConfig.user ?? "pai",
-        password: pgConfig.password ?? "pai",
-        connectionTimeoutMillis: pgConfig.connectionTimeoutMs ?? 5000,
-      };
-
-  const pool = new Pool(poolConfig);
-
-  // Quick connectivity test
-  try {
-    const client = await pool.connect();
-    client.release();
-  } catch (e) {
-    await pool.end();
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Cannot connect to Postgres: ${msg}`);
-  }
-
-  return pool;
-}
-
-async function postgresQuery(
-  sql: string
-): Promise<{ columns: string[]; rows: unknown[][] }> {
-  const pool = await getPool();
-  try {
-    const result = await pool.query(sql);
-    const columns = result.fields.map((f) => f.name);
-    const rows = result.rows.map((r: Record<string, unknown>) =>
-      columns.map((c) => r[c])
-    );
-    return { columns, rows };
-  } finally {
-    await pool.end();
-  }
-}
-
-async function postgresTables(): Promise<string[]> {
-  const pool = await getPool();
-  try {
-    const result = await pool.query<{ tablename: string }>(
-      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-    );
-    return result.rows.map((r) => r.tablename);
-  } finally {
-    await pool.end();
-  }
-}
-
-async function postgresSchema(
-  table: string
-): Promise<{ columns: string[]; rows: unknown[][] }> {
-  const pool = await getPool();
-  try {
-    const result = await pool.query<{
-      column_name: string;
-      data_type: string;
-      is_nullable: string;
-      column_default: string | null;
-    }>(
-      `SELECT column_name, data_type, is_nullable, column_default
-       FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = $1
-       ORDER BY ordinal_position`,
-      [table]
-    );
-    if (result.rows.length === 0) {
-      throw new Error(`Table not found in public schema: ${table}`);
-    }
-    const columns = ["column", "type", "nullable", "default"];
-    const rows = result.rows.map((r) => [
-      r.column_name,
-      r.data_type,
-      r.is_nullable === "YES" ? "YES" : "NO",
-      r.column_default ?? "",
-    ]);
-    return { columns, rows };
-  } finally {
-    await pool.end();
-  }
+  return createStorageBackend({ ...config, storageBackend: target });
 }
 
 // ---------------------------------------------------------------------------
@@ -249,10 +97,11 @@ async function cmdQuery(
 
   try {
     let result: { columns: string[]; rows: unknown[][] };
-    if (target === "postgres") {
-      result = await postgresQuery(sql);
-    } else {
-      result = sqliteQuery(sql);
+    const backend = await backendForTarget(target);
+    try {
+      result = await runDbQuery(backend, sql);
+    } finally {
+      await backend.close();
     }
     printResult(result, opts.json ?? false);
   } catch (e) {
@@ -275,10 +124,11 @@ async function cmdTables(opts: CommonOpts): Promise<void> {
 
   try {
     let tables: string[];
-    if (target === "postgres") {
-      tables = await postgresTables();
-    } else {
-      tables = sqliteTables();
+    const backend = await backendForTarget(target);
+    try {
+      tables = await listDbTables(backend);
+    } finally {
+      await backend.close();
     }
 
     if (opts.json) {
@@ -315,14 +165,11 @@ async function cmdSchema(table: string, opts: CommonOpts): Promise<void> {
 
   try {
     let result: { columns: string[]; rows: unknown[][] };
-    if (target === "postgres") {
-      result = await postgresSchema(table);
-    } else {
-      const raw = sqliteSchema(table) as unknown as {
-        columns: string[];
-        data: unknown[][];
-      };
-      result = { columns: raw.columns, rows: raw.data };
+    const backend = await backendForTarget(target);
+    try {
+      result = await getDbTableSchema(backend, table);
+    } finally {
+      await backend.close();
     }
     printResult(result, opts.json ?? false);
   } catch (e) {
@@ -363,5 +210,21 @@ export function registerDbCommands(dbCmd: Command): void {
     .option("--json", "Output as JSON array")
     .action(async (table: string, opts: CommonOpts) => {
       await cmdSchema(table, opts);
+    });
+
+  dbCmd
+    .command("migrate-to-postgres")
+    .description("One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres")
+    .option("--dry-run", "Preflight + counts only — no writes, no pg_dump")
+    .option("--skip-dump", "Skip the pg_dump rollback artefact (tests only)")
+    .option("--allow-running", "Skip the daemon-not-running refusal (tests only)")
+    .action(async (opts: { dryRun?: boolean; skipDump?: boolean; allowRunning?: boolean }) => {
+      const result = await migrateToPostgres({
+        dryRun: opts.dryRun,
+        skipDump: opts.skipDump,
+        allowRunning: opts.allowRunning,
+      });
+      console.log(renderReport(result));
+      if (!result.ok) process.exitCode = 1;
     });
 }

@@ -24,9 +24,9 @@
  *    thinks of it by.
  */
 
-import type { Database } from "better-sqlite3";
 import { realpathSync } from "node:fs";
 import { ok, err, dim, bold, encodeDir, now } from "../../utils.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
 interface ProjectRow {
   id: number;
@@ -49,10 +49,9 @@ function norm(s: string): string {
  * a substring match: it reaches "Jobs Search Beta" from "jobs beta" without
  * also reaching a sibling project that merely shares the first word.
  */
-export function findProjectsByName(db: Database, name: string): ProjectRow[] {
-  const rows = db
-    .prepare("SELECT id, slug, display_name, root_path, status FROM projects")
-    .all() as ProjectRow[];
+export async function findProjectsByName(name: string): Promise<ProjectRow[]> {
+  const backend = await getRegistryBackend();
+  const rows: ProjectRow[] = await backend.listProjects();
 
   const q = norm(name);
   const exact = rows.filter((r) => norm(r.display_name) === q || norm(r.slug) === q);
@@ -76,11 +75,10 @@ export function slugFromName(name: string): string {
   );
 }
 
-export function cmdHere(
-  db: Database,
+export async function cmdHere(
   name: string,
   opts: { cwd?: string; dryRun?: boolean } = {}
-): void {
+): Promise<void> {
   // Canonicalise: see note 1 above. A symlinked parent must not create a second
   // identity for the same directory.
   let target: string;
@@ -92,8 +90,9 @@ export function cmdHere(
     return;
   }
 
+  const backend = await getRegistryBackend();
   const encoded = encodeDir(target);
-  const matches = findProjectsByName(db, name);
+  const matches = await findProjectsByName(name);
 
   if (matches.length > 1) {
     console.error(
@@ -106,9 +105,7 @@ export function cmdHere(
 
   // Another project already owns this directory: refuse rather than create a
   // duplicate row for a path that is already spoken for.
-  const owner = db
-    .prepare("SELECT id, slug, display_name FROM projects WHERE encoded_dir = ?")
-    .get(encoded) as Pick<ProjectRow, "id" | "slug" | "display_name"> | undefined;
+  const owner = (await backend.getProjectByEncodedDir(encoded)) ?? undefined;
 
   if (matches.length === 1) {
     const p = matches[0];
@@ -144,9 +141,7 @@ export function cmdHere(
       return;
     }
 
-    db.prepare(
-      "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-    ).run(target, encoded, now(), p.id);
+    await backend.updateProjectPath(p.id, { rootPath: target, encodedDir: encoded }, now());
 
     console.log(ok(`${bold(p.display_name)} is now here`));
     console.log(dim(`  was: ${p.root_path}`));
@@ -165,7 +160,7 @@ export function cmdHere(
   }
 
   const slug = slugFromName(name);
-  const taken = db.prepare("SELECT 1 FROM projects WHERE slug = ?").get(slug);
+  const taken = await backend.getProjectBySlug(slug);
   const finalSlug = taken ? `${slug}-${encoded.slice(-6)}` : slug;
 
   if (opts.dryRun) {
@@ -174,10 +169,16 @@ export function cmdHere(
   }
 
   const ts = now();
-  db.prepare(
-    `INSERT INTO projects (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'local', 'active', ?, ?)`
-  ).run(finalSlug, name, target, encoded, ts, ts);
+  await backend.createProject({
+    slug: finalSlug,
+    displayName: name,
+    rootPath: target,
+    encodedDir: encoded,
+    type: "local",
+    status: "active",
+    createdAt: ts,
+    updatedAt: ts,
+  });
 
   console.log(ok(`Created ${bold(name)}`));
   console.log(dim(`  slug: ${finalSlug}`));

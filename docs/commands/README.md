@@ -16,6 +16,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai db`](db.md) | Database inspection: query, tables, schema (sqlite or postgres) |
 | [`pai end`](end.md) | Finalize a session: save state, mark note Completed, display safe-exit instructions. |
 | [`pai help`](help.md) | Show the man page for a command area (pai help <area>), or list all areas |
+| [`pai hooks-db`](hooks-db.md) | Registry updates for the shell hooks (session-stop, pre-compact) |
 | [`pai identity`](identity.md) | Declare who you are: self addresses and where mail is delivered |
 | [`pai kg`](kg.md) | Temporal knowledge graph: backfill, query, list, stats |
 | [`pai launch`](launch.md) | Start the Claude Code harness on any provider/model from workers.yaml. |
@@ -77,11 +78,15 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai daemon status` | Query the running daemon status |
 | `pai daemon uninstall` | Remove the launchd service and revert to direct MCP |
 | `pai db` | Database inspection: query, tables, schema (sqlite or postgres) |
+| `pai db migrate-to-postgres` | One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres |
 | `pai db query <sql>` | Run a SQL query against the selected database |
 | `pai db schema <table>` | Show column schema for a table |
 | `pai db tables` | List all tables in the selected database |
 | `pai end` | Finalize a session: save state, mark note Completed, display safe-exit instructions. |
 | `pai help` | Show the man page for a command area (pai help <area>), or list all areas |
+| `pai hooks-db` | Registry updates for the shell hooks (session-stop, pre-compact) |
+| `pai hooks-db pre-compact <projectSlug>` | Internal: pre-compact hook registry update (called by src/hooks/pre-compact.sh) |
+| `pai hooks-db session-stop <projectSlug>` | Internal: session-stop hook registry update (called by src/hooks/session-stop.sh) |
 | `pai identity` | Declare who you are: self addresses and where mail is delivered |
 | `pai identity add <email>` | Declare an address as your own (widens what can be sent unreviewed) |
 | `pai identity remove <email>` | Stop treating an address as your own |

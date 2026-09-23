@@ -40,7 +40,7 @@ describe("the cleanup scanner never renumbers", () => {
     // guarantee and returns an empty Map unconditionally.
     const builder = scannerSource.slice(
       scannerSource.indexOf("function buildRenumberMap"),
-      scannerSource.indexOf("export function analyzeProject"),
+      scannerSource.indexOf("export async function analyzeProject"),
     );
     expect(builder).toContain("return new Map()");
     // No loop may populate it.

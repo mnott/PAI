@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
  * streaming rather than loading either file into memory, unlike a
  * readFileSync + Buffer.compare — which throws ("File size is greater than
  * 2 GiB") on anything past Node's 2GiB single-read ceiling, a real limit hit
- * migrating a multi-gigabyte federation.db.
+ * migrating a multi-gigabyte legacy federation database file.
  */
 function filesByteIdentical(a: string, b: string): boolean {
   try {

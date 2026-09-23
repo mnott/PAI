@@ -10,8 +10,8 @@
  * `project_detect` tool.
  */
 
-import type { Database } from "better-sqlite3";
 import { resolve } from "node:path";
+import { getRegistryBackend } from "../../storage/factory.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,16 +32,6 @@ export interface DetectedProject {
   relative_path: string | null;
 }
 
-interface ProjectRow {
-  id: number;
-  slug: string;
-  display_name: string;
-  root_path: string;
-  encoded_dir: string;
-  type: string;
-  status: string;
-}
-
 // ---------------------------------------------------------------------------
 // Core detection function
 // ---------------------------------------------------------------------------
@@ -49,28 +39,18 @@ interface ProjectRow {
 /**
  * Detect which registered project a filesystem path belongs to.
  *
- * @param db   Open registry database
  * @param cwd  Absolute path to detect (defaults to process.cwd())
  * @returns    The best matching project, or null if no match
  */
-export function detectProject(
-  db: Database,
-  cwd?: string
-): DetectedProject | null {
+export async function detectProject(cwd?: string): Promise<DetectedProject | null> {
   const target = resolve(cwd ?? process.cwd());
+  const backend = await getRegistryBackend();
 
   // Load all active projects ordered by root_path length descending
   // so the longest (most specific) match wins in a linear scan.
-  const projects = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir, type, status
-       FROM projects
-       WHERE status != 'archived'
-       ORDER BY LENGTH(root_path) DESC`
-    )
-    .all() as ProjectRow[];
+  const projects = await backend.listProjectsByPathLengthDesc({ excludeArchived: true });
 
-  let matched: ProjectRow | null = null;
+  let matched: (typeof projects)[number] | null = null;
   let matchType: "exact" | "parent" = "exact";
 
   for (const p of projects) {
@@ -92,12 +72,8 @@ export function detectProject(
   if (!matched) return null;
 
   // Enrich with session stats
-  const sessionStats = db
-    .prepare(
-      `SELECT COUNT(*) AS cnt, MAX(date) AS last_date
-       FROM sessions WHERE project_id = ?`
-    )
-    .get(matched.id) as { cnt: number; last_date: string | null };
+  const sessionCount = await backend.countSessionsForProject(matched.id);
+  const lastDate = await backend.getMostRecentSessionDate(matched.id);
 
   const relative =
     matchType === "parent"
@@ -112,8 +88,8 @@ export function detectProject(
     encoded_dir: matched.encoded_dir,
     type: matched.type,
     status: matched.status,
-    session_count: sessionStats.cnt,
-    last_session_date: sessionStats.last_date,
+    session_count: sessionCount,
+    last_session_date: lastDate,
     match_type: matchType,
     relative_path: relative,
   };

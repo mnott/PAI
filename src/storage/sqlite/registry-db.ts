@@ -10,8 +10,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
-import { initializeSchema, runMigrations } from "./schema.js";
-import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
+import { initializeSchema, runMigrations } from "./registry-schema.js";
+import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 
 export type { Database };
 

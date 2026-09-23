@@ -4,7 +4,6 @@
  * and the name/unname/names commands for curated project shortlists.
  */
 
-import type { Database } from "better-sqlite3";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import chalk from "chalk";
@@ -15,6 +14,7 @@ import { paiConfigFilePath } from "../../../daemon/config.js";
 import { detectProject } from "../detect.js";
 import { expandMcpNames } from "../../../workers/mcp.js";
 import { readWorkersSection } from "../../../workers/config.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -76,15 +76,15 @@ function applyPreset(config: SessionConfig, preset: string): SessionConfig {
 }
 
 /** The registered project whose root_path covers `cwd` (default: process.cwd()). */
-function currentProject(db: Database, cwd?: string): ProjectRow | undefined {
-  const detected = detectProject(db, cwd);
+async function currentProject(cwd?: string): Promise<ProjectRow | undefined> {
+  const detected = await detectProject(cwd);
   if (!detected) return undefined;
-  return getProject(db, detected.slug);
+  return getProject(detected.slug);
 }
 
-function saveSessionConfig(db: Database, project: ProjectRow, config: SessionConfig): void {
-  db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
-    .run(JSON.stringify(config), now(), project.id);
+async function saveSessionConfig(project: ProjectRow, config: SessionConfig): Promise<void> {
+  const backend = await getRegistryBackend();
+  await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
 }
 
 function splitNames(names: string[]): string[] {
@@ -113,13 +113,13 @@ function parseConfigValue(key: string, value: string): unknown {
 // Commands
 // ---------------------------------------------------------------------------
 
-export function cmdName(
-  db: Database,
+export async function cmdName(
   identifier: string,
   shortname: string,
   opts: { permission?: string }
-): void {
-  const project = resolveIdentifier(db, identifier) ?? requireProject(db, identifier);
+): Promise<void> {
+  const project = (await resolveIdentifier(identifier)) ?? (await requireProject(identifier));
+  const backend = await getRegistryBackend();
 
   if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(shortname)) {
     console.error(err(`Invalid name "${shortname}". Use letters, digits, hyphens, underscores. Must start with a letter.`));
@@ -127,33 +127,28 @@ export function cmdName(
     return;
   }
 
-  const conflictProject = db
-    .prepare("SELECT id FROM projects WHERE slug = ? AND id != ?")
-    .get(shortname, project.id) as { id: number } | undefined;
+  const conflictProject = await backend.getProjectBySlug(shortname, { excludeId: project.id });
   if (conflictProject) {
     console.error(err(`"${shortname}" is already a project slug.`));
     process.exitCode = 1;
     return;
   }
 
-  const conflictAlias = db
-    .prepare("SELECT project_id FROM aliases WHERE alias = ?")
-    .get(shortname) as { project_id: number } | undefined;
-  if (conflictAlias && conflictAlias.project_id !== project.id) {
+  const conflictAliasProjectId = await backend.resolveAlias(shortname);
+  if (conflictAliasProjectId !== null && conflictAliasProjectId !== project.id) {
     console.error(err(`"${shortname}" is already used by another project.`));
     process.exitCode = 1;
     return;
   }
 
-  if (!conflictAlias) {
-    db.prepare("INSERT INTO aliases (alias, project_id) VALUES (?, ?)").run(shortname, project.id);
+  if (conflictAliasProjectId === null) {
+    await backend.addAlias(shortname, project.id);
   }
 
   if (opts.permission) {
     const existing = getSessionConfig(project);
     const config = applyPreset(existing, opts.permission);
-    db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(config), now(), project.id);
+    await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
   }
 
   console.log(ok(`Named: ${bold(shortname)} → ${project.slug} (${shortenPath(project.root_path, 50)})`));
@@ -162,42 +157,32 @@ export function cmdName(
   }
 }
 
-export function cmdUnname(db: Database, shortname: string): void {
-  const alias = db
-    .prepare("SELECT project_id FROM aliases WHERE alias = ?")
-    .get(shortname) as { project_id: number } | undefined;
+export async function cmdUnname(shortname: string): Promise<void> {
+  const backend = await getRegistryBackend();
+  const projectId = await backend.resolveAlias(shortname);
 
-  if (!alias) {
+  if (projectId === null) {
     console.error(err(`No named project found: "${shortname}"`));
     process.exitCode = 1;
     return;
   }
 
-  db.prepare("DELETE FROM aliases WHERE alias = ?").run(shortname);
+  await backend.removeAlias(shortname);
 
-  const remaining = db
-    .prepare("SELECT COUNT(*) AS cnt FROM aliases WHERE project_id = ?")
-    .get(alias.project_id) as { cnt: number };
+  const remaining = await backend.countAliasesForProject(projectId);
 
   console.log(ok(`Removed name: ${bold(shortname)}`));
-  if (remaining.cnt === 0) {
+  if (remaining === 0) {
     console.log(dim("  Project has no remaining names."));
   }
 }
 
-export function cmdNames(db: Database, opts: { json?: boolean; all?: boolean }): void {
-  // --all: LEFT JOIN so projects WITHOUT a curated alias are included too (for
-  //         AIBroker's picker to search everything). Unnamed projects get their
-  //         slug as the launch key (pai project config resolves by slug).
-  const rows = db.prepare(`
-    SELECT p.*, a.alias AS name,
-      (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-      (SELECT MAX(s.created_at) FROM sessions s WHERE s.project_id = p.id) AS last_active
-    FROM projects p
-    ${opts.all ? "LEFT JOIN" : "JOIN"} aliases a ON a.project_id = p.id
-    WHERE p.status = 'active'
-    ORDER BY p.updated_at DESC
-  `).all() as (ProjectRow & { name: string | null; session_count: number; last_active: number | null; session_config: string | null })[];
+export async function cmdNames(opts: { json?: boolean; all?: boolean }): Promise<void> {
+  // --all: includeUnnamed so projects WITHOUT a curated alias are included too
+  //        (for AIBroker's picker to search everything). Unnamed projects get
+  //        their slug as the launch key (pai project config resolves by slug).
+  const backend = await getRegistryBackend();
+  const rows = await backend.listNamedProjects({ includeUnnamed: opts.all });
 
   if (opts.json) {
     const grouped = new Map<number, unknown>();
@@ -254,8 +239,7 @@ export function cmdNames(db: Database, opts: { json?: boolean; all?: boolean }):
   console.log(dim(`  ${tableRows.length} named project(s)`));
 }
 
-export function cmdConfig(
-  db: Database,
+export async function cmdConfig(
   identifier: string | undefined,
   opts: {
     set?: string[];
@@ -266,7 +250,7 @@ export function cmdConfig(
     json?: boolean;
     reset?: boolean;
   }
-): void {
+): Promise<void> {
   // Discovery: list available options
   if (opts.options) {
     if (opts.json) {
@@ -376,19 +360,19 @@ export function cmdConfig(
     return;
   }
 
-  const project = resolveIdentifier(db, identifier) ?? requireProject(db, identifier);
+  const project = (await resolveIdentifier(identifier)) ?? (await requireProject(identifier));
+  const backend = await getRegistryBackend();
   let config = getSessionConfig(project);
 
   if (opts.reset) {
-    db.prepare("UPDATE projects SET session_config = NULL, updated_at = ? WHERE id = ?").run(now(), project.id);
+    await backend.updateProjectSessionConfig(project.id, null, now());
     console.log(ok(`Config reset for ${bold(project.slug)}. Will use global defaults.`));
     return;
   }
 
   if (opts.preset) {
     config = applyPreset(config, opts.preset);
-    db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(config), now(), project.id);
+    await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
     console.log(ok(`Applied preset ${bold(opts.preset)} to ${bold(project.slug)}`));
   }
 
@@ -405,8 +389,7 @@ export function cmdConfig(
         (config as Record<string, unknown>)[key] = parseConfigValue(key, value);
       }
     }
-    db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(config), now(), project.id);
+    await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
     console.log(ok(`Config updated for ${bold(project.slug)}`));
   }
 
@@ -419,13 +402,12 @@ export function cmdConfig(
         delete (config as Record<string, unknown>)[key];
       }
     }
-    db.prepare("UPDATE projects SET session_config = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(config), now(), project.id);
+    await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
     console.log(ok(`Config updated for ${bold(project.slug)}`));
   }
 
   const effective = { ...getGlobalDefaults(), ...config };
-  const aliases = getProjectAliases(db, project.id);
+  const aliases = await getProjectAliases(project.id);
 
   if (opts.json) {
     console.log(JSON.stringify({
@@ -487,12 +469,11 @@ export function cmdConfig(
  * configured server loads, today's behavior. Names are validated against
  * ~/.claude.json's mcpServers / workers.mcpSets the same way `--mcp` is.
  */
-export function cmdMcp(
-  db: Database,
+export async function cmdMcp(
   names: string[],
   opts: { clear?: boolean; cwd?: string } = {}
-): void {
-  const project = currentProject(db, opts.cwd);
+): Promise<void> {
+  const project = await currentProject(opts.cwd);
   if (!project) {
     console.error(err("No registered project matches the current directory."));
     console.error(dim("  Register it first: pai projects here <name>"));
@@ -503,7 +484,7 @@ export function cmdMcp(
 
   if (opts.clear) {
     delete config.mcp;
-    saveSessionConfig(db, project, config);
+    await saveSessionConfig(project, config);
     console.log(ok(`MCP servers unset for ${bold(project.slug)} — all servers load again.`));
     return;
   }
@@ -515,7 +496,7 @@ export function cmdMcp(
 
   const { workers } = readWorkersSection();
   config.mcp = expandMcpNames(splitNames(names), workers); // unknown names fail fast
-  saveSessionConfig(db, project, config);
+  await saveSessionConfig(project, config);
   console.log(ok(`MCP servers set for ${bold(project.slug)}: ${config.mcp.join(", ")}`));
 }
 
@@ -526,12 +507,11 @@ export function cmdMcp(
  * names are not validated against a fixed list — the harness itself rejects
  * an unrecognised one at launch.
  */
-export function cmdTools(
-  db: Database,
+export async function cmdTools(
   names: string[],
   opts: { clear?: boolean; cwd?: string } = {}
-): void {
-  const project = currentProject(db, opts.cwd);
+): Promise<void> {
+  const project = await currentProject(opts.cwd);
   if (!project) {
     console.error(err("No registered project matches the current directory."));
     console.error(dim("  Register it first: pai projects here <name>"));
@@ -542,7 +522,7 @@ export function cmdTools(
 
   if (opts.clear) {
     delete config.tools;
-    saveSessionConfig(db, project, config);
+    await saveSessionConfig(project, config);
     console.log(ok(`Tools unset for ${bold(project.slug)} — all built-in tools load again.`));
     return;
   }
@@ -553,6 +533,6 @@ export function cmdTools(
   }
 
   config.tools = splitNames(names);
-  saveSessionConfig(db, project, config);
+  await saveSessionConfig(project, config);
   console.log(ok(`Tools set for ${bold(project.slug)}: ${config.tools.join(", ")}`));
 }

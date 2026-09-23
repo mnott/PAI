@@ -23,25 +23,6 @@ const capture = () => {
   return () => lines.join("\n");
 };
 
-/** A Postgres-shaped backend whose queries answer from canned rows in order. */
-const pgBackend = (batches: Record<string, unknown>[][]): StorageBackend => {
-  let i = 0;
-  return {
-    backendType: "postgres",
-    getPool: () => ({
-      query: () => Promise.resolve({ rows: batches[i++] ?? [] }),
-    }),
-  } as unknown as StorageBackend;
-};
-
-const sqliteBackend = (batches: Record<string, unknown>[][]): StorageBackend => {
-  let i = 0;
-  return {
-    backendType: "sqlite",
-    getSqliteDb: () => ({ prepare: () => ({ all: () => batches[i++] ?? [] }) }),
-  } as unknown as StorageBackend;
-};
-
 const COMP = [
   { source: "vault", tier: "topic", chunks: 900, embedded: 90 },
   { source: "notes", tier: "session", chunks: 100, embedded: 100 },
@@ -52,17 +33,30 @@ const PATHS = [
 ];
 const CHURN = [{ day: "2026-08-07", chunks: 900, embedded: 20 }];
 
+/** A backend whose getMemorySourcesReport() answers from canned rows. */
+const backendWithReport = (
+  backendType: "sqlite" | "postgres",
+  report: { composition: typeof COMP; paths: typeof PATHS; churn: typeof CHURN },
+): StorageBackend =>
+  ({
+    backendType,
+    getMemorySourcesReport: () => Promise.resolve(report),
+  }) as unknown as StorageBackend;
+
+const FULL_REPORT = { composition: COMP, paths: PATHS, churn: CHURN };
+const EMPTY_REPORT = { composition: [], paths: [], churn: [] };
+
 describe("reading whichever backend is configured", () => {
   it("reports from a Postgres backend", async () => {
     const out = capture();
-    await cmdMemorySources(pgBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("postgres", FULL_REPORT));
     expect(out()).toMatch(/backend: postgres/);
     expect(out()).toMatch(/vault \/ topic/);
   });
 
   it("reports from a SQLite backend too", async () => {
     const out = capture();
-    await cmdMemorySources(sqliteBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("sqlite", FULL_REPORT));
     expect(out()).toMatch(/backend: sqlite/);
   });
 
@@ -70,7 +64,7 @@ describe("reading whichever backend is configured", () => {
     // An empty index and an unreachable backend look the same from here, so the
     // message must not claim the index is empty.
     const out = capture();
-    await cmdMemorySources(pgBackend([[], [], []]));
+    await cmdMemorySources(backendWithReport("postgres", EMPTY_REPORT));
     expect(out()).toMatch(/Nothing indexed yet, or the backend is unreachable/);
   });
 });
@@ -78,21 +72,21 @@ describe("reading whichever backend is configured", () => {
 describe("surfacing the things that were invisible", () => {
   it("totals chunks and embedded, with the embedded share", async () => {
     const out = capture();
-    await cmdMemorySources(pgBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("postgres", FULL_REPORT));
     expect(out()).toMatch(/1[’',]000 chunks/);
     expect(out()).toMatch(/190 embedded \(19%\)/);
   });
 
   it("groups by entry root, so one leaked tree is visible as a share", async () => {
     const out = capture();
-    await cmdMemorySources(pgBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("postgres", FULL_REPORT));
     expect(out()).toMatch(/Linked Tree\/Notes\/…/);
     expect(out()).toMatch(/80%/); // 800 of 1000
   });
 
   it("reports how many chunks still need embedding", async () => {
     const out = capture();
-    await cmdMemorySources(pgBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("postgres", FULL_REPORT));
     expect(out()).toMatch(/810 chunks still need embedding/);
   });
 
@@ -100,7 +94,7 @@ describe("surfacing the things that were invisible", () => {
     // This is the distinction the whole command is for: a finite backlog embeds
     // what it writes, a treadmill does not.
     const out = capture();
-    await cmdMemorySources(pgBackend([COMP, PATHS, CHURN]));
+    await cmdMemorySources(backendWithReport("postgres", FULL_REPORT));
     expect(out()).toMatch(/2026-08-07/);
     expect(out()).toMatch(/20 \(2%\)/);
   });

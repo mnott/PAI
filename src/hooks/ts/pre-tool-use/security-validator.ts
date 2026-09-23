@@ -18,8 +18,13 @@
  */
 
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
+import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
+import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
+import { readWorkersSection } from '../../../workers/config.js';
+import { workersLogDir } from '../../../workers/paths.js';
+import { worktreesDir } from '../../../workers/worktree.js';
 
 // ============================================================================
 // ATTACK PATTERNS - CUSTOMIZE THESE FOR YOUR ENVIRONMENT
@@ -85,12 +90,33 @@ interface HookInput {
   session_id: string;
   tool_name: string;
   tool_input: Record<string, unknown> | string;
+  cwd?: string;
 }
 
-interface HookOutput {
-  permissionDecision: 'allow' | 'deny';
-  additionalContext?: string;
-  feedback?: string;
+/**
+ * The worker git guard's worktrees root, resolved once per process from the
+ * same workers config every other worker code path reads. Null when the
+ * config cannot be read (e.g. no workers.yaml yet); the guard then blocks
+ * every tree-rewriting git command for a worker, since it cannot prove the
+ * worker's cwd is a worktree.
+ */
+function resolveWorktreesRoot(): string | null {
+  try {
+    return resolve(worktreesDir(workersLogDir(readWorkersSection().workers)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claude Code reads the deny reason from stderr on exit code 2, not from the
+ * stdout JSON — a deny that only writes stdout is invisible to the model,
+ * which then retries blindly. Nothing else consumes this stdout JSON, so
+ * the reason goes to stderr only.
+ */
+function deny(reason: string): never {
+  process.stderr.write(`Blocked by PAI security validator: ${reason}\n`);
+  process.exit(2);
 }
 
 // ============================================================================
@@ -202,6 +228,42 @@ async function main(): Promise<void> {
     return;
   }
 
+  // plutil in-place rewrite guard: -extract/-replace/-insert/-remove/
+  // -convert/-create without -o write the result back into the source file
+  // instead of printing it. Applies in every session, not only workers.
+  const plutilGuard = detectUnsafePlutil(command);
+  if (plutilGuard.blocked) {
+    logSecurityEvent({
+      type: 'attack_blocked',
+      category: 'plutil_guard',
+      pattern: plutilGuard.invocation,
+      command: command.slice(0, 200),
+      session_id: input.session_id,
+    });
+
+    deny(plutilGuardMessage(plutilGuard.verb || 'this verb'));
+  }
+
+  // In-place worker git guard: a worker with no worktree runs in the shared
+  // checkout, where a tree-rewriting git command (stash, reset, clean, ...)
+  // can drop or conflict with another worker's in-flight edits.
+  const isWorker = process.env.PAI_WORKER === '1';
+  if (isWorker) {
+    const cwd = input.cwd || process.cwd();
+    const guard = decideWorkerGitGuard(command, isWorker, resolve(cwd), resolveWorktreesRoot());
+    if (guard.blocked) {
+      logSecurityEvent({
+        type: 'attack_blocked',
+        category: 'worker_git_guard',
+        pattern: guard.cmd,
+        command: command.slice(0, 200),
+        session_id: input.session_id,
+      });
+
+      deny(workerGitGuardMessage(guard.cmd || 'this git command'));
+    }
+  }
+
   // Check all patterns
   const result = detectAttack(command);
 
@@ -215,14 +277,7 @@ async function main(): Promise<void> {
       session_id: input.session_id,
     });
 
-    const output: HookOutput = {
-      permissionDecision: 'deny',
-      additionalContext: `SECURITY: Blocked ${result.category} pattern`,
-      feedback: `This command matched a security pattern (${result.category}). If this is legitimate, please rephrase the command.`,
-    };
-
-    console.log(JSON.stringify(output));
-    process.exit(2); // Exit 2 = blocking error
+    deny(`This command matched a security pattern (${result.category}). If this is legitimate, please rephrase the command.`);
   }
 
   if (result.requiresConfirmation) {
@@ -235,14 +290,7 @@ async function main(): Promise<void> {
       session_id: input.session_id,
     });
 
-    const output: HookOutput = {
-      permissionDecision: 'deny',
-      additionalContext: `DANGEROUS: ${result.category} operation requires confirmation`,
-      feedback: `This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`,
-    };
-
-    console.log(JSON.stringify(output));
-    process.exit(2); // Exit 2 = requires user confirmation
+    deny(`This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`);
   }
 
   // Allow - no logging, immediate exit

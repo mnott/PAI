@@ -15,7 +15,6 @@
  * Claude Code.
  */
 
-import type { Database } from "better-sqlite3";
 import { join } from "node:path";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -77,11 +76,14 @@ function touchSentinel(rootPath: string): void {
 // Command
 // ---------------------------------------------------------------------------
 
-export async function cmdAutosave(db: Database, opts: AutosaveOptions): Promise<void> {
+export async function cmdAutosave(opts: AutosaveOptions): Promise<void> {
   const minGap = parseInt(opts.minGap ?? String(DEFAULT_MIN_GAP), 10);
   const cwd = process.cwd();
 
-  const project = resolveProjectByCwd(db, cwd) as ProjectRow | undefined;
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = (await resolveProjectByCwd(registryBackend, cwd)) as ProjectRow | undefined;
   if (!project) return;
 
   if (!opts.dryRun && tooRecent(project.root_path, minGap)) return;
@@ -122,11 +124,8 @@ export async function cmdAutosave(db: Database, opts: AutosaveOptions): Promise<
   // Nothing worth recording — leave whatever is already there alone.
   if (!body) return;
 
-  const session = db
-    .prepare(
-      "SELECT * FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
-    )
-    .get(project.id) as SessionRow | undefined;
+  const session = ((await registryBackend.getLatestSessionForProject(project.id)) ??
+    undefined) as SessionRow | undefined;
 
   const result = applyContinue({
     rootPath: project.root_path,

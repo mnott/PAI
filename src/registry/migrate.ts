@@ -1,9 +1,9 @@
 /**
  * Migration helper: imports the existing JSON session-registry into the
- * new SQLite registry.db.
+ * registry backend (SQLite or Postgres).
  *
  * Source file:  ~/.claude/session-registry.json
- * Target:       openRegistry() → projects + sessions tables
+ * Target:       RegistryBackend → projects + sessions tables
  *
  * The JSON registry uses encoded directory names as keys (Claude Code's
  * encoding: leading `/` is replaced by `-`, then each remaining `/` is also
@@ -18,7 +18,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend } from "../storage/registry-interface.js";
 import { smartDecodeDir } from "../cli/utils.js";
 
 // ---------------------------------------------------------------------------
@@ -236,19 +236,19 @@ export interface MigrationResult {
 }
 
 /**
- * Migrate the existing JSON session-registry into the SQLite registry.
+ * Migrate the existing JSON session-registry into the registry backend.
  *
- * @param db            Open better-sqlite3 Database (target).
+ * @param backend       Target RegistryBackend (SQLite or Postgres).
  * @param registryPath  Path to session-registry.json.
  *                      Defaults to ~/.claude/session-registry.json.
  *
  * The migration is idempotent: projects and sessions that already exist
  * (matched by slug / project_id+number) are silently skipped.
  */
-export function migrateFromJson(
-  db: Database,
+export async function migrateFromJson(
+  backend: RegistryBackend,
   registryPath: string = join(homedir(), ".claude", "session-registry.json")
-): MigrationResult {
+): Promise<MigrationResult> {
   const result: MigrationResult = {
     projectsInserted: 0,
     projectsSkipped: 0,
@@ -271,28 +271,6 @@ export function migrateFromJson(
     return result;
   }
 
-  // ── Prepared statements ───────────────────────────────────────────────────
-  const insertProject = db.prepare(`
-    INSERT OR IGNORE INTO projects
-      (slug, display_name, root_path, encoded_dir, type, status,
-       created_at, updated_at)
-    VALUES
-      (@slug, @display_name, @root_path, @encoded_dir, 'local', 'active',
-       @created_at, @updated_at)
-  `);
-
-  const getProject = db.prepare(
-    "SELECT id FROM projects WHERE slug = ?"
-  );
-
-  const insertSession = db.prepare(`
-    INSERT OR IGNORE INTO sessions
-      (project_id, number, date, slug, title, filename, status, created_at)
-    VALUES
-      (@project_id, @number, @date, @slug, @title, @filename, 'completed',
-       @created_at)
-  `);
-
   const now = Date.now();
 
   // ── Build authoritative encoded-dir → path lookup ─────────────────────────
@@ -304,54 +282,18 @@ export function migrateFromJson(
     const baseSlug = slugify(rootPath);
 
     // --- Upsert project ---
-    let slug = baseSlug;
-    let attempt = 0;
-    while (true) {
-      const info = insertProject.run({
-        slug,
-        display_name:
-          (entry.displayName as string | undefined) ??
-          (rootPath.split("/").pop() ?? rootPath),
-        root_path: rootPath,
-        encoded_dir: encodedDir,
-        created_at: now,
-        updated_at: now,
-      });
-
-      if (info.changes > 0) {
-        result.projectsInserted++;
-        break;
-      }
-
-      // Row existed — check if it's ours (matching root_path) or a collision
-      const existing = db
-        .prepare("SELECT id FROM projects WHERE root_path = ?")
-        .get(rootPath);
-      if (existing) {
-        result.projectsSkipped++;
-        break;
-      }
-
-      // Genuine slug collision — append numeric suffix and retry
-      attempt++;
-      slug = `${baseSlug}-${attempt}`;
-    }
-
-    const projectRow = getProject.get(slug) as { id: number } | undefined;
-    // Also check by root_path in case slug was different
-    const projectById = projectRow ??
-      (db
-        .prepare("SELECT id FROM projects WHERE root_path = ?")
-        .get(rootPath) as { id: number } | undefined);
-
-    if (!projectById) {
-      result.errors.push(
-        `Could not resolve project id for encoded dir: ${encodedDir}`
-      );
-      continue;
-    }
-
-    const projectId = projectById.id;
+    const { id: projectId, created } = await backend.createProjectWithSlugRetry({
+      baseSlug,
+      displayName:
+        (entry.displayName as string | undefined) ??
+        (rootPath.split("/").pop() ?? rootPath),
+      rootPath,
+      encodedDir,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (created) result.projectsInserted++;
+    else result.projectsSkipped++;
 
     // --- Scan Notes/ directory for session notes ---
     const notesDir =
@@ -381,16 +323,16 @@ export function migrateFromJson(
       if (!parsed) continue;
 
       try {
-        const info = insertSession.run({
-          project_id: projectId,
+        const inserted = await backend.upsertSessionIfAbsent({
+          projectId,
           number: parsed.number,
           date: parsed.date,
           slug: parsed.slug,
           title: parsed.title,
           filename: parsed.filename,
-          created_at: now,
+          createdAt: now,
         });
-        if (info.changes > 0) result.sessionsInserted++;
+        if (inserted) result.sessionsInserted++;
       } catch (err) {
         result.errors.push(
           `Failed to insert session ${filename}: ${String(err)}`

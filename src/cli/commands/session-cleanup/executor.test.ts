@@ -49,6 +49,8 @@ describe("the cleanup executor cannot delete notes", () => {
   it("still deletes the session ROW, which is a cache and not the record", () => {
     // The note on disk is the artefact; the DB row is derived and rebuildable.
     // Keeping this asserted makes the asymmetry deliberate rather than accidental.
-    expect(source).toMatch(/DELETE FROM sessions WHERE id = \?/);
+    // The row delete itself lives behind RegistryBackend.deleteSession() now
+    // (src/storage/registry-{sqlite,postgres}.ts), not a raw SQL string here.
+    expect(source).toMatch(/registryBackend\.deleteSession\(/);
   });
 });

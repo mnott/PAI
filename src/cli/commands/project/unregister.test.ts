@@ -2,10 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import DatabaseCtor from "better-sqlite3";
-import type { Database } from "better-sqlite3";
-import { initializeSchema } from "../../../registry/schema.js";
 import { cmdUnregister } from "./unregister.js";
+import { getRegistryBackend, closeStorage, __resetStorageForTests } from "../../../storage/factory.js";
+import type { SQLiteRegistryBackend } from "../../../storage/registry-sqlite.js";
 
 /**
  * Removing a row that should never have existed.
@@ -16,13 +15,15 @@ import { cmdUnregister } from "./unregister.js";
  * SQLite will not complain about any it misses.
  */
 
-let dir: string;
-let db: Database;
+let paiHome: string;
+let originalPaiHome: string | undefined;
 let out: string[];
 
-function project(slug: string, path: string): number {
+async function project(slug: string, path: string): Promise<number> {
+  const backend = (await getRegistryBackend()) as SQLiteRegistryBackend;
   return Number(
-    db
+    backend
+      .getRawDb()
       .prepare(
         `INSERT INTO projects (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'local', 'active', 0, 0)`
@@ -31,68 +32,80 @@ function project(slug: string, path: string): number {
   );
 }
 
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "pai-unreg-"));
-  db = new DatabaseCtor(join(dir, "r.db"));
-  initializeSchema(db);
+beforeEach(async () => {
+  paiHome = mkdtempSync(join(tmpdir(), "pai-unreg-home-"));
+  originalPaiHome = process.env.PAI_HOME;
+  process.env.PAI_HOME = paiHome;
+  __resetStorageForTests();
   out = [];
   process.exitCode = undefined;
   vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
   vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
-  db.close();
-  rmSync(dir, { recursive: true, force: true });
+  await closeStorage();
+  if (originalPaiHome === undefined) delete process.env.PAI_HOME;
+  else process.env.PAI_HOME = originalPaiHome;
+  rmSync(paiHome, { recursive: true, force: true });
   process.exitCode = undefined;
 });
 
 // cmdUnregister sets process.exitCode and returns normally on refusal — it no
 // longer calls process.exit() (see src/cli/lib/exit.ts for why: exit() can
 // truncate output still in flight to a pipe).
-const call = (slug: string, opts: Parameters<typeof cmdUnregister>[2]) => {
-  cmdUnregister(db, slug, opts);
-};
+const call = (slug: string, opts: Parameters<typeof cmdUnregister>[1]) => cmdUnregister(slug, opts);
+
+async function countProjects(): Promise<number> {
+  const backend = await getRegistryBackend();
+  return backend.countProjects();
+}
 
 describe("refusing", () => {
-  it("refuses a row that holds sessions, and points at merge instead", () => {
-    const id = project("wt", "/p/.claude/worktrees/wt");
-    db.prepare(
-      `INSERT INTO sessions (project_id, number, date, slug, title, filename, created_at)
-       VALUES (?, 1, '2026-08-04', 's', 's', 's.md', 0)`
-    ).run(id);
+  it("refuses a row that holds sessions, and points at merge instead", async () => {
+    const id = await project("wt", "/p/.claude/worktrees/wt");
+    const backend = (await getRegistryBackend()) as SQLiteRegistryBackend;
+    backend
+      .getRawDb()
+      .prepare(
+        `INSERT INTO sessions (project_id, number, date, slug, title, filename, created_at)
+         VALUES (?, 1, '2026-08-04', 's', 's', 's.md', 0)`
+      )
+      .run(id);
 
-    call("wt", { execute: true });
+    await call("wt", { execute: true });
 
     expect(process.exitCode).toBe(1);
     expect(out.join("\n")).toContain("pai project merge");
     // The row must still be there — refusing has to mean refusing.
-    expect(db.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 1 });
+    expect(await countProjects()).toBe(1);
   });
 
-  it("exits non-zero for an unknown slug", () => {
-    call("ghost", { execute: true });
+  it("exits non-zero for an unknown slug", async () => {
+    await call("ghost", { execute: true });
     expect(process.exitCode).toBe(1);
   });
 
-  it("changes nothing without --execute", () => {
-    project("t", "/private/tmp");
-    call("t", {});
-    expect(db.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 1 });
+  it("changes nothing without --execute", async () => {
+    await project("t", "/private/tmp");
+    await call("t", {});
+    expect(await countProjects()).toBe(1);
     expect(out.join("\n")).toContain("Preview");
   });
 });
 
 describe("removing", () => {
-  it("removes a zero-session row", () => {
-    project("t", "/private/tmp");
-    call("t", { execute: true });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 0 });
+  it("removes a zero-session row", async () => {
+    await project("t", "/private/tmp");
+    await call("t", { execute: true });
+    expect(await countProjects()).toBe(0);
   });
 
-  it("leaves nothing behind in any of the five tables", () => {
-    const id = project("wt", "/p/.claude/worktrees/wt");
+  it("leaves nothing behind in any of the five tables", async () => {
+    const id = await project("wt", "/p/.claude/worktrees/wt");
+    const backend = (await getRegistryBackend()) as SQLiteRegistryBackend;
+    const db = backend.getRawDb();
     const s = Number(
       db
         .prepare(
@@ -112,7 +125,7 @@ describe("removing", () => {
       "INSERT INTO links (session_id, target_project_id, created_at) VALUES (?, ?, 0)"
     ).run(s, id);
 
-    call("wt", { execute: true, force: true });
+    await call("wt", { execute: true, force: true });
 
     for (const [table, column] of [
       ["sessions", "project_id"],
@@ -126,22 +139,24 @@ describe("removing", () => {
         table
       ).toEqual({ n: 0 });
     }
-    expect(db.prepare("SELECT COUNT(*) AS n FROM projects").get()).toEqual({ n: 0 });
+    expect(await countProjects()).toBe(0);
   });
 
-  it("--force is required to take the sessions with it", () => {
+  it("--force is required to take the sessions with it", async () => {
     // Deleting sessions is the one genuinely lossy thing here, so it must not be
     // reachable from --execute alone.
-    const id = project("wt", "/private/tmp/x");
+    const id = await project("wt", "/private/tmp/x");
+    const backend = (await getRegistryBackend()) as SQLiteRegistryBackend;
+    const db = backend.getRawDb();
     db.prepare(
       `INSERT INTO sessions (project_id, number, date, slug, title, filename, created_at)
        VALUES (?, 1, '2026-08-04', 's', 's', 's.md', 0)`
     ).run(id);
 
-    call("wt", { execute: true });
+    await call("wt", { execute: true });
     expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 1 });
 
-    call("wt", { execute: true, force: true });
+    await call("wt", { execute: true, force: true });
     expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 0 });
   });
 });

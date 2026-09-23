@@ -10,7 +10,7 @@
 
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
+import { ageOf, elapsedOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { parseWorkerReport, renderReport } from "./report.js";
@@ -602,8 +602,8 @@ export function paneStatusRow(
 ): string {
   const model = shortModel(s.model);
   const started = String(s.started ?? "").slice(11, 16);
-  const age = ageOf(s.started, now);
-  const tail = [model, started ? `started ${started}` : "", age].filter(Boolean).join(" · ");
+  const elapsed = elapsedOf(s.started, now);
+  const tail = [model, started ? `started ${started}` : "", elapsed].filter(Boolean).join(" · ");
   const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
   return `${goalOf(s, budget)} · ${tail}`;
 }

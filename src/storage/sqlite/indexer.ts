@@ -1,20 +1,21 @@
 /**
- * Synchronous (SQLite) indexer for the PAI federation memory engine.
+ * Synchronous (SQLite) indexer — moved from memory/indexer/sync.ts so the
+ * only file that opens prepared statements against the federation database
+ * lives under src/storage/ (design doc docs/design/postgres-only.md, unit 7).
  *
  * Scans project memory/ and Notes/ directories, chunks markdown files, and
- * inserts the resulting chunks into federation.db for BM25 search.
- *
- * Change detection: files whose SHA-256 hash has not changed since the last
- * index run are skipped, keeping incremental re-indexing fast.
- *
- * Uses raw better-sqlite3 Database directly for maximum SQLite performance
- * (synchronous transactions, no serialisation overhead).
+ * inserts the resulting chunks into the federation memory store for BM25
+ * search. Uses raw better-sqlite3 Database directly for maximum SQLite
+ * performance (synchronous transactions, no serialisation overhead) — the
+ * reason SQLiteBackend keeps this path instead of routing through the
+ * generic (StorageBackend) indexer that Postgres uses.
  */
 
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 import type { Database } from "better-sqlite3";
-import { chunkMarkdown } from "../chunker.js";
+import type { RegistryBackend } from "../registry-interface.js";
+import { chunkMarkdown } from "../../memory/chunker.js";
 import {
   sha256File,
   chunkId,
@@ -25,13 +26,8 @@ import {
   parseSessionTitleChunk,
   yieldToEventLoop,
   INDEX_YIELD_EVERY,
-} from "./helpers.js";
-import type { IndexResult, EmbedResult } from "./types.js";
-
-export type { IndexResult, EmbedResult };
-
-// Re-export detectTier for backward-compatibility (consumers import it from indexer.js)
-export { detectTier };
+} from "../../memory/indexer/helpers.js";
+import type { IndexResult } from "../../memory/indexer/types.js";
 
 // ---------------------------------------------------------------------------
 // Single-file indexing
@@ -42,7 +38,7 @@ export { detectTier };
  *
  * @returns true if the file was re-indexed (changed or new), false if skipped.
  */
-export function indexFile(
+function indexFile(
   db: Database,
   projectId: number,
   rootPath: string,
@@ -52,7 +48,6 @@ export function indexFile(
 ): boolean {
   const absPath = join(rootPath, relativePath);
 
-  // Read file content
   let content: string;
   let stat: ReturnType<typeof statSync>;
   try {
@@ -67,23 +62,16 @@ export function indexFile(
   const mtime = Math.floor(stat.mtimeMs);
   const size = stat.size;
 
-  // Check if the file has changed since last index
   const existing = db
-    .prepare(
-      "SELECT hash FROM memory_files WHERE project_id = ? AND path = ?",
-    )
+    .prepare("SELECT hash FROM memory_files WHERE project_id = ? AND path = ?")
     .get(projectId, relativePath) as { hash: string } | undefined;
 
   if (existing?.hash === hash) {
-    // Unchanged — skip
     return false;
   }
 
-  // Delete old chunks for this file from both tables
   const oldChunkIds = db
-    .prepare(
-      "SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?",
-    )
+    .prepare("SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?")
     .all(projectId, relativePath) as Array<{ id: string }>;
 
   const deleteFts = db.prepare("DELETE FROM memory_fts WHERE id = ?");
@@ -98,10 +86,8 @@ export function indexFile(
     deleteChunk.run(projectId, relativePath);
   })();
 
-  // Chunk the new content
   const chunks = chunkMarkdown(content);
 
-  // Insert new chunks into memory_chunks and memory_fts
   const insertChunk = db.prepare(`
     INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -130,26 +116,12 @@ export function indexFile(
       const chunk = chunks[i]!;
       const id = chunkId(projectId, relativePath, i, chunk.startLine, chunk.endLine);
       insertChunk.run(
-        id,
-        projectId,
-        source,
-        tier,
-        relativePath,
-        chunk.startLine,
-        chunk.endLine,
-        chunk.hash,
-        chunk.text,
-        updatedAt,
+        id, projectId, source, tier, relativePath,
+        chunk.startLine, chunk.endLine, chunk.hash, chunk.text, updatedAt,
       );
       insertFts.run(
-        chunk.text,
-        id,
-        projectId,
-        relativePath,
-        source,
-        tier,
-        chunk.startLine,
-        chunk.endLine,
+        chunk.text, id, projectId, relativePath, source, tier,
+        chunk.startLine, chunk.endLine,
       );
     }
     upsertFile.run(projectId, relativePath, source, tier, hash, mtime, size);
@@ -164,15 +136,8 @@ export function indexFile(
 
 /**
  * Index all memory, Notes, and content files for a single registered project.
- *
- * Scans:
- *  - {rootPath}/MEMORY.md    → source='memory', tier='evergreen'
- *  - {rootPath}/memory/      → source='memory', tier from detectTier()
- *  - {rootPath}/Notes/       → source='notes',  tier='session'
- *  - {rootPath}/**\/*.md    → source='content', tier='topic'  (all other .md files, recursive)
- *  - {claudeNotesDir}/       → source='notes',  tier='session'  (if set and different)
  */
-export async function indexProject(
+async function indexProject(
   db: Database,
   projectId: number,
   rootPath: string,
@@ -186,13 +151,11 @@ export async function indexProject(
 
   const filesToIndex: Array<{ absPath: string; rootBase: string; source: string; tier: string }> = [];
 
-  // Root-level MEMORY.md
   const rootMemoryMd = join(rootPath, "MEMORY.md");
   if (existsSync(rootMemoryMd)) {
     filesToIndex.push({ absPath: rootMemoryMd, rootBase: rootPath, source: "memory", tier: "evergreen" });
   }
 
-  // memory/ directory
   const memoryDir = join(rootPath, "memory");
   for (const absPath of walkMdFiles(memoryDir)) {
     const relPath = relative(rootPath, absPath);
@@ -200,7 +163,6 @@ export async function indexProject(
     filesToIndex.push({ absPath, rootBase: rootPath, source: "memory", tier });
   }
 
-  // {rootPath}/Notes/ directory
   const notesDir = join(rootPath, "Notes");
   for (const absPath of walkMdFiles(notesDir)) {
     filesToIndex.push({ absPath, rootBase: rootPath, source: "notes", tier: "session" });
@@ -233,20 +195,17 @@ export async function indexProject(
     }
   }
 
-  // {rootPath}/**/*.md — all other markdown content
   if (!isPathTooBroadForContentScan(rootPath)) {
     for (const absPath of walkContentFiles(rootPath)) {
       filesToIndex.push({ absPath, rootBase: rootPath, source: "content", tier: "topic" });
     }
   }
 
-  // Claude Code session notes directory (~/.claude/projects/{encoded}/Notes/)
   if (claudeNotesDir && claudeNotesDir !== notesDir) {
     for (const absPath of walkMdFiles(claudeNotesDir)) {
       filesToIndex.push({ absPath, rootBase: claudeNotesDir, source: "notes", tier: "session" });
     }
 
-    // Synthetic title chunks for claude notes dir
     {
       const updatedAt = Date.now();
       const titleInsertChunk2 = db.prepare(`
@@ -272,7 +231,6 @@ export async function indexProject(
       }
     }
 
-    // Derive the sibling memory/ directory: .../Notes/ → .../memory/
     if (claudeNotesDir.endsWith("/Notes")) {
       const claudeProjectDir = claudeNotesDir.slice(0, -"/Notes".length);
       const claudeMemoryDir = join(claudeProjectDir, "memory");
@@ -295,7 +253,6 @@ export async function indexProject(
     }
   }
 
-  // Yield after collection phase before processing
   await yieldToEventLoop();
 
   let filesSinceYield = 0;
@@ -312,9 +269,7 @@ export async function indexProject(
 
     if (changed) {
       const count = db
-        .prepare(
-          "SELECT COUNT(*) as n FROM memory_chunks WHERE project_id = ? AND path = ?",
-        )
+        .prepare("SELECT COUNT(*) as n FROM memory_chunks WHERE project_id = ? AND path = ?")
         .get(projectId, relPath) as { n: number };
 
       result.filesProcessed++;
@@ -380,13 +335,11 @@ export async function indexProject(
  * Async: yields to the event loop between each project so that the daemon's
  * Unix socket server can process IPC requests (e.g. status) while indexing.
  */
-export async function indexAll(
+export async function indexAllSqlite(
   db: Database,
-  registryDb: Database,
+  registry: RegistryBackend,
 ): Promise<{ projects: number; result: IndexResult }> {
-  const projects = registryDb
-    .prepare("SELECT id, root_path, claude_notes_dir FROM projects WHERE status = 'active'")
-    .all() as Array<{ id: number; root_path: string; claude_notes_dir: string | null }>;
+  const projects = await registry.listProjects({ status: "active" });
 
   const totals: IndexResult = {
     filesProcessed: 0,
@@ -403,79 +356,4 @@ export async function indexAll(
   }
 
   return { projects: projects.length, result: totals };
-}
-
-// ---------------------------------------------------------------------------
-// Embedding generation
-// ---------------------------------------------------------------------------
-
-/**
- * Generate and store embeddings for chunks that do not yet have one.
- *
- * Because better-sqlite3 is synchronous but the embedding pipeline is async,
- * we fetch all unembedded chunk texts first, generate embeddings in batches,
- * and then write them back in a transaction.
- *
- * @param db         Open federation database.
- * @param projectId  Optional — restrict to a specific project.
- * @param batchSize  Number of chunks to embed per round. Default 50.
- * @param onProgress Optional callback called after each batch with running totals.
- */
-export async function embedChunks(
-  db: Database,
-  projectId?: number,
-  batchSize = 50,
-  onProgress?: (embedded: number, total: number) => void,
-): Promise<EmbedResult> {
-  // Dynamic import — keeps the heavy ML runtime out of the module load path
-  const { generateEmbedding, serializeEmbedding } = await import("../embeddings.js");
-
-  const conditions = ["embedding IS NULL"];
-  const params: (string | number)[] = [];
-
-  if (projectId !== undefined) {
-    conditions.push("project_id = ?");
-    params.push(projectId);
-  }
-
-  const where = "WHERE " + conditions.join(" AND ");
-
-  const rows = db
-    .prepare(`SELECT id, text FROM memory_chunks ${where} ORDER BY id`)
-    .all(...params) as Array<{ id: string; text: string }>;
-
-  if (rows.length === 0) {
-    return { chunksEmbedded: 0, chunksSkipped: 0 };
-  }
-
-  const updateStmt = db.prepare(
-    "UPDATE memory_chunks SET embedding = ? WHERE id = ?",
-  );
-
-  let embedded = 0;
-  const total = rows.length;
-
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-
-    // Generate embeddings for the batch (async — must happen OUTSIDE transaction)
-    const embeddings: Array<{ id: string; blob: Buffer }> = [];
-    for (const row of batch) {
-      const vec = await generateEmbedding(row.text);
-      const blob = serializeEmbedding(vec);
-      embeddings.push({ id: row.id, blob });
-    }
-
-    // Write the batch in a single transaction
-    db.transaction(() => {
-      for (const { id, blob } of embeddings) {
-        updateStmt.run(blob, id);
-      }
-    })();
-
-    embedded += embeddings.length;
-    onProgress?.(embedded, total);
-  }
-
-  return { chunksEmbedded: embedded, chunksSkipped: 0 };
 }

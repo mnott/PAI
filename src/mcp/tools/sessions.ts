@@ -2,8 +2,8 @@
  * MCP tool handlers: session_list, session_route
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import {
   lookupProjectId,
   type ToolResult,
@@ -19,12 +19,12 @@ export interface SessionListParams {
   status?: "open" | "completed" | "compacted";
 }
 
-export function toolSessionList(
-  registryDb: Database,
+export async function toolSessionList(
+  registry: RegistryBackend,
   params: SessionListParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
-    const projectId = lookupProjectId(registryDb, params.project);
+    const projectId = await lookupProjectId(registry, params.project);
     if (projectId == null) {
       return {
         content: [
@@ -34,32 +34,12 @@ export function toolSessionList(
       };
     }
 
-    const conditions = ["project_id = ?"];
-    const queryParams: (string | number)[] = [projectId];
-
-    if (params.status) {
-      conditions.push("status = ?");
-      queryParams.push(params.status);
-    }
-
     const limit = params.limit ?? 10;
-    queryParams.push(limit);
-
-    const sessions = registryDb
-      .prepare(
-        `SELECT number, date, title, filename, status
-         FROM sessions
-         WHERE ${conditions.join(" AND ")}
-         ORDER BY number DESC
-         LIMIT ?`
-      )
-      .all(...queryParams) as Array<{
-      number: number;
-      date: string;
-      title: string;
-      filename: string;
-      status: string;
-    }>;
+    const sessions = await registry.listSessions({
+      projectId,
+      status: params.status,
+      limit,
+    });
 
     if (sessions.length === 0) {
       return {
@@ -116,15 +96,15 @@ export interface SessionRouteParams {
  * to automatically route the session to the correct project.
  */
 export async function toolSessionRoute(
-  registryDb: Database,
-  federation: Database | StorageBackend,
+  registry: RegistryBackend,
+  federation: StorageBackend,
   params: SessionRouteParams
 ): Promise<ToolResult> {
   try {
     const { autoRoute, formatAutoRouteJson } = await import("../../session/auto-route.js");
 
     const result = await autoRoute(
-      registryDb,
+      registry,
       federation,
       params.cwd,
       params.context

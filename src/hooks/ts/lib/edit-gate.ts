@@ -45,7 +45,10 @@ export function decideEditGate(ctx: EditGateContext): EditGateDecision {
   return {
     decision: "block",
     reason:
-      `main session does not edit code: run a worker instead — ` +
-      `pai worker run --label "${label}" --class implement --output-format json -p <spec> (target: ${ctx.filePath})`,
+      `main session does not edit code — this is a standing policy for the whole session, not a problem ` +
+      `with this edit: retrying Edit/Write on ${ctx.filePath} or any other code file will be denied the ` +
+      `same way. Next step: write a spec file, then run ` +
+      `pai worker run --label "${label}" --class implement --provider anthropic --output-format json -p "$(cat <spec>)" ` +
+      `(target: ${ctx.filePath})`,
   };
 }

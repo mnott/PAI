@@ -5,8 +5,8 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Database } from "better-sqlite3";
 import { detectProject, formatDetectionJson } from "../../cli/commands/detect.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import {
   lookupProjectId,
   detectProjectFromPath,
@@ -23,25 +23,21 @@ export interface ProjectInfoParams {
   slug?: string;
 }
 
-export function toolProjectInfo(
-  registryDb: Database,
+export async function toolProjectInfo(
+  registry: RegistryBackend,
   params: ProjectInfoParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
     let project: ProjectRow | null = null;
 
     if (params.slug) {
-      const projectId = lookupProjectId(registryDb, params.slug);
+      const projectId = await lookupProjectId(registry, params.slug);
       if (projectId != null) {
-        project = registryDb
-          .prepare(
-            "SELECT id, slug, display_name, root_path, type, status, created_at, updated_at, archived_at, parent_id, obsidian_link FROM projects WHERE id = ?"
-          )
-          .get(projectId) as ProjectRow | null;
+        project = await registry.getProjectById(projectId);
       }
     } else {
       const cwd = process.cwd();
-      project = detectProjectFromPath(registryDb, cwd);
+      project = await detectProjectFromPath(registry, cwd);
     }
 
     if (!project) {
@@ -55,7 +51,7 @@ export function toolProjectInfo(
     }
 
     return {
-      content: [{ type: "text", text: formatProject(registryDb, project) }],
+      content: [{ type: "text", text: await formatProject(registry, project) }],
     };
   } catch (e) {
     return {
@@ -75,48 +71,19 @@ export interface ProjectListParams {
   limit?: number;
 }
 
-export function toolProjectList(
-  registryDb: Database,
+export async function toolProjectList(
+  registry: RegistryBackend,
   params: ProjectListParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
-    const conditions: string[] = [];
-    const queryParams: (string | number)[] = [];
-
-    if (params.status) {
-      conditions.push("p.status = ?");
-      queryParams.push(params.status);
-    }
-
-    if (params.tag) {
-      conditions.push(
-        "p.id IN (SELECT pt.project_id FROM project_tags pt JOIN tags t ON pt.tag_id = t.id WHERE t.name = ?)"
-      );
-      queryParams.push(params.tag);
-    }
-
-    const where =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = params.limit ?? 50;
-    queryParams.push(limit);
 
-    const projects = registryDb
-      .prepare(
-        `SELECT p.id, p.slug, p.display_name, p.root_path, p.type, p.status, p.updated_at
-         FROM projects p
-         ${where}
-         ORDER BY p.updated_at DESC
-         LIMIT ?`
-      )
-      .all(...queryParams) as Array<{
-      id: number;
-      slug: string;
-      display_name: string;
-      root_path: string;
-      type: string;
-      status: string;
-      updated_at: number;
-    }>;
+    const projects = await registry.listProjects({
+      status: params.status,
+      tagName: params.tag,
+      orderBy: "updated_desc",
+      limit,
+    });
 
     if (projects.length === 0) {
       return {
@@ -158,12 +125,11 @@ export interface ProjectDetectParams {
   cwd?: string;
 }
 
-export function toolProjectDetect(
-  registryDb: Database,
+export async function toolProjectDetect(
   params: ProjectDetectParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
-    const detection = detectProject(registryDb, params.cwd);
+    const detection = await detectProject(params.cwd);
 
     if (!detection) {
       const target = params.cwd ?? process.cwd();
@@ -199,7 +165,7 @@ export interface ProjectHealthParams {
 }
 
 export async function toolProjectHealth(
-  registryDb: Database,
+  registry: RegistryBackend,
   params: ProjectHealthParams
 ): Promise<ToolResult> {
   try {
@@ -213,25 +179,9 @@ export async function toolProjectHealth(
     const { homedir } = await import("node:os");
     const { encodeDir: enc } = await import("../../cli/utils.js");
 
-    interface HealthRowLocal {
-      id: number;
-      slug: string;
-      display_name: string;
-      root_path: string;
-      encoded_dir: string;
-      status: string;
-      type: string;
-      session_count: number;
-    }
-
-    const rows = registryDb
-      .prepare(
-        `SELECT p.id, p.slug, p.display_name, p.root_path, p.encoded_dir, p.status, p.type,
-           (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
-         FROM projects p
-         ORDER BY p.slug ASC`
-      )
-      .all() as HealthRowLocal[];
+    const rows = (await registry.listProjectsWithSessionStats())
+      .slice()
+      .sort((a, b) => a.slug.localeCompare(b.slug));
 
     const home = homedir();
     const claudeProjects = pathJoin(home, ".claude", "projects");
@@ -428,16 +378,16 @@ function parseTodoContent(raw: string): {
   return { continueSection, fullContent: raw, hasContinue: true };
 }
 
-export function toolProjectTodo(
-  registryDb: Database,
+export async function toolProjectTodo(
+  registry: RegistryBackend,
   params: ProjectTodoParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
     let rootPath: string;
     let projectSlug: string;
 
     if (params.project) {
-      const projectId = lookupProjectId(registryDb, params.project);
+      const projectId = await lookupProjectId(registry, params.project);
       if (projectId == null) {
         return {
           content: [
@@ -447,9 +397,7 @@ export function toolProjectTodo(
         };
       }
 
-      const row = registryDb
-        .prepare("SELECT root_path, slug FROM projects WHERE id = ?")
-        .get(projectId) as { root_path: string; slug: string } | undefined;
+      const row = await registry.getProjectById(projectId);
 
       if (!row) {
         return {
@@ -464,7 +412,7 @@ export function toolProjectTodo(
       projectSlug = row.slug;
     } else {
       // Auto-detect from cwd
-      const project = detectProjectFromPath(registryDb, process.cwd());
+      const project = await detectProjectFromPath(registry, process.cwd());
       if (!project) {
         return {
           content: [

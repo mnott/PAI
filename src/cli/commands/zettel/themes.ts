@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdThemes(opts: {
   vaultProjectId?: string;
@@ -25,14 +25,14 @@ async function cmdThemes(opts: {
   const similarityThreshold = parseFloat(opts.threshold ?? "0.65");
 
   const { zettelThemes } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
   console.log();
   console.log(header("  PAI Zettel Themes"));
   console.log(dim(`  Lookback: ${lookbackDays}d  Min cluster: ${minClusterSize}  Threshold: ${similarityThreshold}`));
   process.stdout.write(dim("  Detecting emerging themes...\n"));
 
-  const result = await zettelThemes(db, {
+  const result = await zettelThemes(backend, {
     vaultProjectId,
     lookbackDays,
     minClusterSize,

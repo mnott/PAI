@@ -4,7 +4,7 @@
  * When memory_search or zettel_converse returns results, the query + result
  * metadata is saved to ~/.config/pai/queries/ as a markdown file with YAML
  * frontmatter. The daemon indexer picks these up on the next cycle and indexes
- * them into federation.db, creating a self-reinforcing feedback loop: past
+ * them into the storage backend, creating a self-reinforcing feedback loop: past
  * queries become searchable context for future queries.
  */
 

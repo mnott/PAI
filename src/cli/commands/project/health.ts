@@ -3,7 +3,6 @@
  * moved directories, and orphaned note directories.
  */
 
-import type { Database } from "better-sqlite3";
 import { existsSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -18,6 +17,7 @@ import type {
 } from "./types.js";
 import { suggestMovedPath } from "./relocate.js";
 import { unregistrableReason } from "../../../registry/registrable.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
 function findOrphanedNotesDirs(project: ProjectRow): string[] {
   const claudeProjects = join(homedir(), ".claude", "projects");
@@ -157,18 +157,11 @@ function realpathEq(a: string, b: string): boolean {
   }
 }
 
-export function cmdHealth(
-  db: Database,
+export async function cmdHealth(
   opts: { fix?: boolean; json?: boolean; status?: string }
-): void {
-  const rows = db
-    .prepare(
-      `SELECT p.*,
-         (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
-       FROM projects p
-       ORDER BY p.status ASC, p.updated_at DESC`
-    )
-    .all() as HealthRow[];
+): Promise<void> {
+  const backend = await getRegistryBackend();
+  const rows: HealthRow[] = await backend.listProjectsWithSessionStats();
 
   const results: ProjectHealth[] = rows.map((project) => {
     const pathExists = existsSync(project.root_path);
@@ -269,8 +262,7 @@ export function cmdHealth(
       if (opts.fix && r.suggestedPath) {
         const ts = now();
         const newEncoded = encodeDir(r.suggestedPath);
-        db.prepare("UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?")
-          .run(r.suggestedPath, newEncoded, ts, r.project.id);
+        await backend.updateProjectPath(r.project.id, { rootPath: r.suggestedPath, encodedDir: newEncoded }, ts);
         console.log(ok(`      Auto-fixed: updated path to ${r.suggestedPath}`));
       } else if (r.suggestedPath) {
         console.log(dim(`      Fix:        pai project move ${r.project.slug} ${r.suggestedPath}`));
@@ -291,8 +283,7 @@ export function cmdHealth(
       // only thing of value on it, and an ephemeral row wants unregistering, not
       // filing away — auto-archiving either was the bug behind this whole item.
       if (r.project.session_count === 0 && opts.fix && r.reason === "dead") {
-        db.prepare("UPDATE projects SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?")
-          .run(now(), now(), r.project.id);
+        await backend.updateProjectStatus(r.project.id, "archived", { archivedAt: now(), updatedAt: now() });
         console.log(ok("      Auto-fixed: archived (0 sessions, path gone, nothing claims it)"));
       } else if (r.action) {
         console.log(dim(`      Do:     ${r.action}`));

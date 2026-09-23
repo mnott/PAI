@@ -62,10 +62,11 @@ export function migrateSessionStateDir(opts: { dryRun?: boolean } = {}): Migrate
 
 // ---------------------------------------------------------------------------
 // Orphans: files under the old ~/.config/pai that no code currently reads
-// (voices.json — no `voice` reference anywhere in src; federation.db — the
-// live federation DB has lived at ~/.pai/federation.db since the Postgres
-// migration, this copy is a 0-byte leftover). Still moved by `pai config
-// migrate` so ~/.config/pai ends up with nothing but *.migrated-* markers.
+// (voices.json — no `voice` reference anywhere in src). Still moved by
+// `pai config migrate` so ~/.config/pai ends up with nothing but
+// *.migrated-* markers. The orphaned legacy federation database is handled
+// by storage/paths.ts's migrateOrphanFederationDb — this file stays free of
+// database path literals so it is not a database opener.
 // ---------------------------------------------------------------------------
 
 function oldLastHousekeepingPath(): string {
@@ -84,14 +85,6 @@ function oldVoicesJsonPath(): string {
 
 export function migrateVoicesJson(opts: { dryRun?: boolean } = {}): MigrateFileResult {
   return migratePaiFile(paiHomePath("voices.json"), [oldVoicesJsonPath()], opts);
-}
-
-function oldOrphanFederationDbPath(): string {
-  return join(homedir(), ".config", "pai", "federation.db");
-}
-
-export function migrateOrphanFederationDb(opts: { dryRun?: boolean } = {}): MigrateFileResult {
-  return migratePaiFile(paiHomePath("federation.db"), [oldOrphanFederationDbPath()], opts);
 }
 
 // ---------------------------------------------------------------------------

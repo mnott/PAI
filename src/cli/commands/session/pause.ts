@@ -28,10 +28,10 @@
  *     - The session becomes orphaned — transcript exists but is unresumable.
  */
 
-import type { Database } from "better-sqlite3";
 import { basename } from "node:path";
 import { realpathSync } from "node:fs";
 import chalk from "chalk";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { ProjectRow, SessionRow } from "./types.js";
 import {
   applyContinue,
@@ -110,19 +110,11 @@ export function resolveNotePath(project: ProjectRow): string | null {
  * the other spelling finds nothing, and the scanner then registers a second
  * project for the same directory — which splits session history in half.
  */
-export function resolveProjectByCwd(
-  db: Database,
+export async function resolveProjectByCwd(
+  registryBackend: RegistryBackend,
   cwd: string
-): ProjectRow | undefined {
-  const stmt = db.prepare(
-    `SELECT id, slug, display_name, root_path, encoded_dir
-       FROM projects
-      WHERE ? LIKE root_path || '%'
-      ORDER BY length(root_path) DESC
-      LIMIT 1`
-  );
-
-  const direct = stmt.get(cwd) as ProjectRow | undefined;
+): Promise<ProjectRow | undefined> {
+  const direct = await registryBackend.findProjectByCwdPrefix(cwd);
   if (direct) return direct;
 
   let resolved: string;
@@ -133,7 +125,8 @@ export function resolveProjectByCwd(
   }
   if (resolved === cwd) return undefined;
 
-  return stmt.get(resolved) as ProjectRow | undefined;
+  const viaResolved = await registryBackend.findProjectByCwdPrefix(resolved);
+  return viaResolved ?? undefined;
 }
 
 function printMissingBodyError(): void {
@@ -166,7 +159,7 @@ function printMissingBodyError(): void {
 // Command
 // ---------------------------------------------------------------------------
 
-export function cmdPause(db: Database, opts: PauseOptions): void {
+export async function cmdPause(opts: PauseOptions): Promise<void> {
   // ---- 1. Body first — fail before touching anything ----
   let body = "";
 
@@ -195,9 +188,12 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
     return;
   }
 
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
   // ---- 2. Resolve project by cwd ----
   const cwd = process.cwd();
-  const project = resolveProjectByCwd(db, cwd);
+  const project = await resolveProjectByCwd(registryBackend, cwd);
 
   if (!project) {
     console.error(
@@ -210,11 +206,7 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
   }
 
   // ---- 3. Resolve latest session ----
-  const session = db
-    .prepare(
-      "SELECT * FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
-    )
-    .get(project.id) as SessionRow | undefined;
+  const session = (await registryBackend.getLatestSessionForProject(project.id)) ?? undefined;
 
   // ---- 3b. Agree with the hooks on how a session is identified ----
   //
@@ -238,19 +230,11 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
   // checkpoint still writes correctly, but "Unknown session" in TODO.md is a
   // symptom worth naming rather than shipping silently.
   if (!session) {
-    const siblings = db
-      .prepare(
-        `SELECT p.slug, p.root_path, COUNT(s.id) AS n
-           FROM projects p LEFT JOIN sessions s ON s.project_id = p.id
-          WHERE p.id != ? AND (p.slug = ? OR p.slug LIKE ? || '-%' OR ? LIKE p.slug || '-%')
-          GROUP BY p.id HAVING n > 0
-          ORDER BY n DESC LIMIT 3`
-      )
-      .all(project.id, project.slug, project.slug, project.slug) as Array<{
-      slug: string;
-      root_path: string;
-      n: number;
-    }>;
+    const siblings = await registryBackend.findSiblingProjectsBySlugPattern(
+      project.id,
+      project.slug,
+      3
+    );
 
     console.log(
       chalk.yellow(
@@ -261,7 +245,7 @@ export function cmdPause(db: Database, opts: PauseOptions): void {
     for (const s of siblings) {
       console.log(
         chalk.dim(
-          `        '${s.slug}' (${s.root_path}) has ${s.n} — likely the same project under another path.`
+          `        '${s.slug}' (${s.root_path}) has ${s.session_count} — likely the same project under another path.`
         )
       );
     }

@@ -25,11 +25,12 @@
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { spawn, type SpawnOptions } from "node:child_process";
-import { eventsPath } from "./paths.js";
+import { eventsPath, ledgerPath } from "./paths.js";
 import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
+import { appendLedger } from "./ledger.js";
 import {
   CHAT_HELP,
   chatBlankRow,
@@ -398,6 +399,18 @@ export async function followWorkers(
   const c = makeColor(color);
   const out_ = io?.stdout ?? process.stdout;
   const in_ = io?.stdin ?? process.stdin;
+  // A write to a pane that just closed (EPIPE/ENXIO) or is mid-resize throws
+  // synchronously; unguarded, that crashes the whole follow process, which
+  // the pai-worker profile's Close Sessions On End then closes with nothing
+  // left on screen to explain why. Every direct write to `out_` goes through
+  // here instead, so the pane can only ever go quiet, never vanish for it.
+  const safeWrite = (s: string): void => {
+    try {
+      out_.write(s);
+    } catch {
+      /* unwritable pane — the tick loop's PANE-CLOSED ledger line is the record */
+    }
+  };
   // FORCE_TTY=1: the TTY layout over a pipe (tests, recorded panes)
   const tty = out_.isTTY === true || env.FORCE_TTY === "1";
   const term = env.ITERM_SESSION_ID ?? "";
@@ -411,6 +424,13 @@ export async function followWorkers(
   const started = Date.now();
   let idleSince: number | null = null;
   let aborted = false;
+  // why this pane's follow last exited — recorded in the ledger's PANE-CLOSED
+  // line on every exit (a crash closes the pane instantly under the
+  // Close-Sessions-On-End profile, so the ledger is often the only surviving
+  // record of why)
+  let exitReason = "aborted";
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 10;
   // liveness state: rewritten in place between events, TTY only
   let lastEventAt = Date.now();
   let meterStatus: WorkerStatus | null = null;
@@ -438,7 +458,7 @@ export async function followWorkers(
    *  inserted above the fixed prompt/ticker rows (chatui.chatInsertLine). */
   const out = (line: string, keep = true) => {
     if (!chat) {
-      out_.write(line + "\n");
+      safeWrite(line + "\n");
       return;
     }
     if (keep) {
@@ -446,7 +466,7 @@ export async function followWorkers(
       if (retained.length > RETAIN_CAP) retained.splice(0, retained.length - RETAIN_CAP);
     }
     const r = chatInsertLine(line, fill, regionRows());
-    out_.write(r.seq);
+    safeWrite(r.seq);
     fill = r.fill;
   };
 
@@ -459,7 +479,7 @@ export async function followWorkers(
   // once scrolled a blank line per tick.
   const eraseLiveness = () => {
     if (chat) return;
-    if (tty) out_.write("\r\x1b[K");
+    if (tty) safeWrite("\r\x1b[K");
   };
   let ticker = initialFollowState();
   // the chat ticker row doubles as the worker's status line: provider/model,
@@ -498,11 +518,11 @@ export async function followWorkers(
       const text = paneStatus
         ? paneStatusRow(paneStatus, new Date(), columns())
         : tickerText(secs, ticker.intent, ticker.tool);
-      out_.write(chatTickerRow(text, rows, promptCursorCol()));
+      safeWrite(chatTickerRow(text, rows, promptCursorCol()));
     } else {
       const meter = meterStatus ? contextMeter(c, meterStatus) : null;
-      out_.write("\r\x1b[K");
-      out_.write(tickerText(secs, ticker.intent, ticker.tool, meter));
+      safeWrite("\r\x1b[K");
+      safeWrite(tickerText(secs, ticker.intent, ticker.tool, meter));
     }
   };
 
@@ -667,7 +687,7 @@ export async function followWorkers(
     if (!chat) return;
     const line = rlIn?.line ?? "";
     const cur = (rlIn as unknown as { cursor?: number } | null)?.cursor;
-    out_.write(chatPromptRow(rows, line, (s) => c("dim", s), cur));
+    safeWrite(chatPromptRow(rows, line, (s) => c("dim", s), cur));
   };
   if (chat) {
     const echoOperator = (text: string) => {
@@ -753,7 +773,7 @@ export async function followWorkers(
     });
     // the separator rule above the prompt row needs the pane's width and the
     // pane's dim colour — chatEnter without cols leaves the row blank
-    out_.write(chatEnter(rows, columns() ?? 0, (s) => c("dim", s)));
+    safeWrite(chatEnter(rows, columns() ?? 0, (s) => c("dim", s)));
     drawPrompt();
     if (terminalIn) {
       // every keystroke re-renders the row (and re-parks the cursor) from
@@ -766,7 +786,7 @@ export async function followWorkers(
       fill = 0;
       // clear first: the refill lands rows top-down and must not overwrite
       // the stale transcript left under the old geometry
-      out_.write(
+      safeWrite(
         "\x1b[2J" + chatScrollRegion(rows) + chatBlankRow(rows, columns() ?? 0, (s) => c("dim", s))
       );
       // the retained transcript replays in order, newest regionRows() lines
@@ -787,131 +807,44 @@ export async function followWorkers(
   try {
     for (;;) {
       if (aborted) return;
-      const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
-      if (target) paneStatus = statuses.get(target) ?? paneStatus;
-      const wanted = target ? [target] : runningIds();
-      for (const wid of wanted) {
-        if (handles.has(wid) || finished.has(wid)) continue;
-        const path = eventsPath(logDir, wid);
-        const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-        if (existsSync(path)) {
-          const multi = target === null || handles.size > 0;
-          handles.set(wid, attachHandle(wid, path, st, multi));
-          states.set(wid, states.get(wid) ?? initialFollowState());
-        } else if (!seenHeader.has(wid)) {
-          // worker just started, no event yet: name it instead of a blank pane
-          out(headerLine(c, st));
-          seenHeader.add(wid);
+      let outcome: TickOutcome;
+      try {
+        outcome = await runOneTick();
+        consecutiveErrors = 0;
+      } catch (e) {
+        consecutiveErrors++;
+        const msg = e instanceof Error ? e.message : String(e);
+        // best-effort: the pane itself may be exactly what is unwritable
+        try {
+          noteLine(c("red", `» follow error: ${msg}`));
+        } catch {
+          /* pane unwritable — the ledger line in finally is the record */
         }
-      }
-      const multi = handles.size > 1 || target === null;
-      let progressed = false;
-
-      for (const [wid, h] of [...handles.entries()]) {
-        const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-        // read everything appended since the last poll (fd position advances)
-        const buffer = Buffer.alloc(65536);
-        for (;;) {
-          let n: number;
+        process.stderr.write(`pai worker follow: ${msg}\n`);
+        if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+          await sleep(200);
+          continue;
+        }
+        exitReason = `error: ${msg}`.slice(0, 200);
+        // a crash would otherwise close this pane the instant the process
+        // exits (Close Sessions On End) — hold it open so the error above is
+        // readable, not just a pane that vanished for no visible reason
+        if (chat && rlIn) {
           try {
-            n = readSync(h.fd, buffer, 0, buffer.length, null);
+            noteLine(c("dim", "» follow crashed — press enter to close this pane"));
           } catch {
-            n = 0;
+            /* already unwritable */
           }
-          if (n <= 0) break;
-          h.buf += buffer.toString("utf8", 0, n);
+          await Promise.race([
+            new Promise<void>((resolve) => rlIn!.once("line", () => resolve())),
+            sleep(60_000),
+          ]);
         }
-        const lines = h.buf.split("\n");
-        h.buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          progressed = true;
-          let e: StreamEventLike;
-          try {
-            e = JSON.parse(line) as StreamEventLike;
-          } catch {
-            continue;
-          }
-          emitEvent(e, wid, st, multi);
-        }
-        const ended = workerEnded(finished.has(wid), st.state, alive(st.pid));
-        if (ended) {
-          if (!finished.has(wid)) {
-            eraseLiveness();
-            out(
-              `${multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  "}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`
-            );
-            finished.add(wid);
-          }
-          closeSync(h.fd);
-          handles.delete(wid);
-        }
+        return;
       }
-
-      // inbox tail: new handoffs render as ◆ lines in the recipient's pane
-      // (they may also arrive via the say mirror — the durable copy is here)
-      for (const wid of [...handles.keys()]) {
-        const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-        const msgs = readInbox(logDir, wid);
-        const seenN = inboxSeen.get(wid) ?? 0;
-        if (msgs.length > seenN) {
-          for (const m of msgs.slice(seenN)) {
-            emitEvent(
-              { type: "handoff", from: m.from, kind: m.kind, text: m.text, _ts: m._ts },
-              wid,
-              st,
-              multi
-            );
-          }
-          inboxSeen.set(wid, msgs.length);
-          progressed = true;
-        }
-      }
-
-      const lingerOn = target; // resume swaps `target` under us (see above)
-      if (lingerOn !== null && finished.has(lingerOn)) {
-        if (autoExit) {
-          // a draft in the prompt holds the countdown: the operator may be
-          // about to say or resume something
-          if (holdAutoExit(promptText())) {
-            writeLiveness();
-            await sleep(250);
-            continue;
-          }
-          const until = Date.now() + autoExit * 1000;
-          while (
-            Date.now() < until &&
-            !aborted &&
-            target === lingerOn &&
-            !holdAutoExit(promptText())
-          ) {
-            writeLiveness();
-            await sleep(250);
-          }
-          // interrupted, resumed inside the window, or a draft appeared: follow on
-          if (aborted || target !== lingerOn || holdAutoExit(promptText())) continue;
-          eraseLiveness();
-          out(c("dim", "closing"));
-          return;
-        }
-        // no auto-exit: only a terminal follow with no wired stdin is done —
-        // an interactive one stays up for say / resume input
-        if (rlIn === null) return;
-      }
-      if (autoExit && !target) {
-        if (runningIds().length) {
-          idleSince = null;
-        } else if (idleSince === null) {
-          idleSince = Date.now();
-        } else if (Date.now() - started >= 30_000 && Date.now() - idleSince >= autoExit * 1000) {
-          eraseLiveness();
-          out(c("dim", "closing"));
-          return;
-        }
-      }
-      if (!progressed) {
-        writeLiveness();
-        await sleep(500);
+      if (outcome.done) {
+        exitReason = outcome.reason;
+        return;
       }
     }
   } finally {
@@ -920,7 +853,7 @@ export async function followWorkers(
     rlIn?.close();
     process.removeListener("SIGINT", onInt);
     if (onResize) out_.removeListener?.("resize", onResize);
-    if (chat) out_.write(chatLeave(rows));
+    if (chat) safeWrite(chatLeave(rows));
     for (const h of handles.values()) {
       try {
         closeSync(h.fd);
@@ -928,6 +861,153 @@ export async function followWorkers(
         /* already closed */
       }
     }
+    if (target !== null) {
+      appendLedger(ledgerPath(logDir), "PANE-CLOSED", {
+        id: target,
+        reason: exitReason,
+        secs: Math.floor((Date.now() - started) / 1000),
+      });
+    }
+  }
+
+  /** What one poll decided: keep following, or the reason it is over. */
+  type TickOutcome = { done: true; reason: string } | { done: false };
+
+  /**
+   * One poll of the loop: attach new handles, drain them, check exit
+   * conditions. Returning (rather than throwing) `done: true` is how a
+   * normal end is told apart from the error path above — everything in here
+   * that can throw (rendering, terminal writes) is still covered by that
+   * path, so one bad event or write never takes the whole pane down with it.
+   */
+  async function runOneTick(): Promise<TickOutcome> {
+    const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
+    if (target) paneStatus = statuses.get(target) ?? paneStatus;
+    const wanted = target ? [target] : runningIds();
+    for (const wid of wanted) {
+      if (handles.has(wid) || finished.has(wid)) continue;
+      const path = eventsPath(logDir, wid);
+      const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
+      if (existsSync(path)) {
+        const multi = target === null || handles.size > 0;
+        handles.set(wid, attachHandle(wid, path, st, multi));
+        states.set(wid, states.get(wid) ?? initialFollowState());
+      } else if (!seenHeader.has(wid)) {
+        // worker just started, no event yet: name it instead of a blank pane
+        out(headerLine(c, st));
+        seenHeader.add(wid);
+      }
+    }
+    const multi = handles.size > 1 || target === null;
+    let progressed = false;
+
+    for (const [wid, h] of [...handles.entries()]) {
+      const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
+      // read everything appended since the last poll (fd position advances)
+      const buffer = Buffer.alloc(65536);
+      for (;;) {
+        let n: number;
+        try {
+          n = readSync(h.fd, buffer, 0, buffer.length, null);
+        } catch {
+          n = 0;
+        }
+        if (n <= 0) break;
+        h.buf += buffer.toString("utf8", 0, n);
+      }
+      const lines = h.buf.split("\n");
+      h.buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        progressed = true;
+        let e: StreamEventLike;
+        try {
+          e = JSON.parse(line) as StreamEventLike;
+        } catch {
+          continue;
+        }
+        emitEvent(e, wid, st, multi);
+      }
+      const ended = workerEnded(finished.has(wid), st.state, alive(st.pid));
+      if (ended) {
+        if (!finished.has(wid)) {
+          eraseLiveness();
+          out(
+            `${multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  "}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`
+          );
+          finished.add(wid);
+        }
+        closeSync(h.fd);
+        handles.delete(wid);
+      }
+    }
+
+    // inbox tail: new handoffs render as ◆ lines in the recipient's pane
+    // (they may also arrive via the say mirror — the durable copy is here)
+    for (const wid of [...handles.keys()]) {
+      const st = statuses.get(wid) ?? ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
+      const msgs = readInbox(logDir, wid);
+      const seenN = inboxSeen.get(wid) ?? 0;
+      if (msgs.length > seenN) {
+        for (const m of msgs.slice(seenN)) {
+          emitEvent(
+            { type: "handoff", from: m.from, kind: m.kind, text: m.text, _ts: m._ts },
+            wid,
+            st,
+            multi
+          );
+        }
+        inboxSeen.set(wid, msgs.length);
+        progressed = true;
+      }
+    }
+
+    const lingerOn = target; // resume swaps `target` under us (see above)
+    if (lingerOn !== null && finished.has(lingerOn)) {
+      if (autoExit) {
+        // a draft in the prompt holds the countdown: the operator may be
+        // about to say or resume something
+        if (holdAutoExit(promptText())) {
+          writeLiveness();
+          await sleep(250);
+          return { done: false };
+        }
+        const until = Date.now() + autoExit * 1000;
+        while (
+          Date.now() < until &&
+          !aborted &&
+          target === lingerOn &&
+          !holdAutoExit(promptText())
+        ) {
+          writeLiveness();
+          await sleep(250);
+        }
+        // interrupted, resumed inside the window, or a draft appeared: follow on
+        if (aborted || target !== lingerOn || holdAutoExit(promptText())) return { done: false };
+        eraseLiveness();
+        out(c("dim", "closing"));
+        return { done: true, reason: "worker-ended" };
+      }
+      // no auto-exit: only a terminal follow with no wired stdin is done —
+      // an interactive one stays up for say / resume input
+      if (rlIn === null) return { done: true, reason: "worker-ended" };
+    }
+    if (autoExit && !target) {
+      if (runningIds().length) {
+        idleSince = null;
+      } else if (idleSince === null) {
+        idleSince = Date.now();
+      } else if (Date.now() - started >= 30_000 && Date.now() - idleSince >= autoExit * 1000) {
+        eraseLiveness();
+        out(c("dim", "closing"));
+        return { done: true, reason: "idle" };
+      }
+    }
+    if (!progressed) {
+      writeLiveness();
+      await sleep(500);
+    }
+    return { done: false };
   }
 }
 

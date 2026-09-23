@@ -5,7 +5,7 @@
  *   ~/.pai/backups/YYYY-MM-DD-HHmmss/
  *
  * Contents:
- *   registry.db          — SQLite registry database
+ *   registry file        — SQLite registry database (sqlite backend only)
  *   config.json          — PAI daemon config
  *   postgres-pai.sql     — pg_dump of the Postgres "pai" database (via docker exec)
  */
@@ -22,8 +22,7 @@ import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
-import { registryDbPath } from "../../registry/db.js";
-import { federationDbPath } from "../../memory/db.js";
+import { backupStorageFiles } from "../../storage/backup.js";
 import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -31,7 +30,6 @@ import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const REGISTRY_DB = registryDbPath();
 const CONFIG_FILE = paiConfigFilePath();
 
 /** Old backups dir, inside ~/.pai/ (pre-2026-09-19). */
@@ -96,21 +94,20 @@ export function registerBackupCommands(program: Command): void {
       mkdirSync(backupDir, { recursive: true });
 
       const results: { label: string; path: string; size: string; status: string }[] = [];
+      const config = loadConfig();
 
       // ------------------------------------------------------------------
-      // 1. Registry SQLite DB
+      // 1. Registry (+ legacy federation) SQLite DB, sqlite backend only
       // ------------------------------------------------------------------
 
-      if (existsSync(REGISTRY_DB)) {
-        const dest = join(backupDir, "registry.db");
-        try {
-          copyFileSync(REGISTRY_DB, dest);
-          results.push({ label: "Registry DB", path: dest, size: fileSize(dest), status: ok("ok") });
-        } catch (e) {
-          results.push({ label: "Registry DB", path: dest, size: "-", status: err(`failed: ${e}`) });
-        }
-      } else {
-        results.push({ label: "Registry DB", path: REGISTRY_DB, size: "-", status: warn("not found — skipped") });
+      for (const r of backupStorageFiles(config, backupDir)) {
+        results.push({
+          label: r.label,
+          path: r.path,
+          size: r.status === "ok" ? fileSize(r.path) : "-",
+          status:
+            r.status === "ok" ? ok("ok") : r.status === "skipped" ? warn("not found — skipped") : err(`failed: ${r.error}`),
+        });
       }
 
       // ------------------------------------------------------------------
@@ -120,6 +117,7 @@ export function registerBackupCommands(program: Command): void {
       if (existsSync(CONFIG_FILE)) {
         const dest = join(backupDir, "config.json");
         try {
+          const { copyFileSync } = await import("node:fs");
           copyFileSync(CONFIG_FILE, dest);
           results.push({ label: "Config", path: dest, size: fileSize(dest), status: ok("ok") });
         } catch (e) {
@@ -130,22 +128,7 @@ export function registerBackupCommands(program: Command): void {
       }
 
       // ------------------------------------------------------------------
-      // 3. Optional: Federation SQLite (legacy)
-      // ------------------------------------------------------------------
-
-      const federationDb = federationDbPath();
-      if (existsSync(federationDb)) {
-        const dest = join(backupDir, "federation.db");
-        try {
-          copyFileSync(federationDb, dest);
-          results.push({ label: "Federation DB (legacy)", path: dest, size: fileSize(dest), status: ok("ok") });
-        } catch (e) {
-          results.push({ label: "Federation DB (legacy)", path: dest, size: "-", status: warn(`skipped: ${e}`) });
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // 4. Postgres pg_dump via docker exec
+      // 3. Postgres pg_dump via docker exec
       // ------------------------------------------------------------------
 
       if (opts.postgres) {

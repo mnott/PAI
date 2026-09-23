@@ -16,9 +16,8 @@
  * giving a ±50% boost/penalty based on accumulated feedback.
  */
 
-import type { Database } from "better-sqlite3";
 import type { ToolResult } from "./types.js";
-import { listKgEntities, updateEntityFeedbackWeight } from "../../memory/kg-entity.js";
+import type { StorageBackend } from "../../storage/interface.js";
 
 // EMA learning rate
 const FEEDBACK_ALPHA = 0.1;
@@ -42,14 +41,16 @@ export interface MemoryFeedbackParams {
 
 /**
  * Apply relevance feedback to memory chunks and associated KG entities.
+ * Both memory_chunks.relevance_score and kg_entities.feedback_weight go
+ * through the passed StorageBackend, so this works on either backend.
  *
- * @param db      Federation SQLite database
- * @param params  Feedback parameters
+ * @param backend  StorageBackend for both the chunk and kg_entities portions
+ * @param params   Feedback parameters
  */
-export function toolMemoryFeedback(
-  db: Database,
+export async function toolMemoryFeedback(
+  backend: StorageBackend,
   params: MemoryFeedbackParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
     if (!Array.isArray(params.chunk_ids) || params.chunk_ids.length === 0) {
       return {
@@ -70,10 +71,7 @@ export function toolMemoryFeedback(
     const normalizedRating = (rating - 1) / 4;
 
     // Fetch current relevance scores for the given chunk IDs
-    const placeholders = params.chunk_ids.map(() => "?").join(", ");
-    const chunks = db.prepare(
-      `SELECT id, text, relevance_score FROM memory_chunks WHERE id IN (${placeholders})`
-    ).all(...params.chunk_ids) as Array<{ id: string; text: string; relevance_score: number | null }>;
+    const chunks = await backend.getChunksForFeedback(params.chunk_ids);
 
     if (chunks.length === 0) {
       return {
@@ -86,27 +84,23 @@ export function toolMemoryFeedback(
     const combinedText: string[] = [];
 
     // Apply EMA update to each chunk's relevance_score
-    const updateStmt = db.prepare(
-      "UPDATE memory_chunks SET relevance_score = ? WHERE id = ?"
-    );
-
     for (const chunk of chunks) {
-      const oldScore = chunk.relevance_score ?? 0.5;
+      const oldScore = chunk.relevanceScore ?? 0.5;
       const newScore = oldScore + FEEDBACK_ALPHA * (normalizedRating - oldScore);
-      updateStmt.run(newScore, chunk.id);
+      await backend.updateChunkRelevanceScore(chunk.id, newScore);
       updatedChunks++;
       combinedText.push(chunk.text);
     }
 
     // Find entity mentions in updated chunks and apply EMA to kg_entities.feedback_weight
     const tenantId = params.tenant_id ?? "default";
-    const entities = listKgEntities(db, tenantId, undefined, 500);
+    const entities = await backend.listKgEntities(tenantId, undefined, 500);
     const text = combinedText.join("\n").toLowerCase();
 
     let updatedEntities = 0;
     for (const entity of entities) {
       if (text.includes(entity.name.toLowerCase())) {
-        updateEntityFeedbackWeight(db, entity.entity_id, normalizedRating, FEEDBACK_ALPHA);
+        await backend.updateEntityFeedbackWeight(entity.entity_id, normalizedRating, FEEDBACK_ALPHA);
         updatedEntities++;
       }
     }

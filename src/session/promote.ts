@@ -9,7 +9,6 @@
  *   5. Optionally backlinks from the source project's TODO.md
  */
 
-import type { Database } from "better-sqlite3";
 import {
   existsSync,
   mkdirSync,
@@ -84,7 +83,7 @@ function findSourceProjectRoot(sessionPath: string): string {
 // Main implementation
 // ---------------------------------------------------------------------------
 
-export function cmdPromote(db: Database, opts: PromoteOptions): void {
+export async function cmdPromote(opts: PromoteOptions): Promise<void> {
   const sessionPath = resolvePath(opts.fromSession);
   const targetPath = resolvePath(opts.to);
 
@@ -127,10 +126,14 @@ export function cmdPromote(db: Database, opts: PromoteOptions): void {
 
   // ---- Check registry for conflicts ----
 
+  const { getRegistryBackend } = await import("../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
   const encodedDir = encodeDir(targetPath);
-  const existing = db
-    .prepare("SELECT id FROM projects WHERE slug = ? OR root_path = ? OR encoded_dir = ?")
-    .get(slug, targetPath, encodedDir);
+  const existing =
+    (await registryBackend.getProjectBySlug(slug)) ??
+    (await registryBackend.getProjectByRootPath(targetPath)) ??
+    (await registryBackend.getProjectByEncodedDir(encodedDir));
   if (existing) {
     console.error(
       err(`A project with slug "${slug}" or path "${targetPath}" is already registered.`)
@@ -182,11 +185,16 @@ export function cmdPromote(db: Database, opts: PromoteOptions): void {
   // ---- Register in PAI registry ----
 
   const ts = now();
-  db.prepare(
-    `INSERT INTO projects
-       (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'local', 'active', ?, ?)`
-  ).run(slug, displayName, targetPath, encodedDir, ts, ts);
+  await registryBackend.createProject({
+    slug,
+    displayName,
+    rootPath: targetPath,
+    encodedDir,
+    type: "local",
+    status: "active",
+    createdAt: ts,
+    updatedAt: ts,
+  });
 
   // ---- Backlink in source TODO.md ----
 

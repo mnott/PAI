@@ -7,7 +7,6 @@
  */
 
 import type { StorageBackend } from "../storage/interface.js";
-import type { Pool } from "pg";
 import { STOP_WORDS } from "../utils/stop-words.js";
 
 // ---------------------------------------------------------------------------
@@ -40,53 +39,6 @@ export interface GraphClustersResult {
   clusters: ClusterNode[];
   total_notes_analyzed: number;
   time_window: { from: number; to: number };
-}
-
-// ---------------------------------------------------------------------------
-// Observation type enrichment
-// ---------------------------------------------------------------------------
-
-/**
- * Query pai_observations (Postgres) for observation types associated with
- * the given file paths. Returns a map from vault_path → type counts.
- *
- * Falls back to an empty map when the pool is not available or the query fails.
- */
-async function fetchObservationTypes(
-  pool: Pool,
-  filePaths: string[],
-  projectId?: number
-): Promise<Map<string, Record<string, number>>> {
-  if (filePaths.length === 0) return new Map();
-
-  try {
-    const params: (string | number)[] = [...filePaths];
-    let projectFilter = "";
-    if (projectId !== undefined) {
-      params.push(projectId);
-      projectFilter = `AND project_id = $${params.length}`;
-    }
-
-    const result = await pool.query<{ path: string; type: string; cnt: string }>(
-      `SELECT unnested_path AS path, type, COUNT(*) AS cnt
-       FROM pai_observations,
-            LATERAL unnest(files_modified || files_read) AS unnested_path
-       WHERE unnested_path = ANY($1::text[])
-         ${projectFilter}
-       GROUP BY unnested_path, type`,
-      [filePaths, ...params.slice(filePaths.length)]
-    );
-
-    const byPath = new Map<string, Record<string, number>>();
-    for (const row of result.rows) {
-      const existing = byPath.get(row.path) ?? {};
-      existing[row.type] = (existing[row.type] ?? 0) + parseInt(row.cnt, 10);
-      byPath.set(row.path, existing);
-    }
-    return byPath;
-  } catch {
-    return new Map();
-  }
 }
 
 /**
@@ -266,7 +218,6 @@ async function clusterByLinks(
 // ---------------------------------------------------------------------------
 
 export async function handleGraphClusters(
-  pool: Pool | null,
   backend: StorageBackend,
   params: GraphClustersParams
 ): Promise<GraphClustersResult> {
@@ -286,10 +237,7 @@ export async function handleGraphClusters(
 
   const allPaths = themeResult.themes.flatMap((t) => t.notes.map((n) => n.path));
 
-  const observationsByPath =
-    pool !== null
-      ? await fetchObservationTypes(pool, allPaths, params.project_id)
-      : new Map<string, Record<string, number>>();
+  const observationsByPath = await backend.getObservationTypesForPaths(allPaths, params.project_id);
 
   // Fetch indexed_at timestamps for all notes in bulk
   const fileRows = await backend.getVaultFilesByPaths(allPaths);

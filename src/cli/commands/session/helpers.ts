@@ -2,19 +2,19 @@
  * Shared DB helpers, formatting, and path utilities for session sub-commands.
  */
 
-import type { Database } from "better-sqlite3";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import { err } from "../../utils.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { SessionRow, ProjectRow } from "./types.js";
 
-export function getProject(db: Database, slug: string): ProjectRow | undefined {
-  return db
-    .prepare(
-      "SELECT id, slug, display_name, root_path, encoded_dir FROM projects WHERE slug = ?"
-    )
-    .get(slug) as ProjectRow | undefined;
+export async function getProject(
+  registryBackend: RegistryBackend,
+  slug: string
+): Promise<ProjectRow | undefined> {
+  const project = await registryBackend.getProjectBySlug(slug);
+  return project ?? undefined;
 }
 
 export function statusColor(status: string): string {
@@ -51,28 +51,22 @@ export function formatFilename(
 }
 
 /** Resolve a session by project + number or "latest". Exits on failure. */
-export function resolveSession(
-  db: Database,
+export async function resolveSession(
+  registryBackend: RegistryBackend,
   project: ProjectRow,
   numberOrLatest: string
-): SessionRow {
+): Promise<SessionRow> {
   let session: SessionRow | undefined;
 
   if (numberOrLatest === "latest") {
-    session = db
-      .prepare(
-        "SELECT * FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
-      )
-      .get(project.id) as SessionRow | undefined;
+    session = (await registryBackend.getLatestSessionForProject(project.id)) ?? undefined;
   } else {
     const num = parseInt(numberOrLatest, 10);
     if (isNaN(num)) {
       console.error(err(`Invalid session number: ${numberOrLatest}`));
       process.exit(1);
     }
-    session = db
-      .prepare("SELECT * FROM sessions WHERE project_id = ? AND number = ?")
-      .get(project.id, num) as SessionRow | undefined;
+    session = (await registryBackend.getSessionByNumber(project.id, num)) ?? undefined;
   }
 
   if (!session) {
@@ -85,22 +79,10 @@ export function resolveSession(
   return session;
 }
 
-export function upsertTag(db: Database, tagName: string): number {
-  db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run(tagName);
-  const row = db
-    .prepare("SELECT id FROM tags WHERE name = ?")
-    .get(tagName) as { id: number };
-  return row.id;
+export async function upsertTag(registryBackend: RegistryBackend, tagName: string): Promise<number> {
+  return registryBackend.upsertTag(tagName);
 }
 
-export function getSessionTags(db: Database, sessionId: number): string[] {
-  const rows = db
-    .prepare(
-      `SELECT t.name FROM tags t
-       JOIN session_tags st ON st.tag_id = t.id
-       WHERE st.session_id = ?
-       ORDER BY t.name`
-    )
-    .all(sessionId) as { name: string }[];
-  return rows.map((r) => r.name);
+export async function getSessionTags(registryBackend: RegistryBackend, sessionId: number): Promise<string[]> {
+  return registryBackend.listTagsForSession(sessionId);
 }

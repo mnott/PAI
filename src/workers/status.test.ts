@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { isLive, nowStamp, ownsPid } from "./status.js";
+import { elapsedOf, isLive, nowStamp, ownsPid } from "./status.js";
 
 /** This test process's own `ps` start time, formatted as `saveStatus` would. */
 function ownStartedStamp(): string {
@@ -38,5 +38,35 @@ describe("isLive", () => {
     expect(isLive({ pid: process.pid, started: "2020-01-01 00:00:00", state: "running" })).toBe(
       false
     );
+  });
+});
+
+describe("elapsedOf", () => {
+  const base = new Date("2026-09-23T07:33:00Z");
+  it("returns unparseable as ?", () => {
+    expect(elapsedOf("not-a-timestamp", base)).toBe("?");
+  });
+  it("formats 0 seconds as 0s", () => {
+    expect(elapsedOf("2026-09-23T07:33:00Z", base)).toBe("0s");
+  });
+  it("formats 59 seconds as 59s", () => {
+    const ts = new Date(base.getTime() - 59 * 1000).toISOString();
+    expect(elapsedOf(ts, base)).toBe("59s");
+  });
+  it("formats 60 seconds as 1m 00s", () => {
+    const ts = new Date(base.getTime() - 60 * 1000).toISOString();
+    expect(elapsedOf(ts, base)).toBe("1m 00s");
+  });
+  it("formats 83 seconds as 1m 23s", () => {
+    const ts = new Date(base.getTime() - 83 * 1000).toISOString();
+    expect(elapsedOf(ts, base)).toBe("1m 23s");
+  });
+  it("formats 3599 seconds as 59m 59s", () => {
+    const ts = new Date(base.getTime() - 3599 * 1000).toISOString();
+    expect(elapsedOf(ts, base)).toBe("59m 59s");
+  });
+  it("formats 3725 seconds as 1h 02m 05s", () => {
+    const ts = new Date(base.getTime() - 3725 * 1000).toISOString();
+    expect(elapsedOf(ts, base)).toBe("1h 02m 05s");
   });
 });

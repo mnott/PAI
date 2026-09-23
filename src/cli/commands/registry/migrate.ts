@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { ok, warn, err, dim } from "../../utils.js";
 import { slugify, parseSessionFilename } from "../../../registry/migrate.js";
 import { upsertProject, upsertSession } from "./utils.js";
-import type { Database } from "better-sqlite3";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
 // ---------------------------------------------------------------------------
 // Legacy JSON registry types
@@ -35,7 +35,7 @@ const SESSION_REGISTRY_PATH = join(homedir(), ".claude", "session-registry.json"
 // cmdMigrate
 // ---------------------------------------------------------------------------
 
-export function cmdMigrate(db: Database): void {
+export async function cmdMigrate(): Promise<void> {
   if (!existsSync(SESSION_REGISTRY_PATH)) {
     console.error(err(`session-registry.json not found: ${SESSION_REGISTRY_PATH}`));
     process.exitCode = 1;
@@ -60,6 +60,7 @@ export function cmdMigrate(db: Database): void {
 
   console.log(dim(`Migrating ${projects.length} project(s) from session-registry.json ...`));
 
+  const backend = await getRegistryBackend();
   let projectsNew = 0;
   let projectsSkipped = 0;
   let sessionsNew = 0;
@@ -76,7 +77,7 @@ export function cmdMigrate(db: Database): void {
     const slug = slugify(rootPath);
 
     try {
-      const { isNew, id } = upsertProject(db, slug, rootPath, encodedDir);
+      const { isNew, id } = await upsertProject(backend, slug, rootPath, encodedDir);
       if (isNew) projectsNew++;
       else projectsSkipped++;
 
@@ -85,7 +86,7 @@ export function cmdMigrate(db: Database): void {
         const parsed = parseSessionFilename(filename);
         if (!parsed) continue;
 
-        const isNewSession = upsertSession(db, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
+        const isNewSession = await upsertSession(backend, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
         if (isNewSession) sessionsNew++;
       }
     } catch (e) {

@@ -6,16 +6,14 @@
  * Algorithm: wide vector search → entity mention extraction → BFS neighborhood
  * expansion in kg_triples → re-rank triples by cosine similarity to query.
  *
- * Requires:
- *   - federation.db (SQLite) for chunk and entity lookups
- *   - Postgres pool for kg_triples BFS expansion
+ * Requires the storage backend for chunk/entity lookups and kg_triples BFS
+ * expansion.
  *
  * Returns ranked KG triples with relevanceScore, plus seed chunk metadata.
  */
 
-import type { Database } from "better-sqlite3";
-import type { Pool } from "pg";
 import type { ToolResult } from "./types.js";
+import type { StorageBackend } from "../../storage/interface.js";
 import { graphCompletionSearch } from "../../memory/kg-search.js";
 
 // ---------------------------------------------------------------------------
@@ -33,7 +31,7 @@ export interface MemoryKgSearchParams {
   neighborhood_depth?: number;
   /** Maximum triples to return after Phase 4 re-ranking. Default: 20 */
   top_k?: number;
-  /** Tenant ID for entity lookup in federation.db. Default: "default" */
+  /** Tenant ID for entity lookup in the storage backend. Default: "default" */
   tenant_id?: string;
 }
 
@@ -44,13 +42,11 @@ export interface MemoryKgSearchParams {
 /**
  * Graph-completion search: vector search + KG neighborhood BFS.
  *
- * @param federationDb  SQLite federation.db for chunk/entity operations
- * @param pool          Postgres pool for kg_triples BFS expansion
+ * @param federation    Active StorageBackend for chunk/entity/kg_triples operations
  * @param params        Tool parameters
  */
 export async function toolMemoryKgSearch(
-  federationDb: Database,
-  pool: Pool,
+  federation: StorageBackend,
   params: MemoryKgSearchParams
 ): Promise<ToolResult> {
   try {
@@ -64,7 +60,7 @@ export async function toolMemoryKgSearch(
     const { generateEmbedding } = await import("../../memory/embeddings.js");
     const queryVec = await generateEmbedding(params.query, true);
 
-    const result = await graphCompletionSearch(federationDb, pool, queryVec, {
+    const result = await graphCompletionSearch(federation, queryVec, {
       seedCount: params.wide_k ?? 50,
       hops: params.neighborhood_depth ?? 1,
       maxTriples: params.top_k ?? 20,

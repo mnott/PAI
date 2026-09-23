@@ -11,7 +11,8 @@ import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marke
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
-import type { Database } from "better-sqlite3";
+import { getRegistryBackend } from "../../../storage/factory.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 
 // ---------------------------------------------------------------------------
 // clc session.json fallback map
@@ -165,7 +166,8 @@ export interface ScanResult {
 // Core scan logic
 // ---------------------------------------------------------------------------
 
-export function performScan(db: Database): ScanResult {
+export async function performScan(): Promise<ScanResult> {
+  const backend = await getRegistryBackend();
   const result: ScanResult = {
     projectsScanned: 0,
     projectsNew: 0,
@@ -221,7 +223,7 @@ export function performScan(db: Database): ScanResult {
     rootPath = canonicalPath(rootPath);
 
     const slug = slugify(basename(rootPath) || encodedDir);
-    const { id, isNew } = upsertProject(db, slug, rootPath, encodedDir);
+    const { id, isNew } = await upsertProject(backend, slug, rootPath, encodedDir);
 
     result.projectsScanned++;
     if (isNew) result.projectsNew++;
@@ -238,9 +240,7 @@ export function performScan(db: Database): ScanResult {
     if (existsSync(claudeNotesDir)) {
       const rootNotesDir = join(rootPath, "Notes");
       if (claudeNotesDir !== rootNotesDir) {
-        db.prepare(
-          "UPDATE projects SET claude_notes_dir = ?, updated_at = ? WHERE id = ?"
-        ).run(claudeNotesDir, Date.now(), id);
+        await backend.updateProjectClaudeNotesDir(id, claudeNotesDir, Date.now());
       }
     }
 
@@ -253,16 +253,14 @@ export function performScan(db: Database): ScanResult {
       if (!parsed) continue;
 
       result.sessionsScanned++;
-      const isNewSession = upsertSession(db, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
+      const isNewSession = await upsertSession(backend, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
       if (isNewSession) result.sessionsNew++;
     }
   }
 
   // Phase 2: Scan project-root Notes/ for all registered active projects
   {
-    const activeProjects = db
-      .prepare("SELECT id, slug, root_path FROM projects WHERE status = 'active'")
-      .all() as { id: number; slug: string; root_path: string }[];
+    const activeProjects = await backend.listProjects({ status: "active" });
 
     for (const project of activeProjects) {
       const notesDir = join(project.root_path, "Notes");
@@ -280,7 +278,7 @@ export function performScan(db: Database): ScanResult {
         if (!parsed) continue;
 
         result.sessionsScanned++;
-        const isNewSession = upsertSession(db, project.id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
+        const isNewSession = await upsertSession(backend, project.id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename);
         if (isNewSession) result.sessionsNew++;
       }
     }
@@ -310,9 +308,7 @@ export function performScan(db: Database): ScanResult {
         const childSlug = slugify(child);
         const childEncoded = encodeDir(childPath);
 
-        const existing = db
-          .prepare("SELECT id FROM projects WHERE root_path = ?")
-          .get(childPath) as { id: number } | undefined;
+        const existing = await backend.getProjectByRootPath(childPath);
 
         if (existing) {
           result.projectsScanned++;
@@ -327,7 +323,7 @@ export function performScan(db: Database): ScanResult {
               const parsed = parseSessionFilename(filename);
               if (!parsed) continue;
               result.sessionsScanned++;
-              if (upsertSession(db, existing.id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename)) {
+              if (await upsertSession(backend, existing.id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename)) {
                 result.sessionsNew++;
               }
             }
@@ -335,7 +331,7 @@ export function performScan(db: Database): ScanResult {
           continue;
         }
 
-        const { id, isNew } = upsertProject(db, childSlug, childPath, childEncoded);
+        const { id, isNew } = await upsertProject(backend, childSlug, childPath, childEncoded);
         result.projectsScanned++;
         if (isNew) result.projectsNew++;
         else result.projectsUpdated++;
@@ -349,7 +345,7 @@ export function performScan(db: Database): ScanResult {
             const parsed = parseSessionFilename(filename);
             if (!parsed) continue;
             result.sessionsScanned++;
-            if (upsertSession(db, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename)) {
+            if (await upsertSession(backend, id, parsed.number, parsed.date, parsed.slug, parsed.title, parsed.filename)) {
               result.sessionsNew++;
             }
           }
@@ -364,11 +360,7 @@ export function performScan(db: Database): ScanResult {
     const markers = discoverPaiMarkers(resolvedScanDirs);
 
     for (const marker of markers) {
-      const registeredRow = db
-        .prepare("SELECT id, root_path, slug, encoded_dir FROM projects WHERE slug = ?")
-        .get(marker.slug) as
-        | { id: number; root_path: string; slug: string; encoded_dir: string | null }
-        | undefined;
+      const registeredRow = await backend.getProjectBySlug(marker.slug);
 
       if (!registeredRow) continue;
 
@@ -382,12 +374,8 @@ export function performScan(db: Database): ScanResult {
         const newEncoded = encodeDir(markerRoot);
         const now4 = Date.now();
 
-        const encodedOwner = db
-          .prepare("SELECT id FROM projects WHERE encoded_dir = ?")
-          .get(newEncoded) as { id: number } | undefined;
-        const pathOwner = db
-          .prepare("SELECT id FROM projects WHERE root_path = ?")
-          .get(markerRoot) as { id: number } | undefined;
+        const encodedOwner = await backend.getProjectByEncodedDir(newEncoded);
+        const pathOwner = await backend.getProjectByRootPath(markerRoot);
 
         const encodedSafe = !encodedOwner || encodedOwner.id === registeredRow.id;
         const pathSafe = !pathOwner || pathOwner.id === registeredRow.id;
@@ -409,13 +397,9 @@ export function performScan(db: Database): ScanResult {
         const encodedWorthWriting = derivedResolves || !currentResolves;
 
         if (encodedSafe && pathSafe && encodedWorthWriting) {
-          db.prepare(
-            "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-          ).run(markerRoot, newEncoded, now4, registeredRow.id);
+          await backend.updateProjectPath(registeredRow.id, { rootPath: markerRoot, encodedDir: newEncoded }, now4);
         } else if (pathSafe) {
-          db.prepare(
-            "UPDATE projects SET root_path = ?, updated_at = ? WHERE id = ?"
-          ).run(markerRoot, now4, registeredRow.id);
+          await backend.updateProjectPath(registeredRow.id, { rootPath: markerRoot }, now4);
         }
       }
     }
@@ -425,15 +409,13 @@ export function performScan(db: Database): ScanResult {
   // This converts legacy entries created before the basename-based naming was
   // introduced: "jobs-beta" → "Jobs Beta" (from basename of root_path).
   {
-    const stale = db
-      .prepare("SELECT id, slug, root_path FROM projects WHERE display_name = slug AND root_path IS NOT NULL AND root_path != ''")
-      .all() as { id: number; slug: string; root_path: string }[];
+    const all = await backend.listProjects();
+    const stale = all.filter((p) => p.display_name === p.slug && p.root_path);
 
     for (const row of stale) {
       const name = basename(row.root_path);
       if (name && name !== row.slug) {
-        db.prepare("UPDATE projects SET display_name = ?, updated_at = ? WHERE id = ?")
-          .run(name, Date.now(), row.id);
+        await backend.updateProjectDisplayName(row.id, name, Date.now());
       }
     }
   }
@@ -453,7 +435,7 @@ export function performScan(db: Database): ScanResult {
  *                    this flag exists for hook/daemon-triggered invocations that
  *                    want minimal log output.
  */
-export function cmdScan(db: Database, opts: { quick?: boolean } = {}): void {
+export async function cmdScan(opts: { quick?: boolean } = {}): Promise<void> {
   const config = loadScanConfig();
   if (!opts.quick) {
     console.log(dim("Scanning ~/.claude/projects/ ..."));
@@ -465,7 +447,7 @@ export function cmdScan(db: Database, opts: { quick?: boolean } = {}): void {
 
   let result: ScanResult;
   try {
-    result = performScan(db);
+    result = await performScan();
   } catch (e) {
     console.error(err(String(e)));
     process.exitCode = 1;

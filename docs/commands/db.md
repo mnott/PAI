@@ -17,6 +17,7 @@ pai db <subcommand> [options]
 | [`pai db query <sql>`](#pai-db-query-sql) | Run a SQL query against the selected database |
 | [`pai db tables`](#pai-db-tables) | List all tables in the selected database |
 | [`pai db schema <table>`](#pai-db-schema-table) | Show column schema for a table |
+| [`pai db migrate-to-postgres`](#pai-db-migrate-to-postgres) | One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres |
 
 ### pai db query <sql>
 
@@ -66,9 +67,22 @@ Show column schema for a table
 | `--json` | Output as JSON array |  |
 
 
+### pai db migrate-to-postgres
+
+One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Preflight + counts only — no writes, no pg_dump |  |
+| `--skip-dump` | Skip the pg_dump rollback artefact (tests only) |  |
+| `--allow-running` | Skip the daemon-not-running refusal (tests only) |  |
+
+
 ## See also
 
-[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai clear-names`](clear-names.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai end`](end.md) · [`pai help`](help.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai pause`](pause.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai registry`](registry.md) · [`pai restore`](restore.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <area>` to read any of these in the terminal.
 

@@ -10,19 +10,20 @@
  * printed first and `--execute` is what touches the database.
  */
 
-import type { Database } from "better-sqlite3";
 import { ok, warn, err, dim, bold, shortenPath } from "../../utils.js";
-import { planMerge, applyMerge, MergeError } from "../../../registry/merge.js";
+import { MergeError } from "../../../registry/merge.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
-export function cmdMerge(
-  db: Database,
+export async function cmdMerge(
   fromSlug: string,
   intoSlug: string,
   opts: { execute?: boolean } = {}
-): void {
+): Promise<void> {
+  const backend = await getRegistryBackend();
+
   let plan;
   try {
-    plan = planMerge(db, fromSlug, intoSlug);
+    plan = await backend.planProjectMerge(fromSlug, intoSlug);
   } catch (e) {
     if (e instanceof MergeError) {
       console.error(err(`  ${e.message}`));
@@ -32,18 +33,16 @@ export function cmdMerge(
     throw e;
   }
 
-  const path = (id: number): string => {
-    const row = db.prepare("SELECT root_path FROM projects WHERE id = ?").get(id) as
-      | { root_path: string }
-      | undefined;
-    return row ? shortenPath(row.root_path, 54) : "(unknown)";
+  const path = async (id: number): Promise<string> => {
+    const project = await backend.getProjectById(id);
+    return project ? shortenPath(project.root_path, 54) : "(unknown)";
   };
 
   console.log();
   console.log(bold(`  Merge ${plan.fromSlug} into ${plan.intoSlug}`));
   console.log();
-  console.log(dim(`    from  ${plan.fromSlug.padEnd(22)} ${path(plan.fromId)}`));
-  console.log(dim(`    into  ${plan.intoSlug.padEnd(22)} ${path(plan.intoId)}`));
+  console.log(dim(`    from  ${plan.fromSlug.padEnd(22)} ${await path(plan.fromId)}`));
+  console.log(dim(`    into  ${plan.intoSlug.padEnd(22)} ${await path(plan.intoId)}`));
   console.log();
 
   if (plan.sessions.length > 0) {
@@ -85,7 +84,7 @@ export function cmdMerge(
     return;
   }
 
-  applyMerge(db, plan);
+  await backend.applyProjectMerge(plan);
   console.log(
     ok(
       `  Merged. ${plan.sessions.length} session(s) now belong to ${plan.intoSlug}.`

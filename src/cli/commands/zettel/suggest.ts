@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdSuggest(
   note: string,
@@ -20,14 +20,14 @@ async function cmdSuggest(
   const excludeLinked = opts.excludeLinked !== false;
 
   const { zettelSuggest } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
   console.log();
   console.log(header("  PAI Zettel Suggest"));
   console.log(dim(`  Note: ${note}`));
   process.stdout.write(dim("  Computing suggestions...\n"));
 
-  const suggestions = await zettelSuggest(db, {
+  const suggestions = await zettelSuggest(backend, {
     notePath: note,
     vaultProjectId,
     limit,

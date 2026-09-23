@@ -1,0 +1,3 @@
+[test]
+# The suite is vitest (`npm test`); bun test cannot sandbox HOME. See the preload.
+preload = ["./test/refuse-bun-test.ts"]

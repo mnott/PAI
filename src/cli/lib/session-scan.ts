@@ -47,7 +47,6 @@ import {
 } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import type { Database } from "better-sqlite3";
 import { smartDecodeDir } from "../utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 
@@ -166,23 +165,15 @@ function buildClcInfoMap(): Map<string, ClcInfo> {
 // PAI registry
 // ---------------------------------------------------------------------------
 
-interface RegistryProject {
-  root_path: string;
-  encoded_dir: string;
-}
-
 /** Build encoded_dir → root_path map from PAI registry (authoritative cwd). */
-function buildRegistryRootPathMap(db: Database): Map<string, string> {
+async function buildRegistryRootPathMap(): Promise<Map<string, string>> {
   try {
-    const rows = db
-      .prepare(
-        `SELECT root_path, encoded_dir FROM projects
-         WHERE encoded_dir IS NOT NULL AND encoded_dir != ''`
-      )
-      .all() as RegistryProject[];
+    const { getRegistryBackend } = await import("../../storage/factory.js");
+    const registryBackend = await getRegistryBackend();
+    const projects = await registryBackend.listProjects();
     const map = new Map<string, string>();
-    for (const row of rows) {
-      map.set(row.encoded_dir, row.root_path);
+    for (const p of projects) {
+      if (p.encoded_dir) map.set(p.encoded_dir, p.root_path);
     }
     return map;
   } catch {
@@ -472,17 +463,16 @@ function resolveFilter(opts: ScanOptions): "named" | "all" | "resumable" {
  *
  * Returns results sorted by mtime descending.
  */
-export function scanSessions(
-  db: Database,
+export async function scanSessions(
   opts: ScanOptions = {}
-): ScannedSession[] {
+): Promise<ScannedSession[]> {
   const limit = opts.limit ?? 200;
   const filterMode = resolveFilter(opts);
 
   if (!existsSync(CLAUDE_PROJECTS_DIR)) return [];
 
   const clcInfoMap = buildClcInfoMap();
-  const rootPathMap = buildRegistryRootPathMap(db);
+  const rootPathMap = await buildRegistryRootPathMap();
   const results: ScannedSession[] = [];
   // Track which UUIDs we've already added (from the jsonl walk)
   const seenUuids = new Set<string>();
