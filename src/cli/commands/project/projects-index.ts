@@ -6,7 +6,6 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import { cmdPromote } from "../../../session/promote.js";
 import {
   cmdAdd,
@@ -33,13 +32,11 @@ import { cmdMerge } from "./merge.js";
 import { cmdHere } from "./here.js";
 import { cmdUnregister } from "./unregister.js";
 import { resolveIdentifier } from "./helpers.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 
 export { cmdGo };
 
-export function registerProjectsCommands(
-  projectsCmd: Command,
-  getDb: () => Database
-): void {
+export function registerProjectsCommands(projectsCmd: Command): void {
   // pai projects (bare) — show the unified deduped listing, same as `pai`.
   // The old project-only listing is still available as `pai projects list-raw`.
   projectsCmd
@@ -52,7 +49,7 @@ export function registerProjectsCommands(
     .option("-n, --n <count>", "Max rows to show", "20")
     .action(async (opts: { all?: boolean; n?: string }) => {
       const { cmdMain } = await import("../main-resolver.js");
-      await cmdMain(getDb(), undefined, undefined, opts);
+      await cmdMain(undefined, undefined, opts);
     });
 
   // Raw legacy project listing (registry rows only, with slug + path)
@@ -63,8 +60,8 @@ export function registerProjectsCommands(
     .option("--status <status>", "Filter by status: active | archived")
     .option("--tag <tag>", "Filter by tag")
     .option("--type <type>", "Filter by type")
-    .action((opts: { all?: boolean; status?: string; tag?: string; type?: string }) => {
-      cmdList(getDb(), opts);
+    .action(async (opts: { all?: boolean; status?: string; tag?: string; type?: string }) => {
+      await cmdList(opts);
     });
 
   // pai projects cd <identifier>
@@ -75,9 +72,8 @@ export function registerProjectsCommands(
         "(The shell wrapper handles the actual cd; pure output here.)\n" +
         "Auto-detects moved projects when the registered path no longer exists."
     )
-    .action((identifier: string) => {
-      const db = getDb();
-      const project = resolveIdentifier(db, identifier);
+    .action(async (identifier: string) => {
+      const project = await resolveIdentifier(identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
         process.exitCode = 1;
@@ -101,9 +97,8 @@ export function registerProjectsCommands(
         const newPath = result.found;
         const newEncoded = encodeDir(newPath);
         const ts = now();
-        db.prepare(
-          "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-        ).run(newPath, newEncoded, ts, project.id);
+        const backend = await getRegistryBackend();
+        await backend.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
         process.stderr.write(
           ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
           dim(`  → ${newPath}\n`) +
@@ -145,11 +140,11 @@ export function registerProjectsCommands(
     .option("--type <type>", "Project type: local | central | obsidian-linked | external", "local")
     .option("--display-name <name>", "Human-readable display name")
     .action(
-      (
+      async (
         rawPath: string,
         opts: { slug?: string; type?: string; displayName?: string }
       ) => {
-        cmdAdd(getDb(), rawPath, opts);
+        await cmdAdd(rawPath, opts);
       }
     );
 
@@ -157,16 +152,16 @@ export function registerProjectsCommands(
   projectsCmd
     .command("info <slug>")
     .description("Show full details for a project")
-    .action((slug: string) => {
-      cmdInfo(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdInfo(slug);
     });
 
   // pai projects archive <slug>
   projectsCmd
     .command("archive <slug>")
     .description("Archive a project")
-    .action((slug: string) => {
-      cmdArchive(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdArchive(slug);
     });
 
   // pai projects merge <from> <into> [--execute]
@@ -182,8 +177,8 @@ export function registerProjectsCommands(
         "delete the row. Preview unless --execute is given."
     )
     .option("--execute", "Actually perform the merge")
-    .action((from: string, into: string, opts: { execute?: boolean }) => {
-      cmdMerge(getDb(), from, into, opts);
+    .action(async (from: string, into: string, opts: { execute?: boolean }) => {
+      await cmdMerge(from, into, opts);
     });
 
   // pai projects unregister <slug> [--execute] [--force]
@@ -200,24 +195,24 @@ export function registerProjectsCommands(
     )
     .option("--execute", "Actually remove the row")
     .option("--force", "Remove even though sessions would be deleted with it")
-    .action((slug: string, opts: { execute?: boolean; force?: boolean }) => {
-      cmdUnregister(getDb(), slug, opts);
+    .action(async (slug: string, opts: { execute?: boolean; force?: boolean }) => {
+      await cmdUnregister(slug, opts);
     });
 
   // pai projects unarchive <slug>
   projectsCmd
     .command("unarchive <slug>")
     .description("Restore an archived project to active status")
-    .action((slug: string) => {
-      cmdUnarchive(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdUnarchive(slug);
     });
 
   // pai projects move <slug> <new-path>
   projectsCmd
     .command("move <slug> <new-path>")
     .description("Update the root path for a project")
-    .action((slug: string, newPath: string) => {
-      cmdMove(getDb(), slug, newPath);
+    .action(async (slug: string, newPath: string) => {
+      await cmdMove(slug, newPath);
     });
 
   // pai projects rebind <slug> <new-path>
@@ -227,8 +222,8 @@ export function registerProjectsCommands(
       "Manually update the root_path for a project (for when auto-detect found multiple matches).\n" +
         "Validates the new path exists and is a directory, then updates the registry."
     )
-    .action((slug: string, newPath: string) => {
-      cmdRebind(getDb(), slug, newPath);
+    .action(async (slug: string, newPath: string) => {
+      await cmdRebind(slug, newPath);
     });
 
   // pai projects here <name>
@@ -241,24 +236,24 @@ export function registerProjectsCommands(
         "same directory twice."
     )
     .option("--dry-run", "Show what would change without writing")
-    .action((name: string, opts: { dryRun?: boolean }) => {
-      cmdHere(getDb(), name, { dryRun: opts.dryRun });
+    .action(async (name: string, opts: { dryRun?: boolean }) => {
+      await cmdHere(name, { dryRun: opts.dryRun });
     });
 
   // pai projects tag <slug> <tags...>
   projectsCmd
     .command("tag <slug> <tags...>")
     .description("Add one or more tags to a project")
-    .action((slug: string, tags: string[]) => {
-      cmdTag(getDb(), slug, tags);
+    .action(async (slug: string, tags: string[]) => {
+      await cmdTag(slug, tags);
     });
 
   // pai projects alias <slug> <alias>
   projectsCmd
     .command("alias <slug> <alias>")
     .description("Register an alternative slug for a project")
-    .action((slug: string, alias: string) => {
-      cmdAlias(getDb(), slug, alias);
+    .action(async (slug: string, alias: string) => {
+      await cmdAlias(slug, alias);
     });
 
   // pai projects edit <slug>
@@ -268,8 +263,8 @@ export function registerProjectsCommands(
     .option("--display-name <name>", "New display name")
     .option("--type <type>", "New type")
     .action(
-      (slug: string, opts: { displayName?: string; type?: string }) => {
-        cmdEdit(getDb(), slug, opts);
+      async (slug: string, opts: { displayName?: string; type?: string }) => {
+        await cmdEdit(slug, opts);
       }
     );
 
@@ -278,8 +273,8 @@ export function registerProjectsCommands(
     .command("detect [path]")
     .description("Detect which registered project the given path (or CWD) belongs to")
     .option("--json", "Output raw JSON instead of human-readable text")
-    .action((pathArg: string | undefined, opts: { json?: boolean }) => {
-      cmdDetect(getDb(), pathArg, opts);
+    .action(async (pathArg: string | undefined, opts: { json?: boolean }) => {
+      await cmdDetect(pathArg, opts);
     });
 
   // pai projects health
@@ -291,8 +286,8 @@ export function registerProjectsCommands(
     .option("--fix", "Auto-remediate where possible")
     .option("--json", "Output raw JSON report")
     .option("--status <category>", "Filter output to: active | stale | dead")
-    .action((opts: { fix?: boolean; json?: boolean; status?: string }) => {
-      cmdHealth(getDb(), opts);
+    .action(async (opts: { fix?: boolean; json?: boolean; status?: string }) => {
+      await cmdHealth(opts);
     });
 
   // pai projects consolidate <identifier>
@@ -304,8 +299,8 @@ export function registerProjectsCommands(
     .option("--yes", "Perform consolidation without confirmation prompt")
     .option("--dry-run", "Preview what would be moved without making changes")
     .action(
-      (identifier: string, opts: { yes?: boolean; dryRun?: boolean }) => {
-        cmdConsolidate(getDb(), identifier, opts);
+      async (identifier: string, opts: { yes?: boolean; dryRun?: boolean }) => {
+        await cmdConsolidate(identifier, opts);
       }
     );
 
@@ -316,8 +311,8 @@ export function registerProjectsCommands(
     .requiredOption("--from-session <path>", "Path to the session note markdown file")
     .requiredOption("--to <path>", "Directory path for the new project (must not exist)")
     .option("--name <name>", "Display name for the new project (derived from filename if omitted)")
-    .action((opts: { fromSession: string; to: string; name?: string }) => {
-      cmdPromote(getDb(), opts);
+    .action(async (opts: { fromSession: string; to: string; name?: string }) => {
+      await cmdPromote(opts);
     });
 
   // pai projects go <query>
@@ -327,8 +322,8 @@ export function registerProjectsCommands(
       "Print the root path for a project by slug, partial name, or fuzzy match.\n" +
         "Designed for shell integration: cd $(pai projects go <query>)"
     )
-    .action((query: string) => {
-      cmdGo(getDb(), query);
+    .action(async (query: string) => {
+      await cmdGo(query);
     });
 
   // pai projects name <identifier> <shortname>
@@ -337,12 +332,12 @@ export function registerProjectsCommands(
     .description("Give a project a short name for quick access")
     .option("--permission <level>", "Permission level: full | trusted | default")
     .action(
-      (
+      async (
         identifier: string,
         shortname: string,
         opts: { permission?: string }
       ) => {
-        cmdName(getDb(), identifier, shortname, opts);
+        await cmdName(identifier, shortname, opts);
       }
     );
 
@@ -350,8 +345,8 @@ export function registerProjectsCommands(
   projectsCmd
     .command("unname <shortname>")
     .description("Remove a project's short name")
-    .action((shortname: string) => {
-      cmdUnname(getDb(), shortname);
+    .action(async (shortname: string) => {
+      await cmdUnname(shortname);
     });
 
   // pai projects names
@@ -360,8 +355,8 @@ export function registerProjectsCommands(
     .description("List named projects (your curated shortlist)")
     .option("--json", "Output JSON for AIBroker consumption")
     .option("--all", "Include ALL active registered projects, not just the named shortlist")
-    .action((opts: { json?: boolean; all?: boolean }) => {
-      cmdNames(getDb(), opts);
+    .action(async (opts: { json?: boolean; all?: boolean }) => {
+      await cmdNames(opts);
     });
 
   // pai projects config [identifier]
@@ -389,7 +384,7 @@ export function registerProjectsCommands(
     .option("--json", "Output JSON")
     .option("--reset", "Reset config to empty (inherit global defaults)")
     .action(
-      (
+      async (
         identifier: string | undefined,
         opts: {
           set?: string[];
@@ -401,7 +396,7 @@ export function registerProjectsCommands(
           reset?: boolean;
         }
       ) => {
-        cmdConfig(getDb(), identifier, opts);
+        await cmdConfig(identifier, opts);
       }
     );
 
@@ -416,8 +411,8 @@ export function registerProjectsCommands(
         "--clear: unset (all servers load — today's default)."
     )
     .option("--clear", "Unset — all MCP servers load again")
-    .action((names: string[], opts: { clear?: boolean }) => {
-      cmdMcp(getDb(), names, opts);
+    .action(async (names: string[], opts: { clear?: boolean }) => {
+      await cmdMcp(names, opts);
     });
 
   // pai projects tools [names...]
@@ -430,7 +425,7 @@ export function registerProjectsCommands(
         "repeated args): set it. --clear: unset (all tools load — today's default)."
     )
     .option("--clear", "Unset — all built-in tools load again")
-    .action((names: string[], opts: { clear?: boolean }) => {
-      cmdTools(getDb(), names, opts);
+    .action(async (names: string[], opts: { clear?: boolean }) => {
+      await cmdTools(names, opts);
     });
 }

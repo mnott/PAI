@@ -43,7 +43,11 @@ CREATE TABLE IF NOT EXISTS pai_chunks (
   -- pgvector embedding (768 dims = Snowflake/snowflake-arctic-embed-m-v1.5); NULL until embedChunks() runs
   embedding    vector(768),
   -- Pre-computed tsvector for fast GIN-indexed full-text search
-  fts_vector   tsvector
+  fts_vector   tsvector,
+  -- EMA feedback score from memory_feedback (0..1, NULL = no feedback yet)
+  relevance_score  REAL,
+  -- Last time this chunk was returned by a search (QW2 recency signal)
+  last_accessed_at BIGINT
 );
 
 -- Indexes for common query patterns

@@ -6,6 +6,12 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import DatabaseCtor from "better-sqlite3";
+import { initializeSchema } from "../storage/sqlite/registry-schema.js";
+import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
 import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
@@ -31,12 +37,16 @@ import {
   stdinUserMessage,
   usageContextTokens,
   printResult,
+  worktreeExtras,
   type StreamEvent,
 } from "./run.js";
+import { projectLaunchConfig } from "./project-config.js";
 import { AG2_REASK_TEXT, OPERATOR_MARK, promptTrailer } from "./report.js";
 import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
 import { describeProviders } from "./providers.js";
 import * as childProcess from "node:child_process";
+import { addWorktree, git, recordWorktree } from "./worktree.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -307,6 +317,36 @@ describe("interactiveMcpTools — the interactive launch's project-pin vs. expli
   it("a caller --tools suppresses the project's tools pin, leaving mcp alone", () => {
     const launch = { mcp: ["aibroker"], tools: ["Read"] };
     expect(interactiveMcpTools([], true, launch)).toEqual({ mcpNames: ["aibroker"], tools: [] });
+  });
+
+  it("regression: awaiting the now-async projectLaunchConfig() still feeds interactiveMcpTools its resolved pin (run.ts:873-874)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pai-run-helpers-"));
+    try {
+      const db = new DatabaseCtor(join(tmp, "registry.db"));
+      initializeSchema(db);
+      const registry = new SQLiteRegistryBackend(db);
+      const project = await registry.createProject({
+        slug: "p1",
+        displayName: "P1",
+        rootPath: "/proj",
+        encodedDir: "enc-1",
+        type: "local",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await registry.updateProjectSessionConfig(
+        project.id,
+        JSON.stringify({ mcp: ["aibroker", "pai"], tools: ["Read"] })
+      );
+
+      const launch = await projectLaunchConfig("/proj/sub", registry);
+      expect(interactiveMcpTools([], false, launch)).toEqual({
+        mcpNames: ["aibroker", "pai"],
+        tools: ["Read"],
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -727,5 +767,55 @@ describe("runSucceeded", () => {
   it("headless: rc 0 with a clean result event is done", () => {
     expect(runSucceeded(true, 0, { is_error: false })).toBe(true);
     expect(runSucceeded(true, 1, { is_error: false })).toBe(false);
+  });
+});
+
+describe("worktree result: recordWorktree's return, not the stale local, must be reported", () => {
+  // regression for the bug where executeRun/executeCodexRun discarded
+  // recordWorktree's return value, so a run's own commit stayed invisible
+  // to the caller (worktreeExtras(status).commits stuck at undefined/0)
+  it("reassigning status to recordWorktree's return reports the commit made in the worktree", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-run-worktree-result-"));
+    const repo = join(dir, "repo");
+    const logDir = join(dir, "logdir");
+    mkdirSync(repo, { recursive: true });
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "test@example.invalid"]);
+    git(repo, ["config", "user.name", "worker test"]);
+    writeFileSync(join(repo, "base.txt"), "base\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "init"]);
+
+    const info = addWorktree(logDir, "wr1", repo);
+    writeFileSync(join(info.dir, "new.txt"), "new\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work"]);
+
+    let status: WorkerStatus = {
+      id: "wr1",
+      pid: process.pid,
+      label: "label wr1",
+      cwd: repo,
+      term: "",
+      provider: "testprov",
+      model: "test-1",
+      state: "running",
+      started: "2026-09-17 10:00:00",
+      updated: "2026-09-17 10:00:00",
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+    };
+    saveStatus(logDir, status);
+
+    // the buggy call site: `if (worktree) recordWorktree(...)` — return discarded
+    expect(worktreeExtras(status)).toBeUndefined();
+
+    // the fix: `if (worktree) status = recordWorktree(...)`
+    status = recordWorktree(logDir, status, info, true);
+
+    expect(worktreeExtras(status)).toEqual({ branch: "worker/wr1", commits: 1 });
   });
 });

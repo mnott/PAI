@@ -41,8 +41,8 @@ import { buildSessionSummaryPrompt } from "./templates/session-summary-prompt.js
 import {
   extractAndStoreTriples as kgExtractAndStoreTriples,
 } from "../memory/kg-extraction.js";
-import { openFederation } from "../memory/db.js";
-import { registryDb, storageBackend, daemonConfig } from "./daemon/state.js";
+import { getRegistryBackend } from "../storage/factory.js";
+import { storageBackend, daemonConfig } from "./daemon/state.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
@@ -893,22 +893,15 @@ ${aiBody}
 // KG triple extraction
 // ---------------------------------------------------------------------------
 
-/** Narrow cast for backends that expose a Postgres pool. */
-interface BackendWithPool {
-  getPool?(): import("pg").Pool;
-}
-
 /**
- * Look up the integer project_id from the registry DB for a given slug.
- * Returns null if not found or registryDb is not yet initialized.
+ * Look up the integer project_id from the registry backend for a given slug.
+ * Returns null if not found.
  */
-function lookupProjectId(slug: string): number | null {
+async function lookupProjectId(slug: string): Promise<number | null> {
   try {
-    if (!registryDb) return null;
-    const row = (registryDb as import("better-sqlite3").Database)
-      .prepare("SELECT id FROM projects WHERE slug = ? LIMIT 1")
-      .get(slug) as { id: number } | undefined;
-    return row?.id ?? null;
+    const registry = await getRegistryBackend();
+    const project = await registry.getProjectBySlug(slug);
+    return project?.id ?? null;
   } catch {
     return null;
   }
@@ -930,13 +923,7 @@ async function extractAndStoreTriples(params: {
 }): Promise<void> {
   try {
     // Only works with Postgres backend — KG tables live in Postgres
-    if (!storageBackend || storageBackend.backendType !== "postgres") {
-      return;
-    }
-
-    const pool = (storageBackend as BackendWithPool).getPool?.();
-    if (!pool) {
-      process.stderr.write("[session-summary] Triple extraction: no pool available.\n");
+    if (!storageBackend?.supportsPostgresFeatures) {
       return;
     }
 
@@ -947,21 +934,16 @@ async function extractAndStoreTriples(params: {
       return;
     }
 
-    const federationDb = openFederation();
-    let result;
-    try {
-      result = await kgExtractAndStoreTriples(pool, {
-        summaryText: params.summaryText,
-        projectSlug: params.projectSlug,
-        projectId: params.projectId,
-        sessionId: params.sessionId,
-        gitLog: params.gitLog,
-        model: "sonnet",
-        federationDb,
-      });
-    } finally {
-      federationDb.close();
-    }
+    // storageBackend is already confirmed Postgres above — entity upserts
+    // inside kgExtractAndStoreTriples go straight to Postgres, no SQLite touched.
+    const result = await kgExtractAndStoreTriples(storageBackend, {
+      summaryText: params.summaryText,
+      projectSlug: params.projectSlug,
+      projectId: params.projectId,
+      sessionId: params.sessionId,
+      gitLog: params.gitLog,
+      model: "sonnet",
+    });
 
     process.stderr.write(
       `[session-summary] Triple extraction complete: ` +
@@ -1137,7 +1119,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // Step 6: Best-effort KG triple extraction (Postgres only)
   // -------------------------------------------------------------------------
   const effectiveSlug = projectSlug ?? basename(cwd);
-  const projectId = projectSlug ? lookupProjectId(projectSlug) : null;
+  const projectId = projectSlug ? await lookupProjectId(projectSlug) : null;
   await extractAndStoreTriples({
     summaryText,
     projectSlug: effectiveSlug,

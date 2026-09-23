@@ -4,12 +4,13 @@
  * whisper-rules.md, advisor-mode.json, session-state/, and the remaining
  * per-subsystem state files/dirs migrated from ~/.config/pai on 2026-09-19
  * (session-scan-cache.json, queries/, summary-cooldowns.json,
- * work-queue.json, kg-backfill-state.json, voices.json, federation.db),
- * plus ~/.pai/registry.db (`registry.db`) and the two content dirs that get
- * an adapter symlink back to ~/.claude, `agents/` and `commands/`. History/,
- * agent-sessions.json, session-routing.json and security-events.jsonl move
- * only with `--history`; logs/workers only with `--logs` — both are written
- * by hooks on every live session and are refused while a worker is RUNNING.
+ * work-queue.json, kg-backfill-state.json, voices.json, the orphaned legacy
+ * federation database), plus the legacy registry database file and the two
+ * content dirs that get an adapter symlink back to ~/.claude, `agents/` and
+ * `commands/`. History/, agent-sessions.json, session-routing.json and
+ * security-events.jsonl move only with `--history`; logs/workers only with
+ * `--logs` — both are written by hooks on every live session and are
+ * refused while a worker is RUNNING.
  */
 
 import type { Command } from "commander";
@@ -38,8 +39,12 @@ import {
   MainConfigOpsError,
 } from "../../config/main-config-ops.js";
 import { workersYamlPath, relocateWorkersYaml } from "../../workers/workers-config.js";
-import { registryDbPath, oldRegistryPath } from "../../registry/db.js";
-import { federationDbPath, oldFederationPath } from "../../memory/db.js";
+import {
+  legacyDbDisplayPaths,
+  migrateFederationDbOrphan,
+  migrateRegistryDbFile,
+  migrateFederationDbFile,
+} from "../../storage/sqlite/legacy-migration.js";
 import { STATE_FILE as schedulerStatePath, migrateSchedulerState } from "../../tasks/poller.js";
 import { migrateIdentityFile } from "../../memory/wakeup.js";
 import { migrateScanConfig } from "./registry/scan.js";
@@ -55,7 +60,6 @@ import {
   migrateAdvisorMode,
   migrateSessionStateDir,
   migrateVoicesJson,
-  migrateOrphanFederationDb,
   migrateSessionStopLock,
   migrateLastHousekeeping,
   migrateHistoryDir,
@@ -71,203 +75,6 @@ import { migrateKgBackfillState } from "../../memory/kg-backfill.js";
 import { readWorkersSection, expandHome } from "../../workers/config.js";
 import { migrateWorkerLogs, WorkerLogsMigrationError, activeSpawnedWorkerCount } from "../../workers/logs-migrate.js";
 import { ok, err, dim, bold } from "../utils.js";
-
-/**
- * The orphaned ~/.config/pai/federation.db (a 0-byte leftover — the live
- * federation DB has lived at ~/.pai/federation.db since the Postgres
- * migration, nothing in src/ reads this copy). Still checked for an open fd
- * before moving: if some other process ever does hold it, restart the
- * daemon (SIGTERM; launchd relaunches it) and give it a moment to let go
- * before renaming the file aside, per the migration runbook.
- */
-function migrateFederationDbOrphan(dryRun: boolean): MigrateFileResult {
-  const oldPath = join(homedir(), ".config", "pai", "federation.db");
-  if (existsSync(oldPath) && !dryRun) {
-    let heldOpen = false;
-    try {
-      execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
-      heldOpen = true;
-    } catch {
-      // lsof exits non-zero when nothing has the file open — the expected case.
-    }
-    if (heldOpen) {
-      console.log(dim("  federation.db: held open by the daemon — restarting it first"));
-      execSync("pai daemon restart", { stdio: "inherit" });
-      execSync("sleep 2");
-    }
-  }
-  return migrateOrphanFederationDb({ dryRun });
-}
-
-/**
- * ~/.pai/registry.db — a third per-user location, alongside PAI_HOME and the
- * ~/.claude adapter. Same open-fd caution as federation.db above (the daemon
- * holds this connection while it runs), plus SQLite-specific care: a
- * WAL-mode DB can have unflushed writes sitting in a `-wal` sidecar file, so
- * a plain byte-copy of `registry.db` alone can silently drop them. This
- * checkpoints the WAL into the main file before copying, moves any sidecar
- * left behind anyway, and runs `PRAGMA integrity_check` on the copy when the
- * `sqlite3` CLI is available — on top of migratePaiFile's own byte-identical
- * verification, not instead of it.
- */
-function migrateRegistryDb(dryRun: boolean): MigrateFileResult {
-  const oldPath = oldRegistryPath();
-  const newPath = paiHomePath("registry.db");
-
-  if (!existsSync(oldPath) || dryRun) {
-    return migratePaiFile(newPath, [oldPath], { dryRun });
-  }
-
-  let heldOpen = false;
-  try {
-    execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
-    heldOpen = true;
-  } catch {
-    // lsof exits non-zero when nothing has the file open — the expected case.
-  }
-  if (heldOpen) {
-    console.log(dim("  registry.db: held open by the daemon — restarting it first"));
-    execSync("pai daemon restart", { stdio: "inherit" });
-    execSync("sleep 2");
-  }
-
-  let hasSqlite3 = true;
-  try {
-    execSync("command -v sqlite3", { stdio: "pipe" });
-  } catch {
-    hasSqlite3 = false;
-  }
-  if (hasSqlite3) {
-    try {
-      execSync(`sqlite3 "${oldPath}" "PRAGMA wal_checkpoint(TRUNCATE);"`, { stdio: "pipe" });
-    } catch {
-      // Best-effort — the sidecar move below still catches an un-checkpointed WAL.
-    }
-  }
-
-  const result = migratePaiFile(newPath, [oldPath], { dryRun: false });
-
-  if (result.fromPath) {
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${oldPath}${suffix}`;
-      if (existsSync(sidecar)) {
-        try {
-          renameSync(sidecar, `${sidecar}.migrated-${stamp}`);
-        } catch {
-          // Non-fatal — surfaced by the integrity check below if it actually mattered.
-        }
-      }
-    }
-
-    if (hasSqlite3) {
-      try {
-        const check = execSync(`sqlite3 "${newPath}" "PRAGMA integrity_check;"`, { stdio: "pipe" })
-          .toString()
-          .trim();
-        if (check !== "ok") {
-          throw new PaiFileMigrationError(
-            `${newPath}: PRAGMA integrity_check reported "${check}" — investigate before trusting this copy`
-          );
-        }
-      } catch (e) {
-        if (e instanceof PaiFileMigrationError) throw e;
-        // sqlite3 CLI failed for an unrelated reason (not installed, etc.) — the
-        // byte-identical copy migratePaiFile already verified is still trustworthy.
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * ~/.pai/federation.db — the LIVE per-user SQLite federation DB. Despite the
- * comment on migrateFederationDbOrphan above, this one is not an orphan: the
- * daemon's dispatcher, scheduler and session-summary-worker, plus kg-backfill
- * and several `pai memory`/`pai zettel`/`pai db` commands, open it directly
- * via openFederation()'s default path — independent of the storageBackend
- * setting, which only gates the search/stats StorageBackend abstraction.
- * It shares its target filename with the harmless 0-byte
- * ~/.config/pai/federation.db orphan migrated above, so that empty copy is
- * renamed aside first (never deleted) to free up the canonical name. Same
- * open-fd, WAL-checkpoint and integrity-check care as registry.db.
- */
-function migrateFederationDbLive(dryRun: boolean): MigrateFileResult {
-  const oldPath = oldFederationPath();
-  const newPath = paiHomePath("federation.db");
-
-  if (!dryRun && existsSync(newPath) && existsSync(oldPath) && statSync(newPath).size === 0) {
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    renameSync(newPath, `${newPath}.empty-orphan-${stamp}`);
-  }
-
-  if (!existsSync(oldPath) || dryRun) {
-    return migratePaiFile(newPath, [oldPath], { dryRun });
-  }
-
-  let heldOpen = false;
-  try {
-    execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
-    heldOpen = true;
-  } catch {
-    // lsof exits non-zero when nothing has the file open — the expected case.
-  }
-  if (heldOpen) {
-    console.log(dim("  federation.db: held open by the daemon — restarting it first"));
-    execSync("pai daemon restart", { stdio: "inherit" });
-    execSync("sleep 2");
-  }
-
-  let hasSqlite3 = true;
-  try {
-    execSync("command -v sqlite3", { stdio: "pipe" });
-  } catch {
-    hasSqlite3 = false;
-  }
-  if (hasSqlite3) {
-    try {
-      execSync(`sqlite3 "${oldPath}" "PRAGMA wal_checkpoint(TRUNCATE);"`, { stdio: "pipe" });
-    } catch {
-      // Best-effort — the sidecar move below still catches an un-checkpointed WAL.
-    }
-  }
-
-  const result = migratePaiFile(newPath, [oldPath], { dryRun: false });
-
-  if (result.fromPath) {
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${oldPath}${suffix}`;
-      if (existsSync(sidecar)) {
-        try {
-          renameSync(sidecar, `${sidecar}.migrated-${stamp}`);
-        } catch {
-          // Non-fatal — surfaced by the integrity check below if it actually mattered.
-        }
-      }
-    }
-
-    if (hasSqlite3) {
-      try {
-        const check = execSync(`sqlite3 "${newPath}" "PRAGMA integrity_check;"`, { stdio: "pipe" })
-          .toString()
-          .trim();
-        if (check !== "ok") {
-          throw new PaiFileMigrationError(
-            `${newPath}: PRAGMA integrity_check reported "${check}" — investigate before trusting this copy`
-          );
-        }
-      } catch (e) {
-        if (e instanceof PaiFileMigrationError) throw e;
-        // sqlite3 CLI failed for an unrelated reason (not installed, etc.) — the
-        // byte-identical copy migratePaiFile already verified is still trustworthy.
-      }
-    }
-  }
-
-  return result;
-}
 
 function sha256FileSync(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -295,15 +102,15 @@ export interface MigrateBackupsLegacyResult {
 }
 
 /**
- * ~/.pai/backups/ — pre-PAI_HOME `pai backup` snapshots (registry.db,
- * config.json, federation.db, postgres-pai.sql per timestamped run). Moved
- * into PAI_HOME/backups/legacy-pai-backups/ rather than merged into
+ * ~/.pai/backups/ — pre-PAI_HOME `pai backup` snapshots (registry database,
+ * config.json, federation database, postgres-pai.sql per timestamped run).
+ * Moved into PAI_HOME/backups/legacy-pai-backups/ rather than merged into
  * PAI_HOME/backups/ directly, since that directory now holds newly created
  * backups going forward and the legacy runs are kept as a clearly-labelled
  * historical archive. Unlike migratePaiDir's plain rename-per-entry, this
  * copies the whole tree then verifies every file byte-identical (sha256)
  * before renaming the old dir aside — these snapshots include a 1.4GB
- * federation.db and a 1GB pg_dump, worth the extra care.
+ * federation database and a 1GB pg_dump, worth the extra care.
  */
 function migrateBackupsLegacy(dryRun: boolean): MigrateBackupsLegacyResult {
   const oldDir = oldBackupsDir();
@@ -382,13 +189,13 @@ export function registerConfigCommands(configCmd: Command): void {
       console.log(`  summary-cooldowns.json, work-queue.json, kg-backfill-state.json:`);
       console.log(`                            all under PAI_HOME`);
       console.log(`  voices.json / voices.yaml: ${voicesJsonPath()} / ${voicesYamlPath()}`);
-      console.log(`  federation.db (orphan): under PAI_HOME`);
+      console.log(`  federation database (orphan): under PAI_HOME`);
       console.log(`  logs/workers/:            ${paiHomePath("logs", "workers")} (pass --logs to move)`);
       console.log(`  History/:                 ${paiHomePath("History")} (pass --history to move)`);
       console.log(`  agent-sessions.json, session-routing.json, History/security/security-events.jsonl:`);
       console.log(`                            all under PAI_HOME (pass --history to move)`);
-      console.log(`  registry.db:              ${registryDbPath()}`);
-      console.log(`  federation.db:            ${federationDbPath()}`);
+      console.log(`  registry database:        ${legacyDbDisplayPaths().registryDb}`);
+      console.log(`  federation database:      ${legacyDbDisplayPaths().federationDb}`);
       console.log(`  backups/:                 ${backupsDirPath()}`);
       console.log(`  obsidian-vault/:          ${defaultVaultPath()}`);
       console.log(`  scheduler-state.json:     ${schedulerStatePath}`);
@@ -498,11 +305,11 @@ export function registerConfigCommands(configCmd: Command): void {
     .description(
       "Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/,\n" +
         "session-scan-cache.json, queries/, summary-cooldowns.json, work-queue.json,\n" +
-        "kg-backfill-state.json, voices.json, the orphaned federation.db,\n" +
-        "~/.pai/registry.db, ~/.pai/federation.db (live), ~/.pai/backups/,\n" +
+        "kg-backfill-state.json, voices.json, the orphaned legacy federation database,\n" +
+        "the legacy registry database, the legacy live federation database, ~/.pai/backups/,\n" +
         "~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/Agents/,\n" +
         "~/.claude/Commands/ into PAI_HOME.\n" +
-        "registry.db and federation.db each get an extra WAL checkpoint and PRAGMA\n" +
+        "The registry and federation databases each get an extra WAL checkpoint and PRAGMA\n" +
         "integrity_check (sqlite3 CLI, if present) on top of the byte-identical copy.\n" +
         "backups/ is copied and sha256-verified file-by-file into\n" +
         "backups/legacy-pai-backups/ rather than merged in place. Agents/ and Commands/ each\n" +
@@ -584,9 +391,9 @@ export function registerConfigCommands(configCmd: Command): void {
       report("work-queue.json", () => migrateWorkQueue({ dryRun }));
       report("kg-backfill-state.json", () => migrateKgBackfillState({ dryRun }));
       report("voices.json", () => migrateVoicesJson({ dryRun }));
-      report("federation.db (orphan)", () => migrateFederationDbOrphan(dryRun));
-      report("registry.db", () => migrateRegistryDb(dryRun));
-      report("federation.db (live)", () => migrateFederationDbLive(dryRun));
+      report("federation database (orphan)", () => migrateFederationDbOrphan(dryRun));
+      report("registry database", () => migrateRegistryDbFile(dryRun));
+      report("federation database (live)", () => migrateFederationDbFile(dryRun));
       reportDir("obsidian-vault/", () => migrateObsidianVaultDir({ dryRun }));
       try {
         const r = migrateObsidianVaultPathConfig(dryRun);

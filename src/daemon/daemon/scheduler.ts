@@ -4,16 +4,13 @@
  * and the start* functions invoked once at daemon startup.
  */
 
-import { indexAll } from "../../memory/indexer.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { runSupervisionTick, stallMinutesFromEnv } from "../../workers/supervision.js";
-import { storeObservationWithProject } from "../../observations/store.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
-import type { PostgresBackendWithPool, SQLiteBackendWithDb } from "./types.js";
 import {
-  registryDb,
+  registryBackend,
   storageBackend,
   daemonConfig,
   indexInProgress,
@@ -59,30 +56,14 @@ export async function runIndex(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled index run...\n");
 
-    if (storageBackend.backendType === "sqlite") {
-      const { SQLiteBackend } = await import("../../storage/sqlite.js");
-      if (storageBackend instanceof SQLiteBackend) {
-        const db = (storageBackend as SQLiteBackendWithDb).getRawDb();
-        const { projects, result } = await indexAll(db, registryDb);
-        const elapsed = Date.now() - t0;
-        setLastIndexTime(Date.now());
-        process.stderr.write(
-          `[pai-daemon] Index complete: ${projects} projects, ` +
-            `${result.filesProcessed} files, ${result.chunksCreated} chunks ` +
-            `(${elapsed}ms)\n`
-        );
-      }
-    } else {
-      const { indexAllWithBackend } = await import("../../memory/indexer-backend.js");
-      const { projects, result } = await indexAllWithBackend(storageBackend, registryDb);
-      const elapsed = Date.now() - t0;
-      setLastIndexTime(Date.now());
-      process.stderr.write(
-        `[pai-daemon] Index complete (postgres): ${projects} projects, ` +
-          `${result.filesProcessed} files, ${result.chunksCreated} chunks ` +
-          `(${elapsed}ms)\n`
-      );
-    }
+    const { projects, result } = await storageBackend.indexAll(registryBackend);
+    const elapsed = Date.now() - t0;
+    setLastIndexTime(Date.now());
+    process.stderr.write(
+      `[pai-daemon] Index complete: ${projects} projects, ` +
+        `${result.filesProcessed} files, ${result.chunksCreated} chunks ` +
+        `(${elapsed}ms)\n`
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Index error: ${msg}\n`);
@@ -116,9 +97,7 @@ export async function runVaultIndex(): Promise<void> {
 
   let vaultProjectId = daemonConfig.vaultProjectId;
   if (!vaultProjectId) {
-    const row = registryDb
-      .prepare("SELECT id FROM projects WHERE root_path = ?")
-      .get(daemonConfig.vaultPath) as { id: number } | undefined;
+    const row = await registryBackend.getProjectByRootPath(daemonConfig.vaultPath!);
     vaultProjectId = row?.id ?? 999;
     if (!row) {
       process.stderr.write("[pai-daemon] Vault not in project registry — using synthetic project ID 999.\n");
@@ -253,7 +232,7 @@ export async function runEmbed(): Promise<void> {
     return;
   }
 
-  if (storageBackend.backendType !== "postgres") {
+  if (!storageBackend.supportsPostgresFeatures) {
     return;
   }
 
@@ -265,9 +244,7 @@ export async function runEmbed(): Promise<void> {
 
     const projectNames = new Map<number, string>();
     try {
-      const rows = registryDb
-        .prepare("SELECT id, slug FROM projects WHERE status = 'active'")
-        .all() as Array<{ id: number; slug: string }>;
+      const rows = await registryBackend.listProjects({ status: "active" });
       for (const r of rows) projectNames.set(r.id, r.slug);
     } catch { /* registry unavailable — IDs will be used instead */ }
 
@@ -287,43 +264,15 @@ export async function runEmbed(): Promise<void> {
       { maxMillis: 240_000 },
     );
 
-    let vaultEmbedCount = 0;
-    if (daemonConfig.vaultPath) {
-      try {
-        const { SQLiteBackend } = await import("../../storage/sqlite.js");
-        const { openFederation } = await import("../../memory/db.js");
-        const federationDb = openFederation();
-        const vaultSqliteBackend = new SQLiteBackend(federationDb);
-
-        const vaultProjectNames = new Map(projectNames);
-        if (!vaultProjectNames.has(999)) {
-          vaultProjectNames.set(999, "obsidian-vault");
-        }
-
-        vaultEmbedCount = await embedChunksWithBackend(
-          vaultSqliteBackend,
-          () => shutdownRequested,
-          vaultProjectNames,
-          { maxMillis: 45_000 },
-        );
-
-        try { federationDb.close(); } catch { /* ignore */ }
-
-        if (vaultEmbedCount > 0) {
-          process.stderr.write(
-            `[pai-daemon] Vault embed pass complete: ${vaultEmbedCount} vault chunks embedded\n`
-          );
-        }
-      } catch (ve) {
-        const vmsg = ve instanceof Error ? ve.message : String(ve);
-        process.stderr.write(`[pai-daemon] Vault embed error: ${vmsg}\n`);
-      }
-    }
+    // Vault chunks (project 999) are indexed through the same storageBackend
+    // as everything else (indexVault() writes via backend.insertChunks()), so
+    // the embedChunksWithBackend() call above already embeds them. A vault-only
+    // SQLite pass here would open a stray federation database even under Postgres.
 
     const elapsed = Date.now() - t0;
     setLastEmbedTime(Date.now());
     process.stderr.write(
-      `[pai-daemon] Embed pass complete: ${count} postgres chunks + ${vaultEmbedCount} vault chunks embedded (${elapsed}ms)\n`
+      `[pai-daemon] Embed pass complete: ${count} chunks embedded (${elapsed}ms)\n`
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -523,25 +472,23 @@ export function startCacheKeepalive(opts: {
   }
 
   let notedNoPostgres = false;
-  const sqliteNote = () => {
-    const pool = (storageBackend as PostgresBackendWithPool | undefined)?.getPool?.();
-    if (pool) return pool;
+  const supportsObservations = () => {
+    if (storageBackend?.supportsPostgresFeatures) return true;
     if (!notedNoPostgres) {
       notedNoPostgres = true;
       process.stderr.write(
         "[pai-daemon] Cache keepalive: observation rows need Postgres — ledger line only\n"
       );
     }
-    return null;
+    return false;
   };
 
   const beat = async (): Promise<void> => {
     const m = await (opts.beat ?? runKeepaliveBeat)();
     if (!m) return; // overlap guard: previous beat still running
-    const pool = sqliteNote();
-    if (!pool) return; // ledger line already written by the beat itself
+    if (!supportsObservations()) return; // ledger line already written by the beat itself
     try {
-      await storeObservationWithProject(registryDb, pool, {
+      await storageBackend.storeObservationWithProject(registryBackend, {
         session_id: m.id,
         type: "change",
         title: `cache keepalive ${m.ok ? "ok" : "failed"} (cache_read=${m.cache_read_input_tokens}, api_ms=${m.duration_api_ms})`,

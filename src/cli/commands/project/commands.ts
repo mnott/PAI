@@ -4,7 +4,6 @@
  * containsIgnoreCase, findProjectNotesDirs, and findMovedPath.
  */
 
-import type { Database } from "better-sqlite3";
 import {
   existsSync,
   readdirSync,
@@ -16,6 +15,8 @@ import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import { unregistrableReason } from "../../../registry/registrable.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
+import type { Project } from "../../../storage/registry-interface.js";
 import {
   ok,
   warn,
@@ -264,11 +265,11 @@ export function findMovedPath(registeredPath: string): { found?: string; ambiguo
 // Command implementations
 // ---------------------------------------------------------------------------
 
-export function cmdAdd(
-  db: Database,
+export async function cmdAdd(
   rawPath: string,
   opts: { slug?: string; type?: string; displayName?: string }
-): void {
+): Promise<void> {
+  const backend = await getRegistryBackend();
   const rootPath = resolvePath(rawPath);
   const slug = opts.slug ?? slugFromPath(rootPath);
   const encodedDir = encodeDir(rootPath);
@@ -295,9 +296,7 @@ export function cmdAdd(
     return;
   }
 
-  const existing = db
-    .prepare("SELECT id FROM projects WHERE slug = ? OR root_path = ?")
-    .get(slug, rootPath);
+  const existing = (await backend.getProjectBySlug(slug)) ?? (await backend.getProjectByRootPath(rootPath));
   if (existing) {
     console.error(
       err(`Project already registered (slug: ${slug} or path: ${rootPath})`)
@@ -307,11 +306,8 @@ export function cmdAdd(
   }
 
   const dirName = basename(rootPath).toLowerCase();
-  const similar = db
-    .prepare(
-      `SELECT slug, root_path FROM projects WHERE status = 'active' AND slug != ?`
-    )
-    .all(slug) as { slug: string; root_path: string }[];
+  const active = await backend.listProjects({ status: "active" });
+  const similar = active.filter((p) => p.slug !== slug).map((p) => ({ slug: p.slug, root_path: p.root_path }));
   const matches = similar.filter(
     (s) =>
       basename(s.root_path).toLowerCase() === dirName ||
@@ -334,11 +330,16 @@ export function cmdAdd(
   }
 
   const ts = now();
-  db.prepare(
-    `INSERT INTO projects
-       (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
-  ).run(slug, displayName, rootPath, encodedDir, type, ts, ts);
+  await backend.createProject({
+    slug,
+    displayName,
+    rootPath,
+    encodedDir,
+    type: type as Project["type"],
+    status: "active",
+    createdAt: ts,
+    updatedAt: ts,
+  });
 
   scaffoldProjectDirs(rootPath);
 
@@ -354,45 +355,28 @@ export function cmdAdd(
   console.log(dim(`  Type:         ${type}`));
 }
 
-export function cmdList(
-  db: Database,
+export async function cmdList(
   opts: { status?: string; tag?: string; type?: string; all?: boolean }
-): void {
-  let query = `
-    SELECT p.*,
-      (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-      (SELECT MAX(s.created_at) FROM sessions s WHERE s.project_id = p.id) AS last_active
-    FROM projects p
-  `;
-  const params: unknown[] = [];
-  const where: string[] = [];
+): Promise<void> {
+  const backend = await getRegistryBackend();
 
-  // Default: active only, unless --all or explicit --status given
-  if (opts.status) {
-    where.push("p.status = ?");
-    params.push(opts.status);
-  } else if (!opts.all) {
-    where.push("p.status = 'active'");
-  }
-  if (opts.type) {
-    where.push("p.type = ?");
-    params.push(opts.type);
-  }
+  let tagId: number | undefined;
   if (opts.tag) {
-    where.push(`p.id IN (
-      SELECT pt.project_id FROM project_tags pt
-      JOIN tags t ON t.id = pt.tag_id WHERE t.name = ?
-    )`);
-    params.push(opts.tag);
+    const tags = await backend.listAllTags();
+    tagId = tags.find((t) => t.name === opts.tag)?.id;
+    if (tagId === undefined) {
+      console.log(warn("No projects found."));
+      return;
+    }
   }
 
-  if (where.length) query += " WHERE " + where.join(" AND ");
-  query += " ORDER BY p.status ASC, p.updated_at DESC";
-
-  const rows = db.prepare(query).all(...params) as (ProjectRow & {
-    session_count: number;
-    last_active: number | null;
-  })[];
+  const rows = (
+    await backend.listProjectsWithSessionStats({
+      status: opts.status ? (opts.status as Project["status"]) : opts.all ? undefined : "active",
+      tagId,
+      orderBy: "status_updated",
+    })
+  ).filter((p) => !opts.type || p.type === opts.type);
 
   if (!rows.length) {
     console.log(warn("No projects found."));
@@ -419,8 +403,8 @@ export function cmdList(
   console.log();
 
   // When showing active-only, inform the user about hidden archived projects
-  const totalRow = db.prepare("SELECT COUNT(*) AS cnt FROM projects").get() as { cnt: number };
-  const hiddenCount = totalRow.cnt - rows.length;
+  const total = await backend.countProjects();
+  const hiddenCount = total - rows.length;
   if (!opts.all && !opts.status && hiddenCount > 0) {
     console.log(dim(`  ${rows.length} active project(s)  (${hiddenCount} archived — use --all to show)`));
   } else {
@@ -428,20 +412,19 @@ export function cmdList(
   }
 }
 
-export function cmdInfo(db: Database, identifier: string): void {
+export async function cmdInfo(identifier: string): Promise<void> {
   const project =
-    resolveIdentifier(db, identifier) ?? requireProject(db, identifier);
-  const tags = getProjectTags(db, project.id);
-  const aliases = getProjectAliases(db, project.id);
-  const sessionCount = getSessionCount(db, project.id);
-  const lastSession = getLastSessionDate(db, project.id);
+    (await resolveIdentifier(identifier)) ?? (await requireProject(identifier));
+  const backend = await getRegistryBackend();
+  const tags = await getProjectTags(project.id);
+  const aliases = await getProjectAliases(project.id);
+  const sessionCount = await getSessionCount(project.id);
+  const lastSession = await getLastSessionDate(project.id);
 
-  const recentSessions = db
-    .prepare(
-      `SELECT * FROM sessions WHERE project_id = ?
-       ORDER BY created_at DESC LIMIT 5`
-    )
-    .all(project.id) as SessionRow[];
+  const recentSessions: SessionRow[] = await backend.listSessionsForProject(project.id, {
+    orderBy: "created_desc",
+    limit: 5,
+  });
 
   console.log();
   console.log(header(`  ${project.display_name}`));
@@ -493,21 +476,20 @@ export function cmdInfo(db: Database, identifier: string): void {
   console.log();
 }
 
-export function cmdArchive(db: Database, slug: string): void {
-  const project = requireProject(db, slug);
+export async function cmdArchive(slug: string): Promise<void> {
+  const project = await requireProject(slug);
   if (project.status === "archived") {
     console.log(warn(`Project ${slug} is already archived.`));
     return;
   }
   const ts = now();
-  db.prepare(
-    "UPDATE projects SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?"
-  ).run(ts, ts, project.id);
+  const backend = await getRegistryBackend();
+  await backend.updateProjectStatus(project.id, "archived", { archivedAt: ts, updatedAt: ts });
   console.log(ok(`Archived: ${bold(slug)}`));
 }
 
-export function cmdUnarchive(db: Database, slug: string): void {
-  const project = requireProject(db, slug);
+export async function cmdUnarchive(slug: string): Promise<void> {
+  const project = await requireProject(slug);
   if (project.status !== "archived") {
     console.log(
       warn(`Project ${slug} is not archived (status: ${project.status}).`)
@@ -515,49 +497,41 @@ export function cmdUnarchive(db: Database, slug: string): void {
     return;
   }
   const ts = now();
-  db.prepare(
-    "UPDATE projects SET status = 'active', archived_at = NULL, updated_at = ? WHERE id = ?"
-  ).run(ts, project.id);
+  const backend = await getRegistryBackend();
+  await backend.updateProjectStatus(project.id, "active", { archivedAt: null, updatedAt: ts });
   console.log(ok(`Unarchived: ${bold(slug)}`));
 }
 
-export function cmdMove(db: Database, slug: string, newPath: string): void {
-  const project = requireProject(db, slug);
+export async function cmdMove(slug: string, newPath: string): Promise<void> {
+  const project = await requireProject(slug);
   const resolvedNew = resolvePath(newPath);
   const newEncoded = encodeDir(resolvedNew);
   const ts = now();
 
-  db.prepare(
-    "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-  ).run(resolvedNew, newEncoded, ts, project.id);
+  const backend = await getRegistryBackend();
+  await backend.updateProjectPath(project.id, { rootPath: resolvedNew, encodedDir: newEncoded }, ts);
 
   console.log(ok(`Moved: ${bold(slug)}`));
   console.log(dim(`  Old path: ${project.root_path}`));
   console.log(dim(`  New path: ${resolvedNew}`));
 }
 
-export function cmdTag(
-  db: Database,
+export async function cmdTag(
   slug: string,
   tags: string[]
-): void {
-  const project = requireProject(db, slug);
+): Promise<void> {
+  const project = await requireProject(slug);
+  const backend = await getRegistryBackend();
   const added: string[] = [];
   const skipped: string[] = [];
 
   for (const tagName of tags) {
-    const tagId = upsertTag(db, tagName);
-    const exists = db
-      .prepare(
-        "SELECT 1 FROM project_tags WHERE project_id = ? AND tag_id = ?"
-      )
-      .get(project.id, tagId);
+    const tagId = await upsertTag(tagName);
+    const exists = await backend.projectHasTag(project.id, tagId);
     if (exists) {
       skipped.push(tagName);
     } else {
-      db.prepare(
-        "INSERT INTO project_tags (project_id, tag_id) VALUES (?, ?)"
-      ).run(project.id, tagId);
+      await backend.addProjectTag(project.id, tagId);
       added.push(tagName);
     }
   }
@@ -574,16 +548,14 @@ export function cmdTag(
   }
 }
 
-export function cmdAlias(
-  db: Database,
+export async function cmdAlias(
   slug: string,
   alias: string
-): void {
-  requireProject(db, slug);
+): Promise<void> {
+  await requireProject(slug);
+  const backend = await getRegistryBackend();
 
-  const conflict = db
-    .prepare("SELECT id FROM projects WHERE slug = ?")
-    .get(alias);
+  const conflict = await backend.getProjectBySlug(alias);
   if (conflict) {
     console.error(
       err(`"${alias}" is already a project slug — cannot use as alias.`)
@@ -592,11 +564,9 @@ export function cmdAlias(
     return;
   }
 
-  const project = getProject(db, slug)!;
+  const project = (await getProject(slug))!;
   try {
-    db.prepare(
-      "INSERT INTO aliases (alias, project_id) VALUES (?, ?)"
-    ).run(alias, project.id);
+    await backend.addAlias(alias, project.id);
     console.log(ok(`Alias added: ${bold(alias)} → ${slug}`));
   } catch {
     console.error(err(`Alias "${alias}" is already registered.`));
@@ -604,12 +574,11 @@ export function cmdAlias(
   }
 }
 
-export function cmdEdit(
-  db: Database,
+export async function cmdEdit(
   slug: string,
   opts: { displayName?: string; type?: string }
-): void {
-  const project = requireProject(db, slug);
+): Promise<void> {
+  const project = await requireProject(slug);
 
   if (!opts.displayName && !opts.type) {
     console.log(warn("Nothing to update. Use --display-name or --type."));
@@ -626,27 +595,23 @@ export function cmdEdit(
   }
 
   const ts = now();
+  const backend = await getRegistryBackend();
   if (opts.displayName) {
-    db.prepare(
-      "UPDATE projects SET display_name = ?, updated_at = ? WHERE id = ?"
-    ).run(opts.displayName, ts, project.id);
+    await backend.updateProjectDisplayName(project.id, opts.displayName, ts);
     console.log(ok(`Display name updated: ${bold(opts.displayName)}`));
   }
   if (opts.type) {
-    db.prepare(
-      "UPDATE projects SET type = ?, updated_at = ? WHERE id = ?"
-    ).run(opts.type, ts, project.id);
+    await backend.updateProjectType(project.id, opts.type as Project["type"], ts);
     console.log(ok(`Type updated: ${bold(opts.type)}`));
   }
 }
 
-export function cmdDetect(
-  db: Database,
+export async function cmdDetect(
   pathArg: string | undefined,
   opts: { json?: boolean }
-): void {
+): Promise<void> {
   const cwd = pathArg ? resolvePath(pathArg) : process.cwd();
-  const detection = detectProject(db, cwd);
+  const detection = await detectProject(cwd);
 
   if (!detection) {
     if (opts.json) {
@@ -675,13 +640,12 @@ export function cmdDetect(
   console.log();
 }
 
-export function cmdConsolidate(
-  db: Database,
+export async function cmdConsolidate(
   identifier: string,
   opts: { yes?: boolean; dryRun?: boolean }
-): void {
+): Promise<void> {
   const project =
-    resolveIdentifier(db, identifier) ?? requireProject(db, identifier);
+    (await resolveIdentifier(identifier)) ?? (await requireProject(identifier));
 
   console.log();
   console.log(header(`  Consolidate: ${project.slug}`));
@@ -766,7 +730,7 @@ export function cmdConsolidate(
  * Returns the new path on success, or undefined if ambiguous/not found.
  * Prints all messages to stderr (safe for shell-wrapper stdout capture).
  */
-function tryRecoverMovedProject(db: Database, project: ProjectRow): string | undefined {
+async function tryRecoverMovedProject(project: ProjectRow): Promise<string | undefined> {
   process.stderr.write(
     warn(`Path not found: ${project.root_path}\n`) +
     dim("  Searching for moved location...\n")
@@ -778,9 +742,8 @@ function tryRecoverMovedProject(db: Database, project: ProjectRow): string | und
     const newPath = result.found;
     const newEncoded = encodeDir(newPath);
     const ts = now();
-    db.prepare(
-      "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-    ).run(newPath, newEncoded, ts, project.id);
+    const backend = await getRegistryBackend();
+    await backend.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
     process.stderr.write(
       ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
       dim(`  → ${newPath}\n`) +
@@ -812,12 +775,9 @@ function tryRecoverMovedProject(db: Database, project: ProjectRow): string | und
   return undefined;
 }
 
-export function cmdGo(db: Database, query: string): void {
-  const all = db
-    .prepare(
-      "SELECT * FROM projects WHERE status = 'active' ORDER BY updated_at DESC"
-    )
-    .all() as ProjectRow[];
+export async function cmdGo(query: string): Promise<void> {
+  const backend = await getRegistryBackend();
+  const all: ProjectRow[] = await backend.listProjects({ status: "active", orderBy: "updated_desc" });
 
   if (!all.length) {
     console.error(
@@ -830,10 +790,10 @@ export function cmdGo(db: Database, query: string): void {
   const q = query.trim().toLowerCase();
 
   // 1. Exact slug or alias match
-  const exact = getProject(db, query);
+  const exact = await getProject(query);
   if (exact) {
     if (!existsSync(exact.root_path)) {
-      const recovered = tryRecoverMovedProject(db, exact);
+      const recovered = await tryRecoverMovedProject(exact);
       if (!recovered) { process.exitCode = 1; return; }
       process.stdout.write(recovered + "\n");
       return;
@@ -853,7 +813,7 @@ export function cmdGo(db: Database, query: string): void {
   if (partial.length === 1) {
     const p = partial[0];
     if (!existsSync(p.root_path)) {
-      const recovered = tryRecoverMovedProject(db, p);
+      const recovered = await tryRecoverMovedProject(p);
       if (!recovered) { process.exitCode = 1; return; }
       process.stdout.write(recovered + "\n");
       return;
@@ -910,12 +870,11 @@ export function cmdGo(db: Database, query: string): void {
   process.exitCode = 1;
 }
 
-export function cmdRebind(
-  db: Database,
+export async function cmdRebind(
   slug: string,
   newPath: string
-): void {
-  const project = requireProject(db, slug);
+): Promise<void> {
+  const project = await requireProject(slug);
   const resolved = resolve(newPath.startsWith("~/") ? join(homedir(), newPath.slice(2)) : newPath);
 
   if (!existsSync(resolved)) {
@@ -937,11 +896,10 @@ export function cmdRebind(
   }
 
   const newEncoded = encodeDir(resolved);
+  const backend = await getRegistryBackend();
 
   // Check if another project already owns this path
-  const conflict = db
-    .prepare("SELECT slug FROM projects WHERE encoded_dir = ? AND id != ?")
-    .get(newEncoded, project.id) as { slug: string } | undefined;
+  const conflict = await backend.getProjectByEncodedDir(newEncoded, { excludeId: project.id });
   if (conflict) {
     console.error(
       err(`Path is already registered to project: ${bold(conflict.slug)}\n`) +
@@ -953,9 +911,7 @@ export function cmdRebind(
   }
 
   const ts = now();
-  db.prepare(
-    "UPDATE projects SET root_path = ?, encoded_dir = ?, updated_at = ? WHERE id = ?"
-  ).run(resolved, newEncoded, ts, project.id);
+  await backend.updateProjectPath(project.id, { rootPath: resolved, encodedDir: newEncoded }, ts);
 
   console.log(ok(`Rebound: ${bold(slug)}`));
   console.log(dim(`  Old path: ${project.root_path}`));

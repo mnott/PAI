@@ -19,9 +19,7 @@ import {
   toolMemoryKgSearch,
 } from "../../mcp/tools.js";
 import { detectTopicShift } from "../../topics/detector.js";
-import { registryDb, storageBackend, daemonConfig } from "./state.js";
-import { openFederation } from "../../memory/db.js";
-import type { PostgresBackendWithPool } from "./types.js";
+import { registryBackend, storageBackend, daemonConfig } from "./state.js";
 
 /**
  * Dispatch an IPC tool call to the appropriate tool function.
@@ -38,48 +36,48 @@ export async function dispatchTool(
 
   switch (method) {
     case "memory_search":
-      return toolMemorySearch(registryDb, storageBackend, p as Parameters<typeof toolMemorySearch>[2]);
+      return toolMemorySearch(registryBackend, storageBackend, p as Parameters<typeof toolMemorySearch>[2]);
 
     case "memory_get":
-      return toolMemoryGet(registryDb, p as Parameters<typeof toolMemoryGet>[1]);
+      return toolMemoryGet(registryBackend, p as Parameters<typeof toolMemoryGet>[1]);
 
     case "project_info":
-      return toolProjectInfo(registryDb, p as Parameters<typeof toolProjectInfo>[1]);
+      return toolProjectInfo(registryBackend, p as Parameters<typeof toolProjectInfo>[1]);
 
     case "project_list":
-      return toolProjectList(registryDb, p as Parameters<typeof toolProjectList>[1]);
+      return toolProjectList(registryBackend, p as Parameters<typeof toolProjectList>[1]);
 
     case "session_list":
-      return toolSessionList(registryDb, p as Parameters<typeof toolSessionList>[1]);
+      return toolSessionList(registryBackend, p as Parameters<typeof toolSessionList>[1]);
 
     case "registry_search":
-      return toolRegistrySearch(registryDb, p as Parameters<typeof toolRegistrySearch>[1]);
+      return toolRegistrySearch(registryBackend, p as Parameters<typeof toolRegistrySearch>[1]);
 
     case "project_detect":
-      return toolProjectDetect(registryDb, p as Parameters<typeof toolProjectDetect>[1]);
+      return toolProjectDetect(p as Parameters<typeof toolProjectDetect>[0]);
 
     case "project_health":
-      return toolProjectHealth(registryDb, p as Parameters<typeof toolProjectHealth>[1]);
+      return toolProjectHealth(registryBackend, p as Parameters<typeof toolProjectHealth>[1]);
 
     case "project_todo":
-      return toolProjectTodo(registryDb, p as Parameters<typeof toolProjectTodo>[1]);
+      return toolProjectTodo(registryBackend, p as Parameters<typeof toolProjectTodo>[1]);
 
     case "memory_wakeup":
-      return toolMemoryWakeup(registryDb, p as Parameters<typeof toolMemoryWakeup>[1]);
+      return toolMemoryWakeup(registryBackend, p as Parameters<typeof toolMemoryWakeup>[1]);
 
     case "memory_taxonomy":
-      return toolMemoryTaxonomy(registryDb, storageBackend, p as Parameters<typeof toolMemoryTaxonomy>[2]);
+      return toolMemoryTaxonomy(registryBackend, storageBackend, p as Parameters<typeof toolMemoryTaxonomy>[2]);
 
     case "topic_check":
       return detectTopicShift(
-        registryDb,
+        registryBackend,
         storageBackend,
         p as Parameters<typeof detectTopicShift>[2]
       );
 
     case "session_auto_route":
       return toolSessionRoute(
-        registryDb,
+        registryBackend,
         storageBackend,
         p as Parameters<typeof toolSessionRoute>[2]
       );
@@ -109,20 +107,17 @@ export async function dispatchTool(
 
     case "graph_clusters": {
       const { handleGraphClusters } = await import("../../graph/clusters.js");
-      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
-      return handleGraphClusters(pgPool, storageBackend, p as Parameters<typeof handleGraphClusters>[2]);
+      return handleGraphClusters(storageBackend, p as Parameters<typeof handleGraphClusters>[1]);
     }
 
     case "graph_neighborhood": {
       const { handleGraphNeighborhood } = await import("../../graph/neighborhood.js");
-      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
-      return handleGraphNeighborhood(pgPool, storageBackend, p as Parameters<typeof handleGraphNeighborhood>[2]);
+      return handleGraphNeighborhood(storageBackend, p as Parameters<typeof handleGraphNeighborhood>[1]);
     }
 
     case "graph_note_context": {
       const { handleGraphNoteContext } = await import("../../graph/note-context.js");
-      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
-      return handleGraphNoteContext(pgPool, storageBackend, p as Parameters<typeof handleGraphNoteContext>[2]);
+      return handleGraphNoteContext(storageBackend, p as Parameters<typeof handleGraphNoteContext>[1]);
     }
 
     case "graph_trace": {
@@ -151,47 +146,35 @@ export async function dispatchTool(
     case "kg_invalidate":
     case "kg_contradictions": {
       const { toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions } = await import("../../mcp/tools.js");
-      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
-      if (!pgPool) {
+      if (!storageBackend.supportsPostgresFeatures) {
         throw new Error(`${method} requires a Postgres storage backend`);
       }
       switch (method) {
-        case "kg_add":           return toolKgAdd(pgPool, p as Parameters<typeof toolKgAdd>[1]);
-        case "kg_query":         return toolKgQuery(pgPool, p as Parameters<typeof toolKgQuery>[1]);
-        case "kg_invalidate":    return toolKgInvalidate(pgPool, p as Parameters<typeof toolKgInvalidate>[1]);
-        case "kg_contradictions": return toolKgContradictions(pgPool, p as Parameters<typeof toolKgContradictions>[1]);
+        case "kg_add":           return toolKgAdd(storageBackend, p as Parameters<typeof toolKgAdd>[1]);
+        case "kg_query":         return toolKgQuery(storageBackend, p as Parameters<typeof toolKgQuery>[1]);
+        case "kg_invalidate":    return toolKgInvalidate(storageBackend, p as Parameters<typeof toolKgInvalidate>[1]);
+        case "kg_contradictions": return toolKgContradictions(storageBackend, p as Parameters<typeof toolKgContradictions>[1]);
       }
       break;
     }
 
     case "memory_tunnels": {
       const { toolMemoryTunnels } = await import("../../mcp/tools.js");
-      return toolMemoryTunnels(registryDb, storageBackend, p as Parameters<typeof toolMemoryTunnels>[2]);
+      return toolMemoryTunnels(registryBackend, storageBackend, p as Parameters<typeof toolMemoryTunnels>[2]);
     }
 
     case "memory_feedback": {
-      // MR2: feedback weight loop — uses federation.db (SQLite) directly
-      const federationDb = openFederation();
-      try {
-        return await toolMemoryFeedback(federationDb, p as Parameters<typeof toolMemoryFeedback>[1]);
-      } finally {
-        federationDb.close();
-      }
+      // MR2: feedback weight loop — relevance_score/feedback_weight go through
+      // the StorageBackend, so this works on either backend.
+      return await toolMemoryFeedback(storageBackend, p as Parameters<typeof toolMemoryFeedback>[1]);
     }
 
     case "memory_kg_search": {
-      // MR1: graph-completion retrieval — federation.db (SQLite) + Postgres pool
-      const federationDb = openFederation();
-      const pgPool = (storageBackend as PostgresBackendWithPool).getPool?.() ?? null;
-      if (!pgPool) {
-        federationDb.close();
+      // MR1: graph-completion retrieval — active storage backend for KG triple expansion
+      if (!storageBackend.supportsPostgresFeatures) {
         throw new Error("memory_kg_search requires a Postgres storage backend for KG triple expansion");
       }
-      try {
-        return await toolMemoryKgSearch(federationDb, pgPool, p as Parameters<typeof toolMemoryKgSearch>[2]);
-      } finally {
-        federationDb.close();
-      }
+      return await toolMemoryKgSearch(storageBackend, p as Parameters<typeof toolMemoryKgSearch>[1]);
     }
 
     default:

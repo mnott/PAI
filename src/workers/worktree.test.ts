@@ -25,6 +25,7 @@ import {
   worktreePath,
   worktreeWanted,
   worktreeSystemPrompt,
+  inPlaceSystemPrompt,
 } from "./worktree.js";
 import { statusPath } from "./paths.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -129,6 +130,129 @@ describe("addWorktree / commitsSince / recordWorktree", () => {
     expect(git(repo, ["branch", "--list", "worker/w3"])).toBe("");
     const after = loadStatus(logDir, "w3");
     expect(after?.branch ?? null).toBeNull();
+  });
+});
+
+describe("addWorktree snapshot: dirty parent checkout", () => {
+  const repoSnap = join(dir, "repo-snap");
+
+  beforeAll(() => {
+    mkdirSync(repoSnap, { recursive: true });
+    git(repoSnap, ["init", "-q"]);
+    git(repoSnap, ["config", "user.email", "test@example.invalid"]);
+    git(repoSnap, ["config", "user.name", "worker test"]);
+    writeFileSync(join(repoSnap, "base.txt"), "base\n", "utf8");
+    git(repoSnap, ["add", "."]);
+    git(repoSnap, ["commit", "-q", "-m", "init"]);
+  });
+
+  // returns repoSnap to its just-committed state: no dirt left by a prior test
+  function resetRepoSnap(): void {
+    git(repoSnap, ["checkout", "--", "."]);
+    git(repoSnap, ["clean", "-fdq"]);
+  }
+
+  it("gives the worktree the checkout's uncommitted content, and leaves the checkout byte-identical", () => {
+    resetRepoSnap();
+    writeFileSync(join(repoSnap, "base.txt"), "dirty tracked edit\n", "utf8"); // modified tracked file
+    writeFileSync(join(repoSnap, "scratch.txt"), "untracked scratch\n", "utf8"); // untracked file
+
+    const beforeStatus = git(repoSnap, ["status", "--porcelain"]);
+    const beforeDiff = git(repoSnap, ["diff"]);
+    const beforeDiffCached = git(repoSnap, ["diff", "--cached"]);
+    const beforeHead = git(repoSnap, ["rev-parse", "HEAD"]);
+
+    const info = addWorktree(logDir, "snap1", repoSnap);
+    expect(info.snapshot).toBe(true);
+    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("dirty tracked edit\n");
+    expect(readFileSync(join(info.dir, "scratch.txt"), "utf8")).toBe("untracked scratch\n");
+
+    expect(git(repoSnap, ["status", "--porcelain"])).toBe(beforeStatus);
+    expect(git(repoSnap, ["diff"])).toBe(beforeDiff);
+    expect(git(repoSnap, ["diff", "--cached"])).toBe(beforeDiffCached);
+    expect(git(repoSnap, ["rev-parse", "HEAD"])).toBe(beforeHead);
+
+    status("snap1", { cwd: repoSnap, branch: info.branch, worktreeDir: info.dir });
+    discardWorker(logDir, "snap1");
+  });
+
+  it("takes the old, non-snapshot path on a clean checkout even in this repo", () => {
+    resetRepoSnap();
+    const info = addWorktree(logDir, "snap-clean", repoSnap);
+    expect(info.snapshot).toBe(false);
+    expect(info.base).toBe(git(repoSnap, ["rev-parse", "HEAD"]));
+    status("snap-clean", { cwd: repoSnap, branch: info.branch, worktreeDir: info.dir });
+    discardWorker(logDir, "snap-clean");
+  });
+
+  it("merge applies the worker's own changes to the checkout as uncommitted edits, without touching HEAD or committing the snapshot on main", () => {
+    resetRepoSnap();
+    writeFileSync(join(repoSnap, "base.txt"), "dirty tracked edit\n", "utf8");
+    writeFileSync(join(repoSnap, "scratch.txt"), "untracked scratch\n", "utf8");
+    const beforeHead = git(repoSnap, ["rev-parse", "HEAD"]);
+
+    const info = addWorktree(logDir, "snap2", repoSnap);
+    const st = status("snap2", { cwd: repoSnap });
+    recordWorktree(logDir, st, info, true);
+
+    writeFileSync(join(info.dir, "new-feature.txt"), "brand new\n", "utf8"); // a new file
+    writeFileSync(join(info.dir, "scratch.txt"), "scratch edited by worker\n", "utf8"); // edit to the untracked-turned-snapshotted file
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-q", "-m", "worker work"]);
+
+    const msg = mergeWorker(logDir, "snap2");
+    expect(msg).toMatch(/applied worker snap2's changes/);
+    expect(msg).toMatch(/new-feature\.txt/);
+    expect(msg).toMatch(/scratch\.txt/);
+
+    // the branch's changes landed as uncommitted edits in the checkout
+    expect(readFileSync(join(repoSnap, "new-feature.txt"), "utf8")).toBe("brand new\n");
+    expect(readFileSync(join(repoSnap, "scratch.txt"), "utf8")).toBe("scratch edited by worker\n");
+    // base.txt was dirty before the worker ran and untouched by its branch — still dirty, unchanged
+    expect(readFileSync(join(repoSnap, "base.txt"), "utf8")).toBe("dirty tracked edit\n");
+
+    // worktree and branch gone
+    expect(existsSync(info.dir)).toBe(false);
+    expect(git(repoSnap, ["branch", "--list", "worker/snap2"])).toBe("");
+    // HEAD never moved: no merge commit, no commit on main at all
+    expect(git(repoSnap, ["rev-parse", "HEAD"])).toBe(beforeHead);
+    // the snapshot commit is not reachable from any ref left in the repo
+    expect(git(repoSnap, ["log", "--all", "--oneline"])).not.toMatch(/snapshot of uncommitted checkout/);
+    expect(loadStatus(logDir, "snap2")?.merged).toBe(true);
+  });
+
+  it("refuses the merge when the operator edited a touched path after the snapshot, and changes nothing", () => {
+    resetRepoSnap();
+    writeFileSync(join(repoSnap, "base.txt"), "dirty tracked edit\n", "utf8");
+    const beforeHead = git(repoSnap, ["rev-parse", "HEAD"]);
+
+    const info = addWorktree(logDir, "snap3", repoSnap);
+    const st = status("snap3", { cwd: repoSnap });
+    recordWorktree(logDir, st, info, true);
+
+    writeFileSync(join(info.dir, "base.txt"), "edited by worker\n", "utf8");
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-q", "-m", "worker work"]);
+
+    // the operator keeps editing the checkout after the snapshot was taken
+    writeFileSync(join(repoSnap, "base.txt"), "operator edit after snapshot\n", "utf8");
+
+    expect(() => mergeWorker(logDir, "snap3")).toThrow(/base\.txt/);
+    expect(() => mergeWorker(logDir, "snap3")).toThrow(/changed since the worktree's snapshot/);
+
+    // nothing changed: checkout keeps the operator's edit, worktree and branch survive
+    expect(readFileSync(join(repoSnap, "base.txt"), "utf8")).toBe("operator edit after snapshot\n");
+    expect(existsSync(info.dir)).toBe(true);
+    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("edited by worker\n"); // worker's work intact
+    expect(git(repoSnap, ["branch", "--list", "worker/snap3"])).not.toBe("");
+    expect(git(repoSnap, ["rev-parse", "HEAD"])).toBe(beforeHead);
+    expect(loadStatus(logDir, "snap3")?.merged).toBeFalsy();
+
+    // cleanup: the operator resolves it by hand, then merge succeeds
+    writeFileSync(join(repoSnap, "base.txt"), "dirty tracked edit\n", "utf8");
+    const msg = mergeWorker(logDir, "snap3");
+    expect(msg).toMatch(/applied worker snap3's changes/);
+    expect(readFileSync(join(repoSnap, "base.txt"), "utf8")).toBe("edited by worker\n");
   });
 });
 
@@ -325,6 +449,16 @@ describe("worktreeSystemPrompt", () => {
     const p = worktreeSystemPrompt("w6", "worker/w6", "/tmp/dir");
     expect(p).toMatch(/ONLY relative paths/);
     expect(p).toMatch(/never absolute worktree paths/);
+  });
+});
+
+describe("inPlaceSystemPrompt", () => {
+  it("tells the worker it shares the checkout and names the blocked git commands", () => {
+    const p = inPlaceSystemPrompt();
+    expect(p).toMatch(/shared git checkout/);
+    expect(p).toMatch(/git stash \(except list\/show\), reset, clean, checkout\/restore of files, switch, rebase and merge/);
+    expect(p).toMatch(/baselines from measurements taken before you edit/);
+    expect(p).toMatch(/Read-only git \(status, diff, log, show, stash list\) is fine/);
   });
 });
 

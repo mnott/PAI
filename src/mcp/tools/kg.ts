@@ -8,14 +8,8 @@
  *   kg_contradictions — find (subject, predicate) pairs with multiple valid objects
  */
 
-import type { Pool } from "pg";
+import type { StorageBackend } from "../../storage/interface.js";
 import type { ToolResult } from "./types.js";
-import {
-  kgAdd,
-  kgQuery,
-  kgInvalidate,
-  kgContradictions,
-} from "../../memory/kg.js";
 
 // ---------------------------------------------------------------------------
 // Tool: kg_add
@@ -31,7 +25,7 @@ export interface KgAddToolParams {
 }
 
 export async function toolKgAdd(
-  pool: Pool,
+  backend: StorageBackend,
   params: KgAddToolParams
 ): Promise<ToolResult> {
   try {
@@ -41,7 +35,7 @@ export async function toolKgAdd(
         isError: true,
       };
     }
-    const triple = await kgAdd(pool, params);
+    const triple = await backend.addKgTriple(params);
     return {
       content: [{ type: "text", text: JSON.stringify(triple, null, 2) }],
     };
@@ -67,7 +61,7 @@ export interface KgQueryToolParams {
 }
 
 export async function toolKgQuery(
-  pool: Pool,
+  backend: StorageBackend,
   params: KgQueryToolParams
 ): Promise<ToolResult> {
   try {
@@ -78,7 +72,7 @@ export async function toolKgQuery(
         isError: true,
       };
     }
-    const triples = await kgQuery(pool, {
+    const triples = await backend.queryKgTriples({
       subject: params.subject,
       predicate: params.predicate,
       object: params.object,
@@ -106,7 +100,7 @@ export interface KgInvalidateToolParams {
 }
 
 export async function toolKgInvalidate(
-  pool: Pool,
+  backend: StorageBackend,
   params: KgInvalidateToolParams
 ): Promise<ToolResult> {
   try {
@@ -116,7 +110,7 @@ export async function toolKgInvalidate(
         isError: true,
       };
     }
-    await kgInvalidate(pool, params.triple_id);
+    await backend.invalidateKgTriple(params.triple_id);
     return {
       content: [{ type: "text", text: JSON.stringify({ invalidated: true, triple_id: params.triple_id }) }],
     };
@@ -137,7 +131,7 @@ export interface KgContradictionsToolParams {
 }
 
 export async function toolKgContradictions(
-  pool: Pool,
+  backend: StorageBackend,
   params: KgContradictionsToolParams
 ): Promise<ToolResult> {
   try {
@@ -147,7 +141,7 @@ export async function toolKgContradictions(
         isError: true,
       };
     }
-    const contradictions = await kgContradictions(pool, params.subject);
+    const contradictions = await backend.getKgContradictions(params.subject);
     return {
       content: [{ type: "text", text: JSON.stringify(contradictions, null, 2) }],
     };

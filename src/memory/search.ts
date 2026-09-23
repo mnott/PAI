@@ -1,18 +1,12 @@
 /**
- * Search over the PAI federation memory index.
- *
- * Provides three search modes:
- *  - keyword  — BM25 full-text search (default, fast, no ML required)
- *  - semantic — Brute-force cosine similarity over pre-computed embeddings
- *  - hybrid   — Normalized combination of BM25 + cosine scores
- *
- * BM25 uses SQLite's FTS5 extension.  Semantic search requires embeddings to
- * have been generated first via `embedChunks()` in the indexer.
+ * Query building and result post-processing for the PAI federation memory
+ * index — everything here is pure logic (no SQL). The raw FTS5/vector
+ * queries live under src/storage/{sqlite,postgres}/search.ts, which call
+ * back into buildFtsQuery()/isQuerySyntaxError() from this module.
  */
 
-import type { Database } from "better-sqlite3";
-import { deserializeEmbedding, cosineSimilarity } from "./embeddings.js";
 import { STOP_WORDS } from "../utils/stop-words.js";
+import type { RegistryBackend } from "../storage/registry-interface.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,359 +97,9 @@ export function buildFtsQuery(query: string): string {
   return tokens.join(" OR ");
 }
 
-// ---------------------------------------------------------------------------
-// Search
-// ---------------------------------------------------------------------------
-
-/**
- * Search across all indexed memory using FTS5 BM25 ranking.
- *
- * Results are ordered by BM25 score (most relevant first).
- * FTS5 bm25() returns negative values; closer to 0 = more relevant.
- * We negate the score so callers get positive values where higher = better.
- *
- * Multilingual note: SQLite FTS5 uses the `unicode61` tokenizer by default,
- * which handles Unicode correctly (German umlauts, French accents, etc.) without
- * language-specific stemming. No changes needed here — it is already
- * multilingual-safe.
- */
-export function searchMemory(
-  db: Database,
-  query: string,
-  opts?: SearchOptions,
-): SearchResult[] {
-  const maxResults = opts?.maxResults ?? 10;
-  const ftsQuery = buildFtsQuery(query);
-
-  // Build the SQL with optional filters
-  const conditions: string[] = [];
-  const params: (string | number)[] = [ftsQuery];
-
-  if (opts?.projectIds && opts.projectIds.length > 0) {
-    const placeholders = opts.projectIds.map(() => "?").join(", ");
-    conditions.push(`c.project_id IN (${placeholders})`);
-    params.push(...opts.projectIds);
-  }
-
-  if (opts?.sources && opts.sources.length > 0) {
-    const placeholders = opts.sources.map(() => "?").join(", ");
-    conditions.push(`c.source IN (${placeholders})`);
-    params.push(...opts.sources);
-  }
-
-  if (opts?.tiers && opts.tiers.length > 0) {
-    const placeholders = opts.tiers.map(() => "?").join(", ");
-    conditions.push(`c.tier IN (${placeholders})`);
-    params.push(...opts.tiers);
-  }
-
-  const whereClause = conditions.length > 0
-    ? "AND " + conditions.join(" AND ")
-    : "";
-
-  params.push(maxResults);
-
-  // FTS5: join memory_fts with memory_chunks to get metadata
-  // bm25(memory_fts) returns negative values (lower = better match)
-  const sql = `
-    SELECT
-      c.id,
-      c.project_id,
-      c.path,
-      c.start_line,
-      c.end_line,
-      c.text             AS snippet,
-      c.tier,
-      c.source,
-      c.updated_at,
-      c.last_accessed_at,
-      c.relevance_score,
-      bm25(memory_fts) AS bm25_score
-    FROM memory_fts
-    JOIN memory_chunks c ON memory_fts.id = c.id
-    WHERE memory_fts MATCH ?
-      ${whereClause}
-    ORDER BY bm25_score
-    LIMIT ?
-  `;
-
-  let rows: Array<{
-    id: string;
-    project_id: number;
-    path: string;
-    start_line: number;
-    end_line: number;
-    snippet: string;
-    tier: string;
-    source: string;
-    updated_at: number;
-    last_accessed_at: number | null;
-    relevance_score: number | null;
-    bm25_score: number;
-  }>;
-
-  try {
-    rows = db.prepare(sql).all(...params) as typeof rows;
-  } catch (e) {
-    // FTS5 MATCH throws on a malformed query, and for THAT an empty result is the
-    // honest answer — nothing matches a query that cannot be parsed.
-    //
-    // Everything else is a failure of the store: a missing table, a corrupt
-    // index, a locked database. Those used to return [] as well, which made an
-    // unusable index byte-identical to a genuine miss. The Postgres path had the
-    // same defect and it cost a real wrong answer on 2026-08-04 — the backend was
-    // down for two hours, every search reported "No results found", and a sibling
-    // session told the owner a DMARC note did not exist. See
-    // storage/postgres/search.ts.
-    if (!isQuerySyntaxError(e)) {
-      throw new Error(
-        `Memory keyword search failed — the index is unusable, so this is NOT an ` +
-          `empty result set. Cause: ${e instanceof Error ? e.message : String(e)}`
-      );
-    }
-    return [];
-  }
-
-  const minScore = opts?.minScore ?? 0.0;
-
-  return rows
-    .map((row) => {
-      // Negate so higher = better match for callers
-      const baseScore = -row.bm25_score;
-      // MR2: scale by feedback relevance_score: multiplier in [0.5, 1.5]
-      const relevanceScore = row.relevance_score ?? 0.5;
-      const score = baseScore * (0.5 + relevanceScore);
-      return {
-        chunkId: row.id,
-        projectId: row.project_id,
-        path: row.path,
-        startLine: row.start_line,
-        endLine: row.end_line,
-        snippet: row.snippet,
-        score,
-        tier: row.tier,
-        source: row.source,
-        updatedAt: row.updated_at,
-        lastAccessedAt: row.last_accessed_at ?? undefined,
-      };
-    })
-    .filter((r) => r.score >= minScore);
-}
-
-// ---------------------------------------------------------------------------
-// Semantic search
-// ---------------------------------------------------------------------------
-
-/**
- * Search chunks using brute-force cosine similarity over stored embeddings.
- *
- * Only chunks that have a non-null embedding BLOB are considered.  Chunks
- * without embeddings are silently skipped (they can be embedded later via
- * `embedChunks()`).
- *
- * @param queryEmbedding  Pre-computed Float32Array for the search query.
- */
-export function searchMemorySemantic(
-  db: Database,
-  queryEmbedding: Float32Array,
-  opts?: SearchOptions,
-): SearchResult[] {
-  const maxResults = opts?.maxResults ?? 10;
-
-  // Build the SQL filter conditions
-  const conditions: string[] = ["embedding IS NOT NULL"];
-  const params: (string | number)[] = [];
-
-  if (opts?.projectIds && opts.projectIds.length > 0) {
-    const placeholders = opts.projectIds.map(() => "?").join(", ");
-    conditions.push(`project_id IN (${placeholders})`);
-    params.push(...opts.projectIds);
-  }
-
-  if (opts?.sources && opts.sources.length > 0) {
-    const placeholders = opts.sources.map(() => "?").join(", ");
-    conditions.push(`source IN (${placeholders})`);
-    params.push(...opts.sources);
-  }
-
-  if (opts?.tiers && opts.tiers.length > 0) {
-    const placeholders = opts.tiers.map(() => "?").join(", ");
-    conditions.push(`tier IN (${placeholders})`);
-    params.push(...opts.tiers);
-  }
-
-  const where = "WHERE " + conditions.join(" AND ");
-
-  // Hard cap for SQLite semantic path — prevents OOM on large corpora.
-  // Use Postgres for production semantic search.
-  const sql = `
-    SELECT id, project_id, path, start_line, end_line, text, tier, source, embedding, updated_at, last_accessed_at, relevance_score
-    FROM memory_chunks
-    ${where}
-    LIMIT 5000
-  `;
-
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: string;
-    project_id: number;
-    path: string;
-    start_line: number;
-    end_line: number;
-    text: string;
-    tier: string;
-    source: string;
-    embedding: Buffer;
-    updated_at: number;
-    last_accessed_at: number | null;
-    relevance_score: number | null;
-  }>;
-
-  if (rows.length === 0) return [];
-
-  // Compute cosine similarity for every chunk
-  const scored = rows.map((row) => {
-    const vec = deserializeEmbedding(row.embedding);
-    const baseScore = cosineSimilarity(queryEmbedding, vec);
-    // MR2: scale by feedback relevance_score: multiplier in [0.5, 1.5]
-    const relevanceScore = row.relevance_score ?? 0.5;
-    const score = baseScore * (0.5 + relevanceScore);
-    return {
-      chunkId: row.id,
-      projectId: row.project_id,
-      path: row.path,
-      startLine: row.start_line,
-      endLine: row.end_line,
-      snippet: row.text,
-      score,
-      tier: row.tier,
-      source: row.source,
-      updatedAt: row.updated_at,
-      lastAccessedAt: row.last_accessed_at ?? undefined,
-    };
-  });
-
-  // Sort by descending similarity, apply optional min score filter, limit
-  const minScore = opts?.minScore ?? -Infinity;
-
-  return scored
-    .filter((r) => r.score >= minScore)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxResults);
-}
-
-// ---------------------------------------------------------------------------
-// Hybrid search
-// ---------------------------------------------------------------------------
-
-/**
- * Combine BM25 keyword search and semantic search using normalized scores.
- *
- * Both score sets are min-max normalized to [0,1] before combining, so neither
- * dominates the other regardless of their raw scales.
- *
- * @param queryEmbedding  Pre-computed embedding for the query.
- * @param keywordWeight   Weight for BM25 score (default 0.5).
- * @param semanticWeight  Weight for cosine similarity score (default 0.5).
- */
-export function searchMemoryHybrid(
-  db: Database,
-  query: string,
-  queryEmbedding: Float32Array,
-  opts?: SearchOptions & { keywordWeight?: number; semanticWeight?: number },
-): SearchResult[] {
-  const maxResults = opts?.maxResults ?? 10;
-  const kw = opts?.keywordWeight ?? 0.5;
-  const sw = opts?.semanticWeight ?? 0.5;
-
-  // Fetch keyword results — 50 candidates is sufficient for min-max normalization
-  const keywordResults = searchMemory(db, query, {
-    ...opts,
-    maxResults: 50,
-  });
-
-  // Fetch semantic results — 50 candidates is sufficient for min-max normalization
-  const semanticResults = searchMemorySemantic(db, queryEmbedding, {
-    ...opts,
-    maxResults: 50,
-  });
-
-  if (keywordResults.length === 0 && semanticResults.length === 0) return [];
-
-  // Build a map of chunk ID → combined result
-  // Use "projectId:path:startLine:endLine" as a stable key (same as chunk IDs)
-  const keyFor = (r: SearchResult) =>
-    `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
-
-  // Min-max normalize helper
-  function minMaxNormalize(items: SearchResult[]): Map<string, number> {
-    if (items.length === 0) return new Map();
-    const min = Math.min(...items.map((r) => r.score));
-    const max = Math.max(...items.map((r) => r.score));
-    const range = max - min;
-    const m = new Map<string, number>();
-    for (const r of items) {
-      m.set(keyFor(r), range === 0 ? 1 : (r.score - min) / range);
-    }
-    return m;
-  }
-
-  const kwNorm = minMaxNormalize(keywordResults);
-  const semNorm = minMaxNormalize(semanticResults);
-
-  // Union of all chunk keys
-  const allKeys = new Set<string>([
-    ...keywordResults.map(keyFor),
-    ...semanticResults.map(keyFor),
-  ]);
-
-  // Build a lookup from key → result metadata
-  const metaMap = new Map<string, SearchResult>();
-  for (const r of [...keywordResults, ...semanticResults]) {
-    metaMap.set(keyFor(r), r);
-  }
-
-  // Combine scores
-  const combined: Array<SearchResult & { combinedScore: number }> = [];
-  for (const key of allKeys) {
-    const meta = metaMap.get(key)!;
-    const kwScore = kwNorm.get(key) ?? 0;
-    const semScore = semNorm.get(key) ?? 0;
-    const combinedScore = kw * kwScore + sw * semScore;
-    combined.push({ ...meta, score: combinedScore, combinedScore });
-  }
-
-  // Sort by combined score descending
-  return combined
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxResults)
-    .map(({ combinedScore: _unused, ...r }) => r);
-}
-
-// ---------------------------------------------------------------------------
-// Access timestamp tracking (QW2)
-// ---------------------------------------------------------------------------
-
-/**
- * Update last_accessed_at for a set of chunk IDs to the current timestamp.
- *
- * Called after a successful search to record that these chunks were retrieved.
- * This enables the recency boost to account for access patterns, not just
- * modification time.
- *
- * Best-effort: errors are silently ignored so search is never blocked.
- */
-export function touchChunksLastAccessed(db: Database, chunkIds: string[]): void {
-  if (chunkIds.length === 0) return;
-  try {
-    const now = Date.now();
-    const placeholders = chunkIds.map(() => "?").join(", ");
-    db.prepare(
-      `UPDATE memory_chunks SET last_accessed_at = ? WHERE id IN (${placeholders})`
-    ).run(now, ...chunkIds);
-  } catch {
-    // non-critical — do not block search results
-  }
-}
+// The raw searchMemory()/searchMemorySemantic()/searchMemoryHybrid()/
+// touchChunksLastAccessed() implementations live in storage/sqlite/search.ts
+// (SQLite) and storage/postgres/search.ts + backend.ts (Postgres).
 
 // ---------------------------------------------------------------------------
 // Slug lookup helper
@@ -465,19 +109,21 @@ export function touchChunksLastAccessed(db: Database, chunkIds: string[]): void 
  * Populate the projectSlug field on search results by looking up project IDs
  * in the registry database.
  */
-export function populateSlugs(
+export async function populateSlugs(
   results: SearchResult[],
-  registryDb: Database,
-): SearchResult[] {
+  registry: RegistryBackend,
+): Promise<SearchResult[]> {
   if (results.length === 0) return results;
 
   const ids = [...new Set(results.map((r) => r.projectId))];
-  const placeholders = ids.map(() => "?").join(", ");
-  const rows = registryDb
-    .prepare(`SELECT id, slug FROM projects WHERE id IN (${placeholders})`)
-    .all(...ids) as Array<{ id: number; slug: string }>;
-
-  const slugMap = new Map(rows.map((r) => [r.id, r.slug]));
+  // No batch "projects by ids" method on RegistryBackend yet (flagged in the
+  // report) — loops getProjectById, bounded by the distinct project count in
+  // an already-capped result set.
+  const slugMap = new Map<number, string>();
+  for (const id of ids) {
+    const project = await registry.getProjectById(id);
+    if (project) slugMap.set(id, project.slug);
+  }
 
   return results.map((r) => ({
     ...r,

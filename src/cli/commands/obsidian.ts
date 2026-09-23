@@ -7,7 +7,6 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import { execSync } from "node:child_process";
 import { ok, warn, err, dim, bold, header } from "../utils.js";
 import {
@@ -25,6 +24,8 @@ import {
   readMainConfigRaw,
   writeMainConfigRaw,
 } from "../../daemon/config.js";
+import { getRegistryBackend } from "../../storage/factory.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 
@@ -85,10 +86,10 @@ export function saveVaultPath(vaultPath: string): void {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-function cmdSync(
-  db: Database,
+async function cmdSync(
+  registry: RegistryBackend,
   opts: { vault?: string; quiet?: boolean }
-): void {
+): Promise<void> {
   const vaultPath = getVaultPath(opts.vault);
   const q = opts.quiet ?? false;
 
@@ -101,7 +102,7 @@ function cmdSync(
 
   // --- Symlinks ---
   if (!q) process.stdout.write("  Syncing symlinks...");
-  const stats = syncVault(vaultPath, db);
+  const stats = await syncVault(vaultPath, registry);
   if (!q) {
     process.stdout.write(
       `\r  ${ok("Symlinks:")}  created ${stats.created}  updated ${stats.updated}  removed ${stats.removed}  stubs ${stats.stubbed}\n`
@@ -115,17 +116,17 @@ function cmdSync(
 
   // --- Index ---
   if (!q) process.stdout.write("  Generating index...");
-  generateIndex(vaultPath, db);
+  await generateIndex(vaultPath, registry);
   if (!q) console.log(`\r  ${ok("Index:")}     _index.md written              `);
 
   // --- Topic pages ---
   if (!q) process.stdout.write("  Generating topic pages...");
-  const topicCount = generateTopicPages(vaultPath, db);
+  const topicCount = await generateTopicPages(vaultPath, registry);
   if (!q) console.log(`\r  ${ok("Topics:")}    ${topicCount} topic page(s) written          `);
 
   // --- Fix session tags (remove generic #Session) ---
   if (!q) process.stdout.write("  Fixing session tags...");
-  const tagStats = fixSessionTags(db);
+  const tagStats = await fixSessionTags(registry);
   if (!q) {
     console.log(
       `\r  ${ok("Tags:")}      ${tagStats.filesModified} file(s) updated (scanned ${tagStats.filesScanned})          `
@@ -139,7 +140,7 @@ function cmdSync(
 
   // --- Master notes ---
   if (!q) process.stdout.write("  Generating master notes...");
-  const masterCount = generateMasterNotes(vaultPath, db);
+  const masterCount = await generateMasterNotes(vaultPath, registry);
   if (!q) console.log(`\r  ${ok("Masters:")}   ${masterCount} master note(s) written         `);
 
   // Persist vault path so status/open can use it
@@ -152,9 +153,9 @@ function cmdSync(
   }
 }
 
-function cmdStatus(db: Database, opts: { vault?: string }): void {
+async function cmdStatus(registry: RegistryBackend, opts: { vault?: string }): Promise<void> {
   const vaultPath = getVaultPath(opts.vault);
-  const report = checkHealth(vaultPath, db);
+  const report = await checkHealth(vaultPath, registry);
 
   console.log();
   console.log(header("  PAI Obsidian Vault Status"));
@@ -253,18 +254,15 @@ function cmdOpen(opts: { vault?: string }): void {
 // Commander registration
 // ---------------------------------------------------------------------------
 
-export function registerObsidianCommands(
-  obsidianCmd: Command,
-  getDb: () => Database
-): void {
+export function registerObsidianCommands(obsidianCmd: Command): void {
   // pai obsidian sync
   obsidianCmd
     .command("sync")
     .description("Sync project Notes/ dirs into vault, generate _index.md and topic pages")
     .option("--vault <path>", "Override vault path (default: ~/.pai/obsidian-vault)")
     .option("--quiet", "Minimal output — suitable for cron/hook use")
-    .action((opts: { vault?: string; quiet?: boolean }) => {
-      cmdSync(getDb(), opts);
+    .action(async (opts: { vault?: string; quiet?: boolean }) => {
+      await cmdSync(await getRegistryBackend(), opts);
     });
 
   // pai obsidian status
@@ -272,8 +270,8 @@ export function registerObsidianCommands(
     .command("status")
     .description("Show vault health: healthy, broken, orphaned, and missing symlinks")
     .option("--vault <path>", "Override vault path")
-    .action((opts: { vault?: string }) => {
-      cmdStatus(getDb(), opts);
+    .action(async (opts: { vault?: string }) => {
+      await cmdStatus(await getRegistryBackend(), opts);
     });
 
   // pai obsidian open

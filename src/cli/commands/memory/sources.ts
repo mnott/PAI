@@ -25,47 +25,6 @@
 import { ok, warn, dim, bold, header, renderTable } from "../../utils.js";
 import type { StorageBackend } from "../../../storage/interface.js";
 
-interface Row {
-  label: string;
-  chunks: number;
-  embedded: number;
-}
-
-interface ChurnRow {
-  day: string;
-  chunks: number;
-  embedded: number;
-}
-
-/** A backend that can answer aggregate SQL. Both concrete backends can. */
-interface Queryable {
-  backendType: "sqlite" | "postgres";
-  getPool?: () => { query: (sql: string) => Promise<{ rows: unknown[] }> };
-  getSqliteDb?: () => { prepare: (sql: string) => { all: () => unknown[] } };
-}
-
-/**
- * Run one aggregate query against whichever backend is configured.
- *
- * The two dialects differ only in the epoch conversion, so the SQL is passed in
- * per-dialect rather than abstracted — an abstraction over four reporting
- * queries would cost more than it saves.
- */
-async function queryRows(
-  backend: Queryable,
-  pgSql: string,
-  sqliteSql: string
-): Promise<Record<string, unknown>[]> {
-  if (backend.backendType === "postgres" && backend.getPool) {
-    const res = await backend.getPool().query(pgSql);
-    return res.rows as Record<string, unknown>[];
-  }
-  if (backend.getSqliteDb) {
-    return backend.getSqliteDb().prepare(sqliteSql).all() as Record<string, unknown>[];
-  }
-  return [];
-}
-
 const num = (v: unknown): number => Number(v ?? 0);
 const pct = (part: number, whole: number): string =>
   whole === 0 ? "—" : `${Math.round((part / whole) * 100)}%`;
@@ -81,23 +40,15 @@ export async function cmdMemorySources(
   backend: StorageBackend,
   opts: { limit?: number } = {}
 ): Promise<void> {
-  const q = backend as unknown as Queryable;
   const limit = opts.limit ?? 8;
 
-  // ---- composition -------------------------------------------------------
-  const comp = (await queryRows(
-    q,
-    `SELECT source, tier, COUNT(*) AS chunks, COUNT(embedding) AS embedded
-       FROM pai_chunks GROUP BY source, tier ORDER BY COUNT(*) DESC`,
-    `SELECT source, tier, COUNT(*) AS chunks,
-            SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END) AS embedded
-       FROM memory_chunks GROUP BY source, tier ORDER BY COUNT(*) DESC`
-  )) as Array<{ source: string; tier: string; chunks: unknown; embedded: unknown }>;
+  const report = await backend.getMemorySourcesReport();
+  const comp = report.composition;
 
   if (comp.length === 0) {
     console.log();
     console.log(warn(`  Nothing indexed yet, or the backend is unreachable.`));
-    console.log(dim(`  Backend: ${q.backendType}`));
+    console.log(dim(`  Backend: ${backend.backendType}`));
     console.log();
     return;
   }
@@ -111,7 +62,7 @@ export async function cmdMemorySources(
   console.log(
     `  ${bold(totalChunks.toLocaleString())} chunks   ` +
       `${totalEmbedded.toLocaleString()} embedded (${pct(totalEmbedded, totalChunks)})   ` +
-      dim(`backend: ${q.backendType}`)
+      dim(`backend: ${backend.backendType}`)
   );
   console.log();
 
@@ -128,11 +79,7 @@ export async function cmdMemorySources(
   );
 
   // ---- where it enters from ---------------------------------------------
-  const paths = (await queryRows(
-    q,
-    `SELECT path, COUNT(*) AS chunks FROM pai_chunks GROUP BY path`,
-    `SELECT path, COUNT(*) AS chunks FROM memory_chunks GROUP BY path`
-  )) as Array<{ path: string; chunks: unknown }>;
+  const paths = report.paths;
 
   const byRoot = new Map<string, number>();
   for (const r of paths) {
@@ -171,15 +118,7 @@ export async function cmdMemorySources(
   // The section that distinguishes a backlog from a treadmill. A day with a
   // large chunk count and a small embedded count means those chunks were
   // rewritten and their embeddings thrown away.
-  const churn = (await queryRows(
-    q,
-    `SELECT to_char(to_timestamp(updated_at/1000),'YYYY-MM-DD') AS day,
-            COUNT(*) AS chunks, COUNT(embedding) AS embedded
-       FROM pai_chunks GROUP BY day ORDER BY day DESC LIMIT 10`,
-    `SELECT date(updated_at/1000,'unixepoch') AS day, COUNT(*) AS chunks,
-            SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END) AS embedded
-       FROM memory_chunks GROUP BY day ORDER BY day DESC LIMIT 10`
-  )) as unknown as ChurnRow[];
+  const churn = report.churn;
 
   console.log();
   console.log(header(`Rewritten per day`));

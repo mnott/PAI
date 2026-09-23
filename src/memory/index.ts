@@ -6,19 +6,11 @@
  * Re-exports the public API from all memory sub-modules.
  */
 
-export { FEDERATION_SCHEMA_SQL, initializeFederationSchema } from "./schema.js";
-export { openFederation } from "./db.js";
-export type { Database } from "./db.js";
 export { chunkMarkdown, estimateTokens } from "./chunker.js";
 export type { Chunk, ChunkOptions } from "./chunker.js";
-export {
-  indexFile,
-  indexProject,
-  indexAll,
-  detectTier,
-} from "./indexer/sync.js";
+export { detectTier } from "./indexer/helpers.js";
 export type { IndexResult } from "./indexer/types.js";
-export { searchMemory, buildFtsQuery, populateSlugs } from "./search.js";
+export { buildFtsQuery, populateSlugs } from "./search.js";
 export type { SearchResult, SearchOptions } from "./search.js";
 export { rerankResults, configureRerankerModel } from "./reranker.js";
 export type { RerankOptions } from "./reranker.js";

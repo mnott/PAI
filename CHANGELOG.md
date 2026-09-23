@@ -8,6 +8,32 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **One storage layer, Postgres-only when configured** — `src/storage/` owns
+  all persistence: registry, memory, vault, knowledge graph (entities and
+  triples), observations and stats, each behind one interface with a SQLite
+  and a Postgres implementation, chosen once from `storageBackend`. With
+  `postgres`, no code path opens SQLite. `src/storage/boundary.test.ts`
+  fails on any database import, raw handle, backend check or SQL outside
+  `src/storage/`. One Postgres pool per process, created exit-friendly.
+- **`pai db migrate-to-postgres`** — one-shot, idempotent copy of the
+  registry, `kg_entities` and every memory/vault row that exists only in
+  SQLite. Preflight checks the container's data bind mount and takes a
+  `pg_dump` rollback; verification refuses on any missing row. Chunks whose
+  embeddings came from a model of another dimension are copied without one
+  and re-embedded. `--dry-run` shows what would be copied.
+- **`pai hooks-db`** — the session-stop and pre-compact shell hooks update the
+  registry through the storage layer instead of calling `sqlite3`.
+- **Worktrees see uncommitted work** — a worktree run on a dirty checkout
+  starts from a snapshot of the working tree (temporary index, checkout
+  untouched); `pai worker merge` applies only the worker's own changes back
+  as uncommitted edits and refuses when the operator changed the same files.
+- **Guards** — in-place workers may not run tree-rewriting git commands
+  (stash except list/show, reset, clean, checkout/restore of files, switch,
+  rebase, merge) and are told so up front; `plutil` edit verbs without `-o`
+  are blocked; `bun test` refuses to run (it cannot sandbox HOME); main
+  sessions are told at start that code edits go through workers.
+- **Pane close reasons** — every worker pane logs `PANE-CLOSED` with its
+  reason; the pane footer shows exact elapsed time.
 - **Sub-workers** — any worker may start its own with `pai worker run`: the
   runner exports `PAI_WORKER_ID`, a run launched from inside a worker records
   `parent`, and `ps`/status line render the forest (children indented, each
@@ -89,6 +115,15 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Fixed
 
+- **Worker panes no longer vanish** — an exception in `follow`'s poll loop
+  killed the process and iTerm closed the pane without a trace; errors now
+  stay visible in the pane.
+- **Security validator denials are readable** — the reason goes to stderr, so
+  sessions see why a command was blocked instead of "No stderr output".
+- **`pai memory embed` no longer runs out of memory** — it pages through the
+  unembedded backlog instead of loading it at once.
+- **Interactive launches keep project MCP pins** — `projectLaunchConfig` is
+  async and is now awaited; worktree runs report their recorded commit count.
 - **Worker follow panes open reliably** — iTerm intermittently fails window
   enumeration with -1708 ("every window doesn't understand count", ~5% of
   calls, in bursts up to ~2 s), and the swallowed error left headless workers

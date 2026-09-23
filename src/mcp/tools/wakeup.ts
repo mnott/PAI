@@ -6,7 +6,7 @@
  *   L1 — recent session note highlights (Work Done / Key Decisions / Next Steps)
  */
 
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { buildWakeupContext } from "../../memory/wakeup.js";
 import { detectProjectFromPath } from "./types.js";
 import type { ToolResult } from "./types.js";
@@ -32,10 +32,10 @@ export interface MemoryWakeupParams {
 // Tool handler
 // ---------------------------------------------------------------------------
 
-export function toolMemoryWakeup(
-  registryDb: Database,
+export async function toolMemoryWakeup(
+  registry: RegistryBackend,
   params: MemoryWakeupParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
     const tokenBudget = params.token_budget ?? DEFAULT_TOKEN_BUDGET;
 
@@ -44,20 +44,18 @@ export function toolMemoryWakeup(
 
     if (params.project) {
       // Try slug lookup first
-      const bySlug = registryDb
-        .prepare("SELECT root_path FROM projects WHERE slug = ?")
-        .get(params.project) as { root_path: string } | undefined;
+      const bySlug = await registry.getProjectBySlug(params.project);
 
       if (bySlug) {
         rootPath = bySlug.root_path;
       } else {
         // Maybe it's an absolute path — try path-based detect
-        const detected = detectProjectFromPath(registryDb, params.project);
+        const detected = await detectProjectFromPath(registry, params.project);
         if (detected) rootPath = detected.root_path;
       }
     } else {
       // Auto-detect from cwd
-      const detected = detectProjectFromPath(registryDb, process.cwd());
+      const detected = await detectProjectFromPath(registry, process.cwd());
       if (detected) rootPath = detected.root_path;
     }
 

@@ -4,9 +4,9 @@
 
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
-import type { Database } from "better-sqlite3";
-import { populateSlugs, searchMemoryHybrid, touchChunksLastAccessed } from "../../memory/search.js";
+import { populateSlugs } from "../../memory/search.js";
 import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SearchConfig } from "../../daemon/config.js";
 import type { SearchResult } from "../../memory/search.js";
 import {
@@ -37,15 +37,15 @@ export interface MemorySearchParams {
 }
 
 export async function toolMemorySearch(
-  registryDb: Database,
-  federation: Database | StorageBackend,
+  registry: RegistryBackend,
+  federation: StorageBackend,
   params: MemorySearchParams,
   searchDefaults?: SearchConfig,
 ): Promise<ToolResult> {
   try {
     const projectIds: number[] | undefined = params.project
-      ? (() => {
-          const id = lookupProjectId(registryDb, params.project!);
+      ? await (async () => {
+          const id = await lookupProjectId(registry, params.project!);
           return id != null ? [id] : [];
         })()
       : undefined;
@@ -73,57 +73,27 @@ export async function toolMemorySearch(
       maxResults: params.limit ?? (searchDefaults?.defaultLimit ?? 5),
     };
 
-    let results;
+    let results: SearchResult[];
 
-    // Determine if federation is a StorageBackend or a raw Database
-    const isBackend = (x: Database | StorageBackend): x is StorageBackend =>
-      "backendType" in x;
+    if (mode === "keyword") {
+      results = await federation.searchKeyword(params.query, searchOpts);
+    } else if (mode === "semantic" || mode === "hybrid") {
+      const { generateEmbedding } = await import("../../memory/embeddings.js");
+      const queryEmbedding = await generateEmbedding(params.query, true);
 
-    if (isBackend(federation)) {
-      // Use the storage backend interface (works for both SQLite and Postgres)
-      if (mode === "keyword") {
-        results = await federation.searchKeyword(params.query, searchOpts);
-      } else if (mode === "semantic" || mode === "hybrid") {
-        const { generateEmbedding } = await import("../../memory/embeddings.js");
-        const queryEmbedding = await generateEmbedding(params.query, true);
-
-        if (mode === "semantic") {
-          results = await federation.searchSemantic(queryEmbedding, searchOpts);
-        } else {
-          // Hybrid: combine keyword + semantic
-          const [kwResults, semResults] = await Promise.all([
-            federation.searchKeyword(params.query, { ...searchOpts, maxResults: 50 }),
-            federation.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 50 }),
-          ]); // 50 candidates is sufficient for min-max normalization
-          // Reuse the existing hybrid scoring logic
-          results = combineHybridResults(kwResults, semResults, searchOpts.maxResults ?? 10);
-        }
+      if (mode === "semantic") {
+        results = await federation.searchSemantic(queryEmbedding, searchOpts);
       } else {
-        results = await federation.searchKeyword(params.query, searchOpts);
+        // Hybrid: combine keyword + semantic
+        const [kwResults, semResults] = await Promise.all([
+          federation.searchKeyword(params.query, { ...searchOpts, maxResults: 50 }),
+          federation.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 50 }),
+        ]); // 50 candidates is sufficient for min-max normalization
+        // Reuse the existing hybrid scoring logic
+        results = combineHybridResults(kwResults, semResults, searchOpts.maxResults ?? 10);
       }
     } else {
-      // Legacy path: raw better-sqlite3 Database (for direct MCP server usage)
-      const { searchMemory, searchMemorySemantic } = await import("../../memory/search.js");
-
-      if (mode === "keyword") {
-        results = searchMemory(federation, params.query, searchOpts);
-      } else if (mode === "semantic" || mode === "hybrid") {
-        const { generateEmbedding } = await import("../../memory/embeddings.js");
-        const queryEmbedding = await generateEmbedding(params.query, true);
-
-        if (mode === "semantic") {
-          results = searchMemorySemantic(federation, queryEmbedding, searchOpts);
-        } else {
-          results = searchMemoryHybrid(
-            federation,
-            params.query,
-            queryEmbedding,
-            searchOpts
-          );
-        }
-      } else {
-        results = searchMemory(federation, params.query, searchOpts);
-      }
+      results = await federation.searchKeyword(params.query, searchOpts);
     }
 
     // Re-rank by the corpus's own links before returning.
@@ -141,7 +111,7 @@ export async function toolMemorySearch(
       const paths = [...new Set(results.map((r) => r.path))];
       // Bounded: one lookup per distinct result path, not per chunk, and the
       // result set is already capped by maxResults.
-      if (isBackend(federation) && paths.length > 1) {
+      if (paths.length > 1) {
         const edges: Array<{ sourcePath: string; targetPath: string }> = [];
         for (const p of paths) {
           for (const l of await federation.getLinksToTarget(p)) {
@@ -161,13 +131,7 @@ export async function toolMemorySearch(
         .map((r) => r.chunkId)
         .filter((id): id is string => id != null);
       if (chunkIds.length > 0) {
-        // Resolve a raw SQLite Database handle if available
-        const rawDb = !isBackend(federation)
-          ? federation
-          : (federation as { getSqliteDb?: () => Database }).getSqliteDb?.() ?? null;
-        if (rawDb) {
-          touchChunksLastAccessed(rawDb, chunkIds);
-        }
+        await federation.touchChunksLastAccessed(chunkIds);
       }
     } catch {
       // non-critical — never block search results
@@ -189,7 +153,7 @@ export async function toolMemorySearch(
       results = applyRecencyBoost(results, recencyDays);
     }
 
-    const withSlugs = populateSlugs(results, registryDb);
+    const withSlugs = await populateSlugs(results, registry);
 
     if (withSlugs.length === 0) {
       return {
@@ -265,12 +229,12 @@ export interface MemoryGetParams {
   lines?: number;
 }
 
-export function toolMemoryGet(
-  registryDb: Database,
+export async function toolMemoryGet(
+  registry: RegistryBackend,
   params: MemoryGetParams
-): ToolResult {
+): Promise<ToolResult> {
   try {
-    const projectId = lookupProjectId(registryDb, params.project);
+    const projectId = await lookupProjectId(registry, params.project);
     if (projectId == null) {
       return {
         content: [
@@ -280,9 +244,7 @@ export function toolMemoryGet(
       };
     }
 
-    const project = registryDb
-      .prepare("SELECT root_path FROM projects WHERE id = ?")
-      .get(projectId) as { root_path: string } | undefined;
+    const project = await registry.getProjectById(projectId);
 
     if (!project) {
       return {

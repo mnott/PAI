@@ -11,7 +11,6 @@ PAI_OS="pai"
 
 # Bail gracefully if pai is not installed
 command -v "$PAI_OS" &>/dev/null || exit 0
-command -v sqlite3 &>/dev/null || exit 0
 
 # ---------------------------------------------------------------------------
 # Read the Claude session UUID from the hook payload
@@ -38,12 +37,6 @@ if [ ! -t 0 ]; then
     fi
   fi
 fi
-
-# PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts), falling
-# back to the pre-2026-09-19 ~/.pai/registry.db.
-REGISTRY_DB="${PAI_HOME:-$HOME/.claude/pai}/registry.db"
-[ -f "$REGISTRY_DB" ] || REGISTRY_DB="$HOME/.pai/registry.db"
-[ -f "$REGISTRY_DB" ] || exit 0
 
 # ---------------------------------------------------------------------------
 # Everything below runs DETACHED. Nothing here is on the critical path.
@@ -112,27 +105,10 @@ fi
 [ -z "$PROJECT_SLUG" ] && exit 0
 
 # ---------------------------------------------------------------------------
-# Look up project and latest open/compacted session
+# Mark the latest open/compacted session completed
 # ---------------------------------------------------------------------------
 
-PROJECT_ID=$(sqlite3 "$REGISTRY_DB" \
-  "SELECT id FROM projects WHERE slug = '$PROJECT_SLUG' LIMIT 1" 2>/dev/null) || exit 0
-[ -z "$PROJECT_ID" ] && exit 0
-
-SESSION_ID=$(sqlite3 "$REGISTRY_DB" \
-  "SELECT id FROM sessions WHERE project_id = $PROJECT_ID AND status IN ('open','compacted') ORDER BY created_at DESC LIMIT 1" \
-  2>/dev/null) || true
-
-# ---------------------------------------------------------------------------
-# Mark session completed and set closed_at
-# ---------------------------------------------------------------------------
-
-if [ -n "$SESSION_ID" ]; then
-  TS=$(date +%s)000
-  sqlite3 "$REGISTRY_DB" \
-    "UPDATE sessions SET status = 'completed', closed_at = $TS WHERE id = $SESSION_ID" \
-    2>/dev/null || true
-fi
+"$PAI_OS" hooks-db session-stop "$PROJECT_SLUG" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Auto-generate slug from transcript and rename session note

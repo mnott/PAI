@@ -27,7 +27,6 @@
  * is the same as a fresh start.
  */
 
-import type { Database } from "better-sqlite3";
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import chalk from "chalk";
@@ -45,13 +44,12 @@ import { probeResume } from "../../lib/launch.js";
 // Command
 // ---------------------------------------------------------------------------
 
-export function cmdGoto(
-  db: Database,
+export async function cmdGoto(
   query: string,
-  opts: { dryRun?: boolean }
-): void {
+  opts: { dryRun?: boolean; noName?: boolean; noGo?: boolean }
+): Promise<void> {
   // ---- 1. Resolve name → session ----
-  const allSessions = scanSessions(db, { limit: 500, filter: "named" });
+  const allSessions = await scanSessions({ limit: 500, filter: "named" });
 
   let resolved;
   try {

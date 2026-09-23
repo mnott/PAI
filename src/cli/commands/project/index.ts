@@ -18,7 +18,6 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import { cmdPromote } from "../../../session/promote.js";
 import {
   cmdAdd,
@@ -40,10 +39,7 @@ import { resolveIdentifier } from "./helpers.js";
 
 export { cmdGo };
 
-export function registerProjectCommands(
-  projectCmd: Command,
-  getDb: () => Database
-): void {
+export function registerProjectCommands(projectCmd: Command): void {
   // pai project add <path>
   projectCmd
     .command("add <path>")
@@ -56,11 +52,11 @@ export function registerProjectCommands(
     )
     .option("--display-name <name>", "Human-readable display name")
     .action(
-      (
+      async (
         rawPath: string,
         opts: { slug?: string; type?: string; displayName?: string }
       ) => {
-        cmdAdd(getDb(), rawPath, opts);
+        await cmdAdd(rawPath, opts);
       }
     );
 
@@ -73,24 +69,24 @@ export function registerProjectCommands(
     .option("--status <status>", "Filter by status: active | archived")
     .option("--tag <tag>", "Filter by tag")
     .option("--type <type>", "Filter by type")
-    .action((opts: { status?: string; tag?: string; type?: string }) => {
-      cmdList(getDb(), opts);
+    .action(async (opts: { status?: string; tag?: string; type?: string }) => {
+      await cmdList(opts);
     });
 
   // pai project info <slug>
   projectCmd
     .command("info <slug>")
     .description("Show full details for a project")
-    .action((slug: string) => {
-      cmdInfo(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdInfo(slug);
     });
 
   // pai project archive <slug>
   projectCmd
     .command("archive <slug>")
     .description("Archive a project")
-    .action((slug: string) => {
-      cmdArchive(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdArchive(slug);
     });
 
   // merge / unregister are registered in projects-index.ts, the live file. They
@@ -101,32 +97,32 @@ export function registerProjectCommands(
   projectCmd
     .command("unarchive <slug>")
     .description("Restore an archived project to active status")
-    .action((slug: string) => {
-      cmdUnarchive(getDb(), slug);
+    .action(async (slug: string) => {
+      await cmdUnarchive(slug);
     });
 
   // pai project move <slug> <new-path>
   projectCmd
     .command("move <slug> <new-path>")
     .description("Update the root path for a project")
-    .action((slug: string, newPath: string) => {
-      cmdMove(getDb(), slug, newPath);
+    .action(async (slug: string, newPath: string) => {
+      await cmdMove(slug, newPath);
     });
 
   // pai project tag <slug> <tags...>
   projectCmd
     .command("tag <slug> <tags...>")
     .description("Add one or more tags to a project")
-    .action((slug: string, tags: string[]) => {
-      cmdTag(getDb(), slug, tags);
+    .action(async (slug: string, tags: string[]) => {
+      await cmdTag(slug, tags);
     });
 
   // pai project alias <slug> <alias>
   projectCmd
     .command("alias <slug> <alias>")
     .description("Register an alternative slug for a project")
-    .action((slug: string, alias: string) => {
-      cmdAlias(getDb(), slug, alias);
+    .action(async (slug: string, alias: string) => {
+      await cmdAlias(slug, alias);
     });
 
   // pai project edit <slug>
@@ -136,8 +132,8 @@ export function registerProjectCommands(
     .option("--display-name <name>", "New display name")
     .option("--type <type>", "New type")
     .action(
-      (slug: string, opts: { displayName?: string; type?: string }) => {
-        cmdEdit(getDb(), slug, opts);
+      async (slug: string, opts: { displayName?: string; type?: string }) => {
+        await cmdEdit(slug, opts);
       }
     );
 
@@ -148,8 +144,8 @@ export function registerProjectCommands(
       "cd to a project directory. Short form: pai cd <name>\n" +
         "(The shell wrapper handles the actual cd; pure output here.)"
     )
-    .action((identifier: string) => {
-      const project = resolveIdentifier(getDb(), identifier);
+    .action(async (identifier: string) => {
+      const project = await resolveIdentifier(identifier);
       if (!project) {
         console.error(`Project not found: ${identifier}`);
         process.exitCode = 1;
@@ -165,8 +161,8 @@ export function registerProjectCommands(
       "Detect which registered project the given path (or CWD) belongs to"
     )
     .option("--json", "Output raw JSON instead of human-readable text")
-    .action((pathArg: string | undefined, opts: { json?: boolean }) => {
-      cmdDetect(getDb(), pathArg, opts);
+    .action(async (pathArg: string | undefined, opts: { json?: boolean }) => {
+      await cmdDetect(pathArg, opts);
     });
 
   // pai project health
@@ -181,8 +177,8 @@ export function registerProjectCommands(
     )
     .option("--json", "Output raw JSON report")
     .option("--status <category>", "Filter output to: active | stale | dead")
-    .action((opts: { fix?: boolean; json?: boolean; status?: string }) => {
-      cmdHealth(getDb(), opts);
+    .action(async (opts: { fix?: boolean; json?: boolean; status?: string }) => {
+      await cmdHealth(opts);
     });
 
   // pai project consolidate <slug-or-number>
@@ -194,8 +190,8 @@ export function registerProjectCommands(
     .option("--yes", "Perform consolidation without confirmation prompt")
     .option("--dry-run", "Preview what would be moved without making changes")
     .action(
-      (identifier: string, opts: { yes?: boolean; dryRun?: boolean }) => {
-        cmdConsolidate(getDb(), identifier, opts);
+      async (identifier: string, opts: { yes?: boolean; dryRun?: boolean }) => {
+        await cmdConsolidate(identifier, opts);
       }
     );
 
@@ -215,8 +211,8 @@ export function registerProjectCommands(
       "--name <name>",
       "Display name for the new project (derived from filename if omitted)"
     )
-    .action((opts: { fromSession: string; to: string; name?: string }) => {
-      cmdPromote(getDb(), opts);
+    .action(async (opts: { fromSession: string; to: string; name?: string }) => {
+      await cmdPromote(opts);
     });
 
   // pai project go <query>
@@ -227,8 +223,8 @@ export function registerProjectCommands(
         "Designed for shell integration: cd $(pai project go <query>)\n" +
         "Or set a shell alias: alias pcd='cd $(pai project go)'"
     )
-    .action((query: string) => {
-      cmdGo(getDb(), query);
+    .action(async (query: string) => {
+      await cmdGo(query);
     });
 
   // pai project name <slug-or-number> <shortname>
@@ -242,12 +238,12 @@ export function registerProjectCommands(
       "Permission level: full | trusted | default (or raw CLI flags)"
     )
     .action(
-      (
+      async (
         identifier: string,
         shortname: string,
         opts: { permission?: string }
       ) => {
-        cmdName(getDb(), identifier, shortname, opts);
+        await cmdName(identifier, shortname, opts);
       }
     );
 
@@ -255,8 +251,8 @@ export function registerProjectCommands(
   projectCmd
     .command("unname <shortname>")
     .description("Remove a project's short name")
-    .action((shortname: string) => {
-      cmdUnname(getDb(), shortname);
+    .action(async (shortname: string) => {
+      await cmdUnname(shortname);
     });
 
   // pai project names
@@ -264,8 +260,8 @@ export function registerProjectCommands(
     .command("names")
     .description("List named projects (your curated shortlist)")
     .option("--json", "Output JSON for AIBroker consumption")
-    .action((opts: { json?: boolean }) => {
-      cmdNames(getDb(), opts);
+    .action(async (opts: { json?: boolean }) => {
+      await cmdNames(opts);
     });
 
   // pai project config [identifier]
@@ -300,7 +296,7 @@ export function registerProjectCommands(
     .option("--json", "Output JSON")
     .option("--reset", "Reset config to empty (inherit global defaults)")
     .action(
-      (
+      async (
         identifier: string | undefined,
         opts: {
           set?: string[];
@@ -312,7 +308,7 @@ export function registerProjectCommands(
           reset?: boolean;
         }
       ) => {
-        cmdConfig(getDb(), identifier, opts);
+        await cmdConfig(identifier, opts);
       }
     );
 }

@@ -3,7 +3,6 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import {
   cmdList,
   cmdInfo,
@@ -23,10 +22,7 @@ import { cmdEnd } from "./end.js";
 import { cmdPauseAll } from "./pause-all.js";
 import { cmdClearNames } from "./clear-names.js";
 
-export function registerSessionsCommands(
-  sessionsCmd: Command,
-  getDb: () => Database
-): void {
+export function registerSessionsCommands(sessionsCmd: Command): void {
   // pai sessions list [-n N] [--all] [--json]
   // Default when `pai sessions` is invoked bare (isDefault).
   sessionsCmd
@@ -41,7 +37,7 @@ export function registerSessionsCommands(
     .option("--all-tabs", "Show all iTerm2 tabs in Live Sessions, including bare shells")
     .option("--json", "Output raw JSON instead of formatted table")
     .action(async (opts: { n?: string; all?: boolean; allTabs?: boolean; json?: boolean }) => {
-      await cmdRecent(getDb(), opts);
+      await cmdRecent(opts);
     });
 
   // pai sessions goto <name-or-id> [--dry-run]
@@ -54,8 +50,8 @@ export function registerSessionsCommands(
     )
     .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
     .action(
-      (nameOrId: string, opts: { dryRun?: boolean }) => {
-        cmdGoto(getDb(), nameOrId, { dryRun: opts.dryRun });
+      async (nameOrId: string, opts: { dryRun?: boolean }) => {
+        await cmdGoto(nameOrId, { dryRun: opts.dryRun });
       }
     );
 
@@ -68,8 +64,8 @@ export function registerSessionsCommands(
         "Use /exit inside Claude Code to preserve full session resumability."
     )
     .option("--dry-run", "Preview the ## Continue block without writing it")
-    .action((opts: { dryRun?: boolean }) => {
-      cmdPause(getDb(), opts);
+    .action(async (opts: { dryRun?: boolean }) => {
+      await cmdPause(opts);
     });
 
   // pai sessions pause-all [--exit] [--wait <ms>] [--dry-run]
@@ -100,24 +96,24 @@ export function registerSessionsCommands(
         "Use /exit inside Claude Code after running this command."
     )
     .option("--dry-run", "Preview all changes without writing them")
-    .action((opts: { dryRun?: boolean }) => {
-      cmdEnd(getDb(), opts);
+    .action(async (opts: { dryRun?: boolean }) => {
+      await cmdEnd(opts);
     });
 
   // pai sessions info <project-slug> <number>
   sessionsCmd
     .command("info <project-slug> <number>")
     .description("Show full details for a specific session")
-    .action((projectSlug: string, number: string) => {
-      cmdInfo(getDb(), projectSlug, number);
+    .action(async (projectSlug: string, number: string) => {
+      await cmdInfo(projectSlug, number);
     });
 
   // pai sessions rename <project-slug> <number> <new-slug>
   sessionsCmd
     .command("rename <project-slug> <number> <new-slug>")
     .description("Rename a session note — updates file on disk, H1 title, and registry")
-    .action((projectSlug: string, number: string, newSlug: string) => {
-      cmdRename(getDb(), projectSlug, number, newSlug);
+    .action(async (projectSlug: string, number: string, newSlug: string) => {
+      await cmdRename(projectSlug, number, newSlug);
     });
 
   // pai sessions slug <project-slug> <number>
@@ -126,8 +122,8 @@ export function registerSessionsCommands(
     .description("Generate a descriptive slug from the session JSONL transcript")
     .option("--apply", "Rename the session note using the generated slug")
     .action(
-      (projectSlug: string, number: string, opts: { apply?: boolean }) => {
-        cmdSlug(getDb(), projectSlug, number, opts);
+      async (projectSlug: string, number: string, opts: { apply?: boolean }) => {
+        await cmdSlug(projectSlug, number, opts);
       }
     );
 
@@ -135,8 +131,8 @@ export function registerSessionsCommands(
   sessionsCmd
     .command("tag <project-slug> <number> [tags...]")
     .description("Set or show tags on a session.")
-    .action((projectSlug: string, number: string, tags: string[]) => {
-      cmdTag(getDb(), projectSlug, number, tags);
+    .action(async (projectSlug: string, number: string, tags: string[]) => {
+      await cmdTag(projectSlug, number, tags);
     });
 
   // pai sessions route <project-slug> <number> <target-project>
@@ -145,13 +141,13 @@ export function registerSessionsCommands(
     .description("Create a cross-reference link from a session to a target project")
     .option("--type <type>", "Link type: related | follow-up | reference", "related")
     .action(
-      (
+      async (
         projectSlug: string,
         number: string,
         targetProject: string,
         opts: { type?: string }
       ) => {
-        cmdRoute(getDb(), projectSlug, number, targetProject, opts);
+        await cmdRoute(projectSlug, number, targetProject, opts);
       }
     );
 
@@ -163,8 +159,8 @@ export function registerSessionsCommands(
         "Called automatically from session-stop and pre-compact hooks."
     )
     .action(
-      (projectSlug: string | undefined, sessionId: string | undefined) => {
-        cmdHandover(getDb(), projectSlug, sessionId);
+      async (projectSlug: string | undefined, sessionId: string | undefined) => {
+        await cmdHandover(projectSlug, sessionId);
       }
     );
 
@@ -198,8 +194,8 @@ export function registerSessionsCommands(
       "60"
     )
     .option("--json", "Output raw JSON instead of formatted display")
-    .action((opts: { minutes?: string; json?: boolean }) => {
-      cmdActive(getDb(), opts);
+    .action(async (opts: { minutes?: string; json?: boolean }) => {
+      await cmdActive(opts);
     });
 
   // pai sessions clear-names [--dry-run]

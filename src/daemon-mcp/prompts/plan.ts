@@ -18,7 +18,7 @@ Open TODO items \`[ ]\`, in-progress items \`[~]\`, calendar events, recent revi
 
 ### Output Format
 
-Must Do / Should Do / Could Do (3-5 focus items max). Calendar constraints. Energy note from journal. Second-person, specific ('Add journal table to federation.db', NOT 'work on PAI').
+Must Do / Should Do / Could Do (3-5 focus items max). Calendar constraints. Energy note from journal. Second-person, specific ('Add a journal table to the memory store', NOT 'work on PAI').
 
 ### Rules
 

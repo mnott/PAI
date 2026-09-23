@@ -6,7 +6,6 @@
  */
 
 import type { StorageBackend } from "../storage/interface.js";
-import type { Pool } from "pg";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
@@ -65,40 +64,6 @@ function dominantType(counts: Record<string, number>): string {
   return best;
 }
 
-// ---------------------------------------------------------------------------
-// Observation type enrichment
-// ---------------------------------------------------------------------------
-
-async function fetchObservationTypes(
-  pool: Pool,
-  filePaths: string[],
-  projectId: number
-): Promise<Map<string, Record<string, number>>> {
-  if (filePaths.length === 0) return new Map();
-
-  try {
-    const result = await pool.query<{ path: string; type: string; cnt: string }>(
-      `SELECT unnested_path AS path, type, COUNT(*) AS cnt
-       FROM pai_observations,
-            LATERAL unnest(files_modified || files_read) AS unnested_path
-       WHERE unnested_path = ANY($1::text[])
-         AND project_id = $2
-       GROUP BY unnested_path, type`,
-      [filePaths, projectId]
-    );
-
-    const byPath = new Map<string, Record<string, number>>();
-    for (const row of result.rows) {
-      const existing = byPath.get(row.path) ?? {};
-      existing[row.type] = (existing[row.type] ?? 0) + parseInt(row.cnt, 10);
-      byPath.set(row.path, existing);
-    }
-    return byPath;
-  } catch {
-    return new Map();
-  }
-}
-
 function buildNoteNode(
   vaultPath: string,
   fileIndex: Map<string, { title: string | null; indexedAt: number }>,
@@ -125,7 +90,6 @@ function buildNoteNode(
 // ---------------------------------------------------------------------------
 
 export async function handleGraphNoteContext(
-  pool: Pool | null,
   backend: StorageBackend,
   params: GraphNoteContextParams
 ): Promise<GraphNoteContextResult> {
@@ -195,10 +159,7 @@ export async function handleGraphNoteContext(
   // 3. Observation type enrichment (Postgres if available)
   // -------------------------------------------------------------------------
 
-  const obsByPath =
-    pool !== null
-      ? await fetchObservationTypes(pool, allPaths, params.project_id)
-      : new Map<string, Record<string, number>>();
+  const obsByPath = await backend.getObservationTypesForPaths(allPaths, params.project_id);
 
   // -------------------------------------------------------------------------
   // 4. Build focal NoteNode

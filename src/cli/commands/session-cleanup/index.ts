@@ -3,15 +3,11 @@
  */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import { err, dim, ok, header } from "../../utils.js";
 import { getAllProjects, getProject, analyzeProject } from "./scanner.js";
 import { displayDryRun, executeCleanup } from "./executor.js";
 
-export function registerSessionCleanupCommand(
-  sessionCmd: Command,
-  getDb: () => Database
-): void {
+export function registerSessionCleanupCommand(sessionCmd: Command): void {
   sessionCmd
     .command("cleanup [project-slug]")
     .description(
@@ -25,13 +21,15 @@ export function registerSessionCleanupCommand(
         projectSlug: string | undefined,
         opts: { execute?: boolean; renumber?: boolean; reindex?: boolean }
       ) => {
-        const db = getDb();
+        const { getRegistryBackend } = await import("../../../storage/factory.js");
+        const registryBackend = await getRegistryBackend();
+
         const dryRun = !opts.execute;
         const skipReindex = opts.reindex === false;
 
         let projects;
         if (projectSlug) {
-          const p = getProject(db, projectSlug);
+          const p = await getProject(registryBackend, projectSlug);
           if (!p) {
             console.error(err(`Project not found: ${projectSlug}`));
             process.exitCode = 1;
@@ -39,7 +37,7 @@ export function registerSessionCleanupCommand(
           }
           projects = [p];
         } else {
-          projects = getAllProjects(db);
+          projects = await getAllProjects(registryBackend);
         }
 
         console.log();
@@ -54,7 +52,7 @@ export function registerSessionCleanupCommand(
 
         const plans = [];
         for (const project of projects) {
-          const plan = analyzeProject(db, project);
+          const plan = await analyzeProject(registryBackend, project);
           if (plan) plans.push(plan);
         }
 
@@ -78,7 +76,7 @@ export function registerSessionCleanupCommand(
         if (dryRun) {
           await displayDryRun(activePlans);
         } else {
-          await executeCleanup(db, activePlans, skipReindex);
+          await executeCleanup(activePlans, skipReindex);
         }
       }
     );

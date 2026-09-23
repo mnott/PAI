@@ -1,89 +1,26 @@
 /**
- * store.ts — PostgreSQL persistence for PAI observations.
+ * Postgres implementation of PAI observations, session summaries, and skill
+ * telemetry (pai_observations / pai_session_summaries / pai_skill_telemetry).
+ * Delegated from PostgresBackend — see src/storage/interface.ts for the
+ * StorageBackend contract these functions satisfy.
  *
- * All functions accept a pg.Pool and are safe to call concurrently.
- * Schema is initialized lazily via ensureObservationTables().
- *
- * Content-hash deduplication: observations with the same hash
- * created within a 30-second window are silently dropped to prevent
- * duplicate entries from rapid repeated tool calls.
+ * Content-hash deduplication: observations with the same hash created within
+ * a 30-second window are silently dropped to prevent duplicate entries from
+ * rapid repeated tool calls.
  */
 
-import { sha256 } from '../utils/hash.js';
-import type { Pool } from 'pg';
-import type { ClassifiedObservation } from './classifier.js';
-
-// ---------------------------------------------------------------------------
-// Row types
-// ---------------------------------------------------------------------------
-
-export interface ObservationRow {
-  id: number;
-  session_id: string;
-  project_id: number | null;
-  project_slug: string | null;
-  type: string;
-  title: string;
-  narrative: string | null;
-  tool_name: string | null;
-  tool_input_summary: string | null;
-  files_read: string[];
-  files_modified: string[];
-  concepts: string[];
-  content_hash: string | null;
-  created_at: Date;
-}
-
-export interface SessionSummaryRow {
-  id: number;
-  session_id: string;
-  project_id: number | null;
-  project_slug: string | null;
-  request: string | null;
-  investigated: string | null;
-  learned: string | null;
-  completed: string | null;
-  next_steps: string | null;
-  observation_count: number;
-  created_at: Date;
-}
-
-// ---------------------------------------------------------------------------
-// Input types
-// ---------------------------------------------------------------------------
-
-export interface StoreObservationInput extends Omit<ClassifiedObservation, 'narrative'> {
-  session_id: string;
-  project_id?: number | null;
-  project_slug?: string | null;
-  narrative?: string | null;
-}
-
-export interface StoreSessionSummaryInput {
-  session_id: string;
-  project_id?: number | null;
-  project_slug?: string | null;
-  request?: string | null;
-  investigated?: string | null;
-  learned?: string | null;
-  completed?: string | null;
-  next_steps?: string | null;
-  observation_count?: number;
-}
-
-export interface QueryObservationsOptions {
-  projectId?: number;
-  sessionId?: string;
-  type?: string;
-  limit?: number;
-  offset?: number;
-}
+import type { Pool } from "pg";
+import { sha256 } from "../../utils/hash.js";
+import type { RegistryBackend } from "../registry-interface.js";
+import type {
+  ObservationRow, ObservationWithCwd, StoreObservationInput, QueryObservationsOptions,
+  ObservationStats, SessionSummaryRow, StoreSessionSummaryInput,
+  SkillTelemetryRow, RecordSkillInvocationInput, QuerySkillTelemetryOptions,
+} from "../interface.js";
 
 // ---------------------------------------------------------------------------
 // Schema initialisation
 // ---------------------------------------------------------------------------
-
-let _tablesEnsured = false;
 
 /**
  * Inlined schema DDL — avoids runtime file reads that break in bundled code
@@ -131,27 +68,57 @@ CREATE INDEX IF NOT EXISTS idx_ss_project ON pai_session_summaries(project_id);
 CREATE INDEX IF NOT EXISTS idx_ss_session ON pai_session_summaries(session_id);
 `;
 
+let _tablesEnsured = false;
+
 /**
  * Run schema DDL idempotently against the given pool.
  * Uses a module-level flag so subsequent calls are no-ops within the same
  * process lifetime (the SQL itself uses IF NOT EXISTS so it is safe to re-run).
  */
-export async function ensureObservationTables(pool: Pool): Promise<void> {
+async function ensureObservationTables(pool: Pool): Promise<void> {
   if (_tablesEnsured) return;
   await pool.query(SCHEMA_SQL);
   _tablesEnsured = true;
+}
+
+const SKILL_TELEMETRY_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS pai_skill_telemetry (
+  id               SERIAL PRIMARY KEY,
+  scope            TEXT NOT NULL DEFAULT 'default',
+  skill_name       TEXT NOT NULL,
+  source           TEXT NOT NULL DEFAULT 'local',
+  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('trial','active','archived')),
+  trigger_count    INTEGER NOT NULL DEFAULT 0,
+  accept_count     INTEGER NOT NULL DEFAULT 0,
+  first_triggered  TIMESTAMPTZ DEFAULT NOW(),
+  last_triggered   TIMESTAMPTZ DEFAULT NOW(),
+  context_projects JSONB DEFAULT '[]'::jsonb,
+  hash             TEXT,
+  audit_status     TEXT,
+  last_audited     TIMESTAMPTZ,
+  UNIQUE(scope, skill_name, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skilltel_scope   ON pai_skill_telemetry(scope);
+CREATE INDEX IF NOT EXISTS idx_skilltel_status  ON pai_skill_telemetry(scope, status);
+CREATE INDEX IF NOT EXISTS idx_skilltel_last    ON pai_skill_telemetry(last_triggered DESC);
+`;
+
+let _skillTelemetryEnsured = false;
+
+async function ensureSkillTelemetryTable(pool: Pool): Promise<void> {
+  if (_skillTelemetryEnsured) return;
+  await pool.query(SKILL_TELEMETRY_SCHEMA_SQL);
+  _skillTelemetryEnsured = true;
 }
 
 // ---------------------------------------------------------------------------
 // Content-hash deduplication
 // ---------------------------------------------------------------------------
 
-/**
- * Compute a 16-character hex content hash for deduplication.
- * Hash = SHA256(session_id + tool_name + title).slice(0, 16)
- */
+/** Hash = SHA256(session_id + tool_name + title).slice(0, 16) */
 function computeContentHash(sessionId: string, toolName: string, title: string): string {
-  return sha256(sessionId + '\x00' + toolName + '\x00' + title).slice(0, 16);
+  return sha256(sessionId + "\x00" + toolName + "\x00" + title).slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +137,6 @@ export async function storeObservation(
 
   const hash = computeContentHash(obs.session_id, obs.tool_name, obs.title);
 
-  // Check for a recent duplicate (30-second window)
   const dupCheck = await pool.query<{ id: number }>(
     `SELECT id FROM pai_observations
      WHERE content_hash = $1
@@ -181,7 +147,6 @@ export async function storeObservation(
   );
 
   if (dupCheck.rowCount && dupCheck.rowCount > 0) {
-    // Duplicate within dedup window — silently skip
     return null;
   }
 
@@ -210,40 +175,20 @@ export async function storeObservation(
   return result.rows[0]?.id ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Store observation with project attribution
-// ---------------------------------------------------------------------------
-
-/**
- * Minimal registry handle the cwd → project lookup needs (better-sqlite3
- * shaped). Kept structural so callers pass the daemon's registryDb without a
- * cross-module import.
- */
-export interface ProjectLookupDb {
-  prepare(sql: string): { get(...params: unknown[]): unknown };
-}
-
-export interface ObservationWithCwd extends StoreObservationInput {
-  /** Working directory the observation happened in; attributed to a project when one actively covers it. */
-  cwd?: string;
-}
-
 /**
  * Attribute an observation to the active project covering `cwd`, then store
- * it. One shared sequence for every daemon-side writer (IPC handler, cache
- * keepalive) so the lookup query exists exactly once.
+ * it. One shared sequence for every writer (IPC handler, cache keepalive) so
+ * the lookup query exists exactly once.
  */
 export async function storeObservationWithProject(
-  db: ProjectLookupDb,
   pool: Pool,
+  registry: RegistryBackend,
   obs: ObservationWithCwd
 ): Promise<number | null> {
   let project_id: number | null = null;
   let project_slug: string | null = null;
   if (obs.cwd) {
-    const row = db.prepare(
-      "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
-    ).get(obs.cwd) as { id: number; slug: string } | undefined;
+    const row = await registry.findProjectByCwdPrefix(obs.cwd);
     if (row) {
       project_id = row.id;
       project_slug = row.slug;
@@ -256,10 +201,6 @@ export async function storeObservationWithProject(
 // Query observations
 // ---------------------------------------------------------------------------
 
-/**
- * Filtered query for observations with optional projectId, sessionId, type,
- * limit, and offset. Returns results ordered by created_at DESC.
- */
 export async function queryObservations(
   pool: Pool,
   opts: QueryObservationsOptions = {}
@@ -283,7 +224,7 @@ export async function queryObservations(
     params.push(opts.type);
   }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
 
@@ -304,9 +245,6 @@ export async function queryObservations(
   return result.rows;
 }
 
-/**
- * Most recent observations for a project, ordered by created_at DESC.
- */
 export async function queryRecentObservations(
   pool: Pool,
   projectId: number,
@@ -329,9 +267,6 @@ export async function queryRecentObservations(
   return result.rows;
 }
 
-/**
- * All observations for a specific session, ordered chronologically.
- */
 export async function querySessionObservations(
   pool: Pool,
   sessionId: string
@@ -352,14 +287,77 @@ export async function querySessionObservations(
   return result.rows;
 }
 
+export async function getObservationStats(pool: Pool): Promise<ObservationStats> {
+  await ensureObservationTables(pool);
+
+  const [totalRes, byTypeRes, byProjectRes, recentRes] = await Promise.all([
+    pool.query<{ count: string }>("SELECT COUNT(*) as count FROM pai_observations"),
+    pool.query<{ type: string; count: string }>(
+      "SELECT type, COUNT(*) as count FROM pai_observations GROUP BY type ORDER BY count DESC"
+    ),
+    pool.query<{ project_slug: string | null; count: string }>(
+      "SELECT project_slug, COUNT(*) as count FROM pai_observations GROUP BY project_slug ORDER BY count DESC LIMIT 15"
+    ),
+    pool.query<{ created_at: string }>(
+      "SELECT created_at FROM pai_observations ORDER BY created_at DESC LIMIT 1"
+    ),
+  ]);
+
+  return {
+    total: parseInt(totalRes.rows[0]?.count ?? "0", 10),
+    by_type: byTypeRes.rows.map((r) => ({ type: r.type, count: parseInt(r.count, 10) })),
+    by_project: byProjectRes.rows.map((r) => ({ project_slug: r.project_slug, count: parseInt(r.count, 10) })),
+    most_recent: recentRes.rows[0]?.created_at ?? null,
+  };
+}
+
+/**
+ * Observation-type counts per vault path, for the graph_* handlers (note
+ * enrichment). Falls back to an empty map when the query fails — this is
+ * best-effort enrichment, never a hard dependency for graph responses.
+ */
+export async function getObservationTypesForPaths(
+  pool: Pool,
+  filePaths: string[],
+  projectId?: number
+): Promise<Map<string, Record<string, number>>> {
+  if (filePaths.length === 0) return new Map();
+
+  try {
+    const params: unknown[] = [filePaths];
+    let projectFilter = "";
+    if (projectId !== undefined) {
+      params.push(projectId);
+      projectFilter = `AND project_id = $${params.length}`;
+    }
+
+    const result = await pool.query<{ path: string; type: string; cnt: string }>(
+      `SELECT unnested_path AS path, type, COUNT(*) AS cnt
+       FROM pai_observations,
+            LATERAL unnest(files_modified || files_read) AS unnested_path
+       WHERE unnested_path = ANY($1::text[])
+         ${projectFilter}
+       GROUP BY unnested_path, type`,
+      params
+    );
+
+    const byPath = new Map<string, Record<string, number>>();
+    for (const row of result.rows) {
+      const existing = byPath.get(row.path) ?? {};
+      existing[row.type] = (existing[row.type] ?? 0) + parseInt(row.cnt, 10);
+      byPath.set(row.path, existing);
+    }
+    return byPath;
+  } catch {
+    return new Map();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session summaries
 // ---------------------------------------------------------------------------
 
-/**
- * Upsert a session summary.  Uses ON CONFLICT on session_id so calling this
- * multiple times with updated content is safe.
- */
+/** Upsert a session summary. Uses ON CONFLICT on session_id so re-calling with updated content is safe. */
 export async function storeSessionSummary(
   pool: Pool,
   summary: StoreSessionSummaryInput
@@ -394,72 +392,30 @@ export async function storeSessionSummary(
   );
 }
 
+export async function queryRecentSummaries(
+  pool: Pool,
+  projectId: number,
+  limit: number
+): Promise<SessionSummaryRow[]> {
+  await ensureObservationTables(pool);
+
+  const result = await pool.query<SessionSummaryRow>(
+    `SELECT id, session_id, project_id, project_slug,
+            request, investigated, learned, completed, next_steps,
+            observation_count, created_at
+     FROM pai_session_summaries
+     WHERE project_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [projectId, limit]
+  );
+
+  return result.rows;
+}
+
 // ---------------------------------------------------------------------------
 // Skill telemetry — self-educating skill system, Phase 1 (capture)
 // ---------------------------------------------------------------------------
-
-export interface SkillTelemetryRow {
-  id: number;
-  scope: string;
-  skill_name: string;
-  source: string;
-  status: string;
-  trigger_count: number;
-  accept_count: number;
-  first_triggered: Date;
-  last_triggered: Date;
-  context_projects: string[];
-  hash: string | null;
-  audit_status: string | null;
-  last_audited: Date | null;
-}
-
-export interface RecordSkillInvocationInput {
-  skill_name: string;
-  /** 'local' | 'skills.sh' | repo slug */
-  source?: string;
-  /** governance seam — defaults to 'default' */
-  scope?: string;
-  /** project slug for context_projects rollup */
-  project_slug?: string | null;
-}
-
-export interface QuerySkillTelemetryOptions {
-  scope?: string;
-  status?: string;
-  limit?: number;
-}
-
-const SKILL_TELEMETRY_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS pai_skill_telemetry (
-  id               SERIAL PRIMARY KEY,
-  scope            TEXT NOT NULL DEFAULT 'default',
-  skill_name       TEXT NOT NULL,
-  source           TEXT NOT NULL DEFAULT 'local',
-  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('trial','active','archived')),
-  trigger_count    INTEGER NOT NULL DEFAULT 0,
-  accept_count     INTEGER NOT NULL DEFAULT 0,
-  first_triggered  TIMESTAMPTZ DEFAULT NOW(),
-  last_triggered   TIMESTAMPTZ DEFAULT NOW(),
-  context_projects JSONB DEFAULT '[]'::jsonb,
-  hash             TEXT,
-  audit_status     TEXT,
-  last_audited     TIMESTAMPTZ,
-  UNIQUE(scope, skill_name, source)
-);
-
-CREATE INDEX IF NOT EXISTS idx_skilltel_scope   ON pai_skill_telemetry(scope);
-CREATE INDEX IF NOT EXISTS idx_skilltel_status  ON pai_skill_telemetry(scope, status);
-CREATE INDEX IF NOT EXISTS idx_skilltel_last    ON pai_skill_telemetry(last_triggered DESC);
-`;
-
-let _skillTelemetryEnsured = false;
-
-export async function ensureSkillTelemetryTable(pool: Pool): Promise<void> {
-  if (_skillTelemetryEnsured) return;
-  await pool.query(SKILL_TELEMETRY_SCHEMA_SQL);
-  _skillTelemetryEnsured = true;
-}
 
 /**
  * Record a single skill invocation. Upserts on (scope, skill_name, source):
@@ -472,8 +428,8 @@ export async function recordSkillInvocation(
 ): Promise<void> {
   await ensureSkillTelemetryTable(pool);
 
-  const scope = input.scope ?? 'default';
-  const source = input.source ?? 'local';
+  const scope = input.scope ?? "default";
+  const source = input.source ?? "local";
   const proj = input.project_slug ?? null;
   const initialProjects = JSON.stringify(proj ? [proj] : []);
 
@@ -494,9 +450,7 @@ export async function recordSkillInvocation(
   );
 }
 
-/**
- * List skill telemetry rows, most-triggered first.
- */
+/** List skill telemetry rows, most-triggered first. */
 export async function querySkillTelemetry(
   pool: Pool,
   opts: QuerySkillTelemetryOptions = {}
@@ -508,14 +462,14 @@ export async function querySkillTelemetry(
   let idx = 1;
 
   conditions.push(`scope = $${idx++}`);
-  params.push(opts.scope ?? 'default');
+  params.push(opts.scope ?? "default");
 
   if (opts.status !== undefined) {
     conditions.push(`status = $${idx++}`);
     params.push(opts.status);
   }
 
-  const where = `WHERE ${conditions.join(' AND ')}`;
+  const where = `WHERE ${conditions.join(" AND ")}`;
   const limit = opts.limit ?? 100;
   params.push(limit);
 
@@ -529,30 +483,6 @@ export async function querySkillTelemetry(
      ORDER BY trigger_count DESC, last_triggered DESC
      LIMIT $${idx}`,
     params
-  );
-
-  return result.rows;
-}
-
-/**
- * Most recent session summaries for a project, ordered by created_at DESC.
- */
-export async function queryRecentSummaries(
-  pool: Pool,
-  projectId: number,
-  limit: number
-): Promise<SessionSummaryRow[]> {
-  await ensureObservationTables(pool);
-
-  const result = await pool.query<SessionSummaryRow>(
-    `SELECT id, session_id, project_id, project_slug,
-            request, investigated, learned, completed, next_steps,
-            observation_count, created_at
-     FROM pai_session_summaries
-     WHERE project_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [projectId, limit]
   );
 
   return result.rows;

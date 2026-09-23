@@ -3,23 +3,14 @@
  */
 
 import type { Socket } from "node:net";
-import type { IpcRequest, IpcResponse, PostgresBackendWithPool } from "./types.js";
+import type { IpcRequest, IpcResponse } from "./types.js";
 import type { NotificationMode } from "../../notifications/types.js";
 import {
   patchNotificationConfig,
 } from "../../notifications/config.js";
 import { routeNotification } from "../../notifications/router.js";
 import {
-  ensureObservationTables,
-  storeObservationWithProject,
-  queryObservations,
-  queryRecentObservations,
-  storeSessionSummary,
-  recordSkillInvocation,
-  querySkillTelemetry,
-} from "../../observations/store.js";
-import {
-  registryDb,
+  registryBackend,
   storageBackend,
   daemonConfig,
   startTime,
@@ -69,11 +60,7 @@ export async function handleRequest(
       try {
         if (!storageBackend) return null;
         const fedStats = await storageBackend.getStats();
-        const projects = (
-          registryDb
-            .prepare("SELECT COUNT(*) AS n FROM projects")
-            .get() as { n: number }
-        ).n;
+        const projects = await registryBackend.countProjects();
         return { files: fedStats.files, chunks: fedStats.chunks, projects };
       } catch {
         return null;
@@ -200,8 +187,7 @@ export async function handleRequest(
   // ---- Observation methods (Postgres only) --------------------------------
 
   if (method === "observation_store") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
       socket.end();
       return;
@@ -221,7 +207,7 @@ export async function handleRequest(
         cwd?: string;
       };
 
-      const insertedId = await storeObservationWithProject(registryDb, pool, {
+      const insertedId = await storageBackend.storeObservationWithProject(registryBackend, {
         session_id: p.session_id,
         type: p.type as "decision" | "bugfix" | "feature" | "refactor" | "discovery" | "change",
         title: p.title,
@@ -246,8 +232,7 @@ export async function handleRequest(
   // ---- Skill telemetry (Postgres only) ------------------------------------
 
   if (method === "skill_telemetry_record") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Skill telemetry requires Postgres backend" });
       socket.end();
       return;
@@ -262,13 +247,11 @@ export async function handleRequest(
 
       let project_slug: string | null = null;
       if (p.cwd) {
-        const row = registryDb.prepare(
-          "SELECT slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
-        ).get(p.cwd) as { slug: string } | undefined;
+        const row = await registryBackend.findProjectByCwdPrefix(p.cwd);
         if (row) project_slug = row.slug;
       }
 
-      await recordSkillInvocation(pool, {
+      await storageBackend.recordSkillInvocation({
         skill_name: p.skill_name,
         source: p.source,
         scope: p.scope,
@@ -285,15 +268,14 @@ export async function handleRequest(
   }
 
   if (method === "skill_telemetry_query") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Skill telemetry requires Postgres backend" });
       socket.end();
       return;
     }
     try {
       const p = params as { scope?: string; status?: string; limit?: number };
-      const rows = await querySkillTelemetry(pool, {
+      const rows = await storageBackend.querySkillTelemetry({
         scope: p.scope,
         status: p.status,
         limit: p.limit,
@@ -308,8 +290,7 @@ export async function handleRequest(
   }
 
   if (method === "observation_query") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
       socket.end();
       return;
@@ -323,7 +304,7 @@ export async function handleRequest(
         offset?: number;
       };
 
-      const rows = await queryObservations(pool, {
+      const rows = await storageBackend.queryObservations({
         projectId: p.project_id,
         sessionId: p.session_id,
         type: p.type,
@@ -340,8 +321,7 @@ export async function handleRequest(
   }
 
   if (method === "observation_recent") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
       socket.end();
       return;
@@ -353,9 +333,7 @@ export async function handleRequest(
       let resolvedProjectId = p.project_id;
       let resolvedProjectSlug: string | undefined;
       if (resolvedProjectId === undefined && p.cwd) {
-        const row = registryDb.prepare(
-          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
-        ).get(p.cwd) as { id: number; slug: string } | undefined;
+        const row = await registryBackend.findProjectByCwdPrefix(p.cwd);
         if (row) {
           resolvedProjectId = row.id;
           resolvedProjectSlug = row.slug;
@@ -364,9 +342,9 @@ export async function handleRequest(
 
       let rows;
       if (resolvedProjectId !== undefined) {
-        rows = await queryRecentObservations(pool, resolvedProjectId, limit);
+        rows = await storageBackend.queryRecentObservations(resolvedProjectId, limit);
       } else {
-        rows = await queryObservations(pool, { limit });
+        rows = await storageBackend.queryObservations({ limit });
       }
       sendResponse(socket, { id, ok: true, result: { rows, project_slug: resolvedProjectSlug } });
     } catch (e) {
@@ -379,8 +357,7 @@ export async function handleRequest(
 
   // observation_list — alias for observation_query with project slug resolution
   if (method === "observation_list") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
       socket.end();
       return;
@@ -396,13 +373,11 @@ export async function handleRequest(
 
       let projectId: number | undefined;
       if (p.project_slug) {
-        const row = registryDb.prepare(
-          "SELECT id FROM projects WHERE slug = ?"
-        ).get(p.project_slug) as { id: number } | undefined;
+        const row = await registryBackend.getProjectBySlug(p.project_slug);
         projectId = row?.id;
       }
 
-      const rows = await queryObservations(pool, {
+      const rows = await storageBackend.queryObservations({
         projectId,
         sessionId: p.session_id,
         type: p.type,
@@ -420,37 +395,14 @@ export async function handleRequest(
 
   // observation_stats — aggregate statistics
   if (method === "observation_stats") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
       socket.end();
       return;
     }
     try {
-      await ensureObservationTables(pool);
-      const [totalRes, byTypeRes, byProjectRes, recentRes] = await Promise.all([
-        pool.query<{ count: string }>("SELECT COUNT(*) as count FROM pai_observations"),
-        pool.query<{ type: string; count: string }>(
-          "SELECT type, COUNT(*) as count FROM pai_observations GROUP BY type ORDER BY count DESC"
-        ),
-        pool.query<{ project_slug: string | null; count: string }>(
-          "SELECT project_slug, COUNT(*) as count FROM pai_observations GROUP BY project_slug ORDER BY count DESC LIMIT 15"
-        ),
-        pool.query<{ created_at: string }>(
-          "SELECT created_at FROM pai_observations ORDER BY created_at DESC LIMIT 1"
-        ),
-      ]);
-
-      sendResponse(socket, {
-        id,
-        ok: true,
-        result: {
-          total: parseInt(totalRes.rows[0]?.count ?? "0", 10),
-          by_type: byTypeRes.rows.map(r => ({ type: r.type, count: parseInt(r.count, 10) })),
-          by_project: byProjectRes.rows.map(r => ({ project_slug: r.project_slug, count: parseInt(r.count, 10) })),
-          most_recent: recentRes.rows[0]?.created_at ?? null,
-        },
-      });
+      const stats = await storageBackend.getObservationStats();
+      sendResponse(socket, { id, ok: true, result: stats });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       sendResponse(socket, { id, ok: false, error: msg });
@@ -460,8 +412,7 @@ export async function handleRequest(
   }
 
   if (method === "session_summary_store") {
-    const pool = (storageBackend as PostgresBackendWithPool).getPool?.();
-    if (!pool) {
+    if (!storageBackend?.supportsPostgresFeatures) {
       sendResponse(socket, { id, ok: false, error: "Session summaries require Postgres backend" });
       socket.end();
       return;
@@ -483,16 +434,14 @@ export async function handleRequest(
       let resolvedProjectId = p.project_id ?? null;
       let resolvedProjectSlug = p.project_slug ?? null;
       if (resolvedProjectId === null && p.cwd) {
-        const row = registryDb.prepare(
-          "SELECT id, slug FROM projects WHERE status = 'active' AND ? LIKE root_path || '%' ORDER BY length(root_path) DESC LIMIT 1"
-        ).get(p.cwd) as { id: number; slug: string } | undefined;
+        const row = await registryBackend.findProjectByCwdPrefix(p.cwd);
         if (row) {
           resolvedProjectId = row.id;
           resolvedProjectSlug = row.slug;
         }
       }
 
-      await storeSessionSummary(pool, {
+      await storageBackend.storeSessionSummary({
         session_id: p.session_id,
         project_id: resolvedProjectId,
         project_slug: resolvedProjectSlug,

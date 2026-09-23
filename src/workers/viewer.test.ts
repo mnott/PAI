@@ -7,11 +7,12 @@
 import { describe, it, expect } from "vitest";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeColor } from "./render.js";
 import { CHAT_HINT } from "./chatui.js";
+import { ledgerPath } from "./paths.js";
 import {
   applyEvent,
   backfillLines,
@@ -610,5 +611,55 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(after2).not.toContain("» first");
     input.write("/quit\n");
     await done;
+  }, 8000);
+
+  it("a write failure from the pane does not end the pane's follow", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    const t0 = Date.now();
+    let threw = false;
+    const stdout = {
+      write: (s: string) => {
+        // one EPIPE/ENXIO-style throw, well after setup (chatEnter, the
+        // initial prompt draw, the backfill) has already succeeded — a
+        // single bad write to the pane must not take the whole follow down
+        if (!threw && Date.now() - t0 > 300) {
+          threw = true;
+          throw new Error("EPIPE (test)");
+        }
+        buf += s;
+        return true;
+      },
+      rows: 24,
+      columns: 80,
+    };
+    const io: FollowIO = { stdin: input, stdout, spawnResume: () => ({ on: () => undefined }) };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    let settled = false;
+    done.finally(() => {
+      settled = true;
+    });
+    await sleep(1500); // several ticker ticks past the injected failure
+    expect(threw).toBe(true); // the failure actually happened
+    expect(settled).toBe(false); // … and follow is still running past it
+    input.write("/quit\n");
+    await done;
+  }, 8000);
+
+  it("records a PANE-CLOSED ledger line, with reason, whenever a pane's follow exits", async () => {
+    const { dir, id } = chatFixture("done");
+    const input = new PassThrough();
+    const io: FollowIO = {
+      stdin: input,
+      stdout: { write: () => true, rows: 24, columns: 80 },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, io);
+    await done; // the worker is already "done": closes on the 1s countdown
+    const ledger = readFileSync(ledgerPath(dir), "utf8");
+    expect(ledger).toContain("PANE-CLOSED");
+    expect(ledger).toContain(`id=${id}`);
+    expect(ledger).toContain("reason=worker-ended");
   }, 8000);
 });

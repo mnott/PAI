@@ -15,7 +15,6 @@
  * listing currently-active iTerm2 panes that have an active Claude session.
  */
 
-import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { renderTable, err, dim, header } from "../../utils.js";
 import { scanSessions, fmtAge, type SessionStatus } from "../../lib/session-scan.js";
@@ -93,7 +92,6 @@ function renderLiveSessions(allLiveSessions: AiBrokerSessionMeta[], allTabs: boo
 // ---------------------------------------------------------------------------
 
 export async function cmdRecent(
-  db: Database,
   opts: { n?: string; all?: boolean; allTabs?: boolean; json?: boolean }
 ): Promise<void> {
   const limit = parseInt(opts.n ?? "20", 10);
@@ -103,7 +101,7 @@ export async function cmdRecent(
   // Fetch live sessions from AIBroker (silently no-ops if not running).
   const liveSessions = await fetchLiveSessions();
 
-  const sessions = scanSessions(db, {
+  const sessions = await scanSessions({
     limit,
     filter: includeAll ? "all" : "named",
   });

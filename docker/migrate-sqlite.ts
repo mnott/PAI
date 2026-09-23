@@ -1,5 +1,9 @@
 #!/usr/bin/env -S node --input-type=module
 /**
+ * Superseded by `pai db migrate-to-postgres` (src/storage/migrate-to-postgres.ts),
+ * which also covers kg_entities, the registry tables, and vault rows, with
+ * preflight/rollback/verify. Left in place for reference; not wired into the CLI.
+ *
  * migrate-sqlite.ts — Migrate PAI SQLite federation data to PostgreSQL/pgvector
  *
  * Reads existing ~/.pai/federation.db and inserts all data into Postgres.

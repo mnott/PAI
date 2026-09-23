@@ -9,16 +9,16 @@
  *   2. Marker walk  — walk up from cwd looking for Notes/PAI.md, resolve slug
  *   3. Topic match  — BM25 keyword search against memory (requires context text)
  *
- * The function is stateless and works with direct DB access (no daemon
- * required), making it fast and safe to call during session startup.
+ * The function is stateless and works directly against the registry/storage
+ * backends (no daemon required), making it fast and safe to call during
+ * session startup.
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../storage/interface.js";
+import type { RegistryBackend, Project } from "../storage/registry-interface.js";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { readPaiMarker } from "../registry/pai-marker.js";
-import { detectProject } from "../cli/commands/detect.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,15 +46,15 @@ export interface AutoRouteResult {
 /**
  * Determine which project a session should be routed to.
  *
- * @param registryDb  Open PAI registry database
- * @param federation  Memory storage backend (needed only for topic fallback)
- * @param cwd         Working directory to detect from (defaults to process.cwd())
- * @param context     Optional conversation text for topic-based fallback
- * @returns           Best project match, or null if nothing matched
+ * @param registryBackend  Registry backend (projects, sessions, ...)
+ * @param federation       Memory storage backend (needed only for topic fallback)
+ * @param cwd               Working directory to detect from (defaults to process.cwd())
+ * @param context           Optional conversation text for topic-based fallback
+ * @returns                 Best project match, or null if nothing matched
  */
 export async function autoRoute(
-  registryDb: Database,
-  federation: Database | StorageBackend,
+  registryBackend: RegistryBackend,
+  federation: StorageBackend,
   cwd?: string,
   context?: string
 ): Promise<AutoRouteResult | null> {
@@ -64,7 +64,7 @@ export async function autoRoute(
   // Strategy 1: Path match via registry
   // -------------------------------------------------------------------------
 
-  const pathMatch = detectProject(registryDb, target);
+  const pathMatch = await findProjectByPath(registryBackend, target);
 
   if (pathMatch) {
     return {
@@ -83,7 +83,7 @@ export async function autoRoute(
   // Once found, resolve the slug against the registry to get full project info.
   // -------------------------------------------------------------------------
 
-  const markerResult = findMarkerUpward(registryDb, target);
+  const markerResult = await findMarkerUpward(registryBackend, target);
   if (markerResult) {
     return markerResult;
   }
@@ -95,22 +95,20 @@ export async function autoRoute(
   if (context && context.trim().length > 0) {
     // Lazy import to avoid bundler pulling in daemon/index.mjs at module load time
     const { detectTopicShift } = await import("../topics/detector.js");
-    const topicResult = await detectTopicShift(registryDb, federation, {
-      context,
-      threshold: 0.5, // Lower threshold for initial routing (vs shift detection)
-    });
+    const topicResult = await detectTopicShift(
+      registryBackend,
+      federation,
+      {
+        context,
+        threshold: 0.5, // Lower threshold for initial routing (vs shift detection)
+      }
+    );
 
     if (topicResult.suggestedProject && topicResult.confidence > 0) {
       // Look up the full project info from the registry
-      const projectRow = registryDb
-        .prepare(
-          "SELECT slug, display_name, root_path FROM projects WHERE slug = ? AND status != 'archived'"
-        )
-        .get(topicResult.suggestedProject) as
-        | { slug: string; display_name: string; root_path: string }
-        | undefined;
+      const projectRow = await registryBackend.getProjectBySlug(topicResult.suggestedProject);
 
-      if (projectRow) {
+      if (projectRow && projectRow.status !== "archived") {
         return {
           slug: projectRow.slug,
           display_name: projectRow.display_name,
@@ -126,6 +124,31 @@ export async function autoRoute(
 }
 
 // ---------------------------------------------------------------------------
+// Path-match helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact or parent-directory match against every non-archived project,
+ * longest root_path wins. Mirrors src/cli/commands/detect.ts's detectProject()
+ * matching logic (that file also enriches with session stats, which autoRoute
+ * does not need).
+ */
+async function findProjectByPath(
+  registryBackend: RegistryBackend,
+  target: string
+): Promise<Project | null> {
+  const projects = await registryBackend.listProjectsByPathLengthDesc({ excludeArchived: true });
+
+  for (const p of projects) {
+    const root = resolve(p.root_path);
+    if (target === root) return p;
+    if (target.startsWith(root + "/")) return p;
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Marker walk helper
 // ---------------------------------------------------------------------------
 
@@ -135,10 +158,10 @@ export async function autoRoute(
  *
  * Stops at the filesystem root or after 20 levels (safety guard).
  */
-function findMarkerUpward(
-  registryDb: Database,
+async function findMarkerUpward(
+  registryBackend: RegistryBackend,
   startDir: string
-): AutoRouteResult | null {
+): Promise<AutoRouteResult | null> {
   let current = startDir;
   let depth = 0;
 
@@ -150,15 +173,9 @@ function findMarkerUpward(
 
       if (marker && marker.status !== "archived") {
         // Resolve slug to full project info in the registry
-        const projectRow = registryDb
-          .prepare(
-            "SELECT slug, display_name, root_path FROM projects WHERE slug = ? AND status != 'archived'"
-          )
-          .get(marker.slug) as
-          | { slug: string; display_name: string; root_path: string }
-          | undefined;
+        const projectRow = await registryBackend.getProjectBySlug(marker.slug);
 
-        if (projectRow) {
+        if (projectRow && projectRow.status !== "archived") {
           return {
             slug: projectRow.slug,
             display_name: projectRow.display_name,

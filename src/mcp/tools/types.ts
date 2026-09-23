@@ -3,7 +3,7 @@
  */
 
 import { resolve } from "node:path";
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend, Project } from "../../storage/registry-interface.js";
 
 export interface ToolContent {
   type: "text";
@@ -16,67 +16,40 @@ export interface ToolResult {
 }
 
 // ---------------------------------------------------------------------------
-// Shared row type — mirrors the projects SQLite schema
+// Shared row type — mirrors the projects schema (RegistryBackend's Project)
 // ---------------------------------------------------------------------------
 
-export interface ProjectRow {
-  id: number;
-  slug: string;
-  display_name: string;
-  root_path: string;
-  type: string;
-  status: string;
-  created_at: number;
-  updated_at: number;
-  archived_at?: number | null;
-  parent_id?: number | null;
-  obsidian_link?: string | null;
-}
+export type ProjectRow = Project;
 
 // ---------------------------------------------------------------------------
 // Helper: lookup project_id by slug (also checks aliases)
 // ---------------------------------------------------------------------------
 
-export function lookupProjectId(
-  registryDb: Database,
+export async function lookupProjectId(
+  registry: RegistryBackend,
   slug: string
-): number | null {
-  const bySlug = registryDb
-    .prepare("SELECT id FROM projects WHERE slug = ?")
-    .get(slug) as { id: number } | undefined;
+): Promise<number | null> {
+  const bySlug = await registry.getProjectBySlug(slug);
   if (bySlug) return bySlug.id;
 
-  const byAlias = registryDb
-    .prepare("SELECT project_id FROM aliases WHERE alias = ?")
-    .get(slug) as { project_id: number } | undefined;
-  if (byAlias) return byAlias.project_id;
-
-  return null;
+  const projectId = await registry.resolveAlias(slug);
+  return projectId ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // Helper: detect project from a filesystem path
 // ---------------------------------------------------------------------------
 
-export function detectProjectFromPath(
-  registryDb: Database,
+export async function detectProjectFromPath(
+  registry: RegistryBackend,
   fsPath: string
-): ProjectRow | null {
+): Promise<ProjectRow | null> {
   const resolved = resolve(fsPath);
 
-  const exact = registryDb
-    .prepare(
-      "SELECT id, slug, display_name, root_path, type, status, created_at, updated_at FROM projects WHERE root_path = ?"
-    )
-    .get(resolved) as ProjectRow | undefined;
-
+  const exact = await registry.getProjectByRootPath(resolved);
   if (exact) return exact;
 
-  const all = registryDb
-    .prepare(
-      "SELECT id, slug, display_name, root_path, type, status, created_at, updated_at FROM projects ORDER BY LENGTH(root_path) DESC"
-    )
-    .all() as ProjectRow[];
+  const all = await registry.listProjectsByPathLengthDesc();
 
   for (const project of all) {
     if (
@@ -94,35 +67,11 @@ export function detectProjectFromPath(
 // Helper: format project row for tool output
 // ---------------------------------------------------------------------------
 
-export function formatProject(registryDb: Database, project: ProjectRow): string {
-  const sessionCount = (
-    registryDb
-      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE project_id = ?")
-      .get(project.id) as { n: number }
-  ).n;
-
-  const lastSession = registryDb
-    .prepare(
-      "SELECT date FROM sessions WHERE project_id = ? ORDER BY date DESC LIMIT 1"
-    )
-    .get(project.id) as { date: string } | undefined;
-
-  const tags = (
-    registryDb
-      .prepare(
-        `SELECT t.name FROM tags t
-         JOIN project_tags pt ON pt.tag_id = t.id
-         WHERE pt.project_id = ?
-         ORDER BY t.name`
-      )
-      .all(project.id) as Array<{ name: string }>
-  ).map((r) => r.name);
-
-  const aliases = (
-    registryDb
-      .prepare("SELECT alias FROM aliases WHERE project_id = ? ORDER BY alias")
-      .all(project.id) as Array<{ alias: string }>
-  ).map((r) => r.alias);
+export async function formatProject(registry: RegistryBackend, project: ProjectRow): Promise<string> {
+  const sessionCount = await registry.countSessionsForProject(project.id);
+  const lastSessionDate = await registry.getMostRecentSessionDate(project.id);
+  const tags = await registry.listTagsForProject(project.id);
+  const aliases = await registry.listAliasesForProject(project.id);
 
   const lines: string[] = [
     `slug: ${project.slug}`,
@@ -133,7 +82,7 @@ export function formatProject(registryDb: Database, project: ProjectRow): string
     `sessions: ${sessionCount}`,
   ];
 
-  if (lastSession) lines.push(`last_session: ${lastSession.date}`);
+  if (lastSessionDate) lines.push(`last_session: ${lastSessionDate}`);
   if (tags.length) lines.push(`tags: ${tags.join(", ")}`);
   if (aliases.length) lines.push(`aliases: ${aliases.join(", ")}`);
   if (project.obsidian_link) lines.push(`obsidian_link: ${project.obsidian_link}`);

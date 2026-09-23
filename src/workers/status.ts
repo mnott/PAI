@@ -77,6 +77,8 @@ export interface WorkerStatus {
   branch?: string | null;
   /** Commit the branch started from (worktree base) for the commits count. */
   worktreeBase?: string | null;
+  /** Whether `worktreeBase` is a snapshot of uncommitted checkout state, not HEAD. */
+  worktreeSnapshot?: boolean | null;
   /** Commits the worker made on its branch; set with `branch` on success. */
   commits?: number | null;
   /** Set by `pai worker merge` once the branch landed in the original checkout. */
@@ -323,6 +325,19 @@ export function ageOf(ts: string, now: Date = new Date()): string {
   if (Number.isNaN(t)) return "?";
   const s = Math.max(0, Math.floor((now.getTime() - t) / 1000));
   return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m`;
+}
+
+/** Precise elapsed time: "45s", "1m 23s", "12m 05s", "1h 02m 05s" — seconds zero-padded after a larger unit. */
+export function elapsedOf(ts: string, now: Date = new Date()): string {
+  const t = Date.parse(ts.replace(" ", "T"));
+  if (Number.isNaN(t)) return "?";
+  const secs = Math.max(0, Math.floor((now.getTime() - t) / 1000));
+  const hours = Math.floor(secs / 3600);
+  const mins = Math.floor((secs % 3600) / 60);
+  const sec = secs % 60;
+  if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m ${String(sec).padStart(2, "0")}s`;
+  if (mins > 0) return `${mins}m ${String(sec).padStart(2, "0")}s`;
+  return `${sec}s`;
 }
 
 /** One-line description of a tool call, e.g. "Bash: npm test". */

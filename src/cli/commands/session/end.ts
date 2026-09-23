@@ -12,11 +12,9 @@
  * checkpoint is still intact.
  */
 
-import type { Database } from "better-sqlite3";
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { basename } from "node:path";
 import chalk from "chalk";
-import type { ProjectRow } from "./types.js";
 import { cmdPause, type PauseOptions } from "./pause.js";
 import {
   findNotesDir,
@@ -56,23 +54,17 @@ function finalizeNote(notePath: string): { finalized: boolean; path: string } {
 // Command
 // ---------------------------------------------------------------------------
 
-export function cmdEnd(db: Database, opts: PauseOptions): void {
+export async function cmdEnd(opts: PauseOptions): Promise<void> {
   // ---- Step 1: Run pause logic (writes ## Continue, prints warning) ----
   // We call cmdPause first; it prints the ## Continue block and the initial
   // safe-exit box. We'll print the end-specific reminder afterwards.
-  cmdPause(db, opts);
+  await cmdPause(opts);
 
   // ---- Step 2: Locate the project ----
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
   const cwd = process.cwd();
-  const project = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir
-         FROM projects
-        WHERE ? LIKE root_path || '%'
-        ORDER BY length(root_path) DESC
-        LIMIT 1`
-    )
-    .get(cwd) as ProjectRow | undefined;
+  const project = await registryBackend.findProjectByCwdPrefix(cwd);
 
   if (!project) {
     // cmdPause already printed an error. Nothing more to do.

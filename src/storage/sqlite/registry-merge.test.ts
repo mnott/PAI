@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
 import type { Database } from "better-sqlite3";
-import { initializeSchema } from "./schema.js";
-import { planMerge, applyMerge, MergeError } from "./merge.js";
+import { initializeSchema } from "./registry-schema.js";
+import { MergeError } from "../../registry/merge.js";
+import { planMerge, applyMerge } from "./registry-merge.js";
 
 /**
  * Folding a duplicate project into the real one.

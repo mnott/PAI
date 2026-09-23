@@ -46,7 +46,7 @@ import {
 
 // Registry scan — called from handleRegistryScan()
 import { performScan } from "../cli/commands/registry/scan.js";
-import { registryDb } from "./daemon/state.js";
+import { registryBackend } from "./daemon/state.js";
 
 // Hooks lib imports — resolving through the compiled JS path.
 // These are the same utilities used by stop-hook.ts.
@@ -143,7 +143,7 @@ async function processNextItem(): Promise<void> {
         break;
 
       case "session-summary":
-        await handleSessionSummary(item.payload as SessionSummaryPayload);
+        await handleSessionSummary(item.payload as unknown as SessionSummaryPayload);
         break;
 
       case "context-handover":
@@ -151,7 +151,7 @@ async function processNextItem(): Promise<void> {
         break;
 
       case "topic-detect":
-        await handleTopicDetect(item.payload as TopicDetectPayload);
+        await handleTopicDetect(item.payload as unknown as TopicDetectPayload);
         break;
 
       case "registry-scan":
@@ -216,7 +216,9 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
   // Determine completion message
   let message = hookMessage ?? "";
   if (!message) {
-    const lastEntry = tryParseJson(lines[lines.length - 1]);
+    const lastEntry = tryParseJson(lines[lines.length - 1]) as
+      | { type?: string; message?: { content?: unknown } }
+      | null;
     if (lastEntry?.type === "assistant" && lastEntry.message?.content) {
       const content = contentToText(lastEntry.message.content);
       const m = content.match(/COMPLETED:\s*(.+?)(?:\n|$)/i);
@@ -323,14 +325,14 @@ async function handleSessionEnd(item: WorkItem): Promise<void> {
  * checks before enqueuing so duplicates rarely reach here.
  */
 async function handleRegistryScan(): Promise<void> {
-  if (!registryDb) {
-    throw new Error("registry-scan: registryDb not initialized yet");
+  if (!registryBackend) {
+    throw new Error("registry-scan: registryBackend not initialized yet");
   }
 
   const t0 = Date.now();
   process.stderr.write("[work-queue-worker] Running registry scan...\n");
 
-  const result = performScan(registryDb);
+  const result = await performScan();
   const elapsed = Date.now() - t0;
 
   process.stderr.write(

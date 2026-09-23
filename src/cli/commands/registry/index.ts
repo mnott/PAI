@@ -1,7 +1,6 @@
 /** Registry command registration and simple sub-commands (stats, rebuild, lookup). */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
 import { ok, warn, err, dim, bold, fmtDate } from "../../utils.js";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
@@ -10,27 +9,24 @@ import { cmdScan, loadScanConfig, saveScanConfig, resolveHome } from "./scan.js"
 import { cmdMigrate } from "./migrate.js";
 import { cmdDedupe } from "./dedupe.js";
 import { cmdReconnect } from "./reconnect.js";
-import { join } from "node:path";
-import { registryDbPath } from "../../../registry/db.js";
+import { legacyDbDisplayPaths } from "../../../storage/sqlite/legacy-migration.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 
 // ---------------------------------------------------------------------------
 // stats
 // ---------------------------------------------------------------------------
 
-function cmdStats(db: Database): void {
-  const totalProjects = (db.prepare("SELECT COUNT(*) AS n FROM projects").get() as { n: number }).n;
-  const activeProjects = (db.prepare("SELECT COUNT(*) AS n FROM projects WHERE status = 'active'").get() as { n: number }).n;
-  const archivedProjects = (db.prepare("SELECT COUNT(*) AS n FROM projects WHERE status = 'archived'").get() as { n: number }).n;
-  const totalSessions = (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
-  const totalTags = (db.prepare("SELECT COUNT(*) AS n FROM tags").get() as { n: number }).n;
+async function cmdStats(): Promise<void> {
+  const backend = await getRegistryBackend();
+  const totalProjects = await backend.countProjects();
+  const activeProjects = await backend.countProjects({ status: "active" });
+  const archivedProjects = await backend.countProjects({ status: "archived" });
+  const totalSessions = await backend.countSessions();
+  const totalTags = (await backend.listAllTags()).length;
 
-  const lastProject = db
-    .prepare("SELECT updated_at FROM projects ORDER BY updated_at DESC LIMIT 1")
-    .get() as { updated_at: number } | undefined;
-
-  const lastSession = db
-    .prepare("SELECT created_at FROM sessions ORDER BY created_at DESC LIMIT 1")
-    .get() as { created_at: number } | undefined;
+  const lastProjectUpdatedAt = await backend.getMostRecentProjectUpdatedAt();
+  const lastSessionCreatedAt = await backend.getMostRecentSessionCreatedAt();
 
   console.log();
   console.log(bold("  PAI Registry Stats"));
@@ -40,11 +36,11 @@ function cmdStats(db: Database): void {
   console.log(`  ${bold("  Archived:")}   ${archivedProjects}`);
   console.log(`  ${bold("Sessions:")}     ${totalSessions}`);
   console.log(`  ${bold("Tags:")}         ${totalTags}`);
-  if (lastProject) {
-    console.log(`  ${bold("Last updated:")} ${fmtDate(lastProject.updated_at)}`);
+  if (lastProjectUpdatedAt) {
+    console.log(`  ${bold("Last updated:")} ${fmtDate(lastProjectUpdatedAt)}`);
   }
-  if (lastSession) {
-    console.log(`  ${bold("Last session:")} ${fmtDate(lastSession.created_at)}`);
+  if (lastSessionCreatedAt) {
+    console.log(`  ${bold("Last session:")} ${fmtDate(lastSessionCreatedAt)}`);
   }
   console.log();
 }
@@ -53,35 +49,25 @@ function cmdStats(db: Database): void {
 // rebuild
 // ---------------------------------------------------------------------------
 
-function cmdRebuild(db: Database): void {
+async function cmdRebuild(backend: RegistryBackend): Promise<void> {
   console.log(warn("Rebuilding registry — all existing data will be erased."));
   console.log(dim("Clearing all tables ..."));
 
-  db.exec(`
-    DELETE FROM compaction_log;
-    DELETE FROM session_tags;
-    DELETE FROM project_tags;
-    DELETE FROM aliases;
-    DELETE FROM sessions;
-    DELETE FROM projects;
-    DELETE FROM tags;
-    DELETE FROM schema_version;
-  `);
+  await backend.resetRegistry();
 
   console.log(dim("Registry cleared. Re-scanning ..."));
-  cmdScan(db);
+  await cmdScan();
 }
 
 // ---------------------------------------------------------------------------
 // lookup
 // ---------------------------------------------------------------------------
 
-function cmdLookup(db: Database, fsPath: string): void {
+async function cmdLookup(fsPath: string): Promise<void> {
+  const backend = await getRegistryBackend();
   const resolved = resolve(fsPath);
 
-  const row = db
-    .prepare("SELECT slug FROM projects WHERE root_path = ?")
-    .get(resolved) as { slug: string } | undefined;
+  const row = await backend.getProjectByRootPath(resolved);
 
   if (!row) {
     process.exitCode = 1;
@@ -95,10 +81,7 @@ function cmdLookup(db: Database, fsPath: string): void {
 // Commander registration
 // ---------------------------------------------------------------------------
 
-export function registerRegistryCommands(
-  registryCmd: Command,
-  getDb: () => Database
-): void {
+export function registerRegistryCommands(registryCmd: Command): void {
   // pai registry scan
   registryCmd
     .command("scan")
@@ -107,7 +90,7 @@ export function registerRegistryCommands(
     .option("--remove-dir <path>", "Remove a directory from scan_dirs config")
     .option("--show-dirs", "Show currently configured scan directories")
     .option("--quick", "Minimal output mode (used by hooks and daemon)")
-    .action((opts: { addDir?: string; removeDir?: string; showDirs?: boolean; quick?: boolean }) => {
+    .action(async (opts: { addDir?: string; removeDir?: string; showDirs?: boolean; quick?: boolean }) => {
       if (opts.showDirs) {
         const config = loadScanConfig();
         if (!config.scan_dirs.length) {
@@ -156,7 +139,7 @@ export function registerRegistryCommands(
         }
       }
       if (!opts.addDir && !opts.removeDir) {
-        cmdScan(getDb(), { quick: opts.quick });
+        await cmdScan({ quick: opts.quick });
       }
     });
 
@@ -164,24 +147,24 @@ export function registerRegistryCommands(
   registryCmd
     .command("migrate")
     .description("Import data from ~/.claude/session-registry.json")
-    .action(() => {
-      cmdMigrate(getDb());
+    .action(async () => {
+      await cmdMigrate();
     });
 
   // pai registry stats
   registryCmd
     .command("stats")
     .description("Show summary statistics for the registry")
-    .action(() => {
-      cmdStats(getDb());
+    .action(async () => {
+      await cmdStats();
     });
 
   // pai registry rebuild
   registryCmd
     .command("rebuild")
     .description("Erase all registry data and rebuild from the filesystem (destructive)")
-    .action(() => {
-      cmdRebuild(getDb());
+    .action(async () => {
+      await cmdRebuild(await getRegistryBackend());
     });
 
   // pai registry dedupe [--execute]
@@ -195,10 +178,10 @@ export function registerRegistryCommands(
         "Dry-run by default; --execute backs up the registry first and merges in one transaction."
     )
     .option("--execute", "Actually perform the merge (default is dry-run)")
-    .action((opts: { execute?: boolean }) => {
-      cmdDedupe(getDb(), {
+    .action(async (opts: { execute?: boolean }) => {
+      await cmdDedupe({
         execute: opts.execute,
-        dbPath: registryDbPath(),
+        dbPath: legacyDbDisplayPaths().registryDb,
       });
     });
 
@@ -214,8 +197,8 @@ export function registerRegistryCommands(
         "Dry-run by default; --execute writes the corrected rows in one transaction."
     )
     .option("--execute", "Actually write the corrections (default is dry-run)")
-    .action((opts: { execute?: boolean }) => {
-      cmdReconnect(getDb(), { execute: opts.execute });
+    .action(async (opts: { execute?: boolean }) => {
+      await cmdReconnect({ execute: opts.execute });
     });
 
   // pai registry lookup --path <path>
@@ -223,7 +206,7 @@ export function registerRegistryCommands(
     .command("lookup")
     .description("Find the project slug for a filesystem path (for use in scripts)")
     .requiredOption("--path <path>", "Filesystem path to look up")
-    .action((opts: { path: string }) => {
-      cmdLookup(getDb(), opts.path);
+    .action(async (opts: { path: string }) => {
+      await cmdLookup(opts.path);
     });
 }

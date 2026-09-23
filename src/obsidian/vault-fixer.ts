@@ -22,7 +22,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { Database } from "better-sqlite3";
+import type { StorageBackend } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -421,57 +421,42 @@ function replaceFrontmatterText(
 // Detection: dead links
 // ---------------------------------------------------------------------------
 
-interface DeadLinkRow {
-  source_path: string;
-  target_raw: string;
-  line_number: number;
-}
-
-function detectDeadLinks(
-  db: Database,
+async function detectDeadLinks(
+  backend: StorageBackend,
   limit: number,
-): VaultIssue[] {
-  const rows = db.prepare<[number], DeadLinkRow>(`
-    SELECT source_path, target_raw, line_number
-    FROM vault_links
-    WHERE target_path IS NULL
-    ORDER BY source_path
-    LIMIT ?
-  `).all(limit);
+): Promise<VaultIssue[]> {
+  const rows = await backend.getDeadLinksWithLineNumbers();
 
-  return rows.map((r) => ({
-    kind: "dead-link" as IssueKind,
-    notePath: r.source_path,
-    description: `Dead link [[${r.target_raw}]] on line ${r.line_number}`,
-    autoFixable: false,
-  }));
+  return rows
+    .slice()
+    .sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))
+    .slice(0, limit)
+    .map((r) => ({
+      kind: "dead-link" as IssueKind,
+      notePath: r.sourcePath,
+      description: `Dead link [[${r.targetRaw}]] on line ${r.lineNumber}`,
+      autoFixable: false,
+    }));
 }
 
 // ---------------------------------------------------------------------------
 // Detection: orphan notes
 // ---------------------------------------------------------------------------
 
-interface OrphanRow {
-  vault_path: string;
-}
-
-function detectOrphans(
-  db: Database,
+async function detectOrphans(
+  backend: StorageBackend,
   limit: number,
-): VaultIssue[] {
-  const rows = db.prepare<[number], OrphanRow>(`
-    SELECT vault_path
-    FROM vault_health
-    WHERE is_orphan = 1
-    ORDER BY vault_path
-    LIMIT ?
-  `).all(limit);
+): Promise<VaultIssue[]> {
+  const rows = await backend.getOrphans();
 
   return rows
-    .filter((r) => !isOrphanExempt(r.vault_path))
+    .slice()
+    .sort((a, b) => a.vaultPath.localeCompare(b.vaultPath))
+    .filter((r) => !isOrphanExempt(r.vaultPath))
+    .slice(0, limit)
     .map((r) => ({
       kind: "orphan" as IssueKind,
-      notePath: r.vault_path,
+      notePath: r.vaultPath,
       description: "Note has no inbound or outbound links",
       autoFixable: false,
     }));
@@ -481,46 +466,29 @@ function detectOrphans(
 // Detection: missing parent links
 // ---------------------------------------------------------------------------
 
-interface VaultFileRow {
-  vault_path: string;
-}
-
-interface LinkExistsRow {
-  cnt: number;
-}
-
-function detectMissingParentLinks(
-  db: Database,
+async function detectMissingParentLinks(
+  backend: StorageBackend,
   vaultRoot: string,
   limit: number,
-): VaultIssue[] {
-  const allFiles = db.prepare<[], VaultFileRow>(`
-    SELECT vault_path FROM vault_files ORDER BY vault_path
-  `).all();
-
-  const checkLink = db.prepare<[string, string], LinkExistsRow>(`
-    SELECT COUNT(*) AS cnt
-    FROM vault_links
-    WHERE source_path = ?
-      AND target_path = ?
-  `);
+): Promise<VaultIssue[]> {
+  const allFiles = (await backend.getAllVaultFilePaths()).slice().sort();
 
   // Pre-build a set of known vault paths for fast parent-note existence check
-  const knownPaths = new Set(allFiles.map((r) => r.vault_path));
+  const knownPaths = new Set(allFiles);
 
   const issues: VaultIssue[] = [];
 
-  for (const row of allFiles) {
+  for (const vaultPath of allFiles) {
     if (issues.length >= limit) break;
-    if (!isFolderNote(row.vault_path)) continue;
+    if (!isFolderNote(vaultPath)) continue;
 
-    const parentNotePath = deriveParentFolderNotePath(row.vault_path);
+    const parentNotePath = deriveParentFolderNotePath(vaultPath);
     if (!parentNotePath) continue;
     if (!knownPaths.has(parentNotePath)) continue;
 
     // Check if this file already has a link to the parent note
-    const { cnt } = checkLink.get(row.vault_path, parentNotePath)!;
-    if (cnt > 0) continue;
+    const outgoing = await backend.getLinksFromSource(vaultPath);
+    if (outgoing.some((l) => l.targetPath === parentNotePath)) continue;
 
     // Build the wikilink text Obsidian would use for the parent:
     // strip .md extension and use vault-relative path without leading slash
@@ -528,11 +496,11 @@ function detectMissingParentLinks(
 
     issues.push({
       kind: "missing-parent-link",
-      notePath: row.vault_path,
+      notePath: vaultPath,
       description: `Folder note missing parent link to [[${wikilinkTarget}]]`,
       autoFixable: true,
       suggestedEdit: {
-        targetPath: join(vaultRoot, row.vault_path),
+        targetPath: join(vaultRoot, vaultPath),
         operation: "add-frontmatter-link",
         frontmatterKey: "links",
         wikilinkText: `[[${wikilinkTarget}]]`,
@@ -547,79 +515,17 @@ function detectMissingParentLinks(
 // Detection: dual-path conflicts
 // ---------------------------------------------------------------------------
 
-interface AliasRow {
-  alias_path: string;
-  canonical_path: string;
-}
-
-interface ConflictRow {
-  source_path: string;
-  target_raw: string;
-}
-
-function detectDualPathConflicts(
-  db: Database,
-  vaultRoot: string,
-  limit: number,
-): VaultIssue[] {
-  // Build a map of alias → canonical for fast lookup
-  const aliases = db.prepare<[], AliasRow>(`
-    SELECT vault_path AS alias_path, canonical_path
-    FROM vault_aliases
-  `).all();
-
-  if (aliases.length === 0) return [];
-
-  const aliasSet = new Set(aliases.map((a) => a.alias_path));
-  const aliasMap = new Map(aliases.map((a) => [a.alias_path, a.canonical_path]));
-
-  // Find links that resolve to an alias path
-  const conflictRows = db.prepare<[number], ConflictRow>(`
-    SELECT source_path, target_raw
-    FROM vault_links
-    WHERE target_path IN (SELECT vault_path FROM vault_aliases)
-    LIMIT ?
-  `).all(limit);
-
-  const issues: VaultIssue[] = [];
-
-  for (const row of conflictRows) {
-    // We need to find which alias this link resolved to.
-    // The target_path for this link should be in our alias set.
-    // Look it up via a join-style check.
-    const resolvedTarget = db.prepare<[string, string], { target_path: string }>(`
-      SELECT target_path FROM vault_links
-      WHERE source_path = ? AND target_raw = ?
-      LIMIT 1
-    `).get(row.source_path, row.target_raw);
-
-    if (!resolvedTarget?.target_path) continue;
-    if (!aliasSet.has(resolvedTarget.target_path)) continue;
-
-    const canonicalPath = aliasMap.get(resolvedTarget.target_path);
-    if (!canonicalPath) continue;
-
-    const oldWikilink = `[[${row.target_raw}]]`;
-    const newTarget = canonicalPath.replace(/\.md$/, "");
-    const newWikilink = `[[${newTarget}]]`;
-
-    if (oldWikilink === newWikilink) continue;
-
-    issues.push({
-      kind: "dual-path-conflict",
-      notePath: row.source_path,
-      description: `Wikilink uses alias path "${row.target_raw}" instead of canonical "${newTarget}"`,
-      autoFixable: true,
-      suggestedEdit: {
-        targetPath: join(vaultRoot, row.source_path),
-        operation: "replace-wikilink",
-        oldText: oldWikilink,
-        newText: newWikilink,
-      },
-    });
-  }
-
-  return issues;
+// ponytail: StorageBackend has no bulk vault_aliases read (only the
+// single-path getVaultAlias() lookup), so this detector cannot enumerate
+// which paths are aliases without one call per candidate — see worker
+// report for the missing method (getAllVaultAliases(): Promise<VaultAliasRow[]>).
+// Returns [] until that method exists rather than adding raw SQL here.
+async function detectDualPathConflicts(
+  _backend: StorageBackend,
+  _vaultRoot: string,
+  _limit: number,
+): Promise<VaultIssue[]> {
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -650,18 +556,13 @@ function applyEdit(edit: SuggestedEdit): boolean {
 // Count helpers for summary
 // ---------------------------------------------------------------------------
 
-interface CountRow {
-  cnt: number;
+async function countNotes(backend: StorageBackend): Promise<number> {
+  return backend.countVaultFiles();
 }
 
-function countNotes(db: Database): number {
-  const row = db.prepare<[], CountRow>("SELECT COUNT(*) AS cnt FROM vault_files").get();
-  return row?.cnt ?? 0;
-}
-
-function countLinks(db: Database): number {
-  const row = db.prepare<[], CountRow>("SELECT COUNT(*) AS cnt FROM vault_links").get();
-  return row?.cnt ?? 0;
+async function countLinks(backend: StorageBackend): Promise<number> {
+  const graph = await backend.getVaultLinkGraph();
+  return graph.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,12 +573,12 @@ function countLinks(db: Database): number {
  * Run the vault fixer: detect issues in the vault link graph and optionally
  * apply safe, non-destructive fixes.
  *
- * @param db        - better-sqlite3 Database handle (federation.db with vault tables)
+ * @param backend   - StorageBackend (vault operations are Postgres-only today)
  * @param vaultRoot - Absolute path to the Obsidian vault root directory
  * @param opts      - Detection and application options
  */
 export async function runVaultFixer(
-  db: Database,
+  backend: StorageBackend,
   vaultRoot: string,
   opts: FixerOptions = {},
 ): Promise<VaultFixerReport> {
@@ -696,7 +597,7 @@ export async function runVaultFixer(
   // --- Dead links -----------------------------------------------------------
   if (shouldDetect("dead-link")) {
     try {
-      const found = detectDeadLinks(db, maxIssues);
+      const found = await detectDeadLinks(backend, maxIssues);
       issues.push(...found);
     } catch (err) {
       errors.push(`dead-link detection failed: ${String(err)}`);
@@ -706,7 +607,7 @@ export async function runVaultFixer(
   // --- Orphans --------------------------------------------------------------
   if (shouldDetect("orphan")) {
     try {
-      const found = detectOrphans(db, maxIssues);
+      const found = await detectOrphans(backend, maxIssues);
       issues.push(...found);
     } catch (err) {
       errors.push(`orphan detection failed: ${String(err)}`);
@@ -716,7 +617,7 @@ export async function runVaultFixer(
   // --- Missing parent links -------------------------------------------------
   if (shouldDetect("missing-parent-link")) {
     try {
-      const found = detectMissingParentLinks(db, vaultRoot, maxIssues);
+      const found = await detectMissingParentLinks(backend, vaultRoot, maxIssues);
       issues.push(...found);
     } catch (err) {
       errors.push(`missing-parent-link detection failed: ${String(err)}`);
@@ -726,7 +627,7 @@ export async function runVaultFixer(
   // --- Dual-path conflicts --------------------------------------------------
   if (shouldDetect("dual-path-conflict")) {
     try {
-      const found = detectDualPathConflicts(db, vaultRoot, maxIssues);
+      const found = await detectDualPathConflicts(backend, vaultRoot, maxIssues);
       issues.push(...found);
     } catch (err) {
       errors.push(`dual-path-conflict detection failed: ${String(err)}`);
@@ -752,8 +653,8 @@ export async function runVaultFixer(
   // --- Build summary counts ------------------------------------------------
   const byKind = (k: IssueKind) => issues.filter((i) => i.kind === k).length;
 
-  const totalNotes = countNotes(db);
-  const totalLinks = countLinks(db);
+  const totalNotes = await countNotes(backend);
+  const totalLinks = await countLinks(backend);
 
   const report: VaultFixerReport = {
     timestamp: new Date().toISOString(),

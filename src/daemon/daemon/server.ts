@@ -6,14 +6,13 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer, connect, Socket, Server } from "node:net";
 import { setPriority } from "node:os";
-import { openRegistry } from "../../registry/db.js";
-import { createStorageBackend } from "../../storage/factory.js";
+import { createStorageBackend, createRegistryBackend } from "../../storage/factory.js";
 import { configureEmbeddingModel } from "../../memory/embeddings.js";
 import { loadNotificationConfig } from "../../notifications/config.js";
 import type { PaiDaemonConfig } from "../config.js";
 import type { IpcRequest } from "./types.js";
 import {
-  setRegistryDb,
+  setRegistryBackend,
   setStorageBackend,
   setDaemonConfig,
   setStartTime,
@@ -134,14 +133,21 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   configureEmbeddingModel(config.embeddingModel);
 
-  try {
-    setRegistryDb(openRegistry());
-    process.stderr.write("[pai-daemon] Registry database opened.\n");
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[pai-daemon] Fatal: Could not open registry: ${msg}\n`);
-    process.exit(1);
-  }
+  // Connect the registry backend in the background — non-blocking, since it
+  // may take a few retries under Postgres (waitForPostgres: true never
+  // silently falls back to SQLite, matching the federation backend below).
+  // Callers that need it before it resolves (status, observation IPC methods)
+  // already tolerate an unready backend via their own try/catch.
+  void createRegistryBackend(config, { waitForPostgres: true })
+    .then((backend) => {
+      setRegistryBackend(backend);
+      process.stderr.write(`[pai-daemon] Registry backend: ${backend.backendType}\n`);
+    })
+    .catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`[pai-daemon] Fatal: Could not open registry: ${msg}\n`);
+      process.exit(1);
+    });
 
   // Start the IPC server immediately so `pai daemon status` answers even while
   // we are still waiting for the federation backend (e.g. Postgres coming up
@@ -179,7 +185,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
       startIndexScheduler();
 
-      if (backend.backendType === "postgres") {
+      if (backend.supportsPostgresFeatures) {
         startEmbedScheduler();
       } else {
         process.stderr.write(

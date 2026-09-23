@@ -27,6 +27,12 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => home, default: { ...actual, homedir: () => home } };
 });
 
+// scanSessions reads the registry (via getRegistryBackend()) only to decorate
+// results with root paths — stub it so the test never opens the real registry.db.
+vi.mock("../../storage/factory.js", () => ({
+  getRegistryBackend: async () => ({ listProjects: async () => [] }),
+}));
+
 const PROJECT = "/Users/someone/dev/Paperfull";
 const ENCODED = PROJECT.replace(/[^a-zA-Z0-9]/g, "-");
 
@@ -38,12 +44,6 @@ const FINISHED_OLD = "33333333-3333-4333-8333-333333333333";
 const SYSTEM_LINE = JSON.stringify({ type: "system", subtype: "init" }) + "\n";
 const USER_LINE =
   JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) + "\n";
-
-function db() {
-  // scanSessions only reads the registry to decorate results; an empty in-memory
-  // database exercises the path this test cares about without one.
-  return { prepare: () => ({ all: () => [] }) } as never;
-}
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pai-scan-"));
@@ -58,7 +58,7 @@ afterEach(() => {
 
 async function scan(filter: "named" | "all" | "resumable") {
   const { scanSessions } = await import("./session-scan.js");
-  return scanSessions(db(), { limit: 100, filter }).filter(
+  return (await scanSessions({ limit: 100, filter })).filter(
     (s) => s.decodedPath.includes("Paperfull") || s.encodedDir === ENCODED
   );
 }

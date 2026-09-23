@@ -27,7 +27,6 @@
  *     (wrapping desyncs the one-row-per-line layout).
  */
 
-import type { Database } from "better-sqlite3";
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -67,19 +66,11 @@ interface PickRecord {
 // Project registry query (ALL active projects — cold ones included on purpose)
 // ---------------------------------------------------------------------------
 
-function getProjects(db: Database, includeArchived: boolean): RegisteredProject[] {
+async function getProjects(includeArchived: boolean): Promise<RegisteredProject[]> {
   try {
-    const rows = db
-      .prepare(`
-        SELECT p.slug, p.display_name, p.root_path, p.status,
-               COUNT(s.id) AS session_count,
-               MAX(s.created_at) AS last_active
-        FROM projects p
-        LEFT JOIN sessions s ON s.project_id = p.id
-        GROUP BY p.id
-        ORDER BY last_active DESC NULLS LAST, p.updated_at DESC
-      `)
-      .all() as RegisteredProject[];
+    const { getRegistryBackend } = await import("../../storage/factory.js");
+    const registryBackend = await getRegistryBackend();
+    const rows = await registryBackend.listProjectsWithSessionStats();
     return includeArchived ? rows : rows.filter((p) => p.status === "active");
   } catch {
     return [];
@@ -358,7 +349,7 @@ function contextFor(rec: PickRecord): string[] {
 
 async function runSelector(
   lines: FeedLine[],
-  onRemove?: (rec: PickRecord) => boolean
+  onRemove?: (rec: PickRecord) => Promise<boolean>
 ): Promise<SelectorResult | null> {
   const stdin = process.stdin;
   const out = process.stdout;
@@ -481,7 +472,7 @@ async function runSelector(
       cursor = (cursor + delta + filtered.length) % filtered.length;
     };
 
-    const onData = (buf: Buffer) => {
+    const onData = async (buf: Buffer) => {
       const s = buf.toString("utf8");
       const cur = filtered[cursor];
 
@@ -493,7 +484,7 @@ async function runSelector(
         const target = confirm;
         confirm = null;
         if (s === "y" || s === "Y") {
-          const okRemoved = onRemove ? onRemove(target.record) : false;
+          const okRemoved = onRemove ? await onRemove(target.record) : false;
           if (okRemoved) {
             pool = pool.filter((l) => l !== target);
             ctxCache.delete(target.record.dir ?? "");
@@ -604,14 +595,14 @@ export interface PickOpts {
   dryRun?: boolean;
 }
 
-export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> {
+export async function cmdPick(opts: PickOpts = {}): Promise<void> {
   const interactive = !!process.stdout.isTTY && !!process.stdin.isTTY;
 
   // Fallback to the static listing when we're not on an interactive terminal
   // (e.g. piped output). The modal selector needs a real tty.
   if (!interactive) {
-    const allSessions = scanSessions(db, { limit: 500, filter: "named" });
-    const projects = getProjects(db, opts.all ?? false);
+    const allSessions = await scanSessions({ limit: 500, filter: "named" });
+    const projects = await getProjects(opts.all ?? false);
     let live: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
     try {
       live = await fetchLiveSessions();
@@ -624,8 +615,8 @@ export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> 
   }
 
   // Build the feed (with live sessions merged in)
-  const allSessions = scanSessions(db, { limit: 500, filter: "named" });
-  const projects = getProjects(db, opts.all ?? false);
+  const allSessions = await scanSessions({ limit: 500, filter: "named" });
+  const projects = await getProjects(opts.all ?? false);
   let live: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
   try {
     live = await fetchLiveSessions();
@@ -633,7 +624,7 @@ export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> 
     /* AIBroker not running — disk + registry still populate the picker */
   }
 
-  const allProjects = getProjects(db, true);
+  const allProjects = await getProjects(true);
   const lines = buildFeedFrom(allSessions, projects, live, allProjects);
   if (lines.length === 0) {
     process.stderr.write(dim("  No projects or sessions found.\n"));
@@ -642,16 +633,20 @@ export async function cmdPick(db: Database, opts: PickOpts = {}): Promise<void> 
 
   // 'd' removes a row from PAI's list: archive the project (reversible, FK-safe,
   // files stay on disk). Returns false if the row isn't a registered project.
-  const onRemove = (rec: PickRecord): boolean => {
+  const onRemove = async (rec: PickRecord): Promise<boolean> => {
     if (!rec.slug) return false;
     try {
+      const { getRegistryBackend } = await import("../../storage/factory.js");
+      const registryBackend = await getRegistryBackend();
+      const project = await registryBackend.getProjectBySlug(rec.slug);
+      if (!project || project.status !== "active") return false;
       const ts = now();
-      const res = db
-        .prepare(
-          "UPDATE projects SET status = 'archived', archived_at = ?, updated_at = ? WHERE slug = ? AND status = 'active'"
-        )
-        .run(ts, ts, rec.slug);
-      return res.changes > 0;
+      await registryBackend.updateProjectStatus(project.id, "archived", {
+        archivedAt: ts,
+        updatedAt: ts,
+        requireCurrentStatus: "active",
+      });
+      return true;
     } catch {
       return false;
     }

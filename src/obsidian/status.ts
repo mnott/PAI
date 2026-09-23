@@ -8,23 +8,9 @@
  *     sessions → ~/.claude/projects/{enc}/Notes/     (Claude Code session notes, optional)
  */
 
-import type { Database } from "better-sqlite3";
 import { existsSync, readdirSync, lstatSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface ProjectRow {
-  id: number;
-  slug: string;
-  display_name: string;
-  root_path: string;
-  status: string;
-  claude_notes_dir: string | null;
-  obsidian_link: string | null;
-}
+import type { Project, RegistryBackend } from "../storage/registry-interface.js";
 
 export interface SymlinkHealth {
   slug: string;
@@ -100,7 +86,7 @@ function findNotesDir(rootPath: string): string | null {
  * - orphaned: directory entry in vault has no matching registry project
  * - missing:  active project with at least one Notes source but no vault dir
  */
-export function checkHealth(vaultPath: string, db: Database): VaultHealthReport {
+export async function checkHealth(vaultPath: string, registry: RegistryBackend): Promise<VaultHealthReport> {
   const report: VaultHealthReport = {
     vaultPath,
     healthy: [],
@@ -114,17 +100,12 @@ export function checkHealth(vaultPath: string, db: Database): VaultHealthReport 
     return report;
   }
 
-  const projects = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, status, claude_notes_dir, obsidian_link
-       FROM projects WHERE status = 'active'`
-    )
-    .all() as ProjectRow[];
+  const projects = await registry.listProjects({ status: "active" });
 
   report.totalProjects = projects.length;
 
   // Build a map of slug → project for quick lookup
-  const projectsBySlug = new Map<string, ProjectRow>();
+  const projectsBySlug = new Map<string, Project>();
   for (const p of projects) {
     projectsBySlug.set(p.slug, p);
   }

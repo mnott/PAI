@@ -2,7 +2,6 @@
  * Analysis phase: scan Notes/ directories and build CleanupPlans.
  */
 
-import type { Database } from "better-sqlite3";
 import {
   existsSync,
   readdirSync,
@@ -11,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type {
   ProjectRow,
   SessionRow,
@@ -30,32 +30,42 @@ import { extractAutoName, padNum } from "./rename.js";
 // DB helpers
 // ---------------------------------------------------------------------------
 
-export function getAllProjects(db: Database): ProjectRow[] {
-  return db
-    .prepare(
-      "SELECT id, slug, display_name, root_path, encoded_dir, claude_notes_dir FROM projects WHERE status = 'active' ORDER BY slug"
-    )
-    .all() as ProjectRow[];
+export async function getAllProjects(registryBackend: RegistryBackend): Promise<ProjectRow[]> {
+  const projects = await registryBackend.listProjects({ status: "active", orderBy: "slug" });
+  return projects.map((p) => ({
+    id: p.id,
+    slug: p.slug,
+    display_name: p.display_name,
+    root_path: p.root_path,
+    encoded_dir: p.encoded_dir,
+    claude_notes_dir: p.claude_notes_dir,
+  }));
 }
 
-export function getProject(
-  db: Database,
+export async function getProject(
+  registryBackend: RegistryBackend,
   slug: string
-): ProjectRow | undefined {
-  return db
-    .prepare(
-      "SELECT id, slug, display_name, root_path, encoded_dir, claude_notes_dir FROM projects WHERE slug = ?"
-    )
-    .get(slug) as ProjectRow | undefined;
+): Promise<ProjectRow | undefined> {
+  const p = await registryBackend.getProjectBySlug(slug);
+  if (!p) return undefined;
+  return {
+    id: p.id,
+    slug: p.slug,
+    display_name: p.display_name,
+    root_path: p.root_path,
+    encoded_dir: p.encoded_dir,
+    claude_notes_dir: p.claude_notes_dir,
+  };
 }
 
-function getProjectSessions(
-  db: Database,
+async function getProjectSessions(
+  registryBackend: RegistryBackend,
   projectId: number
-): SessionRow[] {
-  return db
-    .prepare("SELECT * FROM sessions WHERE project_id = ? ORDER BY number ASC")
-    .all(projectId) as SessionRow[];
+): Promise<SessionRow[]> {
+  const sessions = await registryBackend.listSessionsForProject(projectId, {
+    orderBy: "number_asc",
+  });
+  return sessions as SessionRow[];
 }
 
 // ---------------------------------------------------------------------------
@@ -273,14 +283,14 @@ function buildRenumberMap(
   return new Map();
 }
 
-export function analyzeProject(
-  db: Database,
+export async function analyzeProject(
+  registryBackend: RegistryBackend,
   project: ProjectRow
-): CleanupPlan | null {
+): Promise<CleanupPlan | null> {
   const notesDirPaths = findAllNotesDirs(project);
   if (notesDirPaths.length === 0) return null;
 
-  const dbSessions = getProjectSessions(db, project.id);
+  const dbSessions = await getProjectSessions(registryBackend, project.id);
   const dbByFilename = new Map<string, SessionRow>();
   for (const s of dbSessions) dbByFilename.set(s.filename, s);
 

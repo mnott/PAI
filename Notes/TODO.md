@@ -1,24 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0148 - 2026-09-22 - Worker Pane Ledger Instrumentation, Plist Handling Fix, And Test Verification" session-id="3ff4940f-41c4-4866-b8a9-6086974fffbf" ts="2026-09-22T19:44:44.809Z" -->
+<!-- pai:checkpoint authored="auto" session="0165 - 2026-09-23 - Pane Lifecycle, Elapsed Time Display, And Worker Safety Validation" session-id="3ff4940f-41c4-4866-b8a9-6086974fffbf" ts="2026-09-23T05:48:49.392Z" -->
 
-> **Last session:** 0148 - 2026-09-22 - Worker Pane Ledger Instrumentation, Plist Handling Fix, And Test Verification
-> **Paused at:** 2026-09-22T19:44:44.809Z
+> **Last session:** 0165 - 2026-09-23 - Pane Lifecycle, Elapsed Time Display, And Worker Safety Validation
+> **Paused at:** 2026-09-23T05:48:49.392Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume 3ff4940f-41c4-4866-b8a9-6086974fffbf`
 
 T
-i=ckpt-2026-09-22T19-44-44.677Z
-g=while he is implementing, why exactly did it fail? only thing we did was update the os, but not iterm afaik
-d=/Name PAI go | ok Opus 5.5 came out. we need to update our rules to use that by default. | no what I meant was not for the workers. it was for the orchestrator session which previously was fable 5.1 | this is so wrong  [2026-09-22 21:28] The worker is running in the background (task brq5sxwrk) and has up to an hour. It is building:  - Capture: microphone plus a Core Audio process tap on system outp… | while he is implementing, why exactly did it fail? only thing we did was update the os, but not iterm afaik
+i=ckpt-2026-09-23T05-48-49.234Z
+g=and so fix it
+d=this is SO WRONG - the sessions do not consistently show the workers. and they keep making up applescript while they should have that handy FIX THAT  what is the worker doing    Ran 1 shell command  T… | and now it starts them side-by-side not one below the other  Starting the fix worker and opening it in the side pane so you can watch it.    Ran 2 shell commands  ⏺ Write(/tmp/follow-worker.applescrip… | [Session:Home] R r=+ z=scripted pane ttys020 closed (shell 62100 HUP); 07:04 scripted pane already gone; `pai worker pane 20260923-070702-59775` -> pane opened; /tmp/follow-worker.applescript no longe… | what - ! PreToolUse:Bash hook error:          │ [${PAI_DIR}/Hooks/security-validator.mjs]: Blocked by PAI          │ security validator: in-place worker: git stash rewrites the          │ shared check… | PAILot build 8 (direct) · sonnet-5 · started 07:31 · 1m <- the status bar should show seconds not only minutes
 t=?
 @1=Notes/TODO.md
-@2=src/workers/pane.test.ts
-@3=src/workers/pane.ts
-@4=src/workers/run.ts
-z=auto ckpt (no model); main@2792f1e fix(launch): v0.54.0 - worker-routed pai <name> carries --name and the /Name opener; offer Resume [y/N] when a transcript exists; 4 dirty; git status for detail
+@2=docker/init.sql
+@3=docker/migrate-sqlite.ts
+@4=docs/commands/README.md
+@5=docs/commands/audit.md
+z=auto ckpt (no model); main@02ab471 fix(workers): v0.54.1 - retry iTerm -1708 window enumeration so follow panes open; log PANE-FAIL instead of swallowing; 20 dirty; +218 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

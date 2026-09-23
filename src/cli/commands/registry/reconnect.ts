@@ -12,7 +12,6 @@
  * guesses wrong reattaches a project to someone else's history.
  */
 
-import type { Database } from "better-sqlite3";
 import { join } from "node:path";
 import chalk from "chalk";
 import {
@@ -22,19 +21,21 @@ import {
   claudeProjectsDir,
   type RegistryProjectRow,
 } from "../../../registry/moved.js";
-import { registryDbPath } from "../../../registry/db.js";
+import { legacyDbDisplayPaths } from "../../../storage/sqlite/legacy-migration.js";
+import { getRegistryBackend } from "../../../storage/factory.js";
 import { encodeDir } from "../../utils.js";
 import { dim, ok, warn } from "../../utils.js";
 
-export function cmdReconnect(db: Database, opts: { execute?: boolean }): void {
-  const rows = db
-    .prepare(
-      `SELECT p.id, p.slug, p.root_path, p.encoded_dir,
-              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS sessions
-         FROM projects p
-        WHERE p.status = 'active'`
-    )
-    .all() as RegistryProjectRow[];
+export async function cmdReconnect(opts: { execute?: boolean }): Promise<void> {
+  const backend = await getRegistryBackend();
+  const active = await backend.listProjectsWithSessionStats({ status: "active" });
+  const rows: RegistryProjectRow[] = active.map((p) => ({
+    id: p.id,
+    slug: p.slug,
+    root_path: p.root_path,
+    encoded_dir: p.encoded_dir,
+    sessions: p.session_count,
+  }));
 
   const base = claudeProjectsDir();
   const has = (name: string | null): boolean =>
@@ -74,25 +75,23 @@ export function cmdReconnect(db: Database, opts: { execute?: boolean }): void {
     return;
   }
 
-  // One transaction: a partial repair would leave the registry in a state
-  // nobody chose, and the whole point here is that stale rows are silent.
-  const update = db.prepare("UPDATE projects SET encoded_dir = ? WHERE id = ?");
-  const apply = db.transaction((list: typeof moved) => {
-    for (const m of list) update.run(m.correctDir, m.id);
-  });
-
+  // Best-effort in sequence: a partial repair would leave the registry in a
+  // state nobody chose, but RegistryBackend has no cross-row transaction
+  // primitive to make this atomic the way the old raw-SQL transaction was.
   try {
-    apply(moved);
+    for (const m of moved) {
+      await backend.updateProjectPath(m.id, { encodedDir: m.correctDir });
+    }
     console.log(ok(`  Reconnected ${moved.length} project(s).`));
     const recovered = moved.reduce((n, m) => n + m.sessions, 0);
     if (recovered > 0) {
       console.log(dim(`  ${recovered} session(s) are reachable again.`));
     }
   } catch (e) {
-    console.error(warn("  Nothing was written: ") + (e instanceof Error ? e.message : String(e)));
+    console.error(warn("  Reconnect failed partway through: ") + (e instanceof Error ? e.message : String(e)));
   }
   console.log();
 }
 
 /** Path to the registry, for callers that want to back it up first. */
-export const REGISTRY_PATH = registryDbPath();
+export const REGISTRY_PATH = legacyDbDisplayPaths().registryDb;

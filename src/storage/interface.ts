@@ -14,6 +14,15 @@
  */
 
 import type { SearchResult, SearchOptions } from "../memory/search.js";
+import type { KgEntity, KgEntityUpsertParams } from "../memory/kg-entity.js";
+import type { KgTriple, KgAddParams, KgQueryParams, KgContradiction } from "../memory/kg.js";
+import type { IndexResult } from "../memory/indexer/types.js";
+import type { RegistryBackend } from "./registry-interface.js";
+import type { Tunnel, FindTunnelsOptions, FindTunnelsResult } from "../memory/tunnels.js";
+import type { ClassifiedObservation } from "../observations/classifier.js";
+
+export type { Tunnel, FindTunnelsOptions, FindTunnelsResult };
+export type { KgTriple, KgAddParams, KgQueryParams, KgContradiction };
 
 // ---------------------------------------------------------------------------
 // Chunk types (mirrored from indexer but backend-independent)
@@ -97,12 +106,167 @@ export interface FederationStats {
 }
 
 // ---------------------------------------------------------------------------
+// Observations (pai_observations / pai_session_summaries / pai_skill_telemetry)
+// ---------------------------------------------------------------------------
+
+export interface ObservationRow {
+  id: number;
+  session_id: string;
+  project_id: number | null;
+  project_slug: string | null;
+  type: string;
+  title: string;
+  narrative: string | null;
+  tool_name: string | null;
+  tool_input_summary: string | null;
+  files_read: string[];
+  files_modified: string[];
+  concepts: string[];
+  content_hash: string | null;
+  created_at: Date;
+}
+
+export interface SessionSummaryRow {
+  id: number;
+  session_id: string;
+  project_id: number | null;
+  project_slug: string | null;
+  request: string | null;
+  investigated: string | null;
+  learned: string | null;
+  completed: string | null;
+  next_steps: string | null;
+  observation_count: number;
+  created_at: Date;
+}
+
+export interface StoreObservationInput extends Omit<ClassifiedObservation, "narrative"> {
+  session_id: string;
+  project_id?: number | null;
+  project_slug?: string | null;
+  narrative?: string | null;
+}
+
+/** StoreObservationInput plus the cwd used to attribute it to a registered project. */
+export interface ObservationWithCwd extends StoreObservationInput {
+  cwd?: string;
+}
+
+export interface StoreSessionSummaryInput {
+  session_id: string;
+  project_id?: number | null;
+  project_slug?: string | null;
+  request?: string | null;
+  investigated?: string | null;
+  learned?: string | null;
+  completed?: string | null;
+  next_steps?: string | null;
+  observation_count?: number;
+}
+
+export interface QueryObservationsOptions {
+  projectId?: number;
+  sessionId?: string;
+  type?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ObservationStats {
+  total: number;
+  by_type: Array<{ type: string; count: number }>;
+  by_project: Array<{ project_slug: string | null; count: number }>;
+  most_recent: string | null;
+}
+
+export interface SkillTelemetryRow {
+  id: number;
+  scope: string;
+  skill_name: string;
+  source: string;
+  status: string;
+  trigger_count: number;
+  accept_count: number;
+  first_triggered: Date;
+  last_triggered: Date;
+  context_projects: string[];
+  hash: string | null;
+  audit_status: string | null;
+  last_audited: Date | null;
+}
+
+export interface RecordSkillInvocationInput {
+  skill_name: string;
+  /** 'local' | 'skills.sh' | repo slug */
+  source?: string;
+  /** governance seam — defaults to 'default' */
+  scope?: string;
+  /** project slug for context_projects rollup */
+  project_slug?: string | null;
+}
+
+export interface QuerySkillTelemetryOptions {
+  scope?: string;
+  status?: string;
+  limit?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge-graph triples stats (for `pai kg stats`)
+// ---------------------------------------------------------------------------
+
+export interface KgStats {
+  total: number;
+  valid: number;
+  invalidated: number;
+  subjects: number;
+  predicates: number;
+  contradictions: number;
+}
+
+// ---------------------------------------------------------------------------
+// Memory sources report (for `pai memory sources`)
+// ---------------------------------------------------------------------------
+
+export interface MemorySourcesComposition {
+  source: string;
+  tier: string;
+  chunks: number;
+  embedded: number;
+}
+
+export interface MemorySourcesPath {
+  path: string;
+  chunks: number;
+}
+
+export interface MemorySourcesChurnDay {
+  day: string;
+  chunks: number;
+  embedded: number;
+}
+
+export interface MemorySourcesReport {
+  composition: MemorySourcesComposition[];
+  paths: MemorySourcesPath[];
+  churn: MemorySourcesChurnDay[];
+}
+
+// ---------------------------------------------------------------------------
 // StorageBackend interface
 // ---------------------------------------------------------------------------
 
 export interface StorageBackend {
   /** Backend identifier — useful for logging */
   readonly backendType: "sqlite" | "postgres";
+
+  /**
+   * True when Postgres-only tables (kg_triples, pai_observations,
+   * pai_session_summaries, pai_skill_telemetry, vault_*) are available.
+   * Callers use this instead of comparing backendType directly, so the
+   * decision of which backend supports what stays behind this interface.
+   */
+  readonly supportsPostgresFeatures: boolean;
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -117,6 +281,12 @@ export interface StorageBackend {
    * Return aggregate statistics for health/status reporting.
    */
   getStats(): Promise<FederationStats>;
+
+  /**
+   * Return file/chunk counts scoped to a single project (memory_files/memory_chunks
+   * row counts for that project_id). Used for per-project taxonomy breakdowns.
+   */
+  getProjectStats(projectId: number): Promise<FederationStats>;
 
   // -------------------------------------------------------------------------
   // File tracking (change detection)
@@ -177,8 +347,18 @@ export interface StorageBackend {
    *
    * Rows are ordered by project so that per-project progress logging reflects
    * real runs of work rather than flapping once per chunk.
+   *
+   * `after` opts into keyset pagination on (project_id, id): pass `null` to
+   * start a paginated scan (ordered by project_id, id instead of the default
+   * priority ordering) and the last row's {project_id, id} from each page to
+   * fetch the next one. Omit it entirely (undefined) to keep the original
+   * single-page behaviour used by the daemon's bounded pass.
    */
-  getUnembeddedChunkIds(projectId?: number, limit?: number): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
+  getUnembeddedChunkIds(
+    projectId?: number,
+    limit?: number,
+    after?: { projectId: number; id: string } | null,
+  ): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
 
   /**
    * Store an embedding for a single chunk.
@@ -322,4 +502,130 @@ export interface StorageBackend {
 
   /** Alias resolution: look up canonical path for a vault alias path. */
   getVaultAlias(vaultPath: string): Promise<{ canonicalPath: string } | null>;
+
+  // -------------------------------------------------------------------------
+  // Knowledge-graph entities (kg_entities)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Upsert a KG entity by (tenant, name). On conflict: bumps mention_count,
+   * refreshes last_seen, fills in description/type when previously unset.
+   * Returns the deterministic entity_id (see entityContentId()).
+   */
+  upsertKgEntity(params: KgEntityUpsertParams): Promise<string>;
+
+  /** Look up a KG entity by name within a tenant. Null if not found. */
+  findKgEntity(name: string, tenantId?: string): Promise<KgEntity | null>;
+
+  /** List KG entities for a tenant, optionally filtered by type, ordered by mention_count desc. */
+  listKgEntities(tenantId?: string, type?: string, limit?: number): Promise<KgEntity[]>;
+
+  /** Apply an EMA feedback-weight update to an entity. No-op if the entity does not exist. */
+  updateEntityFeedbackWeight(entityId: string, normalizedRating: number, alpha?: number): Promise<void>;
+
+  // -------------------------------------------------------------------------
+  // Chunk feedback / access tracking (memory_chunks.relevance_score, last_accessed_at)
+  // -------------------------------------------------------------------------
+
+  /** Fetch text + current relevance_score for a set of chunk ids (for the EMA feedback update). */
+  getChunksForFeedback(chunkIds: string[]): Promise<Array<{ id: string; text: string; relevanceScore: number | null }>>;
+
+  /** Overwrite relevance_score for a single chunk. */
+  updateChunkRelevanceScore(chunkId: string, score: number): Promise<void>;
+
+  /** Set last_accessed_at to now for a set of chunk ids. Best-effort: never throws. */
+  touchChunksLastAccessed(chunkIds: string[]): Promise<void>;
+
+  // -------------------------------------------------------------------------
+  // Global indexing (daemon scheduler entry point — one call regardless of backend)
+  // -------------------------------------------------------------------------
+
+  /** Index every active registered project (memory/Notes/content scan + chunk + FTS). */
+  indexAll(registry: RegistryBackend): Promise<{ projects: number; result: IndexResult }>;
+
+  // -------------------------------------------------------------------------
+  // Cross-project concept tunnels
+  // -------------------------------------------------------------------------
+
+  /** Find concepts shared across two or more registered projects. */
+  findTunnels(registry: RegistryBackend, options?: FindTunnelsOptions): Promise<FindTunnelsResult>;
+
+  // -------------------------------------------------------------------------
+  // Memory sources report (`pai memory sources`)
+  // -------------------------------------------------------------------------
+
+  /** Aggregate composition/root-path/churn breakdown of what the indexer has taken in. */
+  getMemorySourcesReport(): Promise<MemorySourcesReport>;
+
+  // -------------------------------------------------------------------------
+  // Temporal knowledge graph (kg_triples). Postgres only — SQLiteBackend
+  // throws "not supported on the sqlite backend" for all of these.
+  // -------------------------------------------------------------------------
+
+  /** Insert a new (subject, predicate, object) triple. Returns the inserted row. */
+  addKgTriple(params: KgAddParams): Promise<KgTriple>;
+
+  /** Query triples by subject/predicate/object/project, with optional as-of point-in-time filter. */
+  queryKgTriples(params: KgQueryParams): Promise<KgTriple[]>;
+
+  /** Invalidate a triple by setting valid_to = NOW(). Does not delete the row. */
+  invalidateKgTriple(tripleId: number): Promise<void>;
+
+  /** Find (subject, predicate) pairs with more than one currently-valid object. */
+  getKgContradictions(subject: string): Promise<KgContradiction[]>;
+
+  /** Aggregate triple/contradiction counts for `pai kg stats`. */
+  getKgStats(): Promise<KgStats>;
+
+  // -------------------------------------------------------------------------
+  // Observations (pai_observations / pai_session_summaries / pai_skill_telemetry).
+  // Postgres only — SQLiteBackend throws "not supported on the sqlite backend".
+  // -------------------------------------------------------------------------
+
+  /** Insert an observation, skipping duplicates within a 30-second window. Returns the row id, or null if suppressed. */
+  storeObservation(obs: StoreObservationInput): Promise<number | null>;
+
+  /** storeObservation(), attributing project_id/project_slug from obs.cwd via the registry when set. */
+  storeObservationWithProject(registry: RegistryBackend, obs: ObservationWithCwd): Promise<number | null>;
+
+  /** Filtered query for observations, ordered by created_at DESC. */
+  queryObservations(opts?: QueryObservationsOptions): Promise<ObservationRow[]>;
+
+  /** Most recent observations for a project, ordered by created_at DESC. */
+  queryRecentObservations(projectId: number, limit: number): Promise<ObservationRow[]>;
+
+  /** All observations for a session, ordered chronologically. */
+  querySessionObservations(sessionId: string): Promise<ObservationRow[]>;
+
+  /** Aggregate observation totals/by-type/by-project/most-recent. */
+  getObservationStats(): Promise<ObservationStats>;
+
+  /**
+   * Observation-type counts per vault path, for a set of file paths (and
+   * optional project scope). Used by the graph_* handlers to enrich note
+   * nodes with how often each note was touched by which observation type.
+   */
+  getObservationTypesForPaths(filePaths: string[], projectId?: number): Promise<Map<string, Record<string, number>>>;
+
+  /** Upsert a session summary (ON CONFLICT session_id DO UPDATE). */
+  storeSessionSummary(summary: StoreSessionSummaryInput): Promise<void>;
+
+  /** Most recent session summaries for a project, ordered by created_at DESC. */
+  queryRecentSummaries(projectId: number, limit: number): Promise<SessionSummaryRow[]>;
+
+  /** Record a single skill invocation (upserts on scope/skill_name/source). */
+  recordSkillInvocation(input: RecordSkillInvocationInput): Promise<void>;
+
+  /** List skill telemetry rows, most-triggered first. */
+  querySkillTelemetry(opts?: QuerySkillTelemetryOptions): Promise<SkillTelemetryRow[]>;
+
+  // -------------------------------------------------------------------------
+  // File-path rename (session cleanup: moving Notes/*.md into YYYY/MM/)
+  // -------------------------------------------------------------------------
+
+  /** Count indexed file rows whose path is in the given list. */
+  countFilesWithPaths(paths: string[]): Promise<number>;
+
+  /** Rename file/chunk rows in bulk (path only — content/embeddings untouched). Returns rows updated. */
+  renameFilePaths(moves: Array<{ oldPath: string; newPath: string }>): Promise<number>;
 }

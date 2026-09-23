@@ -14,13 +14,10 @@
  * augmented with graph-derived context that pure vector search would miss.
  */
 
-import type { Pool } from "pg";
-import type { Database } from "better-sqlite3";
 import { cosineSimilarity, deserializeEmbedding } from "./embeddings.js";
 import type { SearchResult, SearchOptions } from "./search.js";
 import type { KgTriple } from "./kg.js";
-import { kgQuery } from "./kg.js";
-import { listKgEntities } from "./kg-entity.js";
+import type { StorageBackend } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +41,7 @@ export interface GraphCompletionOptions {
   maxTriples?: number;
   /** Postgres project_id filter for triples. */
   projectId?: number;
-  /** Tenant ID for entity lookup in federation.db. Default: "default" */
+  /** Tenant ID for entity lookup in the storage backend. Default: "default" */
   tenantId?: string;
   /** StorageBackend search options to pass to Phase 1 */
   searchOpts?: SearchOptions;
@@ -55,19 +52,19 @@ export interface GraphCompletionOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Find entity names (from the federation.db kg_entities table) that appear
+ * Find entity names (from the kg_entities table) that appear
  * as substrings in the given text chunks.
  *
  * Returns a deduplicated list of matching entity names.
  */
-function extractEntityMentions(
-  federationDb: Database,
+async function extractEntityMentions(
+  federation: StorageBackend,
   chunks: SearchResult[],
   tenantId = "default"
-): string[] {
+): Promise<string[]> {
   // Load all entity names for this tenant (sorted by length desc so longer
   // entity names are matched before substrings)
-  const entities = listKgEntities(federationDb, tenantId, undefined, 500);
+  const entities = await federation.listKgEntities(tenantId, undefined, 500);
   if (entities.length === 0) return [];
 
   const combinedText = chunks.map((c) => c.snippet).join("\n").toLowerCase();
@@ -95,7 +92,7 @@ function extractEntityMentions(
  * Returns all unique triples found in the BFS expansion.
  */
 async function bfsExpand(
-  pool: Pool,
+  federation: StorageBackend,
   entityNames: string[],
   hops: number,
   projectId?: number
@@ -109,13 +106,13 @@ async function bfsExpand(
 
     for (const name of frontier) {
       // Expand as subject
-      const asSubject = await kgQuery(pool, {
+      const asSubject = await federation.queryKgTriples({
         subject: name,
         project_id: projectId,
       });
 
       // Expand as object
-      const asObject = await kgQuery(pool, {
+      const asObject = await federation.queryKgTriples({
         object: name,
         project_id: projectId,
       });
@@ -190,14 +187,12 @@ async function rerankTriples(
 /**
  * Graph-completion retrieval combining vector search with KG neighborhood BFS.
  *
- * @param federationDb  SQLite federation.db (for chunk/entity lookup)
- * @param pool          Postgres connection pool (for kg_triples queries)
+ * @param federation    Active StorageBackend (for chunk/entity/kg_triples lookup)
  * @param queryVec      Pre-computed embedding for the search query
  * @param opts          Configuration options
  */
 export async function graphCompletionSearch(
-  federationDb: Database,
-  pool: Pool,
+  federation: StorageBackend,
   queryVec: Float32Array,
   opts: GraphCompletionOptions = {}
 ): Promise<GraphCompletionResult> {
@@ -210,7 +205,7 @@ export async function graphCompletionSearch(
     searchOpts,
   } = opts;
 
-  // Phase 1: Wide vector search over federation.db for seed chunks
+  // Phase 1: Wide vector search for seed chunks
   const seedSearchOpts: SearchOptions = {
     ...searchOpts,
     maxResults: seedCount,
@@ -219,8 +214,7 @@ export async function graphCompletionSearch(
 
   let seedChunks: SearchResult[] = [];
   try {
-    const { searchMemorySemantic } = await import("./search.js");
-    seedChunks = searchMemorySemantic(federationDb, queryVec, seedSearchOpts);
+    seedChunks = await federation.searchSemantic(queryVec, seedSearchOpts);
   } catch (e) {
     process.stderr.write(`[kg-search] Phase 1 seed search error: ${e}\n`);
   }
@@ -230,7 +224,7 @@ export async function graphCompletionSearch(
   }
 
   // Phase 2: Extract entity mentions from seed chunks
-  const expandedEntities = extractEntityMentions(federationDb, seedChunks, tenantId);
+  const expandedEntities = await extractEntityMentions(federation, seedChunks, tenantId);
 
   if (expandedEntities.length === 0) {
     // No entities matched — return empty graph results (seed chunks still useful)
@@ -240,7 +234,7 @@ export async function graphCompletionSearch(
   // Phase 3: BFS neighborhood expansion in kg_triples
   let expandedTriples: KgTriple[] = [];
   try {
-    expandedTriples = await bfsExpand(pool, [...expandedEntities], hops, projectId);
+    expandedTriples = await bfsExpand(federation, [...expandedEntities], hops, projectId);
   } catch (e) {
     process.stderr.write(`[kg-search] Phase 3 BFS expansion error: ${e}\n`);
   }

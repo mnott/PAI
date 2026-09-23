@@ -38,6 +38,15 @@ describe("decideEditGate", () => {
     expect((out as { reason: string }).reason).toContain("pai worker run");
   });
 
+  it("tells the session this is a standing policy, not a one-off error, and names the next step", () => {
+    const out = decideEditGate(ctx({}));
+    const reason = (out as { reason: string }).reason;
+    expect(reason).toContain("standing policy for the whole session");
+    expect(reason).toContain("retrying Edit/Write");
+    expect(reason).toContain("--provider anthropic");
+    expect(reason).toContain(ctx({}).filePath);
+  });
+
   it("allows worker sessions regardless of path", () => {
     expect(decideEditGate(ctx({ isPaiWorker: true }))).toEqual({ decision: "allow" });
   });

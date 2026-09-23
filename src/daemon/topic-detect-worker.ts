@@ -21,7 +21,7 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 
 import { detectTopicShift } from "../topics/detector.js";
-import { registryDb, storageBackend } from "./daemon/state.js";
+import { registryBackend, storageBackend } from "./daemon/state.js";
 import {
   findNotesDir,
   getCurrentNotePath,
@@ -166,9 +166,9 @@ export async function handleTopicDetect(payload: TopicDetectPayload): Promise<vo
   );
 
   // Check that daemon state is available
-  if (!registryDb || !storageBackend) {
+  if (!registryBackend || !storageBackend) {
     process.stderr.write(
-      "[topic-detect] Registry DB or storage backend not available — skipping.\n"
+      "[topic-detect] Registry backend or storage backend not available — skipping.\n"
     );
     return;
   }
@@ -192,7 +192,7 @@ export async function handleTopicDetect(payload: TopicDetectPayload): Promise<vo
   );
 
   // Run the BM25-based topic shift detector
-  const result = await detectTopicShift(registryDb, storageBackend, {
+  const result = await detectTopicShift(registryBackend, storageBackend, {
     context,
     currentProject,
     threshold: 0.6,

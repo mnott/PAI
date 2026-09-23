@@ -1,18 +1,37 @@
 /** Memory index command: index one or all projects into the memory store. */
 
 import type { Command } from "commander";
-import type { Database } from "better-sqlite3";
-import { openFederation } from "../../../memory/db.js";
-import { indexProject, indexAll } from "../../../memory/indexer.js";
+import type { StorageBackend } from "../../../storage/interface.js";
+import type { IndexResult } from "../../../memory/indexer-backend.js";
+import { indexProjectWithBackend } from "../../../memory/indexer-backend.js";
+import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { dim, bold, ok, err } from "../../utils.js";
 import { PaiClient } from "../../../daemon/ipc-client.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { runEmbed } from "./embed.js";
 
-export function registerIndexCommand(
-  memoryCmd: Command,
-  getDb: () => Database,
-): void {
+/**
+ * Index every active project through the StorageBackend. Loops
+ * indexProjectWithBackend() per project rather than the sync indexer's
+ * indexAll(), since that one still takes a raw registry Database handle.
+ */
+async function indexAllProjects(
+  backend: StorageBackend,
+): Promise<{ projects: number; result: IndexResult }> {
+  const registry = await getRegistryBackend();
+  const projects = await registry.listProjects({ status: "active" });
+
+  const totals: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
+  for (const project of projects) {
+    const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
+    totals.filesProcessed += r.filesProcessed;
+    totals.chunksCreated += r.chunksCreated;
+    totals.filesSkipped += r.filesSkipped;
+  }
+  return { projects: projects.length, result: totals };
+}
+
+export function registerIndexCommand(memoryCmd: Command): void {
   memoryCmd
     .command("index [project-slug]")
     .description("Index memory files for one project or all projects")
@@ -20,8 +39,6 @@ export function registerIndexCommand(
     .option("--embed", "Also generate embeddings for newly indexed chunks (Phase 2.5)")
     .option("--direct", "Skip daemon IPC and run index directly (for debugging)")
     .action(async (projectSlug: string | undefined, opts: { all?: boolean; embed?: boolean; direct?: boolean }) => {
-      const registryDb = getDb();
-
       // If daemon is running and no --direct flag, trigger via IPC (non-blocking)
       if (!opts.direct && !projectSlug) {
         try {
@@ -36,30 +53,27 @@ export function registerIndexCommand(
         }
       }
 
-      let federation: Database;
+      let backend: StorageBackend;
       try {
-        federation = openFederation();
+        backend = await getStorageBackend();
       } catch (e) {
-        console.error(err(`Failed to open federation database: ${e}`));
+        console.error(err(`Failed to open storage backend: ${e}`));
         process.exitCode = 1;
         return;
       }
 
       if (projectSlug) {
-        const project = registryDb
-          .prepare("SELECT id, slug, display_name, root_path FROM projects WHERE slug = ? AND status = 'active'")
-          .get(projectSlug) as
-          | { id: number; slug: string; display_name: string; root_path: string }
-          | undefined;
+        const registry = await getRegistryBackend();
+        const project = await registry.getProjectBySlug(projectSlug);
 
-        if (!project) {
+        if (!project || project.status !== "active") {
           console.error(err(`Project not found or not active: ${projectSlug}`));
           process.exitCode = 1;
           return;
         }
 
         console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));
-        const result = await indexProject(federation, project.id, project.root_path);
+        const result = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
 
         console.log(
           ok(`Done.`) +
@@ -69,13 +83,13 @@ export function registerIndexCommand(
         );
 
         if (opts.embed) {
-          await runEmbed(federation, project.id, project.slug);
+          await runEmbed(backend, project.id, project.slug);
         }
 
       } else if (opts.all || !projectSlug) {
         console.log(dim("Indexing all active projects..."));
 
-        const { projects, result } = await indexAll(federation, registryDb);
+        const { projects, result } = await indexAllProjects(backend);
 
         console.log(
           ok(`Done.`) +
@@ -86,7 +100,7 @@ export function registerIndexCommand(
         );
 
         if (opts.embed) {
-          await runEmbed(federation);
+          await runEmbed(backend);
         }
       }
     });

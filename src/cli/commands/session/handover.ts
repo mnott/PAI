@@ -16,7 +16,7 @@
  * Still exits 0 on every path — this must never interrupt Claude Code.
  */
 
-import type { Database } from "better-sqlite3";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { SessionRow, ProjectRow } from "./types.js";
 import { applyContinue } from "../../../session/checkpoint-block.js";
 import {
@@ -47,27 +47,25 @@ function buildStopBody(project: ProjectRow, sessionId?: string): string {
   }
 }
 
-export function cmdHandover(
-  db: Database,
+export async function cmdHandover(
   projectSlug: string | undefined,
   numberOrLatest: string | undefined,
   sessionId?: string
-): void {
+): Promise<void> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend: RegistryBackend = await getRegistryBackend();
+
   // ---- 1. Resolve project ----
   let project: ProjectRow | undefined;
 
   if (projectSlug) {
-    project = db
-      .prepare(
-        "SELECT id, slug, display_name, root_path, encoded_dir FROM projects WHERE slug = ?"
-      )
-      .get(projectSlug) as ProjectRow | undefined;
+    project = (await registryBackend.getProjectBySlug(projectSlug)) ?? undefined;
     if (!project) return;
   } else {
     // Same resolver as `pai pause` — including the realpath fallback, so a
     // session started via a symlinked path prefix resolves to the same project
     // rather than silently finding nothing.
-    const row = resolveProjectByCwd(db, process.cwd());
+    const row = await resolveProjectByCwd(registryBackend, process.cwd());
     if (!row) return;
     project = row;
   }
@@ -77,17 +75,11 @@ export function cmdHandover(
   const nol = numberOrLatest ?? "latest";
 
   if (nol === "latest") {
-    session = db
-      .prepare(
-        "SELECT * FROM sessions WHERE project_id = ? ORDER BY number DESC LIMIT 1"
-      )
-      .get(project!.id) as SessionRow | undefined;
+    session = (await registryBackend.getLatestSessionForProject(project!.id)) ?? undefined;
   } else {
     const num = parseInt(nol, 10);
     if (!isNaN(num)) {
-      session = db
-        .prepare("SELECT * FROM sessions WHERE project_id = ? AND number = ?")
-        .get(project!.id, num) as SessionRow | undefined;
+      session = (await registryBackend.getSessionByNumber(project!.id, num)) ?? undefined;
     }
   }
 

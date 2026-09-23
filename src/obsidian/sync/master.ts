@@ -7,8 +7,7 @@ import {
   readFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Database } from "better-sqlite3";
-import type { ProjectRow } from "./types.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { collectSessionFiles, walkNotesDir } from "./walk.js";
 
 // ---------------------------------------------------------------------------
@@ -110,25 +109,18 @@ function appendBacklinkIfMissing(
  * Also appends a backlink footer to each session file (idempotently).
  *
  * @param vaultPath  Absolute path to the PAI Obsidian vault
- * @param db         Registry SQLite database
+ * @param registry   Registry backend
  * @param threshold  Minimum session count to generate a master note (default: 5)
  * @returns          Number of master notes written
  */
-export function generateMasterNotes(
+export async function generateMasterNotes(
   vaultPath: string,
-  db: Database,
+  registry: RegistryBackend,
   threshold = 5
-): number {
+): Promise<number> {
   if (!existsSync(vaultPath)) return 0;
 
-  const projects = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir, status, obsidian_link, claude_notes_dir
-       FROM projects
-       WHERE status = 'active'
-       ORDER BY slug ASC`
-    )
-    .all() as ProjectRow[];
+  const projects = await registry.listProjects({ status: "active", orderBy: "slug" });
 
   let written = 0;
 
@@ -212,22 +204,15 @@ export function generateMasterNotes(
  * Scans all session and notes directories for every active project and removes
  * #Session (with or without a trailing space) from any `**Tags:**` line.
  *
- * @param db  Registry SQLite database
+ * @param registry  Registry backend
  * @returns   Object with counts: { filesScanned, filesModified, errors }
  */
-export function fixSessionTags(
-  db: Database
-): { filesScanned: number; filesModified: number; errors: string[] } {
+export async function fixSessionTags(
+  registry: RegistryBackend
+): Promise<{ filesScanned: number; filesModified: number; errors: string[] }> {
   const results = { filesScanned: 0, filesModified: 0, errors: [] as string[] };
 
-  const projects = db
-    .prepare(
-      `SELECT id, slug, display_name, root_path, encoded_dir, status, obsidian_link, claude_notes_dir
-       FROM projects
-       WHERE status = 'active'
-       ORDER BY slug ASC`
-    )
-    .all() as ProjectRow[];
+  const projects = await registry.listProjects({ status: "active", orderBy: "slug" });
 
   for (const project of projects) {
     const dirsToScan: string[] = [];

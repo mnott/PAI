@@ -13,13 +13,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { Pool } from "pg";
-import type { Database } from "better-sqlite3";
 
 import { buildTripleExtractionPrompt } from "../daemon/templates/triple-extraction-prompt.js";
-import { kgAdd, kgQuery, kgInvalidate } from "./kg.js";
-import { upsertKgEntity } from "./kg-entity.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
+import type { StorageBackend } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
 // Claude CLI binary discovery
@@ -154,8 +151,6 @@ export interface ExtractTriplesParams {
   sessionId: string;
   gitLog?: string;
   model?: ModelTier;
-  /** Optional federation SQLite db — when provided, entities are upserted into kg_entities (QW1) */
-  federationDb?: Database;
   /** Tenant ID for multi-tenant entity scoping (default: "default") */
   tenantId?: string;
 }
@@ -176,7 +171,7 @@ export interface ExtractTriplesResult {
  * Returns a small stats object so callers can report progress.
  */
 export async function extractAndStoreTriples(
-  pool: Pool,
+  backend: StorageBackend,
   params: ExtractTriplesParams
 ): Promise<ExtractTriplesResult> {
   const stats: ExtractTriplesResult = { extracted: 0, added: 0, superseded: 0 };
@@ -219,13 +214,13 @@ export async function extractAndStoreTriples(
       // New structured format: {entities: [...], relations: [...]}
       const newFmt = parsed as NewFormat;
 
-      // QW1: Upsert entities into federation SQLite kg_entities table when db is available
-      if (params.federationDb && Array.isArray(newFmt.entities)) {
+      // QW1: Upsert entities into kg_entities
+      if (Array.isArray(newFmt.entities)) {
         const tenantId = params.tenantId ?? "default";
         for (const entity of newFmt.entities) {
           if (!entity.name) continue;
           try {
-            upsertKgEntity(params.federationDb, {
+            await backend.upsertKgEntity({
               name: entity.name,
               type: entity.type ?? "unknown",
               description: entity.description,
@@ -263,7 +258,7 @@ export async function extractAndStoreTriples(
     if (!t.subject || !t.predicate || !t.object) continue;
 
     try {
-      const existing = await kgQuery(pool, {
+      const existing = await backend.queryKgTriples({
         subject: t.subject,
         predicate: t.predicate,
         project_id: params.projectId ?? undefined,
@@ -276,11 +271,11 @@ export async function extractAndStoreTriples(
       // Invalidate any superseded triple (same subject+predicate, different object)
       const supersedes = existing.find((e) => e.object !== t.object && !e.valid_to);
       if (supersedes) {
-        await kgInvalidate(pool, supersedes.id);
+        await backend.invalidateKgTriple(supersedes.id);
         stats.superseded++;
       }
 
-      await kgAdd(pool, {
+      await backend.addKgTriple({
         subject: t.subject,
         predicate: t.predicate,
         object: t.object,

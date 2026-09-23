@@ -5,8 +5,8 @@
  * Answers "what do I know about?" not "what do I know about X?"
  */
 
-import type { Database } from "better-sqlite3";
 import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { getTaxonomy } from "../../memory/taxonomy.js";
 import type { ToolResult } from "./types.js";
 
@@ -22,12 +22,12 @@ export interface MemoryTaxonomyParams {
 }
 
 export async function toolMemoryTaxonomy(
-  registryDb: Database,
+  registry: RegistryBackend,
   storage: StorageBackend,
   params: MemoryTaxonomyParams = {}
 ): Promise<ToolResult> {
   try {
-    const result = await getTaxonomy(registryDb, storage, {
+    const result = await getTaxonomy(registry, storage, {
       include_archived: params.include_archived,
       limit: params.limit,
     });

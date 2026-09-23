@@ -2,13 +2,8 @@
  * MCP tool handlers: observation_search, observation_timeline
  */
 
-import type { Database } from "better-sqlite3";
-import type { Pool } from "pg";
-import {
-  queryObservations,
-  queryRecentObservations,
-  querySessionObservations,
-} from "../../observations/store.js";
+import type { StorageBackend } from "../../storage/interface.js";
+import type { RegistryBackend } from "../../storage/registry-interface.js";
 import {
   lookupProjectId,
   type ToolResult,
@@ -30,14 +25,14 @@ export interface ObservationSearchParams {
  * Text matching is applied post-query against title and narrative fields.
  */
 export async function toolObservationSearch(
-  pool: Pool,
-  registryDb: Database,
+  backend: StorageBackend,
+  registry: RegistryBackend,
   params: ObservationSearchParams
 ): Promise<ToolResult> {
   try {
     let projectId: number | undefined;
     if (params.project) {
-      const id = lookupProjectId(registryDb, params.project);
+      const id = await lookupProjectId(registry, params.project);
       if (id == null) {
         return {
           content: [{ type: "text", text: `Project not found: ${params.project}` }],
@@ -47,7 +42,7 @@ export async function toolObservationSearch(
       projectId = id;
     }
 
-    const rows = await queryObservations(pool, {
+    const rows = await backend.queryObservations({
       projectId,
       type: params.type,
       limit: (params.limit ?? 20) * (params.query ? 5 : 1), // over-fetch when filtering
@@ -108,8 +103,8 @@ export interface ObservationTimelineParams {
  * If project is provided, shows recent observations for the project grouped by session.
  */
 export async function toolObservationTimeline(
-  pool: Pool,
-  registryDb: Database,
+  backend: StorageBackend,
+  registry: RegistryBackend,
   params: ObservationTimelineParams
 ): Promise<ToolResult> {
   try {
@@ -117,7 +112,7 @@ export async function toolObservationTimeline(
 
     if (params.session_id) {
       // Single session: chronological order
-      const rows = await querySessionObservations(pool, params.session_id);
+      const rows = await backend.querySessionObservations(params.session_id);
       if (rows.length === 0) {
         return {
           content: [{ type: "text", text: `No observations found for session: ${params.session_id}` }],
@@ -139,16 +134,16 @@ export async function toolObservationTimeline(
     // Project-scoped or global: fetch recent, group by session
     let rows;
     if (params.project) {
-      const id = lookupProjectId(registryDb, params.project);
+      const id = await lookupProjectId(registry, params.project);
       if (id == null) {
         return {
           content: [{ type: "text", text: `Project not found: ${params.project}` }],
           isError: true,
         };
       }
-      rows = await queryRecentObservations(pool, id, limit);
+      rows = await backend.queryRecentObservations(id, limit);
     } else {
-      rows = await queryObservations(pool, { limit });
+      rows = await backend.queryObservations({ limit });
     }
 
     if (rows.length === 0) {

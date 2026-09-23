@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header } from "../../utils.js";
-import { getFedDb, shortPath } from "./utils.js";
+import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdHealth(opts: {
   scope?: string;
@@ -19,9 +19,9 @@ async function cmdHealth(opts: {
     : undefined;
 
   const { zettelHealth } = await import("../../../zettelkasten/index.js");
-  const db = getFedDb();
+  const backend = await getFedBackend();
 
-  const result = zettelHealth(db, { scope, projectPath, recentDays, include: includeTypes });
+  const result = await zettelHealth(backend, { scope, projectPath, recentDays, include: includeTypes });
 
   console.log();
   console.log(header("  PAI Zettel Health"));

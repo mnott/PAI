@@ -11,19 +11,18 @@
  */
 
 import type { Command } from "commander";
-import type { Pool } from "pg";
+import type { StorageBackend } from "../../storage/interface.js";
 
 import { ok, warn, err, dim, bold, header } from "../utils.js";
 import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
-import { createStorageBackend } from "../../storage/factory.js";
-import { kgQuery } from "../../memory/kg.js";
+import { createStorageBackend, getRegistryBackend } from "../../storage/factory.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function getPool(): Promise<{ pool: Pool; close: () => Promise<void> }> {
+async function getBackend(): Promise<StorageBackend> {
   const config = loadConfig();
   if (config.storageBackend !== "postgres") {
     console.error(err("  KG commands require Postgres backend."));
@@ -31,12 +30,11 @@ async function getPool(): Promise<{ pool: Pool; close: () => Promise<void> }> {
     process.exit(1);
   }
   const backend = await createStorageBackend(config);
-  if (backend.backendType !== "postgres") {
+  if (!backend.supportsPostgresFeatures) {
     console.error(err("  Postgres backend unavailable — fell back to SQLite."));
     process.exit(1);
   }
-  const pool = (backend as unknown as { getPool(): Pool }).getPool();
-  return { pool, close: () => backend.close() };
+  return backend;
 }
 
 function shorten(s: string, n: number): string {
@@ -108,18 +106,17 @@ async function cmdQuery(opts: {
   project?: string;
   json?: boolean;
 }): Promise<void> {
-  const { pool, close } = await getPool();
+  const backend = await getBackend();
+  const registry = await getRegistryBackend();
+  const close = () => backend.close();
   try {
     let projectId: number | undefined;
     if (opts.project) {
-      const r = await pool.query<{ id: number }>(
-        "SELECT id FROM projects WHERE slug = $1 LIMIT 1",
-        [opts.project]
-      );
-      if (r.rows.length === 0) {
+      const row = await registry.getProjectBySlug(opts.project);
+      if (!row) {
         console.error(warn(`  Project not found in Postgres: ${opts.project}`));
       } else {
-        projectId = r.rows[0].id;
+        projectId = row.id;
       }
     }
 
@@ -130,7 +127,7 @@ async function cmdQuery(opts: {
       return;
     }
 
-    const triples = await kgQuery(pool, {
+    const triples = await backend.queryKgTriples({
       subject: opts.subject,
       predicate: opts.predicate,
       object: opts.object,
@@ -166,18 +163,17 @@ async function cmdQuery(opts: {
 
 async function cmdList(opts: { project?: string; limit?: string }): Promise<void> {
   const limit = opts.limit ? parseInt(opts.limit, 10) : 50;
-  const { pool, close } = await getPool();
+  const backend = await getBackend();
+  const registry = await getRegistryBackend();
+  const close = () => backend.close();
   try {
     let projectId: number | undefined;
     if (opts.project) {
-      const r = await pool.query<{ id: number }>(
-        "SELECT id FROM projects WHERE slug = $1 LIMIT 1",
-        [opts.project]
-      );
-      if (r.rows.length > 0) projectId = r.rows[0].id;
+      const row = await registry.getProjectBySlug(opts.project);
+      if (row) projectId = row.id;
     }
 
-    const triples = await kgQuery(pool, { project_id: projectId });
+    const triples = await backend.queryKgTriples({ project_id: projectId });
     const slice = triples.slice(0, limit);
 
     console.log();
@@ -205,47 +201,21 @@ async function cmdList(opts: { project?: string; limit?: string }): Promise<void
 // ---------------------------------------------------------------------------
 
 async function cmdStats(): Promise<void> {
-  const { pool, close } = await getPool();
+  const backend = await getBackend();
   try {
-    const totals = await pool.query<{
-      total: string;
-      valid: string;
-      invalidated: string;
-      subjects: string;
-      predicates: string;
-    }>(
-      `SELECT
-         COUNT(*)::text                                            AS total,
-         COUNT(*) FILTER (WHERE valid_to IS NULL)::text            AS valid,
-         COUNT(*) FILTER (WHERE valid_to IS NOT NULL)::text        AS invalidated,
-         COUNT(DISTINCT subject)::text                             AS subjects,
-         COUNT(DISTINCT predicate)::text                           AS predicates
-       FROM kg_triples`
-    );
-
-    const contradictions = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM (
-         SELECT subject, predicate
-         FROM kg_triples
-         WHERE valid_to IS NULL
-         GROUP BY subject, predicate
-         HAVING COUNT(*) > 1
-       ) c`
-    );
-
-    const row = totals.rows[0] ?? {};
+    const stats = await backend.getKgStats();
     console.log();
     console.log(header("  PAI KG Stats"));
     console.log();
-    console.log(`  ${bold("Total triples:")}        ${row.total ?? "0"}`);
-    console.log(`  ${bold("Currently valid:")}      ${row.valid ?? "0"}`);
-    console.log(`  ${bold("Invalidated:")}          ${row.invalidated ?? "0"}`);
-    console.log(`  ${bold("Distinct subjects:")}    ${row.subjects ?? "0"}`);
-    console.log(`  ${bold("Distinct predicates:")}  ${row.predicates ?? "0"}`);
-    console.log(`  ${bold("Contradictions:")}       ${contradictions.rows[0]?.count ?? "0"}`);
+    console.log(`  ${bold("Total triples:")}        ${stats.total}`);
+    console.log(`  ${bold("Currently valid:")}      ${stats.valid}`);
+    console.log(`  ${bold("Invalidated:")}          ${stats.invalidated}`);
+    console.log(`  ${bold("Distinct subjects:")}    ${stats.subjects}`);
+    console.log(`  ${bold("Distinct predicates:")}  ${stats.predicates}`);
+    console.log(`  ${bold("Contradictions:")}       ${stats.contradictions}`);
     console.log();
   } finally {
-    await close();
+    await backend.close();
   }
 }
 

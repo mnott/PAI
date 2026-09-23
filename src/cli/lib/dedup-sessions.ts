@@ -20,7 +20,6 @@
  *   HIDE: archived projects (status != 'active')
  */
 
-import type { Database } from "better-sqlite3";
 import chalk from "chalk";
 import { renderTable, dim, header, warn } from "../utils.js";
 import { fmtAge, type ScannedSession } from "./session-scan.js";
