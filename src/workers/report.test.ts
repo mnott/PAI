@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { makeColor } from "./render.js";
+import { mkdtempSync, writeFileSync, utimesSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { makeColor, headerLine } from "./render.js";
 import { validateAg2 } from "./agentish.js";
 import {
   OPERATOR_MARK,
@@ -13,6 +16,8 @@ import {
   promptTrailer,
   renderReport,
   workerContractPrompt,
+  verifyReportChanges,
+  verifyFailNote,
   WORKER_CONTRACT_PROMPT,
 } from "./report.js";
 
@@ -277,5 +282,109 @@ describe("WORKER_CONTRACT_PROMPT — full-contract AG2 baseline (keepalive path)
   it("tells the worker its turn ending ends the run: no ScheduleWakeup, no leaving children running", () => {
     expect(WORKER_CONTRACT_PROMPT).toMatch(/Ending your turn ends/);
     expect(WORKER_CONTRACT_PROMPT).toMatch(/ScheduleWakeup/);
+  });
+});
+
+describe("verifyReportChanges", () => {
+  function withTmpDir(run: (dir: string) => void): void {
+    const dir = mkdtempSync(join(tmpdir(), "report-verify-"));
+    try {
+      run(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("passes when every changed path exists and was written after start", () => {
+    withTmpDir((dir) => {
+      const start = Date.now();
+      writeFileSync(join(dir, "a.ts"), "x");
+      const r = verifyReportChanges([{ path: "a.ts", summary: "added" }], dir, start);
+      expect(r).toEqual({ ok: true, failures: [] });
+    });
+  });
+
+  it("flags a claimed path that was never written", () => {
+    withTmpDir((dir) => {
+      const start = Date.now();
+      const r = verifyReportChanges([{ path: "missing.ts", summary: "added" }], dir, start);
+      expect(r.ok).toBe(false);
+      expect(r.failures).toEqual([{ path: "missing.ts", reason: "missing" }]);
+    });
+  });
+
+  it("flags a claimed path that exists but predates the run's start", () => {
+    withTmpDir((dir) => {
+      writeFileSync(join(dir, "old.ts"), "x");
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(join(dir, "old.ts"), old, old);
+      const start = Date.now();
+      const r = verifyReportChanges([{ path: "old.ts", summary: "touched" }], dir, start);
+      expect(r.ok).toBe(false);
+      expect(r.failures).toEqual([{ path: "old.ts", reason: "stale" }]);
+    });
+  });
+
+  it("passes a path a summary says was deleted when it is actually absent", () => {
+    withTmpDir((dir) => {
+      const r = verifyReportChanges([{ path: "gone.ts", summary: "deleted the dead helper" }], dir, Date.now());
+      expect(r).toEqual({ ok: true, failures: [] });
+    });
+  });
+
+  it("flags a path a summary says was deleted when it still exists", () => {
+    withTmpDir((dir) => {
+      writeFileSync(join(dir, "still.ts"), "x");
+      const r = verifyReportChanges([{ path: "still.ts", summary: "removed the helper" }], dir, Date.now());
+      expect(r.ok).toBe(false);
+      expect(r.failures).toEqual([{ path: "still.ts", reason: "not-deleted" }]);
+    });
+  });
+
+  it("resolves relative paths against cwd", () => {
+    withTmpDir((dir) => {
+      const start = Date.now();
+      writeFileSync(join(dir, "nested.ts"), "x");
+      const r = verifyReportChanges([{ path: "./nested.ts" }], dir, start);
+      expect(r.ok).toBe(true);
+    });
+  });
+});
+
+describe("verifyFailNote", () => {
+  it("names the failure count and the first paths", () => {
+    const note = verifyFailNote({
+      ok: false,
+      failures: [
+        { path: "a.ts", reason: "missing" },
+        { path: "b.csv", reason: "missing" },
+      ],
+    });
+    expect(note).toBe("verify: 2 claimed changes not confirmed: a.ts, b.csv");
+  });
+
+  it("uses the singular for one failure", () => {
+    const note = verifyFailNote({ ok: false, failures: [{ path: "a.ts", reason: "stale" }] });
+    expect(note).toBe("verify: 1 claimed change not confirmed: a.ts");
+  });
+});
+
+describe("headerLine — report markers", () => {
+  const c = makeColor(false);
+  const base = { id: "w1", label: "task", cwd: "/tmp/x" };
+
+  it("shows no marker when the report is valid", () => {
+    expect(headerLine(c, { ...base, reportFormat: "ag2", reportValid: true })).not.toContain("R!");
+    expect(headerLine(c, { ...base, reportFormat: "ag2", reportValid: true })).not.toContain("R?");
+  });
+
+  it("shows R! for a structurally invalid AG2 report", () => {
+    expect(
+      headerLine(c, { ...base, reportFormat: "ag2", reportValid: false, reportErrors: ["bad r"] })
+    ).toContain("R!");
+  });
+
+  it("shows R? for a json report whose claimed changes failed filesystem verification", () => {
+    expect(headerLine(c, { ...base, reportFormat: "json", reportValid: false })).toContain("R?");
   });
 });

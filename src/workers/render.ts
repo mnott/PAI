@@ -408,9 +408,12 @@ export function headerLine(
   const bits = [s.provider ? `[${s.provider}]` : "", sessionTag(s)].filter(Boolean).join(" ");
   const sep = bits ? `  ${bits}` : "";
   const specBit = s.spec ? `  spec: ${s.spec}` : "";
+  // R! an AG2 report that failed `aibroker agentish check`; R? either the
+  // validator couldn't confirm it or a claimed changed path failed
+  // verification against the filesystem (see reportVerify in run.ts)
   const reportBit =
-    s.reportFormat === "ag2" && s.reportValid === false
-      ? "  " + c("red", (s.reportErrors ?? []).length ? "R!" : "R?")
+    s.reportValid === false
+      ? "  " + c("red", s.reportFormat === "ag2" && (s.reportErrors ?? []).length ? "R!" : "R?")
       : "";
   return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}${reportBit}`);
 }
@@ -467,11 +470,13 @@ export function renderTable(
     s.branch && !s.merged ? "  " + c("yellow", "⎇" + (s.commits ? String(s.commits) : "")) : "";
   const inboxMark = (s: WorkerStatus): string =>
     inbox[s.id] ? " " + c("mag", `◆${inbox[s.id]}`) : "";
-  // "R!" no proof/gate/test-set failure, "R?" the aibroker validator itself
-  // could not confirm it (missing/unreadable CLI) — never shown for json reports
+  // "R!" an AG2 report that failed `aibroker agentish check`, "R?" either
+  // the validator couldn't confirm it (missing/unreadable CLI) or a claimed
+  // changed path failed verification against the filesystem — shown for
+  // json reports too in the verify-failure case
   const reportMark = (s: WorkerStatus): string =>
-    s.reportFormat === "ag2" && s.reportValid === false
-      ? "  " + c("red", (s.reportErrors ?? []).length ? "R!" : "R?")
+    s.reportValid === false
+      ? "  " + c("red", s.reportFormat === "ag2" && (s.reportErrors ?? []).length ? "R!" : "R?")
       : "";
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
