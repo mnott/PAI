@@ -8,7 +8,8 @@
  * wall of text.
  */
 
-import { relative } from "node:path";
+import { statSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { shortText } from "./args.js";
 import type { Paint } from "./render.js";
 import { ag2Spec, ag2ToWorkerReport, parseAg2Report } from "./agentish.js";
@@ -270,6 +271,62 @@ export function renderReport(c: Paint, prefix: string, r: WorkerReport, cwd = ""
   }
   if (r.notes) out.push(`${prefix}${c("bold", "notes")}  ${shortText(r.notes, 120)}`);
   return out;
+}
+
+export interface ReportVerifyFailure {
+  path: string;
+  reason: "missing" | "not-deleted" | "stale";
+}
+
+export interface ReportVerifyResult {
+  ok: boolean;
+  failures: ReportVerifyFailure[];
+}
+
+/** A summary that names its own deletion — the path is expected to be gone. */
+const DELETED_RE = /\b(delete|deleted|deleting|remove|removed|removing)\b/i;
+
+/**
+ * Check every path a report's `changed` list claims against the filesystem:
+ * it must exist (mtime at or after `startMs`, the run's start) unless its
+ * summary says it was deleted, in which case it must be absent. Mechanical
+ * only — counts, row totals and other free-text claims are not checked (a
+ * worker's R report is trusted as written; a 2026-09-23 report claimed "181
+ * rows saved" while it had written 31, and only its listed paths are
+ * something the filesystem can confirm or refute).
+ */
+export function verifyReportChanges(
+  changed: Array<{ path?: string; summary?: string }> | undefined,
+  cwd: string,
+  startMs: number
+): ReportVerifyResult {
+  const failures: ReportVerifyFailure[] = [];
+  for (const ch of changed ?? []) {
+    const raw = (ch.path ?? "").trim();
+    if (!raw) continue;
+    const abs = isAbsolute(raw) ? raw : resolve(cwd, raw);
+    let mtimeMs: number | null;
+    try {
+      mtimeMs = statSync(abs).mtimeMs;
+    } catch {
+      mtimeMs = null;
+    }
+    const deleted = DELETED_RE.test(ch.summary ?? "");
+    if (deleted) {
+      if (mtimeMs !== null) failures.push({ path: raw, reason: "not-deleted" });
+    } else if (mtimeMs === null) {
+      failures.push({ path: raw, reason: "missing" });
+    } else if (mtimeMs < startMs) {
+      failures.push({ path: raw, reason: "stale" });
+    }
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+/** The one-line note appended to a report/ledger when verify fails. */
+export function verifyFailNote(v: ReportVerifyResult): string {
+  const paths = v.failures.map((f) => f.path).slice(0, 5).join(", ");
+  return `verify: ${v.failures.length} claimed change${v.failures.length === 1 ? "" : "s"} not confirmed: ${paths}`;
 }
 
 /** repo-relative display of a changed path when it lies under cwd. */

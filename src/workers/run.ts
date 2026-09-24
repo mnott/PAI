@@ -104,6 +104,8 @@ import {
   promptTrailer,
   workerContractPrompt,
   parseWorkerReport,
+  verifyReportChanges,
+  verifyFailNote,
   type WorkerReport,
 } from "./report.js";
 import { validateAg2 } from "./agentish.js";
@@ -1186,6 +1188,20 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       }
     }
   }
+  if (headless && ctx.resultReport?.changed?.length) {
+    const verify = verifyReportChanges(ctx.resultReport.changed, worktree?.dir ?? cwd, t0);
+    if (!verify.ok) {
+      status.reportValid = false;
+      const note = verifyFailNote(verify);
+      status.last = shortText(note, 90);
+      ctx.resultReport.notes = ctx.resultReport.notes ? `${ctx.resultReport.notes} — ${note}` : note;
+      appendLedger(ledger, "REPORT-UNVERIFIED", {
+        id: wid,
+        failures: verify.failures.length,
+        paths: verify.failures.map((f) => f.path).slice(0, 5).join(","),
+      });
+    }
+  }
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", {
     id: wid,
@@ -1517,6 +1533,20 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   status.rc = rc;
   status.secs = secs;
   status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
+  if (report?.changed?.length) {
+    const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0);
+    if (!verify.ok) {
+      status.reportValid = false;
+      const note = verifyFailNote(verify);
+      status.last = shortText(note, 90);
+      report.notes = report.notes ? `${report.notes} — ${note}` : note;
+      appendLedger(ledger, "REPORT-UNVERIFIED", {
+        id: wid,
+        failures: verify.failures.length,
+        paths: verify.failures.map((f) => f.path).slice(0, 5).join(","),
+      });
+    }
+  }
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", {
     id: wid,
