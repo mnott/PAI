@@ -113,6 +113,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "will pick something up later, never leave a background command as your final action. Finish, then",
     "report.",
     "No narration, no timestamps, no greetings, no summaries of what you read; act, verify, then stop.",
+    "Never sleep longer than 60 seconds in one command; wait on a bounded timeout or event instead.",
     ...fileNotInlineBlock(),
     "",
     `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,

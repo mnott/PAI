@@ -1,25 +1,25 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task" session-id="b4164ce3-558e-4b67-b6aa-856e5f9c048d" ts="2026-09-24T08:49:43.993Z" -->
+<!-- pai:checkpoint authored="auto" session="0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task" session-id="b4164ce3-558e-4b67-b6aa-856e5f9c048d" ts="2026-09-25T15:42:08.256Z" -->
 
 > **Last session:** 0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task
-> **Paused at:** 2026-09-24T08:49:43.993Z
+> **Paused at:** 2026-09-25T15:42:08.256Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume b4164ce3-558e-4b67-b6aa-856e5f9c048d`
 
 T
-i=ckpt-2026-09-24T08-49-43.866Z
-g=/Name PAI go
-d=so anyway. I don't understand what you're saying, but if I'm switching to glm it means I'm running out of budget for anthropic. so go figure. | /Name PAI go | so anyway. I don't understand what you're saying, but if I'm switching to glm it means I'm running out of budget for anthropic. so go figure.
+i=ckpt-2026-09-25T15-42-08.087Z
+g=ok then cpp
+d=[Task] pai task done on a recurring task re-dispatches it and re-sets pai-running (Gina sweep, 24.09 and 25.09)  Observed twice, 2026-09-24 07:04 and 2026-09-25 06:57, on the recurring task 6hC3gc8jXH… | [Session:Jobs Matthias] message in your mailbox — shown above if your drain hook ran, otherwise read with aibroker_receive | why in the current status bar zai usage is ?    👋 PAI CC 2.1.280 🧠 glm-5.3[1m] in 📁 CaseLeaf   🔌 MCPs: 15: Todoist, Dtp, Coogle, PAI, macOS, Hook +9   💎 Context: 120K / 1000K (66% left, 664K) │ z… | Look at this situation below. I would have expected the orchestrator (the one spawning a worker; potentially that could be a worker too spawning a child) to keep an eye on the worker. I just caught th… | keepalive
 t=?
 @1=Notes/TODO.md
-@2=src/tasks/poller.ts
-@3=src/workers/render.ts
-@4=src/workers/report.test.ts
-@5=src/workers/report.ts
-z=auto ckpt (no model); main@70de960 feat(storage): v0.55.0 - single storage layer, Postgres-only when configured, migrate-to-postgres, worktree snapshots, worker guards and pane fixes; 6 dirty; +1 path
+@2=src/daemon/daemon/scheduler.ts
+@3=src/hooks/ztk-passthrough.mjs
+@4=src/tasks/poller.ts
+@5=src/workers/report.test.ts
+z=auto ckpt (no model); main@351b75a feat(workers): v0.56.0 - verify worker-reported changed paths against the filesystem and mark unconfirmed reports; 11 dirty; +6 paths; git status for detail
 
 <!-- /pai:checkpoint -->
 

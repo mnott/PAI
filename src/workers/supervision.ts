@@ -12,6 +12,13 @@
  *              or the runner pid vanished while state was still running)
  *   stalled  — state running, runner alive, but no new turn for longer than
  *              the stall threshold (PAI_WORKER_STALL_MINUTES, default 10)
+ *   thrashing — state running, runner alive, turning, but the last N tool
+ *              executions all failed (PAI_WORKER_THRASH_FAILS, default 5) —
+ *              a worker that keeps failing every command never goes quiet,
+ *              so the stall detector alone cannot see it
+ *   sleeping — state running, one Bash command sleeping N >= 60s — under the
+ *              stall threshold for runs like `sleep 500` (8.3m), which would
+ *              otherwise be invisible until they cross it
  *
  * The interactive chat pane (origin "chat") is never supervised: it is the
  * operator's own session, not a task worker. Its status file flips to done
@@ -49,7 +56,10 @@ import { itermForClaudeSession } from "./scope.js";
 // Events
 // ---------------------------------------------------------------------------
 
-export type SupervisionKind = "finished" | "failed" | "stalled";
+export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping";
+
+/** The kinds that fire mid-run and re-arm on turn progress (see eventId). */
+const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping"];
 
 export interface SupervisionEvent {
   /** Deterministic dedup key — see eventId(). */
@@ -65,6 +75,10 @@ export interface SupervisionEvent {
   rc: number | null;
   /** Minutes without a turn, for stalled events; else null. */
   stalledMin: number | null;
+  /** Consecutive failed commands, for thrashing events; else null. */
+  consecFails?: number | null;
+  /** Seconds of the one sleeping command, for sleeping events; else null. */
+  sleepSec?: number | null;
   /** The one-liner that reaches the orchestrator. */
   text: string;
 }
@@ -108,19 +122,35 @@ export function stallMinutesFromEnv(env: NodeJS.ProcessEnv = process.env): numbe
 }
 
 /**
+ * The consecutive-failure threshold from PAI_WORKER_THRASH_FAILS (default 5),
+ * with the same broken-value tolerance as stallMinutesFromEnv.
+ */
+export const DEFAULT_THRASH_FAILS = 5;
+
+export function thrashFailsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PAI_WORKER_THRASH_FAILS;
+  if (raw === undefined || raw === "") return DEFAULT_THRASH_FAILS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_THRASH_FAILS;
+}
+
+/**
  * Event id: `<worker>#<kind>` for the once-per-run terminal kinds, and
- * `<worker>#stalled@<turns>` for stalls — the turn count re-arms the id, so a
- * worker that resumes and stalls again gets a second event while a restart
- * cannot replay the first.
+ * `<worker>#<kind>@<turns>` for the mid-run kinds (stalled, thrashing,
+ * sleeping) — the turn count re-arms the id, so a worker that resumes and
+ * hits the same condition again gets a second event while a restart cannot
+ * replay the first.
  */
 export function eventId(worker: string, kind: SupervisionKind, turns = 0): string {
-  return kind === "stalled" ? `${worker}#stalled@${turns}` : `${worker}#${kind}`;
+  return MID_RUN_KINDS.includes(kind) ? `${worker}#${kind}@${turns}` : `${worker}#${kind}`;
 }
 
 export interface DetectOptions {
   /** How long a running worker may go without a turn before "stalled". */
   stallMs: number;
   now: Date;
+  /** Consecutive failed tool executions before "thrashing" (default 5). */
+  thrashFails?: number;
   /** pid liveness — injected so tests need no real processes. */
   isAlive?: (pid: number) => boolean;
   /**
@@ -135,6 +165,9 @@ function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, st
   const tail = `- see pai worker replay ${s.id}`;
   if (kind === "finished") return `worker ${s.id} ${s.label} finished rc=0 ${tail}`;
   if (kind === "stalled") return `worker ${s.id} ${s.label} stalled ${stalledMin}m no turns ${tail}`;
+  if (kind === "thrashing")
+    return `worker ${s.id} ${s.label} thrashing: ${s.consecFails} consecutive failed commands ${tail}`;
+  if (kind === "sleeping") return `worker ${s.id} ${s.label} sleeping ${s.sleepSec}s in one command ${tail}`;
   const why = rc === null ? "runner gone" : `rc=${rc}`;
   return `worker ${s.id} ${s.label} failed ${why} ${tail}`;
 }
@@ -178,6 +211,10 @@ export function detectSupervisionEvents(
     } else if (ageMs(s.updated, opts.now) > opts.stallMs) {
       kind = "stalled";
       stalledMin = Math.floor(ageMs(s.updated, opts.now) / 60_000);
+    } else if ((s.consecFails ?? 0) >= (opts.thrashFails ?? DEFAULT_THRASH_FAILS)) {
+      kind = "thrashing";
+    } else if (s.sleepSec != null) {
+      kind = "sleeping";
     }
     if (!kind) continue;
     out.push({
@@ -189,6 +226,8 @@ export function detectSupervisionEvents(
       session,
       rc,
       stalledMin,
+      ...(kind === "thrashing" ? { consecFails: s.consecFails ?? 0 } : {}),
+      ...(kind === "sleeping" ? { sleepSec: s.sleepSec ?? 0 } : {}),
       text: eventText(kind, s, rc, stalledMin),
     });
   }
@@ -319,14 +358,20 @@ export const aibrokerPush: PushFn = async (logDir, target, ev) => {
 };
 
 /**
- * Whether a finished/failed/stalled event should be relayed into the owner's
- * terminal. A caller launched with --output-format json|stream-json reads
- * the run's result itself, and the harness already notifies it on process
- * exit — pushing the one-liner too would cost that caller a full extra turn
- * for information it already has. Interactive/pane launches and the default
- * text format are unaffected: only json and stream-json ever skip the relay.
+ * Whether an event should be relayed into the owner's terminal. The mid-run
+ * kinds (stalled, thrashing, sleeping) ALWAYS relay: a json/stream-json
+ * caller knows the run's result at exit but has no other way to hear
+ * mid-run trouble. Only the terminal kinds (finished/failed) skip the relay
+ * for those callers — they read the run's result itself, and the harness
+ * already notifies them on process exit, so the one-liner would cost a full
+ * extra turn for information they already have. Interactive/pane launches
+ * and the default text format are never skipped.
  */
-export function shouldRelay(outputFormat: WorkerStatus["outputFormat"] | undefined): boolean {
+export function shouldRelay(
+  kind: SupervisionKind,
+  outputFormat: WorkerStatus["outputFormat"] | undefined
+): boolean {
+  if (MID_RUN_KINDS.includes(kind)) return true;
   return outputFormat !== "json" && outputFormat !== "stream-json";
 }
 
@@ -349,6 +394,8 @@ function appendPushReceipt(logDir: string, ev: SupervisionEvent): void {
 export interface TickOptions {
   now?: Date;
   stallMs?: number;
+  /** Consecutive-failure threshold for thrashing (default: PAI_WORKER_THRASH_FAILS). */
+  thrashFails?: number;
   isAlive?: (pid: number) => boolean;
   /** Injectable for tests; production pushes through AIBroker. */
   push?: PushFn;
@@ -380,6 +427,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   const pending = filterUndelivered(
     detectSupervisionEvents(statuses, {
       stallMs: opts.stallMs ?? DEFAULT_STALL_MINUTES * 60_000,
+      thrashFails: opts.thrashFails ?? thrashFailsFromEnv(),
       now,
       ...(opts.isAlive ? { isAlive: opts.isAlive } : {}),
     }),
@@ -397,7 +445,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   for (const ev of written) {
     // the owner's iTerm identity is in its worker status, not the event
     const owner = statuses.find((s) => s.id === ev.worker);
-    if (!shouldRelay(owner?.outputFormat)) continue; // caller reads its own JSON result
+    if (!shouldRelay(ev.kind, owner?.outputFormat)) continue; // caller reads its own JSON result
     const target: PushTarget = {
       claudeSession: owner?.spawnerSession ?? null,
       iterm: owner?.session?.id ?? null,

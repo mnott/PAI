@@ -153,12 +153,14 @@ try {
     // Allow-list: only what the status line ever reads from a provider.
     // workers.yaml is 0600 because providers carry inline `key:` secrets —
     // this cache must never repeat them (or `env`, `url`, `headers`, …).
+    // `key_file` (snake_case, workers.yaml spelling) and `keyFile` are the
+    // same field; both are allow-listed.
     const safe = {};
     for (const [name, p] of Object.entries(providers || {})) {
         safe[name] = {
             models: (p && p.models) || {},
             usage: (p && p.usage) || undefined,
-            keyFile: (p && p.keyFile) || undefined,
+            keyFile: (p && (p.keyFile || p.key_file)) || undefined,
         };
     }
     process.stdout.write(JSON.stringify(safe));

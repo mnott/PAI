@@ -9,6 +9,8 @@
  * Interpreters, text-processing tools, anything already piped through
  * head/tail/wc, and anything asking for machine-readable JSON output must
  * keep their exact stdout, so they bypass ztk entirely.
+ * Git is included because compaction turned a failing git commit into a
+ * bare "ok" — its stderr and exit codes are essential and must survive.
  *
  * Prints "yes" (pass through, skip ztk) or "no" (send to ztk) to stdout.
  */
@@ -18,6 +20,7 @@ const PASSTHROUGH_COMMANDS = new Set([
   "basename", "dirname", "readlink", "stat", "du", "df",
   "head", "tail", "cat", "jq", "sed", "awk", "sort", "uniq", "tr", "cut",
   "true", "test", "[",
+  "git",
   "python3", "node", "bun",
 ]);
 

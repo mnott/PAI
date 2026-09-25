@@ -7,7 +7,7 @@
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { runSupervisionTick, stallMinutesFromEnv } from "../../workers/supervision.js";
+import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import {
   registryBackend,
@@ -411,6 +411,7 @@ export function startWorkerSupervisor(): void {
   const tick = () => {
     runSupervisionTick(workersLogDir(readWorkersSection().workers), {
       stallMs: stallMinutesFromEnv() * 60_000,
+      thrashFails: thrashFailsFromEnv(),
     })
       .then((r) => {
         for (const ev of r.events) {

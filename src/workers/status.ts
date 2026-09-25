@@ -99,6 +99,18 @@ export interface WorkerStatus {
   promptTrailer?: boolean;
   /** Whether an invalid AG2 final message triggered the one bounded re-ask (see run.ts). */
   reportRetried?: boolean;
+  /**
+   * Consecutive failed tool executions in this run, maintained by the runner's
+   * stream loop (0 after any success). Absent on old status files — every
+   * reader must treat that as "no signal".
+   */
+  consecFails?: number | null;
+  /**
+   * Seconds of the most recent single long sleep observed in a Bash tool_use
+   * (see parseSleepSecs), cleared when the command completes. Absent on old
+   * status files.
+   */
+  sleepSec?: number | null;
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */
@@ -338,6 +350,25 @@ export function elapsedOf(ts: string, now: Date = new Date()): string {
   if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m ${String(sec).padStart(2, "0")}s`;
   if (mins > 0) return `${mins}m ${String(sec).padStart(2, "0")}s`;
   return `${sec}s`;
+}
+
+/** Shorter sleeps are legitimate polling — not worth a supervision event. */
+export const SLEEP_FLOOR_SECS = 60;
+
+const SLEEP_RE = /^\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)\s*$/;
+
+/**
+ * Seconds of a standalone `sleep N` (N plain or with an s/m/h/d suffix), or
+ * null when the command is not one long sleep: anchored to the whole command,
+ * so a filename containing "sleep" or an `echo sleep 500` never trips it, and
+ * floored at SLEEP_FLOOR_SECS so ordinary polling stays invisible.
+ */
+export function parseSleepSecs(command: string): number | null {
+  const m = command.match(SLEEP_RE);
+  if (!m) return null;
+  const mult = m[2] === "m" ? 60 : m[2] === "h" ? 3600 : m[2] === "d" ? 86_400 : 1;
+  const secs = Number(m[1]) * mult;
+  return Number.isFinite(secs) && secs >= SLEEP_FLOOR_SECS ? secs : null;
 }
 
 /** One-line description of a tool call, e.g. "Bash: npm test". */
