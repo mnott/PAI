@@ -22,10 +22,11 @@ import {
   shouldRelay,
   stallMinutesFromEnv,
   supervisionEventsPath,
+  thrashFailsFromEnv,
   type SupervisionEvent,
   type SupervisionState,
 } from "./supervision.js";
-import type { WorkerStatus } from "./status.js";
+import { parseSleepSecs, type WorkerStatus } from "./status.js";
 
 const NOW = new Date("2026-09-18T01:00:00");
 
@@ -52,6 +53,8 @@ interface FakeOptions {
   origin?: WorkerStatus["origin"];
   label?: string;
   outputFormat?: WorkerStatus["outputFormat"];
+  consecFails?: number;
+  sleepSec?: number;
 }
 
 /** One ledger row with everything defaulted to "healthy and owned". */
@@ -82,6 +85,8 @@ function fake(o: FakeOptions = {}): WorkerStatus {
     ...(o.origin ? { origin: o.origin } : {}),
     ...(o.label !== undefined ? { label: o.label } : {}),
     ...(o.outputFormat ? { outputFormat: o.outputFormat } : {}),
+    ...(o.consecFails !== undefined ? { consecFails: o.consecFails } : {}),
+    ...(o.sleepSec !== undefined ? { sleepSec: o.sleepSec } : {}),
   };
 }
 
@@ -189,6 +194,48 @@ describe("condition detection", () => {
       fake({ id: "chain-3", state: "running", updatedMinsAgo: 20, parent: "chain-root" }),
     ]);
     expect(evs.map((e) => e.kind)).toEqual(["finished", "failed", "stalled"]);
+  });
+});
+
+describe("thrashing and sleeping detection", () => {
+  it("fires thrashing at the threshold, not below it", () => {
+    const [ev] = detect([fake({ consecFails: 5 })]);
+    expect(ev.kind).toBe("thrashing");
+    expect(ev.id).toBe("20260918-010000-100#thrashing@3");
+    expect(ev.text).toContain("thrashing: 5 consecutive failed commands");
+    expect(ev.text).toContain("pai worker replay");
+    expect(detect([fake({ consecFails: 4 })])).toHaveLength(0);
+  });
+
+  it("honours a custom thrash threshold", () => {
+    const opts = { stallMs: 10 * 60_000, now: NOW, isAlive: () => true, thrashFails: 3 };
+    expect(detectSupervisionEvents([fake({ consecFails: 3 })], opts)).toHaveLength(1);
+    expect(detectSupervisionEvents([fake({ consecFails: 2 })], opts)).toHaveLength(0);
+  });
+
+  it("re-arms the thrashing id only when turns advance", () => {
+    const once = detect([fake({ consecFails: 6, turns: 4 })])[0];
+    expect(detect([fake({ consecFails: 6, turns: 4 })])[0].id).toBe(once.id); // one event
+    expect(detect([fake({ consecFails: 6, turns: 5 })])[0].id).not.toBe(once.id); // new turn, new event
+  });
+
+  it("never fires thrashing when the counter is absent (old status files)", () => {
+    expect(detect([fake()])).toHaveLength(0);
+  });
+
+  it("a stalled worker reports the stall, not thrashing or sleeping", () => {
+    // no turns and no status writes is the stronger signal — a stale status
+    // could still carry last turn's consecFails or sleepSec
+    const [ev] = detect([fake({ updatedMinsAgo: 14, consecFails: 9, sleepSec: 500 })]);
+    expect(ev.kind).toBe("stalled");
+  });
+
+  it("fires sleeping for a recorded long sleep and re-arms on turns", () => {
+    const [ev] = detect([fake({ sleepSec: 500 })]);
+    expect(ev.kind).toBe("sleeping");
+    expect(ev.text).toContain("sleeping 500s in one command");
+    expect(detect([fake({ sleepSec: 500 })])[0].id).toBe(ev.id); // same turns, one event
+    expect(detect([fake({ sleepSec: 500, turns: 4 })])[0].id).not.toBe(ev.id);
   });
 });
 
@@ -332,6 +379,17 @@ describe("tick delivery", () => {
     expect(r.pushed).toHaveLength(0); // but the caller reads its own JSON result
   });
 
+  it("a json-format launch still gets mid-run events pushed (thrashing)", async () => {
+    await tick([fake({ id: "w-thr", state: "running", outputFormat: "json" })]);
+    const r = await tick(
+      [fake({ id: "w-thr", state: "running", consecFails: 7, outputFormat: "json" })],
+      async () => true
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].kind).toBe("thrashing");
+    expect(r.pushed).toHaveLength(1); // mid-run trouble reaches even a json caller
+  });
+
   it("a push that throws is treated as not delivered", async () => {
     await prime("w-throw");
     const r = await tick(
@@ -344,20 +402,29 @@ describe("tick delivery", () => {
 });
 
 describe("shouldRelay", () => {
-  it("skips the relay for a json launch", () => {
-    expect(shouldRelay("json")).toBe(false);
+  it("skips the relay for terminal kinds on a json launch", () => {
+    expect(shouldRelay("finished", "json")).toBe(false);
+    expect(shouldRelay("failed", "stream-json")).toBe(false);
   });
 
-  it("skips the relay for a stream-json launch", () => {
-    expect(shouldRelay("stream-json")).toBe(false);
+  it("relays terminal kinds for a default text launch", () => {
+    expect(shouldRelay("finished", "text")).toBe(true);
+    expect(shouldRelay("failed", "text")).toBe(true);
   });
 
-  it("relays a default text launch", () => {
-    expect(shouldRelay("text")).toBe(true);
+  it("relays terminal kinds when no format was recorded (interactive/pane launches)", () => {
+    expect(shouldRelay("finished", undefined)).toBe(true);
   });
 
-  it("relays when no format was recorded (interactive/pane launches)", () => {
-    expect(shouldRelay(undefined)).toBe(true);
+  it("always relays the mid-run kinds, whatever the output format", () => {
+    // a json caller knows the run's result at exit but has no other way to
+    // hear mid-run trouble — stalled/thrashing/sleeping always relay
+    for (const kind of ["stalled", "thrashing", "sleeping"] as const) {
+      expect(shouldRelay(kind, "json")).toBe(true);
+      expect(shouldRelay(kind, "stream-json")).toBe(true);
+      expect(shouldRelay(kind, "text")).toBe(true);
+      expect(shouldRelay(kind, undefined)).toBe(true);
+    }
   });
 });
 
@@ -372,6 +439,39 @@ describe("stallMinutesFromEnv", () => {
   it("reads a positive override", () => {
     expect(stallMinutesFromEnv({ PAI_WORKER_STALL_MINUTES: "3" })).toBe(3);
     expect(stallMinutesFromEnv({ PAI_WORKER_STALL_MINUTES: "45" })).toBe(45);
+  });
+});
+
+describe("thrashFailsFromEnv", () => {
+  it("defaults to 5 and survives broken values", () => {
+    expect(thrashFailsFromEnv({})).toBe(5);
+    expect(thrashFailsFromEnv({ PAI_WORKER_THRASH_FAILS: "" })).toBe(5);
+    expect(thrashFailsFromEnv({ PAI_WORKER_THRASH_FAILS: "abc" })).toBe(5);
+    expect(thrashFailsFromEnv({ PAI_WORKER_THRASH_FAILS: "-2" })).toBe(5);
+  });
+
+  it("reads a positive override", () => {
+    expect(thrashFailsFromEnv({ PAI_WORKER_THRASH_FAILS: "3" })).toBe(3);
+    expect(thrashFailsFromEnv({ PAI_WORKER_THRASH_FAILS: "12" })).toBe(12);
+  });
+});
+
+describe("parseSleepSecs", () => {
+  it("reads plain, minute, hour and day sleeps", () => {
+    expect(parseSleepSecs("sleep 500")).toBe(500);
+    expect(parseSleepSecs("sleep 5m")).toBe(300);
+    expect(parseSleepSecs("sleep 2h")).toBe(7200);
+    expect(parseSleepSecs("sleep 1d")).toBe(86400);
+  });
+
+  it("rejects short sleeps, other commands and mere mentions of sleep", () => {
+    expect(parseSleepSecs("sleep 30")).toBeNull(); // under the floor: polling
+    expect(parseSleepSecs("sleep 59.9")).toBeNull();
+    expect(parseSleepSecs("echo sleep 500")).toBeNull(); // sleep is an argument
+    expect(parseSleepSecs("cat notes.sleep.md")).toBeNull(); // filename, not a sleep
+    expect(parseSleepSecs("grep -n sleep src/*.ts")).toBeNull();
+    expect(parseSleepSecs("echo done && sleep 5m")).toBeNull(); // not standalone
+    expect(parseSleepSecs("")).toBeNull();
   });
 });
 

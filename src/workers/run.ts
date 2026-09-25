@@ -74,6 +74,7 @@ import {
   saveStatus,
   describeTool,
   nowStamp,
+  parseSleepSecs,
   UNLABELED,
 } from "./status.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
@@ -228,7 +229,16 @@ export type StreamEvent = {
   context_window?: number;
   model_info?: { context_window?: number } | null;
   message?: {
-    content?: Array<{ type?: string; text?: string; name?: string; id?: string; input?: unknown }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      name?: string;
+      id?: string;
+      input?: unknown;
+      /** tool_result blocks: the result payload (string or text blocks). */
+      content?: unknown;
+      is_error?: boolean;
+    }>;
     usage?: UsageBlock;
   };
   usage?: UsageBlock;
@@ -277,6 +287,40 @@ export function resetContextTokensOnCompact(status: Pick<WorkerStatus, "contextT
 /** A compact boundary in a worker's stream, in either event spelling. */
 export function isCompactBoundary(e: StreamEvent): boolean {
   return e.type === "system" && (e.subtype === "compact_boundary" || e.subtype === "compact");
+}
+
+/** The command string of a Bash tool_use input, "" when there is none. */
+function bashCommand(input: unknown): string {
+  if (typeof input === "object" && input !== null && typeof (input as { command?: unknown }).command === "string") {
+    return (input as { command: string }).command;
+  }
+  return "";
+}
+
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) =>
+        typeof c === "object" && c !== null && typeof (c as { text?: unknown }).text === "string"
+          ? (c as { text: string }).text
+          : ""
+      )
+      .join("\n");
+  }
+  return "";
+}
+
+/**
+ * Whether a tool_result block is a failed execution: the harness's own
+ * is_error flag, or — the older Bash spelling — an "Exit code N" line with a
+ * non-zero N in the result text. Feeds the consecFails counter supervision's
+ * thrashing detector reads.
+ */
+export function toolResultFailed(block: { is_error?: boolean; content?: unknown }): boolean {
+  if (block.is_error === true) return true;
+  const m = toolResultText(block.content).match(/Exit code (\d+)/);
+  return m !== null && Number(m[1]) !== 0;
 }
 
 /**
@@ -1116,11 +1160,30 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           if (block.type === "tool_use") {
             status.tools += 1;
             status.last = describeTool(block.name ?? "?", block.input);
+            // a long single sleep is worth seeing while it runs (supervision's
+            // "sleeping" kind) — set when issued, cleared when it completes
+            if (block.name === "Bash") status.sleepSec = parseSleepSecs(bashCommand(block.input));
           } else if (block.type === "text" && (block.text ?? "").trim()) {
             status.last = "says: " + shortText(block.text, 70);
           }
         }
         saveStatus(logDir, status);
+      } else if (e.type === "user") {
+        // tool results arrive as user events: each one advances (or resets)
+        // the consecutive-failure counter supervision's thrashing detector
+        // reads, and retires a pending sleep observation. Plain user turns
+        // (operator input) have no tool_result blocks and change nothing.
+        const blocks = e.message?.content;
+        if (Array.isArray(blocks)) {
+          let sawResult = false;
+          for (const block of blocks) {
+            if (block.type !== "tool_result") continue;
+            sawResult = true;
+            status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
+            status.sleepSec = null;
+          }
+          if (sawResult) saveStatus(logDir, status);
+        }
       } else if (e.type === "result") {
         const tokens = usageContextTokens(e.usage);
         // a compact result legitimately restarts the context lower
