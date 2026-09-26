@@ -1,25 +1,23 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task" session-id="b4164ce3-558e-4b67-b6aa-856e5f9c048d" ts="2026-09-26T09:48:32.642Z" -->
+<!-- pai:checkpoint authored="auto" session="0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task" session-id="b4164ce3-558e-4b67-b6aa-856e5f9c048d" ts="2026-09-26T10:09:55.025Z" -->
 
 > **Last session:** 0169 - 2026-09-23 - Keepalive Check In — Awaiting Next Task
-> **Paused at:** 2026-09-26T09:48:32.642Z
+> **Paused at:** 2026-09-26T10:09:55.025Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/PAI
 >
 > Resume with: `claude --resume b4164ce3-558e-4b67-b6aa-856e5f9c048d`
 
 T
-i=ckpt-2026-09-26T09-48-32.488Z
-g=seriously, how can we make those workers not make those stupid timeouts.  19:02:10 │ $ timeout 900 xcodebuild test -scheme VoiceInk -configuration          │ Debug -destination 'platform=macOS'…
-d=[Session:pai-cli] message in your mailbox — shown above if your drain hook ran, otherwise read with aibroker_receive | [Session:CaseLeaf] message in your mailbox — shown above if your drain hook ran, otherwise read with aibroker_receive | what the heck was that message  [Session:pai-cli] message in your mailbox — shown above if your drain hook ran, otherwise read with aibroker_receive  arrived in mulitple sessions | if I do e.g. PAI AIBroker, it'll allow me to resume the session. but even if that session had been running under glm-5.3[1m] (started by saying "N", then naming it), the resume will try to resume it i… | of course it shoudl resume in the type it ran on - otherwise resume would it make sense? idk
+i=ckpt-2026-09-26T10-09-54.891Z
+g=what the heck was that message  [Session:pai-cli] message in your mailbox — shown above if your drain hook ran, otherwise read with aibroker_receive  arrived in mulitple sessions
+d=if I do e.g. PAI AIBroker, it'll allow me to resume the session. but even if that session had been running under glm-5.3[1m] (started by saying "N", then naming it), the resume will try to resume it i… | of course it shoudl resume in the type it ran on - otherwise resume would it make sense? idk | if you need to cpp for pai, do it now. | what is parked wrt poller.ts | well then fix it
 t=?
 @1=Notes/TODO.md
-@2=src/cli/commands/main-resolver.ts
-@3=src/cli/commands/session/goto.ts
-@4=src/cli/lib/launch.test.ts
-@5=src/cli/lib/launch.ts
-z=auto ckpt (no model); main@2bff15e feat(workers): v0.57.0 - mid-run supervision (thrashing, sleeping) always relayed to json spawners; statusline key_file providers; git passthrough; 11 dirty; +6 path
+@2=src/tasks/poller.test.ts
+@3=src/tasks/poller.ts
+z=auto ckpt (no model); main@7041a44 feat(cli): v0.58.0 - resume lands on the transcript's provider; supervision prune keeps listed workers' receipts; compound sleep detection; 3 dirty; git status for d
 
 <!-- /pai:checkpoint -->
 
