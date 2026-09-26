@@ -19,7 +19,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeResume, resolveLaunchRoute, workerRunArgv } from "./launch.js";
+import {
+  probeResume,
+  resolveLaunchRoute,
+  workerRunArgv,
+  lastTranscriptModel,
+  matchTranscriptProvider,
+  resumeOfferText,
+} from "./launch.js";
 import type { WorkerProvider } from "../../workers/config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -187,6 +194,146 @@ describe("the probe has exactly one implementation", () => {
       /\bfunction\s+probeResume\b/.test(readFileSync(f, "utf8"))
     );
     expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli/lib/launch.ts"]);
+  });
+
+  it("providerResumePlan lives beside it, also exactly once", () => {
+    const definers = tsFiles(SRC).filter((f) =>
+      /\bfunction\s+providerResumePlan\b/.test(readFileSync(f, "utf8"))
+    );
+    expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli/lib/launch.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider-aware resume
+// ---------------------------------------------------------------------------
+
+function assistantLine(model: string): string {
+  return JSON.stringify({ type: "assistant", message: { role: "assistant", model, content: "hi" } });
+}
+
+describe("lastTranscriptModel — which model a transcript ran on", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-model-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("returns the last assistant entry's model", () => {
+    const p = join(dir, "t.jsonl");
+    writeFileSync(
+      p,
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) + "\n" +
+        assistantLine("glm-4.6") + "\n" +
+        assistantLine("glm-5.3") + "\n"
+    );
+    expect(lastTranscriptModel(p)).toBe("glm-5.3");
+  });
+
+  it("returns null for a file with no assistant entry, and for a missing file", () => {
+    const stub = join(dir, "stub.jsonl");
+    writeFileSync(stub, JSON.stringify({ lastPrompt: "go", customTitle: "PAI" }) + "\n");
+    expect(lastTranscriptModel(stub)).toBeNull();
+    expect(lastTranscriptModel(join(dir, "absent.jsonl"))).toBeNull();
+  });
+
+  /**
+   * The read is bounded to the tail by design — the last assistant entry sits
+   * at the end of the file. Both directions are pinned: a model announced
+   * only in the head of a large transcript is NOT found (proof the head is
+   * never read), and one in the tail of the same size is.
+   */
+  it("reads only the tail of a large transcript", () => {
+    const filler =
+      JSON.stringify({ type: "user", message: { role: "user", content: "x".repeat(200) } }) + "\n";
+    // ~150 KB of non-assistant lines, assistant entry at the very end
+    const tailHit = join(dir, "tail.jsonl");
+    writeFileSync(tailHit, filler.repeat(600) + assistantLine("glm-5.3") + "\n");
+    expect(statSync(tailHit).size).toBeGreaterThan(64 * 1024);
+    expect(lastTranscriptModel(tailHit)).toBe("glm-5.3");
+
+    // Same size, assistant entry only at the start: a tail reader cannot see it
+    const headOnly = join(dir, "head.jsonl");
+    writeFileSync(headOnly, assistantLine("glm-5.3") + "\n" + filler.repeat(600));
+    expect(lastTranscriptModel(headOnly)).toBeNull();
+  });
+
+  it("skips a fragment cut by the tail boundary", () => {
+    // One 70 KB line, then the assistant entry. The 64 KB tail starts
+    // mid-way through the big line, so the chunk's first "line" is a JSON
+    // fragment — it must be skipped, not fatal.
+    const blob = JSON.stringify({ type: "attachment", content: "y".repeat(70_000) }) + "\n";
+    const p = join(dir, "cut.jsonl");
+    writeFileSync(p, blob + assistantLine("glm-5.3") + "\n");
+    expect(lastTranscriptModel(p)).toBe("glm-5.3");
+  });
+});
+
+describe("matchTranscriptProvider — which configured provider owns a model", () => {
+  const glm: WorkerProvider = {
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: "https://glm.example/api",
+    keyFile: "~/.config/pai/keys/glm",
+    models: { default: "glm-5.3[1m]", fast: "glm-4.6-flash" },
+    env: {},
+  };
+  const providers: Record<string, WorkerProvider> = { glm };
+
+  it("matches a model exactly as configured", () => {
+    expect(matchTranscriptProvider("glm-5.3[1m]", providers)).toEqual({
+      provider: "glm",
+      model: "glm-5.3[1m]",
+    });
+  });
+
+  it("matches across the [1m] variant suffix, on either side", () => {
+    // session recorded "glm-5.3", table says "glm-5.3[1m]"...
+    expect(matchTranscriptProvider("glm-5.3", providers)).toEqual({
+      provider: "glm",
+      model: "glm-5.3",
+    });
+    // ...and the mirror: table bare, session suffixed
+    const bare: Record<string, WorkerProvider> = {
+      glm: { ...glm, models: { default: "glm-5.3" } },
+    };
+    expect(matchTranscriptProvider("glm-5.3[1m]", bare)).toEqual({
+      provider: "glm",
+      model: "glm-5.3[1m]",
+    });
+  });
+
+  it("matches a non-default capability model too", () => {
+    expect(matchTranscriptProvider("glm-4.6-flash", providers)?.provider).toBe("glm");
+  });
+
+  it("returns null for an unknown or absent model — an Anthropic-login transcript resumes plain", () => {
+    expect(matchTranscriptProvider("claude-sonnet-5", providers)).toBeNull();
+    expect(matchTranscriptProvider("claude-fable-5-1[1m]", providers)).toBeNull();
+    expect(matchTranscriptProvider(null, providers)).toBeNull();
+  });
+
+  it("skips disabled and openai-protocol providers", () => {
+    const disabled: Record<string, WorkerProvider> = { glm: { ...glm, enabled: false } };
+    expect(matchTranscriptProvider("glm-5.3", disabled)).toBeNull();
+    const proxied: Record<string, WorkerProvider> = {
+      glm: { ...glm, protocol: "openai", upstreamUrl: "https://api.openai.example/v1" },
+    };
+    expect(matchTranscriptProvider("glm-5.3", proxied)).toBeNull();
+  });
+});
+
+describe("resumeOfferText — the offer names its destination", () => {
+  it("names provider and model when the transcript ran on one", () => {
+    expect(resumeOfferText({ provider: "glm", model: "glm-5.3[1m]" })).toBe(
+      "Resume into glm-5.3[1m] (glm)?"
+    );
+  });
+
+  it("stays plain when no provider matches", () => {
+    expect(resumeOfferText(null)).toBe("Resume?");
   });
 });
 

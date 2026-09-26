@@ -355,13 +355,15 @@ export function elapsedOf(ts: string, now: Date = new Date()): string {
 /** Shorter sleeps are legitimate polling — not worth a supervision event. */
 export const SLEEP_FLOOR_SECS = 60;
 
-const SLEEP_RE = /^\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)\s*$/;
+const SLEEP_RE = /^\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)\s*(?:$|[;&|])/;
 
 /**
- * Seconds of a standalone `sleep N` (N plain or with an s/m/h/d suffix), or
- * null when the command is not one long sleep: anchored to the whole command,
- * so a filename containing "sleep" or an `echo sleep 500` never trips it, and
- * floored at SLEEP_FLOOR_SECS so ordinary polling stays invisible.
+ * Seconds of a `sleep N` (N plain or with an s/m/h/d suffix) that stands alone
+ * or leads a compound command (`sleep 150; cat f`, `sleep 2m && tail f`,
+ * `sleep 90 || true`, `sleep 60 &`), or null when no long sleep leads: anchored
+ * to the start of the command, so a filename containing "sleep" or an
+ * `echo sleep 500` never trips it, and floored at SLEEP_FLOOR_SECS so ordinary
+ * polling stays invisible.
  */
 export function parseSleepSecs(command: string): number | null {
   const m = command.match(SLEEP_RE);

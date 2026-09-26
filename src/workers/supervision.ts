@@ -286,16 +286,28 @@ export function saveSupervisionState(path: string, state: SupervisionState): voi
 }
 
 /**
- * Drop workers the ledger no longer lists and cap the rest (newest ids last —
- * worker ids sort chronologically), so the persisted state stays bounded.
+ * Drop the delivered ids of workers the ledger no longer lists (absent means
+ * history: their status files are gone) and cap only that history — newest
+ * ids last, worker ids sort chronologically — so the persisted state stays
+ * bounded. A worker the ledger still lists must never lose its receipts:
+ * pruning one un-marks its terminal events as delivered, and every save
+ * re-arms them into an unbounded re-delivery loop (the 2026-09-25 incident:
+ * one old chain stage re-pushed 7,393 times, because the cap of 500 bit into
+ * a ledger of ~1,700 live statuses).
  */
-export function pruneState(state: SupervisionState, statuses: WorkerStatus[]): SupervisionState {
+export function pruneState(
+  state: SupervisionState,
+  statuses: WorkerStatus[],
+  maxAbsent = MAX_REMEMBERED_WORKERS
+): SupervisionState {
   const present = new Set(statuses.map((s) => s.id));
-  const kept = Object.entries(state.delivered)
-    .filter(([id]) => present.has(id))
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .slice(-MAX_REMEMBERED_WORKERS);
-  return { delivered: Object.fromEntries(kept) };
+  const entries = Object.entries(state.delivered);
+  const byId = ([a]: [string, string[]], [b]: [string, string[]]) => (a < b ? -1 : a > b ? 1 : 0);
+  const keptPresent = entries.filter(([id]) => present.has(id)).sort(byId);
+  const absent = entries.filter(([id]) => !present.has(id)).sort(byId);
+  // not slice(-maxAbsent): with maxAbsent 0 that returns the whole array
+  const keptAbsent = absent.slice(Math.max(0, absent.length - maxAbsent));
+  return { delivered: Object.fromEntries([...keptAbsent, ...keptPresent]) };
 }
 
 /**
