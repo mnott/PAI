@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { tick, type Prober, type ProbeState } from "./poller.js";
+import { tick, isNotReceivedReply, type Prober, type ProbeState } from "./poller.js";
 import { RUNNING_LABEL } from "./scheduler.js";
 import type { Task } from "./types.js";
 
@@ -964,5 +964,135 @@ describe("an alarm nobody could deliver falls back to the tracker", () => {
       String(c[1]).includes("no notification channel accepted")
     );
     expect(fallback).toBeUndefined();
+  });
+});
+
+/**
+ * A probe reply of NOT-RECEIVED: alive, but the dispatch never reached the
+ * session.
+ *
+ * The transport said `queued` or `delivered`, the claim went on, and the one
+ * place the work order had to arrive never saw it. Logging "alive" here — the
+ * old behaviour — abandons the run to a claim that will age out hours later,
+ * having never run. The reply is an undelivered-dispatch report, so the poller
+ * re-dispatches with backoff and a cap: three tries, then the claim is left
+ * for a human, because an endless retry loop risks double-running a dispatch
+ * that was only very late.
+ */
+describe("a NOT-RECEIVED probe reply", () => {
+  const SEED = { startedAt: { sweep: NOW - 60 * 60_000 } }; // 60m elapsed → probe at 45m
+
+  async function probeTick(
+    reply: string | undefined,
+    seed: Record<string, unknown> = SEED,
+    now = NOW
+  ) {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-notreceived-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, JSON.stringify(seed));
+    const transport = fakeTransport("queued");
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([runningTask()]),
+      setLabels: vi.fn().mockResolvedValue(undefined),
+      setDue: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    try {
+      const report = await tick({
+        provider,
+        transport,
+        prober: { ask: vi.fn().mockResolvedValue({ state: "replied", reply, reason: "replied" }) },
+        autoDispatch: true,
+        dryRun: false,
+        now,
+        stateFile,
+        webhookActive: true,
+      });
+      return { report, transport, state: JSON.parse(readFileSync(stateFile, "utf8")) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("re-dispatches on the first NOT-RECEIVED reply", async () => {
+    const { report, transport, state } = await probeTick("NOT-RECEIVED: never saw it");
+    expect(transport.dispatch).toHaveBeenCalledTimes(1);
+    expect(state.notReceivedAttempts.sweep).toBe(1);
+    expect(state.notReceivedRetryAt.sweep).toBe(NOW + 2 * 60_000);
+    expect(report.decisions[0]!.note).toContain("re-dispatched (try 1)");
+    expect(report.dispatched).toBe(1);
+  });
+
+  it("backs off: a second NOT-RECEIVED inside the window dispatches nothing", async () => {
+    const { report, transport, state } = await probeTick("alive, not received", {
+      ...SEED,
+      notReceivedAttempts: { sweep: 1 },
+      notReceivedRetryAt: { sweep: NOW + 2 * 60_000 },
+    });
+    expect(transport.dispatch).not.toHaveBeenCalled();
+    expect(report.decisions[0]!.note).toContain("backed off");
+    expect(report.dispatched).toBe(0);
+    expect(state.notReceivedAttempts.sweep).toBe(1); // unchanged, clock still running
+  });
+
+  it("dispatches again once the backoff has expired, at the next step", async () => {
+    const { report, transport, state } = await probeTick(
+      "Alive: not-received x",
+      { ...SEED, notReceivedAttempts: { sweep: 1 }, notReceivedRetryAt: { sweep: NOW + 2 * 60_000 } },
+      NOW + 3 * 60_000
+    );
+    expect(transport.dispatch).toHaveBeenCalledTimes(1);
+    expect(state.notReceivedAttempts.sweep).toBe(2);
+    // try 2 waits 4 minutes from the new now.
+    expect(state.notReceivedRetryAt.sweep).toBe(NOW + 7 * 60_000);
+    expect(report.decisions[0]!.note).toContain("re-dispatched (try 2)");
+  });
+
+  it("stops re-dispatching at the attempt cap and reports the claim stuck", async () => {
+    const { report, transport, state } = await probeTick("NOT-RECEIVED: never saw it", {
+      ...SEED,
+      notReceivedAttempts: { sweep: 3 },
+    });
+    expect(transport.dispatch).not.toHaveBeenCalled();
+    expect(report.stuck).toBe(1);
+    expect(report.decisions[0]!.note).toContain("claim left for a human");
+    expect(state.notReceivedAttempts.sweep).toBe(3);
+  });
+
+  it("resets the backoff clock on a normal alive reply", async () => {
+    const { report, state } = await probeTick("alive, working on it", {
+      ...SEED,
+      notReceivedAttempts: { sweep: 2 },
+      notReceivedRetryAt: { sweep: NOW + 4 * 60_000 },
+    });
+    expect(state.notReceivedAttempts.sweep).toBeUndefined();
+    expect(state.notReceivedRetryAt.sweep).toBeUndefined();
+    expect(report.decisions[0]!.note).toContain("alive after");
+  });
+});
+
+describe("isNotReceivedReply", () => {
+  it("matches the NOT-RECEIVED spellings on the first line only", () => {
+    for (const yes of [
+      "NOT-RECEIVED: never saw it",
+      "not-received",
+      "alive, not received",
+      "Alive: not-received x",
+      "ALIVE, NOT RECEIVED since the morning",
+    ]) {
+      expect(isNotReceivedReply(yes), yes).toBe(true);
+    }
+    for (const no of [
+      "alive, working on it",
+      "alive: yes, still on it",
+      "we discussed not received earlier in this line only later",
+      "still working; NOT-RECEIVED",
+      "",
+      undefined,
+      null,
+      "working on it\nNOT-RECEIVED", // second line must not count
+    ]) {
+      expect(isNotReceivedReply(no), JSON.stringify(no)).toBe(false);
+    }
   });
 });

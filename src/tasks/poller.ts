@@ -132,6 +132,27 @@ export interface PersistedState extends RunState {
    * door that quietly retires a task nobody notices is gone.
    */
   parked: Record<string, { reason: string; at: number; due?: string }>;
+  /**
+   * Task id → consecutive re-dispatch attempts triggered by a probe reply
+   * that starts with NOT-RECEIVED, for the claim currently in flight.
+   *
+   * Separate from `failedProbes`: that counter tracks silence, this one
+   * tracks an explicit "I was never told about this" reply, which needs its
+   * own cap so a dispatch that never lands stops being retried forever
+   * rather than every tick.
+   */
+  notReceivedAttempts: Record<string, number>;
+  /**
+   * Task id → epoch ms before which another NOT-RECEIVED reply must not
+   * trigger another re-dispatch.
+   *
+   * Deliberately not cleared on a "delivered"/"queued"/"spawned" transport
+   * result — that is exactly the false signal this field exists to survive:
+   * a transport reporting success does not mean the session received
+   * anything, so the backoff clock only resets on a confirmed-alive reply or
+   * on the claim being released.
+   */
+  notReceivedRetryAt: Record<string, number>;
 }
 
 /**
@@ -157,6 +178,8 @@ function emptyState(): PersistedState {
     triggeredRestore: {},
     claimSeenAt: {},
     parked: {},
+    notReceivedAttempts: {},
+    notReceivedRetryAt: {},
   };
 }
 
@@ -566,11 +589,12 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
       case "probe":
       case "orphaned": {
         const elapsed = d.action === "probe" ? d.elapsedMinutes : null;
-        const result = await handleProbe(task, elapsed, opts, state);
+        const result = await handleProbe(task, elapsed, opts, state, now);
         note = result.note;
         if (!opts.dryRun) {
           report.probed++;
           if (result.stuck) report.stuck++;
+          if (result.dispatched) report.dispatched++;
         }
         break;
       }
@@ -730,7 +754,10 @@ async function handleDispatch(
   // The cost is a label to undo when the dispatch does not land, which is the
   // cheaper failure: a task wrongly marked running is visible and self-clears
   // below, whereas a double-dispatched sweep reads Gmail twice and mails twice.
-  const claimed = [...task.labels, RUNNING_LABEL];
+  // Already present when this is a re-dispatch of a claim that never landed
+  // (handleNotReceived reaches here while the task is still marked running) —
+  // append only if missing, or the label array grows a duplicate every retry.
+  const claimed = task.labels.includes(RUNNING_LABEL) ? task.labels : [...task.labels, RUNNING_LABEL];
   await opts.provider.setLabels(task.id, claimed);
 
   const result = await dispatchTask(task, {
@@ -916,7 +943,10 @@ async function clearRunningMark(task: Task, provider: TodoistProvider): Promise<
 export async function releaseClaim(
   task: Task,
   provider: TodoistProvider,
-  state: Pick<PersistedState, "startedAt" | "claimSeenAt" | "failedProbes">
+  state: Pick<
+    PersistedState,
+    "startedAt" | "claimSeenAt" | "failedProbes" | "notReceivedAttempts" | "notReceivedRetryAt"
+  >
 ): Promise<void> {
   await provider.setLabels(
     task.id,
@@ -926,6 +956,8 @@ export async function releaseClaim(
   delete state.startedAt[task.id];
   delete state.failedProbes[task.id];
   delete state.claimSeenAt[task.id];
+  delete state.notReceivedAttempts[task.id];
+  delete state.notReceivedRetryAt[task.id];
 }
 
 /**
@@ -1022,12 +1054,37 @@ async function keepTriggeredSchedule(
   }
 }
 
+/** Re-dispatch attempts allowed for one claim before NOT-RECEIVED gives up. */
+export const NOT_RECEIVED_MAX_ATTEMPTS = 3;
+
+/** Minutes of backoff per attempt: try 1 waits 2m, try 2 waits 4m, try 3 waits 6m. */
+export const NOT_RECEIVED_BACKOFF_BASE_MIN = 2;
+
+/**
+ * Does a probe reply say "alive, but the dispatch never reached me"?
+ *
+ * The session answers the liveness probe with NOT-RECEIVED (or the "alive, not
+ * received" spelling) when it is demonstrably live yet has no knowledge of the
+ * work order — the dispatch was reported delivered and was not. That is not
+ * silence (the session is fine) and not death (nothing needs recovering): it is
+ * an UNDELIVERED dispatch, and the honest response is to send it again.
+ *
+ * Anchored to the first line so a reply merely discussing the phrase —
+ * "we discussed not received earlier" — does not trip it.
+ */
+export function isNotReceivedReply(reply: string | undefined | null): boolean {
+  if (!reply) return false;
+  const first = reply.split("\n", 1)[0]!.trim().toLowerCase();
+  return first.startsWith("not-received") || /^alive[,:]\s*not[ -]received/.test(first);
+}
+
 async function handleProbe(
   task: Task,
   elapsed: number | null,
   opts: TickOptions,
-  state: PersistedState
-): Promise<{ note: string; stuck: boolean }> {
+  state: PersistedState,
+  now: number
+): Promise<{ note: string; stuck: boolean; dispatched?: boolean }> {
   const project = task.owner.project;
   const el = elapsed === null ? "unknown" : `${elapsed}m`;
 
@@ -1049,6 +1106,44 @@ async function handleProbe(
   // costs no tokens and must not count as a strike.
   if (answer.state === "replied" || answer.state === "busy") {
     state.failedProbes[task.id] = 0;
+
+    // Alive but the dispatch never landed. Only `replied` can carry this — `busy`
+    // means AIBroker sent nothing — and it must come before the overrun logic:
+    // an elapsed-time verdict about a run that never started is noise.
+    if (isNotReceivedReply(answer.reply)) {
+      const attempts = state.notReceivedAttempts[task.id] ?? 0;
+      const retryAt = state.notReceivedRetryAt[task.id] ?? 0;
+      if (now < retryAt) {
+        return {
+          note: `alive but NOT-RECEIVED — re-dispatch backed off ${Math.round((retryAt - now) / 60_000)}m (try ${attempts})`,
+          stuck: false,
+        };
+      }
+      if (attempts >= NOT_RECEIVED_MAX_ATTEMPTS) {
+        // A late-arriving original must not be double-run by an endless retry
+        // loop: after three re-dispatches the claim is a human's problem.
+        return {
+          note: `alive but NOT-RECEIVED x${attempts} — dispatch never landed, claim left for a human`,
+          stuck: true,
+        };
+      }
+      const next = attempts + 1;
+      state.notReceivedAttempts[task.id] = next;
+      state.notReceivedRetryAt[task.id] = now + next * NOT_RECEIVED_BACKOFF_BASE_MIN * 60_000;
+      const r = await handleDispatch(task, 0, opts, state, now);
+      return {
+        note: `alive but NOT-RECEIVED — re-dispatched (try ${next}): ${r.note}`,
+        stuck: r.alarm === true,
+        dispatched: true,
+      };
+    }
+
+    // A confirmed-alive reply that does NOT say not-received is evidence the
+    // dispatch DID land: the backoff clock resets (see notReceivedRetryAt docs).
+    if (answer.state === "replied") {
+      delete state.notReceivedAttempts[task.id];
+      delete state.notReceivedRetryAt[task.id];
+    }
 
     const expected = expectedMinutes(state.history[task.id] ?? []);
     if (elapsed !== null && elapsed > expected * GROSS_OVERRUN_FACTOR) {
