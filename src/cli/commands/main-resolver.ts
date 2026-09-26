@@ -29,7 +29,7 @@ import {
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
 import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
 import { basename } from "node:path";
-import { launchInDir } from "../lib/launch.js";
+import { launchInDir, resumeOfferText, transcriptProviderFor } from "../lib/launch.js";
 import {
   buildDeduped,
   normalizeName,
@@ -158,9 +158,13 @@ async function offerResume(
       `\n  Resumable transcript ${candidate.shortId} (${fmtAge(candidate.mtime)}): "${prompt}"`
     )
   );
+  // Name the destination when the transcript ran on a configured provider,
+  // so the operator can see the resume comes up on that provider instead of
+  // silently flipping to the Anthropic login.
+  const match = transcriptProviderFor(candidate.uuid, candidate.encodedDir);
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(chalk.dim("  Resume it? [y/N] "), (answer) => {
+    rl.question(chalk.dim(`  ${resumeOfferText(match)} [y/N] `), (answer) => {
       rl.close();
       const a = answer.trim().toLowerCase();
       resolve(a === "y" || a === "yes");

@@ -303,11 +303,36 @@ describe("dedup and the restart guard", () => {
     expect(filterUndelivered(detect(statuses), state)).toHaveLength(0);
   });
 
-  it("pruneState forgets workers the ledger no longer lists", () => {
-    const state = { delivered: { gone: ["x"], here: ["y"] } };
-    const pruned = pruneState(state, [fake({ id: "here" })]);
-    expect(pruned.delivered["gone"]).toBeUndefined();
+  it("pruneState drops absent workers beyond the cap, keeps the ones the ledger lists", () => {
+    // absent means history (status file gone); within the cap it is remembered
+    const state = { delivered: { "a-1": ["x"], "a-2": ["x"], here: ["y"] } };
+    const pruned = pruneState(state, [fake({ id: "here" })], 1);
+    expect(pruned.delivered["a-1"]).toBeUndefined();
+    expect(pruned.delivered["a-2"]).toHaveLength(1);
     expect(pruned.delivered["here"]).toHaveLength(1);
+  });
+
+  it("pruneState keeps the oldest present worker's receipts across 600 newer present workers", () => {
+    // the 2026-09-25 incident: the ledger listed ~1,700 statuses, the cap 500
+    // pruned an old worker's receipts mid-ledger, nothing re-marked them
+    // delivered, and every tick re-pushed its finished event
+    const statuses = Array.from({ length: 600 }, (_, i) => fake({ id: `w-${String(i).padStart(3, "0")}` }));
+    const state = { delivered: { "w-000": ["w-000#finished", "w-000#failed"] } };
+    const pruned = pruneState(state, statuses);
+    expect(pruned.delivered["w-000"]).toEqual(["w-000#finished", "w-000#failed"]);
+  });
+
+  it("pruneState caps only absent workers, keeping the newest by id", () => {
+    const present = Array.from({ length: 6 }, (_, i) => fake({ id: `p-${i}` }));
+    const delivered = Object.fromEntries(
+      Array.from({ length: 6 }, (_, i) => [`a-${i}`, [`a-${i}#finished`]]).concat(
+        present.map((s) => [s.id, [`${s.id}#finished`]])
+      )
+    );
+    const pruned = pruneState({ delivered }, present, 3);
+    expect(Object.keys(pruned.delivered).sort()).toEqual(
+      ["a-3", "a-4", "a-5", ...present.map((s) => s.id)].sort()
+    );
   });
 });
 

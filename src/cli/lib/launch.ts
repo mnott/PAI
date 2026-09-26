@@ -10,10 +10,12 @@
  *   engine           → fresh launches follow the workers config: routing on
  *                      starts an interactive `pai worker run` (the glm-shim
  *                      shape) instead of claude. `engine` in opts forces one;
- *                      resume always stays claude.
+ *                      resume always stays the claude binary.
  *   resume-or-fresh  → if a resumable UUID is given, probe it; on success
- *                      `claude --resume`, otherwise fall back to a fresh session
- *                      in the same dir. With no UUID, start fresh.
+ *                      `claude --resume` — through the provider the transcript
+ *                      ran on, when its model matches one (providerResumePlan),
+ *                      plain otherwise — else fall back to a fresh session in
+ *                      the same dir. With no UUID, start fresh.
  *
  * The `claude` child inherits the tty (stdio: "inherit"), so the session runs
  * in the terminal that launched `pai`. On exit we print the working directory.
@@ -23,6 +25,7 @@ import { spawnSync } from "node:child_process";
 import {
   realpathSync,
   existsSync,
+  fstatSync,
   linkSync,
   copyFileSync,
   openSync,
@@ -33,7 +36,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { err } from "../utils.js";
-import { readWorkersSection, type WorkersConfig } from "../../workers/config.js";
+import { readWorkersSection, type WorkersConfig, type WorkerProvider } from "../../workers/config.js";
+import { buildRunEnv, claudeCommand } from "../../workers/run-env.js";
+import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
 
 export interface ProbeResult {
@@ -162,14 +167,17 @@ export function hasConversation(path: string, chunkBytes = 1 << 20): boolean {
  * Claude Code stores transcripts at ~/.claude/projects/<encoded-cwd>/, where the
  * encoding replaces every non-alphanumeric character with `-`.
  */
+function encodedProjectDir(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 function transcriptOnDisk(
   uuid: string,
   cwd: string,
   home = homedir()
 ): true | "missing" | "stub" | null {
   try {
-    const encoded = cwd.replace(/[^a-zA-Z0-9]/g, "-");
-    const dir = join(home, ".claude", "projects", encoded);
+    const dir = join(home, ".claude", "projects", encodedProjectDir(cwd));
     if (!existsSync(dir)) return null; // unknown layout — not evidence of absence
     if (!restoreTopLevel(uuid, dir)) return "missing";
     // Present is not the same as resumable. A metadata stub survives every
@@ -245,6 +253,195 @@ export function probeResume(uuid: string, cwd: string, home?: string): ProbeResu
     };
   }
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Provider-aware resume
+// ---------------------------------------------------------------------------
+
+/** Tail of a transcript that is enough to name its model: the last assistant
+ *  entry sits at the end, and 64 KB covers several whole entries. */
+const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
+
+/**
+ * The model a transcript actually ran on: the `message.model` of its LAST
+ * assistant entry, read from a bounded tail of the JSONL. Null when the file
+ * is unreadable, empty, or holds no assistant entry.
+ *
+ * Why this exists: sessions started through the worker path run on a
+ * configured provider, but `claude --resume` with the unmodified environment
+ * comes up on the Anthropic login — the session silently flips provider on
+ * resume. This is the detection half of the fix.
+ */
+export function lastTranscriptModel(transcriptPath: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(transcriptPath, "r");
+    const { size } = fstatSync(fd);
+    const start = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+    const len = size - start;
+    if (len <= 0) return null;
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+    const lines = buf.toString("utf8").split("\n");
+    // A tail cut mid-line leaves a fragment at the head of the chunk; walk
+    // from the end and skip anything that does not parse as an assistant
+    // entry — an earlier complete entry names the model just as well.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let entry: { type?: unknown; message?: { model?: unknown } };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry?.type === "assistant" && typeof entry.message?.model === "string" && entry.message.model) {
+        return entry.message.model;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* nothing useful to do */
+      }
+    }
+  }
+}
+
+/** Which model a session's transcript ran on, wherever PAI's archivers left
+ *  it (top level first, then sessions/). Null when neither answers. */
+export function transcriptModelFor(
+  uuid: string,
+  encodedDir: string,
+  home = homedir()
+): string | null {
+  const dir = join(home, ".claude", "projects", encodedDir);
+  for (const p of [join(dir, `${uuid}.jsonl`), join(dir, "sessions", `${uuid}.jsonl`)]) {
+    if (!existsSync(p)) continue;
+    const model = lastTranscriptModel(p);
+    if (model) return model;
+  }
+  return null;
+}
+
+export interface TranscriptProviderMatch {
+  /** Configured provider whose model table names the transcript's model. */
+  provider: string;
+  /** Model id as the transcript recorded it — variant suffix kept ("glm-5.3[1m]"). */
+  model: string;
+}
+
+/**
+ * Which configured provider a transcript's model belongs to, or null.
+ *
+ * The comparison strips the bracketed variant suffix on BOTH sides (the same
+ * normalization the statusline context window uses): a session records
+ * "glm-5.3" while the provider table says "glm-5.3[1m]" — same model, one
+ * names its context window. Anthropic-login transcripts match nothing (the
+ * built-in anthropic provider is synthetic and never in the table), which is
+ * the point: they resume exactly as before.
+ *
+ * ponytail: protocol "openai" providers are skipped — their resume needs the
+ * local PAI proxy, an async daemon bring-up launchInDir cannot do; they fall
+ * back to the plain claude resume (today's behaviour). Add the proxy wait if
+ * an openai-protocol provider ever needs interactive resume.
+ */
+export function matchTranscriptProvider(
+  model: string | null,
+  providers: Record<string, WorkerProvider>
+): TranscriptProviderMatch | null {
+  if (!model) return null;
+  const base = stripModelVariant(model);
+  for (const [name, p] of Object.entries(providers)) {
+    if (!p.enabled || p.native || p.protocol !== "anthropic") continue;
+    if (Object.values(p.models).some((m) => !!m && stripModelVariant(m) === base)) {
+      return { provider: name, model };
+    }
+  }
+  return null;
+}
+
+export interface ProviderResumePlan {
+  provider: string;
+  model: string;
+  /** argv head from claudeCommand: the route is pinned in --settings so a
+   *  machine-wide proxy cannot override the provider's base URL. */
+  cmd: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * The spawn a resume needs when its transcript ran on a configured provider:
+ * the SAME env the worker engine builds for an interactive run (run-env.ts,
+ * imported — never copied; a duplicated provider-env builder is the known
+ * bite-pattern here), plus the claude argv head that pins the route. Null
+ * when no provider matches — the caller resumes exactly as before.
+ *
+ * No `--model`, deliberately: an interactive worker run passes none either
+ * (modelFlagArgs, run.ts), so the settings.json model — e.g. the [1m]
+ * variant — applies, and buildRunEnv's ANTHROPIC_DEFAULT_*_MODEL pins the
+ * capability tiers to the provider's table.
+ */
+export function providerResumePlan(
+  uuid: string,
+  cwd: string,
+  workers?: Pick<WorkersConfig, "providers" | "caveman">,
+  home = homedir()
+): ProviderResumePlan | null {
+  let w = workers;
+  if (!w) {
+    try {
+      w = readWorkersSection().workers;
+    } catch {
+      return null; // a broken workers config degrades to the plain resume
+    }
+  }
+  const match = matchTranscriptProvider(
+    transcriptModelFor(uuid, encodedProjectDir(cwd), home),
+    w.providers
+  );
+  if (!match) return null;
+  const env = buildRunEnv(w.providers[match.provider], false);
+  return { ...match, cmd: claudeCommand(env, w.caveman), env };
+}
+
+/** Provider match for a session the scanner already located (uuid + its
+ *  encoded projects dir), reading the workers config itself. Null on no
+ *  match — or a broken config, which must never break the offer. */
+export function transcriptProviderFor(
+  uuid: string,
+  encodedDir: string,
+  home = homedir()
+): TranscriptProviderMatch | null {
+  try {
+    return matchTranscriptProvider(
+      transcriptModelFor(uuid, encodedDir, home),
+      readWorkersSection().workers.providers
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The resume offer line, naming the destination when it is known, so the
+ * operator can see the resume will come up on glm (glm-5.3[1m]) rather than
+ * silently flipping to the Anthropic login. The caller appends "[y/N]".
+ */
+export function resumeOfferText(match: TranscriptProviderMatch | null): string {
+  return match ? `Resume into ${match.model} (${match.provider})?` : "Resume?";
+}
+
+/** Display form of the resume argv — shared by the dry-run paths so they
+ *  cannot drift from what launchInDir actually spawns. */
+export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null): string {
+  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}" "/Name ${name}\\ngo"`;
 }
 
 export interface LaunchOpts {
@@ -333,10 +530,11 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   const promptArg = launchPrompt(name);
 
   // A broken workers config must degrade to claude, never crash the picker.
-  let workers: Pick<WorkersConfig, "enabled" | "active" | "providers"> = {
+  let workers: Pick<WorkersConfig, "enabled" | "active" | "providers" | "caveman"> = {
     enabled: false,
     active: null,
     providers: {},
+    caveman: false,
   };
   try {
     workers = readWorkersSection().workers;
@@ -357,10 +555,14 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       return;
     }
     if (wantResume) {
+      const plan = providerResumePlan(opts.resumableUuid!, cwd, workers);
       console.log("\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n");
       console.log(`  cwd:      ${chalk.cyan(cwd)}`);
       console.log(`  probe:    transcript on disk for ${opts.resumableUuid!.slice(0, 8)}?`);
-      console.log(`  argv:     claude --resume ${opts.resumableUuid} --name "${name}" "/Name ${name}\\ngo"`);
+      if (plan) {
+        console.log(`  route:    ${plan.provider} (${plan.model})`);
+      }
+      console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan))}`);
       console.log(`  fallback: claude --name "${name}" "/Name ${name}\\ngo"`);
     } else {
       console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
@@ -406,11 +608,21 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   if (wantResume) {
     const probe = probeResume(opts.resumableUuid!, cwd);
     if (probe.ok) {
-      const result = spawnSync(
-        "claude",
-        ["--resume", opts.resumableUuid!, "--name", name, promptArg],
-        { cwd, stdio: "inherit", env: process.env }
-      );
+      // A transcript that ran on a configured provider must resume on it:
+      // plain `claude --resume` with the inherited environment comes up on
+      // the Anthropic login and the session silently flips provider.
+      const plan = providerResumePlan(opts.resumableUuid!, cwd, workers);
+      const result = plan
+        ? spawnSync(
+            plan.cmd[0],
+            [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, promptArg],
+            { cwd, stdio: "inherit", env: plan.env }
+          )
+        : spawnSync("claude", ["--resume", opts.resumableUuid!, "--name", name, promptArg], {
+            cwd,
+            stdio: "inherit",
+            env: process.env,
+          });
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));
         process.exitCode = 1;

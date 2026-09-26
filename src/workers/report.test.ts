@@ -257,8 +257,9 @@ describe("WORKER_CONTRACT_PROMPT — full-contract AG2 baseline (keepalive path)
     expect(WORKER_CONTRACT_PROMPT).toMatch(/write it to a file with/);
   });
 
-  it("caps a single sleep at 60 seconds", () => {
-    expect(WORKER_CONTRACT_PROMPT).toMatch(/sleep longer than 60 seconds/);
+  it("bans sleep-polling: no sleep over 60 seconds, standalone or leading a compound", () => {
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/Never sleep-poll: no `sleep N` over 60 seconds/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/standalone or leading a compound command/);
   });
 
   it("bans inline multi-line/quoted payloads broadly, not just heredocs", () => {

@@ -11,11 +11,16 @@
  *                   and only an unrecognised layout falls back to spawning claude)
  *        b. If probe succeeds:
  *             exec  claude --resume <uuid> --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *                  — through the provider the transcript ran on, when its model
+ *                  matches one (providerResumePlan in lib/launch.ts)
  *        c. Else (probe failed):
  *             print clear stderr line: "Resume failed. Starting fresh session in same dir."
  *             exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
  *   4. Else (no uuid known):
  *        exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *
+ * Steps 3 and 4 are launchInDir's, shared — this file no longer carries its
+ * own copy of the spawn dance.
  *
  * Why both --name AND /Name?
  *   --name <friendlyName>       → sets Claude Code's internal session label
@@ -27,7 +32,6 @@
  * is the same as a fresh start.
  */
 
-import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import chalk from "chalk";
 import { err } from "../../utils.js";
@@ -37,8 +41,11 @@ import {
   fmtAge,
   type ScannedSession,
 } from "../../lib/session-scan.js";
-import { printExitDir } from "../../lib/exit-dir.js";
-import { probeResume } from "../../lib/launch.js";
+import {
+  launchInDir,
+  providerResumePlan,
+  resumeArgvText,
+} from "../../lib/launch.js";
 
 // ---------------------------------------------------------------------------
 // Command
@@ -109,19 +116,21 @@ export async function cmdGoto(
 
   // ---- 4. Build argv components ----
   const name = friendlyName ?? query;
-  // Initial prompt: /Name sets tab/statusline via AIBroker; \ngo triggers ## Continue
-  const promptArg = `/Name ${name}\ngo`;
 
   // ---- 5. Dry-run mode ----
   if (opts.dryRun) {
     if (resumableUuid) {
-      const argvResume = `claude --resume ${resumableUuid} --name "${name}" "/Name ${name}\\ngo"`;
+      const plan = providerResumePlan(resumableUuid, projectDir);
+      const argvResume = resumeArgvText(resumableUuid, name, plan);
       const argvFresh = `claude --name "${name}" "/Name ${name}\\ngo"`;
       console.log(
         "\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n"
       );
       console.log(`  cwd:      ${chalk.cyan(projectDir)}`);
       console.log(`  probe:    claude --resume ${resumableUuid} --print --output-format=json "_"`);
+      if (plan) {
+        console.log(`  route:    ${plan.provider} (${plan.model})`);
+      }
       console.log(`  argv:     ${chalk.white(argvResume)}`);
       console.log(`  fallback: ${chalk.yellow(argvFresh)}`);
       if (resumableSession) {
@@ -143,72 +152,11 @@ export async function cmdGoto(
   }
 
   // ---- 6. Live execution ----
-  if (resumableUuid) {
-    // Probe first
-    const probe = probeResume(resumableUuid, projectDir);
-
-    if (probe.ok) {
-      // Happy path: session is resumable
-      const result = spawnSync(
-        "claude",
-        ["--resume", resumableUuid, "--name", name, promptArg],
-        {
-          cwd: projectDir,
-          stdio: "inherit",
-          env: process.env,
-        }
-      );
-      if (result.error) {
-        console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exitCode = 1;
-        return;
-      }
-      printExitDir(projectDir);
-      process.exitCode = result.status ?? 0;
-      return;
-    } else {
-      // Fallback path
-      process.stderr.write(
-        chalk.yellow(
-          `\n  Resume failed for ${resumableUuid.slice(0, 8)}: ${probe.reason ?? "unknown error"}\n` +
-            `  Starting fresh session in same directory.\n\n`
-        )
-      );
-      const result = spawnSync(
-        "claude",
-        ["--name", name, promptArg],
-        {
-          cwd: projectDir,
-          stdio: "inherit",
-          env: process.env,
-        }
-      );
-      if (result.error) {
-        console.error(err(`Failed to launch claude: ${result.error.message}`));
-        process.exitCode = 1;
-        return;
-      }
-      printExitDir(projectDir);
-      process.exitCode = result.status ?? 0;
-      return;
-    }
-  } else {
-    // No UUID at all — fresh start
-    const result = spawnSync(
-      "claude",
-      ["--name", name, promptArg],
-      {
-        cwd: projectDir,
-        stdio: "inherit",
-        env: process.env,
-      }
-    );
-    if (result.error) {
-      console.error(err(`Failed to launch claude: ${result.error.message}`));
-      process.exitCode = 1;
-      return;
-    }
-    printExitDir(projectDir);
-    process.exitCode = result.status ?? 0;
-  }
+  // The whole probe → resume → fresh-fallback dance lives in launchInDir and
+  // nowhere else. This file carried a near-verbatim copy of it, which is how
+  // probeResume was once fixed in one copy while `pai resume <name>` kept the
+  // bug. `engine: "claude"` keeps goto's fresh paths exactly what they were —
+  // plain claude, no worker routing — while the resume inherits the provider
+  // the transcript actually ran on.
+  launchInDir(projectDir, name, { resumableUuid, engine: "claude" });
 }
