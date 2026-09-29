@@ -19,9 +19,9 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { packageRoot } from "../../module-paths.js";
 import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../utils.js";
@@ -92,10 +92,7 @@ function capture(cmd: string, cwd?: string): string | null {
  * package root where package.json lives.
  */
 function getPaiSrcDir(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  // dist/cli/index.mjs → dist/ → package root
-  return join(__dirname, "../..");
+  return packageRoot(import.meta.url);
 }
 
 /**

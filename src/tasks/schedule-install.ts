@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { schedulerLogPath } from "../runtime-paths.js";
+import { serviceManagerAllowed } from "../service-manager.js";
 
 export const SCHEDULE_LABEL = "com.pai.task-scheduler";
 const LAUNCH_AGENTS = join(homedir(), "Library", "LaunchAgents");
@@ -117,6 +118,9 @@ export function installSchedule(intervalSecs = DEFAULT_INTERVAL_SECS): InstallRe
   // would be the wrong tool — there is nothing here anyone could not regenerate.
   writeFileSync(SCHEDULE_PLIST, plist, "utf8");
 
+  if (!serviceManagerAllowed(`launchctl load ${SCHEDULE_PLIST}`)) {
+    return { plistPath: SCHEDULE_PLIST, intervalSecs, loaded: false, message: "Plist written; not loaded (HOME is not the account home)." };
+  }
   spawnSync("launchctl", ["unload", SCHEDULE_PLIST], { encoding: "utf8" });
   const load = spawnSync("launchctl", ["load", SCHEDULE_PLIST], { encoding: "utf8" });
 
@@ -133,7 +137,9 @@ export function installSchedule(intervalSecs = DEFAULT_INTERVAL_SECS): InstallRe
 
 export function uninstallSchedule(): string {
   if (!existsSync(SCHEDULE_PLIST)) return "Scheduler is not installed.";
-  spawnSync("launchctl", ["unload", SCHEDULE_PLIST], { encoding: "utf8" });
+  if (serviceManagerAllowed(`launchctl unload ${SCHEDULE_PLIST}`)) {
+    spawnSync("launchctl", ["unload", SCHEDULE_PLIST], { encoding: "utf8" });
+  }
   unlinkSync(SCHEDULE_PLIST);
   return "Scheduler uninstalled.";
 }
