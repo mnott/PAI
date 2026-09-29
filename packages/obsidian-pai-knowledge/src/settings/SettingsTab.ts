@@ -39,7 +39,7 @@ export class PaiSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Unix socket path")
       .setDesc(
-        "Path to the PAI daemon socket. Start the daemon with `pai daemon start`."
+        "Path to the PAI daemon socket. Is it running? `pai daemon status`; start or restart it with `pai daemon restart`."
       )
       .addText((text) => {
         text
@@ -80,7 +80,7 @@ export class PaiSettingsTab extends PluginSettingTab {
             } else {
               statusEl.className = "pai-connection-status disconnected";
               statusEl.innerHTML =
-                '<span class="pai-connection-dot"></span> Not reachable — run `pai daemon start`';
+                '<span class="pai-connection-dot"></span> Not reachable — run `pai daemon restart`';
             }
           } catch {
             statusEl.className = "pai-connection-status disconnected";

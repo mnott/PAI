@@ -2,1169 +2,143 @@
 
 Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
 
-Install PAI and Claude remembers. Ask it what you were working on. Ask it to find that conversation about the database schema. Ask it to pick up exactly where the last session ended. It knows.
+Install PAI and Claude remembers. Ask it what you were working on, find that conversation about the database schema, or pick up exactly where the last session ended.
 
-## Quick Start
+- Automatic session notes, split by topic, written by a background daemon
+- Federated keyword and semantic search across sessions, notes and vaults
+- Workers on any provider, orchestrated from one Claude Code session
+- Everything runs locally
 
-Tell Claude Code:
+## Install
 
-> Clone https://github.com/mnott/PAI and set it up for me
-
-Or install with a single command:
+**macOS.** Tell Claude Code "Clone https://github.com/mnott/PAI and set it up for me", or:
 
 ```bash
 npx @tekmidian/pai install
+# or from a checkout: git clone https://github.com/mnott/PAI && cd PAI && bun install && bun run build
+pai setup            # interactive; --yes takes every default
+pai daemon status    # should show "running"
 ```
 
-Or manually:
-
-### 1. Install
-
-```bash
-git clone https://github.com/mnott/PAI
-cd PAI
-bun install
-bun run build
-```
-
-### 2. Run the setup wizard
-
-```bash
-pai setup            # interactive
-pai setup --yes      # unattended: every prompt takes its default
-```
-
-The wizard walks you through: storage mode (SQLite or PostgreSQL), project directories, Obsidian vault path, MCP server registration, CLAUDE.md template, and daemon configuration. It's idempotent — safe to re-run anytime.
-
-#### Linux, from zero (Ubuntu)
-
-Both paths below were run end to end on a fresh Ubuntu 26.04 (arm64) install: setup, daemon, statusline in Claude Code, and a real `pai worker run`.
-
-Common start:
+**Linux (Ubuntu).**
 
 ```bash
 sudo apt install -y nodejs npm tmux
-curl -fsSL https://claude.ai/install.sh | bash   # Claude Code, native installer (no Node needed for Claude itself)
-claude auth login                                # or run `claude` and type /login
-npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"   # global npm installs without sudo
+curl -fsSL https://claude.ai/install.sh | bash   # Claude Code, native installer
+claude auth login
+npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"
 npm i -g @tekmidian/pai
-loginctl enable-linger "$USER"                   # the daemon keeps running after logout
+loginctl enable-linger "$USER"
+pai setup --yes --storage sqlite     # keyword search; or --storage postgres for PostgreSQL + pgvector in Docker
 ```
 
-**Keyword search only (SQLite, no Docker):**
-
-```bash
-pai setup --yes --storage sqlite
-```
-
-**Keyword and semantic search (PostgreSQL + pgvector in Docker):**
-
-```bash
-sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker "$USER"                  # then log out and in, or prefix the next command with: sg docker -c "…"
-export PAI_PG_SHARED_BUFFERS=256MB               # only on small machines; the default 1GB must fit in RAM
-pai setup --yes --storage postgres
-```
-
-Setup starts the `pai-pgvector` container itself (`pgvector/pgvector:pg17`, bound to 127.0.0.1:5432, data in `~/.pai/pgdata`). The daemon waits for the database, so the first start of the container can take its time.
-
-Either way, setup skips macOS-only steps, installs the daemon as a systemd user unit, and turns workers on with the built-in `anthropic` provider. Inside tmux, `pai worker run` opens its follow pane as a tmux split; elsewhere use `pai worker follow <id>`. Where systemd is absent (containers), run the daemon with `pai daemon serve`.
-
-### 3. The daemon
-
-Setup installs and starts it. To manage it:
-
-```bash
-pai daemon status      # running? which storage?
-pai daemon restart
-pai daemon install     # re-create the launchd (macOS) or systemd (Linux) service
-```
-
-The daemon runs in the background via launchd (macOS) or a systemd user unit (Linux), indexing your sessions and serving the MCP tools. It starts automatically on login.
-
-### 4. Verify
-
-```bash
-pai daemon status    # should show "running"
-pai memory search "test"   # should return results after indexing
-```
-
-That's it. Claude Code now has persistent memory across all sessions.
-
----
+→ [docs/install.md](docs/install.md) · [docs/install-linux.md](docs/install-linux.md) (both storage paths, Docker, systemd)
 
 ## Command Reference
 
-Every `pai` command area has its own man page, **generated from the live CLI** so it never drifts from the actual commands. Read them three ways:
+Every `pai` command area has a man page generated from the live CLI: `pai help`, `pai help memory`, `pai memory --help`.
 
-```bash
-pai help            # list all command areas (the index)
-pai help memory     # the full man page for one area, in your terminal
-pai memory --help   # terse Commander help for any command
-```
+→ [docs/command-reference.md](docs/command-reference.md) · [docs/commands/](docs/commands/README.md)
 
-Browse the same pages on GitHub under [`docs/commands/`](docs/commands/README.md). Each page lists every subcommand, its arguments and options, and worked examples. The reference below in this README is the *guided tour*; `docs/commands/` is the *complete reference*.
+## Worker Providers
 
-| Area | What it covers |
-|------|----------------|
-| [`pai memory`](docs/commands/memory.md) | Federated search, indexing, embeddings |
-| [`pai projects`](docs/commands/projects.md) | Project registry: add, cd, info, health, rebind |
-| [`pai kg`](docs/commands/kg.md) | Temporal knowledge graph |
-| [`pai zettel`](docs/commands/zettel.md) | Zettelkasten intelligence over your vault |
-| [`pai observation`](docs/commands/observation.md) | Automatic tool-call observation capture |
-| [`pai skill`](docs/commands/skill.md) | Skill telemetry (self-educating skill system) |
-| [`pai obsidian`](docs/commands/obsidian.md) | Obsidian vault sync |
-| [`pai daemon`](docs/commands/daemon.md) | Daemon lifecycle |
-| [`pai notify`](docs/commands/notify.md) | Notification configuration |
-| [`pai backup`](docs/commands/backup.md) · [`pai restore`](docs/commands/restore.md) | Data safety |
-| … | See [the full index](docs/commands/README.md) for all areas |
+Only the orchestrator session runs on Anthropic; every worker runs on a provider you choose, routed by class. Providers and classes live in one `workers.yaml`.
 
----
-
-## Worker Providers — Run the Fleet Anywhere
-
-**Read the story: [Provider Independence — how I freed my stack from a single vendor in one day](docs/provider-independence.md).**
-
-Only the outer orchestrator session runs on Anthropic. Every worker PAI spawns — research, drafting, implementation, review, spotchecks — runs on a managed provider you choose. The same provider layer carries the daemon's background calls and the session picker, so the whole stack moves together.
-
-### Why
-
-- **Vendor independence.** Any provider that speaks the Anthropic Messages protocol is a registry entry: models, key file, price tier. OpenAI-protocol providers work through a built-in translating proxy. Switching is configuration, not surgery.
-- **Cost control.** Parallel work is a commodity; it should not burn your premium seat. Workers bill against their own provider, and cheap classes resolve to the provider's fast model automatically.
-- **No lock-in to one orchestrator vendor.** Sessions run on the active provider too — the picker launches through it, and `pai worker fallback` extends that machine-wide.
-- **Survives orchestrator outages.** Workers carry their own provider credentials, so a quota freeze or outage on the vendor seat does not stop delegated work.
-
-### How
-
-- **Managed providers.** `pai worker providers add` registers one, `pai worker providers use <name>` switches the fleet, `pai worker off` disables routing entirely (the Agent tool runs on Anthropic again), `pai worker on` re-enables it. The reserved name `anthropic` needs no `add` step — it's Claude Code's own login; `pai worker providers use anthropic` switches straight to it.
-- **Start the harness itself on any provider.** `pai launch` (numbered picker, or `--provider <name> [--model <model>]`) starts a fresh Claude Code session on any provider/model in `workers.yaml` — a running session can't switch providers (base URL and auth are fixed at start), so this always begins a new one. Claude Code's own `/model` only lists the current endpoint's models; `pai launch --list` (or the `/providers` skill, from inside a session) lists every provider configured here.
-- **Classes route work to the right model.** `--class` picks the provider and model for the job: `draft`, `plan`, `implement`, `review`, `research`, `spotcheck`, `simple`, `complex`, `image`. `pai worker classes` shows and edits the mapping; `--provider` / `--model` override for a single run.
-- **Every worker spawn stands alone.** The orchestrator's API key is stripped and the spawn gets the provider's base URL, token and model ids instead — proven live: a worker answers with the parent's credentials gone. No inherited billing, no fallback to the vendor login.
-- **The route is pinned, not inherited.** Claude Code's user settings outrank the process env, so a machine-wide proxy route (a `caveman` install, a `pai worker fallback`) would otherwise swallow a worker's base URL and send its provider token to the wrong endpoint. Every spawn repeats its route with `--settings`, which outranks user settings; native-Anthropic workers are pinned to `api.anthropic.com`, or launched as `caveman claude` when `workers.caveman: true` is set in `config.yaml`. Details: [docs/worker.md](docs/worker.md), "What a worker is".
-- **One file to configure it.** Providers, per-role model ids and class routing live in one hand-editable `workers.yaml` — adding a provider (Anthropic-compatible, OpenAI-compatible, or local) is a YAML edit, never code. Full reference: [docs/workers-config.md](docs/workers-config.md).
-
-```yaml
-active: anthropic
-providers:
-  anthropic:
-    builtin: true                 # Claude Code's own login
-    models: { default: claude-sonnet-5, fast: claude-haiku-4-5-20251001 }
-  glm:
-    url: https://api.z.ai/api/anthropic
-    key: "<your-api-key>"         # or key_file: <path to a 0600 file>
-    tier: 3
-    models: { default: glm-5.3[1m], fast: glm-5.3-flash }
-classes:
-  implement: anthropic
-  spotcheck: anthropic/fast       # cheap classes default to the fast model
-```
-
-### What
-
-```bash
-pai worker run -p '<task>' --class implement   # one worker on a provider
-pai worker ps                                  # this session's workers (--all: every one)
-pai worker follow <id>                         # live transcript of one worker
-pai worker pane                                # shared follow pane for the session
-pai worker replay <id>                         # transcript of a finished or running worker
-pai worker say <id> <text>                     # message a running worker mid-run
-pai worker handoff '<json>'                    # from inside a worker: report to the parent
-pai worker merge <id>                          # merge the worker's branch back, drop the worktree
-pai worker wait <id>...                        # block until workers finish (never sleep-loop)
-pai worker watch                               # ps refreshed every 2 seconds
-```
-
-The rest of the surface — `discard`, `resume`, `controls`, `proxy`, `mcp`, `model`, `providers`, `classes` — is in `pai help worker` and [docs/commands/worker.md](docs/commands/worker.md).
-
-![Workers in the statusline](docs/images/workers.png)
-
-Get started in three copy-paste steps: **[docs/provider-independence.md](docs/provider-independence.md)**. For the depth — provider registry, statusline instrumentation, seam patches, current limits — see **[docs/provider-abstraction.md](docs/provider-abstraction.md)**.
-
----
-
-## Automatic Session Notes — by Topic
-
-PAI's headline feature: **every session is automatically documented.** No manual note-taking, no "pause session" commands, no forgetting to save what you did.
-
-When you work, a background daemon watches your session **continuously**. Every time Claude's context compacts — which happens automatically as the conversation grows — the daemon reads the JSONL transcript, combines it with your git history, and spawns a headless Claude process to write a structured session note. Not just at session end. Midway through your work, while you're still coding. The notes build up in real time as you go — what was built, what decisions were made, what problems were hit, what's left to do.
-
-**When you change topics mid-session, PAI creates a new note.** If you start the day debugging audio, then pivot to a Flutter rewrite, you get two notes — not one giant file mixing unrelated work:
-
-```
-Notes/2026/03/
-  0001 - 2026-03-23 - Phase 1 Research and Architecture.md
-  0002 - 2026-03-24 - Background Audio and iOS Conflicts.md
-  0003 - 2026-03-24 - Flutter Rewrite with Whisper.md     ← auto-split, same day
-```
-
-Topic detection uses Jaccard word similarity between the new summary's topic and the existing note's title. Below 30% overlap = new note.
-
-**Model tiering:** Opus for final session summaries (best quality, runs once). Sonnet for mid-session checkpoints (good quality, runs on compaction). All using your Max plan — no API charges.
-
-This is not a template or a skeleton. These are real notes with build error chronologies, architectural decisions with rationale, code snippets, and "what was tried and failed" sections. The kind of notes you'd write yourself if you had time.
-
----
-
-## What You Can Ask Claude
-
-### Searching Your Memory
-
-- "Search your memory for authentication" — finds past sessions about auth, even with different words
-- "What do you know about the Whazaa project?" — retrieves full project context instantly
-- "Find where we discussed the database migration" — semantic search finds it even if you phrase it differently
-- "Search your memory for that Chrome browser issue" — keyword and meaning-based search combined
-
-### Managing Projects
-
-- "Show me all my projects" — lists everything PAI tracks with stats
-- "Which project am I in?" — auto-detects from your current directory
-- "What's the status of the PAI project?" — full project details, sessions, last activity
-- "How many sessions does Whazaa have?" — project-level session history
-
-### Navigating Sessions
-
-- "List my recent sessions" — shows what you've been working on across all projects
-- "What did we do in session 42?" — retrieves any specific session by number
-- "What were we working on last week?" — Claude knows, without you re-explaining
-- "Clean up my session notes" — auto-names unnamed sessions and organizes by date
-
-### Reviewing Your Work
-
-- "Review my week" — synthesizes session notes, git commits, and completed tasks into a themed narrative
-- "What did I do today?" — daily review across all projects
-- "Journal this thought" — capture freeform reflections with timestamps
-- "Plan my week" — forward-looking priorities based on open TODOs and recent activity
-- "What themes are emerging in my work?" — spot patterns across sessions and projects
-
-### Sharing Your Work
-
-- "Share on LinkedIn today" — generates a professional post about what you shipped, with real numbers and technical substance
-- "Tweet about the vault migration" — punchy X/Twitter post or thread, with option to post directly
-- "Share on Bluesky this week" — conversational technical post for the Bluesky audience
-- Platform-aware formatting: LinkedIn gets hashtags and narrative, X gets threads and hooks, Bluesky gets conversational tone
-
-### Tracking Your Activity
-
-- "What changes did I make to the daemon today?" — automatic observation capture tracks every tool call
-- "Show me all decisions from the last session" — observations are classified: decision, bugfix, feature, refactor, discovery, change
-- "What files did I modify in the PAI project this week?" — searchable timeline of every edit, commit, and search
-- "Show observation stats" — totals, breakdowns by type and project, with visual bar charts
-
-### Continuing Where You Left Off
-
-- "Go" — reads your TODO.md continuation prompt and picks up exactly where the last session stopped
-- "What was I working on?" — progressive context injection loads recent observations at session start
-- "Continue the daemon refactor" — session summaries give Claude full context without re-explaining
-- "/reconstruct" — retroactively creates session notes from JSONL transcripts and git history when automatic capture missed a session
-
-### Keeping Things Safe
-
-- "Back up everything" — creates a timestamped backup of all your data
-- "How's the system doing?" — checks daemon health, index stats, embedding coverage
-
-### Obsidian Integration
-
-- "Sync my Obsidian vault" — updates your linked vault with the latest notes
-- "Open my notes in Obsidian" — launches Obsidian with your full knowledge graph
-
-### Zettelkasten Intelligence
-
-- "Explore notes linked to PAI" — follow trains of thought through wikilink chains
-- "Find surprising connections to this note" — discover semantically similar but graph-distant notes
-- "What themes are emerging in my vault?" — detect clusters of related notes forming new ideas
-- "How healthy is my vault?" — structural audit: dead links, orphans, disconnected clusters
-- "Suggest connections for this note" — proactive link suggestions using semantic + graph signals
-- "What does my vault say about knowledge management?" — use the vault as a thinking partner
-
-### Budget Management
-
-- "How much budget do I have left?" — shows current weekly usage and advisor mode
-- "Go easy on the budget" — switches to conservative mode (prefer haiku subagents)
-- "Lock it down" — switches to critical mode (minimize all token usage)
-- "Go full power" — switches to normal mode (no constraints)
-- "Back to auto" — resets to auto mode (derives from weekly budget percentage)
-
----
-
-## Skills
-
-PAI ships 22 skills — slash commands that activate specialized workflows. Each responds to natural language triggers as well as the `/command` syntax.
-
-### Productivity
-
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `/advisor` | "budget mode", "save budget", "go easy on the budget" | Manage budget-aware model tiering for subagents |
-| `/plan` | "plan my week", "what should I focus on", "priorities" | Plan tomorrow/week/month based on open tasks and calendar |
-| `/review` | "review my week", "what did I do", "recap" | Daily/weekly/monthly review of work accomplished |
-| `/journal` | "journal", "note to self", "capture this thought" | Create, read, or search personal journal entries |
-| `/share` | "share on LinkedIn", "tweet about", "post to Bluesky" | Generate social media posts about completed work |
-
-### Session Management
-
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `/sessions` | "list sessions", "where was I working" | Navigate sessions, projects, switch working context |
-| `/route` | "what project is this", "tag this session" | Detect which PAI project the current session belongs to |
-| `/name` | "name this session", "rename session" | Name or rename the current session |
-| `/search-history` | "search history", "find past", "what did we do" | Search past sessions and previous work by keyword |
-| `/consolidate` | "consolidate notes", "clean up notes", "merge duplicates" | Merge duplicate session notes, fix titles, renumber |
-| `/reconstruct` | "reconstruct sessions", "backfill session notes" | Retroactively create notes from JSONL transcripts and git history |
-
-### Obsidian Vault
-
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `/vault-context` | "morning briefing", "load vault context" | Load Obsidian vault context for a briefing |
-| `/vault-connect` | "connect X and Y", "how does X relate to Y" | Find connections between two topics in the vault |
-| `/vault-emerge` | "what's emerging", "find patterns", "themes in vault" | Surface emerging themes and clusters |
-| `/vault-orphans` | "find orphans", "unlinked notes" | Find and reconnect orphaned notes with zero inbound links |
-| `/vault-trace` | "trace idea", "how did X evolve", "idea history" | Trace the evolution of an idea across vault notes over time |
-
-### Tools & System
-
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `/whisper` | "add whisper rule", "show whisper rules" | Manage persistent behavioral constraints injected on every prompt |
-| `/research` | "do research", "extract wisdom", "analyze content" | Web research, content extraction, and analysis via parallel agents |
-| `/art` | "create diagram", "flowchart", "visualize" | Create visual content, diagrams, flowcharts, and AI-generated images |
-| `/story` | "explain this as a story", "create story explanation" | Create numbered narrative story explanations of any content |
-| `/observability` | "start observability", "monitor agents" | Start, stop, or check the multi-agent observability dashboard |
-| `/createskill` | "create skill", "validate skill" | Create, validate, update, or canonicalize a PAI skill |
-
----
-
-## Budget-Aware Advisor Mode
-
-PAI tracks your weekly Claude usage and automatically adjusts subagent model selection to stay within budget. The statusline shows your current mode at a glance.
-
-### How it works
-
-The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.claude/pai/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
-
-### Automatic thresholds
-
-| Budget Used | Mode | Subagent Model | Behavior |
-|-------------|------|----------------|----------|
-| < 60% | normal | Any | No constraints |
-| 60–80% | conservative | Haiku preferred | Escalate to sonnet only if haiku insufficient |
-| 80–92% | strict | Haiku only | Minimize spawning, no opus subagents |
-| > 92% | critical | Haiku or none | Essential work only, minimize all token usage |
-
-### Statusline display
-
-The advisor mode label appears on the context line:
-
-```
-💎 Context: 12K / 1000K (68%) │ 5h: 3% → 13:18 │ 1d: 5% / 8% │ 7d: strict 91% → Fr. 08:00
-```
-
-Manually forced modes show a 📌 prefix (e.g. `📌normal 91%`) so you always know whether the mode was auto-calculated or manually set.
-
-### Switching modes
-
-Use `/budget` commands, `/Advisor` skill, or plain language:
-
-```
-/budget auto                  — reset to auto (budget-driven)
-/budget mode normal           — force normal mode
-/budget force haiku           — force all subagents to haiku
-
-/Advisor auto                 — same, via skill (note: capital A)
-/Advisor mode strict          — force strict mode
-
-"go full power"               — normal mode (plain language)
-"be conservative"             — conservative mode
-"lock it down"                — critical mode
-"back to auto"                — auto mode
-```
-
-Changes take effect on the next prompt — no restart needed.
-
-> **Note:** `/advisor` (lowercase) conflicts with a Claude Code built-in command. Use `/budget` or `/Advisor` (capital A) instead.
-
----
-
-## Context Preservation
-
-When Claude's context window fills up, it compresses the conversation. Without PAI, everything from before that point is lost — Claude forgets what it was working on, what files it changed, and what you asked for.
-
-PAI intercepts this compression with a two-stage relay:
-
-1. **Before compression** — PAI extracts session state from the conversation transcript: your recent requests, work summaries, files modified, and current task context. This gets saved to a checkpoint.
-
-2. **After compression** — PAI reads that checkpoint and injects it back into Claude's fresh context. Claude picks up exactly where it left off.
-
-This happens automatically. You don't need to do anything — just keep working, and PAI handles the continuity.
-
-### What Gets Preserved
-
-- Your last 3 requests (so Claude knows what you were asking)
-- Work summaries and captured context
-- Files modified during the session
-- Current working directory and task state
-- Session note checkpoints (persistent — survive even full restarts)
-
-### Surviving a Restart, and Surviving a Crash
-
-Compaction continuity above is one path. Closing the session and opening a new one is another, and it works differently:
-
-- **`## Continue` in the project's `TODO.md`** is the handover. `pai pause` writes a model-authored checkpoint there; the SessionStart hook reads it back and injects it. You do not have to say "go" — it arrives on its own.
-- **A rolling autosave keeps it fresh.** `pai session autosave` runs from the UserPromptSubmit and PostToolUse hooks (rate-limited, ~4 minutes) and records recent prompts plus the state of the working tree. The model is never invoked on `/exit` and never on Ctrl+C, so a checkpoint written *at* exit is impossible — it has to already exist. This is what makes an interrupted session survivable.
-- **Authored beats automatic.** The autosave writes in "auto" mode and will not overwrite a model-authored checkpoint for the same session. Preservation is keyed on the Claude session UUID rather than the session note's name, because the stop hook renames and renumbers that note before the handover runs.
-
-### Session Lifecycle Hooks
-
-PAI runs hooks at every stage of a Claude Code session:
-
-| Event | What PAI Does |
-|-------|--------------|
-| **Session Start** | Loads project context, detects which project you're in, auto-registers new projects, creates a session note, injects recent observations, and **injects the previous session's `## Continue` checkpoint** so a restart resumes with full context |
-| **User Prompt** | Cleans up temp files, updates terminal tab titles, injects whisper rules and advisor mode guidance, refreshes the rolling autosave checkpoint |
-| **Pre-Compact** | Saves session state checkpoint, pushes `session-summary` work item to daemon, sends notification |
-| **Post-Compact** | Injects preserved state back into Claude's context |
-| **Tool Use** | Classifies tool calls into structured observations (decision/bugfix/feature/refactor/discovery/change), refreshes the rolling autosave checkpoint (rate-limited) |
-| **Session End** | Pushes `session-summary` work item to daemon for AI-powered note generation |
-| **Stop** | Pushes `session-summary` work item to daemon, sends notification |
-
-All hooks are TypeScript compiled to `.mjs` modules. They run as separate processes and communicate via stdin (JSON input from Claude Code) and stdout (context injection back into the conversation). Hooks are thin relays — they capture minimal data and immediately push work items to the daemon queue, which handles all heavy processing asynchronously.
-
----
-
-## Session Management
-
-PAI gives you a complete picture of every Claude Code session running on your machine — live tabs in iTerm2, paused snapshots on disk, and everything in between.
-
-### The Core Idea: One Entry Point
-
-Two ways in, both forgiving:
-
-- **`pai`** (no args) — opens the **interactive picker**: type to search across projects *and* sessions, then act on the highlighted row with a single key.
-- **`pai <name>`** — the universal session command when you already know the name. It does the right thing based on session state:
-  - **Live session** — switches the iTerm2 tab to front (no new Claude launched)
-  - **Otherwise** — starts a fresh Claude in the project directory, on the configured route. If a resumable transcript exists it asks `Resume it? [y/N]` first (Enter keeps fresh); `--resume` or `pai resume <name>` resume without asking; `-y` skips the question.
-  - **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
-
-```bash
-pai                 # Interactive picker — search, then go / new / cd / finder / remove
-pai aibroker        # Switch to the live AIBroker tab (iTerm comes to front)
-pai youdrill        # Fresh youdrill session; offers to resume the last transcript
-pai mdf             # Free-text search across your prompt history
-pai 0856d40b        # Resume by UUID prefix
-pai --list          # Static deduped table (the old no-args behaviour)
-```
-
-### Daily Commands
-
-```bash
-pai                   # Interactive picker (projects + sessions; search then act)
-pai --list            # Static deduped listing (one row per name)
-pai <name>            # Switch / resume / fresh — universal
-pai pause             # Save state checkpoint (write ## Continue to TODO.md)
-pai pause all         # Pause every live Claude session at once
-pai end               # Finalize: save state + mark session note Completed
-```
-
-And inside Claude Code, the two slash commands that matter:
-
-```
-/pause    →  write checkpoint to TODO.md, print handoff block, then type /exit
-/end      →  same as /pause, plus marks the session note Completed
-```
-
-### The Interactive Picker
-
-Run `pai` with no arguments to open a self-contained terminal selector (no `fzf` or other dependency) over a **unified, deduped list of both projects and sessions** — tagged so the two stay distinct. It's the one place to answer "where did I work on X, and take me there."
-
-```
-  pai  —  find a project or session
-  search > samba
-
-  live      Chenarlier   now   …/Raspi/Chenarlier   samba setup monster reverse proxy
-  project   Glidr        2d    …/apps/glidr          claude pai research
-
-  ────────────────────────────────────────
-  Chenarlier   ~/…/Raspi/Chenarlier
-  recent notes:
-    10 - Samba Setup/01 - Samba Server Setup.md   1mo
-    00 - Monster/00 - Monster.md                  3mo
-  ────────────────────────────────────────
-  g go to tab · n new · c cd · f finder · d remove · s search · ↑↓ move · q quit
-```
-
-**Two modes.** You start in *command mode* (single keys are actions). Press `s` (or `/`) to enter *search mode* (type a topic — it filters by name, path, **and folded-in note file/folder names**, so `samba` finds a project literally named "Chenarlier"); `Enter` or `esc` returns to command mode.
-
-**Command keys** act immediately on the highlighted row:
-
-| Key | Action |
-|-----|--------|
-| `g` | **Go to** the running iTerm2 tab (for live rows) |
-| `n` | **New** Claude session in that directory (current terminal) |
-| `c` | **cd** into the folder only — no Claude (your shell stays there) |
-| `f` | Open the folder in **Finder** / Explorer / `xdg-open` (keeps the picker open) |
-| `d` | **Remove** from PAI's list — archives the project (reversible, files untouched); asks `y/N` first |
-| `s` `/` | Enter **search** mode |
-| `↑↓` `j` `k` | Move the highlight |
-| `q` `esc` | Quit |
-
-`Enter` on a row takes the smart default: a live row → go to its tab, otherwise → new session.
-
-The `c` (cd) action needs PAI's shell integration to change your shell's directory — see [Finding the Claude Binary](#finding-the-claude-binary) / `pai shell-init`. On a non-interactive terminal (piped output), `pai` falls back to the static listing automatically.
-
-### Static Listing
-
-`pai --list` shows a single deduped table — one row per session name, regardless of how many snapshots exist on disk:
-
-```
-Sessions:
-
-  #   name        status      age       project                       last prompt
-  --  ----------  ----------  --------  ----------------------------  --------------------------
-  1   AIBroker    live        now       —                             —
-  2   PAI         resumable   2m ago    /…dev/ai/PAI                  "refactor session listing…"
-  3   MDF         transcript  3d ago    /…MDF/Infrastruktur/Webseiten "ok so we recently had…"
-```
-
-Status values: `live` (active iTerm tab), `resumable` (clean snapshot on disk), `transcript` (history available, not resumable), `stub` (empty or minimal).
-
-### Finding Sessions by Topic
-
-`pai <topic>` first checks session names, then falls back to searching your prompt history:
-
-```
-Sessions matching "mdf":
-
-  #  id        when              project                              last matching prompt
-  -  --------  ----------------  -----------------------------------  -------------------------
-  1  6269cf64  2026-05-21 08:20  /…MDF/Infrastruktur/20 - Webseiten  "ok so we recently had an order…"
-  2  abe2d977  2026-02-23 08:40  /…MDF/Infrastruktur/20 - Webseiten  "yes the session notes for Whazaa…"
-
-  Enter # to launch (1-2), or press Enter to cancel:
-```
-
-Use `pai <topic> --auto` (or `-y`) to auto-pick #1. Use `pai <topic> 2` to pick directly.
-
-### Power User Access
-
-The full session management namespace is still available:
-
-```bash
-pai sessions              # Live + disk listing (with more columns)
-pai sessions --all        # Include unnamed orphan sessions
-pai sessions --all-tabs   # Include shell tabs in the live section
-pai sessions goto <name>  # Named-session resolver (same as pai <name>)
-pai sessions list         # Explicit listing (same as pai sessions)
-```
-
-### Pausing All Sessions at Once
-
-When you're done for the day and have multiple Claude windows open:
-
-```bash
-pai pause all             # send "pause session" to every live Claude pane
-pai pause all --dry-run   # preview what would be sent
-pai pause all --exit      # also send /exit after each session saves state
-```
-
-AIBroker must be running for this to work. Shell tabs (bare zsh, SSH panes) are automatically skipped — only Claude Code panes receive the pause command. The count of skipped tabs is printed to stderr.
-
-### /pause and /end Inside Claude Code
-
-Type `/pause` or `/end` from inside an active Claude Code session (not from a shell — these are Claude Code slash commands, not CLI commands):
-
-- `/pause` — Claude writes a `## Continue` block to the project's `TODO.md`, prints a handoff summary with the session ID, then tells you to type `/exit`. The next session starts by reading that TODO.md block and picking up exactly where you left off.
-- `/end` — Same as `/pause`, plus Claude marks the session note as Completed and writes a final summary. Use this when you're genuinely done with a topic, not just pausing mid-task.
-
-After either command, type `/exit` to exit Claude Code cleanly.
-
-### Why /exit and Not Ctrl+C
-
-Ctrl+C or closing the terminal kills the Claude Code process abruptly. The session note generation hook never fires, the checkpoint is not written, and the session cannot be resumed with `claude --resume`.
-
-`/exit` sends a clean shutdown signal. Claude Code runs its Stop and Session End hooks, which trigger PAI to write the session note, push the final summary to the daemon, and save a resumable snapshot. The difference in recovery quality between a clean `/exit` and a Ctrl+C is significant for long sessions.
-
-If you do accidentally close a terminal, use `pai sessions --all` to find the orphaned transcript. The `/reconstruct` skill can retroactively generate a session note from it.
-
----
+→ [docs/worker-providers.md](docs/worker-providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
 
 ## Automatic Session Notes
 
-PAI automatically writes structured session notes after every session ends — no manual journaling required. The daemon spawns a headless Claude CLI process (using your Max plan, not the API) to summarize the JSONL conversation transcript combined with recent git history.
+A background daemon documents every session as it happens, from the transcript and git history, and starts a new note when the topic changes.
 
-### What Gets Generated
+→ [docs/session-notes.md](docs/session-notes.md)
 
-Each session note contains:
+## What You Can Ask Claude
 
-- **Work Done** — concrete description of what was accomplished
-- **Key Decisions** — choices made and their rationale
-- **Known Issues** — bugs found, blockers, or open questions
-- **Next Steps** — where to pick up in the next session
+Search your memory, manage projects, navigate sessions, review your week, keep things safe, work with Obsidian and manage your budget, all in plain language.
 
-The summarizer uses tiered model selection based on the trigger:
+→ [docs/what-you-can-ask.md](docs/what-you-can-ask.md)
 
-| Trigger | Model | Timeout | JSONL Limit |
-|---------|-------|---------|-------------|
-| Session end (Stop hook) | Opus | 5 minutes | 500K bytes |
-| Auto-compaction (PreCompact hook) | Sonnet | 2 minutes | 200K bytes |
+## Skills
 
-### Topic-Based Note Splitting
+On-demand skills for productivity, session management, Obsidian vaults and system tools.
 
-When a session covers multiple distinct topics, PAI creates separate notes rather than one long note for the whole session. The summarizer outputs a `TOPIC:` line describing the subject of the current work. PAI compares this against the existing note title using Jaccard word similarity — when similarity falls below 30%, a new note is created automatically.
+→ [docs/skills.md](docs/skills.md)
 
-Notes within the same day are numbered sequentially: `0042 - 2026-03-24 - Session Name.md`, `0043 - 2026-03-24 - Different Topic.md`, and so on.
+## Budget-Aware Advisor Mode
 
-### One Note Per Session
+Adapts how much work Claude delegates to cheaper models as your usage limits fill up, with thresholds and a statusline label.
 
-Each compaction within a session updates the existing note rather than creating a new one. The 30-minute cooldown between summaries prevents redundant updates. Stop hook triggers bypass the cooldown with a force flag to ensure the final state is always captured.
+→ [docs/budget-advisor.md](docs/budget-advisor.md)
 
-### Garbage Title Filter
+## Context Preservation
 
-Session note titles are validated before creation. Over 20 patterns are rejected, including: task notification strings, `[object Object]`, hex hashes, bare numbers, and other non-descriptive artifacts that can appear in session transcripts. Titles must describe actual work done and are capped at 60 characters.
+State is saved before compaction and injected afterwards, so a compaction, a restart or a crash does not cost you the thread.
 
-### Finding the Claude Binary
+→ [docs/context-preservation.md](docs/context-preservation.md)
 
-The daemon runs under launchd with a minimal PATH that does not include `~/.local/bin/`. PAI resolves the Claude CLI binary by checking `~/.local/bin/claude` first, then falling back to PATH lookup, before spawning headless summarization processes.
+## Session Management
 
-### Stripping the API Key
+One entry point, `pai <topic>`: an interactive picker over projects and sessions, topic search, pausing all sessions at once.
 
-When spawning headless Claude CLI processes for summarization, the daemon strips `ANTHROPIC_API_KEY` from the subprocess environment. This forces the spawned process to authenticate via your Max plan (free) rather than using the API key (billable). Without this, every automatic session note would incur API charges.
+→ [docs/session-management.md](docs/session-management.md)
 
----
+## Memory
 
-## Progressive Memory Loading
+Progressive memory loading in four layers, a temporal knowledge graph, and a three-tier hybrid store with graph-completion search and a relevance feedback loop.
 
-PAI loads context in layers at session start rather than all at once. This keeps early-session latency low while giving Claude everything it needs to be useful immediately.
-
-### The Four Layers
-
-| Layer | What it loads | When |
-|-------|---------------|------|
-| **L0 — Identity** | Your identity file (`~/.pai/identity.txt`) — who you are, your working style, key preferences | Always, at every session start |
-| **L1 — Essential story** | Summaries from the most recent session notes — what you were doing, what decisions were made, where things stand | Always, at session start |
-| **L2 — Topic queries** | On-demand retrieval for the current topic — fetched when a specific question or task is identified | On demand, during the session |
-| **L3 — Deep search** | Full `memory_search` across all indexed content — for when L2 is not enough | On demand, when explicitly needed |
-
-L0 and L1 fire automatically via the `memory_wakeup` MCP tool, which is called by the `SessionStart` hook. L2 and L3 are invoked as needed — the model decides when to go deeper based on the question at hand.
-
-### Configuring Your Identity File
-
-Create `~/.pai/identity.txt` with a short description of yourself and your working style. Claude will see this at every session start. Example:
-
-```
-Principal engineer. Work across TypeScript, Dart, and shell scripting.
-Projects: PAI (AI infrastructure), RingsADay (Flutter app), Scribe (MCP server).
-Prefer concise explanations, hate unnecessary hedging.
-```
-
----
-
-## Advanced Memory Tools
-
-### Temporal Knowledge Graph
-
-Facts change over time. The `kg_triples` table stores knowledge as subject-predicate-object triples with `valid_from` and `valid_to` timestamps, so facts can expire and contradict each other rather than accumulating in an undated blob.
-
-Four MCP tools cover the full lifecycle:
-
-- `kg_add` — Add a fact with a start date (and optional end date)
-- `kg_query` — Query the graph, filtered to facts valid at a given point in time
-- `kg_invalidate` — Mark a fact as no longer true (sets `valid_to`)
-- `kg_contradictions` — Surface facts that directly contradict each other, using predicate inversion rules
-
-Example: "the user prefers PostgreSQL" added in March; "the user prefers SQLite" added in April with the March fact invalidated. `kg_query` in April sees only the current fact; `kg_query` for March sees the historical one.
-
-### Memory Taxonomy
-
-`memory_taxonomy` gives a shape-of-memory overview: projects, session counts, chunk counts, embedding coverage, and recent activity. Think of it as a dashboard for your knowledge base — useful both for the model (to understand what it knows) and for you (to audit what is indexed).
-
-### Cross-Project Tunnels
-
-`memory_tunnels` detects concepts that appear across multiple projects. It works by comparing FTS vocabulary in SQLite mode or `ts_stat` output in PostgreSQL mode. When a concept — a library name, a design pattern, a person's name — shows up in three separate projects, PAI surfaces that connection as a tunnel.
-
-This reveals unexpected intellectual bridges: the same concurrency pattern used in PAI's daemon showing up in your Flutter app's state management, or a vendor name appearing in both your notes and your job applications.
-
----
-
-## Memory Architecture
-
-PAI's memory system uses a three-tier hybrid store inspired by Cognee's approach to knowledge graphs and retrieval. Each tier has a distinct role, and they work together to answer queries that no single store could handle alone.
-
-### Three-Tier Hybrid Store
-
-| Tier | Backend | What it stores |
-|------|---------|----------------|
-| **Chunks + entities** | SQLite (simple mode) or PostgreSQL (full mode) | Text chunks with embeddings; named entity records with content-address hashes |
-| **Knowledge graph** | PostgreSQL (`kg_triples`) | Subject-predicate-object triples with `valid_from`/`valid_to` timestamps |
-| **Vector embeddings** | pgvector (full mode) | 768-dimensional Snowflake Arctic embeddings on chunks and vault notes |
-
-### Entity Deduplication via Content-Address Hashing
-
-Named entities (people, projects, libraries, concepts) extracted during indexing are stored in a `kg_entities` table and deduplicated using a content-address hash derived from the entity's canonical name. Two mentions of "PostgreSQL" in different session notes resolve to a single entity row — the hash acts as a stable identity, so the graph stays normalized even as new content is indexed.
-
-### Graph-Completion Search Pipeline
-
-Standard vector search finds semantically similar chunks. Graph-completion search goes further:
-
-1. **Vector seeds** — a semantic search returns the top-K most relevant chunks.
-2. **Graph traversal** — the entities mentioned in those chunks are looked up in `kg_triples`; their immediate neighbors are fetched (one hop).
-3. **Candidate expansion** — the neighbor entities' associated chunks are added to the result set.
-4. **Re-rank** — the expanded candidate set is re-scored by the cross-encoder, which reads each (query, result) pair together. Results are sorted by this final relevance score.
-
-This means a query about "the PAI daemon" can surface a session note that mentions the daemon only indirectly — because a connected entity (the Unix socket, the launchd service) appears in both the graph and the note.
-
-### Feedback Loop with Relevance Scoring
-
-Every search result that is subsequently retrieved via `memory_get` (i.e., actually read by the model) generates a positive feedback signal. These signals are stored and used to adjust future search weights using an exponential moving average (EMA):
-
-```
-new_weight = alpha * signal + (1 - alpha) * old_weight
-```
-
-The default alpha is 0.1, so recent positive signals gradually raise a chunk's effective score without overriding the semantic baseline. This creates a personalization loop: content you actually use rises in future rankings; content you skip does not.
-
-### Access Timestamp Tracking
-
-Every chunk row carries a `last_accessed_at` timestamp updated on each `memory_get` call. This supports recency boost (content accessed recently scores higher) and enables future eviction policies for very large knowledge bases.
-
-### Multi-Tenant Support
-
-PAI isolates memory by project. Every chunk, entity, and observation row carries a `project_id` foreign key. Searches default to the current project; the `all_projects: true` flag (or `--all` CLI option) lifts the filter. Knowledge-graph triples carry a `project_id` as well, so cross-project tunnels (`memory_tunnels`) are detected explicitly rather than accidentally.
-
----
+→ [docs/memory.md](docs/memory.md)
 
 ## Automatic Observation Capture
 
-PAI automatically classifies and stores every significant tool call during your sessions. When you edit a file, run a command, or make a decision, PAI captures it as a structured observation — building a searchable timeline of everything you've done across all projects.
+Tool calls are classified into structured observations and injected back as progressive context.
 
-### How it works
+→ [docs/observations.md](docs/observations.md)
 
-A PostToolUse hook fires after every Claude Code tool call. A rule-based classifier (no AI needed, under 50ms) categorizes each action:
+## Whisper Rules and Privacy Tags
 
-| Type | What triggers it | Examples |
-|------|-----------------|----------|
-| **decision** | Git commits, config changes | `git commit`, writing to config files |
-| **bugfix** | Test runs, error investigation | `npm test`, debugging commands |
-| **feature** | New file creation, feature work | Creating components, adding endpoints |
-| **refactor** | Code restructuring | Renaming, moving files, reorganizing |
-| **discovery** | File reads, searches | Reading code, grep searches, glob patterns |
-| **change** | File edits | Editing source files, updating configs |
+Rules injected into every prompt so they survive compaction, and `<private>` tags that keep content out of the index.
 
-Observations are stored with content-hash deduplication (30-second window) to prevent duplicates from rapid tool calls.
+→ [docs/rules-and-privacy.md](docs/rules-and-privacy.md)
 
-### Progressive context injection
+## Search
 
-At session start, PAI injects recent observations as layered context:
+Keyword, semantic and hybrid search with cross-encoder reranking, recency boost, a compact token-efficient format and section-aware retrieval.
 
-1. **Compact index** (~100 tokens) — observation type counts and active projects
-2. **Timeline** (~500 tokens) — recent observations with timestamps
-3. **On-demand** — full details available via MCP tools
-
-This means Claude starts every session already knowing what you were working on, without you re-explaining anything.
-
-### Searching observations
-
-Ask Claude naturally:
-
-```
-"What changes did I make to the daemon today?"
-"Show me all decisions from the last session"
-"What files did I modify in the PAI project this week?"
-```
-
-Or use the CLI:
-
-```bash
-# List recent observations
-pai observation list
-
-# Filter by type
-pai observation list --type decision
-
-# Filter by project
-pai observation list --project pai
-
-# Show stats
-pai observation stats
-```
-
-### Session summaries
-
-When a session ends, PAI generates a structured summary capturing what was requested, investigated, learned, completed, and what the next steps are. These summaries feed into the progressive context system, giving future sessions a concise picture of past work.
-
----
-
-## Whisper Rules
-
-PAI provides a hook that injects user-defined rules into every prompt via `UserPromptSubmit`. Rules survive compaction, `/clear`, and session restarts — they fire on every single turn, making them the most reliable way to enforce behavioral constraints.
-
-**PAI ships the mechanism. You provide the rules.** The file `~/.claude/pai/whisper-rules.md` does not exist by default. Use the `/whisper` skill to manage your rules:
-
-```
-/whisper                          — show current rules
-/whisper add "NEVER send emails"  — add a rule
-/whisper remove 3                 — remove rule #3
-/whisper list                     — list with line numbers
-```
-
-Or edit `~/.claude/pai/whisper-rules.md` directly — one rule per line, plain text.
-
-**Keep rules focused.** Every rule is injected on every prompt. Too many rules dilute effectiveness and waste tokens. Reserve whisper rules for truly critical constraints that keep getting violated despite being in CLAUDE.md.
-
-The pattern is inspired by [Letta's claude-subconscious](https://github.com/letta-ai/claude-subconscious) approach to persistent context injection.
-
----
-
-## Privacy Tags
-
-Wrap any content in `<private>...</private>` tags to exclude it from PAI's memory index. Private content is stripped before chunking — it's never stored, never searched, never surfaced.
-
-```markdown
-## API Keys
-<private>
-STRIPE_KEY=sk_live_abc123
-DATABASE_URL=postgres://user:pass@host/db
-</private>
-
-## Architecture Notes
-The payment system uses Stripe webhooks...
-```
-
-The architecture notes get indexed. The API keys don't. Works in session notes, memory files, and any markdown PAI indexes.
-
----
-
-## Token-Efficient Search (3-Layer Pattern)
-
-For budget-conscious usage, PAI supports a compact search format that returns ~10x fewer tokens per result. Instead of fetching full snippets upfront, get a compact index first, then drill into interesting results.
-
-### The workflow
-
-```
-1. Search with format="compact"  →  IDs + paths + scores (~50 tokens/result)
-2. Review the index, pick interesting results
-3. Use memory_get to read full content for those specific files
-```
-
-### Example
-
-```
-"Search for authentication with compact format"
-  → Claude passes format: "compact" to memory_search
-  → Gets a tight index: [1] pai — src/auth.ts L10-45 score=0.892
-  → Then reads only the files that matter
-```
-
-Via MCP, pass `format: "compact"` to the `memory_search` tool. Default is `"full"` (current behavior with snippets).
-
-### Section-aware retrieval
-
-Long notes are chunked at their headings, and every chunk carries its heading path as a first line, for example `[Decisions > Worker routing > Provider choice]`. A search for "routing" therefore finds the paragraph under that sub-section even when the paragraph never uses the word. Headings inside code fences are ignored.
-
-For long files, read by section instead of whole:
-
-```
-1. memory_outline(project, path)  →  heading tree with line ranges and token estimates
-      ## Previous handovers  L45-195 ~2361t
-        ### Shipped (2026-09-29)  L60-66 ~251t
-2. memory_get(project, path, from=60, lines=7)  →  just that section
-```
-
-`memory_outline` returns structure only, never text, and takes an optional `max_depth`.
-
-When the chunking logic changes, `CHUNKER_VERSION` in `src/memory/chunker.ts` is bumped. It is part of each file's change-detection hash, so the first index pass after an upgrade re-chunks and re-embeds every file once; later passes skip unchanged files as before. On a large index that pass takes hours of local CPU for embeddings, and semantic search misses files until they are re-embedded, so restart the daemon onto a new version at a quiet time.
-
----
+→ [docs/search.md](docs/search.md)
 
 ## Auto-Compact Context Window
 
-Claude Code can automatically compact your context window when it fills up, preventing session interruptions mid-task. PAI's statusline shows you at a glance whether auto-compact is active.
+The durable way to make Claude Code compact automatically, via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
 
-### Why the GUI setting doesn't work
-
-Claude Code has an `autoCompactEnabled` setting in `~/.claude.json`, but it gets overwritten on every restart. Do not use it — changes don't survive.
-
-### The durable approach: environment variable
-
-Set `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in your `~/.claude/settings.json` under the `env` block. This survives restarts, `/clear`, and Claude Code updates.
-
-```json
-{
-  "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
-  }
-}
-```
-
-The value is the context percentage at which compaction triggers. `80` means compact when the context window reaches 80% full. Restart Claude Code after saving.
-
-### Statusline indicator
-
-PAI's statusline shows the remaining context until auto-compact triggers as a percentage on line 3, along with your 5-hour and 7-day usage limits, daily pace indicator, and advisor mode label.
-
-### Set it up with one prompt
-
-Give Claude Code this prompt and it handles everything:
-
-> Add `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` set to `80` to the `env` block in `~/.claude/settings.json`. This enables durable auto-compact that survives restarts. Do not touch `~/.claude.json` — that file gets overwritten on startup. After saving, confirm the setting is in place and tell me to restart Claude Code.
-
----
-
-## Storage Options
-
-PAI offers two modes, and the setup wizard asks which you prefer.
-
-**Simple mode (SQLite)** — Zero dependencies beyond Node. Keyword search only. Great for trying it out or for systems without Docker.
-
-**Full mode (PostgreSQL + pgvector)** — Adds semantic search and vector embeddings. Finds things by meaning, not just exact words. "How does the reconnection logic work?" finds the right session even if it never used those exact words. Requires Docker.
-
----
-
-## Prerequisites
-
-- [Node.js](https://nodejs.org) 20 or newer (22 from apt works) — the installed `pai` runs on Node
-- [Bun](https://bun.sh) — only to build from a git checkout (development)
-- [Docker](https://docs.docker.com/get-docker/) — only for full mode
-- [Claude Code](https://claude.ai/code)
-- macOS or Linux (tmux for worker panes on Linux; iTerm2 on macOS)
-
----
-
-## How It Works
-
-A background service runs quietly alongside your work. Every five minutes it indexes your Claude Code projects and session notes — chunking them, hashing them for change detection, and storing them in a local database. When you ask Claude something about past work, it searches this index by keyword, by meaning, or both, and surfaces the relevant context in seconds.
-
-Everything runs locally. No cloud. No API keys for the core system.
-
-For the technical deep-dive — architecture, database schema, CLI reference, and development setup — see [ARCHITECTURE.md](ARCHITECTURE.md).
-
----
-
-## Search Intelligence
-
-PAI doesn't just store your notes — it understands them. Three search modes work together, with reranking and recency boost on by default. All search settings are configurable.
-
-### Search Modes
-
-| Mode | How it works | Best for |
-|------|-------------|----------|
-| **Keyword** | Full-text search (BM25 via SQLite FTS5) | Exact terms, function names, error messages |
-| **Semantic** | Vector similarity (Snowflake Arctic embeddings) | Finding things by meaning, even with different words |
-| **Hybrid** | Keyword + semantic combined, scores normalized and blended | General use — the default |
-
-### Cross-Encoder Reranking
-
-Every search automatically runs a second pass: a cross-encoder model reads each (query, result) pair together and re-scores them for relevance. This catches results that keyword or vector search ranked too low.
-
-```bash
-# Search with reranking (default)
-pai memory search "how does session routing work"
-
-# Skip reranking for faster results
-pai memory search "how does session routing work" --no-rerank
-```
-
-The reranker uses a small local model (~23 MB) that runs entirely on your machine. First use downloads it automatically. No API keys, no cloud calls.
-
-### Recency Boost
-
-Recent content scores higher than older content — on by default with a 90-day half-life. A 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
-
-```bash
-# Search uses recency boost automatically (90-day half-life from config)
-pai memory search "notification system"
-
-# Override the half-life for this search
-pai memory search "notification system" --recency 30
-
-# Disable recency boost for this search
-pai memory search "notification system" --recency 0
-```
-
-Via MCP, pass `recency_boost: 90` to the `memory_search` tool, or `recency_boost: 0` to disable.
-
-Recency boost is applied after cross-encoder reranking, so relevance is scored first, then time-weighted. Scores are normalized before decay so the math works correctly regardless of the underlying score scale.
-
-### Search Settings
-
-All search defaults are configurable via `~/.claude/pai/config.json` and can be viewed or changed from the command line.
-
-```bash
-# View all search settings
-pai memory settings
-
-# View a single setting
-pai memory settings recencyBoostDays
-
-# Change a setting
-pai memory settings recencyBoostDays 60
-pai memory settings mode hybrid
-pai memory settings rerank false
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `mode` | `keyword` | Default search mode: `keyword`, `semantic`, or `hybrid` |
-| `rerank` | `true` | Cross-encoder reranking on by default |
-| `recencyBoostDays` | `90` | Recency half-life in days. `0` = off |
-| `defaultLimit` | `10` | Default number of results |
-| `snippetLength` | `200` | Max characters per snippet in MCP results |
-
-Settings live in the `search` section of `~/.claude/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
-
-### Using Search from Within Claude
-
-When PAI is configured as an MCP server, Claude uses the `memory_search` tool automatically. You don't need to call it yourself — just ask Claude naturally and it searches your memory behind the scenes.
-
-**Example prompts you can give Claude:**
-
-```
-"Search your memory for authentication"
-"What do you know about the database migration?"
-"Find where we discussed the notification system"
-```
-
-Claude calls `memory_search` with the right parameters based on your config defaults. Reranking and recency boost are both active by default — you don't need to configure anything for good results.
-
-**Overriding defaults for a specific search:**
-
-You can ask Claude to adjust search behavior per-query:
-
-```
-"Search for authentication using semantic mode"
-  → Claude passes mode: "semantic"
-
-"Search for the old logging discussion without recency boost"
-  → Claude passes recency_boost: 0
-
-"Search for database schema across all projects with no reranking"
-  → Claude passes all_projects: true, rerank: false
-```
-
-**The `memory_search` MCP tool accepts these parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `query` | string | Free-text search query (required) |
-| `project` | string | Scope to one project by slug |
-| `all_projects` | boolean | Explicitly search all projects |
-| `sources` | array | Restrict to `"memory"` or `"notes"` |
-| `limit` | integer | Max results (1–100, default from config) |
-| `mode` | string | `"keyword"`, `"semantic"`, or `"hybrid"` |
-| `rerank` | boolean | Cross-encoder reranking (default: true from config) |
-| `recency_boost` | integer | Recency half-life in days (0 = off, default from config) |
-
-All parameters except `query` are optional. Omitted values fall back to your `~/.claude/pai/config.json` defaults.
-
-**Changing defaults permanently:**
-
-Tell Claude to change your search settings:
-
-```
-"Set my default search mode to hybrid"
-"Turn off reranking by default"
-"Change the recency boost to 60 days"
-```
-
-Claude runs `pai memory settings <key> <value>` to update `~/.claude/pai/config.json`. Changes take effect on the next search — no restart needed.
-
----
+→ [docs/auto-compact.md](docs/auto-compact.md)
 
 ## Zettelkasten Intelligence
 
-PAI implements Niklas Luhmann's Zettelkasten principles as six computational operations on your Obsidian vault.
+Graph operations over your Obsidian vault: connections, themes, god notes, communities, latent ideas.
 
-### How it works
+→ [docs/zettelkasten.md](docs/zettelkasten.md)
 
-PAI indexes your entire vault — following symlinks, deduplicating by inode, parsing every link — and builds a graph database alongside semantic embeddings. Six tools then operate on this dual representation:
+## How It Works
 
-| Tool | What it does |
-|------|-------------|
-| `pai zettel explore` | Follow trains of thought through link chains (Folgezettel traversal) |
-| `pai zettel surprise` | Find notes that are semantically close but far apart in the link graph |
-| `pai zettel converse` | Ask questions and let the vault "talk back" with unexpected connections |
-| `pai zettel themes` | Detect emerging clusters of related notes across folders |
-| `pai zettel health` | Structural audit — dead links, orphans, disconnected clusters, health score |
-| `pai zettel suggest` | Proactive connection suggestions combining semantic similarity, tags, and graph proximity |
+Storage options (SQLite or PostgreSQL + pgvector), prerequisites and the indexing loop. Deep dive: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-All tools work as CLI commands (`pai zettel <command>`) and MCP tools (`zettel_*`) accessible through the daemon.
+→ [docs/how-it-works.md](docs/how-it-works.md)
 
-### Vault Indexing
+## Use Cases
 
-The vault indexer follows symlinks (critical for vaults built on symlinks), deduplicates files by inode to handle multiple paths to the same file, and builds a complete link graph with Obsidian-compatible shortest-match resolution.
+Solo developer, team lead, researcher: what changes with persistent memory.
 
-All link types are parsed and resolved:
-
-| Syntax | Type | Example |
-|--------|------|---------|
-| `[[Note]]` | Wikilink | `[[Daily Note]]`, `[[Note\|alias]]`, `[[Note#heading]]` |
-| `![[file]]` | Embed | `![[diagram.png]]`, `![[template]]` |
-| `[text](path.md)` | Markdown link | `[see here](notes/idea.md)`, `[ref](note.md#section)` |
-| `![alt](file)` | Markdown embed | `![photo](assets/img.jpg)` |
-
-External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths are treated as vault connections. URL-encoded paths (e.g. `my%20note.md`) are decoded automatically.
-
-- Full index: ~10 seconds for ~1,000 files
-- Incremental: ~2 seconds (hash-based change detection)
-- Runs automatically via the daemon scheduler
-
----
+→ [docs/use-cases.md](docs/use-cases.md)
 
 ## Release History
 
-31 releases shipped from v0.7.2 to v0.10.0 (March 19 – May 21, 2026):
-
-| Version | Feature |
-|---------|---------|
-| v0.7.2 | Auto-registration, one-note-per-session, Reconstruct skill |
-| v0.7.3 | Automatic AI-powered session notes via daemon |
-| v0.7.4 | Auto-register on parent match |
-| v0.7.5 | Tiered model selection (opus/sonnet/haiku) |
-| v0.7.6 | Find claude binary in launchd |
-| v0.7.7 | Whisper rules hook |
-| v0.7.8 | Strip API key from daemon (prevent billing) |
-| v0.8.0 | Topic-based note splitting |
-| v0.8.1 | /whisper skill, remove hardcoded defaults |
-| v0.8.2 | Reduce topic split sensitivity |
-| v0.8.3 | /consolidate skill |
-| v0.8.4 | Store TOPIC in HTML comment |
-| v0.8.5 | God-note detection, confidence tagging, Louvain communities, query feedback |
-| v0.9.0 | 4-layer wake-up, temporal KG, taxonomy, tunnels, mid-session auto-save |
-| v0.9.1 | KG backfill CLI, shared kg-extraction module |
-| v0.9.2 | Stop-hook first-run safeguard |
-| v0.9.3 | Silence stop-hook diagnostics |
-| v0.9.4 | Remove exit(2) noise |
-| v0.9.5 | Budget-aware advisor mode |
-| v0.9.6 | Statusline auto-writes budget to advisor |
-| v0.9.7 | Advisor mode label in statusline, natural language mode switching |
-| v0.9.8 | Privacy tags, compact search format, npx install |
-| v0.9.9 | Fix advisor mode to delegate to haiku instead of hoarding in opus |
-| v0.9.10 | Cognee-inspired three-tier memory: entity deduplication, graph-completion search, feedback EMA |
-| v0.9.11 | Session-commands hook for truncation resilience |
-| v0.9.12 | Dispatcher uses openFederation directly for kg_search/feedback |
-| v0.9.13 | Emit chunk IDs in memory_search output |
-| v0.9.14 | AIBroker live-session integration: `pai sessions` shows live iTerm2 panes |
-| v0.9.15 | `pai pause all`: pause every live Claude session at once via AIBroker |
-| v0.9.16 | createHash import fix, registry scan clc fallback map |
-| v0.9.17 | Switch live-session listing to `sessions` IPC (metadata-only, faster); `--all-tabs` flag |
-| v0.9.18 | `pai projects`: moved-project auto-detect, rebind command, active-only default listing |
-| v0.10.0 | Topic-first redesign: `pai <topic>` universal resolver, history search, sticky tab titles |
-| v0.10.1 | `pai sessions clear-names` recovery command |
-| v0.11.0 | Deduped session listing + universal `pai <name>` (switch / resume / fresh) |
-| v0.12.0 | Interactive picker: `pai` opens a modal search-and-act selector over projects + sessions (g go · n new · c cd · f finder · d remove); note-keyword filtering; quoted exit-dir path |
-
----
+→ [docs/release-history.md](docs/release-history.md) · [CHANGELOG.md](CHANGELOG.md)
 
 ## Companion Projects
 
-PAI works great alongside these tools (also by the same author):
+AIBroker, Whazaa, Telex, Coogle and DEVONthink MCP.
 
-- **[AIBroker](https://github.com/mnott/AIBroker)** — Unified message bridge for Claude Code (WhatsApp, Telegram, PAILot — text and voice routing)
-- **[Whazaa](https://github.com/mnott/Whazaa)** — WhatsApp bridge for Claude Code (voice notes, screenshots, session routing)
-- **[Telex](https://github.com/mnott/Telex)** — Telegram bridge for Claude Code (text and voice messaging)
-- **[Coogle](https://github.com/mnott/Coogle)** — Google Workspace MCP daemon (Gmail, Calendar, Drive multiplexing)
-- **[DEVONthink MCP](https://github.com/mnott/devonthink-mcp)** — DEVONthink integration for document search and archival
-
----
+→ [docs/companion-projects.md](docs/companion-projects.md)
 
 ## Acknowledgments
 
@@ -1175,8 +149,6 @@ The automatic observation capture system — classifying tool calls into structu
 The three-store hybrid memory architecture — combining SQLite/PostgreSQL chunks with a knowledge graph and vector embeddings, graph-completion search (vector seeds → graph traversal → re-rank), and the feedback EMA relevance loop — is inspired by [Cognee](https://github.com/topoteretes/cognee) by [topoteretes](https://github.com/topoteretes). Cognee showed that unifying structured knowledge graphs with unstructured vector retrieval produces dramatically better recall. PAI adapts this pattern to the personal knowledge OS context with project-scoped multi-tenancy and content-address entity deduplication.
 
 Section-aware retrieval (heading paths on chunks, `memory_outline`) borrows from [PageIndex](https://github.com/VectifyAI/PageIndex) by [VectifyAI](https://github.com/VectifyAI), which retrieves from long documents by navigating a heading tree rather than by similarity alone. PAI keeps its keyword, vector and graph search and adds the tree as structure the model can navigate, without an LLM call per query.
-
----
 
 ## License
 
