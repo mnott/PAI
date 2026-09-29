@@ -113,12 +113,12 @@ Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-sta
 session-scan-cache.json, queries/, summary-cooldowns.json, work-queue.json,
 kg-backfill-state.json, voices.json, the orphaned legacy federation database,
 the legacy registry database, the legacy live federation database, ~/.pai/backups/,
-~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/Agents/,
-~/.claude/Commands/ into PAI_HOME.
+~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/agents/,
+~/.claude/commands/ into PAI_HOME.
 The registry and federation databases each get an extra WAL checkpoint and PRAGMA
 integrity_check (sqlite3 CLI, if present) on top of the byte-identical copy.
 backups/ is copied and sha256-verified file-by-file into
-backups/legacy-pai-backups/ rather than merged in place. Agents/ and Commands/ each
+backups/legacy-pai-backups/ rather than merged in place. agents/ and commands/ each
 get a symlink left at the old ~/.claude path once their content has moved, so
 Claude Code still finds them at its fixed harness paths.
 Each file is copied, verified byte-identical, then the old file is renamed to

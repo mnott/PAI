@@ -270,7 +270,7 @@ describe("WORKER_CONTRACT_PROMPT — full-contract AG2 baseline (keepalive path)
     // src/hooks/ts/lib/sleep-poll-gate.ts for the isWorker branch.
     expect(WORKER_CONTRACT_PROMPT).toMatch(/no later wake-up here/);
     expect(WORKER_CONTRACT_PROMPT).toMatch(/FOREGROUND with a Bash timeout up to 600000 ms/);
-    expect(WORKER_CONTRACT_PROMPT).toMatch(/while kill -0 <pid> 2>\/dev\/null; do sleep 15; done/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/run_in_background is denied/);
   });
 
   it("bans inline multi-line/quoted payloads broadly, not just heredocs", () => {

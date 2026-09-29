@@ -1199,7 +1199,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   };
 
   const operatorServer = headless
-    ? createOperatorServer(logDir, wid, (text) => {
+    ? createOperatorServer(logDir, wid, async (text) => {
+        const stdin = proc.stdin;
+        if (!stdin || !stdin.writable || stdin.writableEnded) {
+          return "the worker's stdin is already closed (its turn ended) — use: pai worker resume";
+        }
         operatorInFlight += 1;
         if (closeTimer) {
           clearTimeout(closeTimer);
@@ -1208,11 +1212,15 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         // a handoff delivery's mirror carries a flag: the viewer shows the
         // inbox ◆ line instead, never both
         writeEvent({ type: "operator", text, handoff: isHandoffMessage(text) });
-        try {
-          proc.stdin?.write(stdinUserMessage(operatorUserText(text)) + "\n");
-        } catch {
-          /* child gone; the socket is closed by the run's cleanup */
-        }
+        return new Promise<void | string>((resolve) => {
+          try {
+            stdin.write(stdinUserMessage(operatorUserText(text)) + "\n", (e) =>
+              resolve(e ? `write to the worker failed: ${e.message}` : undefined)
+            );
+          } catch (e) {
+            resolve(`write to the worker failed: ${(e as Error).message}`);
+          }
+        });
       })
     : null;
 
