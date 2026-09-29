@@ -226,7 +226,7 @@ dir_name=$(basename "$current_dir" 2>/dev/null)
 pai_session_name=""
 if [ -n "$ITERM_SESSION_ID" ] && command -v osascript >/dev/null 2>&1; then
     ITERM_UUID="${ITERM_SESSION_ID##*:}"
-    pai_session_name=$(osascript << APPLESCRIPT 2>/dev/null
+    pai_session_name=$(env -u __CFBundleIdentifier osascript << APPLESCRIPT 2>/dev/null
 tell application "iTerm2"
   repeat with aWindow in windows
     repeat with aTab in tabs of aWindow

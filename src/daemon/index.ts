@@ -12,6 +12,9 @@ import { Command } from "commander";
 import { loadConfig, ensureConfigDir } from "./config.js";
 import { serve } from "./daemon.js";
 import { PaiClient } from "./ipc-client.js";
+import { dropItermBundleId } from "../utils/env.js";
+
+dropItermBundleId();
 
 const program = new Command();
 

@@ -19,6 +19,9 @@ import { CommanderError } from "commander";
 import { buildProgram } from "./program.js";
 import { err } from "./utils.js";
 import { drainStdio } from "./lib/exit.js";
+import { dropItermBundleId } from "../utils/env.js";
+
+dropItermBundleId();
 
 // `parse()` does not await async command actions — Commander fires the
 // action and returns immediately, leaving its promise unawaited. When that

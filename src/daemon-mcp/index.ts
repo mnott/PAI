@@ -27,6 +27,9 @@ import { z } from "zod";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
+import { dropItermBundleId } from "../utils/env.js";
+
+dropItermBundleId();
 import {
   review,
   journal,
