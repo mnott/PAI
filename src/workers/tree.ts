@@ -18,7 +18,7 @@
  */
 
 import type { WorkersTreeConfig } from "./config.js";
-import { isLive, loadStatus, loadStatuses, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 
 /** The env var the runner sets in every worker's environment. */
 export const WORKER_ID_ENV = "PAI_WORKER_ID";
@@ -102,4 +102,36 @@ export function launchParent(explicit: string | undefined, env: NodeJS.ProcessEn
 /** Does a status file exist for `id` (i.e. is it a worker rather than a chain)? */
 export function isWorkerId(logDir: string, id: string): boolean {
   return loadStatus(logDir, id) !== null;
+}
+
+/**
+ * A worker owns its children's results (the worker contract says so): if
+ * `parent` exits leaving sub-workers unaccounted for, its own run must not
+ * report success. Two shapes count, both read off `runningChildren` and the
+ * raw statuses, never a second live-child lookup:
+ *
+ *   - still live: left running untouched (killing another process's work
+ *     here would be its own bug) but named in the reason.
+ *   - marked "running" with a dead pid (the child never got to write its own
+ *     terminal state before its parent vanished from under it): finalised
+ *     here as failed, so `ps` stops showing a corpse as live.
+ *
+ * Returns the reason string for the parent's own report, or null when every
+ * child it started is accounted for.
+ */
+export function checkOrphanedChildren(logDir: string, parent: string): string | null {
+  const statuses = loadStatuses(logDir);
+  const live = runningChildren(statuses, parent);
+  const abandoned = statuses.filter(
+    (s) => s.parent === parent && s.state === "running" && !isLive(s)
+  );
+  for (const child of abandoned) {
+    saveStatus(logDir, { ...child, state: "failed", last: `parent ${parent} exited` });
+  }
+  const ids = [...live, ...abandoned].map((s) => s.id);
+  if (!ids.length) return null;
+  return (
+    `exited with ${ids.length} sub-worker${ids.length === 1 ? "" : "s"} still running ` +
+    `(${ids.join(", ")}); they were not waited for — run children in the foreground or wait for them before finishing`
+  );
 }
