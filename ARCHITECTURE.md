@@ -167,6 +167,7 @@ Claude Code (stdio)
 |------|-------------|
 | `memory_search` | Search indexed memory across projects |
 | `memory_get` | Retrieve full content of a specific file |
+| `memory_outline` | Heading tree of a file: line ranges and approximate tokens per section |
 | `project_info` | Look up a project by slug, alias, or number |
 | `project_list` | List all registered projects |
 | `session_list` | List session notes, optionally filtered by project |
@@ -180,6 +181,8 @@ Claude Code (stdio)
 **`memory_search(query, mode?, project?, limit?, rerank?)`** — Search the indexed knowledge base. Returns ranked chunks with file paths and line numbers. `mode`: `keyword` (default), `semantic`, or `hybrid`. Cross-encoder reranking is on by default; set `rerank: false` to skip it.
 
 **`memory_get(project, path)`** — Retrieve the complete contents of a specific file from a project's memory index.
+
+**`memory_outline(project, path, max_depth?)`** — Heading tree of one file (level, title, line range, ~tokens per section, no text). Pick a section, then read just those lines with `memory_get`.
 
 **`project_info(identifier)`** — Returns metadata for a project. Accepts a slug, numeric ID, or alias.
 

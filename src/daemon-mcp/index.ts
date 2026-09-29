@@ -8,7 +8,7 @@
  * database connections and embedding model singleton.
  *
  * Tool definitions are static (unlike Coogle which discovers tools dynamically).
- * The 9 PAI tools are: memory_search, memory_get, project_info, project_list,
+ * The 10 PAI tools are: memory_search, memory_get, memory_outline, project_info, project_list,
  * session_list, registry_search, project_detect, project_health, project_todo.
  *
  * If the daemon is not running, tool calls return a helpful error message
@@ -282,7 +282,7 @@ async function startShim(): Promise<void> {
       "Higher score = more relevant.",
       "",
       "Token-efficient workflow: use format='compact' first (~50 tokens/result),",
-      "then memory_get on interesting results for full content. ~10x token savings.",
+      "then memory_get on interesting results for full content (memory_outline lists a file's sections). ~10x token savings.",
     ].join("\n"),
     {
       query: z
@@ -352,7 +352,7 @@ async function startShim(): Promise<void> {
       "Read the content of a specific file from a registered PAI project.",
       "",
       "Use this to read a full memory file, session note, or document after finding",
-      "it via memory_search. Optionally restrict to a line range.",
+      "it via memory_search. Optionally restrict to a line range (see memory_outline for section line ranges).",
       "",
       "The path must be a relative path within the project root (no ../ traversal).",
     ].join("\n"),
@@ -379,6 +379,34 @@ async function startShim(): Promise<void> {
         .describe("Number of lines to return. Default: entire file."),
     },
     async (args) => proxyTool("memory_get", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: memory_outline
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_outline",
+    [
+      "Heading tree of one project file: level, title, line range, ~tokens per section.",
+      "No text. Pick a section, then read just those lines with memory_get (from, lines).",
+      "Same project/path rules as memory_get.",
+    ].join("\n"),
+    {
+      project: z
+        .string()
+        .describe("Project slug identifying which project's files to read from."),
+      path: z
+        .string()
+        .describe("Relative path within the project root (e.g. 'Notes/TODO.md')."),
+      max_depth: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Limit nesting depth (1 = top-level headings only). Default: all."),
+    },
+    async (args) => proxyTool("memory_outline", args)
   );
 
   // -------------------------------------------------------------------------

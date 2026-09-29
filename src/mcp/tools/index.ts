@@ -3,7 +3,7 @@
  *
  * Domain modules:
  *   types.ts         — shared types (ToolContent, ToolResult, ProjectRow) and helpers
- *   memory.ts        — memory_search, memory_get
+ *   memory.ts        — memory_search, memory_get, memory_outline
  *   projects.ts      — project_info, project_list, project_detect, project_health, project_todo
  *   sessions.ts      — session_list, session_route
  *   registry.ts      — registry_search

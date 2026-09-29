@@ -48,7 +48,7 @@ const SERVERS: McpServerSpec[] = [
     name: "pai",
     entry: "mcp/index.mjs",
     label: "PAI MCP server",
-    tools: "memory_search, memory_get, project_info, project_list, session_list, registry_search",
+    tools: "memory_search, memory_get, memory_outline, project_info, project_list, session_list, registry_search",
   },
 ];
 
