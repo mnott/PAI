@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
@@ -47,7 +47,7 @@ import { AG2_REASK_TEXT, OPERATOR_MARK, promptTrailer } from "./report.js";
 import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
 import { describeProviders } from "./providers.js";
 import * as childProcess from "node:child_process";
-import { addWorktree, git, recordWorktree } from "./worktree.js";
+import { addWorktree, git, commitsSince, recordWorktree } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { parseLedger } from "./ledger.js";
 import * as pane from "./pane.js";
@@ -954,5 +954,29 @@ describe("finaliseRun", () => {
     });
     expect(rc).toBe(0);
     expect(parent.state).toBe("done");
+  });
+
+  it("rc 143 with uncommitted worktree edits: salvaged onto the branch before anything else", async () => {
+    const repo = join(logDir, "repo");
+    mkdirSync(repo);
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "t@example.invalid"]);
+    git(repo, ["config", "user.name", "t"]);
+    writeFileSync(join(repo, "a.txt"), "a\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "init"]);
+    const wt = addWorktree(logDir, "killed1", repo);
+    writeFileSync(join(wt.dir, "fix.txt"), "unsaved\n");
+    const ledger = join(logDir, "ledger.log");
+    const st = worker("killed1", { cwd: repo });
+    const rc = await finaliseRun({
+      logDir, ledger, status: st, ok: false, rc: 143, secs: 1, end: {}, report: null, worktree: wt,
+    });
+    expect(rc).toBe(143);
+    expect(readFileSync(ledger, "utf8")).toContain("WORKER-SALVAGE");
+    expect(commitsSince(wt.dir, wt.base)).toBe(1);
+    expect(existsSync(join(wt.dir, "fix.txt"))).toBe(true);
+    expect(st.branch ?? git(repo, ["branch", "--list", wt.branch])).toBeTruthy();
+    expect(git(repo, ["show", `${wt.branch}:fix.txt`])).toBe("unsaved");
   });
 });
