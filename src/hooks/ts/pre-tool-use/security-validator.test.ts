@@ -60,6 +60,29 @@ describe("security-validator", () => {
     expect(status).toBe(2);
   });
 
+  it.each([
+    "git push --force-with-lease origin main",
+    "git push --force-with-lease=main:abc123 origin main",
+    "git -C repo.git push --force-with-lease URL main refs/tags/v1",
+    "git push --force-with-lease --force-if-includes origin main",
+    "git push --follow-tags origin main",
+  ])("allows %s", (command) => {
+    const { status, stderr } = runHook(command);
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+  });
+
+  it.each([
+    "git push --force origin main",
+    "git push -f origin main",
+    "git push --force --force-with-lease origin main",
+    "git push --force-with-lease origin main --force",
+    "git push origin main -f",
+  ])("denies %s", (command) => {
+    const { status } = runHook(command);
+    expect(status).toBe(2);
+  });
+
   it("allows an ordinary command", () => {
     const { status, stderr } = runHook("ls -la");
     expect(status).toBe(0);

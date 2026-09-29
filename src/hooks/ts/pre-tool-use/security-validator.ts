@@ -65,7 +65,7 @@ const DANGEROUS_FILE_OPS_PATTERNS: RegExp[] = [
 
 // OPTIONAL: Operations that require confirmation instead of blocking
 const DANGEROUS_GIT_PATTERNS: RegExp[] = [
-  /\bgit\s+push\s+.*(-f\b|--force)/i,               // git push --force
+  /\bgit\b.*\spush\b.*(\s-f\b|\s--force(\s|$))/i,  // git push -f / --force; --force-with-lease and --follow-tags pass
   /\bgit\s+reset\s+--hard/i,                        // git reset --hard
   // Add your own git safety patterns here
 ];
