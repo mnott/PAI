@@ -4,33 +4,24 @@
  * install  — Register the PAI MCP servers in ~/.claude.json
  * status   — Show whether the PAI MCP servers are registered and the binaries exist
  *
- * One server is managed: `pai` (memory/project tools, dist/mcp/index.mjs).
+ * One server is managed: `pai` (memory/project tools, dist/daemon-mcp/index.mjs).
  * Registration is idempotent: an already-present entry is skipped
  * with a note, a missing one is added.
  */
 
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
+import { resolveFromModule } from "../../module-paths.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
-/**
- * Resolve the absolute path to a built MCP entry point.
- *
- * tsdown bundles all CLI commands into a single dist/cli/index.mjs file, so
- * import.meta.url always resolves to dist/cli/index.mjs at runtime.
- * From dist/cli/ we go up one level to dist/ and then into the entry.
- */
-function distDir(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  // dist/cli/index.mjs  →  dist/
-  return join(dirname(__filename), "..");
+/** Absolute path of a built entry under dist/ (chunk depth varies, so walk up — see module-paths). */
+function distEntry(entry: string): string {
+  return resolveFromModule(import.meta.url, `dist/${entry}`);
 }
 
 interface McpServerSpec {
@@ -46,7 +37,7 @@ interface McpServerSpec {
 const SERVERS: McpServerSpec[] = [
   {
     name: "pai",
-    entry: "mcp/index.mjs",
+    entry: "daemon-mcp/index.mjs",
     label: "PAI MCP server",
     tools: "memory_search, memory_get, memory_outline, project_info, project_list, session_list, registry_search",
   },
@@ -68,7 +59,7 @@ function cmdInstall(): void {
   let changed = false;
 
   for (const spec of SERVERS) {
-    const bin = join(distDir(), spec.entry);
+    const bin = distEntry(spec.entry);
 
     if (spec.name in servers) {
       console.log(warn(`${spec.label} is already registered in ~/.claude.json as "${spec.name}".`));
@@ -127,7 +118,7 @@ function cmdStatus(): void {
   let allReady = true;
 
   for (const spec of SERVERS) {
-    const bin = join(distDir(), spec.entry);
+    const bin = distEntry(spec.entry);
     const registered = spec.name in servers;
     const binExists = existsSync(bin);
 

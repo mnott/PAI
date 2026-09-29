@@ -30,10 +30,23 @@ bun run build
 ### 2. Run the setup wizard
 
 ```bash
-pai setup
+pai setup            # interactive
+pai setup --yes      # unattended: every prompt takes its default
 ```
 
 The wizard walks you through: storage mode (SQLite or PostgreSQL), project directories, Obsidian vault path, MCP server registration, CLAUDE.md template, and daemon configuration. It's idempotent — safe to re-run anytime.
+
+#### Linux, from zero (Ubuntu, apt Node, no Docker)
+
+```bash
+sudo apt install -y nodejs npm tmux
+npm i -g @anthropic-ai/claude-code && claude login
+npm i -g @tekmidian/pai            # set `npm config set prefix ~/.npm-global` first to avoid sudo
+pai setup --yes --storage sqlite   # skips macOS-only steps; installs the systemd user unit when systemd runs
+pai worker on                      # route subagents to `pai worker run`
+```
+
+Run `loginctl enable-linger "$USER"` so the daemon survives logout. Inside tmux, `pai worker run` opens its follow pane as a tmux split; elsewhere use `pai worker follow <id>`. Where systemd is absent (containers), start the daemon with `pai daemon serve`.
 
 ### 3. Start the daemon
 
@@ -41,7 +54,7 @@ The wizard walks you through: storage mode (SQLite or PostgreSQL), project direc
 pai daemon start
 ```
 
-The daemon runs in the background via launchd, indexing your sessions and serving the MCP tools. It starts automatically on login.
+The daemon runs in the background via launchd (macOS) or a systemd user unit (Linux), indexing your sessions and serving the MCP tools. It starts automatically on login.
 
 ### 4. Verify
 
@@ -874,7 +887,7 @@ Give Claude Code this prompt and it handles everything:
 
 PAI offers two modes, and the setup wizard asks which you prefer.
 
-**Simple mode (SQLite)** — Zero dependencies beyond Bun. Keyword search only. Great for trying it out or for systems without Docker.
+**Simple mode (SQLite)** — Zero dependencies beyond Node. Keyword search only. Great for trying it out or for systems without Docker.
 
 **Full mode (PostgreSQL + pgvector)** — Adds semantic search and vector embeddings. Finds things by meaning, not just exact words. "How does the reconnection logic work?" finds the right session even if it never used those exact words. Requires Docker.
 
@@ -882,10 +895,11 @@ PAI offers two modes, and the setup wizard asks which you prefer.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
+- [Node.js](https://nodejs.org) 20 or newer (22 from apt works) — the installed `pai` runs on Node
+- [Bun](https://bun.sh) — only to build from a git checkout (development)
 - [Docker](https://docs.docker.com/get-docker/) — only for full mode
 - [Claude Code](https://claude.ai/code)
-- macOS or Linux
+- macOS or Linux (tmux for worker panes on Linux; iTerm2 on macOS)
 
 ---
 

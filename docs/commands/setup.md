@@ -2,15 +2,22 @@
 
 # pai setup
 
-> Interactive setup wizard — configure storage, embeddings, agent config, and indexing
+> Setup wizard — configure storage, embeddings, agent config, and indexing (--yes for unattended)
 
 **Aliases:** `install`
 
 ## Synopsis
 
 ```
-pai setup
+pai setup [options]
 ```
+
+## Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-y, --yes` | Unattended: take every default, read no input |  |
+| `--storage <backend>` | Storage backend: sqlite \| postgres (default under --yes: sqlite unless local Postgres answers) |  |
 
 ## See also
 
