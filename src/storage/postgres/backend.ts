@@ -12,8 +12,7 @@
 import pg from "pg";
 import type { Pool, PoolClient } from "pg";
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveFromModule } from "../../module-paths.js";
 import type {
   StorageBackend, ChunkRow, FileRow, FederationStats,
   VaultFileRow, VaultAliasRow, VaultLinkRow, VaultHealthRow, VaultNameEntry,
@@ -90,15 +89,7 @@ export class PostgresBackend implements StorageBackend {
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'pai_chunks'"
       );
       if (tableCheck.rowCount === 0) {
-        const __dirname = dirname(fileURLToPath(import.meta.url));
-        const initSqlPath = join(__dirname, "../../docker/init.sql");
-        let initSql: string;
-        try {
-          initSql = readFileSync(initSqlPath, "utf-8");
-        } catch {
-          const altPath = join(__dirname, "../docker/init.sql");
-          initSql = readFileSync(altPath, "utf-8");
-        }
+        const initSql = readFileSync(resolveFromModule(import.meta.url, "docker/init.sql"), "utf-8");
         await targetPool.query(initSql);
         process.stderr.write(`[pai-postgres] Applied schema to database: ${targetDb}\n`);
       }

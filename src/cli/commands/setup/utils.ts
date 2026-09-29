@@ -5,13 +5,12 @@
 
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 import { exitAfterFlush } from "../../lib/exit.js";
-import { resolveFromModule } from "../../../module-paths.js";
+import { packageRoot } from "../../../module-paths.js";
 
 // ---------------------------------------------------------------------------
 // Chalk colour helpers
@@ -177,37 +176,8 @@ export function hasDocker(): boolean {
   }
 }
 
-/**
- * Root of the installed (or checked-out) package: the nearest package.json
- * above this module. Bundled chunks sit at different depths under dist/, so a
- * fixed "../.." hop is wrong; a global install under any npm prefix (apt Node
- * + ~/.npm-global) resolves here.
- */
-export function packageRoot(): string | null {
-  try {
-    return dirname(resolveFromModule(import.meta.url, "package.json"));
-  } catch {
-    return null;
-  }
-}
-
-/** Candidate paths under the package root first, then the legacy guesses. */
-function underRoot(...segs: string[]): string[] {
-  const root = packageRoot();
-  return root ? [join(root, ...segs)] : [];
-}
-
 export function getDockerDir(): string {
-  const candidates = [
-    ...underRoot("docker"),
-    join(process.cwd(), "docker"),
-    join(homedir(), "dev", "ai", "PAI", "docker"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "docker"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "docker-compose.yml"))) return candidate;
-  }
-  return join(process.cwd(), "docker");
+  return join(packageRoot(import.meta.url), "docker");
 }
 
 export async function testPostgresConnection(connectionString: string): Promise<boolean> {
@@ -228,87 +198,27 @@ export async function testPostgresConnection(connectionString: string): Promise<
 // ---------------------------------------------------------------------------
 
 export function getTemplatesDir(): string {
-  const candidates = [
-    ...underRoot("templates"),
-    join(process.cwd(), "templates"),
-    join(homedir(), "dev", "ai", "PAI", "templates"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "templates"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "claude-md.template.md"))) return candidate;
-  }
-  return join(process.cwd(), "templates");
+  return join(packageRoot(import.meta.url), "templates");
 }
 
 export function getHooksDir(): string {
-  const candidates = [
-    ...underRoot("src", "hooks"),
-    join(process.cwd(), "src", "hooks"),
-    join(homedir(), "dev", "ai", "PAI", "src", "hooks"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "src", "hooks"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "session-stop.sh"))) return candidate;
-  }
-  return join(process.cwd(), "src", "hooks");
+  return join(packageRoot(import.meta.url), "src", "hooks");
 }
 
 export function getDistHooksDir(): string {
-  const moduleDir = new URL(".", import.meta.url).pathname;
-  const fromModule = join(moduleDir, "..", "..", "hooks");
-
-  const candidates = [
-    ...underRoot("dist", "hooks"),
-    fromModule,
-    join(process.cwd(), "dist", "hooks"),
-    join(homedir(), "dev", "ai", "PAI", "dist", "hooks"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "dist", "hooks"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "stop-hook.mjs"))) return candidate;
-  }
-  return fromModule;
+  return join(getDistDir(), "hooks");
 }
 
 export function getDistDir(): string {
-  const moduleDir = new URL(".", import.meta.url).pathname;
-  const fromModule = join(moduleDir, "..", "..", "..");
-
-  const candidates = [
-    ...underRoot("dist"),
-    fromModule,
-    join(process.cwd(), "dist"),
-    join(homedir(), "dev", "ai", "PAI", "dist"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "dist"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "skills"))) return candidate;
-  }
-  return fromModule;
+  return join(packageRoot(import.meta.url), "dist");
 }
 
 export function getStatuslineScript(): string | null {
-  const candidates = [
-    ...underRoot("statusline-command.sh"),
-    join(process.cwd(), "statusline-command.sh"),
-    join(homedir(), "dev", "ai", "PAI", "statusline-command.sh"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "statusline-command.sh"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+  const p = join(packageRoot(import.meta.url), "statusline-command.sh");
+  return existsSync(p) ? p : null;
 }
 
 export function getTabColorScript(): string | null {
-  const candidates = [
-    ...underRoot("tab-color-command.sh"),
-    join(process.cwd(), "tab-color-command.sh"),
-    join(homedir(), "dev", "ai", "PAI", "tab-color-command.sh"),
-    join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "tab-color-command.sh"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+  const p = join(packageRoot(import.meta.url), "tab-color-command.sh");
+  return existsSync(p) ? p : null;
 }

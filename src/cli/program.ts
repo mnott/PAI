@@ -11,8 +11,7 @@
 
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveFromModule } from "../module-paths.js";
 import { getRegistryBackend } from "../storage/factory.js";
 import { registerProjectsCommands } from "./commands/project/projects-index.js";
 import { findMovedPath } from "./commands/project/commands.js";
@@ -62,8 +61,7 @@ import { cmdPick } from "./commands/pick.js";
 
 function getVersion(): string {
   try {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const pkgPath = join(__dirname, "../../package.json");
+    const pkgPath = resolveFromModule(import.meta.url, "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
     return pkg.version ?? "0.0.0";
   } catch {
