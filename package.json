@@ -25,6 +25,7 @@
     "scripts/build-skill-stubs.mjs",
     "scripts/build-docs.mjs",
     "docker/init.sql",
+    "docker/docker-compose.yml",
     "src/hooks",
     "docs",
     "README.md",

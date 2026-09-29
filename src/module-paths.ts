@@ -34,3 +34,8 @@ export function resolveFromModule(moduleUrl: string, rel: string, maxLevels = 8)
   }
   throw new Error(`cannot locate "${rel}" above ${dirname(fileURLToPath(moduleUrl))} — is the project built? (bun run build)`);
 }
+
+/** Package root (the directory holding package.json) for a running module, at any bundle depth. */
+export function packageRoot(moduleUrl: string): string {
+  return dirname(resolveFromModule(moduleUrl, "package.json"));
+}
