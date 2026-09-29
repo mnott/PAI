@@ -138,16 +138,37 @@ WantedBy=default.target
 `;
 }
 
-/** Warns (does not fail) when the user's systemd instance is not kept alive after logout. */
-function warnIfLingerDisabled(): void {
-  const username = userInfo().username;
-  const result = spawnSync("loginctl", ["show-user", username, "-p", "Linger"], {
-    encoding: "utf8",
-  });
-  if (result.status === 0 && result.stdout.trim() !== "Linger=yes") {
-    console.log(warn(`  Linger is off for ${username} — the daemon stops when you log out.`));
-    console.log(dim(`    Enable it: loginctl enable-linger ${username}`));
+type LoginctlRunner = (args: string[]) => { status: number | null; stdout: string };
+
+const runLoginctl: LoginctlRunner = (args) => {
+  const r = spawnSync("loginctl", args, { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout ?? "" };
+};
+
+/**
+ * Turns on systemd linger for the user (so the user unit survives logout) without sudo
+ * or a prompt; prints the sudo command only when the system refuses. Linux only.
+ */
+export function ensureLinger(
+  plat: NodeJS.Platform = process.platform,
+  username: string = userInfo().username,
+  loginctl: LoginctlRunner = runLoginctl,
+  log: (s: string) => void = console.log,
+): void {
+  if (plat !== "linux") return;
+  const linger = () => {
+    const r = loginctl(["show-user", username, "-p", "Linger"]);
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  const before = linger();
+  if (before === null || before === "Linger=yes") return;
+  loginctl(["--no-ask-password", "enable-linger", username]);
+  if (linger() === "Linger=yes") {
+    log(ok("  linger: on (daemon survives logout)"));
+    return;
   }
+  log(warn(`  Linger is off for ${username} — the daemon stops when you log out.`));
+  log(dim(`    Enable it: sudo loginctl enable-linger ${username}`));
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +362,7 @@ function installServiceLinux(daemonBin: string): boolean {
     console.log(warn(`  systemctl enable --now: ${(enableResult.stderr || "").trim()}`));
   }
 
-  warnIfLingerDisabled();
+  ensureLinger();
   return true;
 }
 

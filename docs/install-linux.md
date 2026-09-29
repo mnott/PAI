@@ -2,15 +2,14 @@
 
 Both paths below were run end to end on a fresh Ubuntu 26.04 (arm64) install: setup, daemon, statusline in Claude Code, and a real `pai worker run`.
 
+Prerequisite: Claude Code installed.
+
 Common start:
 
 ```bash
 sudo apt install -y nodejs npm tmux
-curl -fsSL https://claude.ai/install.sh | bash   # Claude Code, native installer (no Node needed for Claude itself)
-claude auth login                                # or run `claude` and type /login
 npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"   # global npm installs without sudo
 npm i -g @tekmidian/pai
-loginctl enable-linger "$USER"                   # the daemon keeps running after logout
 ```
 
 **Keyword search only (SQLite, no Docker):**
@@ -30,4 +29,4 @@ pai setup --yes --storage postgres
 
 Setup starts the `pai-pgvector` container itself (`pgvector/pgvector:pg17`, bound to 127.0.0.1:5432, data in `~/.pai/pgdata`). The daemon waits for the database, so the first start of the container can take its time.
 
-Either way, setup skips macOS-only steps, installs the daemon as a systemd user unit, and turns workers on with the built-in `anthropic` provider. Inside tmux, `pai worker run` opens its follow pane as a tmux split; elsewhere use `pai worker follow <id>`. Where systemd is absent (containers), run the daemon with `pai daemon serve`.
+Either way, setup skips macOS-only steps, installs the daemon as a systemd user unit, and turns workers on with the built-in `anthropic` provider. Inside tmux, `pai worker run` opens its follow pane as a tmux split; elsewhere use `pai worker follow <id>`. Setup also enables systemd linger itself so the daemon survives logout, and prints the `sudo loginctl enable-linger` command if the system does not allow it. Where systemd is absent (containers), run the daemon with `pai daemon serve`.
