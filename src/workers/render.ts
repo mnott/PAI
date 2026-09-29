@@ -14,6 +14,7 @@ import { shortText } from "./args.js";
 import { ageOf, elapsedOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
+import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 
 export type ColorEnabled = boolean;
@@ -404,6 +405,8 @@ export function headerLine(
     reportFormat?: "json" | "ag2";
     reportValid?: boolean;
     reportErrors?: string[];
+    endReason?: string;
+    endBy?: string;
   }
 ): string {
   const bits = [s.provider ? `[${s.provider}]` : "", sessionTag(s)].filter(Boolean).join(" ");
@@ -416,7 +419,9 @@ export function headerLine(
     s.reportValid === false
       ? "  " + c("red", s.reportFormat === "ag2" && (s.reportErrors ?? []).length ? "R!" : "R?")
       : "";
-  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}${reportBit}`);
+  const why = endLabel(s);
+  const endBit = why ? `  ended: ${why}` : "";
+  return c("bold", `━━ ${s.id}${sep}  ${s.label}  (${basename(s.cwd)})${specBit}${reportBit}${endBit}`);
 }
 
 /** The chain label behind a stage label: strip the trailing " · <stage>". */
@@ -541,7 +546,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${reportMark(s)}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
         chain,
         last
       )
