@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readSettingsJson, writeSettingsJson } from "../cli/commands/settings-manager.js";
@@ -205,6 +205,7 @@ function installShims(lines: string[]): boolean {
       continue;
     }
     const body = shim(name, pai);
+    mkdirSync(LOCAL_BIN, { recursive: true });
     writeFileSync(path, body, { encoding: "utf8", mode: 0o755 });
     try {
       chmodSync(path, 0o755);

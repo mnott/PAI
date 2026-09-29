@@ -2,6 +2,8 @@
 
 import { c, line, section, type Rl, promptYesNo, readConfigRaw } from "../utils.js";
 import { installWorkers } from "../../../../workers/install.js";
+import { readWorkersSection } from "../../../../workers/config.js";
+import { describeProviders, setWorkersEnabled } from "../../../../workers/providers.js";
 
 export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
   section("Step 17: Worker Providers (Optional)");
@@ -18,36 +20,27 @@ export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
   }
 
   line();
-  line("  PAI can run every subagent (worker) on a provider you configure —");
-  line("  a non-Anthropic endpoint via its Anthropic-compatible API.");
+  line("  PAI can run every subagent (worker) on a provider: the built-in");
+  line("  `anthropic` one (your logged-in claude CLI, Max plan, no API key) or any");
+  line("  Anthropic-compatible endpoint you add later.");
   line();
   line("  `pai worker run` is the runner; ps / follow / replay watch the runs;");
-  line("  the Agent tool is denied and rewritten to it once providers exist.");
-  line();
-  line("  PAI works fully without this — Agent subagents then just run as before.");
+  line("  the Agent tool is denied and rewritten to it while workers are on.");
   line();
 
-  const wanted = await promptYesNo(rl, "Configure a worker provider now?", false);
+  const wanted = await promptYesNo(rl, "Turn workers on now with the built-in anthropic provider?", true);
   if (!wanted) {
     line();
-    console.log(c.ok("Skipping worker providers."));
-    console.log(c.dim("  Add later: pai worker providers add <name> … — see docs/worker.md"));
+    console.log(c.ok("Skipping workers."));
+    console.log(c.dim("  Later: pai worker on   (other providers: pai worker providers add <name> … — see docs/worker.md)"));
     return { workers: { enabled: false, providers: {}, classes: {} } };
   }
 
-  line();
-  line("  Add the provider after setup finishes (this step only prepares the");
-  line("  wiring — shims, hook registration, log dir):");
-  line();
-  line(c.dim("    pai worker providers add glm \\"));
-  line(c.dim("      --base-url https://api.example.com/api/anthropic \\"));
-  line(c.dim("      --key-file ~/.config/example/api_key \\"));
-  line(c.dim("      --model example-4.7 --fast-model example-4.7-flash"));
-  line();
-  line("  The first provider turns workers on and seeds the classes.");
-  line();
-
+  setWorkersEnabled(true);
   const r = installWorkers();
   for (const l of r.lines) line(`  ${l}`);
-  return { workers: { enabled: false, providers: {}, classes: {} } };
+  const { workers } = readWorkersSection();
+  console.log(c.ok("Workers on — provider: anthropic (built-in, no API key written)."));
+  for (const l of describeProviders(workers)) line(c.dim(`  ${l}`));
+  return {};
 }
