@@ -261,6 +261,7 @@ export function salvageOnExit(
   try {
     const { committed, skipped } = salvageUncommitted(wtDir, label, timeoutMs);
     if (committed.length) appendLedger(ledger, "WORKER-SALVAGE", { id, paths: committed.join(","), skipped: skipped.length });
+    if (skipped.length) appendLedger(ledger, "WORKER-NOTE", { id, note: `salvage skipped: ${skipped.join("; ")}` });
     return committed;
   } catch (e) {
     try {
@@ -349,9 +350,14 @@ export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: num
   const paths = uncommittedPaths(wtDir, timeoutMs);
   if (!paths.length) return { committed: [], skipped: [] };
   const skipped: string[] = [];
+  // tracked files gone from disk but not staged for removal: the worker never
+  // ran `git rm`, so the absence is not its decision (see MAX_SALVAGE_DELETES)
+  const missing = new Set(git(wtDir, ["ls-files", "--deleted"], timeoutMs).split("\n").filter(Boolean));
   const toStage: string[] = [];
   for (const p of paths) {
-    if (symlinkEscapesWorktree(wtDir, p)) {
+    if (missing.has(p)) {
+      skipped.push(`${p} (missing, not committed)`);
+    } else if (symlinkEscapesWorktree(wtDir, p)) {
       skipped.push(`symlink ${p} -> ${readlinkSync(join(wtDir, p))} (points outside the worktree)`);
     } else {
       toStage.push(p);
@@ -359,11 +365,15 @@ export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: num
   }
   if (!toStage.length) return { committed: [], skipped };
   try {
-    // -A over the whole tree, not an explicit path list: a staged deletion is
-    // gone from disk and index, so naming it makes `git add` fail on the pathspec.
-    // Only the outside symlinks (a handful) are excluded.
+    // --ignore-removal: additions and modifications only. Deletions the worker
+    // staged itself (git rm) are already in the index and ride along.
     const excludes = paths.filter((p) => !toStage.includes(p)).map((p) => `:(exclude,literal)${p}`);
-    git(wtDir, ["add", "-A", "--", ".", ...excludes], timeoutMs);
+    git(wtDir, ["add", "--ignore-removal", "--", ".", ...excludes], timeoutMs);
+    const deleted = git(wtDir, ["diff", "--cached", "--diff-filter=D", "--name-only"], timeoutMs).split("\n").filter(Boolean);
+    if (deleted.length > MAX_SALVAGE_DELETES) {
+      git(wtDir, ["reset", "-q"], timeoutMs);
+      throw new Error(`salvage would delete ${deleted.length} tracked files (${deleted.slice(0, 5).join(", ")}, ...), refused`);
+    }
     git(wtDir, ["commit", "-m", `salvaged: ${label}`], timeoutMs);
   } catch (e) {
     throw new Error(
@@ -373,6 +383,9 @@ export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: num
   }
   return { committed: toStage, skipped };
 }
+
+/** A salvage commit that deletes more tracked files than this is refused. */
+const MAX_SALVAGE_DELETES = 5;
 
 /**
  * The dirty paths of a checkout, parsed from `git status --porcelain -z`:

@@ -328,12 +328,14 @@ describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
     discardWorker(logDir, "s5");
   });
 
-  it("salvages an unstaged deletion", () => {
+  it("does not salvage an unstaged deletion, it reports it as missing", () => {
     const info = addWorktree(logDir, "s6", repo);
     status("s6", { branch: worktreeBranch("s6"), worktreeDir: info.dir });
     rmSync(join(info.dir, "base.txt"));
-    expect(salvageUncommitted(info.dir, "label s6").committed).toEqual(["base.txt"]);
-    expect(uncommittedPaths(info.dir)).toEqual([]);
+    const r = salvageUncommitted(info.dir, "label s6");
+    expect(r.committed).toEqual([]);
+    expect(r.skipped).toEqual(["base.txt (missing, not committed)"]);
+    expect(commitsSince(info.dir, info.base)).toBe(0);
     discardWorker(logDir, "s6");
   });
 
