@@ -90,7 +90,7 @@ import {
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
 import { openPaneForWorker } from "./pane.js";
-import { assertChildAllowed, isWorkerId, launchParent } from "./tree.js";
+import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
   addWorktree,
@@ -1222,10 +1222,18 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (eventsFd !== null) closeSync(eventsFd);
   cleanup();
 
+  // A worker owns its children's results (the worker contract says so): if
+  // it backgrounded a sub-worker and exited without waiting, this run must
+  // not report success, whatever the claude process itself returned. Kept
+  // separate from `ok` below — recordWorktree(...) must still see the
+  // process's real outcome, or an orphaned child would wrongly delete a
+  // worktree/branch that holds genuine, committed work.
+  const orphanReason = checkOrphanedChildren(logDir, wid);
+
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = ctx.resultEvent;
   const ok = runSucceeded(headless, rc, resultEvent);
-  status.state = ok ? "done" : "failed";
+  status.state = ok && !orphanReason ? "done" : "failed";
   status.rc = rc;
   status.secs = secs;
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
@@ -1278,6 +1286,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         paths: verify.failures.map((f) => f.path).slice(0, 5).join(","),
       });
     }
+  }
+  if (orphanReason) {
+    status.last = shortText(orphanReason, 90);
+    ctx.resultReport = { ...(ctx.resultReport ?? {}), notes: orphanReason, result: "-" };
+    appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
   }
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", {
@@ -1339,7 +1352,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // A finishing child reports to its worker parent automatically: the report
   // lands in the parent's inbox and (when the parent still runs) is said to
   // it so it enters the parent's conversation.
-  const finalRc = rc !== 0 ? rc : ok ? 0 : 1;
+  const succeeded = ok && !orphanReason;
+  const finalRc = rc !== 0 ? rc : succeeded ? 0 : 1;
   if (status.parent && isWorkerId(logDir, status.parent)) {
     try {
       await deliverHandoff(logDir, {
@@ -1347,12 +1361,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         to: status.parent,
         kind: "result",
         text: shortText(
-          ctx.resultReport?.notes ?? resultEvent?.result ?? (ok ? "done" : "failed"),
+          ctx.resultReport?.notes ?? resultEvent?.result ?? (succeeded ? "done" : "failed"),
           400
         ),
         data: {
           rc: finalRc,
-          ok,
+          ok: succeeded,
           ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
           ...(ctx.resultReport ? { report: ctx.resultReport } : {}),
         },

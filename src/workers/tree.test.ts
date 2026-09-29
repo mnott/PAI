@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertChildAllowed,
+  checkOrphanedChildren,
   isWorkerId,
   launchParent,
   parentFromEnv,
@@ -145,6 +146,52 @@ describe("assertChildAllowed", () => {
     status("p2");
     status("d1", { parent: "p2", state: "done" });
     assertChildAllowed(dir, "p2", { maxDepth: 2, maxChildren: 1 });
+  });
+});
+
+describe("checkOrphanedChildren", () => {
+  it("null when the parent has no children at all", () => {
+    status("lone");
+    expect(checkOrphanedChildren(dir, "lone")).toBeNull();
+  });
+
+  it("null when every child of the parent already finished", () => {
+    status("pf");
+    status("done1", { parent: "pf", state: "done" });
+    expect(checkOrphanedChildren(dir, "pf")).toBeNull();
+  });
+
+  it("a live child: named in the reason, left running untouched", () => {
+    status("po");
+    status("live1", { parent: "po" }); // pid: process.pid, real started -> isLive true
+    const reason = checkOrphanedChildren(dir, "po");
+    expect(reason).toMatch(/1 sub-worker still running \(live1\)/);
+    expect(reason).toMatch(/run children in the foreground or wait for them/);
+    const after = loadStatuses(dir).find((s) => s.id === "live1")!;
+    expect(after.state).toBe("running"); // untouched, not killed
+  });
+
+  it("a dead-pid child still marked running: finalised failed, named in the reason", () => {
+    status("pd");
+    status("dead1", { parent: "pd", pid: -1 }); // dead pid, state still "running"
+    const reason = checkOrphanedChildren(dir, "pd");
+    expect(reason).toMatch(/1 sub-worker still running \(dead1\)/);
+    const after = loadStatuses(dir).find((s) => s.id === "dead1")!;
+    expect(after.state).toBe("failed");
+    expect(after.last).toBe("parent pd exited");
+  });
+
+  it("both kinds at once: parent's reason names both ids, only the dead one is finalised", () => {
+    status("pb");
+    status("livex", { parent: "pb" });
+    status("deadx", { parent: "pb", pid: -1 });
+    const reason = checkOrphanedChildren(dir, "pb");
+    expect(reason).toMatch(/2 sub-workers still running/);
+    expect(reason).toContain("livex");
+    expect(reason).toContain("deadx");
+    const all = loadStatuses(dir);
+    expect(all.find((s) => s.id === "livex")!.state).toBe("running");
+    expect(all.find((s) => s.id === "deadx")!.state).toBe("failed");
   });
 });
 
