@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 it("importing pai-paths with an empty HOME does not exit", () => {
   const home = mkdtempSync(join(tmpdir(), "pai-paths-import-"));
-  const env = { ...process.env, HOME: home };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
   delete env.PAI_DIR;
   delete env.ADAPTER_DIR;
   const r = spawnSync(
