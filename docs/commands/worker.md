@@ -274,7 +274,8 @@ Send SIGTERM to a running worker process
 
 Hand the desktop controls (clickr) to a worker or take them back.
 
-<who> is `you` (the worker may actuate) or `me` (the operator keeps them);
+<who> is `you` (<id> becomes the exclusive controls holder; needs clickr with
+--agent support) or `me` (the operator takes them back);
 inside a worker's pane, typing "your controls" does the same.
 
 **Arguments**
@@ -302,6 +303,8 @@ Continue a finished worker on the same provider: claude --resume <session>
 |--------|-------------|---------|
 | `--print-id` | Print the new worker id on its own line (pane follow handoff) |  |
 | `--no-pane` | Do not open a follow pane for the resumed worker |  |
+| `--output-format <fmt>` | text (default), json or stream-json — same as `run` |  |
+| `--label <text>` | Short task label (default: "↩ <old label>") |  |
 
 
 ### pai worker proxy [stop]
@@ -458,7 +461,7 @@ Remove a provider and any classes pointing at it
 
 ### pai worker providers use <name>
 
-Make this provider the active one for runs without --provider/--class
+Make this provider the active one, re-pointing every class pinned to a provider
 
 **Arguments**
 

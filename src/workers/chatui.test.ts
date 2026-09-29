@@ -225,15 +225,29 @@ describe("parseChatLine", () => {
     expect(parseChatLine("/unknown")).toEqual({ kind: "message", text: "/unknown" });
   });
 
+  it("'your controls' / 'my controls' are the controls action, not a message", () => {
+    expect(parseChatLine("your controls")).toEqual({ kind: "controls", who: "you" });
+    expect(parseChatLine("your controls.")).toEqual({ kind: "controls", who: "you" });
+    expect(parseChatLine("Your Controls")).toEqual({ kind: "controls", who: "you" });
+    expect(parseChatLine("  your controls  ")).toEqual({ kind: "controls", who: "you" });
+    expect(parseChatLine("my controls")).toEqual({ kind: "controls", who: "me" });
+  });
+
+  it("a controls-like phrase that is not an exact match stays a message", () => {
+    expect(parseChatLine("your controls please")).toEqual({ kind: "message", text: "your controls please" });
+    expect(parseChatLine("take your controls")).toEqual({ kind: "message", text: "take your controls" });
+  });
+
   it("empty input is an empty message the caller ignores", () => {
     expect(parseChatLine("   ")).toEqual({ kind: "message", text: "" });
   });
 
-  it("the help text names the three commands", () => {
+  it("the help text names the three commands and controls", () => {
     const all = CHAT_HELP.join("\n");
     expect(all).toContain("/quit");
     expect(all).toContain("/resume <text>");
     expect(all).toContain("/status");
+    expect(all).toContain("your controls");
   });
 });
 

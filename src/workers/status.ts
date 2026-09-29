@@ -111,6 +111,8 @@ export interface WorkerStatus {
    * status files.
    */
   sleepSec?: number | null;
+  /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
+  controlsHeld?: boolean;
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */
@@ -357,6 +359,11 @@ export const SLEEP_FLOOR_SECS = 60;
 
 const SLEEP_RE = /^\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)\s*(?:$|[;&|])/;
 
+/** s/m/h/d suffix to seconds multiplier, shared by every `sleep N<unit>` parse below. */
+function sleepUnitMultiplier(unit: string): number {
+  return unit === "m" ? 60 : unit === "h" ? 3600 : unit === "d" ? 86_400 : 1;
+}
+
 /**
  * Seconds of a `sleep N` (N plain or with an s/m/h/d suffix) that stands alone
  * or leads a compound command (`sleep 150; cat f`, `sleep 2m && tail f`,
@@ -368,9 +375,38 @@ const SLEEP_RE = /^\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)\s*(?:$|[;&|])/;
 export function parseSleepSecs(command: string): number | null {
   const m = command.match(SLEEP_RE);
   if (!m) return null;
-  const mult = m[2] === "m" ? 60 : m[2] === "h" ? 3600 : m[2] === "d" ? 86_400 : 1;
-  const secs = Number(m[1]) * mult;
+  const secs = Number(m[1]) * sleepUnitMultiplier(m[2]);
   return Number.isFinite(secs) && secs >= SLEEP_FLOOR_SECS ? secs : null;
+}
+
+/**
+ * Every command-segment boundary a shell recognises before a new simple
+ * command can start: the very start of the string, `;`, `&`/`&&`, `|`/`||`,
+ * a newline, an opening `(` or `{` (also covers `$(...)`, which ends in `(`),
+ * or the keywords `do`/`then`. Segment end is the mirror image plus a closing
+ * `)`, so `sleep 90` inside `$(sleep 90)` or `(sleep 90)` still counts.
+ */
+// The terminator is a lookahead, not a consumed match: two sleeps sharing one
+// separator (`sleep 65; sleep 590`) both need that `;` available as their own
+// boundary — matchAll never revisits a character a previous match consumed.
+const SLEEP_SEGMENT_RE =
+  /(?:^|[;&|\n(){]|\bdo\b|\bthen\b)\s*sleep\s+([0-9]+(?:\.[0-9]+)?)([smhd]?)(?=\s*(?:$|[;&|)\n]))/g;
+
+/**
+ * The longest `sleep N` found as its OWN command segment anywhere in
+ * `command` — not just leading it, unlike {@link parseSleepSecs} — or null
+ * when none reaches SLEEP_FLOOR_SECS. Used by the PreToolUse Bash gate
+ * (block-sleep-poll.ts), which must catch a sleep buried after `&&`, inside a
+ * `do ... done` loop, or in a subshell, not only one that leads the command.
+ */
+export function longestSleepSecs(command: string): number | null {
+  let longest: number | null = null;
+  for (const m of command.matchAll(SLEEP_SEGMENT_RE)) {
+    const secs = Number(m[1]) * sleepUnitMultiplier(m[2]);
+    if (!Number.isFinite(secs) || secs < SLEEP_FLOOR_SECS) continue;
+    if (longest === null || secs > longest) longest = secs;
+  }
+  return longest;
 }
 
 /** One-line description of a tool call, e.g. "Bash: npm test". */

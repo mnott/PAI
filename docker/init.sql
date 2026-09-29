@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_pc_has_embedding ON pai_chunks (id)
 CREATE OR REPLACE FUNCTION pai_chunks_fts_update()
 RETURNS TRIGGER AS $$
 BEGIN
-  NEW.fts_vector := to_tsvector('english', COALESCE(NEW.text, ''));
+  NEW.fts_vector := to_tsvector('simple', COALESCE(NEW.text, ''));
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

@@ -24,7 +24,7 @@ import {
   initWorkersYaml,
   migrateWorkersToYaml,
 } from "./workers-config.js";
-import { addProvider, useProvider, setProviderEnabled } from "./providers.js";
+import { addProvider, useProvider, setProviderEnabled, setClass, setProviderModel } from "./providers.js";
 
 function tmpConfigDir(): string {
   return mkdtempSync(join(tmpdir(), "pai-workers-yaml-"));
@@ -280,6 +280,118 @@ describe("comment preservation across add → use → disable", () => {
     expect(final).toContain("# a new provider I am testing");
     expect(final).toMatch(/active: handadded/);
     expect(final).toMatch(/newprov:\s*\n\s*enabled: false/);
+  });
+});
+
+describe("useProvider re-points classes pinned to a provider", () => {
+  it("re-points a plain string target and preserves a string's /alias", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    addProvider({
+      name: "newprov",
+      baseUrl: "https://newprov.example.com",
+      model: "newprov-default",
+      fastModel: "newprov-fast",
+      configPath: jsonPath,
+    });
+    setProviderModel("newprov", "image", "newprov-image", jsonPath);
+
+    const { repointed } = useProvider("newprov", jsonPath);
+
+    const { workers } = readWorkersSection(jsonPath);
+    expect(workers.active).toBe("newprov");
+    expect(workers.classes.implement).toBe("newprov");
+    expect(workers.classes.spotcheck).toBe("newprov/fast");
+    // "image: glm/image" keeps its alias, just re-pointed to the new provider
+    expect(workers.classes.image).toBe("newprov/image");
+    expect(repointed).toBe(Object.keys(workers.classes).length);
+  });
+
+  it("re-points an object target's provider field, keeping every other field", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    addProvider({
+      name: "newprov",
+      baseUrl: "https://newprov.example.com",
+      model: "newprov-default",
+      fastModel: "newprov-fast",
+      configPath: jsonPath,
+    });
+    setProviderModel("newprov", "image", "newprov-image", jsonPath);
+    setClass("pinned", { provider: "glm", mcp: ["fs"], maxCostTier: 2 }, jsonPath);
+
+    const { repointed } = useProvider("newprov", jsonPath);
+
+    const { workers } = readWorkersSection(jsonPath);
+    expect(workers.classes.pinned).toEqual({ provider: "newprov", mcp: ["fs"], maxCostTier: 2 });
+    expect(repointed).toBeGreaterThan(0);
+  });
+
+  it("leaves a constraint-only object target (no provider) untouched", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    addProvider({
+      name: "newprov",
+      baseUrl: "https://newprov.example.com",
+      model: "newprov-default",
+      fastModel: "newprov-fast",
+      configPath: jsonPath,
+    });
+    setProviderModel("newprov", "image", "newprov-image", jsonPath);
+    setClass("auto-routed", { maxCostTier: 2, requireTags: ["fast"] }, jsonPath);
+
+    useProvider("newprov", jsonPath);
+
+    const { workers } = readWorkersSection(jsonPath);
+    expect(workers.classes["auto-routed"]).toEqual({ maxCostTier: 2, requireTags: ["fast"] });
+  });
+
+  it("drops the /alias when the new provider has no such model, still re-pointing", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    // no fastModel/image: this provider only has a default model configured
+    addProvider({
+      name: "barebones",
+      baseUrl: "https://barebones.example.com",
+      model: "barebones-default",
+      configPath: jsonPath,
+    });
+
+    const { repointed } = useProvider("barebones", jsonPath);
+
+    const { workers } = readWorkersSection(jsonPath);
+    expect(workers.active).toBe("barebones");
+    // implement had no alias: re-pointed
+    expect(workers.classes.implement).toBe("barebones");
+    // spotcheck/image needed a model "barebones" doesn't have: alias dropped,
+    // still moved to barebones (its default model) rather than left on the
+    // old provider
+    expect(workers.classes.spotcheck).toBe("barebones");
+    expect(workers.classes.image).toBe("barebones");
+    expect(repointed).toBe(Object.keys(workers.classes).length);
+  });
+
+  it('"use auto" sets active only and leaves every pinned class alone', () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    const before = readWorkersSection(jsonPath).workers.classes;
+
+    const { repointed } = useProvider("auto", jsonPath);
+
+    const { workers } = readWorkersSection(jsonPath);
+    expect(workers.active).toBe("auto");
+    expect(workers.classes).toEqual(before);
+    expect(repointed).toBe(0);
   });
 });
 

@@ -25,10 +25,11 @@ import { join } from "node:path";
 import { readWorkersSection } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, workersLogDir } from "./paths.js";
-import { loadStatuses, newWorkerId, type WorkerStatus } from "./status.js";
+import { loadStatus, newWorkerId } from "./status.js";
 import { parseRunnerArgs, shortText } from "./args.js";
 import { swapPromptArg } from "./chain.js";
 import { runWorker, printResult, type RunOptions, type StreamEvent } from "./run.js";
+import { git, mergeWorker } from "./worktree.js";
 import type { WorkerReport } from "./report.js";
 
 /** Where a planner run's plan file lives: <logDir>/plans/<planner id>.json. */
@@ -208,13 +209,19 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
     plan: planFile,
   });
 
-  // --- phase 2: run the sub-tasks as children, maxChildren at a time
-  const results: { task: PlannerTask; rc: number }[] = [];
+  // --- phase 2: run the sub-tasks as children, maxChildren at a time. Each
+  // child is spawned in the planner's own worktree (when it got one) rather
+  // than the operator's cwd, so its branch is created off the planner's own
+  // HEAD and can later be merged straight into it.
+  const plannerStatus = loadStatus(logDir, plannerId);
+  const plannerWorktreeDir = plannerStatus?.worktreeDir ?? null;
+  const results: { task: PlannerTask; rc: number; id: string }[] = [];
   for (let i = 0; i < tasks.length; i += maxChildren) {
     const wave = tasks.slice(i, i + maxChildren);
     process.stderr.write(
       `planner ${plannerId}: sub-tasks ${i + 1}–${i + wave.length} of ${tasks.length}\n`
     );
+    const waveIds: string[] = new Array(wave.length).fill("");
     const rcs = await Promise.all(
       wave.map((task, w) =>
         runStage({
@@ -225,66 +232,128 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
           noPane: opts.noPane,
           mcpFlag: opts.mcpFlag,
           claudeArgs: swapPromptArg(opts.claudeArgs, taskPrompt(goal, task, i + w, tasks.length)),
-          cwd: opts.cwd,
+          cwd: plannerWorktreeDir ?? opts.cwd,
           worktreeFlag: opts.worktreeFlag,
           parent: plannerId,
           quiet: true,
+          onWorkerStart: (wid) => {
+            waveIds[w] = wid;
+          },
         })
       )
     );
-    for (let w = 0; w < wave.length; w++) results.push({ task: wave[w], rc: rcs[w] });
+    for (let w = 0; w < wave.length; w++) results.push({ task: wave[w], rc: rcs[w], id: waveIds[w] });
   }
 
-  // --- phase 3: summary from the children's statuses and inbox handoffs
+  // --- phase 3: the planner merges each finished child's branch into its
+  // OWN worktree branch, in spawn order — never into the operator's checkout
+  // — reusing `pai worker merge`'s own logic (mergeWorker). A conflicting
+  // merge is aborted cleanly so the planner's branch stays clean and the
+  // next child still gets a try; the child's branch is left intact either way.
+  const merged: string[] = [];
+  const conflicted: { id: string; branch: string; paths: string[] }[] = [];
+  if (plannerWorktreeDir) {
+    for (const r of results) {
+      if (r.rc !== 0 || !r.id) continue;
+      const st = loadStatus(logDir, r.id);
+      if (!st?.branch) continue; // ran in place, or no worktree: nothing to merge
+      try {
+        mergeWorker(logDir, r.id);
+        merged.push(r.id);
+      } catch {
+        let paths: string[] = [];
+        try {
+          git(plannerWorktreeDir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+          paths = git(plannerWorktreeDir, ["diff", "--name-only", "--diff-filter=U"])
+            .split("\n")
+            .filter(Boolean);
+          git(plannerWorktreeDir, ["merge", "--abort"]);
+        } catch {
+          // no merge was left in progress: the failure was not a conflict
+        }
+        conflicted.push({ id: r.id, branch: st.branch, paths });
+      }
+    }
+  }
+
+  // --- phase 4: summary from the children's statuses and inbox handoffs
   const failed = results.filter((r) => r.rc !== 0).length;
   appendLedger(ledgerPath(logDir), "WORKER-PLAN-END", {
     planner: plannerId,
-    rc: failed ? 1 : 0,
+    rc: failed || conflicted.length ? 1 : 0,
     failed,
+    merged: merged.length,
+    conflicted: conflicted.length,
   });
-  printPlannerSummary(logDir, plannerId, results, parsed.outputFormat, opts.quiet === true);
-  return failed ? 1 : 0;
+  printPlannerSummary(logDir, plannerId, results, merged, conflicted, parsed.outputFormat, opts.quiet === true);
+  return failed || conflicted.length ? 1 : 0;
 }
 
 /** Compose and print the planner's summary report (text or json). */
 function printPlannerSummary(
   logDir: string,
   plannerId: string,
-  results: { task: PlannerTask; rc: number }[],
+  results: { task: PlannerTask; rc: number; id: string }[],
+  merged: string[],
+  conflicted: { id: string; branch: string; paths: string[] }[],
   fmt: "text" | "json" | "stream-json",
   quiet: boolean
 ): void {
-  const children = statusesOfChildren(logDir, plannerId);
   const ok = results.filter((r) => r.rc === 0).length;
-  const unmerged = children.filter((c) => c.branch && !c.merged);
+  const attempted = new Set([...merged, ...conflicted.map((c) => c.id)]);
+  // a branch never attempted (no planner worktree to merge into) still needs
+  // the old "go merge me by hand" hint
+  const stillOpen: { id: string; branch: string }[] = [];
+  for (const r of results) {
+    if (r.rc !== 0 || !r.id || attempted.has(r.id)) continue;
+    const st = loadStatus(logDir, r.id);
+    if (st?.branch && !st.merged) stillOpen.push({ id: r.id, branch: st.branch });
+  }
   const report: WorkerReport = {
-    checks: results.map((r, i) => ({
+    checks: results.map((r) => ({
       name: r.task.title,
       ok: r.rc === 0,
-      detail: r.rc === 0 ? shortText(children[i]?.last, 80) : `rc=${r.rc}`,
+      detail: r.rc === 0 ? shortText(r.id ? loadStatus(logDir, r.id)?.last : "", 80) : `rc=${r.rc}`,
     })),
-    ...(unmerged.length
-      ? { open: unmerged.map((c) => `branch to merge: pai worker merge ${c.id} (${c.branch})`) }
+    ...(merged.length || conflicted.length || stillOpen.length
+      ? {
+          open: [
+            ...merged.map((id) => `merged: ${id}`),
+            ...conflicted.map(
+              (c) =>
+                `conflict: pai worker merge ${c.id} (${c.branch})` +
+                (c.paths.length ? ` — ${c.paths.join(", ")}` : "")
+            ),
+            ...stillOpen.map((c) => `branch to merge: pai worker merge ${c.id} (${c.branch})`),
+          ],
+        }
       : {}),
-    notes: `${ok}/${results.length} sub-tasks ok${unmerged.length ? `; ${unmerged.length} branch(es) to merge` : ""}`,
+    notes:
+      `${ok}/${results.length} sub-tasks ok` +
+      (merged.length ? `; ${merged.length} merged` : "") +
+      (conflicted.length ? `; ${conflicted.length} conflict(s)` : "") +
+      (stillOpen.length ? `; ${stillOpen.length} branch(es) to merge` : ""),
   };
   if (quiet || fmt === "stream-json") return;
+  const allOk = ok === results.length && conflicted.length === 0;
   const resultEvent: StreamEvent = {
     type: "result",
     result: [
       `planner ${plannerId}: ${report.notes}`,
-      ...(unmerged.length ? ["branches to merge:"] : []),
-      ...unmerged.map((c) => `  pai worker merge ${c.id}   # ${c.branch}`),
+      ...(conflicted.length ? ["conflicts:"] : []),
+      ...conflicted.map(
+        (c) =>
+          `  pai worker merge ${c.id}   # ${c.branch}, conflicting: ${c.paths.join(", ") || "unknown"}`
+      ),
+      ...(stillOpen.length ? ["branches to merge:"] : []),
+      ...stillOpen.map((c) => `  pai worker merge ${c.id}   # ${c.branch}`),
     ].join("\n"),
-    is_error: ok !== results.length,
+    is_error: !allOk,
   };
-  printResult(fmt, resultEvent, ok === results.length ? 0 : 1, logDir, plannerId, report, {
+  printResult(fmt, resultEvent, allOk ? 0 : 1, logDir, plannerId, report, {
     plan: results.length,
-    ...(unmerged.length ? { branches: unmerged.map((c) => c.branch!) } : {}),
+    ...(merged.length ? { mergedBranches: merged } : {}),
+    ...(conflicted.length ? { conflictedBranches: conflicted.map((c) => c.branch) } : {}),
+    ...(stillOpen.length ? { branches: stillOpen.map((c) => c.branch) } : {}),
   });
-}
-
-/** Children of the planner, oldest first, from the status files. */
-function statusesOfChildren(logDir: string, plannerId: string): WorkerStatus[] {
-  return loadStatuses(logDir).filter((s) => s.parent === plannerId);
 }

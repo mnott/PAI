@@ -99,6 +99,15 @@ export interface InstallResult {
 }
 
 export function installSchedule(intervalSecs = DEFAULT_INTERVAL_SECS): InstallResult {
+  if (process.platform !== "darwin") {
+    return {
+      plistPath: SCHEDULE_PLIST,
+      intervalSecs,
+      loaded: false,
+      message: "scheduler install supports launchd (macOS) only",
+    };
+  }
+
   if (!existsSync(LAUNCH_AGENTS)) mkdirSync(LAUNCH_AGENTS, { recursive: true });
 
   const cli = cliPath();

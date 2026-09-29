@@ -19,7 +19,7 @@ import {
   getCurrentNotePath,
   addWorkToSessionNote,
   type WorkItem
-} from '../lib/project-utils';
+} from '../lib/project-utils.js';
 
 interface TodoItem {
   content: string;

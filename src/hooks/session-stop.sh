@@ -68,7 +68,7 @@ OLD_LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
 mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
 
 if [ -d "$OLD_LOCK_DIR" ] && [ ! -d "$LOCK_DIR" ]; then
-  OLD_LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$OLD_LOCK_DIR" 2>/dev/null || echo 0) ))
+  OLD_LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$OLD_LOCK_DIR" 2>/dev/null || stat -f %m "$OLD_LOCK_DIR" 2>/dev/null || echo 0) ))
   if [ "$OLD_LOCK_AGE" -le 600 ]; then
     echo "pai: honoring in-flight lock at old location $OLD_LOCK_DIR" >&2
     LOCK_DIR="$OLD_LOCK_DIR"
@@ -78,7 +78,7 @@ fi
 # A crashed run must not wedge this forever: treat a lock older than 10 minutes
 # as abandoned. Longer than any observed tail, shorter than a working session.
 if [ -d "$LOCK_DIR" ]; then
-  LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0) ))
+  LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_DIR" 2>/dev/null || stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0) ))
   [ "$LOCK_AGE" -gt 600 ] && rmdir "$LOCK_DIR" 2>/dev/null
 fi
 

@@ -28,8 +28,8 @@
 import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { SKILLS_DIR } from '../lib/pai-paths';
-import { isProbeSession } from '../lib/project-utils';
+import { SKILLS_DIR } from '../lib/pai-paths.js';
+import { isProbeSession } from '../lib/project-utils.js';
 import { stripFrontmatter } from '../lib/frontmatter.js';
 
 async function main() {

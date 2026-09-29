@@ -28,7 +28,7 @@ function resetNoticeFlag(): void {
 }
 
 function deprecationLines(writeSpy: ReturnType<typeof vi.spyOn>): string[] {
-  return writeSpy.mock.calls.map((c) => String(c[0])).filter((line) => line.includes("PAI_DIR is deprecated"));
+  return writeSpy.mock.calls.map((c: unknown[]) => String(c[0])).filter((line: string) => line.includes("PAI_DIR is deprecated"));
 }
 
 beforeEach(() => {

@@ -22,6 +22,7 @@ export const CHAT_HELP = [
   "/quit            close this pane",
   "/resume <text>   continue the finished worker with <text>",
   "/status          one-line worker status",
+  "your controls    exclusive clickr control to this worker (my controls takes it back)",
   "anything else is sent to the worker — said while it runs, resumed after",
 ];
 
@@ -295,13 +296,18 @@ export type ChatAction =
   | { kind: "help" }
   | { kind: "quit" }
   | { kind: "status" }
-  | { kind: "resume"; text: string };
+  | { kind: "resume"; text: string }
+  | { kind: "controls"; who: "you" | "me" };
+
+const CONTROLS_LINE = /^(your|my) controls\.?$/i;
 
 /**
  * One submitted prompt line → what to do with it. `/help`, `/quit`,
  * `/status` and `/resume <text>` are commands (a bare `/resume` comes back
- * with empty text so the caller can print its usage); anything else,
- * including any other `/word`, is a message for the worker.
+ * with empty text so the caller can print its usage); "your controls" /
+ * "my controls" is the same `pai worker controls <id> you|me` action, never
+ * forwarded to the worker as a normal chat line; anything else, including
+ * any other `/word`, is a message for the worker.
  */
 export function parseChatLine(raw: string): ChatAction {
   const text = raw.trim();
@@ -309,6 +315,8 @@ export function parseChatLine(raw: string): ChatAction {
   if (text === "/quit") return { kind: "quit" };
   if (text === "/status") return { kind: "status" };
   if (text.startsWith("/resume")) return { kind: "resume", text: text.slice("/resume".length).trim() };
+  const controls = text.match(CONTROLS_LINE);
+  if (controls) return { kind: "controls", who: controls[1]!.toLowerCase() === "your" ? "you" : "me" };
   return { kind: "message", text };
 }
 

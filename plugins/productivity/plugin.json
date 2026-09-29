@@ -3,9 +3,6 @@
   "displayName": "PAI Productivity",
   "description": "Planning, journaling, reviewing, research, sharing, and cross-session task routing",
   "version": "0.7.0",
-  "tier": "free",
-  "required": false,
-  "depends": ["core"],
-  "hooks": "hooks/hooks.json",
-  "skills": ["Plan", "Review", "Journal", "Research", "Share", "Createskill", "Reconstruct", "Tasks"]
+  "hooks": "./hooks/hooks.json",
+  "skills": ["./skills/"]
 }

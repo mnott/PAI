@@ -30,6 +30,7 @@ import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
+import { clickrControlsArgv, markControlsHeld } from "./controls.js";
 import { appendLedger } from "./ledger.js";
 import {
   CHAT_HELP,
@@ -364,12 +365,21 @@ export interface ResumeChild {
   on(event: "close", cb: (code: number | null) => void): unknown;
 }
 
+/** The child of a clickr controls spawn (tests inject a fake). */
+export interface ControlsChild {
+  stdout?: { on(event: "data", cb: (chunk: Buffer) => void): unknown };
+  stderr?: { on(event: "data", cb: (chunk: Buffer) => void): unknown };
+  on(event: "close", cb: (code: number | null) => void): unknown;
+}
+
 /** Test seams for followWorkers: the streams, the resume spawn, the prompt. */
 export interface FollowIO {
   stdin?: NodeJS.ReadableStream;
   stdout?: FollowStream;
   /** replaces the `pai worker resume` spawn (tests record instead of run). */
   spawnResume?: (id: string, text: string) => ResumeChild;
+  /** replaces the clickr controls spawn (tests record instead of run). */
+  spawnControls?: (id: string, who: "you" | "me", pid: number | undefined) => ControlsChild;
   /** current unsent prompt text (tests force a draft to hold the countdown). */
   promptLine?: () => string;
 }
@@ -645,6 +655,33 @@ export async function followWorkers(
       }
     });
   };
+  // same argv `pai worker controls` builds — the pane just spawns clickr
+  // itself instead of shelling out to the CLI, so it can capture the result
+  // for the pane's own echo rather than inheriting stdio into the transcript
+  const spawnControls =
+    io?.spawnControls ??
+    ((id: string, who: "you" | "me", pid: number | undefined): ControlsChild =>
+      spawn("clickr", clickrControlsArgv(id, who, pid), {
+        stdio: ["ignore", "pipe", "pipe"],
+      } as SpawnOptions) as unknown as ControlsChild);
+  const controlsTarget = (id: string, who: "you" | "me") => {
+    const pid = loadStatuses(logDir).find((s) => s.id === id)?.pid;
+    const child = spawnControls(id, who, pid);
+    let errText = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      errText += chunk.toString("utf8");
+    });
+    child.on("close", (rc: number | null) => {
+      if (rc === 0) {
+        if (who === "you") markControlsHeld(logDir, id);
+        noteLine(
+          c("dim", `» controls → ${who === "you" ? `${id} (exclusive; needs clickr with --agent support)` : "operator"}`)
+        );
+      } else {
+        noteLine(c("red", `» controls failed (rc=${rc})${errText.trim() ? `: ${errText.trim()}` : ""}`));
+      }
+    });
+  };
   const handleOperatorLine = makeOperatorInput({
     target: () => target,
     say: (id, text) => sayToWorker(logDir, id, text),
@@ -728,6 +765,10 @@ export async function followWorkers(
           drawPrompt();
           redrew = true;
           echoOperator(act.text);
+          break;
+        case "controls":
+          if (target !== null) controlsTarget(target, act.who);
+          else out(c("dim", "no target worker for controls"));
           break;
         case "help":
           for (const ln of CHAT_HELP) out(c("dim", ln));

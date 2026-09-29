@@ -103,6 +103,7 @@ interface Observation {
   session_id?: string | null;
   created_at: string;
   narrative?: string | null;
+  tool_input_summary?: string | null;
 }
 
 interface ObservationStats {

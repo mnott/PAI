@@ -234,7 +234,7 @@ Go to a session: resume if a resumable snapshot exists, start fresh otherwise.
 
 Recommended short form: pai resume <name>
 Resolves by clc/registry name (case-insensitive) or UUID prefix.
-Sends '/Name <name>\ngo' as the initial prompt so the PAI ## Continue hook fires.
+Sends '/Name <name>' as the initial prompt to label the session.
 
 **Arguments**
 
@@ -247,7 +247,7 @@ Sends '/Name <name>\ngo' as the initial prompt so the PAI ## Continue hook fires
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--skip-name` | Do not prepend /Name to set the session name in chrome |  |
-| `--skip-go` | Do not append \ngo to trigger PAI auto-resume (## Continue) |  |
+| `--skip-go` | Deprecated no-op: 'go' is no longer appended — type it by hand when wanted |  |
 | `--dry-run` | Print the exact argv and cwd, then exit without launching |  |
 
 

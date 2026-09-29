@@ -90,12 +90,17 @@ function fake(o: FakeOptions = {}): WorkerStatus {
   };
 }
 
-const detect = (statuses: WorkerStatus[], stallMin = 10) =>
+const detect = (
+  statuses: WorkerStatus[],
+  stallMin = 10,
+  childPids: (pid: number) => number[] = () => []
+) =>
   detectSupervisionEvents(statuses, {
     stallMs: stallMin * 60_000,
     now: NOW,
     // pid 0 stands in for a dead runner, every other pid reads alive
     isAlive: (pid: number) => pid !== 0,
+    childPids,
   });
 
 describe("condition detection", () => {
@@ -236,6 +241,47 @@ describe("thrashing and sleeping detection", () => {
     expect(ev.text).toContain("sleeping 500s in one command");
     expect(detect([fake({ sleepSec: 500 })])[0].id).toBe(ev.id); // same turns, one event
     expect(detect([fake({ sleepSec: 500, turns: 4 })])[0].id).not.toBe(ev.id);
+  });
+
+  it("fires sleeping when the worker has no live child process", () => {
+    const [ev] = detect([fake({ sleepSec: 60 })], 10, () => []);
+    expect(ev.kind).toBe("sleeping");
+  });
+
+  it("stays quiet while the sleep waits on a live child process (bounded wait)", () => {
+    // background a build, then `sleep 60; ps -p` cycles: real work, no alarm
+    expect(detect([fake({ sleepSec: 60 })], 10, () => [123])).toHaveLength(0);
+    expect(detect([fake({ sleepSec: 60 })], 10, () => [123, 456])).toHaveLength(0);
+  });
+
+  it("treats a failing child check as no children, so sleeping still fires", () => {
+    // pgrep missing or erroring must degrade to today's behavior, not silence
+    const boom = () => {
+      throw new Error("pgrep gone");
+    };
+    const [ev] = detect([fake({ sleepSec: 60 })], 10, boom);
+    expect(ev.kind).toBe("sleeping");
+  });
+
+  it("skips the child check for a dead pid and fires sleeping anyway", () => {
+    // runner killed mid-sleep inside the grace window: nothing to query
+    const boom = () => {
+      throw new Error("must not be called");
+    };
+    const [ev] = detect([fake({ pid: 0, sleepSec: 60 })], 10, boom);
+    expect(ev.kind).toBe("sleeping");
+  });
+
+  it("still reports stalled for a sleeping worker with children past the turn clock", () => {
+    // children cover the sleep, not the silence — no turns is still a stall
+    const [ev] = detect([fake({ updatedMinsAgo: 14, sleepSec: 60 })], 10, () => [123]);
+    expect(ev.kind).toBe("stalled");
+    expect(ev.stalledMin).toBe(14);
+  });
+
+  it("still reports thrashing for a worker with live children", () => {
+    const [ev] = detect([fake({ consecFails: 5 })], 10, () => [123]);
+    expect(ev.kind).toBe("thrashing");
   });
 });
 

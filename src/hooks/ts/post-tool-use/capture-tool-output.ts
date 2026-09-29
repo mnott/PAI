@@ -9,7 +9,7 @@
 
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import { historyDir } from '../lib/pai-paths';
+import { historyDir } from '../lib/pai-paths.js';
 
 interface ToolUseData {
   tool_name: string;

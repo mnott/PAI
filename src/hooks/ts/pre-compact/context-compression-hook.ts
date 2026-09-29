@@ -31,7 +31,7 @@ import {
   updateTodoContinue,
   isProbeSession,
   WorkItem,
-} from '../lib/project-utils';
+} from '../lib/project-utils.js';
 import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
 import { readContextHandoverCache } from '../lib/context-handover-cache.js';

@@ -122,15 +122,15 @@ function findSessionNotes(notesDir: string): string[] {
 
   const scanDir = (dir: string) => {
     if (!existsSync(dir)) return;
-    let entries: string[];
+    let entries: Array<{ name: string; isDir: boolean }>;
     try {
-      entries = readdirSync(dir, { withFileTypes: true } as Parameters<typeof readdirSync>[1] as any)
-        .map((e: any) => ({ name: e.name, isDir: e.isDirectory() }));
+      entries = readdirSync(dir, { withFileTypes: true })
+        .map((e) => ({ name: e.name, isDir: e.isDirectory() }));
     } catch {
       return;
     }
 
-    for (const entry of entries as Array<{ name: string; isDir: boolean }>) {
+    for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDir) {
         // Recurse into YYYY/MM subdirectories

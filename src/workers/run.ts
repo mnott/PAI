@@ -78,6 +78,7 @@ import {
   UNLABELED,
 } from "./status.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
+import { returnControlsIfHeld } from "./controls.js";
 import {
   capabilityForRun,
   isQuotaFailure,
@@ -505,9 +506,19 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     : resolveRunModel(target, opts.className, opts.modelFlag);
   const reportFormat = resolveReportFormat(opts.reportFormatFlag);
 
+  // tracked across every engine (including a quota reroute's recursive
+  // runWorker call) so the exit hook below knows which status to check,
+  // whatever opts.id/onWorkerStart the caller did or didn't pass
+  let workerId: string | undefined = opts.id;
+  const trackStart = (wid: string) => {
+    workerId = wid;
+    opts.onWorkerStart?.(wid);
+  };
+
   try {
+    let rc: number;
     if (target.provider.engine === "image") {
-      return await executeImageRun({
+      rc = await executeImageRun({
         config,
         logDir,
         target,
@@ -523,12 +534,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
-        onWorkerStart: opts.onWorkerStart,
+        onWorkerStart: trackStart,
         id: opts.id,
       });
-    }
-    if (target.provider.engine === "codex") {
-      return await executeCodexRun({
+    } else if (target.provider.engine === "codex") {
+      rc = await executeCodexRun({
         config,
         logDir,
         target,
@@ -542,40 +552,44 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
-        onWorkerStart: opts.onWorkerStart,
+        onWorkerStart: trackStart,
         id: opts.id,
         worktreeFlag: opts.worktreeFlag,
         className: opts.className,
         reportFormat,
         capability: capability ?? undefined,
       });
+    } else {
+      rc = await executeRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        claudeArgs: opts.claudeArgs,
+        noPane: opts.noPane ?? false,
+        mcpFlag: opts.mcpFlag,
+        cwd: opts.cwd,
+        specPath: opts.specPath,
+        parent: parent ?? undefined,
+        stage: opts.stage,
+        quiet: opts.quiet,
+        onWorkerStart: trackStart,
+        id: opts.id,
+        capability: capability ?? undefined,
+        worktreeFlag: opts.worktreeFlag,
+        className: opts.className,
+        reroutes: opts._reroutes ?? 0,
+        printCmd: opts.printCmd,
+        reportFormat,
+        noReportRetry: opts.noReportRetry ?? false,
+      });
     }
-    return await executeRun({
-      config,
-      logDir,
-      target,
-      model,
-      label,
-      parsed,
-      claudeArgs: opts.claudeArgs,
-      noPane: opts.noPane ?? false,
-      mcpFlag: opts.mcpFlag,
-      cwd: opts.cwd,
-      specPath: opts.specPath,
-      parent: parent ?? undefined,
-      stage: opts.stage,
-      quiet: opts.quiet,
-      onWorkerStart: opts.onWorkerStart,
-      id: opts.id,
-      capability: capability ?? undefined,
-      worktreeFlag: opts.worktreeFlag,
-      className: opts.className,
-      reroutes: opts._reroutes ?? 0,
-      printCmd: opts.printCmd,
-      reportFormat,
-      noReportRetry: opts.noReportRetry ?? false,
-    });
+    await returnControlsIfHeld(logDir, workerId);
+    return rc;
   } catch (e) {
+    await returnControlsIfHeld(logDir, workerId);
     if (e instanceof Error && e.message.startsWith("key file")) {
       throw new Error(
         `provider "${target.providerName}": ${e.message}` +

@@ -29,6 +29,7 @@ import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, s
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
+import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
 // IPC helpers
@@ -187,6 +188,15 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
       if (backend.supportsPostgresFeatures) {
         startEmbedScheduler();
+
+        // Repair fts_vector rows written under the old ('english') trigger.
+        // Async, non-blocking: real tables hold millions of rows, and a
+        // rebuild must never delay daemon startup. Idempotent — safe to
+        // resume from scratch if interrupted (see fts-migration.ts).
+        void migrateFtsConfig(backend).catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          process.stderr.write(`[pai-daemon] FTS config migration failed: ${msg}\n`);
+        });
       } else {
         process.stderr.write(
           "[pai-daemon] Embed scheduler: disabled (SQLite backend)\n"

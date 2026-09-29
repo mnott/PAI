@@ -314,6 +314,95 @@ export function lastTranscriptModel(transcriptPath: string): string | null {
   }
 }
 
+/**
+ * One line saying WHAT a resume would bring back — the transcript's mtime and
+ * its last real user line — so the operator can tell where the session went on
+ * before answering the offer. Bounded tail read, the same shape as
+ * lastTranscriptModel: the last user entry sits at the end.
+ *
+ * Entries that are not something the operator typed are skipped: tool results
+ * and image blocks (content arrays without text blocks), and isMeta entries
+ * when marked. Null when the file is missing, unreadable or empty;
+ * "no recent user line" when the readable tail holds no such entry.
+ */
+export function transcriptResumeContext(transcriptPath: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(transcriptPath, "r");
+    const { size, mtime } = fstatSync(fd);
+    const start = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+    const len = size - start;
+    if (len <= 0) return null;
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+
+    const d = new Date(mtime.getTime());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    const lines = buf.toString("utf8").split("\n");
+    // Tail cut mid-line leaves a fragment at the head of the chunk; anything
+    // that does not parse is skipped, exactly as in lastTranscriptModel.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let entry: { type?: unknown; isMeta?: unknown; message?: { content?: unknown } };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry?.type !== "user" || entry.isMeta === true) continue;
+      const content = entry.message?.content;
+      let text: string | null = null;
+      if (typeof content === "string") text = content;
+      else if (Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const block of content) {
+          if (block && typeof block === "object" && (block as { type?: unknown }).type === "text") {
+            const t = (block as { text?: unknown }).text;
+            if (typeof t === "string") parts.push(t);
+          }
+        }
+        text = parts.join(" ");
+      }
+      if (!text || !text.trim()) continue;
+      const snippet = text
+        .replace(/[\x00-\x1f\x7f]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 70);
+      if (!snippet) continue;
+      return `last active ${stamp} · last: "${snippet}"`;
+    }
+    return `last active ${stamp} · no recent user line`;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* nothing useful to do */
+      }
+    }
+  }
+}
+
+/** First transcript path PAI's archivers may have left for a uuid — top level,
+ *  then sessions/. Null when neither exists. */
+export function transcriptPathFor(
+  uuid: string,
+  encodedDir: string,
+  home = homedir()
+): string | null {
+  const dir = join(home, ".claude", "projects", encodedDir);
+  for (const p of [join(dir, `${uuid}.jsonl`), join(dir, "sessions", `${uuid}.jsonl`)]) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
 /** Which model a session's transcript ran on, wherever PAI's archivers left
  *  it (top level first, then sessions/). Null when neither answers. */
 export function transcriptModelFor(
@@ -321,13 +410,8 @@ export function transcriptModelFor(
   encodedDir: string,
   home = homedir()
 ): string | null {
-  const dir = join(home, ".claude", "projects", encodedDir);
-  for (const p of [join(dir, `${uuid}.jsonl`), join(dir, "sessions", `${uuid}.jsonl`)]) {
-    if (!existsSync(p)) continue;
-    const model = lastTranscriptModel(p);
-    if (model) return model;
-  }
-  return null;
+  const p = transcriptPathFor(uuid, encodedDir, home);
+  return p ? lastTranscriptModel(p) : null;
 }
 
 export interface TranscriptProviderMatch {
@@ -432,16 +516,33 @@ export function transcriptProviderFor(
 /**
  * The resume offer line, naming the destination when it is known, so the
  * operator can see the resume will come up on glm (glm-5.3[1m]) rather than
- * silently flipping to the Anthropic login. The caller appends "[y/N]".
+ * silently flipping to the Anthropic login. resumeOfferBlock composes this
+ * into the full question.
  */
 export function resumeOfferText(match: TranscriptProviderMatch | null): string {
   return match ? `Resume into ${match.model} (${match.provider})?` : "Resume?";
 }
 
+/**
+ * The full question the operator answers: the offer line with "[y/N]", and —
+ * when a transcript path is known — one context line beneath it saying WHAT
+ * would come back (transcriptResumeContext). Without a transcript (or when it
+ * says nothing) this is just the old one-line offer, unchanged.
+ */
+export function resumeOfferBlock(
+  match: TranscriptProviderMatch | null,
+  transcriptPath: string | null | undefined
+): string {
+  const context = transcriptPath ? transcriptResumeContext(transcriptPath) : null;
+  return context
+    ? `${resumeOfferText(match)} [y/N]\n  ${context} `
+    : `${resumeOfferText(match)} [y/N] `;
+}
+
 /** Display form of the resume argv — shared by the dry-run paths so they
  *  cannot drift from what launchInDir actually spawns. */
 export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null): string {
-  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}" "/Name ${name}\\ngo"`;
+  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}" "${launchPrompt(name)}"`;
 }
 
 export interface LaunchOpts {
@@ -490,11 +591,13 @@ export function resolveLaunchRoute(
 }
 
 /**
- * `/Name` labels the tab/statusline through AIBroker; `go` reads the
- * TODO.md handover. Shared by both the claude and worker launch paths.
+ * `/Name` labels the tab/statusline through AIBroker. Shared by both the
+ * claude and worker launch paths. No trailing `go`: the operator types it by
+ * hand when they want the TODO.md handover — the CORE command itself is
+ * unchanged, it is just no longer sent unasked on every opening.
  */
 export function launchPrompt(name: string): string {
-  return `/Name ${name}\ngo`;
+  return `/Name ${name}`;
 }
 
 /**
@@ -549,7 +652,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       console.log("\n" + chalk.bold("Dry run — would exec (WORKER path):") + "\n");
       console.log(`  cwd:  ${chalk.cyan(cwd)}`);
       console.log(
-        `  argv: pai worker run --label "${name}" --cwd ${cwd} --name "${name}" "/Name ${name}\\ngo"`
+        `  argv: pai worker run --label "${name}" --cwd ${cwd} --name "${name}" "${launchPrompt(name)}"`
       );
       console.log();
       return;
@@ -559,15 +662,18 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       console.log("\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n");
       console.log(`  cwd:      ${chalk.cyan(cwd)}`);
       console.log(`  probe:    transcript on disk for ${opts.resumableUuid!.slice(0, 8)}?`);
+      const transcriptPath = transcriptPathFor(opts.resumableUuid!, encodedProjectDir(cwd));
+      const context = transcriptPath ? transcriptResumeContext(transcriptPath) : null;
+      if (context) console.log(`  context:  ${chalk.dim(context)}`);
       if (plan) {
         console.log(`  route:    ${plan.provider} (${plan.model})`);
       }
       console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan))}`);
-      console.log(`  fallback: claude --name "${name}" "/Name ${name}\\ngo"`);
+      console.log(`  fallback: claude --name "${name}" "${launchPrompt(name)}"`);
     } else {
       console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
       console.log(`  cwd:  ${chalk.cyan(cwd)}`);
-      console.log(`  argv: claude --name "${name}" "/Name ${name}\\ngo"`);
+      console.log(`  argv: claude --name "${name}" "${launchPrompt(name)}"`);
     }
     console.log();
     return;

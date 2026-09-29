@@ -240,10 +240,10 @@ export function registerSessionCommands(sessionCmd: Command): void {
       "Go to a session: resume if a resumable snapshot exists, start fresh otherwise.\n" +
         "Recommended short form: pai resume <name>\n" +
         "Resolves by clc/registry name (case-insensitive) or UUID prefix.\n" +
-        "Sends '/Name <name>\\ngo' as the initial prompt so the PAI ## Continue hook fires."
+        "Sends '/Name <name>' as the initial prompt to label the session."
     )
     .option("--skip-name", "Do not prepend /Name to set the session name in chrome")
-    .option("--skip-go", "Do not append \\ngo to trigger PAI auto-resume (## Continue)")
+    .option("--skip-go", "Deprecated no-op: 'go' is no longer appended — type it by hand when wanted")
     .option("--dry-run", "Print the exact argv and cwd, then exit without launching")
     .action(
       async (nameOrId: string, opts: { skipName?: boolean; skipGo?: boolean; dryRun?: boolean }) => {

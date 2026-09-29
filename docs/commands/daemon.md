@@ -17,9 +17,9 @@ pai daemon <subcommand> [options]
 | [`pai daemon serve`](#pai-daemon-serve) | Start the PAI daemon in the foreground |
 | [`pai daemon migrate`](#pai-daemon-migrate) | Migrate federation data from SQLite to PostgreSQL |
 | [`pai daemon status`](#pai-daemon-status) | Query the running daemon status |
-| [`pai daemon restart`](#pai-daemon-restart) | Send SIGTERM to the running daemon (launchd will restart it) |
-| [`pai daemon install`](#pai-daemon-install) | Install daemon as a launchd service and update ~/.claude.json to use the shim |
-| [`pai daemon uninstall`](#pai-daemon-uninstall) | Remove the launchd service and revert to direct MCP |
+| [`pai daemon restart`](#pai-daemon-restart) | Restart the running daemon (launchd on macOS, systemd on Linux) |
+| [`pai daemon install`](#pai-daemon-install) | Install daemon as a service (launchd/systemd) and update ~/.claude.json to use the shim |
+| [`pai daemon uninstall`](#pai-daemon-uninstall) | Remove the daemon service (launchd/systemd) and revert to direct MCP |
 | [`pai daemon keepalive`](#pai-daemon-keepalive) | Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines |
 | [`pai daemon logs`](#pai-daemon-logs) | Tail the daemon log (/tmp/pai-daemon.log) |
 
@@ -46,17 +46,17 @@ Query the running daemon status
 
 ### pai daemon restart
 
-Send SIGTERM to the running daemon (launchd will restart it)
+Restart the running daemon (launchd on macOS, systemd on Linux)
 
 
 ### pai daemon install
 
-Install daemon as a launchd service and update ~/.claude.json to use the shim
+Install daemon as a service (launchd/systemd) and update ~/.claude.json to use the shim
 
 
 ### pai daemon uninstall
 
-Remove the launchd service and revert to direct MCP
+Remove the daemon service (launchd/systemd) and revert to direct MCP
 
 
 ### pai daemon keepalive

@@ -257,9 +257,20 @@ describe("WORKER_CONTRACT_PROMPT — full-contract AG2 baseline (keepalive path)
     expect(WORKER_CONTRACT_PROMPT).toMatch(/write it to a file with/);
   });
 
-  it("bans sleep-polling: no sleep over 60 seconds, standalone or leading a compound", () => {
+  it("bans sleep-polling: no sleep over 60 seconds, anywhere in a command", () => {
     expect(WORKER_CONTRACT_PROMPT).toMatch(/Never sleep-poll: no `sleep N` over 60 seconds/);
-    expect(WORKER_CONTRACT_PROMPT).toMatch(/standalone or leading a compound command/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/anywhere in a command/);
+  });
+
+  it("tells the worker why background-and-wait doesn't work for it, and what to do instead", () => {
+    // A worker has no owner to deliver a background-exit notification to —
+    // ending its turn ends the process — so it gets the foreground-timeout /
+    // kill -0 loop instruction, not the interactive session's "background it,
+    // the harness notifies you" advice. Mirrors the deny reason in
+    // src/hooks/ts/lib/sleep-poll-gate.ts for the isWorker branch.
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/no later wake-up here/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/FOREGROUND with a Bash timeout up to 600000 ms/);
+    expect(WORKER_CONTRACT_PROMPT).toMatch(/while kill -0 <pid> 2>\/dev\/null; do sleep 15; done/);
   });
 
   it("bans inline multi-line/quoted payloads broadly, not just heredocs", () => {

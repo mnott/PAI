@@ -34,6 +34,7 @@ import {
   renameSync,
   unlinkSync,
   mkdirSync,
+  chmodSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -120,6 +121,7 @@ export function writeJsonAtomic(
   if (backup && existsSync(path)) {
     try {
       copyFileSync(path, `${path}.bak-pai`);
+      chmodSync(`${path}.bak-pai`, 0o600);
     } catch (e) {
       throw new Error(
         `Could not back up ${label}: ${e instanceof Error ? e.message : String(e)}\n` +
@@ -130,8 +132,9 @@ export function writeJsonAtomic(
 
   const tmp = `${path}.tmp-pai-${process.pid}`;
   try {
-    writeFileSync(tmp, serialized, "utf8");
+    writeFileSync(tmp, serialized, { encoding: "utf8", mode: 0o600 });
     renameSync(tmp, path);
+    chmodSync(path, 0o600);
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best effort */ }
     throw new Error(

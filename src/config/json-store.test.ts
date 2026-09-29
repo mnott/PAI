@@ -8,10 +8,14 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, unlinkSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readJsonStrict, writeJsonAtomic } from "./json-store.js";
+
+function mode(path: string): number {
+  return statSync(path).mode & 0o777;
+}
 
 const dir = mkdtempSync(join(tmpdir(), "pai-json-store-"));
 const FILE = join(dir, "config.json");
@@ -107,6 +111,25 @@ describe("writeJsonAtomic", () => {
     // three hits because a schema dump never has fewer
     writeJsonAtomic(FILE, { mode: "string", note: "bool", real: 42 });
     expect(readJsonStrict(FILE)).toEqual({ mode: "string", note: "bool", real: 42 });
+  });
+
+  it("writes the file at mode 0600 (it may hold secrets, e.g. a Postgres password)", () => {
+    writeJsonAtomic(FILE, { ok: 1 });
+    expect(mode(FILE)).toBe(0o600);
+  });
+
+  it("resets a pre-existing file's mode to 0600 even when it was left world/group readable", () => {
+    writeFileSync(FILE, POPULATED);
+    chmodSync(FILE, 0o644);
+    writeJsonAtomic(FILE, { replaced: true });
+    expect(mode(FILE)).toBe(0o600);
+  });
+
+  it("writes the .bak-pai backup at mode 0600", () => {
+    writeFileSync(FILE, POPULATED);
+    chmodSync(FILE, 0o644);
+    writeJsonAtomic(FILE, { replaced: true });
+    expect(mode(BAK)).toBe(0o600);
   });
 });
 

@@ -31,8 +31,10 @@ SENTINEL="${TMPDIR:-/tmp}/pai-autosave-hook-${SENTINEL_KEY}"
 
 if [ -f "$SENTINEL" ]; then
   NOW=$(date +%s)
-  # stat is not portable: BSD/macOS uses -f %m, GNU/Linux uses -c %Y.
-  LAST=$(stat -f %m "$SENTINEL" 2>/dev/null || stat -c %Y "$SENTINEL" 2>/dev/null || echo 0)
+  # stat is not portable: GNU/Linux uses -c %Y, BSD/macOS uses -f %m. GNU
+  # first — BSD's `-f %m` reads as "filesystem status" on GNU and silently
+  # succeeds on the wrong thing instead of failing over.
+  LAST=$(stat -c %Y "$SENTINEL" 2>/dev/null || stat -f %m "$SENTINEL" 2>/dev/null || echo 0)
   if [ $((NOW - LAST)) -lt "$MIN_GAP_SECONDS" ]; then
     exit 0
   fi

@@ -943,8 +943,10 @@ async function startShim(): Promise<void> {
           return workerText(`provider ${args.name} removed`);
         }
         if (action === "use") {
-          useProvider(args.name);
-          return workerText(`active provider: ${args.name}`);
+          const { repointed } = useProvider(args.name);
+          return workerText(
+            `active provider: ${args.name}${repointed ? `; ${repointed} class(es) re-pointed` : ""}`
+          );
         }
         if (action === "enable" || action === "disable") {
           setProviderEnabled(args.name, action === "enable");

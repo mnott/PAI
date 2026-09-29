@@ -8,9 +8,9 @@
  * Expands ~ in path values at runtime.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
@@ -374,7 +374,18 @@ export type ConfigMigrateResult = MigrateFileResult;
  * config.json.migrated-<YYYYMMDD> (never deleted).
  */
 export function migrateConfigFile(opts: { dryRun?: boolean } = {}): ConfigMigrateResult {
-  return migratePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], opts);
+  const result = migratePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], opts);
+  if (!result.dryRun && result.fromPath) {
+    // config.json can hold secrets (e.g. the Postgres password) — lock down
+    // both the new location and the `.migrated-<stamp>` copy left behind.
+    if (existsSync(result.toPath)) chmodSync(result.toPath, 0o600);
+    const oldDir = dirname(result.fromPath);
+    const oldName = basename(result.fromPath);
+    for (const entry of readdirSync(oldDir)) {
+      if (entry.startsWith(`${oldName}.migrated-`)) chmodSync(join(oldDir, entry), 0o600);
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

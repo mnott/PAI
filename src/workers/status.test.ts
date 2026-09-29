@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { elapsedOf, isLive, nowStamp, ownsPid } from "./status.js";
+import { elapsedOf, isLive, longestSleepSecs, nowStamp, ownsPid } from "./status.js";
 
 /** This test process's own `ps` start time, formatted as `saveStatus` would. */
 function ownStartedStamp(): string {
@@ -68,5 +68,40 @@ describe("elapsedOf", () => {
   it("formats 3725 seconds as 1h 02m 05s", () => {
     const ts = new Date(base.getTime() - 3725 * 1000).toISOString();
     expect(elapsedOf(ts, base)).toBe("1h 02m 05s");
+  });
+});
+
+describe("longestSleepSecs", () => {
+  it("catches a long sleep standing alone or leading a compound command", () => {
+    expect(longestSleepSecs("sleep 590")).toBe(590);
+    expect(longestSleepSecs("sleep 2m")).toBe(120);
+  });
+
+  it("catches a long sleep buried after &&, ;, |, &, a newline, do/then, (, {, $(", () => {
+    expect(longestSleepSecs("cd x && sleep 300")).toBe(300);
+    expect(longestSleepSecs("sleep 120; tail -5 f")).toBe(120);
+    expect(longestSleepSecs("while true; do sleep 90; done")).toBe(90);
+    expect(longestSleepSecs("for i in 1 2; do sleep 61; done")).toBe(61);
+    expect(longestSleepSecs("true || sleep 90")).toBe(90);
+    expect(longestSleepSecs("make build | sleep 90")).toBe(90);
+    expect(longestSleepSecs("make build &\nsleep 90")).toBe(90);
+    expect(longestSleepSecs("(sleep 90)")).toBe(90);
+    expect(longestSleepSecs("{ sleep 90; }")).toBe(90);
+    expect(longestSleepSecs("echo $(sleep 90)")).toBe(90);
+  });
+
+  it("returns the LONGEST qualifying segment, not the first", () => {
+    expect(longestSleepSecs("sleep 65; sleep 590")).toBe(590);
+    expect(longestSleepSecs("sleep 590; sleep 65")).toBe(590);
+  });
+
+  it("allows sleeps under the floor and non-sleep lookalikes", () => {
+    expect(longestSleepSecs("sleep 30")).toBeNull();
+    expect(longestSleepSecs("sleep 59; tail f")).toBeNull();
+    expect(longestSleepSecs("echo sleep 500")).toBeNull();
+    expect(longestSleepSecs("grep sleep file")).toBeNull();
+    expect(longestSleepSecs("cat '/tmp/sleep 300.txt'")).toBeNull();
+    expect(longestSleepSecs("timeout 600 make")).toBeNull();
+    expect(longestSleepSecs("")).toBeNull();
   });
 });

@@ -35,7 +35,7 @@ import {
   sendNtfyNotification,
   isProbeSession,
   archiveSessionFilesToSessionsDir
-} from '../lib/project-utils';
+} from '../lib/project-utils.js';
 
 /**
  * Find the pai CLI binary path dynamically.

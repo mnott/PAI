@@ -43,6 +43,7 @@ import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
 import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
+import { clickrControlsArgv, markControlsHeld } from "../../../workers/controls.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../../workers/proxy/server.js";
 import { err, dim } from "../../utils.js";
 
@@ -507,7 +508,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .command("controls <id> <who>")
     .description(
       "Hand the desktop controls (clickr) to a worker or take them back.\n" +
-        "<who> is `you` (the worker may actuate) or `me` (the operator keeps them);\n" +
+        "<who> is `you` (<id> becomes the exclusive controls holder; needs clickr with\n" +
+        "--agent support) or `me` (the operator takes them back);\n" +
         "inside a worker's pane, typing \"your controls\" does the same."
     )
     .action((id: string, who: string) => {
@@ -516,16 +518,23 @@ export function registerWorkerCommands(workerCmd: Command): void {
           fail(new Error(`<who> must be "you" or "me"`));
           return;
         }
-        if (!loadStatus(currentLogDir(), id)) {
+        const logDir = currentLogDir();
+        const status = loadStatus(logDir, id);
+        if (!status) {
           fail(new Error(`no worker named "${id}"`));
           return;
         }
-        const proc = spawn("clickr", ["controls", who], { stdio: "inherit" });
+        const proc = spawn("clickr", clickrControlsArgv(id, who, status.pid), { stdio: "inherit" });
         proc.on("error", (e) =>
           fail(new Error(`cannot run clickr controls: ${e.message} (is clickr installed?)`))
         );
         proc.on("close", (code) => {
-          if (code === 0) console.log(`controls → ${who === "you" ? id : "operator"}`);
+          if (code === 0) {
+            if (who === "you") markControlsHeld(logDir, id);
+            console.log(
+              `controls → ${who === "you" ? `${id} (exclusive; needs clickr with --agent support)` : "operator"}`
+            );
+          }
           process.exitCode = code ?? 1;
         });
       } catch (e) {
@@ -538,40 +547,50 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .description("Continue a finished worker on the same provider: claude --resume <session>")
     .option("--print-id", "Print the new worker id on its own line (pane follow handoff)")
     .option("--no-pane", "Do not open a follow pane for the resumed worker")
-    .action(async (id: string, text: string, opts: { printId?: boolean; pane?: boolean }) => {
-      try {
-        const logDir = currentLogDir();
-        const old = loadStatus(logDir, id);
-        if (!old) {
-          fail(new Error(`no worker named "${id}"`));
-          return;
+    .option("--output-format <fmt>", "text (default), json or stream-json — same as `run`")
+    .option("--label <text>", "Short task label (default: \"↩ <old label>\")")
+    .action(
+      async (
+        id: string,
+        text: string,
+        opts: { printId?: boolean; pane?: boolean; outputFormat?: string; label?: string }
+      ) => {
+        try {
+          const logDir = currentLogDir();
+          const old = loadStatus(logDir, id);
+          if (!old) {
+            fail(new Error(`no worker named "${id}"`));
+            return;
+          }
+          if (!old.claudeSession) {
+            fail(
+              new Error(
+                `worker ${id} recorded no Claude session id — it predates resume support ` +
+                  `or ran through an engine that does not expose one`
+              )
+            );
+            return;
+          }
+          const claudeArgs = ["--resume", old.claudeSession, "-p", text];
+          if (opts.outputFormat !== undefined) claudeArgs.push("--output-format", opts.outputFormat);
+          let newId = "";
+          const rc = await runWorker({
+            providerFlag: old.provider,
+            modelFlag: old.model,
+            label: opts.label || `↩ ${old.label}`,
+            noPane: opts.pane === false,
+            claudeArgs,
+            onWorkerStart: (wid) => {
+              newId = wid;
+            },
+          });
+          if (opts.printId === true && newId) console.log(newId);
+          process.exitCode = rc;
+        } catch (e) {
+          fail(e);
         }
-        if (!old.claudeSession) {
-          fail(
-            new Error(
-              `worker ${id} recorded no Claude session id — it predates resume support ` +
-                `or ran through an engine that does not expose one`
-            )
-          );
-          return;
-        }
-        let newId = "";
-        const rc = await runWorker({
-          providerFlag: old.provider,
-          modelFlag: old.model,
-          label: `↩ ${old.label}`,
-          noPane: opts.pane === false,
-          claudeArgs: ["--resume", old.claudeSession, "-p", text],
-          onWorkerStart: (wid) => {
-            newId = wid;
-          },
-        });
-        if (opts.printId === true && newId) console.log(newId);
-        process.exitCode = rc;
-      } catch (e) {
-        fail(e);
       }
-    });
+    );
 
   workerCmd
     .command("proxy [stop]")

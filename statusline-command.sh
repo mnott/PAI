@@ -28,6 +28,21 @@ claude_env="${PAI_DIR:-$HOME/.claude}/.env"
 # Read JSON input from stdin
 input=$(cat)
 
+# GNU coreutils first, BSD/macOS fallback: `stat -f %m` on GNU is filesystem
+# status (not "file", -f means "filesystem"), so it silently parses the path
+# as a file operand and prints filesystem info instead of failing — a cache
+# never reads as fresh. `stat -c` errors cleanly on BSD, so GNU-first is safe
+# on both.
+file_mtime() {
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf '%s\n' "${2:-0}"
+}
+
+# Same GNU-first/BSD-fallback rule for formatting an epoch: `date -d @epoch`
+# on GNU, `date -r epoch` on BSD/macOS.
+fmt_epoch() {
+    date -d "@$1" "+$2" 2>/dev/null || date -r "$1" "+$2" 2>/dev/null || printf ''
+}
+
 # Get Digital Assistant configuration from environment
 DA_NAME="${DA:-Assistant}"  # Assistant name
 DA_COLOR="${DA_COLOR:-purple}"  # Color for the assistant name
@@ -81,7 +96,7 @@ model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // empty' 2>/
 cc_version=$(echo "$input" | jq -r '.version // empty' 2>/dev/null)
 if [ -z "$cc_version" ]; then
     _ccv_cache="${pai_cache_dir}/cc-version"
-    _ccv_age=$(( $(date +%s) - $(stat -f %m "$_ccv_cache" 2>/dev/null || echo 0) ))
+    _ccv_age=$(( $(date +%s) - $(file_mtime "$_ccv_cache" 0) ))
     if [ -s "$_ccv_cache" ] && [ "$_ccv_age" -lt 86400 ] 2>/dev/null; then
         read -r cc_version < "$_ccv_cache"
     elif command -v claude >/dev/null 2>&1; then
@@ -133,8 +148,8 @@ if [ -f "$_workers_yaml" ] && command -v node >/dev/null 2>&1; then
     _sl_script="$(readlink -f "$0" 2>/dev/null || echo "$0")"
     _sl_script_dir="$(dirname "$_sl_script")"
     _providers_cache="${pai_cache_dir}/statusline-providers.json"
-    _yaml_mtime=$(stat -f %m "$_workers_yaml" 2>/dev/null || echo 0)
-    _cache_mtime=$(stat -f %m "$_providers_cache" 2>/dev/null || echo -1)
+    _yaml_mtime=$(file_mtime "$_workers_yaml" 0)
+    _cache_mtime=$(file_mtime "$_providers_cache" -1)
     if [ ! -s "$_providers_cache" ] || [ "$_cache_mtime" -lt "$_yaml_mtime" ] 2>/dev/null; then
         mkdir -p "$pai_cache_dir" 2>/dev/null
         # umask 077 so the temp file is born 0600 — it must never exist at a
@@ -209,7 +224,7 @@ dir_name=$(basename "$current_dir" 2>/dev/null)
 
 # Read Whazaa session name from iTerm2 user variable
 pai_session_name=""
-if [ -n "$ITERM_SESSION_ID" ]; then
+if [ -n "$ITERM_SESSION_ID" ] && command -v osascript >/dev/null 2>&1; then
     ITERM_UUID="${ITERM_SESSION_ID##*:}"
     pai_session_name=$(osascript << APPLESCRIPT 2>/dev/null
 tell application "iTerm2"
@@ -634,7 +649,7 @@ fi
 # buys nothing when the live numbers arrived on stdin.
 if [ "$session_provider" = "anthropic" ] && [ -z "$usage_source" ]; then
     if [ -f "$usage_cache" ]; then
-        cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
+        cache_age=$(( $(date +%s) - $(file_mtime "$usage_cache" 0) ))
         [ "$cache_age" -gt "$usage_cache_ttl" ] && _fetch_usage &
     else
         _fetch_usage &
@@ -643,7 +658,7 @@ fi
 
 # Source 2 (fallback): the OAuth endpoint cache, and only while it is fresh.
 if [ "$session_provider" = "anthropic" ] && [ -z "$usage_source" ] && [ -f "$usage_cache" ]; then
-    _usage_cache_age=$(( $(date +%s) - $(stat -f %m "$usage_cache" 2>/dev/null || echo 0) ))
+    _usage_cache_age=$(( $(date +%s) - $(file_mtime "$usage_cache" 0) ))
     if [ "$_usage_cache_age" -le "$usage_cache_max_age" ] 2>/dev/null; then
         usage_source="oauth"
         five_hour=$(jq -r '.five_hour.utilization // empty' "$usage_cache" 2>/dev/null)
@@ -686,8 +701,8 @@ if [ "$session_provider" = "anthropic" ]; then
     # Format reset times in local time
     five_reset_fmt=""
     seven_reset_fmt=""
-    [ "$five_reset_epoch" -gt 0 ] 2>/dev/null && five_reset_fmt=$(date -r "$five_reset_epoch" "+%H:%M" 2>/dev/null || echo "")
-    [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && seven_reset_fmt=$(date -r "$seven_reset_epoch" "+%a %H:%M" 2>/dev/null || echo "")
+    [ "$five_reset_epoch" -gt 0 ] 2>/dev/null && five_reset_fmt=$(fmt_epoch "$five_reset_epoch" "%H:%M")
+    [ "$seven_reset_epoch" -gt 0 ] 2>/dev/null && seven_reset_fmt=$(fmt_epoch "$seven_reset_epoch" "%a %H:%M")
 
     five_color=$(_usage_color "$five_hour_int")
     seven_color=$(_usage_color "$seven_day_int")
@@ -834,7 +849,7 @@ if [ "$session_provider" != "anthropic" ]; then
         # Use cache if fresh, otherwise refresh in the background
         if [ -n "$usage_url" ]; then
             if [ -f "$provider_cache" ]; then
-                cache_age=$(( $(date +%s) - $(stat -f %m "$provider_cache" 2>/dev/null || echo 0) ))
+                cache_age=$(( $(date +%s) - $(file_mtime "$provider_cache" 0) ))
                 if [ "$cache_age" -gt "$usage_ttl" ]; then
                     _fetch_provider_usage "$usage_url" "$usage_auth" "$provider_keyfile" "$provider_cache" "$usage_probe" &
                 fi
@@ -879,9 +894,9 @@ if [ "$session_provider" != "anthropic" ]; then
                         # Within the next 24h the weekday carries no information;
                         # beyond it, the bare time would be ambiguous.
                         if [ $(( w_epoch - $(date +%s) )) -lt 86400 ]; then
-                            w_reset_fmt=$(date -r "$w_epoch" "+%H:%M" 2>/dev/null || echo "")
+                            w_reset_fmt=$(fmt_epoch "$w_epoch" "%H:%M")
                         else
-                            w_reset_fmt=$(date -r "$w_epoch" "+%a %H:%M" 2>/dev/null || echo "")
+                            w_reset_fmt=$(fmt_epoch "$w_epoch" "%a %H:%M")
                         fi
                     fi
                 fi

@@ -272,11 +272,13 @@ export function registerWorkerProviderCommands(providersCmd: Command): void {
 
   providersCmd
     .command("use <name>")
-    .description("Make this provider the active one for runs without --provider/--class")
+    .description("Make this provider the active one, re-pointing every class pinned to a provider")
     .action((name: string) => {
       try {
-        useProvider(name);
-        console.log(ok(`active provider: ${name}`));
+        const { repointed } = useProvider(name);
+        console.log(
+          ok(`active provider: ${name}${repointed ? `; ${repointed} class(es) re-pointed` : ""}`)
+        );
       } catch (e) {
         fail(e);
       }

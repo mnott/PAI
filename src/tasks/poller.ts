@@ -263,6 +263,43 @@ async function escalate(
 }
 
 /**
+ * One best-effort PAILot alert at the moment a task transitions into parked.
+ *
+ * Parking is silent from the phone's point of view: the tracker note and the
+ * scheduler log both say PARKED, but the only person who reads either is the
+ * one who already knows. On 2026-09-27 both morning sweeps were parked on a
+ * FALSE unreachable (the hub misread a statusline) and nothing surfaced it
+ * until the day's run simply did not happen — the exact failure parking's own
+ * docs promise to prevent.
+ *
+ * Deliberately NOT rate-limited beyond its call sites: it runs exactly once
+ * per parking event (on the transition, not on every poll while parked), and
+ * a re-park after a release is a new event that deserves a new alert. The
+ * escalate() quiet window is untouched — this is the announcement, that is
+ * the daily reminder.
+ *
+ * Never allowed to throw or linger: the hub gets a short deadline, and an
+ * unreachable hub falls back to the poller log (launchd sends both streams to
+ * /tmp/pai-scheduler.log, which already carries every PARKED line).
+ */
+async function alertParked(task: Task, reason: string): Promise<void> {
+  const text =
+    `PAI parked "${task.title}" (${task.id}) — the scheduler will not retry it.\n` +
+    `Reason: ${reason}\n` +
+    `To release it: fix the cause, then move the due date — due_string, natural ` +
+    `language only (e.g. "tomorrow 9am").`;
+  try {
+    const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
+    await callAiBroker("pailot_send", { text }, 8_000);
+  } catch (e) {
+    console.error(
+      `[pai-poller] parked-task alert not delivered to PAILot ` +
+        `(${e instanceof Error ? e.message : String(e)}): ${text}`
+    );
+  }
+}
+
+/**
  * Run state is a rebuildable cache, so a damaged file must not block the
  * scheduler forever — starting fresh is the correct recovery here, which is
  * exactly the case json-store's guard is NOT for.
@@ -728,6 +765,7 @@ async function handleDispatch(
   if (task.owner.rootPath && !existsSync(task.owner.rootPath)) {
     const reason = `project root missing: ${task.owner.rootPath}`;
     state.parked[task.id] = { reason, at: now, due: task.due ?? undefined };
+    await alertParked(task, reason);
     await escalate(
       task,
       "task is not running",
@@ -813,6 +851,7 @@ async function handleDispatch(
       at: now,
       due: task.due ?? undefined,
     };
+    await alertParked(task, detail);
     await escalate(
       task,
       "task is not running",

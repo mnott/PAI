@@ -42,13 +42,11 @@ Each module has a `plugins/<module>/plugin.json` that declares:
   "displayName": "PAI Core",
   "description": "Core memory engine, session management, and project registry",
   "version": "0.7.0",
-  "tier": "free",
-  "required": true,
-  "depends": [],
-  "hooks": "hooks/hooks.json",
-  "skills": ["Sessions", "Route", "Name"]
+  "hooks": "./hooks/hooks.json"
 }
 ```
+
+`tier`, `required`, and `depends` are PAI-internal concepts (see `pai-plugin.json`), not part of Claude Code's plugin schema — the Claude Code loader ignores them, so they live only in `pai-plugin.json`, not in each module's `plugin.json`. `hooks/hooks.json` itself uses Claude Code's standard hooks shape (`{"hooks": {"<Event>": [{"matcher": "...", "hooks": [{"type": "command", "command": "..."}]}]}}`), not a PAI-private shape.
 
 ### Module Inventory
 
@@ -102,7 +100,7 @@ PAI/
 ├── .cursor/
 │   └── plugin.json              # Cursor plugin manifest
 ├── gemini-extension.json        # Gemini CLI extension manifest
-├── pai-plugin.json              # Canonical module manifest (build reads this)
+├── pai-plugin.json              # Documentation-only module/tier overview; not read by build or runtime
 │
 ├── plugins/                     # Module definitions
 │   ├── core/

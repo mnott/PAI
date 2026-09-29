@@ -23,9 +23,12 @@ import {
   probeResume,
   resolveLaunchRoute,
   workerRunArgv,
+  launchPrompt,
   lastTranscriptModel,
   matchTranscriptProvider,
   resumeOfferText,
+  resumeOfferBlock,
+  transcriptResumeContext,
 } from "./launch.js";
 import type { WorkerProvider } from "../../workers/config.js";
 
@@ -412,7 +415,143 @@ describe("worker launch argv", () => {
       "/Users/someone/dev/A Project",
       "--name",
       "fix login timeout",
-      "/Name fix login timeout\ngo",
+      "/Name fix login timeout",
     ]);
+  });
+});
+
+describe("launchPrompt — the opening prompt of a new session", () => {
+  it("names the session and nothing else: no 'go'", () => {
+    expect(launchPrompt("fix login timeout")).toBe("/Name fix login timeout");
+  });
+});
+
+describe("transcriptResumeContext — what a resume would bring back", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-ctx-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A file's mtime, formatted the way the context line does. */
+  const stampOf = (p: string): string => {
+    const d = new Date(statSync(p).mtime.getTime());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  it("gives the mtime and the last user text line", () => {
+    const p = join(dir, "t.jsonl");
+    writeFileSync(
+      p,
+      JSON.stringify({ type: "user", message: { role: "user", content: "earlier question" } }) + "\n" +
+        JSON.stringify({ type: "assistant", message: { role: "assistant", content: "an answer" } }) + "\n" +
+        JSON.stringify({ type: "user", message: { role: "user", content: "what the heck was that message" } }) + "\n"
+    );
+    expect(transcriptResumeContext(p)).toBe(
+      `last active ${stampOf(p)} · last: "what the heck was that message"`
+    );
+  });
+
+  it("takes text blocks too, skipping tool results and isMeta entries after them", () => {
+    const p = join(dir, "t.jsonl");
+    writeFileSync(
+      p,
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "real question" }] } }) + "\n" +
+        JSON.stringify({ type: "user", isMeta: true, message: { role: "user", content: "hook noise" } }) + "\n" +
+        JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", content: "x" }] } }) + "\n"
+    );
+    expect(transcriptResumeContext(p)).toBe(`last active ${stampOf(p)} · last: "real question"`);
+  });
+
+  it("caps the snippet at 70 printable chars, newlines collapsed", () => {
+    const p = join(dir, "long.jsonl");
+    writeFileSync(
+      p,
+      JSON.stringify({ type: "user", message: { role: "user", content: "a".repeat(100) + "\nb" } }) + "\n"
+    );
+    expect(transcriptResumeContext(p)).toMatch(/last: "a{70}"$/);
+  });
+
+  it("says 'no recent user line' for a tail of tool results or garbage", () => {
+    const garbage = join(dir, "garbage.jsonl");
+    writeFileSync(garbage, "not json\nalso not json\n");
+    expect(transcriptResumeContext(garbage)).toMatch(/no recent user line$/);
+    const toolOnly = join(dir, "tools.jsonl");
+    writeFileSync(
+      toolOnly,
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", content: "x" }] } }) + "\n"
+    );
+    expect(transcriptResumeContext(toolOnly)).toMatch(/no recent user line$/);
+  });
+
+  it("returns null for a missing, and for an empty, file", () => {
+    expect(transcriptResumeContext(join(dir, "absent.jsonl"))).toBeNull();
+    const empty = join(dir, "empty.jsonl");
+    writeFileSync(empty, "");
+    expect(transcriptResumeContext(empty)).toBeNull();
+  });
+
+  /**
+   * The read is bounded to the tail, like lastTranscriptModel's: a user line
+   * at the end of a large transcript is found, one only at the head is not.
+   */
+  it("reads only the tail of a large transcript", () => {
+    const filler =
+      JSON.stringify({ type: "attachment", content: "x".repeat(200) }) + "\n";
+    const tailHit = join(dir, "tail.jsonl");
+    writeFileSync(
+      tailHit,
+      filler.repeat(600) +
+        JSON.stringify({ type: "user", message: { role: "user", content: "at the end" } }) + "\n"
+    );
+    expect(statSync(tailHit).size).toBeGreaterThan(64 * 1024);
+    expect(transcriptResumeContext(tailHit)).toMatch(/last: "at the end"$/);
+
+    const headOnly = join(dir, "head.jsonl");
+    writeFileSync(
+      headOnly,
+      JSON.stringify({ type: "user", message: { role: "user", content: "at the start" } }) + "\n" +
+        filler.repeat(600)
+    );
+    expect(transcriptResumeContext(headOnly)).toMatch(/no recent user line$/);
+  });
+});
+
+describe("resumeOfferBlock — the [y/N] question carries its context", () => {
+  it("puts the context line beneath the offer when a transcript is known", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-block-"));
+    try {
+      const p = join(dir, "t.jsonl");
+      writeFileSync(
+        p,
+        JSON.stringify({ type: "user", message: { role: "user", content: "where was I" } }) + "\n"
+      );
+      const out = resumeOfferBlock({ provider: "glm", model: "glm-5.3[1m]" }, p);
+      expect(out).toMatch(/^Resume into glm-5\.3\[1m\] \(glm\)\? \[y\/N\]\n  last active /);
+      expect(out).toMatch(/· last: "where was I" $/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is the old one-line offer when no transcript is known", () => {
+    expect(resumeOfferBlock(null, null)).toBe("Resume? [y/N] ");
+    expect(resumeOfferBlock({ provider: "glm", model: "glm-5.3[1m]" }, undefined)).toBe(
+      "Resume into glm-5.3[1m] (glm)? [y/N] "
+    );
+  });
+
+  it("falls back to the one-line offer when the transcript says nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-block2-"));
+    try {
+      const p = join(dir, "empty.jsonl");
+      writeFileSync(p, "");
+      expect(resumeOfferBlock(null, p)).toBe("Resume? [y/N] ");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -9,7 +9,7 @@
  */
 
 import { dirname, basename } from 'path';
-import { archiveSessionFilesToSessionsDir } from '../lib/project-utils';
+import { archiveSessionFilesToSessionsDir } from '../lib/project-utils.js';
 
 interface HookInput {
   session_id: string;

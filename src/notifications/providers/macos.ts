@@ -21,6 +21,7 @@ export class MacOsProvider implements NotificationProvider {
   ): Promise<boolean> {
     const cfg = config.channels.macos;
     if (!cfg.enabled) return false;
+    if (process.platform !== "darwin") return false;
 
     try {
       const title = payload.title ?? "PAI";

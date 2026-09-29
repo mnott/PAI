@@ -24,8 +24,8 @@ import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, statSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { ADAPTER_DIR } from '../lib/pai-paths';
-import { sendNtfyNotification, isWhatsAppEnabled, isProbeSession } from '../lib/project-utils';
+import { ADAPTER_DIR } from '../lib/pai-paths.js';
+import { sendNtfyNotification, isWhatsAppEnabled, isProbeSession } from '../lib/project-utils.js';
 
 // Debounce duration in milliseconds (prevents duplicate SessionStart events)
 const DEBOUNCE_MS = 2000;

@@ -720,10 +720,15 @@ describe("the alarm actually reaches the notification router", () => {
  */
 describe("parking a task that cannot be dispatched", () => {
   const notify = vi.fn().mockResolvedValue(undefined);
+  // Parking now also alerts PAILot; without this mock those sends would leave
+  // the test run and reach the operator's phone for real.
+  const pailot = vi.fn().mockResolvedValue({ sent: true });
 
   beforeEach(() => {
     notify.mockClear();
+    pailot.mockClear();
     vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
+    vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
   });
 
   function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
@@ -873,6 +878,111 @@ describe("parking a task that cannot be dispatched", () => {
     const [payload] = notify.mock.calls[0]!;
     expect(payload.message).toContain("Jobs Alpha sweep");
     expect(payload.message).not.toContain("undefined");
+  });
+});
+
+/**
+ * Parking tells the operator the moment it happens, on PAILot.
+ *
+ * The PARKED note reaches the tracker and /tmp/pai-scheduler.log — places the
+ * operator reads only once they already suspect something. On 2026-09-27 both
+ * morning sweeps were parked on a FALSE unreachable and the day's run simply
+ * did not happen; the first human to notice was the one expecting the result.
+ * The alert rides the same hub the dispatches do, once per parking event, and
+ * may never take the tick down with it.
+ */
+describe("a parked task alerts PAILot on the transition", () => {
+  const notify = vi.fn().mockResolvedValue(undefined);
+  const pailot = vi.fn().mockResolvedValue({ sent: true });
+
+  beforeEach(() => {
+    notify.mockClear();
+    pailot.mockClear();
+    vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
+    vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
+  });
+
+  const MISSING_ROOT = "project_root_missing: /Users/x/old-name which does not exist";
+
+  function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
+    return { dispatch: vi.fn().mockResolvedValue({ outcome, reason, session: "jobs-alpha" }) };
+  }
+
+  async function tickParked(seed: Record<string, unknown> = {}) {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-parked-alert-"));
+    const stateFile = pathJoin(dir, "state.json");
+    writeFileSync(stateFile, JSON.stringify(seed));
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([dueTask()]),
+      setLabels: vi.fn().mockResolvedValue(undefined),
+      setDue: vi.fn().mockResolvedValue(undefined),
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    try {
+      const report = await tick({
+        provider,
+        transport: failingTransport("unlaunchable", MISSING_ROOT),
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+      return { report, state: JSON.parse(readFileSync(stateFile, "utf-8")) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("sends exactly one alert when a task transitions into parked", async () => {
+    const { state } = await tickParked();
+    expect(state.parked.sweep).toBeDefined();
+    expect(pailot).toHaveBeenCalledTimes(1);
+    const [method, params] = pailot.mock.calls[0]!;
+    expect(method).toBe("pailot_send");
+    // The alert has to stand alone on a phone screen: which task, why, and the
+    // one gesture that releases it — a natural-language due_string only.
+    expect(params.text).toContain("Jobs Alpha sweep");
+    expect(params.text).toContain("sweep");
+    expect(params.text).toContain(MISSING_ROOT);
+    expect(params.text).toContain("due_string");
+  });
+
+  it("does not re-alert on later polls while the task stays parked", async () => {
+    // launchd polls every 15 minutes; one alert per parking event is the whole
+    // rate limit. The daily escalate() reminder is separate and untouched.
+    await tickParked({
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+      alarmedAt: { sweep: NOW },
+    });
+    expect(pailot).not.toHaveBeenCalled();
+  });
+
+  it("alerts again when a released task is re-parked, because that is a new event", async () => {
+    // Seeded with a moved due date: the user acted, the task unparked, and the
+    // dispatch failed permanently again — a fresh parking, not a continuation.
+    const { state } = await tickParked({
+      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: "2026-07-01T09:00:00Z" } },
+    });
+    expect(state.parked.sweep).toBeDefined();
+    expect(pailot).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs the would-be alert and keeps ticking when the hub is unreachable", async () => {
+    pailot.mockRejectedValue(new Error("AIBroker not running (socket not found)."));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { report } = await tickParked();
+      // The park still happened and was still reported — the alert is a side
+      // channel, never a dependency.
+      expect(report.decisions[0]!.note).toContain("PARKED");
+      expect(report.stuck).toBe(1);
+      expect(err).toHaveBeenCalledWith(expect.stringContaining("not delivered to PAILot"));
+      expect(err).toHaveBeenCalledWith(expect.stringContaining("Jobs Alpha sweep"));
+    } finally {
+      err.mockRestore();
+    }
   });
 });
 

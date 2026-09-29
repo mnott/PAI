@@ -19,6 +19,7 @@ import {
   copyFileSync,
   mkdirSync,
   readFileSync,
+  chmodSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -187,6 +188,7 @@ export function registerRestoreCommands(program: Command): void {
         try {
           mkdirSync(dirname(CONFIG_FILE), { recursive: true });
           copyFileSync(join(resolvedDir, "config.json"), CONFIG_FILE);
+          chmodSync(CONFIG_FILE, 0o600);
           results.push({ label: "Config", status: ok("restored") });
         } catch (e) {
           results.push({ label: "Config", status: err(`failed: ${e}`) });

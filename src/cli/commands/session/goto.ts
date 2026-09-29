@@ -10,23 +10,24 @@
  *                  (see probeResume in lib/launch.ts — the filesystem answers,
  *                   and only an unrecognised layout falls back to spawning claude)
  *        b. If probe succeeds:
- *             exec  claude --resume <uuid> --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *             exec  claude --resume <uuid> --name "<friendlyName>" "/Name <friendlyName>"
  *                  — through the provider the transcript ran on, when its model
  *                  matches one (providerResumePlan in lib/launch.ts)
  *        c. Else (probe failed):
  *             print clear stderr line: "Resume failed. Starting fresh session in same dir."
- *             exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *             exec  claude --name "<friendlyName>" "/Name <friendlyName>"
  *   4. Else (no uuid known):
- *        exec  claude --name "<friendlyName>" "/Name <friendlyName>\ngo"
+ *        exec  claude --name "<friendlyName>" "/Name <friendlyName>"
  *
  * Steps 3 and 4 are launchInDir's, shared — this file no longer carries its
  * own copy of the spawn dance.
  *
  * Why both --name AND /Name?
  *   --name <friendlyName>       → sets Claude Code's internal session label
- *   "/Name <friendlyName>\ngo"  → runs the /Name slash command via AIBroker, which updates
- *                                  iTerm tab title, statusline, and AIBroker session registry;
- *                                  the \ngo on the next line triggers PAI's ## Continue resume
+ *   "/Name <friendlyName>"      → runs the /Name slash command via AIBroker, which updates
+ *                                  iTerm tab title, statusline, and AIBroker session registry.
+ *                                  No trailing `go`: the operator types it by hand when the
+ *                                  TODO.md handover is wanted
  *
  * The probe is two `existsSync` calls on the happy path. On the fallback path, total latency
  * is the same as a fresh start.
@@ -43,6 +44,7 @@ import {
 } from "../../lib/session-scan.js";
 import {
   launchInDir,
+  launchPrompt,
   providerResumePlan,
   resumeArgvText,
 } from "../../lib/launch.js";
@@ -122,7 +124,7 @@ export async function cmdGoto(
     if (resumableUuid) {
       const plan = providerResumePlan(resumableUuid, projectDir);
       const argvResume = resumeArgvText(resumableUuid, name, plan);
-      const argvFresh = `claude --name "${name}" "/Name ${name}\\ngo"`;
+      const argvFresh = `claude --name "${name}" "${launchPrompt(name)}"`;
       console.log(
         "\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n"
       );
@@ -140,7 +142,7 @@ export async function cmdGoto(
         console.log(`  sys:      ${resumableSession.topLevelSystemLines} system lines`);
       }
     } else {
-      const argvFresh = `claude --name "${name}" "/Name ${name}\\ngo"`;
+      const argvFresh = `claude --name "${name}" "${launchPrompt(name)}"`;
       console.log(
         "\n" + chalk.bold("Dry run — would exec (FRESH path, no resumable UUID):") + "\n"
       );

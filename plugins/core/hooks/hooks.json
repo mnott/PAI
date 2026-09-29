@@ -1,49 +1,54 @@
 {
-  "module": "core",
   "description": "Essential lifecycle hooks for session management, context loading, and security",
-  "hooks": [
-    {
-      "event": "SessionStart",
-      "command": "${PAI_DIR}/Hooks/load-core-context.mjs",
-      "description": "Load PAI skill system and core configuration into session context"
-    },
-    {
-      "event": "SessionStart",
-      "command": "${PAI_DIR}/Hooks/load-project-context.mjs",
-      "description": "Detect project from CWD, load notes directory, TODO.md, and session note"
-    },
-    {
-      "event": "SessionStart",
-      "command": "${PAI_DIR}/Hooks/initialize-session.mjs",
-      "description": "Create numbered session note and register in PAI registry"
-    },
-    {
-      "event": "SessionStart",
-      "matcher": "resume|compact",
-      "command": "${PAI_DIR}/Hooks/mcp-deferred-reminder.mjs",
-      "description": "Heal stale deferred MCP tool handles on resumed sessions: ToolSearch-and-retry instead of trusting a stale disconnect conclusion"
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "command": "${PAI_DIR}/Hooks/security-validator.mjs",
-      "description": "Validate shell commands against security rules before execution"
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "mcp__",
-      "command": "${PAI_DIR}/Hooks/mcp-deferred-gate.mjs",
-      "description": "Correct deferred MCP tool calls: ToolSearch remedy instead of a false 'MCP server disconnected' report"
-    },
-    {
-      "event": "Stop",
-      "command": "${PAI_DIR}/Hooks/stop-hook.mjs",
-      "description": "Write work items and summary to session note, send notification"
-    },
-    {
-      "event": "Stop",
-      "command": "${PAI_DIR}/Hooks/pai-session-stop.sh",
-      "description": "Shell-level session cleanup on stop"
-    }
-  ]
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/load-core-context.mjs" }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/load-project-context.mjs" }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/initialize-session.mjs" }
+        ]
+      },
+      {
+        "matcher": "resume|compact",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/mcp-deferred-reminder.mjs" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/security-validator.mjs" }
+        ]
+      },
+      {
+        "matcher": "mcp__",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/mcp-deferred-gate.mjs" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/stop-hook.mjs" }
+        ]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/pai-session-stop.sh" }
+        ]
+      }
+    ]
+  }
 }

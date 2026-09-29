@@ -231,7 +231,7 @@ async function migrate(): Promise<void> {
            VALUES
              ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
               $11::vector,
-              to_tsvector('english', $9))
+              to_tsvector('simple', $9))
            ON CONFLICT (id) DO UPDATE SET
              project_id = EXCLUDED.project_id,
              source     = EXCLUDED.source,

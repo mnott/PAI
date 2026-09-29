@@ -5,7 +5,7 @@
  * No worker is ever spawned.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,8 @@ import {
 } from "./planner.js";
 import { parseRunnerArgs } from "./args.js";
 import type { RunOptions } from "./run.js";
+import { addWorktree, git, recordWorktree } from "./worktree.js";
+import { loadStatus, newWorkerId, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-planner-test-"));
 
@@ -189,5 +191,140 @@ describe("runPlanner", () => {
     const rc = await runPlanner(opts(), { runStage: mock.runStage, logDir: dir, maxChildren: 2 });
     expect(rc).toBe(1);
     expect(mock.seen).toHaveLength(0);
+  });
+});
+
+/**
+ * The merge phase against a real throwaway git repo: the planner worker gets
+ * its own worktree (built with the real worktree.ts helpers, exactly like
+ * run.ts would), each child gets one off the planner's worktree instead of
+ * the operator's cwd, and `runPlanner` merges finished children into the
+ * planner's branch via the same `mergeWorker` `pai worker merge` uses.
+ */
+function baseStatus(id: string, cwd: string): WorkerStatus {
+  return {
+    id,
+    pid: process.pid,
+    label: `label ${id}`,
+    cwd,
+    term: "",
+    provider: "testprov",
+    model: "test-1",
+    state: "done",
+    started: "2026-09-29 10:00:00",
+    updated: "2026-09-29 10:00:00",
+    turns: 0,
+    tools: 0,
+    last: "",
+    rc: 0,
+    secs: 1,
+  };
+}
+
+/** A throwaway git repo the planner's own worktree branches from. */
+function initRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), "pai-planner-merge-repo-"));
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.email", "test@example.invalid"]);
+  git(repo, ["config", "user.name", "worker test"]);
+  writeFileSync(join(repo, "shared.txt"), "original\n", "utf8");
+  git(repo, ["add", "."]);
+  git(repo, ["commit", "-q", "-m", "init"]);
+  return repo;
+}
+
+/**
+ * Stage-runner mock that does real git work: phase 1 gives the planner its
+ * own worktree off `repo` (mirroring run.ts's worktreeWanted path for class
+ * "plan"); each child gets a worktree off whatever cwd it was handed (the
+ * planner's worktree, once `runPlanner` redirects it there) and commits the
+ * edit `edit(wtDir, taskIndex)` makes, in task order — `maxChildren: 1` in
+ * the tests below keeps that order free of wave concurrency.
+ */
+function mockGitStage(repo: string, plan: unknown[], edit: (wtDir: string, taskIndex: number) => void) {
+  const childIds: string[] = [];
+  let plannerId = "";
+  let taskIndex = 0;
+  const runStage = async (opts: RunOptions): Promise<number> => {
+    const prompt = parseRunnerArgs(opts.claudeArgs).prompt ?? "";
+    if (opts._planner) {
+      plannerId = opts.id!;
+      const m = prompt.match(/Write the plan with the Write tool to (\S+) /);
+      if (m) writeFileSync(m[1], JSON.stringify({ tasks: plan }), "utf8");
+      const info = addWorktree(dir, plannerId, repo);
+      recordWorktree(dir, baseStatus(plannerId, repo), info, true);
+      return 0;
+    }
+    const id = newWorkerId();
+    opts.onWorkerStart?.(id);
+    const cwd = opts.cwd!;
+    const info = addWorktree(dir, id, cwd);
+    const idx = taskIndex++;
+    edit(info.dir, idx);
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-q", "-m", `child ${idx}`]);
+    recordWorktree(dir, baseStatus(id, cwd), info, true);
+    childIds.push(id);
+    return 0;
+  };
+  return { runStage, childIds, getPlannerId: () => plannerId };
+}
+
+describe("runPlanner: merging children into the planner's own worktree", () => {
+  it("merges two children that touch different files, both", async () => {
+    const repo = initRepo();
+    const mock = mockGitStage(repo, [task(1), task(2)], (wtDir, idx) => {
+      writeFileSync(join(wtDir, `file${idx}.txt`), `child ${idx} content\n`, "utf8");
+    });
+    const rc = await runPlanner(opts(), { runStage: mock.runStage, logDir: dir, maxChildren: 1 });
+    expect(rc).toBe(0);
+    expect(mock.childIds).toHaveLength(2);
+
+    const plannerSt = loadStatus(dir, mock.getPlannerId());
+    const wtDir = plannerSt!.worktreeDir!;
+    expect(readFileSync(join(wtDir, "file0.txt"), "utf8")).toBe("child 0 content\n");
+    expect(readFileSync(join(wtDir, "file1.txt"), "utf8")).toBe("child 1 content\n");
+
+    for (const id of mock.childIds) {
+      expect(loadStatus(dir, id)?.merged).toBe(true);
+    }
+    // no merge left in progress on the planner's branch
+    expect(() => git(wtDir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])).toThrow();
+  });
+
+  it("merges the first of two children editing the same line, reports the second as conflicted with the path, keeps the planner branch clean", async () => {
+    const repo = initRepo();
+    const mock = mockGitStage(repo, [task(1), task(2)], (wtDir, idx) => {
+      writeFileSync(join(wtDir, "shared.txt"), `child ${idx} edit\n`, "utf8");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const rc = await runPlanner(
+      { claudeArgs: ["-p", "the goal", "--output-format", "json"] },
+      { runStage: mock.runStage, logDir: dir, maxChildren: 1 }
+    );
+    expect(rc).toBe(1);
+    expect(mock.childIds).toHaveLength(2);
+    const [firstId, secondId] = mock.childIds;
+
+    const plannerSt = loadStatus(dir, mock.getPlannerId());
+    const wtDir = plannerSt!.worktreeDir!;
+    // first child merged: its content landed on the planner branch
+    expect(loadStatus(dir, firstId)?.merged).toBe(true);
+    expect(readFileSync(join(wtDir, "shared.txt"), "utf8")).toBe("child 0 edit\n");
+
+    // second child conflicted: not merged, branch left intact
+    const secondSt = loadStatus(dir, secondId);
+    expect(secondSt?.merged).toBeFalsy();
+    expect(secondSt?.branch).toBeTruthy();
+    expect(git(wtDir, ["branch", "--list", secondSt!.branch!])).not.toBe("");
+
+    // the planner's own branch is clean: no merge in progress
+    expect(() => git(wtDir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])).toThrow();
+
+    // the report names the conflict and its path
+    const payload = JSON.parse(logSpy.mock.calls[0][0] as string);
+    logSpy.mockRestore();
+    const openLines: string[] = payload.report.open;
+    expect(openLines.some((l) => l.includes(secondId) && l.includes("shared.txt"))).toBe(true);
   });
 });

@@ -333,7 +333,11 @@ pai worker classes set research kimi/fast
 ```
 
 `pai worker providers use kimi` makes it the default target for
-`pai worker run` with no `--provider`/`--class`.
+`pai worker run` with no `--provider`, and also re-points every class whose
+target already pins a provider (e.g. `research kimi/fast` above stays as-is
+since it already names kimi; a class pinned to some other provider is
+switched to kimi, keeping its `/alias` or other fields). A class with no
+pinned provider (auto-routing only) is left untouched.
 
 ## Starting the harness on another provider
 

@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createInterface } from "node:readline";
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -385,6 +386,43 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     input.write("/quit\n");
     await done;
     expect(buf).toContain("\x1b[r"); // the region reset on leave
+  });
+
+  it("'your controls' spawns the same clickr argv as `pai worker controls` and echoes the result, without saying it to the worker", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let buf = "";
+    const io: FollowIO = {
+      stdin: input,
+      stdout: {
+        write: (s: string) => {
+          buf += s;
+          return true;
+        },
+        rows: 24,
+        columns: 80,
+      },
+      spawnResume: () => {
+        throw new Error("resume must not run for a controls line");
+      },
+    };
+    const controlsCalls: [string, "you" | "me", number | undefined][] = [];
+    io.spawnControls = (cid, who, pid) => {
+      controlsCalls.push([cid, who, pid]);
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
+      child.stderr = new EventEmitter();
+      setImmediate(() => child.emit("close", 0));
+      return child as unknown as { on: typeof child.on; stderr: EventEmitter };
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(200); // attach + backfill
+    input.write("your controls\n");
+    await sleep(200);
+    expect(controlsCalls).toEqual([[id, "you", -1]]); // pid from the fixture's status
+    expect(buf).toContain(`» controls → ${id} (exclusive; needs clickr with --agent support)`);
+    expect(buf).not.toMatch(/» your controls/); // never echoed/sent as an operator chat line
+    input.write("/quit\n");
+    await done;
   });
 
   it("a submitted line clears the prompt row (placeholder back) before the » echo", async () => {

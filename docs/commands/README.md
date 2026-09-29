@@ -69,14 +69,14 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai config unset <path>` | Remove one config value (dotted path), reverting it to the built-in default |
 | `pai config yaml` | Convert config.json → config.yaml (and voices.json → voices.yaml), with a short |
 | `pai daemon` | PAI daemon management: serve, status, restart, install, uninstall, logs |
-| `pai daemon install` | Install daemon as a launchd service and update ~/.claude.json to use the shim |
+| `pai daemon install` | Install daemon as a service (launchd/systemd) and update ~/.claude.json to use the shim |
 | `pai daemon keepalive` | Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines |
 | `pai daemon logs` | Tail the daemon log (/tmp/pai-daemon.log) |
 | `pai daemon migrate` | Migrate federation data from SQLite to PostgreSQL |
-| `pai daemon restart` | Send SIGTERM to the running daemon (launchd will restart it) |
+| `pai daemon restart` | Restart the running daemon (launchd on macOS, systemd on Linux) |
 | `pai daemon serve` | Start the PAI daemon in the foreground |
 | `pai daemon status` | Query the running daemon status |
-| `pai daemon uninstall` | Remove the launchd service and revert to direct MCP |
+| `pai daemon uninstall` | Remove the daemon service (launchd/systemd) and revert to direct MCP |
 | `pai db` | Database inspection: query, tables, schema (sqlite or postgres) |
 | `pai db migrate-to-postgres` | One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres |
 | `pai db query <sql>` | Run a SQL query against the selected database |
@@ -258,7 +258,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker providers remove <name>` | Remove a provider and any classes pointing at it |
 | `pai worker providers test [name]` | One-word pong probe through a provider (default: the active one) |
 | `pai worker providers update <name>` | Change cost tier and tags of a provider (routing constraints use these) |
-| `pai worker providers use <name>` | Make this provider the active one for runs without --provider/--class |
+| `pai worker providers use <name>` | Make this provider the active one, re-pointing every class pinned to a provider |
 | `pai worker proxy [stop]` | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
 | `pai worker ps` | List workers of this session (RUNNING + FINISHED); --all for every worker |
 | `pai worker replay <id>` | Print the transcript of one finished or running worker |

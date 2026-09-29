@@ -3,8 +3,5 @@
   "displayName": "PAI Core",
   "description": "Core memory engine, session management, and project registry",
   "version": "0.7.0",
-  "tier": "free",
-  "required": true,
-  "hooks": "hooks/hooks.json",
-  "skills": ["Sessions", "Route", "Name"]
+  "hooks": "./hooks/hooks.json"
 }

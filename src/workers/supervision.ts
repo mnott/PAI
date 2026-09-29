@@ -16,9 +16,13 @@
  *              executions all failed (PAI_WORKER_THRASH_FAILS, default 5) —
  *              a worker that keeps failing every command never goes quiet,
  *              so the stall detector alone cannot see it
- *   sleeping — state running, one Bash command sleeping N >= 60s — under the
- *              stall threshold for runs like `sleep 500` (8.3m), which would
- *              otherwise be invisible until they cross it
+ *   sleeping — state running, one Bash command sleeping N >= 60s with nothing
+ *              to wait on — under the stall threshold for runs like
+ *              `sleep 500` (8.3m), which would otherwise be invisible until
+ *              they cross it. The bounded-wait pattern (background a build or
+ *              test, then `sleep 60; ps` cycles) has live children and stays
+ *              quiet; stalled and thrashing remain the backstop for a child
+ *              that never finishes or dies silently
  *
  * The interactive chat pane (origin "chat") is never supervised: it is the
  * operator's own session, not a task worker. Its status file flips to done
@@ -47,6 +51,7 @@
  * that way: supervision that bills tokens to watch tokens is a bug.
  */
 
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./status.js";
@@ -145,6 +150,21 @@ export function eventId(worker: string, kind: SupervisionKind, turns = 0): strin
   return MID_RUN_KINDS.includes(kind) ? `${worker}#${kind}@${turns}` : `${worker}#${kind}`;
 }
 
+/**
+ * Live child pids of a runner via `pgrep -P` (its exit 1 means "no
+ * children"). Any failure — here or in an injected stub — is caught at the
+ * one call site in detectSupervisionEvents and reads as an empty list, so a
+ * broken check degrades to firing the sleeping event, never to silencing it.
+ */
+function pgrepChildren(pid: number): number[] {
+  return execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" })
+    .split("\n")
+    .flatMap((l) => {
+      const n = Number(l.trim());
+      return Number.isInteger(n) && n > 0 ? [n] : [];
+    });
+}
+
 export interface DetectOptions {
   /** How long a running worker may go without a turn before "stalled". */
   stallMs: number;
@@ -153,6 +173,12 @@ export interface DetectOptions {
   thrashFails?: number;
   /** pid liveness — injected so tests need no real processes. */
   isAlive?: (pid: number) => boolean;
+  /**
+   * Live child pids of a runner — a sleeping worker with children is a
+   * bounded wait on real work, not a stuck one. Injected so tests need no
+   * pgrep; the default is pgrepChildren.
+   */
+  childPids?: (pid: number) => number[];
   /**
    * How stale `updated` must be before a dead pid counts as killed rather
    * than as a status write racing the tick.
@@ -214,7 +240,20 @@ export function detectSupervisionEvents(
     } else if ((s.consecFails ?? 0) >= (opts.thrashFails ?? DEFAULT_THRASH_FAILS)) {
       kind = "thrashing";
     } else if (s.sleepSec != null) {
-      kind = "sleeping";
+      // bounded wait on real work: a sleep while a spawned child still runs
+      // is healthy, so flag only a sleep with nothing to wait on. The check
+      // runs once per sleeping candidate, only for a live pid; a failed
+      // check reads as no children and fires. stalled (no turns) and
+      // thrashing stay the backstop and never pass through here.
+      let hasChildren = false;
+      if (isAlive(s.pid)) {
+        try {
+          hasChildren = (opts.childPids ?? pgrepChildren)(s.pid).length > 0;
+        } catch {
+          hasChildren = false; // pgrep gone: degrade to today's behavior
+        }
+      }
+      if (!hasChildren) kind = "sleeping";
     }
     if (!kind) continue;
     out.push({

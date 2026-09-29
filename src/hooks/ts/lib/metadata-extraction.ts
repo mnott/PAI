@@ -52,10 +52,11 @@ export function extractAgentInstanceId(
   if (!result.agent_instance_id && toolInput?.prompt && typeof toolInput.prompt === 'string') {
     const promptMatch = toolInput.prompt.match(/\[AGENT_INSTANCE:\s*([^\]]+)\]/);
     if (promptMatch) {
-      result.agent_instance_id = promptMatch[1].trim();
+      const agentInstanceId = promptMatch[1].trim();
+      result.agent_instance_id = agentInstanceId;
 
       // Parse agent type and instance number from ID
-      const parts = result.agent_instance_id.match(/^([a-z-]+)-(\d+)$/);
+      const parts = agentInstanceId.match(/^([a-z-]+)-(\d+)$/);
       if (parts) {
         result.agent_type = parts[1];
         result.instance_number = parseInt(parts[2], 10);

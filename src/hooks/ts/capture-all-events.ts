@@ -8,9 +8,9 @@
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import { historyDir, agentSessionsPath } from './lib/pai-paths';
-import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction';
-import { isProbeSession } from './lib/project-utils';
+import { historyDir, agentSessionsPath } from './lib/pai-paths.js';
+import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction.js';
+import { isProbeSession } from './lib/project-utils.js';
 import { writeJsonAtomic } from '../../config/json-store.js';
 
 interface HookEvent {

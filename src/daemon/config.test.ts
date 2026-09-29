@@ -5,9 +5,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, chmodSync, statSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+
+function mode(path: string): number {
+  return statSync(path).mode & 0o777;
+}
 
 const savedHome = process.env.HOME;
 const savedPaiHome = process.env.PAI_HOME;
@@ -21,18 +25,21 @@ function newDir(): string {
 }
 
 let configFile: string;
+let homeDir: string;
 let loadConfig: typeof import("./config.js")["loadConfig"];
 let paiConfigYamlFilePath: typeof import("./config.js")["paiConfigYamlFilePath"];
 let ensureConfigDir: typeof import("./config.js")["ensureConfigDir"];
+let migrateConfigFile: typeof import("./config.js")["migrateConfigFile"];
 
 beforeAll(async () => {
-  process.env.HOME = newDir();
+  homeDir = newDir();
+  process.env.HOME = homeDir;
   const paiHome = newDir();
   process.env.PAI_HOME = paiHome;
   configFile = join(paiHome, "config.json");
   process.env.PAI_CONFIG_FILE = configFile;
 
-  ({ loadConfig, paiConfigYamlFilePath, ensureConfigDir } = await import("./config.js"));
+  ({ loadConfig, paiConfigYamlFilePath, ensureConfigDir, migrateConfigFile } = await import("./config.js"));
 });
 
 afterAll(() => {
@@ -80,5 +87,27 @@ describe("ensureConfigDir", () => {
     ensureConfigDir();
     expect(existsSync(configFile)).toBe(true);
     rmSync(configFile);
+  });
+});
+
+describe("migrateConfigFile", () => {
+  it("locks the migrated file and the old .migrated-<stamp> copy to 0600, even from a 0644 source (config.json can hold a Postgres password)", () => {
+    const oldConfigFile = join(homeDir, ".claude", "pai.json");
+    mkdirSync(dirname(oldConfigFile), { recursive: true });
+    writeFileSync(oldConfigFile, JSON.stringify({ logLevel: "debug" }), "utf-8");
+    chmodSync(oldConfigFile, 0o644);
+
+    const result = migrateConfigFile();
+
+    expect(result.fromPath).toBe(oldConfigFile);
+    expect(mode(configFile)).toBe(0o600);
+
+    const oldDir = dirname(oldConfigFile);
+    const migratedAside = readdirSync(oldDir).find((f) => f.startsWith("pai.json.migrated-"));
+    expect(migratedAside).toBeDefined();
+    expect(mode(join(oldDir, migratedAside!))).toBe(0o600);
+
+    rmSync(configFile);
+    rmSync(join(oldDir, migratedAside!));
   });
 });

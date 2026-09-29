@@ -3,9 +3,9 @@
  *
  * serve      — Start the PAI daemon in the foreground
  * status     — Query daemon status via IPC
- * restart    — Send SIGTERM to running daemon (launchd will restart it)
- * install    — Write launchd plist + update ~/.claude.json to use the shim
- * uninstall  — Remove launchd plist + revert ~/.claude.json to direct MCP
+ * restart    — Restart the running daemon (launchd on macOS, systemd on Linux)
+ * install    — Install as a service (launchd plist / systemd user unit) + update ~/.claude.json to use the shim
+ * uninstall  — Remove the service + revert ~/.claude.json to direct MCP
  * logs       — Tail the daemon log file
  */
 
@@ -17,9 +17,8 @@ import {
   unlinkSync,
   mkdirSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { homedir, userInfo } from "node:os";
 import { execSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
@@ -27,6 +26,7 @@ import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
+import { resolveFromModule } from "../../module-paths.js";
 import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
 import {
   loadSessionKeepaliveState,
@@ -44,25 +44,23 @@ const LAUNCH_AGENTS_DIR = join(HOME, "Library", "LaunchAgents");
 const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${PLIST_LABEL}.plist`);
 const DAEMON_LOG = daemonLogPath();
 
-/**
- * Resolve the absolute path to the built daemon entry point.
- * tsdown bundles into dist/daemon/index.mjs (or similar).
- * From dist/cli/index.mjs → dist/ → dist/daemon/index.mjs
- */
-function getDaemonBinPath(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  return join(__dirname, "../daemon/index.mjs");
-}
+const SYSTEMD_UNIT_NAME = "pai-daemon.service";
+const SYSTEMD_USER_DIR = join(HOME, ".config", "systemd", "user");
+const SYSTEMD_UNIT_PATH = join(SYSTEMD_USER_DIR, SYSTEMD_UNIT_NAME);
 
 /**
- * Resolve the absolute path to the built MCP shim entry point.
- * dist/cli/index.mjs → dist/ → dist/daemon-mcp/index.mjs
+ * Resolve the absolute path to the built daemon entry point.
+ * tsdown may emit this module's own chunk directly under dist/ rather than
+ * under dist/cli/, so a fixed "../daemon/index.mjs" is not reliable — walk up
+ * from this module until dist/daemon/index.mjs is found instead.
  */
+function getDaemonBinPath(): string {
+  return resolveFromModule(import.meta.url, "dist/daemon/index.mjs");
+}
+
+/** Resolve the absolute path to the built MCP shim entry point. Same reasoning as getDaemonBinPath. */
 function getShimBinPath(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  return join(__dirname, "../daemon-mcp/index.mjs");
+  return resolveFromModule(import.meta.url, "dist/daemon-mcp/index.mjs");
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +112,36 @@ function generatePlist(daemonBin: string): string {
 </dict>
 </plist>
 `;
+}
+
+// ---------------------------------------------------------------------------
+// systemd user unit generation (Linux)
+// ---------------------------------------------------------------------------
+
+export function generateSystemdUnit(daemonBin: string, nodeBin: string): string {
+  return `[Unit]
+Description=PAI Daemon
+After=network.target
+
+[Service]
+ExecStart=${nodeBin} ${daemonBin} serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+/** Warns (does not fail) when the user's systemd instance is not kept alive after logout. */
+function warnIfLingerDisabled(): void {
+  const username = userInfo().username;
+  const result = spawnSync("loginctl", ["show-user", username, "-p", "Linger"], {
+    encoding: "utf8",
+  });
+  if (result.status === 0 && result.stdout.trim() !== "Linger=yes") {
+    console.log(warn(`  Linger is off for ${username} — the daemon stops when you log out.`));
+    console.log(dim(`    Enable it: loginctl enable-linger ${username}`));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +207,27 @@ async function cmdStatus(): Promise<void> {
 }
 
 function cmdRestart(): void {
+  if (process.platform === "linux") {
+    const result = spawnSync("systemctl", ["--user", "restart", SYSTEMD_UNIT_NAME], {
+      encoding: "utf8",
+    });
+    if (result.status === 0) {
+      console.log(ok("Restarted via systemd."));
+    } else {
+      console.error(err(`systemctl restart failed: ${(result.stderr || "").trim()}`));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (process.platform !== "darwin") {
+    console.error(
+      err(`Unsupported platform: ${process.platform}. Daemon restart supports macOS (launchd) and Linux (systemd user) only.`)
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   // Find and signal the running daemon
   try {
     const result = spawnSync("pgrep", ["-f", "pai-daemon.*serve"], {
@@ -222,14 +271,7 @@ function cmdRestart(): void {
   }
 }
 
-function cmdInstall(): void {
-  const daemonBin = getDaemonBinPath();
-  const shimBin = getShimBinPath();
-
-  console.log();
-  console.log(bold("  PAI Daemon Install"));
-  console.log();
-
+function installServiceDarwin(daemonBin: string): boolean {
   // 1. Write launchd plist
   if (!existsSync(LAUNCH_AGENTS_DIR)) {
     mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
@@ -242,7 +284,7 @@ function cmdInstall(): void {
   } catch (e) {
     console.error(err(`  Failed to write plist: ${e}`));
     process.exitCode = 1;
-    return;
+    return false;
   }
 
   // 2. Load the plist (unload first in case it was already there)
@@ -259,6 +301,59 @@ function cmdInstall(): void {
   } catch {
     console.log(warn("  Could not run launchctl. Load manually:"));
     console.log(dim(`    launchctl load ${PLIST_PATH}`));
+  }
+  return true;
+}
+
+function installServiceLinux(daemonBin: string): boolean {
+  // 1. Write systemd user unit
+  if (!existsSync(SYSTEMD_USER_DIR)) {
+    mkdirSync(SYSTEMD_USER_DIR, { recursive: true });
+  }
+
+  const unitContent = generateSystemdUnit(daemonBin, process.execPath);
+  try {
+    writeFileSync(SYSTEMD_UNIT_PATH, unitContent, "utf8");
+    console.log(ok(`  Wrote systemd unit: ${SYSTEMD_UNIT_PATH}`));
+  } catch (e) {
+    console.error(err(`  Failed to write systemd unit: ${e}`));
+    process.exitCode = 1;
+    return false;
+  }
+
+  // 2. daemon-reload + enable --now
+  spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
+  const enableResult = spawnSync("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT_NAME], {
+    encoding: "utf8",
+  });
+  if (enableResult.status === 0) {
+    console.log(ok("  Enabled and started via systemd."));
+  } else {
+    console.log(warn(`  systemctl enable --now: ${(enableResult.stderr || "").trim()}`));
+  }
+
+  warnIfLingerDisabled();
+  return true;
+}
+
+function cmdInstall(): void {
+  const daemonBin = getDaemonBinPath();
+  const shimBin = getShimBinPath();
+
+  console.log();
+  console.log(bold("  PAI Daemon Install"));
+  console.log();
+
+  if (process.platform === "darwin") {
+    if (!installServiceDarwin(daemonBin)) return;
+  } else if (process.platform === "linux") {
+    if (!installServiceLinux(daemonBin)) return;
+  } else {
+    console.error(
+      err(`  Unsupported platform: ${process.platform}. Daemon install supports macOS (launchd) and Linux (systemd user) only.`)
+    );
+    process.exitCode = 1;
+    return;
   }
 
   // 3. Update ~/.claude.json to use the shim
@@ -320,12 +415,7 @@ function cmdInstall(): void {
   console.log();
 }
 
-function cmdUninstall(): void {
-  console.log();
-  console.log(bold("  PAI Daemon Uninstall"));
-  console.log();
-
-  // 1. Unload and remove plist
+function uninstallServiceDarwin(): void {
   if (existsSync(PLIST_PATH)) {
     try {
       spawnSync("launchctl", ["unload", PLIST_PATH], { encoding: "utf8" });
@@ -342,8 +432,44 @@ function cmdUninstall(): void {
   } else {
     console.log(dim("  No launchd plist found."));
   }
+}
 
-  // 2. Revert ~/.claude.json to legacy direct MCP
+function uninstallServiceLinux(): void {
+  if (existsSync(SYSTEMD_UNIT_PATH)) {
+    spawnSync("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT_NAME], {
+      encoding: "utf8",
+    });
+    console.log(ok("  Disabled and stopped via systemd."));
+    try {
+      unlinkSync(SYSTEMD_UNIT_PATH);
+      console.log(ok(`  Removed unit: ${SYSTEMD_UNIT_PATH}`));
+    } catch (e) {
+      console.log(warn(`  Could not remove unit: ${e}`));
+    }
+    spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
+  } else {
+    console.log(dim("  No systemd unit found."));
+  }
+}
+
+function cmdUninstall(): void {
+  console.log();
+  console.log(bold("  PAI Daemon Uninstall"));
+  console.log();
+
+  if (process.platform === "darwin") {
+    uninstallServiceDarwin();
+  } else if (process.platform === "linux") {
+    uninstallServiceLinux();
+  } else {
+    console.error(
+      err(`  Unsupported platform: ${process.platform}. Daemon uninstall supports macOS (launchd) and Linux (systemd user) only.`)
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // Revert ~/.claude.json to legacy direct MCP
   const config = readClaudeJson();
   const servers =
     typeof config.mcpServers === "object" && config.mcpServers !== null
@@ -376,15 +502,10 @@ async function cmdMigrate(connectionString?: string): Promise<void> {
   console.log(dim("  Running SQLite → PostgreSQL migration..."));
   console.log();
 
-  // Resolve the migration script path relative to this built file
-  const { fileURLToPath } = await import("node:url");
-  const { dirname: pathDirname, join: pathJoin } = await import("node:path");
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = pathDirname(__filename);
-
-  // The migration script is at docker/migrate-sqlite.ts in the source tree
-  // When built, we look for it relative to the package root
-  const migrationScript = pathJoin(__dirname, "../..", "docker", "migrate-sqlite.ts");
+  // The migration script is at docker/migrate-sqlite.ts, a package-root
+  // sibling of dist/ that is not bundled — walk up to find it regardless of
+  // which dist/ chunk this module ended up in.
+  const migrationScript = resolveFromModule(import.meta.url, "docker/migrate-sqlite.ts");
   const { spawnSync: spawn } = await import("node:child_process");
 
   // Use npx tsx to run the TypeScript migration script (bun doesn't support better-sqlite3)
@@ -507,7 +628,7 @@ export function registerDaemonCommands(daemonCmd: Command): void {
 
   daemonCmd
     .command("restart")
-    .description("Send SIGTERM to the running daemon (launchd will restart it)")
+    .description("Restart the running daemon (launchd on macOS, systemd on Linux)")
     .action(() => {
       cmdRestart();
     });
@@ -515,7 +636,7 @@ export function registerDaemonCommands(daemonCmd: Command): void {
   daemonCmd
     .command("install")
     .description(
-      "Install daemon as a launchd service and update ~/.claude.json to use the shim"
+      "Install daemon as a service (launchd/systemd) and update ~/.claude.json to use the shim"
     )
     .action(() => {
       cmdInstall();
@@ -523,7 +644,7 @@ export function registerDaemonCommands(daemonCmd: Command): void {
 
   daemonCmd
     .command("uninstall")
-    .description("Remove the launchd service and revert to direct MCP")
+    .description("Remove the daemon service (launchd/systemd) and revert to direct MCP")
     .action(() => {
       cmdUninstall();
     });

@@ -15,7 +15,7 @@ import {
   isProbeSession,
   updateTodoContinue, sessionIdFromTranscript,
   WorkItem
-} from '../lib/project-utils';
+} from '../lib/project-utils.js';
 import { paiHomePath, sessionStateDir } from '../../../config/pai-files.js';
 
 // ---------------------------------------------------------------------------

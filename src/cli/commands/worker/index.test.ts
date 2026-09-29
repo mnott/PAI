@@ -308,6 +308,70 @@ describe("worker capability", () => {
   });
 });
 
+describe("worker resume", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-worker-resume-"));
+    mocks.logDir = dir;
+    const status: WorkerStatus = {
+      id: "resume-test",
+      pid: 4242,
+      label: "original label",
+      cwd: dir,
+      term: "",
+      provider: "anthropic",
+      model: "sonnet",
+      state: "done",
+      started: nowStamp(),
+      updated: nowStamp(),
+      turns: 1,
+      tools: 0,
+      last: "",
+      rc: 0,
+      secs: 2,
+      claudeSession: "sess-abc",
+    };
+    saveStatus(dir, status);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("--output-format rides the claudeArgs into runWorker, same as `run`", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "resume", "resume-test", "keep going", "--output-format", "json",
+    ]);
+    expect(mocks.runWorker).toHaveBeenCalledTimes(1);
+    const opts = mocks.runWorker.mock.calls[0][0];
+    expect(opts.claudeArgs).toEqual(["--resume", "sess-abc", "-p", "keep going", "--output-format", "json"]);
+  });
+
+  it("--label overrides the default \"↩ <old label>\"", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync([
+      "node", "pai", "worker", "resume", "resume-test", "keep going", "--label", "custom label",
+    ]);
+    expect(mocks.runWorker.mock.calls[0][0].label).toBe("custom label");
+  });
+
+  it("without --label, the default is \"↩ <old label>\"", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync(["node", "pai", "worker", "resume", "resume-test", "keep going"]);
+    expect(mocks.runWorker.mock.calls[0][0].label).toBe("↩ original label");
+  });
+
+  it("without --output-format, claudeArgs carries no --output-format flag", async () => {
+    mocks.runWorker.mockResolvedValue(0);
+    await buildCli().parseAsync(["node", "pai", "worker", "resume", "resume-test", "keep going"]);
+    expect(mocks.runWorker.mock.calls[0][0].claudeArgs).toEqual(["--resume", "sess-abc", "-p", "keep going"]);
+  });
+});
+
 describe("worker kill: reused-pid protection", () => {
   let dir: string;
 

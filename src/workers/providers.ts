@@ -184,16 +184,61 @@ export function removeProvider(name: string, configPath?: string): WorkersConfig
   return workers;
 }
 
-export function useProvider(name: string, configPath?: string): WorkersConfig {
+/**
+ * Point a class target at `name`, keeping every other field. Only touches
+ * targets that already pin a provider — a constraint-only object (no
+ * `provider`) only narrows auto-routing and is left alone. A string target's
+ * `/alias` is dropped (falling back to `name`'s default model) when `name`
+ * has no such model configured — the class must move to `name` either way,
+ * since leaving it on the old provider is exactly the bug this fixes.
+ */
+function repointClassTarget(
+  target: ClassTarget,
+  name: string,
+  providers: WorkersConfig["providers"]
+): ClassTarget | null {
+  if (typeof target === "string") {
+    const [provider, alias] = target.split("/");
+    if (provider === name) return null;
+    if (alias && name !== ANTHROPIC_NATIVE && alias !== "default" && !providers[name]?.models[alias]) {
+      return name;
+    }
+    return alias ? `${name}/${alias}` : name;
+  }
+  if (!target.provider || target.provider === name) return null;
+  return { ...target, provider: name };
+}
+
+/**
+ * Make `name` the active provider. Unless `name` is "auto", also re-points
+ * every class whose target pins a provider (string or `{provider: …}`) at
+ * it — a class pinned to a provider otherwise wins over `active` at run time
+ * (routing.ts resolveTarget), so leaving classes untouched would make `use`
+ * silently do nothing for any class already pinned elsewhere.
+ */
+export function useProvider(
+  name: string,
+  configPath?: string
+): { workers: WorkersConfig; repointed: number } {
   const { raw, workers } = readWorkersSection(configPath);
-  if (name !== ANTHROPIC_NATIVE && !workers.providers[name]) {
+  if (name !== ANTHROPIC_NATIVE && name !== "auto" && !workers.providers[name]) {
     throw new WorkersConfigError(
       `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
     );
   }
   workers.active = name;
+  let repointed = 0;
+  if (name !== "auto") {
+    for (const [cls, target] of Object.entries(workers.classes)) {
+      const next = repointClassTarget(target, name, workers.providers);
+      if (next !== null) {
+        workers.classes[cls] = next;
+        repointed++;
+      }
+    }
+  }
   writeWorkersSection(raw, workers, configPath);
-  return workers;
+  return { workers, repointed };
 }
 
 /** Which model capability of a provider a set touches (MODEL_CAPABILITIES). */
