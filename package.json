@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/pai",
-  "version": "0.61.0",
+  "version": "0.62.0",
   "description": "PAI Knowledge OS — Personal AI Infrastructure with federated memory and project management",
   "type": "module",
   "main": "dist/index.mjs",
@@ -61,7 +61,7 @@
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build && node dist/cli/index.mjs worker pending --gate"
   },
   "author": "Matthias Nott",
   "license": "MIT",

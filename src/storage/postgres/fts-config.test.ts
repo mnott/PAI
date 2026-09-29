@@ -172,4 +172,33 @@ describe("Postgres FTS config migration (fts_vector 'english' -> 'simple')", () 
       expect(await findsRunning(pool, "c3")).toBe(true);
     });
   }, 30000);
+
+  it("retries a batch UPDATE once on a deadlock (40P01) and completes", async () => {
+    await withScratchDb(async (pool) => {
+      await pool.query(initSql);
+      await insertChunk(pool, "c1", "The process is running right now.");
+
+      const originalQuery = pool.query.bind(pool);
+      let updateAttempts = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pool as any).query = (...args: any[]) => {
+        const sql = typeof args[0] === "string" ? args[0] : "";
+        if (/UPDATE\s+pai_chunks/i.test(sql)) {
+          updateAttempts++;
+          if (updateAttempts === 1) {
+            const err = new Error("deadlock detected") as Error & { code: string };
+            err.code = "40P01";
+            return Promise.reject(err);
+          }
+        }
+        return originalQuery(...(args as Parameters<typeof originalQuery>));
+      };
+
+      await migrateFtsConfig(backendFor(pool));
+
+      expect(updateAttempts).toBe(2);
+      expect(await marker(pool)).toBe("fts:simple");
+      expect(await findsRunning(pool, "c1")).toBe(true);
+    });
+  }, 30000);
 });

@@ -16,6 +16,9 @@
  * - Sending ntfy.sh notifications
  */
 
+import { readWorkersSection } from '../../../workers/config.js';
+import { workersLogDir } from '../../../workers/paths.js';
+import { pendingResults } from '../../../workers/pending.js';
 import { isWorkerSession } from "../lib/worker-session.js";
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, basename, dirname, resolve } from 'path';
@@ -491,6 +494,17 @@ ${paiProjectBlock ? `\n${paiProjectBlock}` : ''}
 
   // Output to stdout for Claude to receive
   console.log(reminder);
+
+  // Unmerged finished worker results in this repo: one line, none when zero
+  try {
+    const { workers } = readWorkersSection();
+    const pending = pendingResults(workersLogDir(workers), cwd);
+    if (pending.length) {
+      console.log(`${pending.length} finished worker result(s) not merged in this repo: ${pending.map((r) => r.id).join(', ')} — run \`pai worker pending\``);
+    }
+  } catch {
+    // no workers config or not a git repo: stay silent
+  }
 
   // 8.5. INJECT THE PAUSE CHECKPOINT
   //

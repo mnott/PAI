@@ -13,9 +13,10 @@
  * logDir stays covered.
  */
 
-import { readFileSync, realpathSync, existsSync } from "fs";
+import { readFileSync, realpathSync, existsSync, readdirSync, lstatSync } from "fs";
+import { fileURLToPath } from "url";
 import { homedir } from "os";
-import { basename, dirname, join, sep } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import { parse } from "yaml";
 
 const DEFAULT_LOG_DIR = "~/.claude/logs/workers";
@@ -100,4 +101,55 @@ export function isInsideWorkerWorktree(cwd, opts = {}) {
   );
   const here = real(cwd);
   return here === root || here.startsWith(root + sep);
+}
+
+/**
+ * Root of the checkout the live ~/.claude/Hooks symlinks already point into:
+ * the nearest package.json ancestor of the first live symlink target. Null
+ * when there is none yet (first install, or every link dangles).
+ */
+export function canonicalInstallRoot(claudeDir = join(homedir(), ".claude")) {
+  const hooks = join(claudeDir, "Hooks");
+  let names = [];
+  try {
+    names = readdirSync(hooks);
+  } catch {
+    return null;
+  }
+  for (const n of names) {
+    try {
+      const link = join(hooks, n);
+      if (!lstatSync(link).isSymbolicLink()) continue;
+      let cur = dirname(realpathSync(link));
+      for (;;) {
+        if (existsSync(join(cur, "package.json"))) return cur;
+        const up = dirname(cur);
+        if (up === cur) break;
+        cur = up;
+      }
+    } catch {
+      // dangling or unreadable link — try the next one
+    }
+  }
+  return null;
+}
+
+const HERE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * Why the --sync steps must not touch ~/.claude for this build, or null when
+ * they may: never from a worker worktree, and only from the canonical install
+ * (or when none exists yet). A copy of the repo built elsewhere — /tmp, a
+ * clone — must not repoint the live hook and skill symlinks at itself.
+ */
+export function syncSkipReason(opts = {}) {
+  const repo = real(opts.repoRoot ?? HERE_ROOT);
+  if (isInsideWorkerWorktree(opts.repoRoot ?? HERE_ROOT, opts) || isInsideWorkerWorktree(opts.cwd ?? process.cwd(), opts)) {
+    return "build runs inside a worker worktree";
+  }
+  const canon = canonicalInstallRoot(opts.claudeDir);
+  if (canon && real(canon) !== repo) {
+    return `skipping symlink sync: ${repo} is not the canonical install ${real(canon)}`;
+  }
+  return null;
 }

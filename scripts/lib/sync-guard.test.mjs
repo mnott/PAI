@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { isInsideWorkerWorktree, workersLogDirFromConfig } from "./sync-guard.mjs";
+import { isInsideWorkerWorktree, workersLogDirFromConfig, syncSkipReason } from "./sync-guard.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-sync-guard-test-"));
 
@@ -66,5 +66,39 @@ describe("isInsideWorkerWorktree", () => {
     writeFileSync(cfg, JSON.stringify({ workers: { logDir: join(dir, "logs") } }), "utf8");
     expect(isInsideWorkerWorktree(wt, { configPath: cfg })).toBe(true);
     expect(isInsideWorkerWorktree("/opt/src/PAI", { configPath: cfg })).toBe(false);
+  });
+});
+
+describe("syncSkipReason (canonical install)", () => {
+  const mk = (name) => {
+    const root = join(dir, name);
+    mkdirSync(join(root, "dist", "hooks"), { recursive: true });
+    writeFileSync(join(root, "package.json"), "{}", "utf8");
+    writeFileSync(join(root, "dist", "hooks", "h.mjs"), "", "utf8");
+    return root;
+  };
+  const claudeWithHook = (canon) => {
+    const claudeDir = join(dir, `claude-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(claudeDir, "Hooks"), { recursive: true });
+    symlinkSync(join(canon, "dist", "hooks", "h.mjs"), join(claudeDir, "Hooks", "h.mjs"));
+    return claudeDir;
+  };
+  const logDir = join(dir, "no-workers");
+
+  it("skips, with the message, for a repo that is not the canonical root", () => {
+    const canon = mk("canon-a");
+    const other = mk("other-a");
+    const reason = syncSkipReason({ repoRoot: other, cwd: other, claudeDir: claudeWithHook(canon), logDir });
+    expect(reason).toMatch(/^skipping symlink sync: .*other-a is not the canonical install .*canon-a$/);
+  });
+
+  it("syncs for the canonical root", () => {
+    const canon = mk("canon-b");
+    expect(syncSkipReason({ repoRoot: canon, cwd: canon, claudeDir: claudeWithHook(canon), logDir })).toBeNull();
+  });
+
+  it("syncs on first install (no Hooks symlinks yet)", () => {
+    const repo = mk("first");
+    expect(syncSkipReason({ repoRoot: repo, cwd: repo, claudeDir: join(dir, "empty-claude"), logDir })).toBeNull();
   });
 });

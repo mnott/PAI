@@ -252,6 +252,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
 | `pai worker pane [id]` | Open the follow pane for a worker (or one shared pane for this session) |
+| `pai worker pending` | Finished workers whose branch or worktree holds work not yet merged into this repo |
 | `pai worker providers` | Providers: list (default), add, remove, use, enable, disable, test |
 | `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds classes. |
 | `pai worker providers disable <name>` | Disable a provider (auto-routing skips it; --provider still works) |

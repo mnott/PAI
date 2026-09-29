@@ -129,6 +129,8 @@ export const ALWAYS_SKIP_DIRS = new Set([
   // Backup snapshots (Carbon Copy Cloner, Time Machine, etc.)
   "snaps",
   ".Trashes",
+  // Worker worktrees — full repo copies checked out per worker run
+  "worktrees",
 ]);
 
 /**

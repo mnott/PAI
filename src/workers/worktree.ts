@@ -17,7 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
@@ -35,11 +35,11 @@ export function worktreePath(logDir: string, id: string): string {
 }
 
 /** Run git in `cwd` with an optional env override, trimmed stdout, stderr on failure. */
-function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
+function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv, timeout = 30_000): string {
   try {
     return execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
-      timeout: 30_000,
+      timeout,
       stdio: ["ignore", "pipe", "pipe"],
       ...(env ? { env } : {}),
     }).trim();
@@ -54,8 +54,8 @@ function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
 }
 
 /** Run git in `cwd`, returning trimmed stdout; throws with stderr on failure. */
-export function git(cwd: string, args: string[]): string {
-  return runGit(cwd, args);
+export function git(cwd: string, args: string[], timeoutMs?: number): string {
+  return runGit(cwd, args, undefined, timeoutMs);
 }
 
 /** Is `cwd` inside a git repository (a .git dir — worktrees: a .git file)? */
@@ -67,40 +67,22 @@ export function isGitRepo(cwd: string): boolean {
   }
 }
 
-/**
- * Does the prompt read as a read-only task? Writing classes default to a
- * worktree; a prompt that only asks to look at things should not pay for one.
- * First-word verbs plus the explicit markers people actually write.
- */
-export function promptLooksReadonly(prompt: string): boolean {
-  const p = prompt.trim();
-  if (!p) return true;
-  const firstLine = p.split("\n", 1)[0];
-  if (/\b(read[- ]only|do not (modify|change|edit|write)|don'?t (modify|change|edit|write)|no changes)\b/i.test(firstLine)) {
-    return true;
-  }
-  return /^(review|read|analy[sz]e|research|summar[iy]|inspect|investigate|spotcheck|report|find|list|check|verify|describe|explain|show)\b/i.test(
-    p
-  );
-}
+/** Tools that can write to the checkout (Bash can, via the shell). */
+const WRITING_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"];
 
-/** The classes whose runs write files and therefore default to a worktree. */
-export const WORKTREE_CLASSES = ["implement", "complex", "plan"] as const;
+/** Can a run with these --allowedTools write? No restriction at all means yes. */
+export function toolsCanWrite(allowedTools: string[]): boolean {
+  const names = allowedTools.flatMap((e) => e.split(",")).map((s) => s.trim().replace(/\(.*$/, "")).filter(Boolean);
+  return !names.length || names.some((n) => WRITING_TOOLS.includes(n));
+}
 
 /** How the run flags decide the worktree question; undefined = decide by default. */
 export type WorktreeFlag = boolean | undefined;
 
-/** Should this run get a worktree? Explicit flag first, then the default rule. */
-export function worktreeWanted(
-  flag: WorktreeFlag,
-  opts: { cwd: string; className?: string; prompt: string | null }
-): boolean {
+/** Should this run get a worktree? Explicit flag first, then: can it write? */
+export function worktreeWanted(flag: WorktreeFlag, opts: { cwd: string; allowedTools: string[] }): boolean {
   if (flag !== undefined) return flag;
-  if (!opts.className || !(WORKTREE_CLASSES as readonly string[]).includes(opts.className)) {
-    return false;
-  }
-  if (!isGitRepo(opts.cwd)) return false;
-  return !promptLooksReadonly(opts.prompt ?? "");
+  return toolsCanWrite(opts.allowedTools) && isGitRepo(opts.cwd);
 }
 
 export interface WorktreeInfo {
@@ -155,7 +137,53 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const dirty = dirtyPaths(cwd).length > 0;
   const base = dirty ? snapshotUncommitted(cwd, id, head) : head;
   git(cwd, ["worktree", "add", dir, "-b", branch, base]);
+  provisionDeps(logDir, id, cwd, dir);
   return { dir, branch, base, snapshot: dirty };
+}
+
+/**
+ * Give the worktree its own dependencies so the worker never has to improvise
+ * (symlinking node_modules to the main checkout, building in a /tmp copy).
+ * A real node_modules directory in the main checkout is APFS-cloned
+ * (`cp -c`, copy-on-write, near instant); elsewhere the lockfile installs it.
+ * Never a symlink. Time-boxed and best effort: a failure is logged, the run
+ * goes on.
+ */
+export function provisionDeps(logDir: string, id: string, cwd: string, wtDir: string): void {
+  const note = (n: string) => appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id, note: n });
+  try {
+    const root = git(cwd, ["rev-parse", "--show-toplevel"]);
+    const main = join(root, "node_modules");
+    const dest = join(wtDir, "node_modules");
+    if (!existsSync(main) || lstatSync(main).isSymbolicLink() || existsSync(dest)) return;
+    try {
+      // an unignored node_modules would be committed by salvage
+      git(wtDir, ["check-ignore", "-q", "node_modules"]);
+    } catch {
+      return;
+    }
+    const t0 = Date.now();
+    const opts = { cwd: wtDir, stdio: "ignore" as const, timeout: 180_000 };
+    if (platform() === "darwin") {
+      try {
+        execFileSync("cp", ["-cR", main, dest], opts);
+        note(`node_modules cloned (apfs) in ${Date.now() - t0}ms`);
+        return;
+      } catch {
+        rmSync(dest, { recursive: true, force: true }); // half-copied
+      }
+    }
+    if (existsSync(join(wtDir, "bun.lock"))) execFileSync("bun", ["install", "--frozen-lockfile"], opts);
+    else if (existsSync(join(wtDir, "package-lock.json"))) execFileSync("npm", ["ci"], opts);
+    else return;
+    note(`node_modules installed from lockfile in ${Date.now() - t0}ms`);
+  } catch (e) {
+    try {
+      note(`node_modules provisioning failed: ${(e as Error).message}`);
+    } catch {
+      /* ledger is best effort too */
+    }
+  }
 }
 
 /** Commits the branch collected on top of its base. */
@@ -184,8 +212,16 @@ export function recordWorktree(
     s.worktreeDir = info.dir;
     s.worktreeBase = info.base;
     s.worktreeSnapshot = info.snapshot;
+  } else if (safeCommitsSince(info.dir, info.base) > 0) {
+    // a failed or killed run that committed (or was salvaged) keeps its work:
+    // branch and worktree stay for `pai worker merge` / `discard`
+    s.branch = info.branch;
+    s.commits = commitsSince(info.dir, info.base);
+    s.worktreeDir = info.dir;
+    s.worktreeBase = info.base;
+    s.worktreeSnapshot = info.snapshot;
   } else {
-    // a failed run leaves nothing to merge; the branch dies with the worktree
+    // a failed run with no commits leaves nothing to merge; the branch dies with the worktree
     removeWorktree(s.cwd, info.dir, true);
     try {
       git(s.cwd, ["branch", "-D", info.branch]);
@@ -200,6 +236,40 @@ export function recordWorktree(
   }
   saveStatus(logDir, s);
   return s;
+}
+
+function safeCommitsSince(dir: string, base: string): number {
+  try {
+    return commitsSince(dir, base);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Salvage for an exit path (run finaliser, kill signal): commit whatever the
+ * worker left uncommitted, log WORKER-SALVAGE, never throw. Bounded by
+ * `timeoutMs` per git call. Returns the committed paths.
+ */
+export function salvageOnExit(
+  ledger: string,
+  id: string,
+  label: string,
+  wtDir: string,
+  timeoutMs?: number
+): string[] {
+  try {
+    const { committed, skipped } = salvageUncommitted(wtDir, label, timeoutMs);
+    if (committed.length) appendLedger(ledger, "WORKER-SALVAGE", { id, paths: committed.join(","), skipped: skipped.length });
+    return committed;
+  } catch (e) {
+    try {
+      appendLedger(ledger, "WORKER-NOTE", { id, note: `salvage failed: ${(e as Error).message}` });
+    } catch {
+      /* best effort */
+    }
+    return [];
+  }
 }
 
 /** Remove a worktree directory from git's books and the filesystem. */
@@ -226,9 +296,9 @@ function removeWorktree(cwd: string, dir: string, force: boolean): void {
  * carry used; name-only, not porcelain: a worktree-only change renders as
  * " M path" and the shared git() helper trims that leading space away.
  */
-export function uncommittedPaths(wtDir: string): string[] {
-  const tracked = git(wtDir, ["diff", "--name-only", "HEAD"]).split("\n").filter(Boolean);
-  const untracked = git(wtDir, ["ls-files", "--others", "--exclude-standard"])
+export function uncommittedPaths(wtDir: string, timeoutMs?: number): string[] {
+  const tracked = git(wtDir, ["diff", "--name-only", "HEAD"], timeoutMs).split("\n").filter(Boolean);
+  const untracked = git(wtDir, ["ls-files", "--others", "--exclude-standard"], timeoutMs)
     .split("\n")
     .filter(Boolean);
   return [...tracked, ...untracked];
@@ -275,8 +345,8 @@ export interface SalvageResult {
  * as skipped instead. A failed commit throws with the worktree untouched:
  * its edits are still on disk, so nothing is lost.
  */
-export function salvageUncommitted(wtDir: string, label: string): SalvageResult {
-  const paths = uncommittedPaths(wtDir);
+export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: number): SalvageResult {
+  const paths = uncommittedPaths(wtDir, timeoutMs);
   if (!paths.length) return { committed: [], skipped: [] };
   const skipped: string[] = [];
   const toStage: string[] = [];
@@ -289,8 +359,12 @@ export function salvageUncommitted(wtDir: string, label: string): SalvageResult 
   }
   if (!toStage.length) return { committed: [], skipped };
   try {
-    git(wtDir, ["add", "--", ...toStage]);
-    git(wtDir, ["commit", "-m", `salvaged: ${label}`]);
+    // -A over the whole tree, not an explicit path list: a staged deletion is
+    // gone from disk and index, so naming it makes `git add` fail on the pathspec.
+    // Only the outside symlinks (a handful) are excluded.
+    const excludes = paths.filter((p) => !toStage.includes(p)).map((p) => `:(exclude,literal)${p}`);
+    git(wtDir, ["add", "-A", "--", ".", ...excludes], timeoutMs);
+    git(wtDir, ["commit", "-m", `salvaged: ${label}`], timeoutMs);
   } catch (e) {
     throw new Error(
       `cannot salvage the uncommitted changes in ${wtDir} — ${(e as Error).message}; ` +

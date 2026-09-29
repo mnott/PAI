@@ -13,6 +13,12 @@
  * on every daemon boot for free once migrated, and resume if a batch run
  * was interrupted: every 20 batches the last completed id is stored in the
  * comment as `fts:simple:inprogress:<id>` and the next start continues after it.
+ *
+ * The rebuild runs in the background while the indexer writes pai_chunks, so
+ * each batch UPDATE locks its rows in id order (consistent with other writers)
+ * and is retried up to 5 times on deadlock (40P01) or serialization failure
+ * (40001) with a 200ms * attempt backoff. Rows whose fts_vector is already
+ * correct are skipped, so a retry or restart is cheap.
  */
 
 import type { StorageBackend } from "../interface.js";
@@ -20,7 +26,13 @@ import type { PostgresBackend } from "../postgres.js";
 
 const DONE_MARKER = "fts:simple";
 const PROGRESS_PREFIX = "fts:simple:inprogress:";
-const BATCH_SIZE = 5000;
+const BATCH_SIZE = 1000;
+const MAX_ATTEMPTS = 5;
+const RETRYABLE_CODES = new Set(["40P01", "40001"]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
   // Obtained inside the async function body, not by the caller: a throw here
@@ -82,12 +94,23 @@ export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
     if (idRows.rows.length === 0) break;
 
     const ids: string[] = idRows.rows.map((r) => r.id);
-    await pool.query(
-      `UPDATE pai_chunks SET fts_vector = to_tsvector('simple', COALESCE(text, ''))
-       WHERE id = ANY($1::text[])`,
-      [ids]
-    );
-    totalUpdated += ids.length;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const result = await pool.query(
+          `UPDATE pai_chunks c SET fts_vector = to_tsvector('simple', COALESCE(c.text, ''))
+           FROM (SELECT id FROM pai_chunks WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE) s
+           WHERE c.id = s.id
+             AND c.fts_vector IS DISTINCT FROM to_tsvector('simple', COALESCE(c.text, ''))`,
+          [ids]
+        );
+        totalUpdated += result.rowCount ?? 0;
+        break;
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (attempt >= MAX_ATTEMPTS || !code || !RETRYABLE_CODES.has(code)) throw err;
+        await sleep(200 * attempt);
+      }
+    }
     lastId = ids[ids.length - 1];
     batchN++;
     if (batchN % 20 === 0) {

@@ -41,6 +41,7 @@ import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus 
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, gcWorktrees, mergeWorker } from "../../../workers/worktree.js";
+import { formatPending, pendingGate, pendingResults } from "../../../workers/pending.js";
 import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../../workers/controls.js";
@@ -233,7 +234,31 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--all", "Show workers of all sessions, not just this terminal's")
     .action((opts: { all?: boolean }) => {
       try {
-        console.log(psOutput(currentLogDir(), opts.all === true));
+        const logDir = currentLogDir();
+        const pending = pendingResults(logDir, process.cwd()).length;
+        if (pending) console.log(`${pending} unmerged result(s) — pai worker pending`);
+        console.log(psOutput(logDir, opts.all === true));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("pending")
+    .description("Finished workers whose branch or worktree holds work not yet merged into this repo")
+    .option("--all", "Every repo in the log dir, not just the current one")
+    .option("--json", "Machine-readable output")
+    .option("--gate", "Release gate: exit 1 with the list unless PAI_ALLOW_PENDING=1")
+    .action((opts: { all?: boolean; json?: boolean; gate?: boolean }) => {
+      try {
+        const res = pendingResults(currentLogDir(), opts.all ? undefined : process.cwd());
+        if (opts.gate) {
+          const g = pendingGate(res);
+          if (g.message) console.error(g.message);
+          process.exit(g.code);
+        }
+        if (opts.json) console.log(JSON.stringify(res, null, 2));
+        else console.log(res.length ? formatPending(res, opts.all === true) : "no pending worker results");
       } catch (e) {
         fail(e);
       }

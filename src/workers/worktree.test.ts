@@ -18,8 +18,8 @@ import {
   git,
   isGitRepo,
   mergeWorker,
-  promptLooksReadonly,
   recordWorktree,
+  salvageOnExit,
   salvageUncommitted,
   uncommittedPaths,
   worktreeBranch,
@@ -68,46 +68,30 @@ function status(id: string, over: Partial<WorkerStatus> = {}): WorkerStatus {
   return s;
 }
 
-describe("isGitRepo / promptLooksReadonly / worktreeWanted", () => {
+describe("isGitRepo / worktreeWanted", () => {
   it("knows a git repo from a plain dir", () => {
     expect(isGitRepo(repo)).toBe(true);
     expect(isGitRepo(join(dir, "not-a-repo"))).toBe(false);
   });
 
-  it("spots read-only prompts by marker and leading verb", () => {
-    expect(promptLooksReadonly("Review the diff and report problems")).toBe(true);
-    expect(promptLooksReadonly("read-only: check the build")).toBe(true);
-    expect(promptLooksReadonly("Do not modify anything, just look")).toBe(true);
-    expect(promptLooksReadonly("")).toBe(true);
-    expect(promptLooksReadonly("Create three files")).toBe(false);
-    expect(promptLooksReadonly("Fix the button styling")).toBe(false);
+  it("decides by tools, not class: any writing tool or no restriction -> worktree", () => {
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Read,Edit"] })).toBe(true);
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Read,Edit,Write,Bash"] })).toBe(true);
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Bash(git *)"] })).toBe(true);
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Bash", "mcp__clickr__click"] })).toBe(true);
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: [] })).toBe(true);
   });
 
-  it("only treats a leading marker as read-only, not one buried later in the prompt", () => {
-    expect(
-      promptLooksReadonly(
-        "Implement X.\n\nDo not write a second copy of the helper, reuse the existing one."
-      )
-    ).toBe(false);
-    expect(promptLooksReadonly("read-only: check the build")).toBe(true);
-    expect(promptLooksReadonly("Do not modify anything, just look")).toBe(true);
-  });
-
-  it("defaults to a worktree for writing classes in a git repo with a writing prompt", () => {
-    const yes = { cwd: repo, className: "implement", prompt: "Create a file" };
-    expect(worktreeWanted(undefined, yes)).toBe(true);
-    expect(worktreeWanted(undefined, { ...yes, className: "complex" })).toBe(true);
-    expect(worktreeWanted(undefined, { ...yes, className: "plan" })).toBe(true);
-    expect(worktreeWanted(undefined, { ...yes, className: "review" })).toBe(false);
-    expect(worktreeWanted(undefined, { ...yes, className: undefined })).toBe(false);
-    expect(worktreeWanted(undefined, { ...yes, prompt: "Review the code" })).toBe(false);
-    expect(worktreeWanted(undefined, { cwd: join(dir, "not-a-repo"), className: "implement", prompt: "Create" })).toBe(false);
+  it("read-only tool sets get none; neither does a non-git cwd", () => {
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Read,Grep,Glob"] })).toBe(false);
+    expect(worktreeWanted(undefined, { cwd: repo, allowedTools: ["Read", "WebFetch,WebSearch", "mcp__pai__memory_search"] })).toBe(false);
+    expect(worktreeWanted(undefined, { cwd: join(dir, "not-a-repo"), allowedTools: [] })).toBe(false);
   });
 
   it("lets --worktree force one on and --no-worktree force one off", () => {
-    const ctx = { cwd: repo, className: "implement", prompt: "Create a file" };
-    expect(worktreeWanted(true, { ...ctx, className: "review", prompt: "Review it" })).toBe(true);
-    expect(worktreeWanted(false, ctx)).toBe(false);
+    expect(worktreeWanted(true, { cwd: repo, allowedTools: ["Read"] })).toBe(true);
+    expect(worktreeWanted(false, { cwd: repo, allowedTools: ["Edit"] })).toBe(false);
+    expect(worktreeWanted(false, { cwd: repo, allowedTools: [] })).toBe(false);
   });
 });
 
@@ -325,6 +309,45 @@ describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
     expect(lstatSync(join(repo, "node_modules")).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(repo, "node_modules", "marker.txt"), "utf8")).toBe("real node_modules\n");
     expect(existsSync(join(repo, "real.txt"))).toBe(true);
+  });
+
+  it("salvages a staged deletion together with edits and untracked files in one commit", () => {
+    const info = addWorktree(logDir, "s5", repo);
+    status("s5", { branch: worktreeBranch("s5"), worktreeDir: info.dir });
+    writeFileSync(join(info.dir, "gone.txt"), "x\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "add gone"]);
+    git(info.dir, ["rm", "-q", "gone.txt"]); // staged deletion: "D  gone.txt"
+    writeFileSync(join(info.dir, "base.txt"), "edited\n", "utf8");
+    writeFileSync(join(info.dir, "new.txt"), "new\n", "utf8");
+
+    const salvage = salvageUncommitted(info.dir, "label s5");
+    expect(salvage.committed.sort()).toEqual(["base.txt", "gone.txt", "new.txt"]);
+    expect(git(info.dir, ["log", "-1", "--name-status", "--format=%s"])).toMatch(/D\tgone\.txt/);
+    expect(uncommittedPaths(info.dir)).toEqual([]);
+    discardWorker(logDir, "s5");
+  });
+
+  it("salvages an unstaged deletion", () => {
+    const info = addWorktree(logDir, "s6", repo);
+    status("s6", { branch: worktreeBranch("s6"), worktreeDir: info.dir });
+    rmSync(join(info.dir, "base.txt"));
+    expect(salvageUncommitted(info.dir, "label s6").committed).toEqual(["base.txt"]);
+    expect(uncommittedPaths(info.dir)).toEqual([]);
+    discardWorker(logDir, "s6");
+  });
+
+  it("still skips an outside symlink alongside a staged deletion", () => {
+    const info = addWorktree(logDir, "s7", repo);
+    status("s7", { branch: worktreeBranch("s7"), worktreeDir: info.dir });
+    git(info.dir, ["rm", "-q", "base.txt"]);
+    symlinkSync(repo, join(info.dir, "outside-link"));
+    const salvage = salvageUncommitted(info.dir, "label s7");
+    expect(salvage.committed).toEqual(["base.txt"]);
+    expect(salvage.skipped).toHaveLength(1);
+    expect(git(info.dir, ["log", "-1", "--name-only", "--format=%s"])).not.toMatch(/outside-link/);
+    expect(lstatSync(join(info.dir, "outside-link")).isSymbolicLink()).toBe(true);
+    discardWorker(logDir, "s7");
   });
 
   it("assertWorktreeClean throws on dirt, passes on a clean worktree", () => {
@@ -569,5 +592,47 @@ describe("gcWorktrees", () => {
     expect(gcWorktreesThrottled(tl, 60)).toEqual([]);
     expect(gcWorktreesThrottled(tl, 60)).toBeNull();
     expect(gcWorktreesThrottled(tl, 60, Date.now() + 2 * 3_600_000)).toEqual([]);
+  });
+});
+
+describe("provisioned dependencies and exit salvage", () => {
+  // own repo: node_modules must be gitignored, like the real one
+  const r2 = join(dir, "repo2");
+  const log2 = join(dir, "logdir2");
+  beforeAll(() => {
+    mkdirSync(join(r2, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(r2, "node_modules", "pkg", "index.js"), "x\n", "utf8");
+    writeFileSync(join(r2, ".gitignore"), "node_modules\n", "utf8");
+    git(r2, ["init", "-q"]);
+    git(r2, ["config", "user.email", "test@example.invalid"]);
+    git(r2, ["config", "user.name", "worker test"]);
+    git(r2, ["add", "."]);
+    git(r2, ["commit", "-q", "-m", "init"]);
+  });
+
+  it("gives the worktree its own real node_modules directory, never a symlink", () => {
+    const wt = addWorktree(log2, "deps1", r2);
+    const nm = join(wt.dir, "node_modules");
+    expect(lstatSync(nm).isSymbolicLink()).toBe(false);
+    expect(lstatSync(nm).isDirectory()).toBe(true);
+    expect(readFileSync(join(nm, "pkg", "index.js"), "utf8")).toBe("x\n");
+    expect(uncommittedPaths(wt.dir)).toEqual([]);
+  });
+
+  it("salvageOnExit (the kill-signal path) commits leftovers, logs WORKER-SALVAGE, and the branch survives a failed record", () => {
+    const wt = addWorktree(log2, "sig1", r2);
+    writeFileSync(join(wt.dir, "fix.txt"), "work\n", "utf8");
+    const ledger = join(dir, "sig1-ledger.log");
+    expect(salvageOnExit(ledger, "sig1", "sig test", wt.dir, 5_000)).toEqual(["fix.txt"]);
+    expect(readFileSync(ledger, "utf8")).toContain("WORKER-SALVAGE");
+    const s = recordWorktree(log2, status("sig1", { cwd: r2, state: "killed" }), wt, false);
+    expect(s.branch).toBe(wt.branch);
+    expect(existsSync(join(wt.dir, "fix.txt"))).toBe(true);
+  });
+
+  it("a failed run with no commits still drops its worktree", () => {
+    const wt = addWorktree(log2, "nowork", r2);
+    recordWorktree(log2, status("nowork", { cwd: r2 }), wt, false);
+    expect(existsSync(wt.dir)).toBe(false);
   });
 });

@@ -15,6 +15,7 @@
 import { readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
 import { recordSessionMapEntry } from "../scope.js";
+import { pendingCountCached } from "../pending.js";
 import { statusLineOutput } from "../viewer.js";
 
 const term = process.argv[2] ?? process.env.ITERM_SESSION_ID ?? "";
@@ -25,7 +26,9 @@ try {
   const { workers } = readWorkersSection();
   const logDir = workersLogDir(workers);
   if (claudeSession) recordSessionMapEntry(logDir, cwd, claudeSession, term);
-  const out = statusLineOutput(logDir, term, cwd, claudeSession, new Date(), workers.active);
+  let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date(), workers.active);
+  const unmerged = pendingCountCached(logDir, cwd);
+  if (unmerged) out = [out, `⚑${unmerged} unmerged`].filter(Boolean).join(" ");
   if (out) process.stdout.write(out + "\n");
 } catch {
   // no workers section or a broken config: no line, never an error in the bar

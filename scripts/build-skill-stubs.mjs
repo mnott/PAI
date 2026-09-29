@@ -32,7 +32,7 @@ import {
 } from "fs";
 import { join, resolve } from "path";
 import { homedir, platform } from "os";
-import { isInsideWorkerWorktree } from "./lib/sync-guard.mjs";
+import { syncSkipReason } from "./lib/sync-guard.mjs";
 
 const PROMPTS_DIR = "src/daemon-mcp/prompts";
 const CUSTOM_DIR = join(PROMPTS_DIR, "custom");
@@ -206,10 +206,11 @@ for (const [fileName, dir] of [
 const customLabel = customNames.length > 0 ? ` (${builtinNames.length} built-in + ${customNames.length} custom)` : "";
 console.log(`✔ ${generated} skill stubs generated in ${STUBS_OUT}/${customLabel}`);
 
-if (doSync && isInsideWorkerWorktree(process.cwd())) {
-  // Never repoint the live ~/.claude/skills symlinks at a worktree that
-  // `pai worker merge` will delete — see scripts/lib/sync-guard.mjs.
-  console.log("✔ Skill symlinks skipped: build runs inside a worker worktree");
+const skipReason = doSync ? syncSkipReason() : null;
+if (skipReason) {
+  // Only the canonical install repoints the live ~/.claude/skills symlinks —
+  // see scripts/lib/sync-guard.mjs.
+  console.log(skipReason.startsWith("skipping") ? skipReason : `✔ Skill symlinks skipped: ${skipReason}`);
 } else if (doSync) {
   syncSymlinks(generatedDirNames);
 }

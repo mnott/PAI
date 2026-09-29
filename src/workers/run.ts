@@ -95,6 +95,7 @@ import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } f
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
   addWorktree,
+  salvageOnExit,
   gcWorktreesThrottled,
   inPlaceSystemPrompt,
   recordWorktree,
@@ -778,10 +779,22 @@ interface FinaliseArgs {
  * backgrounded a sub-worker and exited without waiting, the run must not
  * report success, whatever the process returned.
  */
+/** Per-git-call bound for the salvage a kill signal runs before exiting. */
+const SIGNAL_SALVAGE_MS = 5_000;
+
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
   const wid = status.id;
+  // first, whatever the outcome (rc 143 included): uncommitted edits in the
+  // worktree must reach the branch before anything can drop the worktree
+  const salvaged = f.worktree
+    ? salvageOnExit(ledger, wid, status.label || UNLABELED, f.worktree.dir)
+    : [];
+  if (salvaged.length) {
+    const msg = `WORKER-SALVAGE: committed uncommitted edits (${salvaged.join(", ")})`;
+    report = { ...(report ?? {}), notes: [report?.notes ?? f.fallbackText, msg].filter(Boolean).join("\n"), result: report?.result ?? "-" };
+  }
   const orphanReason = checkOrphanedChildren(logDir, wid);
   const succeeded = ok && !orphanReason;
   status.state = succeeded ? "done" : "failed";
@@ -999,15 +1012,15 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // session map supplies the claude session they were spawned by instead
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
-  // One worktree per writing run (implement/complex/plan, a git cwd, a prompt
-  // that is not read-only; --worktree/--no-worktree override). A git refusal
+  // One worktree per run whose tools can write (Edit/Write/Bash or no
+  // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal
   // degrades to an in-place run — the worker itself must still run.
   // Skipped for --print-cmd: it is a dry-run and must not touch git.
   let worktree: WorktreeInfo | null = null;
   if (
     headless &&
     !a.printCmd &&
-    worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })
+    worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })
   ) {
     try {
       worktree = addWorktree(logDir, wid, cwd);
@@ -1221,6 +1234,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // a killed worktree run leaves nothing to merge — drop its worktree and
     // branch too, or every kill strands them for hand-pruning (2026-09-18)
     if (worktree) {
+      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
       try {
         recordWorktree(logDir, status, worktree, false);
       } catch {
@@ -1525,7 +1539,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
   let worktree: WorktreeInfo | null = null;
-  if (worktreeWanted(a.worktreeFlag, { cwd, className: a.className, prompt: parsed.prompt })) {
+  if (worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })) {
     try {
       worktree = addWorktree(logDir, wid, cwd);
     } catch (e) {
@@ -1637,6 +1651,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       saveStatus(logDir, status);
       // same as the claude path: a killed run's worktree and branch go now
       if (worktree) {
+        salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
         try {
           recordWorktree(logDir, status, worktree, false);
         } catch {

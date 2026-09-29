@@ -20,6 +20,7 @@ pai worker <subcommand> [options]
 |---------|-------------|
 | [`pai worker run [args...]`](#pai-worker-run-args) | Run one claude-code worker through the configured provider. |
 | [`pai worker ps`](#pai-worker-ps) | List workers of this session (RUNNING + FINISHED); --all for every worker |
+| [`pai worker pending`](#pai-worker-pending) | Finished workers whose branch or worktree holds work not yet merged into this repo |
 | [`pai worker follow [id]`](#pai-worker-follow-id) | Live transcript of one worker, or of this session's running workers |
 | [`pai worker replay <id>`](#pai-worker-replay-id) | Print the transcript of one finished or running worker |
 | [`pai worker watch`](#pai-worker-watch) | ps refreshed every 2 seconds (plain `watch`, colors kept) |
@@ -106,6 +107,19 @@ List workers of this session (RUNNING + FINISHED); --all for every worker
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--all` | Show workers of all sessions, not just this terminal's |  |
+
+
+### pai worker pending
+
+Finished workers whose branch or worktree holds work not yet merged into this repo
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--all` | Every repo in the log dir, not just the current one |  |
+| `--json` | Machine-readable output |  |
+| `--gate` | Release gate: exit 1 with the list unless PAI_ALLOW_PENDING=1 |  |
 
 
 ### pai worker follow [id]

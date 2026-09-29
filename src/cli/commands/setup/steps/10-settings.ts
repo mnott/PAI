@@ -56,6 +56,7 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       // already exist. Rate-limited internally; safe on high-frequency events.
       { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
       { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
+      { hookType: "PreToolUse", matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit", command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
       { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse" },
       { hookType: "PostToolUse", matcher: "TodoWrite", command: "${ADAPTER_DIR}/Hooks/sync-todo-to-md.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse" },
