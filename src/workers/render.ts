@@ -8,6 +8,7 @@
  * tool output stays plain text.
  */
 
+import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
 import { ageOf, elapsedOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
@@ -479,6 +480,11 @@ export function renderTable(
       ? "  " + c("red", s.reportFormat === "ag2" && (s.reportErrors ?? []).length ? "R!" : "R?")
       : "";
 
+  const timeMark = (s: WorkerStatus): string => {
+    const l = deadlineLabel(s, now.getTime());
+    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l) : "";
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   lines.push(c("bold", `RUNNING (${running.length})`));
@@ -503,7 +509,7 @@ export function renderTable(
     const q = chain ? "      " : rowCont(depth, subLast);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )
@@ -535,7 +541,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${reportMark(s)}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${reportMark(s)}  ${s.label}`,
         chain,
         last
       )

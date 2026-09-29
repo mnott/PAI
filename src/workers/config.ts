@@ -373,6 +373,10 @@ export interface WorkersConfig {
    * (src/workers/keepalive.ts). 0 = off.
    */
   cacheKeepaliveSecs: number;
+  /** Default time limit of every run in minutes (workers.defaultMaxMinutes); 0 = none. */
+  defaultMaxMinutes: number;
+  /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
+  noBrowserByDefault: boolean;
   /**
    * Run native-Anthropic workers through `caveman claude` (workers.caveman).
    * Off pins them to api.anthropic.com even when the user settings route
@@ -423,6 +427,7 @@ export const DEFAULT_TREE: WorkersTreeConfig = {
  * "cacheKeepaliveSecs": 60).
  */
 export const DEFAULT_CACHE_KEEPALIVE_SECS = 0;
+export const DEFAULT_MAX_MINUTES = 60;
 
 /**
  * The default MCP sets every config starts from. `desktop` names the clickr
@@ -448,6 +453,8 @@ export function defaultWorkersConfig(): WorkersConfig {
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
+    defaultMaxMinutes: DEFAULT_MAX_MINUTES,
+    noBrowserByDefault: false,
     caveman: false,
     fallback: null,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
@@ -888,6 +895,18 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     cacheKeepaliveSecs = w.cacheKeepaliveSecs;
   }
 
+  let defaultMaxMinutes = DEFAULT_MAX_MINUTES;
+  if (w.defaultMaxMinutes !== undefined) {
+    if (typeof w.defaultMaxMinutes !== "number" || !Number.isInteger(w.defaultMaxMinutes) || w.defaultMaxMinutes < 0) {
+      bad(".defaultMaxMinutes", "must be a non-negative integer (minutes, 0 = no limit)");
+    }
+    defaultMaxMinutes = w.defaultMaxMinutes;
+  }
+  if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
+    bad(".noBrowserByDefault", "must be true or false");
+  }
+  const noBrowserByDefault = w.noBrowserByDefault === true;
+
   if (w.caveman !== undefined && typeof w.caveman !== "boolean") {
     bad(".caveman", "must be true or false");
   }
@@ -945,6 +964,8 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     routing,
     tree,
     cacheKeepaliveSecs,
+    defaultMaxMinutes,
+    noBrowserByDefault,
     caveman,
     fallback,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
@@ -1024,6 +1045,8 @@ export function writeWorkersSection(
         routing: workers.routing,
         tree: workers.tree,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
+        defaultMaxMinutes: workers.defaultMaxMinutes,
+        noBrowserByDefault: workers.noBrowserByDefault,
         caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),
       }

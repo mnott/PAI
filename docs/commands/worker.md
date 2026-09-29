@@ -93,6 +93,10 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--no-pane` | Do not open a follow pane for this worker |  |
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
 | `--no-worktree` | Run in place, no worktree |  |
+| `--max-minutes <n>` | Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60) |  |
+| `--deadline <HH:MM>` | Stop the run at this local time (tomorrow if already past); exclusive with --max-minutes |  |
+| `--browser` | Allow browser tools (re-enables them when workers.noBrowserByDefault is on) |  |
+| `--no-browser` | Strip --chrome and every browser MCP tool from this worker and deny them in its hooks |  |
 | `--print-cmd` | Print the assembled claude argv as JSON and exit, without spawning (audit tool) |  |
 | `--report <format>` | Final-report contract/parser: json or ag2 (default: ag2, or PAI_WORKER_REPORT) |  |
 | `--no-report-retry` | Skip the one bounded re-ask when the final AG2 message fails validation |  |

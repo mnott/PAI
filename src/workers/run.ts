@@ -114,6 +114,8 @@ import {
   type WorkerReport,
 } from "./report.js";
 import { validateAg2 } from "./agentish.js";
+import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
+import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { pinNotices, projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
@@ -155,6 +157,12 @@ export interface RunOptions {
   id?: string;
   /** --worktree/--no-worktree; undefined lets the class default decide. */
   worktreeFlag?: boolean;
+  /** --max-minutes: stop the run after N minutes (0 = no limit; default workers.defaultMaxMinutes). */
+  maxMinutes?: number;
+  /** --deadline HH:MM (local): stop the run then; exclusive with maxMinutes. */
+  deadline?: string;
+  /** --browser / --no-browser: undefined follows workers.noBrowserByDefault. */
+  browser?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
   /** Internal: suppress recursion depth on reroute. */
@@ -512,7 +520,9 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
   assertProviderRunnable(target.providerName, target.provider);
 
-  const parsed = parseRunnerArgs(opts.claudeArgs);
+  const limit = resolveLimit(opts, config.defaultMaxMinutes);
+  const noBrowser = opts.browser === undefined ? config.noBrowserByDefault : !opts.browser;
+  const parsed = parseRunnerArgs(noBrowser ? stripBrowserArgs(opts.claudeArgs) : opts.claudeArgs);
   const label =
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
@@ -574,6 +584,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         className: opts.className,
         reportFormat,
         capability: capability ?? undefined,
+        limit,
+        noBrowser,
       });
     } else {
       rc = await executeRun({
@@ -600,6 +612,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
+        limit,
+        noBrowser,
       });
     }
     await returnControlsIfHeld(logDir, workerId);
@@ -764,6 +778,8 @@ interface FinaliseArgs {
   /** Handoff text when the report has no notes. */
   fallbackText?: string;
   worktree?: WorktreeInfo | null;
+  /** The deadline stopped the run after this many minutes. */
+  timedOut?: number;
   /**
    * Runs after the worktree outcome is recorded, before the parent handoff
    * (print the result, quota reroute). A returned number ends the run with
@@ -782,6 +798,14 @@ interface FinaliseArgs {
 /** Per-git-call bound for the salvage a kill signal runs before exiting. */
 const SIGNAL_SALVAGE_MS = 5_000;
 
+/** The deadline fired: record it on the status and in the ledger (the caller then stops the child). */
+export function fireDeadline(logDir: string, status: WorkerStatus, ledger: string, limit: RunLimit): void {
+  status.timedOut = true;
+  status.last = `deadline reached after ${limit.minutes} min`;
+  saveStatus(logDir, status);
+  appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes });
+}
+
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
@@ -795,8 +819,15 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     const msg = `WORKER-SALVAGE: committed uncommitted edits (${salvaged.join(", ")})`;
     report = { ...(report ?? {}), notes: [report?.notes ?? f.fallbackText, msg].filter(Boolean).join("\n"), result: report?.result ?? "-" };
   }
+  if (f.timedOut) {
+    const reason = `deadline reached after ${f.timedOut} min`;
+    status.timedOut = true;
+    status.last = reason;
+    // partial state = the salvage summary (r=~: stopped, not failed outright)
+    report = { ...(report ?? {}), result: "~", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+  }
   const orphanReason = checkOrphanedChildren(logDir, wid);
-  const succeeded = ok && !orphanReason;
+  const succeeded = ok && !orphanReason && !f.timedOut;
   status.state = succeeded ? "done" : "failed";
   status.rc = rc;
   status.secs = f.secs;
@@ -990,10 +1021,14 @@ interface ExecuteArgs {
   noReportRetry?: boolean;
   /** Capability name this run resolved through (--capability, or an implied class capability), when it did. */
   capability?: string;
+  /** Time limit of the run; null = none. */
+  limit: RunLimit | null;
+  /** Browser tools are stripped from this run (and denied by the worker guard). */
+  noBrowser: boolean;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
-  const { config, logDir, target, model, label, parsed, noPane } = a;
+  const { config, logDir, target, model, label, parsed, noPane, limit, noBrowser } = a;
   const headless = parsed.headless;
 
   // openai-protocol providers run through the local proxy (started on demand)
@@ -1032,11 +1067,17 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   }
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+  if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
 
-  const chromeArgs = chromeGrantArgs(
-    [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp, ...(target.classMcp ?? []), ...parsed.allowedTools],
-    parsed.rest
-  );
+  const mcpFlag = noBrowser ? stripBrowserNames(a.mcpFlag ? [a.mcpFlag] : [])[0] : a.mcpFlag;
+  const classMcp = noBrowser && target.classMcp ? stripBrowserNames(target.classMcp) : target.classMcp;
+  if (noBrowser) parsed.mcp = stripBrowserNames(parsed.mcp);
+  const chromeArgs = noBrowser
+    ? []
+    : chromeGrantArgs(
+        [...(mcpFlag ? [mcpFlag] : []), ...parsed.mcp, ...(classMcp ?? []), ...parsed.allowedTools],
+        parsed.rest
+      );
 
   // MCP / tools: caller config > allowlist (--mcp flag / --mcp args / role /
   // mcp__ grants in --allowedTools) > project pin (interactive only, `pai
@@ -1046,9 +1087,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   let toolsFlag: string[] = headless ? headlessToolsFlag(parsed.allowedTools) : [];
   if (headless && !parsed.callerMcpConfig) {
     const wanted = [
-      ...(a.mcpFlag ? [a.mcpFlag] : []),
+      ...(mcpFlag ? [mcpFlag] : []),
       ...parsed.mcp,
-      ...(target.classMcp ?? []),
+      ...(classMcp ?? []),
       ...mcpServersFromToolGrants(parsed.allowedTools),
     ];
     if (wanted.length) {
@@ -1058,7 +1099,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       mcpArgs = ["--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir)];
     }
   } else if (!headless && !parsed.callerMcpConfig) {
-    const explicitMcp = [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp];
+    const explicitMcp = [...(mcpFlag ? [mcpFlag] : []), ...parsed.mcp];
     const projectLaunch = await projectLaunchConfig(cwd);
     const picked = interactiveMcpTools(explicitMcp, parsed.callerTools, projectLaunch);
     // applied pins only: an explicit --mcp / --tools overrides its pin
@@ -1099,6 +1140,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       ...(headless
         ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
         : []),
+      ...(headless && limit ? [deadlinePromptLine(limit)] : []),
       ...parsed.callerSystemPrompts,
     ])
   );
@@ -1106,7 +1148,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Dry run: the argv audit, no status/ledger/pane, no spawn.
   if (a.printCmd) {
-    console.log(JSON.stringify({ cmd, cwd: worktree?.dir ?? cwd }));
+    console.log(
+      JSON.stringify({
+        cmd,
+        cwd: worktree?.dir ?? cwd,
+        browser: noBrowser ? "off" : "on",
+        ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : {}),
+      })
+    );
     return 0;
   }
 
@@ -1145,6 +1194,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         }
       : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
+    ...(limit ? { deadlineAt: limit.deadlineAt, maxMinutes: limit.minutes } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -1224,7 +1274,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     : null;
 
   let killed = false;
+  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit)) : null;
   const cleanup = () => {
+    stopDeadline?.();
     if (closeTimer) clearTimeout(closeTimer);
     operatorServer?.close();
   };
@@ -1433,6 +1485,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     report: ctx.resultReport,
     fallbackText: resultEvent?.result,
     worktree,
+    timedOut: status.timedOut ? limit?.minutes : undefined,
     beforeHandoff: async (st, rep) => {
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
@@ -1565,6 +1618,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   env.PAI_WORKER_ID = wid;
   // codex takes instructions through the prompt, not a system prompt flag
   const prompt =
+    (a.limit ? deadlinePromptLine(a.limit) + "\n\n" : "") +
     (worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) + "\n\n" : "") +
     parsed.prompt;
 
@@ -1603,6 +1657,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
         }
       : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
+    ...(a.limit ? { deadlineAt: a.limit.deadlineAt, maxMinutes: a.limit.minutes } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -1652,6 +1707,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   });
 
   let killed = false;
+  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!)) : null;
   process.once("SIGTERM", onCodexSignal("SIGTERM"));
   process.once("SIGINT", onCodexSignal("SIGINT"));
   process.once("SIGHUP", onCodexSignal("SIGHUP"));
@@ -1700,6 +1756,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     proc.on("error", reject);
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
+  stopDeadline?.();
   closeSync(eventsFd);
 
   const secs = Math.floor((Date.now() - t0) / 1000);
@@ -1749,6 +1806,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     report,
     fallbackText: finalText,
     worktree,
+    timedOut: status.timedOut ? a.limit?.minutes : undefined,
     beforeHandoff: (st, rep) => {
       if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
     },
