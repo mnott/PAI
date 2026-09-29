@@ -6,11 +6,12 @@
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 import { exitAfterFlush } from "../../lib/exit.js";
+import { resolveFromModule } from "../../../module-paths.js";
 
 // ---------------------------------------------------------------------------
 // Chalk colour helpers
@@ -64,7 +65,22 @@ export function createRl() {
 
 export type Rl = ReturnType<typeof createRl>;
 
-export async function prompt(rl: Rl, question: string): Promise<string> {
+/** Unattended-mode switches (`pai setup --yes --storage …`), set once by the command. */
+export const setupOptions: { yes: boolean; storage?: "sqlite" | "postgres" } = { yes: false };
+
+/**
+ * The one place every wizard question passes through. Under --yes it answers
+ * `defaultValue` without touching stdin; a question with no default cannot be
+ * answered unattended, so it fails naming the flag instead of returning "".
+ */
+export async function prompt(rl: Rl, question: string, defaultValue?: string): Promise<string> {
+  if (setupOptions.yes) {
+    if (defaultValue === undefined) {
+      throw new Error(`"${question.trim()}" has no default; cannot answer it with --yes. Run without --yes, or skip the feature that asks it.`);
+    }
+    console.log(chalk.dim(`  ${question.trim()} -> ${defaultValue || "(default)"}`));
+    return defaultValue;
+  }
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       resolve(answer.trim());
@@ -93,6 +109,7 @@ export async function promptMenu(
     const answer = await prompt(
       rl,
       chalk.bold(`  Enter number [1-${options.length}] (default: ${defaultIdx + 1}): `),
+      "",
     );
 
     if (answer === "") return defaultIdx;
@@ -113,7 +130,7 @@ export async function promptYesNo(
   defaultYes = true,
 ): Promise<boolean> {
   const hint = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = await prompt(rl, `  ${question} ${chalk.dim(hint)}: `);
+  const answer = await prompt(rl, `  ${question} ${chalk.dim(hint)}: `, "");
 
   if (answer === "") return defaultYes;
   return answer.toLowerCase().startsWith("y");
@@ -160,8 +177,29 @@ export function hasDocker(): boolean {
   }
 }
 
+/**
+ * Root of the installed (or checked-out) package: the nearest package.json
+ * above this module. Bundled chunks sit at different depths under dist/, so a
+ * fixed "../.." hop is wrong; a global install under any npm prefix (apt Node
+ * + ~/.npm-global) resolves here.
+ */
+export function packageRoot(): string | null {
+  try {
+    return dirname(resolveFromModule(import.meta.url, "package.json"));
+  } catch {
+    return null;
+  }
+}
+
+/** Candidate paths under the package root first, then the legacy guesses. */
+function underRoot(...segs: string[]): string[] {
+  const root = packageRoot();
+  return root ? [join(root, ...segs)] : [];
+}
+
 export function getDockerDir(): string {
   const candidates = [
+    ...underRoot("docker"),
     join(process.cwd(), "docker"),
     join(homedir(), "dev", "ai", "PAI", "docker"),
     join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "docker"),
@@ -191,6 +229,7 @@ export async function testPostgresConnection(connectionString: string): Promise<
 
 export function getTemplatesDir(): string {
   const candidates = [
+    ...underRoot("templates"),
     join(process.cwd(), "templates"),
     join(homedir(), "dev", "ai", "PAI", "templates"),
     join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "templates"),
@@ -203,6 +242,7 @@ export function getTemplatesDir(): string {
 
 export function getHooksDir(): string {
   const candidates = [
+    ...underRoot("src", "hooks"),
     join(process.cwd(), "src", "hooks"),
     join(homedir(), "dev", "ai", "PAI", "src", "hooks"),
     join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "src", "hooks"),
@@ -218,6 +258,7 @@ export function getDistHooksDir(): string {
   const fromModule = join(moduleDir, "..", "..", "hooks");
 
   const candidates = [
+    ...underRoot("dist", "hooks"),
     fromModule,
     join(process.cwd(), "dist", "hooks"),
     join(homedir(), "dev", "ai", "PAI", "dist", "hooks"),
@@ -234,6 +275,7 @@ export function getDistDir(): string {
   const fromModule = join(moduleDir, "..", "..", "..");
 
   const candidates = [
+    ...underRoot("dist"),
     fromModule,
     join(process.cwd(), "dist"),
     join(homedir(), "dev", "ai", "PAI", "dist"),
@@ -247,6 +289,7 @@ export function getDistDir(): string {
 
 export function getStatuslineScript(): string | null {
   const candidates = [
+    ...underRoot("statusline-command.sh"),
     join(process.cwd(), "statusline-command.sh"),
     join(homedir(), "dev", "ai", "PAI", "statusline-command.sh"),
     join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "statusline-command.sh"),
@@ -259,6 +302,7 @@ export function getStatuslineScript(): string | null {
 
 export function getTabColorScript(): string | null {
   const candidates = [
+    ...underRoot("tab-color-command.sh"),
     join(process.cwd(), "tab-color-command.sh"),
     join(homedir(), "dev", "ai", "PAI", "tab-color-command.sh"),
     join("/", "usr", "local", "lib", "node_modules", "@tekmidian", "pai", "tab-color-command.sh"),

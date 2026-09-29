@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
-import { c, line, section, type Rl, prompt, promptMenu, promptYesNo, readConfigRaw, getDockerDir, hasDocker, testPostgresConnection } from "../utils.js";
+import { c, line, section, type Rl, prompt, promptMenu, promptYesNo, readConfigRaw, setupOptions, getDockerDir, hasDocker, testPostgresConnection } from "../utils.js";
 
 async function startDocker(rl: Rl): Promise<boolean> {
   const dockerDir = getDockerDir();
@@ -71,7 +71,14 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
   line("  Choose how PAI stores your indexed knowledge:");
   line();
 
-  const choice = await promptMenu(rl, [
+  // Unattended: --storage wins, else Postgres only when the default local one answers.
+  const forced =
+    setupOptions.storage ??
+    (setupOptions.yes
+      ? (await testPostgresConnection("postgresql://pai:pai@localhost:5432/pai")) ? "postgres" : "sqlite"
+      : undefined);
+
+  const choice = forced ? (forced === "sqlite" ? 1 : 0) : await promptMenu(rl, [
     {
       label: "PostgreSQL with pgvector",
       description: "Best for large collections, semantic search, and production use. Requires Docker or a Postgres server.",
@@ -131,7 +138,7 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
   const useConnStr = await promptYesNo(rl, "Use a full connection string? (e.g. postgresql://user:pass@host:5432/dbname)", true);
 
   if (useConnStr) {
-    const connStr = await prompt(rl, chalk.bold("  Connection string: "));
+    const connStr = await prompt(rl, chalk.bold("  Connection string: "), "");
     if (connStr) {
       console.log(c.dim("  Testing connection..."));
       const connected = await testPostgresConnection(connStr);
@@ -144,11 +151,11 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
     }
   }
 
-  const host = await prompt(rl, chalk.bold("  Host [localhost]: ")) || "localhost";
-  const portStr = await prompt(rl, chalk.bold("  Port [5432]: ")) || "5432";
-  const database = await prompt(rl, chalk.bold("  Database [pai]: ")) || "pai";
-  const user = await prompt(rl, chalk.bold("  User [pai]: ")) || "pai";
-  const password = await prompt(rl, chalk.bold("  Password [pai]: ")) || "pai";
+  const host = await prompt(rl, chalk.bold("  Host [localhost]: "), "") || "localhost";
+  const portStr = await prompt(rl, chalk.bold("  Port [5432]: "), "") || "5432";
+  const database = await prompt(rl, chalk.bold("  Database [pai]: "), "") || "pai";
+  const user = await prompt(rl, chalk.bold("  User [pai]: "), "") || "pai";
+  const password = await prompt(rl, chalk.bold("  Password [pai]: "), "") || "pai";
 
   const connStr = `postgresql://${user}:${password}@${host}:${portStr}/${database}`;
   console.log(c.dim(`  Connection string: ${connStr}`));

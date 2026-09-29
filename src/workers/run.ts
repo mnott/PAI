@@ -90,7 +90,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
-import { openPaneForWorker } from "./pane.js";
+import { openPaneForWorker, paneBackend } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -946,8 +946,8 @@ export async function announcePane(
       ? "workers.pane.enabled is false"
       : process.env.PAI_WORKER_AUTOPANE === "0"
         ? "PAI_WORKER_AUTOPANE=0"
-        : !term
-          ? "not in iTerm2 (no ITERM_SESSION_ID)"
+        : paneBackend() === "none"
+          ? "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"
           : null
     : "--no-pane";
   if (skip) {

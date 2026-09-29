@@ -536,6 +536,30 @@ function absoluteCliPath(): string {
   return "pai";
 }
 
+export type PaneBackend = "tmux" | "iterm" | "none";
+
+/** The one place that decides where a follow pane opens: tmux (any OS) > iTerm2 (macOS) > nowhere. */
+export function paneBackend(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): PaneBackend {
+  if (env.TMUX) return "tmux";
+  if (platform === "darwin" && env.ITERM_SESSION_ID) return "iterm";
+  return "none";
+}
+
+export function noPaneMessage(wid?: string): string {
+  return `no pane support here, use: pai worker follow${wid ? ` ${wid}` : ""}`;
+}
+
+/** Split the current tmux window horizontally (right-hand column) and run cmd in it, focus stays put. */
+function tmuxSplit(cmd: string): void {
+  const target = process.env.TMUX_PANE ? ["-t", process.env.TMUX_PANE] : [];
+  try {
+    execFileSync("tmux", ["split-window", "-h", "-d", "-l", "40%", ...target, cmd], { stdio: "pipe" });
+  } catch (e) {
+    const err = e as { stderr?: Buffer; message?: string };
+    throw new Error(`pai worker pane: tmux split-window failed: ${(err.stderr?.toString() || err.message || "").trim().slice(0, 200)}`);
+  }
+}
+
 /** Outcome of opening a worker's follow pane: the report line plus, on a fresh open, the new iTerm session id. */
 export interface PaneOpenResult {
   message: string;
@@ -550,6 +574,12 @@ export async function openPaneForWorker(
   term: string
 ): Promise<PaneOpenResult> {
   if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
+  const backend = paneBackend();
+  if (backend === "none") return { message: noPaneMessage(wid), session: null };
+  if (backend === "tmux") {
+    tmuxSplit(followCommand(wid, config.pane.autoExitSecs));
+    return { message: `pane opened for ${wid}`, session: null };
+  }
   const uid = itermUuid(term);
   const regPath = join(panesDir(logDir), `${scopeKey(term)}.json`);
   const reg = loadRegistry(regPath);
@@ -613,6 +643,7 @@ async function windowBoundsLine(term: string): Promise<string> {
  */
 export async function checkPaneForWorker(wid: string, fontSize: number, term: string): Promise<string> {
   const lines = [workerPaneOpen(wid) ? `pane for ${wid} open` : `no pane for ${wid}`];
+  if (paneBackend() !== "iterm") return lines.join("\n");
   lines.push(await windowBoundsLine(term));
   const path = dynamicProfilePath();
   if (existsSync(path)) {
@@ -647,6 +678,13 @@ export async function openFollowPane(
   checkOnly: boolean
 ): Promise<string> {
   void logDir;
+  const backend = paneBackend();
+  if (backend === "none") return noPaneMessage();
+  if (backend === "tmux") {
+    if (checkOnly) return "no follow pane";
+    tmuxSplit(`${process.execPath} ${absoluteCliPath()} worker follow`);
+    return "follow pane opened";
+  }
   const uid = itermUuid(term);
   const p = await osascript(TAB_TTYS_SCRIPT, [uid]);
   const out = p.stdout.trim();

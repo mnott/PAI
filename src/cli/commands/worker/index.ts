@@ -309,7 +309,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   workerCmd
     .command("pane [id]")
-    .description("Open the follow pane for a worker (or one shared pane for this session)")
+    .description("Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on macOS, else prints the follow command)")
     .option("--check", "Only report whether the pane is open, plus the profile file's path, font, and the hosting window's bounds")
     .action(async (id: string | undefined, opts: { check?: boolean }) => {
       try {

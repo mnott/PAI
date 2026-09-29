@@ -93,7 +93,9 @@ export async function stepHooks(rl: Rl): Promise<boolean> {
     console.log(c.warn("  statusline-command.sh not found — skipping statusline."));
   }
 
-  if (tabColorSrc) {
+  if (platform() !== "darwin") {
+    console.log(c.dim("  Skipping tab-color-command.sh (iTerm2 only)."));
+  } else if (tabColorSrc) {
     installLink(tabColorSrc, join(claudeDir, "tab-color-command.sh"), "tab-color-command.sh");
   } else {
     console.log(c.warn("  tab-color-command.sh not found — skipping tab color."));

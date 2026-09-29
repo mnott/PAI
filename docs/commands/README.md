@@ -32,7 +32,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai restore`](restore.md) | Restore from a backup directory (created by pai backup) |
 | [`pai session`](session.md) | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
 | [`pai sessions`](sessions.md) | Alias for `pai` — show the unified deduped listing. |
-| [`pai setup`](setup.md) | Interactive setup wizard — configure storage, embeddings, agent config, and indexing |
+| [`pai setup`](setup.md) | Setup wizard — configure storage, embeddings, agent config, and indexing (--yes for unattended) |
 | [`pai shell-init`](shell-init.md) | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |
 | [`pai skill`](skill.md) | Skill telemetry and (future) discovery for the self-educating skill system |
 | [`pai task`](task.md) | Task bus: list, add, dispatch, and complete cross-session work |
@@ -206,7 +206,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai session slug <project-slug> <number>` | Generate a descriptive slug from the session JSONL transcript |
 | `pai session tag <project-slug> <number> [tags...]` | Set or show tags on a session. Tags can be space-separated or comma-separated. |
 | `pai sessions` | Alias for `pai` — show the unified deduped listing. |
-| `pai setup` | Interactive setup wizard — configure storage, embeddings, agent config, and indexing |
+| `pai setup` | Setup wizard — configure storage, embeddings, agent config, and indexing (--yes for unattended) |
 | `pai shell-init` | Emit shell integration code. Add to ~/.zshrc: eval "$(pai shell-init)" |
 | `pai skill` | Skill telemetry and (future) discovery for the self-educating skill system |
 | `pai skill telemetry` | Show skill-invocation telemetry (triggers, last used, projects) |
@@ -253,7 +253,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker model [what] [model]` | Model ids per provider: no args lists them, |
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
-| `pai worker pane [id]` | Open the follow pane for a worker (or one shared pane for this session) |
+| `pai worker pane [id]` | Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on macOS, else prints the follow command) |
 | `pai worker pending` | Finished workers whose branch or worktree holds work not yet merged into this repo |
 | `pai worker providers` | Providers: list (default), add, remove, use, enable, disable, test |
 | `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds classes. |

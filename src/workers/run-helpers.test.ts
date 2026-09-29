@@ -846,6 +846,7 @@ describe("announcePane", () => {
     ledger = join(dir, "ledger.jsonl");
     stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.mocked(pane.openPaneForWorker).mockReset();
+    vi.stubEnv("TMUX", "/tmp/tmux-1/default,1,0");
   });
 
   afterEach(() => {
@@ -875,8 +876,12 @@ describe("announcePane", () => {
       { noPane: false, config: { ...cfg, pane: { ...cfg.pane, enabled: false } }, term: "term-1" },
       "workers.pane.enabled is false",
     ],
-    ["not in iTerm2", { noPane: false, config: cfg, term: "" }, "not in iTerm2 (no ITERM_SESSION_ID)"],
-  ] as const)("skips and names why: %s", async (_label, o, reason) => {
+    ["no tmux, no iTerm2", { noPane: false, config: cfg, term: "" }, "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"],
+  ] as const)("skips and names why: %s", async (label, o, reason) => {
+    if (label === "no tmux, no iTerm2") {
+      vi.stubEnv("TMUX", "");
+      vi.stubEnv("ITERM_SESSION_ID", "");
+    }
     await announcePane(dir, o.config, "w1", o.term, o.noPane, ledger);
     expect(stderr).toHaveBeenCalledWith(`[pai worker] no pane for w1: ${reason}\n`);
     expect(pane.openPaneForWorker).not.toHaveBeenCalled();
