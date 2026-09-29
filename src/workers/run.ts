@@ -48,7 +48,7 @@ import {
   closeSync,
   writeSync,
 } from "node:fs";
-import { parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
+import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
   assertProviderRunnable,
   classModelCapability,
@@ -1091,18 +1091,17 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
-    if (!parsed.callerSystemPrompt) {
-      cmd.push("--append-system-prompt", workerContractPrompt(a.className, a.reportFormat));
-    }
-    if (worktree) {
-      cmd.push(
-        "--append-system-prompt",
-        worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)
-      );
-    } else {
-      cmd.push("--append-system-prompt", inPlaceSystemPrompt());
-    }
   }
+  // ONE flag: contract (unless the caller brought their own), placement, caller text
+  cmd.push(
+    ...appendSystemPromptArgs([
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(headless
+        ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
+        : []),
+      ...parsed.callerSystemPrompts,
+    ])
+  );
   cmd = ensureToolSearch(cmd);
 
   // Dry run: the argv audit, no status/ledger/pane, no spawn.
