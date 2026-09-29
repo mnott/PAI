@@ -15,7 +15,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
@@ -506,7 +506,8 @@ function assertNoSnapshotDrift(cwd: string, snapshot: string, paths: string[], i
 function mergeSnapshotWorker(
   logDir: string,
   id: string,
-  st: WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">>
+  st: WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">>,
+  noCommit = false
 ): string {
   const snapshot = st.worktreeBase!;
   const branch = st.branch!;
@@ -549,6 +550,7 @@ function mergeSnapshotWorker(
       );
     }
   }
+  if (noCommit) return noCommitNextSteps(id, branch, worktreeDir, changedPaths);
   removeWorktree(st.cwd, worktreeDir, true);
   try {
     git(st.cwd, ["branch", "-D", branch]); // never merged by git — nothing for -d to see
@@ -572,6 +574,109 @@ function mergeSnapshotWorker(
   return notes.length ? `${base}; ${notes.join("; ")}` : base;
 }
 
+function noCommitNextSteps(id: string, branch: string, worktreeDir: string, paths: string[]): string {
+  return (
+    `applied worker ${id}'s changes (branch ${branch}) to the checkout as uncommitted changes: ${paths.join(", ")}. ` +
+    `Branch and worktree ${worktreeDir} were kept. Next: review (git diff), commit, then run: pai worker gc`
+  );
+}
+
+/**
+ * `merge --no-commit`: apply base..branch to the checkout with a 3-way
+ * `git apply`, leaving the result uncommitted. On conflict the tree is left
+ * as is (markers + unmerged index entries) and the conflicted paths are listed.
+ */
+function applyNoCommit(cwd: string, id: string, branch: string, worktreeDir: string, base: string, paths: string[]): string {
+  const diff = execFileSync("git", ["-C", cwd, "diff", "--binary", `${base}..${branch}`], {
+    encoding: "buffer",
+    timeout: 30_000,
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  try {
+    execFileSync("git", ["-C", cwd, "apply", "--3way", "--binary"], {
+      input: diff,
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, LC_ALL: "C" },
+    });
+  } catch (e) {
+    const conflicted = git(cwd, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
+    const err = e as { stderr?: Buffer | string; message?: string };
+    const why = ((typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf8")) || err.message || "").trim();
+    throw new Error(
+      conflicted.length
+        ? `worker ${id}: applying ${branch} conflicted in ${conflicted.join(", ")}. The tree was left for you: ` +
+            `resolve those paths, review, commit; branch and worktree ${worktreeDir} were kept`
+        : `worker ${id}: git refused to apply ${branch} to ${cwd} — ${why}. Nothing was changed; branch and worktree were kept`
+    );
+  }
+  return noCommitNextSteps(id, branch, worktreeDir, paths);
+}
+
+export type VerifyState = "identical" | "differs" | "missing" | "deleted";
+export interface VerifyResult {
+  id: string;
+  ref: string;
+  base: string;
+  against: string;
+  files: { path: string; state: VerifyState }[];
+  ok: boolean;
+}
+
+/**
+ * `pai worker verify <id>`: for every file the worker's branch (or its
+ * refs/pai-archive/<id> archive once the branch is gone) changed since its
+ * base, compare bytes with the working tree or `--against <ref>`.
+ * identical = the target already holds the worker's version (a worker delete
+ * counts as identical when the target lacks the file too); differs = other
+ * bytes; missing = the worker's file is absent in the target; deleted = the
+ * worker deleted it but the target still has it. ok = every file identical.
+ */
+export function verifyWorker(logDir: string, id: string, opts: { against?: string } = {}): VerifyResult {
+  const st = loadStatus(logDir, id);
+  if (!st) throw new Error(`no worker named "${id}"`);
+  const env = { ...process.env, LC_ALL: "C" };
+  const bytes = (args: string[]): Buffer | null => {
+    try {
+      return execFileSync("git", ["-C", st.cwd, ...args], {
+        env,
+        timeout: 30_000,
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      return null;
+    }
+  };
+  const has = (ref: string): boolean => bytes(["rev-parse", "--verify", "-q", `${ref}^{commit}`]) !== null;
+  const ref = [`refs/heads/${worktreeBranch(id)}`, `refs/pai-archive/${id}`].find(has);
+  if (!ref) throw new Error(`worker ${id}: neither ${worktreeBranch(id)} nor refs/pai-archive/${id} exists in ${st.cwd}`);
+  const base = st.worktreeSnapshot && st.worktreeBase ? st.worktreeBase : git(st.cwd, ["merge-base", "HEAD", ref]);
+  const list = (bytes(["diff", "--name-status", "--no-renames", "-z", `${base}..${ref}`]) ?? Buffer.alloc(0))
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean);
+  const files: VerifyResult["files"] = [];
+  for (let i = 0; i + 1 < list.length; i += 2) {
+    const path = list[i + 1];
+    const deleted = list[i] === "D";
+    const target = opts.against
+      ? bytes(["show", `${opts.against}:${path}`])
+      : existsSync(join(st.cwd, path))
+        ? readFileSync(join(st.cwd, path))
+        : null;
+    let state: VerifyState;
+    if (deleted) state = target ? "deleted" : "identical";
+    else {
+      const mine = bytes(["show", `${ref}:${path}`]);
+      state = !target ? "missing" : mine && mine.equals(target) ? "identical" : "differs";
+    }
+    files.push({ path, state });
+  }
+  return { id, ref, base, against: opts.against ?? "working tree", files, ok: files.every((f) => f.state === "identical") };
+}
+
 /**
  * `pai worker merge <id>`: salvage whatever the worker left uncommitted onto
  * its branch, refuse when the original checkout is dirty in paths the branch
@@ -581,10 +686,10 @@ function mergeSnapshotWorker(
  * genuinely means it holds nothing, and reporting success there would
  * destroy the worktree for no gain.
  */
-export function mergeWorker(logDir: string, id: string): string {
+export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean } = {}): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
-  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st);
+  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit);
   // salvage first: only a commit can carry uncommitted work through the merge
   const salvage = existsSync(st.worktreeDir!)
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
@@ -602,6 +707,7 @@ export function mergeWorker(logDir: string, id: string): string {
     .split("\n")
     .filter(Boolean);
   assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
+  if (opts.noCommit) return applyNoCommit(st.cwd, id, st.branch!, st.worktreeDir!, mergeBase, incomingPaths);
   try {
     git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
