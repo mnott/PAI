@@ -27,6 +27,7 @@ import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
 import { resolveFromModule } from "../../module-paths.js";
+import { serviceManagerAllowed } from "../../service-manager.js";
 import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
 import {
   loadSessionKeepaliveState,
@@ -212,6 +213,7 @@ async function cmdStatus(): Promise<void> {
 }
 
 function cmdRestart(): void {
+  if (!serviceManagerAllowed("pai daemon restart")) return;
   if (process.platform === "linux") {
     const result = spawnSync("systemctl", ["--user", "restart", SYSTEMD_UNIT_NAME], {
       encoding: "utf8",
@@ -293,6 +295,7 @@ function installServiceDarwin(daemonBin: string): boolean {
   }
 
   // 2. Load the plist (unload first in case it was already there)
+  if (!serviceManagerAllowed(`launchctl load ${PLIST_PATH}`)) return true;
   try {
     spawnSync("launchctl", ["unload", PLIST_PATH], { encoding: "utf8" });
     const loadResult = spawnSync("launchctl", ["load", PLIST_PATH], {
@@ -327,6 +330,7 @@ function installServiceLinux(daemonBin: string): boolean {
   }
 
   // 2. daemon-reload + enable --now
+  if (!serviceManagerAllowed(`systemctl --user daemon-reload && systemctl --user enable --now ${SYSTEMD_UNIT_NAME}`)) return true;
   spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
   const enableResult = spawnSync("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT_NAME], {
     encoding: "utf8",
@@ -422,11 +426,13 @@ function cmdInstall(): void {
 
 function uninstallServiceDarwin(): void {
   if (existsSync(PLIST_PATH)) {
-    try {
-      spawnSync("launchctl", ["unload", PLIST_PATH], { encoding: "utf8" });
-      console.log(ok("  Unloaded launchd plist."));
-    } catch {
-      console.log(warn("  Could not unload plist via launchctl."));
+    if (serviceManagerAllowed(`launchctl unload ${PLIST_PATH}`)) {
+      try {
+        spawnSync("launchctl", ["unload", PLIST_PATH], { encoding: "utf8" });
+        console.log(ok("  Unloaded launchd plist."));
+      } catch {
+        console.log(warn("  Could not unload plist via launchctl."));
+      }
     }
     try {
       unlinkSync(PLIST_PATH);
@@ -441,17 +447,20 @@ function uninstallServiceDarwin(): void {
 
 function uninstallServiceLinux(): void {
   if (existsSync(SYSTEMD_UNIT_PATH)) {
-    spawnSync("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT_NAME], {
-      encoding: "utf8",
-    });
-    console.log(ok("  Disabled and stopped via systemd."));
+    const managed = serviceManagerAllowed(`systemctl --user disable --now ${SYSTEMD_UNIT_NAME}`);
+    if (managed) {
+      spawnSync("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT_NAME], {
+        encoding: "utf8",
+      });
+      console.log(ok("  Disabled and stopped via systemd."));
+    }
     try {
       unlinkSync(SYSTEMD_UNIT_PATH);
       console.log(ok(`  Removed unit: ${SYSTEMD_UNIT_PATH}`));
     } catch (e) {
       console.log(warn(`  Could not remove unit: ${e}`));
     }
-    spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
+    if (managed) spawnSync("systemctl", ["--user", "daemon-reload"], { encoding: "utf8" });
   } else {
     console.log(dim("  No systemd unit found."));
   }
