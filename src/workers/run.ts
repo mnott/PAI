@@ -53,6 +53,7 @@ import {
   assertProviderRunnable,
   classModelCapability,
   isModelCapability,
+  NATIVE_ANTHROPIC_MODELS,
   readWorkersSection,
   resolveModelCapability,
   type WorkerProvider,
@@ -324,16 +325,23 @@ export function toolResultFailed(block: { is_error?: boolean; content?: unknown 
   return m !== null && Number(m[1]) !== 0;
 }
 
+/** CLI aliases the built-in provider hands to `--model` (NATIVE_ANTHROPIC_MODELS'
+ *  values): a bare name like "sonnet", not a concrete id, so the init event's
+ *  resolved id is always the more useful thing to display. */
+const NATIVE_MODEL_ALIASES = new Set(Object.values(NATIVE_ANTHROPIC_MODELS));
+
 /**
  * The model the init event announces, adopted into the status when the spawn
  * could not name one (a caller that passed `--model` itself in the claude
- * args, or a provider whose table has no entry for the capability). The run's
- * real model is then only knowable from the first event it sends. Never
- * overwrites an explicit model — a resolved or pinned model stays the
+ * args, or a provider whose table has no entry for the capability) or named
+ * only a CLI alias (the built-in provider's "sonnet"/"haiku", which tracks
+ * whatever release is current — the init event says which one actually ran).
+ * The run's real model is then only knowable from the first event it sends.
+ * Never overwrites a concrete resolved or pinned model — that stays the
  * recorded truth.
  */
 export function adoptInitModel(status: Pick<WorkerStatus, "model">, e: StreamEvent): void {
-  if (status.model) return;
+  if (status.model && !NATIVE_MODEL_ALIASES.has(status.model)) return;
   const m = (e.model ?? "").trim();
   if (m) status.model = m;
 }
