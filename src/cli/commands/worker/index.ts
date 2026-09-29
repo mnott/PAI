@@ -294,7 +294,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
         if (id) {
           const msg = opts.check
             ? await checkPaneForWorker(id, workers.pane.fontSize, term)
-            : await openPaneForWorker(logDir, workers, id, term);
+            : (await openPaneForWorker(logDir, workers, id, term)).message;
           console.log(msg);
         } else {
           console.log(await openFollowPane(logDir, workers, term, opts.check === true));

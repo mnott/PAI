@@ -536,14 +536,20 @@ function absoluteCliPath(): string {
   return "pai";
 }
 
+/** Outcome of opening a worker's follow pane: the report line plus, on a fresh open, the new iTerm session id. */
+export interface PaneOpenResult {
+  message: string;
+  session: string | null;
+}
+
 /** Open (or only report on) the stacked follow pane of one worker. */
 export async function openPaneForWorker(
   logDir: string,
   config: WorkersConfig,
   wid: string,
   term: string
-): Promise<string> {
-  if (workerPaneOpen(wid)) return `pane for ${wid} already open`;
+): Promise<PaneOpenResult> {
+  if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
   const uid = itermUuid(term);
   const regPath = join(panesDir(logDir), `${scopeKey(term)}.json`);
   const reg = loadRegistry(regPath);
@@ -574,7 +580,7 @@ export async function openPaneForWorker(
     opened: new Date().toISOString().replace("T", " ").slice(0, 19),
   });
   saveRegistry(regPath, pruned);
-  return `pane opened for ${wid}`;
+  return { message: `pane opened for ${wid}`, session: out.slice(bar + 1) };
 }
 
 /**

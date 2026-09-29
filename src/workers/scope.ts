@@ -14,9 +14,10 @@
  * If neither is available, viewers fall back to "all workers".
  *
  * A third case: workers spawned from a Claude Code Bash tool (the
- * orchestrator pattern) have neither — Claude Code exports no terminal or
- * session identity to its Bash children. Those record `spawnerSession`, the
- * orchestrator's claude session id bridged through the status line's
+ * orchestrator pattern) inherit the orchestrator's `ITERM_SESSION_ID`, which
+ * identifies the orchestrator's own pane, not a pane for the sub-worker —
+ * so it does not key the sub-worker's tab. Those record `spawnerSession`,
+ * the orchestrator's claude session id bridged through the status line's
  * session map (see below), so their tab still claims them.
  */
 
