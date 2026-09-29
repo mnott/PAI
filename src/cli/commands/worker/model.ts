@@ -9,6 +9,7 @@
 import type { Command } from "commander";
 import {
   WorkersConfigError,
+  getProviderOrNative,
   isModelCapability,
   readWorkersSection,
   type ModelCapability,
@@ -39,9 +40,19 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
         `--provider targets another provider.`
     )
     .option("--provider <name>", "Provider to read or change (default: the active one)")
-    .action((what: string | undefined, model: string | undefined, opts: { provider?: string }) => {
+    .option("--capability <name>", "Capability to set/show, with a model id as the only argument (same as the MCP tool)")
+    .action((what: string | undefined, model: string | undefined, opts: { provider?: string; capability?: string }) => {
       try {
         const { workers } = readWorkersSection();
+        if (opts.capability !== undefined) {
+          if (!isModelCapability(opts.capability)) {
+            throw new WorkersConfigError(`"${opts.capability}" is not a valid capability name`);
+          }
+          if (model !== undefined) throw new WorkersConfigError("with --capability pass only a model id");
+          // rewrite into the positional form below
+          model = what;
+          what = opts.capability;
+        }
         if (what === undefined) {
           for (const line of describeModels(workers)) console.log(`  ${line}`);
           return;
@@ -52,7 +63,7 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
           capability = what;
           if (model === undefined) {
             const name = resolveProviderName(workers, opts.provider);
-            const p = workers.providers[name];
+            const p = getProviderOrNative(workers, name);
             if (p) console.log(`  ${name} ${capability} ${p.models[capability] ?? "(none)"}`);
             return;
           }
@@ -64,7 +75,7 @@ export function registerWorkerModelCommand(workerCmd: Command): void {
         }
         const name = resolveProviderName(workers, opts.provider);
         const fresh = setProviderModel(name, capability, id);
-        const p = fresh.providers[name];
+        const p = getProviderOrNative(fresh, name);
         if (p) {
           console.log(ok(`${name} ${capability} model: ${p.models[capability]}`));
           console.log(dim(`  ${modelPrefsText(p)}`));
