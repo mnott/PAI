@@ -15,10 +15,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { loadStatus, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 
@@ -666,4 +666,122 @@ export function inPlaceSystemPrompt(): string {
     "A hook blocks git stash (except list/show), reset, clean, checkout/restore of files, switch, rebase and merge — take baselines from measurements taken before you edit, not from stashing.",
     "Read-only git (status, diff, log, show, stash list) is fine.",
   ].join("\n");
+}
+
+export interface GcEntry {
+  id: string;
+  /** archive ref, or the reason the worktree was skipped. */
+  archive?: string;
+  skipped?: string;
+}
+
+const GC_STAMP = "gc-last";
+
+/**
+ * Archive worktrees of finished workers older than `olderThanHours` and
+ * status-less orphan directories: uncommitted state is salvaged onto the
+ * branch, the branch is x, the worktree is
+ * removed. Nothing is deleted without a salvage first; a failed salvage skips
+ * that worktree. Running workers are never touched. `dryRun` reports only.
+ */
+export function gcWorktrees(
+  logDir: string,
+  olderThanHours = 24,
+  dryRun = false,
+  now = Date.now()
+): GcEntry[] {
+  const cutoff = now - olderThanHours * 3_600_000;
+  const out: GcEntry[] = [];
+  const root = worktreesDir(logDir);
+  const known = new Set<string>();
+  const archive = (id: string, dir: string, repo: string | null, st: WorkerStatus | null): void => {
+    const target = `refs/pai-archive/${id}`;
+    if (dryRun) return void out.push({ id, archive: target });
+    try {
+      if (!repo) throw new Error("not a git worktree");
+      const label = `archive: leftover state of worker ${id}`;
+      if (uncommittedPaths(dir).length) {
+        // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
+        const res = salvageUncommitted(dir, label);
+        if (res.committed.length) git(dir, ["commit", "--amend", "-q", "-m", label]);
+        if (res.skipped.length && uncommittedPaths(dir).some((p) => !symlinkEscapesWorktree(dir, p))) {
+          throw new Error("uncommitted paths remain");
+        }
+      }
+      const src = worktreeBranch(id);
+      let hasBranch = true;
+      try {
+        git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${src}`]);
+      } catch {
+        hasBranch = false;
+      }
+      const tip = git(dir, ["rev-parse", "HEAD"]);
+      // never drop a branch whose tip the archive ref would not keep reachable
+      if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${src}`, tip]);
+      git(repo, ["update-ref", target, tip]);
+      git(repo, ["worktree", "remove", "--force", dir]);
+      if (hasBranch) git(repo, ["branch", "-D", src]);
+      if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
+      appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
+      out.push({ id, archive: target });
+    } catch (e) {
+      out.push({ id, skipped: (e as Error).message.split("\n")[0] });
+    }
+  };
+
+  for (const st of loadStatuses(logDir)) {
+    known.add(st.id);
+    if (!st.worktreeDir || !existsSync(st.worktreeDir) || isLive(st)) continue;
+    let end = 0;
+    try {
+      end = statSync(statusPath(logDir, st.id)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (end > cutoff) continue;
+    archive(st.id, st.worktreeDir, st.cwd, st);
+  }
+
+  if (existsSync(root)) {
+    for (const ent of readdirSync(root, { withFileTypes: true })) {
+      if (!ent.isDirectory() || known.has(ent.name) || existsSync(statusPath(logDir, ent.name))) continue;
+      const dir = join(root, ent.name);
+      try {
+        if (statSync(dir).mtimeMs > cutoff) continue;
+      } catch {
+        continue;
+      }
+      let repo: string | null = null;
+      try {
+        const raw = git(dir, ["rev-parse", "--git-common-dir"]);
+        repo = isAbsolute(raw) ? raw : resolve(dir, raw);
+      } catch {
+        repo = null;
+      }
+      archive(ent.name, dir, repo, null);
+    }
+  }
+  if (!dryRun) {
+    for (const repo of new Set(loadStatuses(logDir).map((s) => s.cwd))) {
+      try {
+        git(repo, ["worktree", "prune"]);
+      } catch {
+        // repo gone
+      }
+    }
+  }
+  return out;
+}
+
+/** Run `gcWorktrees` at most once per `everyMin` minutes (stamp file in the logDir). */
+export function gcWorktreesThrottled(logDir: string, everyMin = 60, now = Date.now()): GcEntry[] | null {
+  const stamp = join(logDir, GC_STAMP);
+  try {
+    if (now - statSync(stamp).mtimeMs < everyMin * 60_000) return null;
+  } catch {
+    // never ran
+  }
+  mkdirSync(logDir, { recursive: true });
+  writeFileSync(stamp, String(now), "utf8");
+  return gcWorktrees(logDir, 24, false, now);
 }

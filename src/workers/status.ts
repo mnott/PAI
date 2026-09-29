@@ -83,6 +83,8 @@ export interface WorkerStatus {
   commits?: number | null;
   /** Set by `pai worker merge` once the branch landed in the original checkout. */
   merged?: boolean;
+  /** Set by `pai worker gc`: the hidden ref (refs/pai-archive/<id>) holding the leftover worktree's state. */
+  archived?: string | null;
   /**
    * How the run came to be: "spawn" (a `pai worker run` subagent) or "chat"
    * (the terminal's interactive pane itself, tracked like a worker). Absent

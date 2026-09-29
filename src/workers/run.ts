@@ -95,6 +95,7 @@ import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } f
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
   addWorktree,
+  gcWorktreesThrottled,
   inPlaceSystemPrompt,
   recordWorktree,
   worktreeSystemPrompt,
@@ -467,6 +468,12 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
   const logDir = workersLogDir(config);
   mkdirSync(logDir, { recursive: true });
+  try {
+    const gc = gcWorktreesThrottled(logDir)?.filter((r) => r.archive);
+    if (gc?.length) process.stderr.write(`pai worker: archived ${gc.length} leftover worktree(s) (pai worker gc)\n`);
+  } catch {
+    // best effort
+  }
 
   // class plan is not one worker but the planner orchestration (planner.ts)
   if (opts.className === "plan" && !opts._planner) {
