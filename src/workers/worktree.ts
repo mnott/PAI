@@ -717,11 +717,19 @@ export function gcWorktrees(
   const out: GcEntry[] = [];
   const root = worktreesDir(logDir);
   const known = new Set<string>();
-  const archive = (id: string, dir: string, repo: string | null, st: WorkerStatus | null): void => {
+  const archive = (id: string, dir: string, st: WorkerStatus | null): void => {
     const target = `refs/pai-archive/${id}`;
     if (dryRun) return void out.push({ id, archive: target });
     try {
-      if (!repo) throw new Error("not a git worktree");
+      // The shared object store and refs live in the main repo; the recorded cwd
+      // may be another worker's worktree that gc already removed.
+      let repo: string;
+      try {
+        const raw = git(dir, ["rev-parse", "--git-common-dir"]);
+        repo = isAbsolute(raw) ? raw : resolve(dir, raw);
+      } catch {
+        throw new Error("not a git worktree");
+      }
       const label = `archive: leftover state of worker ${id}`;
       if (uncommittedPaths(dir).length) {
         // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
@@ -762,7 +770,7 @@ export function gcWorktrees(
       continue;
     }
     if (end > cutoff) continue;
-    archive(st.id, st.worktreeDir, st.cwd, st);
+    archive(st.id, st.worktreeDir, st);
   }
 
   if (existsSync(root)) {
@@ -774,14 +782,7 @@ export function gcWorktrees(
       } catch {
         continue;
       }
-      let repo: string | null = null;
-      try {
-        const raw = git(dir, ["rev-parse", "--git-common-dir"]);
-        repo = isAbsolute(raw) ? raw : resolve(dir, raw);
-      } catch {
-        repo = null;
-      }
-      archive(ent.name, dir, repo, null);
+      archive(ent.name, dir, null);
     }
   }
   if (!dryRun) {
