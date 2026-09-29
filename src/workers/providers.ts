@@ -22,6 +22,7 @@ import {
   PROVIDER_TAGS,
   WorkersConfigError,
   expandHome,
+  getProviderOrNative,
   isModelCapability,
   keysDir,
   maskKey,
@@ -250,13 +251,13 @@ export type ModelSlot = ModelCapability;
  */
 export function resolveProviderName(workers: WorkersConfig, name?: string): string {
   const target = name ?? workers.active ?? "";
-  if (workers.providers[target]) return target;
+  if (target === ANTHROPIC_NATIVE || workers.providers[target]) return target;
   if (!target) throw new WorkersConfigError("no active provider — name one explicitly");
   if (target === "auto") {
     throw new WorkersConfigError('active is "auto" — name a provider explicitly');
   }
   throw new WorkersConfigError(
-    `no provider named "${target}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+    `no provider named "${target}". Configured: ${[ANTHROPIC_NATIVE, ...Object.keys(workers.providers)].join(", ")}`
   );
 }
 
@@ -278,13 +279,14 @@ export function setProviderModel(
   const id = model.trim();
   if (!id) throw new WorkersConfigError(`a ${capability} model id must not be empty`);
   const { raw, workers } = readWorkersSection(configPath);
-  const p = workers.providers[name];
+  const p = getProviderOrNative(workers, name);
   if (!p) {
     throw new WorkersConfigError(
-      `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+      `no provider named "${name}". Configured: ${[ANTHROPIC_NATIVE, ...Object.keys(workers.providers)].join(", ")}`
     );
   }
-  p.models[capability] = id;
+  // the built-in provider is synthesized on read; its table is workers.nativeModels
+  (name === ANTHROPIC_NATIVE ? workers.nativeModels : p.models)[capability] = id;
   writeWorkersSection(raw, workers, configPath);
   return workers;
 }
@@ -386,13 +388,9 @@ export function modelPrefsText(p: WorkerProvider): string {
  * provider, then one line per provider with all its capability preferences.
  */
 export function describeModels(workers: WorkersConfig): string[] {
-  const names = Object.keys(workers.providers);
-  if (!names.length) {
-    return ["no providers configured — add one with `pai worker providers add <name> …`"];
-  }
   const lines = [`active provider: ${workers.active ?? "(none)"}`];
-  for (const name of names) {
-    const p = workers.providers[name];
+  for (const name of [...Object.keys(workers.providers), ANTHROPIC_NATIVE]) {
+    const p = getProviderOrNative(workers, name)!;
     const active = workers.active === name ? "  [active]" : "";
     lines.push(`${name}${active}  ${modelPrefsText(p)}`);
   }

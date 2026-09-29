@@ -7,7 +7,7 @@
  * src/workers/providers.ts, shared with the `pai worker model` CLI.
  */
 
-import { readWorkersSection, type ModelCapability } from "../../workers/config.js";
+import { getProviderOrNative, readWorkersSection, type ModelCapability } from "../../workers/config.js";
 import {
   describeModels,
   modelPrefsText,
@@ -55,10 +55,7 @@ export function workerModel(args: WorkerModelArgs, configPath?: string): WorkerT
     if (action === "get") {
       if (args.provider) {
         const name = resolveProviderName(workers, args.provider);
-        const p = workers.providers[name];
-        return p
-          ? text(`${name}  ${modelPrefsText(p)}`)
-          : error(new Error(`no provider named "${args.provider}"`));
+        return text(`${name}  ${modelPrefsText(getProviderOrNative(workers, name)!)}`);
       }
       return text(describeModels(workers).join("\n"));
     }
@@ -67,7 +64,7 @@ export function workerModel(args: WorkerModelArgs, configPath?: string): WorkerT
     }
     const name = resolveProviderName(workers, args.provider);
     const fresh = setProviderModel(name, capability, args.model, configPath);
-    const p = fresh.providers[name];
+    const p = getProviderOrNative(fresh, name);
     return text(`${name} ${capability} model: ${p?.models[capability] ?? "?"}`);
   } catch (e) {
     return error(e);

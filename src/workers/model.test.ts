@@ -266,10 +266,15 @@ describe("describeModels", () => {
     expect(lines[1]).toContain("image example-paint");
   });
 
-  it("says so when no providers are configured", () => {
+  it("lists only the built-in anthropic provider when none are configured", () => {
     const lines = describeModels(parseWorkersConfig({}));
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/no providers configured/);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatch(/^anthropic\s+default sonnet\s+fast haiku/);
+  });
+
+  it("lists the built-in anthropic provider after the configured ones", () => {
+    const lines = describeModels(parseWorkersConfig(FIXTURE));
+    expect(lines[lines.length - 1]).toMatch(/^anthropic\s+default sonnet/);
   });
 });
 

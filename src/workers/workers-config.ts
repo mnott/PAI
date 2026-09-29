@@ -177,7 +177,7 @@ function parseBuiltinAnthropic(raw: unknown, pathPrefix: string): WorkerProvider
     );
   }
   if (p.models === undefined) return { ...NATIVE_ANTHROPIC_MODELS };
-  return parseModelsBlock(`${pathPrefix}.models`, p.models);
+  return { ...NATIVE_ANTHROPIC_MODELS, ...parseModelsBlock(`${pathPrefix}.models`, p.models) };
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +390,18 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
   }
   for (const name of Object.keys(before.providers)) {
     if (!(name in after.providers)) doc.deleteIn(["providers", name]);
+  }
+
+  // builtin anthropic models: only the capabilities that changed; the entry
+  // is created (with `builtin: true`) when the file has none yet
+  if (!shallowEqual(before.nativeModels, after.nativeModels)) {
+    if (!doc.hasIn(["providers", ANTHROPIC_NATIVE])) {
+      doc.setIn(["providers", ANTHROPIC_NATIVE], { builtin: true, models: { ...after.nativeModels } });
+    } else {
+      for (const [cap, id] of Object.entries(after.nativeModels)) {
+        if (before.nativeModels[cap] !== id) doc.setIn(["providers", ANTHROPIC_NATIVE, "models", cap], id);
+      }
+    }
   }
 
   // classes: same add/update/remove diff
