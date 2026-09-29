@@ -23,6 +23,7 @@ import {
   type WorkersConfig,
   type ProviderTag,
   WORKER_CLASSES,
+  ANTHROPIC_NATIVE,
   WorkersConfigError,
   classModelCapability,
   providerCostTier,
@@ -236,14 +237,8 @@ export function resolveTarget(
   }
 
   if (config.active !== "auto") {
-    const name = config.active;
-    if (!name) {
-      throw new NoProviderError(
-        `no active worker provider. Add one with: ` +
-          `pai worker providers add <name> --base-url <url> --key-file <path> --model <model>` +
-          `\n(or point one that exists at it: pai worker providers use <name>)`
-      );
-    }
+    // nothing active and no class entry: the built-in provider, no config written
+    const name = config.active ?? ANTHROPIC_NATIVE;
     return {
       providerName: name,
       provider: mustBeRunnable(name, mustExist(config, name)),

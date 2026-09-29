@@ -408,8 +408,9 @@ function classesForProvider(workers: WorkersConfig, name: string): string[] {
 export function describeProviders(workers: WorkersConfig, configPath: string = CONFIG_FILE): string[] {
   const lines: string[] = [];
   const nativeActive = workers.active === ANTHROPIC_NATIVE;
+  const nativeDefault = !workers.active;
   lines.push(
-    `${ANTHROPIC_NATIVE}  [built-in${nativeActive ? ", active" : ""}]  Claude Code's own OAuth/Max-plan login — no base URL, no API key`
+    `${ANTHROPIC_NATIVE}  [built-in${nativeActive ? ", active" : ""}]${nativeDefault ? " (active: default)" : ""}  Claude Code's own OAuth/Max-plan login — no base URL, no API key`
   );
   lines.push(`    ${modelPrefsText(nativeAnthropicProvider(workers.nativeModels))}`);
   const nativeClasses = classesForProvider(workers, ANTHROPIC_NATIVE);
