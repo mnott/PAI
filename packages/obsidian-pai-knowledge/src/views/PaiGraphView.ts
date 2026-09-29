@@ -107,8 +107,8 @@ export class PaiGraphView extends ItemView {
     } catch (err) {
       this.showError(
         "PAI daemon not running",
-        "Could not connect to the PAI daemon. Start it with:",
-        "pai daemon start"
+        "Could not connect to the PAI daemon. Is it running? `pai daemon status`. Start or restart it with:",
+        "pai daemon restart"
       );
       return;
     }
@@ -132,7 +132,7 @@ export class PaiGraphView extends ItemView {
       this.showError(
         "Failed to load clusters",
         message,
-        "Check that `pai daemon start` is running and try again."
+        "Check that the daemon is running (`pai daemon status`); restart it with `pai daemon restart` and try again."
       );
       return;
     }
@@ -368,7 +368,7 @@ export class PaiGraphView extends ItemView {
       this.renderLevel1(result.clusters);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.showError("Refresh failed", message, "pai daemon start");
+      this.showError("Refresh failed", message, "pai daemon restart");
     }
   }
 
@@ -392,7 +392,7 @@ export class PaiGraphView extends ItemView {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.showError("Failed to load cluster notes", message, "pai daemon start");
+      this.showError("Failed to load cluster notes", message, "pai daemon restart");
       return;
     }
 
@@ -432,7 +432,7 @@ export class PaiGraphView extends ItemView {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.showError("Failed to load note context", message, "pai daemon start");
+      this.showError("Failed to load note context", message, "pai daemon restart");
       return;
     }
 
@@ -508,7 +508,7 @@ export class PaiGraphView extends ItemView {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.showError("Failed to load latent ideas", message, "pai daemon start");
+      this.showError("Failed to load latent ideas", message, "pai daemon restart");
       return;
     }
 
@@ -731,7 +731,7 @@ export class PaiGraphView extends ItemView {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.showError("Trace failed", message, "pai daemon start");
+      this.showError("Trace failed", message, "pai daemon restart");
       return;
     }
 
