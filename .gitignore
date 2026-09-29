@@ -52,3 +52,4 @@ user-extensions/hooks/*
 !user-extensions/hooks/.gitkeep
 user-extensions/skills/*
 !user-extensions/skills/.gitkeep
+audits/
