@@ -113,6 +113,12 @@ export interface WorkerStatus {
    * status files.
    */
   sleepSec?: number | null;
+  /** Epoch ms the run is stopped at (deadline.ts); absent = no limit. */
+  deadlineAt?: number | null;
+  /** Limit in minutes the deadline was derived from. */
+  maxMinutes?: number | null;
+  /** The deadline stopped this run (state failed, `last` says why). */
+  timedOut?: boolean;
   /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
   controlsHeld?: boolean;
 }

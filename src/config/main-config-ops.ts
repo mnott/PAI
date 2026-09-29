@@ -22,6 +22,7 @@ import {
   DEFAULT_ROUTING,
   DEFAULT_TREE,
   DEFAULT_CACHE_KEEPALIVE_SECS,
+  DEFAULT_MAX_MINUTES,
   maskKey,
 } from "../workers/config.js";
 import { migrateMainConfigToYaml } from "./main-config.js";
@@ -145,6 +146,8 @@ function workersMainConfigShape(): Record<string, unknown> {
     routing: workers.routing,
     tree: workers.tree,
     cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
+    defaultMaxMinutes: workers.defaultMaxMinutes,
+    noBrowserByDefault: workers.noBrowserByDefault,
     ...(workers.fallback ? { fallback: workers.fallback } : {}),
   };
 }
@@ -159,6 +162,8 @@ function schemaRoot(): Record<string, unknown> {
       routing: DEFAULT_ROUTING,
       tree: DEFAULT_TREE,
       cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
+      defaultMaxMinutes: DEFAULT_MAX_MINUTES,
+      noBrowserByDefault: false,
     },
   };
 }

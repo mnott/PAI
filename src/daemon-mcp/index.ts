@@ -91,6 +91,7 @@ import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/status.js";
+import { deadlineLabel } from "../workers/deadline.js";
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
@@ -866,6 +867,7 @@ async function startShim(): Promise<void> {
               ...running.map(
                 (w) =>
                   `  ${w.id} ${w.label}${w.parent ? ` (sub-worker of ${w.parent})` : ""} · ${w.last}` +
+                  (deadlineLabel(w) ? ` · ${deadlineLabel(w)}` : "") +
                   (readInbox(logDir, w.id).length ? ` · ◆${readInbox(logDir, w.id).length}` : "")
               ),
             ]

@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type GateDecision } from "./sleep-poll-gate.js";
 import { decideWorkerGitGuard } from "./worker-git-guard.js";
+import { isBrowserTool } from "../../../workers/browser-tools.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
@@ -300,6 +301,9 @@ export function decideWorkerGuard(
   const tool = input.tool_name;
   const ti = input.tool_input ?? {};
 
+  if (env.PAI_WORKER_NO_BROWSER === "1" && tool?.startsWith("mcp__") && isBrowserTool(tool)) {
+    return deny(`${tool} blocked: this worker runs with --no-browser`);
+  }
   if (tool === "Bash") {
     return typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
   }

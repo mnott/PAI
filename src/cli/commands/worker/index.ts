@@ -18,7 +18,7 @@
  * local Anthropic↔OpenAI translation, mcp for the allowlist workers may load.
  */
 
-import type { Command } from "commander";
+import { InvalidArgumentError, type Command } from "commander";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readWorkersSection, type WorkerProvider } from "../../../workers/config.js";
@@ -104,6 +104,10 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--no-pane", "Do not open a follow pane for this worker")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
+    .option("--max-minutes <n>", "Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60)", parseMinutesArg)
+    .option("--deadline <HH:MM>", "Stop the run at this local time (tomorrow if already past); exclusive with --max-minutes")
+    .option("--browser", "Allow browser tools (re-enables them when workers.noBrowserByDefault is on)")
+    .option("--no-browser", "Strip --chrome and every browser MCP tool from this worker and deny them in its hooks")
     .option("--print-cmd", "Print the assembled claude argv as JSON and exit, without spawning (audit tool)")
     .option("--report <format>", "Final-report contract/parser: json or ag2 (default: ag2, or PAI_WORKER_REPORT)")
     .option("--no-report-retry", "Skip the one bounded re-ask when the final AG2 message fails validation")
@@ -124,6 +128,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           mcp?: string;
           pane?: boolean;
           worktree?: boolean;
+          maxMinutes?: number;
+          deadline?: string;
+          browser?: boolean;
           printCmd?: boolean;
           report?: string;
           reportRetry?: boolean;
@@ -212,6 +219,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
             cwd: opts.cwd,
             noPane: opts.pane === false,
             worktreeFlag: opts.worktree,
+            maxMinutes: opts.maxMinutes,
+            deadline: opts.deadline,
+            browser: opts.browser,
             printCmd: opts.printCmd,
             reportFormatFlag,
             noReportRetry: opts.reportRetry === false,
@@ -813,4 +823,10 @@ export function registerWorkerCommands(workerCmd: Command): void {
 function parseIntArg(v: string): number {
   const n = parseInt(v, 10);
   return Number.isNaN(n) ? 0 : n;
+}
+
+function parseMinutesArg(v: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) throw new InvalidArgumentError(`expected minutes >= 0, got "${v}"`);
+  return n;
 }
