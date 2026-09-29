@@ -118,6 +118,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
     "run_in_background is denied. Run the long command in the FOREGROUND with a Bash timeout up to 600000 ms",
     "and split longer jobs into steps that each fit it.",
+    "Kill only processes you started, by PID (`cmd & echo $! > /tmp/x.pid`, then `kill $(cat /tmp/x.pid)`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",
     `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,
