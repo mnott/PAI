@@ -155,11 +155,7 @@ async function retryConnect<T>(
     attemptN++;
     const result = await attempt();
     if ("backend" in result) {
-      if (attemptN > 1) {
-        process.stderr.write(`[pai-daemon] Connected to ${label} (after ${attemptN} attempts).\n`);
-      } else {
-        process.stderr.write(`[pai-daemon] Connected to ${label}.\n`);
-      }
+      if (attemptN > 1) process.stderr.write(`[pai-daemon] Connected to ${label} (after ${attemptN} attempts).\n`);
       // An outage that ended must stop being reported, or the status command
       // trades one wrong answer for another.
       clearBackendOutage();

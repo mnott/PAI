@@ -75,7 +75,8 @@ export function isGitRepo(cwd: string): boolean {
 export function promptLooksReadonly(prompt: string): boolean {
   const p = prompt.trim();
   if (!p) return true;
-  if (/\b(read[- ]only|do not (modify|change|edit|write)|don'?t (modify|change|edit|write)|no changes)\b/i.test(p)) {
+  const firstLine = p.split("\n", 1)[0];
+  if (/\b(read[- ]only|do not (modify|change|edit|write)|don'?t (modify|change|edit|write)|no changes)\b/i.test(firstLine)) {
     return true;
   }
   return /^(review|read|analy[sz]e|research|summar[iy]|inspect|investigate|spotcheck|report|find|list|check|verify|describe|explain|show)\b/i.test(

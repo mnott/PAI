@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -116,6 +116,17 @@ describe("migrateMainConfigToYaml", () => {
     expect(yamlText).toContain("# Daemon log level: debug, info, warn, or error.");
     expect(yamlText).toContain("logLevel: info");
     expect(yamlText).toContain("# Search defaults");
+  });
+
+  it("backs up config.json at 0o600 even when it started world-readable", () => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    writeFileSync(jsonPath, JSON.stringify({ logLevel: "info" }), "utf-8");
+    chmodSync(jsonPath, 0o644);
+
+    const r = migrateMainConfigToYaml(jsonPath, {});
+
+    expect(statSync(r.backupPath!).mode & 0o777).toBe(0o600);
   });
 
   it("folds a leading-underscore JSON comment key into a real # comment", () => {

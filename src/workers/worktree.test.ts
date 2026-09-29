@@ -82,6 +82,16 @@ describe("isGitRepo / promptLooksReadonly / worktreeWanted", () => {
     expect(promptLooksReadonly("Fix the button styling")).toBe(false);
   });
 
+  it("only treats a leading marker as read-only, not one buried later in the prompt", () => {
+    expect(
+      promptLooksReadonly(
+        "Implement X.\n\nDo not write a second copy of the helper, reuse the existing one."
+      )
+    ).toBe(false);
+    expect(promptLooksReadonly("read-only: check the build")).toBe(true);
+    expect(promptLooksReadonly("Do not modify anything, just look")).toBe(true);
+  });
+
   it("defaults to a worktree for writing classes in a git repo with a writing prompt", () => {
     const yes = { cwd: repo, className: "implement", prompt: "Create a file" };
     expect(worktreeWanted(undefined, yes)).toBe(true);

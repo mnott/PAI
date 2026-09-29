@@ -12,7 +12,7 @@
  * src/daemon/config.ts) keeps working unmodified either way.
  */
 
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { Document, parseDocument } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "./json-store.js";
@@ -239,6 +239,7 @@ export function migrateMainConfigToYaml(
   const stamp = new Date().toISOString().slice(0, 10);
   const backupPath = join(dirname(jsonPath), `${basename(jsonPath)}.migrated-${stamp}`);
   renameSync(jsonPath, backupPath);
+  chmodSync(backupPath, 0o600);
 
   return { yamlPath, yamlText, backupPath, dryRun: false };
 }
