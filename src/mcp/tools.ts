@@ -7,7 +7,7 @@
  *
  * Domain modules:
  *   tools/types.ts         — shared types + project-row helpers
- *   tools/memory.ts        — memory_search, memory_get
+ *   tools/memory.ts        — memory_search, memory_get, memory_outline
  *   tools/projects.ts      — project_info, project_list, project_detect,
  *                            project_health, project_todo
  *   tools/sessions.ts      — session_list, session_route

@@ -5,6 +5,7 @@
 import {
   toolMemorySearch,
   toolMemoryGet,
+  toolMemoryOutline,
   toolProjectInfo,
   toolProjectList,
   toolSessionList,
@@ -40,6 +41,9 @@ export async function dispatchTool(
 
     case "memory_get":
       return toolMemoryGet(registryBackend, p as Parameters<typeof toolMemoryGet>[1]);
+
+    case "memory_outline":
+      return toolMemoryOutline(registryBackend, p as Parameters<typeof toolMemoryOutline>[1]);
 
     case "project_info":
       return toolProjectInfo(registryBackend, p as Parameters<typeof toolProjectInfo>[1]);

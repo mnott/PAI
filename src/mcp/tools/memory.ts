@@ -1,10 +1,11 @@
 /**
- * MCP tool handlers: memory_search, memory_get
+ * MCP tool handlers: memory_search, memory_get, memory_outline
  */
 
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { populateSlugs } from "../../memory/search.js";
+import { buildOutline, type OutlineNode } from "../../memory/chunker.js";
 import type { StorageBackend } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SearchConfig } from "../../daemon/config.js";
@@ -229,84 +230,69 @@ export interface MemoryGetParams {
   lines?: number;
 }
 
+/**
+ * Resolve `project` + `path` to a readable file inside the project root.
+ * Shared by memory_get and memory_outline so both apply the same path and
+ * access checks. Returns a ToolResult on any failure.
+ */
+async function resolveProjectFile(
+  registry: RegistryBackend,
+  projectSlug: string,
+  requestedPath: string,
+): Promise<{ fullPath: string } | ToolResult> {
+  const fail = (text: string): ToolResult => ({
+    content: [{ type: "text", text }],
+    isError: true,
+  });
+
+  const projectId = await lookupProjectId(registry, projectSlug);
+  if (projectId == null) return fail(`Project not found: ${projectSlug}`);
+
+  const project = await registry.getProjectById(projectId);
+  if (!project) return fail(`Project not found: ${projectSlug}`);
+
+  if (requestedPath.includes("..") || isAbsolute(requestedPath)) {
+    return fail(
+      `Invalid path: ${requestedPath} (must be a relative path within the project root, no ../ allowed)`,
+    );
+  }
+
+  const fullPath = join(project.root_path, requestedPath);
+  const resolvedFull = resolve(fullPath);
+  const resolvedRoot = resolve(project.root_path);
+
+  if (!resolvedFull.startsWith(resolvedRoot + "/") && resolvedFull !== resolvedRoot) {
+    return fail(`Path traversal blocked: ${requestedPath}`);
+  }
+
+  if (!existsSync(fullPath)) {
+    return fail(`File not found: ${requestedPath} (project: ${projectSlug})`);
+  }
+
+  const stat = statSync(fullPath);
+  if (stat.size > 5 * 1024 * 1024) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Maximum 5 MB.`,
+        },
+      ],
+    };
+  }
+
+  return { fullPath };
+}
+
 export async function toolMemoryGet(
   registry: RegistryBackend,
   params: MemoryGetParams
 ): Promise<ToolResult> {
   try {
-    const projectId = await lookupProjectId(registry, params.project);
-    if (projectId == null) {
-      return {
-        content: [
-          { type: "text", text: `Project not found: ${params.project}` },
-        ],
-        isError: true,
-      };
-    }
-
-    const project = await registry.getProjectById(projectId);
-
-    if (!project) {
-      return {
-        content: [
-          { type: "text", text: `Project not found: ${params.project}` },
-        ],
-        isError: true,
-      };
-    }
-
+    const resolved = await resolveProjectFile(registry, params.project, params.path);
+    if ("content" in resolved) return resolved;
+    const { fullPath } = resolved;
     const requestedPath = params.path;
-    if (requestedPath.includes("..") || isAbsolute(requestedPath)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Invalid path: ${params.path} (must be a relative path within the project root, no ../ allowed)`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const fullPath = join(project.root_path, requestedPath);
-    const resolvedFull = resolve(fullPath);
-    const resolvedRoot = resolve(project.root_path);
-
-    if (
-      !resolvedFull.startsWith(resolvedRoot + "/") &&
-      resolvedFull !== resolvedRoot
-    ) {
-      return {
-        content: [
-          { type: "text", text: `Path traversal blocked: ${params.path}` },
-        ],
-        isError: true,
-      };
-    }
-
-    if (!existsSync(fullPath)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `File not found: ${requestedPath} (project: ${params.project})`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const stat = statSync(fullPath);
-    if (stat.size > 5 * 1024 * 1024) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Maximum 5 MB.`,
-          },
-        ],
-      };
-    }
 
     const content = readFileSync(fullPath, "utf8");
     const allLines = content.split("\n");
@@ -327,6 +313,50 @@ export async function toolMemoryGet(
 
     return {
       content: [{ type: "text", text: `${header}\n\n${text}` }],
+    };
+  } catch (e) {
+    return {
+      content: [{ type: "text", text: `Read error: ${String(e)}` }],
+      isError: true,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tool: memory_outline
+// ---------------------------------------------------------------------------
+
+export interface MemoryOutlineParams {
+  project: string;
+  path: string;
+  max_depth?: number;
+}
+
+function renderOutline(nodes: OutlineNode[], maxDepth: number, depth = 0, out: string[] = []): string[] {
+  for (const n of nodes) {
+    out.push(
+      `${"  ".repeat(depth)}${"#".repeat(n.level)} ${n.title}  L${n.startLine}-${n.endLine} ~${n.tokens}t`,
+    );
+    if (depth + 1 < maxDepth) renderOutline(n.children, maxDepth, depth + 1, out);
+  }
+  return out;
+}
+
+export async function toolMemoryOutline(
+  registry: RegistryBackend,
+  params: MemoryOutlineParams
+): Promise<ToolResult> {
+  try {
+    const resolved = await resolveProjectFile(registry, params.project, params.path);
+    if ("content" in resolved) return resolved;
+
+    const outline = buildOutline(readFileSync(resolved.fullPath, "utf8"));
+    const body = outline.length
+      ? renderOutline(outline, params.max_depth ?? Infinity).join("\n")
+      : "(no headings)";
+
+    return {
+      content: [{ type: "text", text: `${params.project}/${params.path} outline:\n\n${body}` }],
     };
   } catch (e) {
     return {

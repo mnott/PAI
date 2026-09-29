@@ -27,6 +27,10 @@
         "description": "Retrieve full content of a specific file from project memory"
       },
       {
+        "name": "memory_outline",
+        "description": "Heading tree of a project file with line ranges and token estimates"
+      },
+      {
         "name": "project_info",
         "description": "Look up a project by slug, alias, or number"
       },

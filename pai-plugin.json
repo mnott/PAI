@@ -22,6 +22,7 @@
         "tools": [
           "memory_search",
           "memory_get",
+          "memory_outline",
           "project_info",
           "project_list",
           "session_list",

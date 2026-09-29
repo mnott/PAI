@@ -10,7 +10,7 @@
     "pai": {
       "command": "node",
       "args": ["dist/daemon-mcp/index.mjs"],
-      "description": "PAI Knowledge OS — federated memory search, project registry, session management. Provides 9 tools: memory_search, memory_get, project_info, project_list, session_list, registry_search, project_detect, project_health, project_todo."
+      "description": "PAI Knowledge OS — federated memory search, project registry, session management. Provides 10 tools: memory_search, memory_get, memory_outline, project_info, project_list, session_list, registry_search, project_detect, project_health, project_todo."
     }
   },
   "capabilities": {

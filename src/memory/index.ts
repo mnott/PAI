@@ -6,8 +6,8 @@
  * Re-exports the public API from all memory sub-modules.
  */
 
-export { chunkMarkdown, estimateTokens } from "./chunker.js";
-export type { Chunk, ChunkOptions } from "./chunker.js";
+export { chunkMarkdown, estimateTokens, parseHeadings, buildOutline } from "./chunker.js";
+export type { Chunk, ChunkOptions, Heading, OutlineNode } from "./chunker.js";
 export { detectTier } from "./indexer/helpers.js";
 export type { IndexResult } from "./indexer/types.js";
 export { buildFtsQuery, populateSlugs } from "./search.js";

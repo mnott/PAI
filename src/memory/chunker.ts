@@ -13,6 +13,8 @@ export interface Chunk {
   startLine: number;  // 1-indexed
   endLine: number;    // 1-indexed, inclusive
   hash: string;       // SHA-256 of text
+  /** Ancestor heading titles, outermost first, including the chunk's own section heading. */
+  headingPath: string[];
 }
 
 export interface ChunkOptions {
@@ -37,6 +39,90 @@ export function estimateTokens(text: string): number {
 // sha256 imported from utils/hash.ts
 
 // ---------------------------------------------------------------------------
+// Heading parser (the only one — chunker and memory_outline both use it)
+// ---------------------------------------------------------------------------
+
+export interface Heading {
+  level: number;  // 1-6
+  title: string;
+  line: number;   // 1-indexed
+}
+
+/**
+ * Parse ATX headings (levels 1-6) from lines. Lines inside ``` or ~~~ fences
+ * are never headings.
+ */
+export function parseHeadings(lines: string[]): Heading[] {
+  const headings: Heading[] = [];
+  let fence: { ch: string; len: number } | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i] ?? "";
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(text);
+    if (f) {
+      const marker = f[1]!;
+      if (!fence) fence = { ch: marker[0]!, len: marker.length };
+      else if (marker[0] === fence.ch && marker.length >= fence.len && !text.slice(f[0].length).trim()) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    const h = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(text);
+    if (h && h[2]) headings.push({ level: h[1]!.length, title: h[2], line: i + 1 });
+  }
+  return headings;
+}
+
+/** Heading path (outermost first) in effect at each heading, via a level stack. */
+function headingPaths(headings: Heading[]): Map<number, string[]> {
+  const paths = new Map<number, string[]>();
+  const stack: Heading[] = [];
+  for (const h of headings) {
+    while (stack.length > 0 && stack[stack.length - 1]!.level >= h.level) stack.pop();
+    stack.push(h);
+    paths.set(h.line, stack.map((x) => x.title));
+  }
+  return paths;
+}
+
+export interface OutlineNode {
+  level: number;
+  title: string;
+  startLine: number;
+  endLine: number;
+  tokens: number;
+  children: OutlineNode[];
+}
+
+/**
+ * Heading tree of a markdown file. A section ends on the line before the next
+ * heading of the same or higher level (or at EOF) and includes its children.
+ */
+export function buildOutline(content: string): OutlineNode[] {
+  const lines = content.split("\n");
+  const last = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+  const headings = parseHeadings(lines);
+  const roots: OutlineNode[] = [];
+  const stack: OutlineNode[] = [];
+
+  headings.forEach((h, i) => {
+    const next = headings.slice(i + 1).find((n) => n.level <= h.level);
+    const endLine = Math.max(h.line, next ? next.line - 1 : last);
+    const node: OutlineNode = {
+      level: h.level,
+      title: h.title,
+      startLine: h.line,
+      endLine,
+      tokens: estimateTokens(lines.slice(h.line - 1, endLine).join("\n")),
+      children: [],
+    };
+    while (stack.length > 0 && stack[stack.length - 1]!.level >= h.level) stack.pop();
+    (stack.length > 0 ? stack[stack.length - 1]!.children : roots).push(node);
+    stack.push(node);
+  });
+  return roots;
+}
+
+// ---------------------------------------------------------------------------
 // Internal section / paragraph / sentence splitters
 // ---------------------------------------------------------------------------
 
@@ -46,6 +132,7 @@ export function estimateTokens(text: string): number {
 interface LineBlock {
   lines: Array<{ text: string; lineNo: number }>;
   tokens: number;
+  headingPath: string[];
 }
 
 /**
@@ -57,21 +144,27 @@ function splitBySections(
 ): LineBlock[] {
   const sections: LineBlock[] = [];
   let current: Array<{ text: string; lineNo: number }> = [];
+  let currentPath: string[] = [];
+
+  const headings = parseHeadings(lines.map((l) => l.text));
+  const paths = headingPaths(headings);
+  const splitAt = new Set(headings.filter((h) => h.level <= 3).map((h) => h.line));
+
+  const flush = () => {
+    const text = current.map((l) => l.text).join("\n");
+    sections.push({ lines: current, tokens: estimateTokens(text), headingPath: currentPath });
+    current = [];
+  };
 
   for (const line of lines) {
-    const isHeading = /^#{1,3}\s/.test(line.text);
-    if (isHeading && current.length > 0) {
-      const text = current.map((l) => l.text).join("\n");
-      sections.push({ lines: current, tokens: estimateTokens(text) });
-      current = [];
+    if (splitAt.has(line.lineNo)) {
+      if (current.length > 0) flush();
+      currentPath = paths.get(line.lineNo) ?? [];
     }
     current.push(line);
   }
 
-  if (current.length > 0) {
-    const text = current.map((l) => l.text).join("\n");
-    sections.push({ lines: current, tokens: estimateTokens(text) });
-  }
+  if (current.length > 0) flush();
 
   return sections;
 }
@@ -87,7 +180,7 @@ function splitByParagraphs(block: LineBlock): LineBlock[] {
     if (line.text.trim() === "" && current.length > 0) {
       // Empty line — potential paragraph boundary
       const text = current.map((l) => l.text).join("\n");
-      paragraphs.push({ lines: [...current], tokens: estimateTokens(text) });
+      paragraphs.push({ lines: [...current], tokens: estimateTokens(text), headingPath: block.headingPath });
       current = [];
     } else {
       current.push(line);
@@ -96,7 +189,7 @@ function splitByParagraphs(block: LineBlock): LineBlock[] {
 
   if (current.length > 0) {
     const text = current.map((l) => l.text).join("\n");
-    paragraphs.push({ lines: current, tokens: estimateTokens(text) });
+    paragraphs.push({ lines: current, tokens: estimateTokens(text), headingPath: block.headingPath });
   }
 
   return paragraphs.length > 0 ? paragraphs : [block];
@@ -130,6 +223,7 @@ function splitBySentences(block: LineBlock, maxTokens: number): LineBlock[] {
     result.push({
       lines: [{ text: accText.trim(), lineNo: approxLine }],
       tokens: estimateTokens(accText),
+      headingPath: block.headingPath,
     });
     approxLine = endApprox + 1;
     accText = "";
@@ -160,13 +254,10 @@ function splitBySentences(block: LineBlock, maxTokens: number): LineBlock[] {
  * emitted chunks to prepend to the next chunk.
  */
 function buildOverlapPrefix(
-  chunks: Chunk[],
+  lastChunk: { text: string; startLine: number; endLine: number } | undefined,
   overlapTokens: number,
 ): Array<{ text: string; lineNo: number }> {
-  if (overlapTokens <= 0 || chunks.length === 0) return [];
-
-  const lastChunk = chunks[chunks.length - 1];
-  if (!lastChunk) return [];
+  if (overlapTokens <= 0 || !lastChunk) return [];
 
   const lines = lastChunk.text.split("\n");
   const kept: string[] = [];
@@ -206,6 +297,11 @@ export function stripPrivateTags(content: string): string {
   return content.replace(/<private>[\s\S]*?<\/private>/gi, "");
 }
 
+/** One breadcrumb line ("[A > B]\n") for a non-empty heading path, else "". */
+function breadcrumb(path: string[]): string {
+  return path.length > 0 ? `[${path.join(" > ")}]\n` : "";
+}
+
 export function chunkMarkdown(content: string, opts?: ChunkOptions): Chunk[] {
   const maxTokens = opts?.maxTokens ?? DEFAULT_MAX_TOKENS;
   const overlapTokens = opts?.overlap ?? DEFAULT_OVERLAP;
@@ -224,49 +320,55 @@ export function chunkMarkdown(content: string, opts?: ChunkOptions): Chunk[] {
   // Step 1: section split
   const sections = splitBySections(lines);
 
-  // Step 2 & 3: further split oversized sections
+  // Step 2 & 3: further split oversized sections. The breadcrumb line is
+  // prepended to every chunk, so it counts against the token budget.
   const finalBlocks: LineBlock[] = [];
   for (const section of sections) {
-    if (section.tokens <= maxTokens) {
+    const budget = Math.max(1, maxTokens - estimateTokens(breadcrumb(section.headingPath)));
+    if (section.tokens <= budget) {
       finalBlocks.push(section);
       continue;
     }
     // Too big — split by paragraphs
     const paras = splitByParagraphs(section);
     for (const para of paras) {
-      if (para.tokens <= maxTokens) {
+      if (para.tokens <= budget) {
         finalBlocks.push(para);
         continue;
       }
       // Still too big — split by sentences
-      const sentences = splitBySentences(para, maxTokens);
+      const sentences = splitBySentences(para, budget);
       finalBlocks.push(...sentences);
     }
   }
 
   // Step 4: build final chunks with overlap
   const chunks: Chunk[] = [];
+  let prev: { text: string; startLine: number; endLine: number } | undefined;
 
   for (const block of finalBlocks) {
     if (block.lines.length === 0) continue;
 
-    // Build overlap prefix from previous chunks
-    const overlapLines = buildOverlapPrefix(chunks, overlapTokens);
+    // Build overlap prefix from the previous chunk's raw (unprefixed) text
+    const overlapLines = buildOverlapPrefix(prev, overlapTokens);
 
     // Combine overlap + block lines
     const allLines = [...overlapLines, ...block.lines];
-    const text = allLines.map((l) => l.text).join("\n").trim();
+    const raw = allLines.map((l) => l.text).join("\n").trim();
 
-    if (!text) continue;
+    if (!raw) continue;
 
     const startLine = block.lines[0]?.lineNo ?? 1;
     const endLine = block.lines[block.lines.length - 1]?.lineNo ?? startLine;
+    const text = breadcrumb(block.headingPath) + raw;
 
+    prev = { text: raw, startLine, endLine };
     chunks.push({
       text,
       startLine,
       endLine,
       hash: sha256(text),
+      headingPath: block.headingPath,
     });
   }
 
