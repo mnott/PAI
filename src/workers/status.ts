@@ -119,6 +119,16 @@ export interface WorkerStatus {
   maxMinutes?: number | null;
   /** The deadline stopped this run (state failed, `last` says why). */
   timedOut?: boolean;
+  /** Launching process (the parent of `pai worker run`) at start, and its command name. */
+  parentPid?: number;
+  parentComm?: string;
+  parentBackground?: boolean;
+  /** Why the run ended (endreason.ts): exit, deadline, pai-worker-kill, parent-gone, external-signal. */
+  endReason?: string;
+  /** Who asked for the stop, when known (kill caller, daemon:<reason>). */
+  endBy?: string;
+  /** Detail for the reason (signal, sender note). */
+  endNote?: string;
   /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
   controlsHeld?: boolean;
 }

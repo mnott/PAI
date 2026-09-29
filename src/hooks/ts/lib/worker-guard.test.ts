@@ -57,6 +57,13 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
   ["tilde settings.json sed -i", bash("sed -i s/a/b/ ~/.claude/settings.json"), wtCtx(), "temp-dir copies"],
   ["cp onto pai yaml", bash("cp /tmp/x.yaml ~/.claude/pai/config.yaml"), wtCtx(), "temp-dir copies"],
   ["mv pai json", bash("mv /tmp/x ~/.claude/pai/config.json"), wtCtx(), "temp-dir copies"],
+  ["pkill -f real command", bash(`pkill -f "uvicorn paperfull_server.main:app --port 8490"`), wtCtx(), "by PID"],
+  ["pkill after &&", bash("cd x && pkill node"), wtCtx(), "by PID"],
+  ["sudo killall", bash("sudo killall node"), wtCtx(), "by PID"],
+  ["kill $(pgrep)", bash("kill $(pgrep -f uvicorn)"), wtCtx(), "by PID"],
+  ["kill backtick pgrep", bash("kill -9 `pgrep node`"), wtCtx(), "by PID"],
+  ["pgrep | xargs kill", bash("pgrep -f uvicorn | xargs kill"), wtCtx(), "by PID"],
+  ["pkill in bash -c", bash(`bash -c 'pkill -9 node'`), wtCtx(), "by PID"],
 ];
 
 const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
@@ -77,6 +84,11 @@ const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
   ["read live config", bash("cat ~/.claude/settings.json ~/.claude.json | head"), wtCtx()],
   ["write other Notes file", bash("echo x > Notes/other.md"), wtCtx()],
   ["write deep pai file", bash("echo x > ~/.claude/pai/logs/x.json"), wtCtx()],
+  ["kill by pid", bash("kill 1234"), wtCtx()],
+  ["kill pidfile", bash("kill $(cat /tmp/x.pid)"), wtCtx()],
+  ["kill job", bash("sleep 5 & kill %1"), wtCtx()],
+  ["pgrep alone", bash("pgrep -f uvicorn"), wtCtx()],
+  ["pkill in echo", bash("echo pkill is denied"), wtCtx()],
   ["stderr dup redirect", bash("npm test 2>&1 | tail"), wtCtx()],
   ["git checkout -b in worktree", bash("git checkout -b topic"), wtCtx()],
 ];

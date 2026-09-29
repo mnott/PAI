@@ -92,6 +92,7 @@ import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/status.js";
 import { deadlineLabel } from "../workers/deadline.js";
+import { endLabel } from "../workers/endreason.js";
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
@@ -868,10 +869,16 @@ async function startShim(): Promise<void> {
                 (w) =>
                   `  ${w.id} ${w.label}${w.parent ? ` (sub-worker of ${w.parent})` : ""} · ${w.last}` +
                   (deadlineLabel(w) ? ` · ${deadlineLabel(w)}` : "") +
+                  (w.parentComm ? ` · parent: ${w.parentComm}` : "") +
                   (readInbox(logDir, w.id).length ? ` · ◆${readInbox(logDir, w.id).length}` : "")
               ),
             ]
           : [];
+        const ended = loadStatuses(logDir)
+          .filter((w) => w.state !== "running" && w.endReason)
+          .slice(-5);
+        if (ended.length)
+          runningLines.push("", "recently ended:", ...ended.map((w) => `  ${w.id} ${w.state} · ${endLabel(w)}${w.endNote ? ` (${w.endNote})` : ""}`));
         return workerText(
           [
             `workers: ${workers.enabled ? "on" : "off"}`,

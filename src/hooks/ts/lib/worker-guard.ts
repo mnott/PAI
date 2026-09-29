@@ -194,6 +194,11 @@ function gitSub(args: string[]): { sub: string; rest: string[] } | null {
   return null;
 }
 
+const PATTERN_KILL = new Set(["pkill", "killall"]);
+const PATTERN_KILL_REASON =
+  "pattern-based process kill blocked: kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
+  "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";
+
 /** Decide one segment; `st.cwd` is the tracked working directory. */
 function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext): GateDecision {
   const words = stripPrefix(seg.words);
@@ -212,6 +217,10 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   }
 
   const pos = args.filter((a) => !isFlag(a));
+
+  if (PATTERN_KILL.has(cmd) || (cmd === "xargs" && args.includes("kill")) || (cmd === "kill" && /pgrep|pidof/.test(args.join(" ")))) {
+    return deny(PATTERN_KILL_REASON);
+  }
 
   if (cmd === "cd") {
     const p = pos[0] ? abs(pos[0], st.cwd, ctx.home) : null;

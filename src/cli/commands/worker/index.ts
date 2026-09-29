@@ -38,6 +38,7 @@ import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerCapabilityCommand } from "./capability.js";
 import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
+import { callerDescription, requestKill } from "../../../workers/endreason.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../../workers/worktree.js";
@@ -554,6 +555,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
           return;
         }
         try {
+          requestKill(logDir, ledgerPath(logDir), id);
           process.kill(status.pid, "SIGTERM");
           // The run's own SIGTERM handler writes the terminal status (killed,
           // rc 143, secs) — it knows the numbers we do not. Give it a moment
@@ -566,6 +568,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
             latest.state = "killed";
             latest.rc = latest.rc ?? 143;
             latest.last = latest.last || "killed by signal SIGTERM";
+            latest.endReason = "pai-worker-kill";
+            latest.endBy = callerDescription();
             saveStatus(logDir, latest);
           }
           console.log(`sent SIGTERM to worker ${id} (pid ${status.pid})`);

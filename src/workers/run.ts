@@ -62,6 +62,7 @@ import { buildRunEnv, claudeCommand } from "./run-env.js";
 
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
+import { decideEndReason, endFields, parentInfo, type EndInfo } from "./endreason.js";
 import {
   ensureNoMcpConfig,
   eventsPath,
@@ -806,6 +807,23 @@ export function fireDeadline(logDir: string, status: WorkerStatus, ledger: strin
   appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes });
 }
 
+/** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */
+export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: string): EndInfo {
+  const end = decideEndReason({
+    logDir,
+    id: status.id,
+    signal,
+    timedOut: status.timedOut,
+    parentPid: status.parentPid,
+    parentComm: status.parentComm,
+    parentBackground: status.parentBackground,
+  });
+  status.endReason = end.reason;
+  status.endBy = end.by;
+  status.endNote = end.note;
+  return end;
+}
+
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
@@ -836,8 +854,10 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), notes: orphanReason, result: "-" };
     appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
   }
+  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined });
+  status.endReason = end.reason;
   saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs });
+  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end) });
 
   if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
 
@@ -1162,6 +1182,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    ...parentInfo(),
     label,
     cwd,
     term,
@@ -1285,7 +1306,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     status.state = "killed";
     status.rc = 143;
     status.secs = Math.floor((Date.now() - t0) / 1000);
-    status.last = `killed by signal ${sig}`;
+    const end = recordSignalEnd(logDir, status, sig);
+    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
     saveStatus(logDir, status);
     appendLedger(ledger, "WORKER-END", {
       id: wid,
@@ -1295,6 +1317,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       rc: 143,
       secs: status.secs,
       killed: 1,
+      ...endFields(end),
+      note: end.note,
       label,
     });
     // a killed worktree run leaves nothing to merge — drop its worktree and
@@ -1625,6 +1649,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    ...parentInfo(),
     label,
     cwd,
     term,
@@ -1717,8 +1742,21 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       status.state = "killed";
       status.rc = 143;
       status.secs = Math.floor((Date.now() - t0) / 1000);
-      status.last = `killed by signal ${sig}`;
+      const end = recordSignalEnd(logDir, status, sig);
+      status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
       saveStatus(logDir, status);
+      appendLedger(ledger, "WORKER-END", {
+        id: wid,
+        provider: target.providerName,
+        mode: "headless",
+        model,
+        rc: 143,
+        secs: status.secs,
+        killed: 1,
+        ...endFields(end),
+        note: end.note,
+        label,
+      });
       // same as the claude path: a killed run's worktree and branch go now
       if (worktree) {
         salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
