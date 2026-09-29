@@ -817,6 +817,23 @@ For budget-conscious usage, PAI supports a compact search format that returns ~1
 
 Via MCP, pass `format: "compact"` to the `memory_search` tool. Default is `"full"` (current behavior with snippets).
 
+### Section-aware retrieval
+
+Long notes are chunked at their headings, and every chunk carries its heading path as a first line, for example `[Decisions > Worker routing > Provider choice]`. A search for "routing" therefore finds the paragraph under that sub-section even when the paragraph never uses the word. Headings inside code fences are ignored.
+
+For long files, read by section instead of whole:
+
+```
+1. memory_outline(project, path)  →  heading tree with line ranges and token estimates
+      ## Previous handovers  L45-195 ~2361t
+        ### Shipped (2026-09-29)  L60-66 ~251t
+2. memory_get(project, path, from=60, lines=7)  →  just that section
+```
+
+`memory_outline` returns structure only, never text, and takes an optional `max_depth`.
+
+When the chunking logic changes, `CHUNKER_VERSION` in `src/memory/chunker.ts` is bumped. It is part of each file's change-detection hash, so the first index pass after an upgrade re-chunks and re-embeds every file once; later passes skip unchanged files as before. On a large index that pass takes hours of local CPU for embeddings, and semantic search misses files until they are re-embedded, so restart the daemon onto a new version at a quiet time.
+
 ---
 
 ## Auto-Compact Context Window
@@ -1116,6 +1133,8 @@ PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiess
 The automatic observation capture system — classifying tool calls into structured observations with progressive context injection — is inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by [thedotmack](https://github.com/thedotmack). claude-mem demonstrated that automatic memory capture during Claude Code sessions dramatically improves continuity. PAI adapts this concept with a rule-based classifier, PostgreSQL storage, and three-layer progressive disclosure.
 
 The three-store hybrid memory architecture — combining SQLite/PostgreSQL chunks with a knowledge graph and vector embeddings, graph-completion search (vector seeds → graph traversal → re-rank), and the feedback EMA relevance loop — is inspired by [Cognee](https://github.com/topoteretes/cognee) by [topoteretes](https://github.com/topoteretes). Cognee showed that unifying structured knowledge graphs with unstructured vector retrieval produces dramatically better recall. PAI adapts this pattern to the personal knowledge OS context with project-scoped multi-tenancy and content-address entity deduplication.
+
+Section-aware retrieval (heading paths on chunks, `memory_outline`) borrows from [PageIndex](https://github.com/VectifyAI/PageIndex) by [VectifyAI](https://github.com/VectifyAI), which retrieves from long documents by navigating a heading tree rather than by similarity alone. PAI keeps its keyword, vector and graph search and adds the tree as structure the model can navigate, without an LLM call per query.
 
 ---
 
