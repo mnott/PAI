@@ -17,30 +17,17 @@ Install PAI and Claude remembers. Ask it what you were working on, find that con
 >
 > Claude installs PAI, runs the setup wizard and checks the daemon.
 
-Both assume [Claude Code](https://claude.com/claude-code) is installed. By hand, the same two storage choices on both platforms: **PostgreSQL + pgvector in Docker** (keyword and semantic search, recommended) or **SQLite** (keyword search, nothing else to run).
+**Prerequisites:** [Claude Code](https://claude.com/claude-code), Node.js 20 or newer, and Docker if you choose PostgreSQL.
 
-**macOS**
+By hand, the same on macOS and Linux:
 
 ```bash
-# Docker Desktop or OrbStack running, for the Postgres path
 npm i -g @tekmidian/pai
-pai setup --yes --storage postgres   # or: --storage sqlite
+pai setup --yes --storage postgres   # keyword + semantic search (pgvector in Docker); or: --storage sqlite
 pai daemon status                    # should show "running"
 ```
 
-**Linux (Ubuntu)**
-
-```bash
-sudo apt install -y nodejs npm tmux docker.io docker-compose-v2
-sudo usermod -aG docker "$USER"                  # then log out and in once
-npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"
-npm i -g @tekmidian/pai
-loginctl enable-linger "$USER"                   # daemon keeps running after logout
-pai setup --yes --storage postgres   # or: --storage sqlite (then Docker is not needed)
-pai daemon status                    # should show "running"
-```
-
-`pai setup` without `--yes` asks every question interactively. From a source checkout: `git clone https://github.com/mnott/PAI && cd PAI && bun install && bun run build`.
+`pai setup` without `--yes` asks every question interactively. It installs the daemon as a LaunchAgent on macOS and a systemd user service on Linux. From a source checkout: `git clone https://github.com/mnott/PAI && cd PAI && bun install && bun run build`.
 
 → [docs/install.md](docs/install.md) · [docs/install-linux.md](docs/install-linux.md) (both storage paths, Docker, systemd)
 
