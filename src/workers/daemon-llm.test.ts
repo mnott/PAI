@@ -117,10 +117,10 @@ describe("planLlmSpawn — no provider configured", () => {
     expect(plan.timeoutMs).toBe(LLM_TIMEOUT_MS.sonnet);
   });
 
-  it("falls back the same way when workers are enabled but no provider resolves", async () => {
+  it("routes to the built-in anthropic provider when workers are enabled but none is configured", async () => {
     writeConfig({ enabled: true, active: null, providers: {} });
     const plan = await planLlmSpawn("haiku", configPath);
-    expect(plan.provider).toBeNull();
+    expect(plan.provider).toBe("anthropic");
     expect(plan.model).toBe("haiku");
   });
 });

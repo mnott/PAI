@@ -291,3 +291,27 @@ describe("resolveCapabilityRun", () => {
     expect(() => resolveCapabilityRun(c, "image")).toThrow(/pai worker capability image/);
   });
 });
+
+describe("resolveTarget: fresh install (no active, no class map)", () => {
+  const empty = () => parseWorkersConfig({ enabled: true });
+
+  it("routes implement, simple and spotcheck to the built-in anthropic provider", () => {
+    for (const className of ["implement", "simple", "spotcheck"]) {
+      const t = resolveTarget(empty(), dir, { className });
+      expect(t.providerName).toBe("anthropic");
+      expect(t.provider.native).toBe(true);
+    }
+  });
+
+  it("an explicit active provider still wins", () => {
+    expect(resolveTarget(config({ classes: {} }), dir, { className: "implement" }).providerName).toBe("glm");
+  });
+
+  it("an explicit class mapping still wins", () => {
+    expect(resolveTarget(config(), dir, { className: "spotcheck" }).modelAlias).toBe("fast");
+  });
+
+  it("a configured-but-missing active provider still errors", () => {
+    expect(() => resolveTarget(config({ active: "gone", classes: {} }), dir, { className: "implement" })).toThrow(NoProviderError);
+  });
+});
