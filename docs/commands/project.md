@@ -39,6 +39,7 @@ pai project <subcommand> [options]
 | [`pai project names`](#pai-project-names) | List named projects (your curated shortlist) |
 | [`pai project config [identifier]`](#pai-project-config-identifier) | View or modify session launch config for a project. |
 | [`pai project mcp [names...]`](#pai-project-mcp-names) | View or set the MCP servers this project's interactive supervisor session |
+| [`pai project pins`](#pai-project-pins) | Print one line per active MCP/tools pin for the current directory's project (nothing when unpinned) |
 | [`pai project tools [names...]`](#pai-project-tools-names) | View or set the built-in tool schemas this project's interactive |
 
 ### pai project list
@@ -405,9 +406,9 @@ Use --options to discover available keys and presets.
 View or set the MCP servers this project's interactive supervisor session
 
 loads (run from inside the project, like `pai projects here`).
-No names: print the current value. Names (comma-separated or repeated
-args): set it, validated against ~/.claude.json's mcpServers.
---clear: unset (all servers load — today's default).
+No args: print the current value. --set <names> (comma-separated): set it,
+validated against ~/.claude.json's mcpServers. --clear: unset (all
+servers load — today's default). Positional names are an error.
 
 **Arguments**
 
@@ -419,7 +420,13 @@ args): set it, validated against ~/.claude.json's mcpServers.
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `--set <names>` | Set the pin (comma-separated server or set names) |  |
 | `--clear` | Unset — all MCP servers load again |  |
+
+
+### pai project pins
+
+Print one line per active MCP/tools pin for the current directory's project (nothing when unpinned)
 
 
 ### pai project tools [names...]
@@ -427,8 +434,9 @@ args): set it, validated against ~/.claude.json's mcpServers.
 View or set the built-in tool schemas this project's interactive
 
 supervisor session loads (run from inside the project, like `pai projects
-here`). No names: print the current value. Names (comma-separated or
-repeated args): set it. --clear: unset (all tools load — today's default).
+here`). No args: print the current value. --set <names> (comma-separated):
+set it. --clear: unset (all tools load — today's default). Positional
+names are an error.
 
 **Arguments**
 
@@ -440,6 +448,7 @@ repeated args): set it. --clear: unset (all tools load — today's default).
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `--set <names>` | Set the pin (comma-separated tool names) |  |
 | `--clear` | Unset — all built-in tools load again |  |
 
 

@@ -32,6 +32,7 @@ import { cmdMerge } from "./merge.js";
 import { cmdHere } from "./here.js";
 import { cmdUnregister } from "./unregister.js";
 import { resolveIdentifier } from "./helpers.js";
+import { pinNotices, projectLaunchConfig } from "../../../workers/project-config.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 
 export { cmdGo };
@@ -406,13 +407,22 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .description(
       "View or set the MCP servers this project's interactive supervisor session\n" +
         "loads (run from inside the project, like `pai projects here`).\n" +
-        "No names: print the current value. Names (comma-separated or repeated\n" +
-        "args): set it, validated against ~/.claude.json's mcpServers.\n" +
-        "--clear: unset (all servers load — today's default)."
+        "No args: print the current value. --set <names> (comma-separated): set it,\n" +
+        "validated against ~/.claude.json's mcpServers. --clear: unset (all\n" +
+        "servers load — today's default). Positional names are an error."
     )
+    .option("--set <names>", "Set the pin (comma-separated server or set names)")
     .option("--clear", "Unset — all MCP servers load again")
-    .action(async (names: string[], opts: { clear?: boolean }) => {
+    .action(async (names: string[], opts: { clear?: boolean; set?: string }) => {
       await cmdMcp(names, opts);
+    });
+
+  // pai projects pins — read by the SessionStart hook
+  projectsCmd
+    .command("pins")
+    .description("Print one line per active MCP/tools pin for the current directory's project (nothing when unpinned)")
+    .action(async () => {
+      for (const line of pinNotices(await projectLaunchConfig(process.cwd()))) console.log(line);
     });
 
   // pai projects tools [names...]
@@ -421,11 +431,13 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .description(
       "View or set the built-in tool schemas this project's interactive\n" +
         "supervisor session loads (run from inside the project, like `pai projects\n" +
-        "here`). No names: print the current value. Names (comma-separated or\n" +
-        "repeated args): set it. --clear: unset (all tools load — today's default)."
+        "here`). No args: print the current value. --set <names> (comma-separated):\n" +
+        "set it. --clear: unset (all tools load — today's default). Positional\n" +
+        "names are an error."
     )
+    .option("--set <names>", "Set the pin (comma-separated tool names)")
     .option("--clear", "Unset — all built-in tools load again")
-    .action(async (names: string[], opts: { clear?: boolean }) => {
+    .action(async (names: string[], opts: { clear?: boolean; set?: string }) => {
       await cmdTools(names, opts);
     });
 }

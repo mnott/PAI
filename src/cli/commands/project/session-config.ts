@@ -462,7 +462,7 @@ export async function cmdConfig(
 // ---------------------------------------------------------------------------
 
 /**
- * `pai project mcp [names...]` — the MCP servers this project's interactive
+ * `pai project mcp [--set names | --clear]` — the MCP servers this project's interactive
  * supervisor session loads. Operates on whichever registered project's
  * root_path covers `opts.cwd` (default: process.cwd()) — run it from inside
  * the project, same as `pai projects here`. Unset (the default) means every
@@ -471,8 +471,13 @@ export async function cmdConfig(
  */
 export async function cmdMcp(
   names: string[],
-  opts: { clear?: boolean; cwd?: string } = {}
+  opts: { clear?: boolean; set?: string; cwd?: string } = {}
 ): Promise<void> {
+  if (names.length) {
+    console.error(err("use --set <names> to change the pin; `pai project mcp` shows it"));
+    process.exitCode = 1;
+    return;
+  }
   const project = await currentProject(opts.cwd);
   if (!project) {
     console.error(err("No registered project matches the current directory."));
@@ -489,19 +494,19 @@ export async function cmdMcp(
     return;
   }
 
-  if (!names.length) {
+  if (opts.set === undefined) {
     console.log(config.mcp?.length ? config.mcp.join(",") : "unset (all)");
     return;
   }
 
   const { workers } = readWorkersSection();
-  config.mcp = expandMcpNames(splitNames(names), workers); // unknown names fail fast
+  config.mcp = expandMcpNames(splitNames([opts.set]), workers); // unknown names fail fast
   await saveSessionConfig(project, config);
   console.log(ok(`MCP servers set for ${bold(project.slug)}: ${config.mcp.join(", ")}`));
 }
 
 /**
- * `pai project tools [names...]` — the built-in tool schemas this project's
+ * `pai project tools [--set names | --clear]` — the built-in tool schemas this project's
  * interactive supervisor session loads (Read, Edit, Bash, …). Same cwd-based
  * project resolution and unset semantics as `cmdMcp`. Unlike MCP names, tool
  * names are not validated against a fixed list — the harness itself rejects
@@ -509,8 +514,13 @@ export async function cmdMcp(
  */
 export async function cmdTools(
   names: string[],
-  opts: { clear?: boolean; cwd?: string } = {}
+  opts: { clear?: boolean; set?: string; cwd?: string } = {}
 ): Promise<void> {
+  if (names.length) {
+    console.error(err("use --set <names> to change the pin; `pai project tools` shows it"));
+    process.exitCode = 1;
+    return;
+  }
   const project = await currentProject(opts.cwd);
   if (!project) {
     console.error(err("No registered project matches the current directory."));
@@ -527,12 +537,12 @@ export async function cmdTools(
     return;
   }
 
-  if (!names.length) {
+  if (opts.set === undefined) {
     console.log(config.tools?.length ? config.tools.join(",") : "unset (all)");
     return;
   }
 
-  config.tools = splitNames(names);
+  config.tools = splitNames([opts.set]);
   await saveSessionConfig(project, config);
   console.log(ok(`Tools set for ${bold(project.slug)}: ${config.tools.join(", ")}`));
 }

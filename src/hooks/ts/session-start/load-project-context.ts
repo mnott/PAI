@@ -506,6 +506,15 @@ ${paiProjectBlock ? `\n${paiProjectBlock}` : ''}
     // no workers config or not a git repo: stay silent
   }
 
+  // An MCP/tools pin silently drops servers; say so. Nothing printed when unpinned.
+  try {
+    const { execFileSync: run } = await import('child_process');
+    const pins = run(paiBin, ['project', 'pins'], { encoding: 'utf-8', cwd }).trim();
+    if (pins) console.log(pins);
+  } catch {
+    // pai unavailable: stay silent
+  }
+
   // 8.5. INJECT THE PAUSE CHECKPOINT
   //
   // `pai pause` writes the handover to TODO.md under `## Continue`. Until now

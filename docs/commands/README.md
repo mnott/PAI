@@ -143,6 +143,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project move <slug> <new-path>` | Update the root path for a project |
 | `pai project name <identifier> <shortname>` | Give a project a short name for quick access |
 | `pai project names` | List named projects (your curated shortlist) |
+| `pai project pins` | Print one line per active MCP/tools pin for the current directory's project (nothing when unpinned) |
 | `pai project promote` | Promote a session note into a new standalone project |
 | `pai project rebind <slug> <new-path>` | Manually update the root_path for a project (for when auto-detect found multiple matches). |
 | `pai project tag <slug> <tags...>` | Add one or more tags to a project |
@@ -170,6 +171,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects move <slug> <new-path>` | Update the root path for a project |
 | `pai projects name <identifier> <shortname>` | Give a project a short name for quick access |
 | `pai projects names` | List named projects (your curated shortlist) |
+| `pai projects pins` | Print one line per active MCP/tools pin for the current directory's project (nothing when unpinned) |
 | `pai projects promote` | Promote a session note into a new standalone project |
 | `pai projects rebind <slug> <new-path>` | Manually update the root_path for a project (for when auto-detect found multiple matches). |
 | `pai projects tag <slug> <tags...>` | Add one or more tags to a project |

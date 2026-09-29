@@ -84,7 +84,7 @@ describe("cmdMcp", () => {
   });
 
   it("sets, reads back, and clears", async () => {
-    await cmdMcp(["aibroker,clickr"], { cwd: projDir });
+    await cmdMcp([], { set: "aibroker,clickr", cwd: projDir });
     expect((await configFor("proj")).mcp).toEqual(["aibroker", "clickr"]);
 
     const log = vi.spyOn(console, "log");
@@ -95,8 +95,16 @@ describe("cmdMcp", () => {
     expect((await configFor("proj")).mcp).toBeUndefined();
   });
 
+  it("positional names without --set error and change nothing", async () => {
+    const err = vi.spyOn(console, "error");
+    await cmdMcp(["pai"], { cwd: projDir });
+    expect(process.exitCode).toBe(1);
+    expect(err.mock.calls.join()).toContain("use --set <names> to change the pin; `pai project mcp` shows it");
+    expect((await configFor("proj")).mcp).toBeUndefined();
+  });
+
   it("rejects an unknown MCP server name", async () => {
-    await expect(cmdMcp(["nosuch"], { cwd: projDir })).rejects.toThrow(/unknown MCP server/);
+    await expect(cmdMcp([], { set: "nosuch", cwd: projDir })).rejects.toThrow(/unknown MCP server/);
     expect((await configFor("proj")).mcp).toBeUndefined();
   });
 
@@ -114,7 +122,7 @@ describe("cmdTools", () => {
   });
 
   it("sets, reads back, and clears", async () => {
-    await cmdTools(["Bash,Read,Edit"], { cwd: projDir });
+    await cmdTools([], { set: "Bash,Read,Edit", cwd: projDir });
     expect((await configFor("proj")).tools).toEqual(["Bash", "Read", "Edit"]);
 
     const log = vi.spyOn(console, "log");
@@ -125,9 +133,17 @@ describe("cmdTools", () => {
     expect((await configFor("proj")).tools).toBeUndefined();
   });
 
-  it("does not disturb an existing mcp pin", async () => {
-    await cmdMcp(["pai"], { cwd: projDir });
+  it("positional names without --set error and change nothing", async () => {
+    const err = vi.spyOn(console, "error");
     await cmdTools(["Read"], { cwd: projDir });
+    expect(process.exitCode).toBe(1);
+    expect(err.mock.calls.join()).toContain("use --set <names> to change the pin; `pai project tools` shows it");
+    expect((await configFor("proj")).tools).toBeUndefined();
+  });
+
+  it("does not disturb an existing mcp pin", async () => {
+    await cmdMcp([], { set: "pai", cwd: projDir });
+    await cmdTools([], { set: "Read", cwd: projDir });
     expect(await configFor("proj")).toEqual({ mcp: ["pai"], tools: ["Read"] });
   });
 });

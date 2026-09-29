@@ -115,7 +115,7 @@ import {
 } from "./report.js";
 import { validateAg2 } from "./agentish.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
-import { projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
+import { pinNotices, projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
@@ -719,7 +719,7 @@ export function chromeGrantArgs(wanted: string[], rest: string[] = []): string[]
 export function interactiveMcpTools(
   explicitMcp: string[],
   callerTools: boolean,
-  projectLaunch: ProjectLaunchConfig | null
+  projectLaunch: Omit<ProjectLaunchConfig, "slug"> | null
 ): { mcpNames: string[]; tools: string[] } {
   return {
     mcpNames: explicitMcp.length ? explicitMcp : (projectLaunch?.mcp ?? []),
@@ -1061,6 +1061,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     const explicitMcp = [...(a.mcpFlag ? [a.mcpFlag] : []), ...parsed.mcp];
     const projectLaunch = await projectLaunchConfig(cwd);
     const picked = interactiveMcpTools(explicitMcp, parsed.callerTools, projectLaunch);
+    // applied pins only: an explicit --mcp / --tools overrides its pin
+    const applied = projectLaunch && {
+      ...projectLaunch,
+      mcp: explicitMcp.length ? undefined : projectLaunch.mcp,
+      tools: picked.tools.length ? projectLaunch.tools : undefined,
+    };
+    for (const line of pinNotices(applied)) console.error(line);
     if (picked.mcpNames.length) {
       const names = expandMcpNames(picked.mcpNames, config);
       mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
