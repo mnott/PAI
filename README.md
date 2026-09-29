@@ -17,7 +17,7 @@ Install PAI and Claude remembers. Ask it what you were working on, find that con
 >
 > Claude installs PAI, runs the setup wizard and checks the daemon.
 
-By hand, the same two storage choices on both platforms: **PostgreSQL + pgvector in Docker** (keyword and semantic search, recommended) or **SQLite** (keyword search, nothing else to run).
+Both assume [Claude Code](https://claude.com/claude-code) is installed. By hand, the same two storage choices on both platforms: **PostgreSQL + pgvector in Docker** (keyword and semantic search, recommended) or **SQLite** (keyword search, nothing else to run).
 
 **macOS**
 
@@ -33,8 +33,6 @@ pai daemon status                    # should show "running"
 ```bash
 sudo apt install -y nodejs npm tmux docker.io docker-compose-v2
 sudo usermod -aG docker "$USER"                  # then log out and in once
-curl -fsSL https://claude.ai/install.sh | bash   # Claude Code, native installer
-claude auth login
 npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"
 npm i -g @tekmidian/pai
 loginctl enable-linger "$USER"                   # daemon keeps running after logout
