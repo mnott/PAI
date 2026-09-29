@@ -21,7 +21,6 @@ import {
   promptLooksReadonly,
   recordWorktree,
   salvageUncommitted,
-  sweepOrphanWorktrees,
   uncommittedPaths,
   worktreeBranch,
   worktreePath,
@@ -561,6 +560,7 @@ describe("gcWorktrees", () => {
     expect(res.map((r) => r.id)).toEqual(["gc-orphan"]);
     expect(existsSync(wt.dir)).toBe(false);
     expect(git(repo, ["show", "refs/pai-archive/gc-orphan:o.txt"])).toBe("orphan");
+    expect(refs()).not.toContain("refs/heads/worker/gc-orphan");
   });
 
   it("throttles to once per interval", () => {

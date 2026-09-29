@@ -149,13 +149,6 @@ function snapshotUncommitted(cwd: string, id: string, head: string): string {
  * degrade to an in-place run.
  */
 export function addWorktree(logDir: string, id: string, cwd: string): WorktreeInfo {
-  const swept = sweepOrphanWorktrees(logDir);
-  if (swept.length) {
-    appendLedger(ledgerPath(logDir), "WORKER-NOTE", {
-      id,
-      note: `swept orphan worktree(s): ${swept.join(", ")}`,
-    });
-  }
   const dir = worktreePath(logDir, id);
   const branch = worktreeBranch(id);
   const head = git(cwd, ["rev-parse", "HEAD"]);
@@ -163,50 +156,6 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const base = dirty ? snapshotUncommitted(cwd, id, head) : head;
   git(cwd, ["worktree", "add", dir, "-b", branch, base]);
   return { dir, branch, base, snapshot: dirty };
-}
-
-/**
- * Remove worktrees (and their `worker/<id>` branches) whose worker no longer
- * exists — no status file left in the log dir. Killed and failed runs clean
- * up after themselves, but a `kill -9` or a crash strands a directory and a
- * branch; every worktree creation sweeps first so they cannot accumulate.
- * Directories younger than `minAgeMin` minutes are left alone: a run that is
- * just starting owns its worktree a moment before its status file exists.
- */
-export function sweepOrphanWorktrees(logDir: string, minAgeMin = 10): string[] {
-  const root = worktreesDir(logDir);
-  if (!existsSync(root)) return [];
-  const swept: string[] = [];
-  for (const ent of readdirSync(root, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const id = ent.name;
-    const dir = join(root, id);
-    if (existsSync(statusPath(logDir, id))) continue; // a known worker owns it
-    try {
-      const ageMin = (Date.now() - statSync(dir).mtimeMs) / 60_000;
-      if (ageMin < minAgeMin) continue;
-    } catch {
-      /* vanished mid-sweep; nothing to do */
-    }
-    let gitDir: string | null = null;
-    try {
-      const raw = git(dir, ["rev-parse", "--git-common-dir"]);
-      gitDir = isAbsolute(raw) ? raw : resolve(dir, raw);
-    } catch {
-      gitDir = null; // not a worktree anymore; just drop the directory
-    }
-    removeWorktree(gitDir ?? dir, dir, true);
-    if (gitDir) {
-      try {
-        git(gitDir, ["worktree", "prune"]);
-        git(gitDir, ["branch", "-D", worktreeBranch(id)]);
-      } catch {
-        // branch already gone or kept by git for a reason; the directory is
-      }
-    }
-    swept.push(id);
-  }
-  return swept;
 }
 
 /** Commits the branch collected on top of its base. */

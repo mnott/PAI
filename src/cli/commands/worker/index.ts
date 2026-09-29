@@ -448,7 +448,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   workerCmd
     .command("gc")
-    .description("Archive leftover worker worktrees (state kept under refs/pai-archive/<id>)")
+    .description("Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept)")
     .option("--older-than <hours>", "minimum age of a finished worker", "24")
     .option("--dry-run", "print what would be archived, change nothing")
     .action((opts: { olderThan: string; dryRun?: boolean }) => {
