@@ -169,29 +169,6 @@ export const SKILLS_DIR = join(ADAPTER_DIR, 'Skills');
 export const AGENTS_DIR = join(ADAPTER_DIR, 'Agents');
 export const COMMANDS_DIR = join(ADAPTER_DIR, 'Commands');
 
-/**
- * Validate PAI directory structure on first import
- * This fails fast with a clear error if PAI is misconfigured
- */
-function validatePAIStructure(): void {
-  if (!existsSync(ADAPTER_DIR)) {
-    console.error(`ADAPTER_DIR does not exist: ${ADAPTER_DIR}`);
-    console.error(`   Expected ~/.claude or set ADAPTER_DIR environment variable`);
-    process.exit(1);
-  }
-
-  if (!existsSync(HOOKS_DIR)) {
-    console.error(`PAI hooks directory not found: ${HOOKS_DIR}`);
-    console.error(`   Your ADAPTER_DIR may be misconfigured`);
-    console.error(`   Current ADAPTER_DIR: ${ADAPTER_DIR}`);
-    process.exit(1);
-  }
-}
-
-// Run validation on module import
-// This ensures any hook that imports this module will fail fast if paths are wrong
-validatePAIStructure();
-
 // ---------------------------------------------------------------------------
 // PAI state written by hooks — resolves under PAI_HOME, falling back to the
 // pre-2026-09-19 ADAPTER_DIR location (one-time stderr notice) until
