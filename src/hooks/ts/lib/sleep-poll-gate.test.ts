@@ -52,11 +52,27 @@ describe("sleep-poll gate", () => {
   it("worker session (PAI_WORKER=1): deny reason points at a foreground timeout and a kill -0 loop instead", () => {
     const out = decisionOf(bash("sleep 590"), { PAI_WORKER: "1" });
     expect(out.permissionDecisionReason).toContain("FOREGROUND with a Bash timeout up to 600000 ms");
-    expect(out.permissionDecisionReason).toContain("while kill -0 <pid> 2>/dev/null; do sleep 15; done");
     expect(out.permissionDecisionReason).not.toContain("run_in_background: true");
   });
 
   it("names the exact offending duration in the reason", () => {
     expect(decisionOf(bash("sleep 2m")).permissionDecisionReason).toContain("sleep 120s blocked");
+  });
+
+  it("sums sleeps across one command", () => {
+    for (const cmd of ["sleep 58; sleep 58", "sleep 30 && sleep 30", "sleep 1m\nsleep 1", "sleep 0.5m; sleep 31", "for i in 1 2 3; do sleep 30; done", "until false; do sleep 5; done"]) {
+      expect(decisionOf(bash(cmd)).permissionDecision, cmd).toBe("deny");
+    }
+    for (const cmd of ["sleep 30; sleep 20", "for i in 1 2; do sleep 20; done", "for i in {1..3}; do sleep 10; done", "while kill -0 123 2>/dev/null; do sleep 15; done"]) {
+      expect(decisionOf(bash(cmd)).permissionDecision, cmd).toBe("allow");
+    }
+  });
+
+  it("worker: run_in_background is denied with foreground advice; interactive keeps it", () => {
+    const out = decisionOf(bash("npm test", true), { PAI_WORKER: "1" });
+    expect(out.permissionDecision).toBe("deny");
+    expect(out.permissionDecisionReason).toContain("FOREGROUND");
+    expect(decisionOf(bash("npm test", true), {}).permissionDecision).toBe("allow");
+    expect(decisionOf(bash("npm test", false), { PAI_WORKER: "1" }).permissionDecision).toBe("allow");
   });
 });

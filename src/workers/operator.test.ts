@@ -129,3 +129,44 @@ describe("socket hygiene", () => {
     });
   });
 });
+
+describe("say reports ok only on real delivery", () => {
+  it("rejects with the reason when the runner could not hand the line to the worker", async () => {
+    const id = "20260917-100000-888";
+    runningWorker(id);
+    server = createOperatorServer(dir, id, () => "the worker's stdin is already closed");
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/stdin is already closed/);
+  });
+
+  it("rejects when onLine throws", async () => {
+    const id = "20260917-100000-889";
+    runningWorker(id);
+    server = createOperatorServer(dir, id, () => {
+      throw new Error("boom");
+    });
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/boom/);
+  });
+
+  it("rejects on a stale socket file nobody listens on", async () => {
+    const id = "20260917-100000-890";
+    runningWorker(id);
+    writeFileSync(operatorSocketPath(dir, id), "stale", "utf8");
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/cannot talk to worker/);
+  });
+
+  it("rejects when the socket file is missing", async () => {
+    const id = "20260917-100000-891";
+    runningWorker(id);
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/no operator socket/);
+  });
+
+  it("rejects when the peer closes without acknowledging", async () => {
+    const id = "20260917-100000-892";
+    runningWorker(id);
+    const { createServer } = await import("node:net");
+    const fake = createServer((s) => s.on("data", () => s.destroy()));
+    await new Promise<void>((r) => fake.listen(operatorSocketPath(dir, id), r));
+    server = fake;
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/cannot talk to worker/);
+  });
+});

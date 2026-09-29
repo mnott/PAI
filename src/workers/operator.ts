@@ -21,13 +21,15 @@ export function operatorSocketPath(logDir: string, id: string): string {
 
 /**
  * The runner's side: listen on the worker socket, hand every received line to
- * `onLine`. Returns the server (close it when the run ends; the socket file is
+ * `onLine`. It acknowledges with "ok" only when `onLine` returns without a
+ * string; a returned string (or a throw) is the failure reason, sent back as
+ * `err <reason>` so `say` never reports ok for a message nobody received. Returns the server (close it when the run ends; the socket file is
  * unlinked on close, best effort).
  */
 export function createOperatorServer(
   logDir: string,
   id: string,
-  onLine: (text: string) => void
+  onLine: (text: string) => unknown
 ): import("node:net").Server {
   const path = operatorSocketPath(logDir, id);
   try {
@@ -37,14 +39,22 @@ export function createOperatorServer(
   }
   const server = createServer((socket: Socket) => {
     let buf = "";
-    socket.on("data", (chunk: Buffer) => {
+    socket.on("error", () => {});
+    socket.on("data", async (chunk: Buffer) => {
       buf += chunk.toString("utf8");
       let nl: number;
       while ((nl = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, nl).replace(/\r$/, "");
         buf = buf.slice(nl + 1);
-        if (line.trim()) onLine(line);
-        socket.write("ok\n");
+        let failure: unknown;
+        if (line.trim()) {
+          try {
+            failure = await onLine(line);
+          } catch (e) {
+            failure = (e as Error).message;
+          }
+        }
+        if (!socket.destroyed) socket.write(typeof failure === "string" && failure ? `err ${failure.replace(/\n/g, " ")}\n` : "ok\n");
       }
     });
   });
@@ -61,7 +71,7 @@ export function createOperatorServer(
 
 /**
  * `pai worker say <id> "<text>"`: forward one line to a running worker.
- * Resolves "ok", rejects with a clear message when the worker is not running.
+ * Resolves "ok" only once the worker acknowledged delivery; rejects with the reason otherwise.
  */
 export function sayToWorker(logDir: string, id: string, text: string, timeoutMs = 4000): Promise<string> {
   const status = loadStatus(logDir, id);
@@ -93,9 +103,12 @@ export function sayToWorker(logDir: string, id: string, text: string, timeoutMs 
     sock.once("connect", () => {
       sock.write(text.replace(/\n/g, " ") + "\n");
     });
-    sock.once("data", () => {
+    sock.once("data", (d: Buffer) => {
       sock.end();
-      resolve("ok");
+      const reply = d.toString("utf8").trim();
+      if (reply === "ok") resolve("ok");
+      else reject(new Error(`worker ${id} did not take the message: ${reply.replace(/^err /, "") || "no acknowledgement"}`));
     });
+    sock.once("close", () => fail(new Error("connection closed before the worker acknowledged")));
   });
 }

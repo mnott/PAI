@@ -6,12 +6,12 @@
  * same split as lib/agent-gate.ts and lib/edit-gate.ts.
  *
  * CLAUDE.md already says "never sleep-poll"; prose does not enforce it, a
- * PreToolUse deny does. `run_in_background: true` is always allowed — a
+ * PreToolUse deny does. `run_in_background: true` is allowed in an interactive session (denied in a worker) — a
  * backgrounded sleep blocks nothing, it is the harness's own long-command
  * pattern.
  */
 
-import { longestSleepSecs } from "../../../workers/status.js";
+import { SLEEP_FLOOR_SECS, totalSleepSecs } from "../../../workers/status.js";
 
 export interface SleepPollGateInput {
   tool_name?: string;
@@ -32,9 +32,8 @@ export function denyReason(secs: number, isWorker: boolean): string {
   if (isWorker) {
     return (
       lead +
-      "In a worker, run the long command in the FOREGROUND with a Bash timeout up to 600000 ms. " +
-      "If it can run longer, start it in the background and wait with a foreground loop that ends " +
-      "when the job ends: while kill -0 <pid> 2>/dev/null; do sleep 15; done"
+      "In a worker, run the long command in the FOREGROUND with a Bash timeout up to 600000 ms " +
+        "and split longer jobs into steps; run_in_background is denied here."
     );
   }
   return (
@@ -44,20 +43,33 @@ export function denyReason(secs: number, isWorker: boolean): string {
   );
 }
 
+/**
+ * A headless worker (`claude -p`) has no re-invocation: ending its turn ends
+ * the process and kills the background job, whatever it says about waiting for
+ * a completion notification.
+ */
+const BACKGROUND_WORKER_REASON =
+  "run_in_background is blocked in a worker: ending your turn ends this process and kills the job, " +
+  "there is no completion notification. Run the command in the FOREGROUND with a Bash timeout up to " +
+  "600000 ms, and split a longer job into steps that each fit in that.";
+
 export function decideSleepPollGate(
   input: SleepPollGateInput,
   env: Record<string, string | undefined>
 ): GateDecision {
   if (input.tool_name && input.tool_name !== "Bash") return { decision: "allow" };
-  if (input.tool_input?.run_in_background === true) return { decision: "allow" };
+  const isWorker = env.PAI_WORKER === "1";
+  if (input.tool_input?.run_in_background === true) {
+    return isWorker ? { decision: "deny", reason: BACKGROUND_WORKER_REASON } : { decision: "allow" };
+  }
 
   const command = input.tool_input?.command;
   if (typeof command !== "string") return { decision: "allow" };
 
-  const secs = longestSleepSecs(command);
-  if (secs === null) return { decision: "allow" };
+  const secs = totalSleepSecs(command);
+  if (secs < SLEEP_FLOOR_SECS) return { decision: "allow" };
 
-  return { decision: "deny", reason: denyReason(secs, env.PAI_WORKER === "1") };
+  return { decision: "deny", reason: denyReason(secs, isWorker) };
 }
 
 /** Render a decision as the JSON the harness reads on the hook's stdout. */

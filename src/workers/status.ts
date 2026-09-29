@@ -414,6 +414,49 @@ export function longestSleepSecs(command: string): number | null {
   return longest;
 }
 
+const LOOP_RE = /\b(for|while|until)\b([^;\n]*)[;\n]\s*do\b([\s\S]*?)\bdone\b/g;
+
+function sleepSum(text: string): number {
+  let sum = 0;
+  for (const m of text.matchAll(SLEEP_SEGMENT_RE)) {
+    const secs = Number(m[1]) * sleepUnitMultiplier(m[2]);
+    if (Number.isFinite(secs)) sum += secs;
+  }
+  return sum;
+}
+
+/** Iterations of a `for x in <words>` header, or null when not provably small. */
+function forIterations(header: string): number | null {
+  const words = header.replace(/^\s*\w+\s+in\s+/, "").trim();
+  if (words === header.trim() || /[$`*?]/.test(words)) return null;
+  const range = /^\{(-?\d+)\.\.(-?\d+)\}$/.exec(words);
+  if (range) return Math.abs(Number(range[2]) - Number(range[1])) + 1;
+  return words ? words.split(/\s+/).length : 0;
+}
+
+/**
+ * Total sleep of one Bash command: every `sleep N` segment counted once, plus
+ * loop repetition — `for x in a b c` multiplies its body by the word count;
+ * `while`/`until` and any unbounded `for` count as at least SLEEP_FLOOR_SECS,
+ * except a `kill -0` job-wait (the sanctioned wait-for-a-job loop). Used by
+ * the PreToolUse gate so `sleep 58; sleep 58` is caught as the 116 s it is.
+ */
+// ponytail: loops are not nested-aware (body ends at the first `done`); upgrade to a real shell parse if that bites.
+export function totalSleepSecs(command: string): number {
+  let total = sleepSum(command);
+  for (const m of command.matchAll(LOOP_RE)) {
+    const body = sleepSum(m[3]);
+    if (body === 0) continue;
+    if (m[1] === "for") {
+      const n = forIterations(m[2]);
+      total += n === null ? Math.max(SLEEP_FLOOR_SECS, body) : body * (n - 1);
+    } else if (!/\bkill\s+-0\b/.test(m[2])) {
+      total += SLEEP_FLOOR_SECS;
+    }
+  }
+  return total;
+}
+
 /** One-line description of a tool call, e.g. "Bash: npm test". */
 export function describeTool(name: string, inp: unknown): string {
   if (typeof inp !== "object" || inp === null) return name;
