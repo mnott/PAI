@@ -13,7 +13,7 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
-import { chunkMarkdown } from "../chunker.js";
+import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import {
   sha256File,
   chunkId,
@@ -56,7 +56,7 @@ export async function indexFileWithBackend(
     return false;
   }
 
-  const hash = sha256File(content);
+  const hash = fileContentHash(content);
   const mtime = Math.floor(stat.mtimeMs);
   const size = stat.size;
 

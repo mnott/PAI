@@ -15,7 +15,7 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 import type { Database } from "better-sqlite3";
 import type { RegistryBackend } from "../registry-interface.js";
-import { chunkMarkdown } from "../../memory/chunker.js";
+import { chunkMarkdown, fileContentHash } from "../../memory/chunker.js";
 import {
   sha256File,
   chunkId,
@@ -58,7 +58,7 @@ function indexFile(
     return false;
   }
 
-  const hash = sha256File(content);
+  const hash = fileContentHash(content);
   const mtime = Math.floor(stat.mtimeMs);
   const size = stat.size;
 

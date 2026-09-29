@@ -24,7 +24,7 @@ import type {
   VaultNameEntry,
   ChunkRow,
 } from "../../storage/interface.js";
-import { chunkMarkdown } from "../chunker.js";
+import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import { sha256File, chunkId, yieldToEventLoop } from "../indexer/helpers.js";
 import { walkVaultMdFiles } from "./walk.js";
 import { deduplicateByInode } from "./deduplicate.js";
@@ -110,7 +110,7 @@ export async function indexVault(
       continue;
     }
 
-    const hash = sha256File(content);
+    const hash = fileContentHash(content);
 
     // Change detection: skip if hash is unchanged
     const existing = await backend.getVaultFile(canonical.vaultRelPath);
