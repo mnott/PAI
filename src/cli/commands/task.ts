@@ -4,7 +4,7 @@
  * Surface for the task bus: list what is open, file new work, dispatch tasks to
  * the sessions that own them, and close them out.
  *
- * See Notes/docs/task-bus.md.
+ * See docs/task-bus.md.
  */
 
 import type { Command } from "commander";

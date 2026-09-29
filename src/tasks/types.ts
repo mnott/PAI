@@ -8,7 +8,7 @@
  * A session files a task; a routine reads it later and dispatches it to the
  * session that owns it — spawning one if none is running.
  *
- * See Notes/docs/task-bus.md for the architecture and its constraints.
+ * See docs/task-bus.md for the architecture and its constraints.
  */
 
 // ---------------------------------------------------------------------------

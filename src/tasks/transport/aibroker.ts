@@ -9,7 +9,7 @@
  * and the bus reports ownership instead of delivering. PAI must stay useful on
  * machines that do not run iTerm2.
  *
- * See Notes/docs/task-bus.md.
+ * See docs/task-bus.md.
  */
 
 import { execFile } from "node:child_process";

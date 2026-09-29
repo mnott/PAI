@@ -2,8 +2,7 @@
 
 File a task from your phone. A session picks it up, does the work, and ticks it off.
 
-This document is the setup guide. For why the design splits the way it does, see
-`Notes/docs/task-bus.md`.
+This document is the setup guide.
 
 ---
 

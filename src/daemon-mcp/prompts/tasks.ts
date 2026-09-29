@@ -118,6 +118,6 @@ Otherwise the open items live only in a session note nobody re-reads, which is t
 
 - \`pai task done <id>\` closes a task. Dispatched tasks instruct the receiving session to do this, so work is not dispatched twice.
 - One-way by design: PAI and its sessions write; a routine reads. Nothing reads the tracker back into PAI state.
-- Architecture and verified API constraints: \`Notes/docs/task-bus.md\`.
+- Architecture and verified API constraints: \`docs/task-bus.md\`.
 `,
 };

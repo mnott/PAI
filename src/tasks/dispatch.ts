@@ -6,7 +6,7 @@
  * what and leaves acting to the user — PAI must stay useful on machines that
  * do not run iTerm2.
  *
- * See Notes/docs/task-bus.md.
+ * See docs/task-bus.md.
  */
 
 import type { DispatchResult, Task } from "./types.js";

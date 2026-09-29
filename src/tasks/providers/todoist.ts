@@ -5,7 +5,7 @@
  * MCP. The MCP is scoped to a Claude session; the daemon has no session, so an
  * MCP-only integration could never run the bus unattended.
  *
- * See Notes/docs/task-bus.md.
+ * See docs/task-bus.md.
  */
 
 import type {

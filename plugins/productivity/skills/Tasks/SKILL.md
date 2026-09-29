@@ -123,4 +123,4 @@ An explicit label that matches nothing does **not** fall through to the containe
 
 - `pai task done <id>` closes a task on the tracker. Dispatched tasks tell the receiving session to do this, so work is not dispatched twice.
 - The bus never reads the tracker back into PAI state. It is one-way: PAI and its sessions write, a routine reads.
-- Full architecture and the verified API constraints: `Notes/docs/task-bus.md`.
+- Full architecture and the verified API constraints: `docs/task-bus.md`.

@@ -10,7 +10,7 @@
  * Label wins because labels survive a task being moved between containers, and
  * because a task parked in the findings inbox has no meaningful container yet.
  *
- * See Notes/docs/task-bus.md.
+ * See docs/task-bus.md.
  */
 
 import { getRegistryBackend } from "../storage/factory.js";
