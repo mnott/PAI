@@ -13,7 +13,7 @@ export async function stepDaName(rl: Rl): Promise<string> {
   line("  and session notes when hooks are active.");
   line();
 
-  const answer = await prompt(rl, chalk.bold("  Assistant name [PAI]: "));
+  const answer = await prompt(rl, chalk.bold("  Assistant name [PAI]: "), "");
   const daName = answer || "PAI";
   line();
   console.log(c.ok(`Assistant name set to: ${daName}`));

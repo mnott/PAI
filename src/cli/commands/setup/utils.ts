@@ -64,7 +64,22 @@ export function createRl() {
 
 export type Rl = ReturnType<typeof createRl>;
 
-export async function prompt(rl: Rl, question: string): Promise<string> {
+/** Unattended-mode switches (`pai setup --yes --storage …`), set once by the command. */
+export const setupOptions: { yes: boolean; storage?: "sqlite" | "postgres" } = { yes: false };
+
+/**
+ * The one place every wizard question passes through. Under --yes it answers
+ * `defaultValue` without touching stdin; a question with no default cannot be
+ * answered unattended, so it fails naming the flag instead of returning "".
+ */
+export async function prompt(rl: Rl, question: string, defaultValue?: string): Promise<string> {
+  if (setupOptions.yes) {
+    if (defaultValue === undefined) {
+      throw new Error(`"${question.trim()}" has no default; cannot answer it with --yes. Run without --yes, or skip the feature that asks it.`);
+    }
+    console.log(chalk.dim(`  ${question.trim()} -> ${defaultValue || "(default)"}`));
+    return defaultValue;
+  }
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       resolve(answer.trim());
@@ -93,6 +108,7 @@ export async function promptMenu(
     const answer = await prompt(
       rl,
       chalk.bold(`  Enter number [1-${options.length}] (default: ${defaultIdx + 1}): `),
+      "",
     );
 
     if (answer === "") return defaultIdx;
@@ -113,7 +129,7 @@ export async function promptYesNo(
   defaultYes = true,
 ): Promise<boolean> {
   const hint = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = await prompt(rl, `  ${question} ${chalk.dim(hint)}: `);
+  const answer = await prompt(rl, `  ${question} ${chalk.dim(hint)}: `, "");
 
   if (answer === "") return defaultYes;
   return answer.toLowerCase().startsWith("y");

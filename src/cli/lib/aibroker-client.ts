@@ -302,10 +302,12 @@ export async function switchToSession(target: string): Promise<{ ok: boolean; er
   try {
     await callAiBroker("switch", { target });
     // Bring iTerm2 itself to the foreground (the IPC only selects the tab)
-    const { spawnSync } = await import("node:child_process");
-    spawnSync("osascript", ["-e", 'tell application "iTerm" to activate'], {
-      stdio: "ignore",
-    });
+    if (process.platform === "darwin") {
+      const { spawnSync } = await import("node:child_process");
+      spawnSync("osascript", ["-e", 'tell application "iTerm" to activate'], {
+        stdio: "ignore",
+      });
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
@@ -322,6 +324,7 @@ export async function switchToSession(target: string): Promise<{ ok: boolean; er
  * iTerm), this actually reveals the tab.
  */
 export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
+  if (process.platform !== "darwin") return { ok: false, error: "iTerm2 is macOS only" };
   // Strip any "iterm:" style prefix, matching AIBroker's stripItermPrefix.
   const id = itermSessionId.replace(/^iterm:/i, "").trim();
   const script = `tell application "iTerm2"

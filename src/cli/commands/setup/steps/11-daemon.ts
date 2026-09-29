@@ -1,7 +1,7 @@
-/** Step 9: PAI daemon installation via launchd plist. */
+/** Step 9: PAI daemon installation (launchd plist on macOS, systemd user unit on Linux). */
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { c, line, section, type Rl, promptYesNo } from "../utils.js";
@@ -12,14 +12,23 @@ export async function stepDaemon(rl: Rl): Promise<boolean> {
   line("  The PAI daemon indexes your projects every 5 minutes in the background.");
   line();
 
-  const plistPath = join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
+  const linux = platform() === "linux";
+  if (linux && !existsSync("/run/systemd/system")) {
+    console.log(c.dim("  systemd is not running here (container?). Skipping service install; start the daemon with: pai daemon serve"));
+    return false;
+  }
+
+  const plistPath = linux
+    ? join(homedir(), ".config", "systemd", "user", "pai-daemon.service")
+    : join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
+  const unit = linux ? "systemd user unit" : "launchd plist";
   const exists = existsSync(plistPath);
 
   if (exists) {
-    console.log(c.dim("  PAI daemon plist already installed."));
+    console.log(c.dim(`  PAI daemon ${unit} already installed.`));
     line();
 
-    const reinstall = await promptYesNo(rl, "Reinstall the PAI daemon launchd plist?", false);
+    const reinstall = await promptYesNo(rl, `Reinstall the PAI daemon ${unit}?`, false);
     if (!reinstall) {
       console.log(c.dim("  Keeping existing daemon installation."));
       return false;
@@ -40,6 +49,6 @@ export async function stepDaemon(rl: Rl): Promise<boolean> {
     return false;
   }
 
-  console.log(c.ok("Daemon installed as com.pai.pai-daemon."));
+  console.log(c.ok(linux ? "Daemon installed as a systemd user unit." : "Daemon installed as com.pai.pai-daemon."));
   return true;
 }

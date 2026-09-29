@@ -24,6 +24,8 @@ import {
   followCommand,
   followProfile,
   isRetryableIterm2Error,
+  noPaneMessage,
+  paneBackend,
   itermPrefs,
   paneFont,
   readItermPlist,
@@ -318,5 +320,20 @@ describe("isRetryableIterm2Error", () => {
     expect(isRetryableIterm2Error("execution error: some other failure (-2700)")).toBe(false);
     expect(isRetryableIterm2Error("every window doesn't understand the count message.")).toBe(false);
     expect(isRetryableIterm2Error("(-1708)")).toBe(false);
+  });
+});
+
+describe("paneBackend", () => {
+  it("TMUX set -> tmux, on any platform, and beats iTerm", () => {
+    expect(paneBackend({ TMUX: "/tmp/tmux-1/default,1,0" }, "linux")).toBe("tmux");
+    expect(paneBackend({ TMUX: "x", ITERM_SESSION_ID: "w0t0p0:U" }, "darwin")).toBe("tmux");
+  });
+  it("darwin + ITERM_SESSION_ID -> iterm", () => {
+    expect(paneBackend({ ITERM_SESSION_ID: "w0t0p0:U" }, "darwin")).toBe("iterm");
+  });
+  it("anything else -> none", () => {
+    expect(paneBackend({ ITERM_SESSION_ID: "w0t0p0:U" }, "linux")).toBe("none");
+    expect(paneBackend({}, "darwin")).toBe("none");
+    expect(noPaneMessage("w1")).toBe("no pane support here, use: pai worker follow w1");
   });
 });
