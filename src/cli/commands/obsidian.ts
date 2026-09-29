@@ -7,7 +7,7 @@
  */
 
 import type { Command } from "commander";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { ok, warn, err, dim, bold, header } from "../utils.js";
 import {
   syncVault,
@@ -240,7 +240,7 @@ function cmdOpen(opts: { vault?: string }): void {
   const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
   console.log(dim(`  Opening: ${url}`));
   try {
-    execSync(`open "${url}"`, { stdio: "ignore" });
+    execFileSync("open", [url], { stdio: "ignore" });
     console.log(ok(`  Opened vault "${vaultName}" in Obsidian.`));
   } catch (e) {
     console.error(err(`  Failed to open Obsidian: ${e}`));

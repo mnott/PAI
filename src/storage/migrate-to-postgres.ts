@@ -13,8 +13,8 @@
  * pool at once (it lives in src/storage/, where that is the point).
  */
 
-import { execFileSync, execSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, statSync, openSync, closeSync } from "node:fs";
 import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
@@ -149,14 +149,22 @@ function pgDump(
   const database = resolvePgDatabaseName(pgConfig);
   const user = pgConfig.user ?? "pai";
   mkdirSync(dirname(destPath), { recursive: true });
+  const fd = openSync(destPath, "w");
   try {
-    execSync(`docker exec ${container} pg_dump -U ${user} -Fc ${database} > "${destPath}"`, {
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: true as unknown as string,
-    });
+    const dump = spawnSync(
+      "docker",
+      ["exec", container, "pg_dump", "-U", user, "-Fc", database],
+      { stdio: ["pipe", fd, "pipe"] }
+    );
+    if (dump.status !== 0) {
+      const msg = dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`;
+      return { ok: false, reason: `pg_dump failed: ${msg}` };
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
     return { ok: false, reason: `pg_dump failed: ${msg}` };
+  } finally {
+    closeSync(fd);
   }
   if (!existsSync(destPath) || statSync(destPath).size === 0) {
     return { ok: false, reason: `pg_dump produced an empty file at ${destPath}` };

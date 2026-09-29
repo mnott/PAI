@@ -8,7 +8,7 @@
  */
 
 import { isWorkerSession } from "../lib/worker-session.js";
-import { execSync } from 'child_process';
+import { setTabTitle } from "../lib/tab-title.js";
 
 // Action tools that warrant a tab title update
 const ACTION_TOOLS = new Set([
@@ -58,24 +58,6 @@ async function readStdinWithTimeout(timeout: number = 3000): Promise<string> {
       reject(err);
     });
   });
-}
-
-/**
- * Update Kitty tab title using escape codes
- */
-function setTabTitle(title: string): void {
-  try {
-    // Truncate to reasonable length
-    const truncated = title.length > 50 ? title.slice(0, 47) + '...' : title;
-    const escaped = truncated.replace(/'/g, "'\\''");
-
-    // Multiple escape sequences for compatibility
-    execSync(`printf '\\033]0;${escaped}\\007' >&2`, { stdio: ['pipe', 'pipe', 'inherit'] });
-    execSync(`printf '\\033]2;${escaped}\\007' >&2`, { stdio: ['pipe', 'pipe', 'inherit'] });
-    execSync(`printf '\\033]30;${escaped}\\007' >&2`, { stdio: ['pipe', 'pipe', 'inherit'] });
-  } catch {
-    // Silently fail - don't interrupt Claude's work
-  }
 }
 
 /**
@@ -135,7 +117,8 @@ async function main() {
 
     // Generate and set title
     const title = generateTitle(data.tool_name, data.tool_input);
-    setTabTitle(title);
+    const truncated = title.length > 50 ? title.slice(0, 47) + '...' : title;
+    setTabTitle(truncated);
 
     process.exit(0);
   } catch {

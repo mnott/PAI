@@ -249,13 +249,13 @@ describe("provider isolation", () => {
 });
 
 describe("workers.yaml providers", () => {
-  const SECRET = "sk-test-secret-value";
+  const FAKE_KEY = "sk-test-secret-value";
 
   it("reads providers from workers.yaml when it exists, and caches the conversion", () => {
     const paiHome = mkdtempSync(join(tmpdir(), "pai-sl-workers-home-"));
     writeFileSync(
       join(paiHome, "workers.yaml"),
-      `providers:\n  glm:\n    models:\n      default: glm-5.3\n    usage:\n      label: glm\n    key: ${SECRET}\n    env:\n      X: y\n`,
+      `providers:\n  glm:\n    models:\n      default: glm-5.3\n    usage:\n      label: glm\n    key: ${FAKE_KEY}\n    env:\n      X: y\n`,
     );
 
     const r = run(payload({ model: { id: "glm-5.3", display_name: "GLM 5.3" } }), {
@@ -274,7 +274,7 @@ describe("workers.yaml providers", () => {
     // `env:` secrets landed in a world-readable file. It must carry only the
     // allow-listed fields the status line actually reads.
     const cacheContent = readFileSync(cachePath, "utf-8");
-    expect(cacheContent).not.toContain(SECRET);
+    expect(cacheContent).not.toContain(FAKE_KEY);
     expect(cacheContent).not.toContain('"key"');
     expect(cacheContent).not.toContain('"env"');
     expect(statSync(cachePath).mode & 0o777).toBe(0o600);
@@ -284,7 +284,7 @@ describe("workers.yaml providers", () => {
     const jsonConfig = {
       workers: {
         providers: {
-          glm: { models: { implement: "glm-5.3" }, key: SECRET, env: { X: "y" } },
+          glm: { models: { implement: "glm-5.3" }, key: FAKE_KEY, env: { X: "y" } },
         },
       },
     };
@@ -301,7 +301,7 @@ describe("workers.yaml providers", () => {
     const cachePath = join(r.home, "cache", "statusline-providers-legacy.json");
     expect(existsSync(cachePath)).toBe(true);
     const cacheContent = readFileSync(cachePath, "utf-8");
-    expect(cacheContent).not.toContain(SECRET);
+    expect(cacheContent).not.toContain(FAKE_KEY);
     expect(cacheContent).not.toContain('"key"');
     expect(cacheContent).not.toContain('"env"');
     expect(statSync(cachePath).mode & 0o777).toBe(0o600);

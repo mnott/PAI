@@ -45,7 +45,7 @@ describe("buildRunEnv session identity", () => {
   it("strips the spawner's session identity from a headless run", () => {
     const saved = { ...process.env };
     for (const k of SESSION_IDENTITY) process.env[k] = "spawner-value";
-    process.env.ANTHROPIC_API_KEY = "must-not-cross";
+    process.env.ANTHROPIC_API_KEY = "must-not-cross-example";
     try {
       const env = buildRunEnv(provider, true);
       for (const k of [...SESSION_IDENTITY, "ANTHROPIC_API_KEY"]) {
@@ -95,8 +95,8 @@ describe("buildRunEnv native anthropic", () => {
   it("strips ANTHROPIC_BASE_URL/AUTH_TOKEN/API_KEY even when the parent shell has them set", () => {
     const saved = { ...process.env };
     process.env.ANTHROPIC_BASE_URL = "https://leaked.example.invalid/api/anthropic";
-    process.env.ANTHROPIC_AUTH_TOKEN = "leaked-token";
-    process.env.ANTHROPIC_API_KEY = "leaked-key";
+    process.env.ANTHROPIC_AUTH_TOKEN = "your-leaked-token";
+    process.env.ANTHROPIC_API_KEY = "your-leaked-key";
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "leaked-model";
     try {
       const env = buildRunEnv(nativeAnthropicProvider(), true);

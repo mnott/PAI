@@ -57,7 +57,7 @@ export async function stepTaskBus(rl: Rl): Promise<Record<string, unknown>> {
   }
 
   while (!apiKey) {
-    apiKey = (await prompt(rl, "  Paste your Todoist API token: ")).trim();
+    apiKey = (await prompt(rl, "  Paste your Todoist API token here: ")).trim();
     if (!apiKey) console.log(c.warn("  A token is required, or answer no to skip the task bus."));
   }
 
