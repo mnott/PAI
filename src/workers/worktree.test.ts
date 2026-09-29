@@ -586,8 +586,25 @@ describe("gcWorktrees", () => {
     expect(refs()).not.toContain("refs/heads/worker/gc-orphan");
   });
 
+  it("archives a child whose recorded cwd is a parent worktree gc removed first", () => {
+    const parent = mk("gc-aparent", {}, 3 * DAY);
+    const cdir = addWorktree(gcLog, "gc-bchild", parent);
+    saveStatus(gcLog, { ...status("gc-bchild"), cwd: parent, worktreeDir: cdir.dir, branch: cdir.branch });
+    const t = new Date(Date.now() - 3 * DAY);
+    utimesSync(statusPath(gcLog, "gc-bchild"), t, t);
+    const res = gcWorktrees(gcLog, 24);
+    expect(res.filter((r) => r.skipped)).toEqual([]);
+    expect(res.map((r) => r.id).sort()).toEqual(["gc-aparent", "gc-bchild"]);
+    expect(existsSync(parent) || existsSync(cdir.dir)).toBe(false);
+    expect(refs()).toContain("refs/pai-archive/gc-aparent");
+    expect(refs()).toContain("refs/pai-archive/gc-bchild");
+    expect(refs()).not.toContain("refs/heads/worker/gc-aparent");
+    expect(refs()).not.toContain("refs/heads/worker/gc-bchild");
+    expect(git(repo, ["fsck", "--no-dangling"])).not.toMatch(/error/i);
+  });
+
   it("throttles to once per interval", () => {
-    const tl = join(dir, "gclog-throttle");
+    const tl =join(dir, "gclog-throttle");
     mkdirSync(tl, { recursive: true });
     expect(gcWorktreesThrottled(tl, 60)).toEqual([]);
     expect(gcWorktreesThrottled(tl, 60)).toBeNull();
