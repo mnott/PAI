@@ -7,7 +7,7 @@
  */
 
 import { isWorkerSession } from "../lib/worker-session.js";
-import { execSync } from 'child_process';
+import { setTabTitle } from "../lib/tab-title.js";
 
 interface HookInput {
   session_id: string;
@@ -69,15 +69,7 @@ async function main() {
     }
 
     // Set initial tab title with recycle emoji
-    try {
-      const titleWithEmoji = '♻️ ' + tabTitle;
-      const escapedTitle = titleWithEmoji.replace(/'/g, "'\\''");
-      execSync(`printf '\\033]0;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]2;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]30;${escapedTitle}\\007' >&2`);
-    } catch (e) {
-      // Silently fail
-    }
+    setTabTitle('♻️ ' + tabTitle);
 
     process.exit(0);
   } catch (error) {

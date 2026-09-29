@@ -52,7 +52,7 @@ beforeEach(() => {
   keyPath = join(dir, "api_key");
   writeFileSync(keyPath, "test-token\n", "utf8");
   chmodSync(keyPath, 0o600);
-  process.env.ANTHROPIC_API_KEY = "must-never-reach-the-child";
+  process.env.ANTHROPIC_API_KEY = "must-never-reach-the-child-example";
 });
 
 afterEach(() => {

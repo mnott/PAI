@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { isWorkerSession } from "../lib/worker-session.js";
+import { setTabTitle } from "../lib/tab-title.js";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
 import { connect } from 'net';
@@ -599,11 +600,7 @@ async function executeDirectly(
 
   if (tabTitle) {
     try {
-      const escapedTitle = tabTitle.replace(/'/g, "'\\''");
-      const { execSync } = await import('child_process');
-      execSync(`printf '\\033]0;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]2;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]30;${escapedTitle}\\007' >&2`);
+      setTabTitle(tabTitle);
       console.error(`Tab title set to: "${tabTitle}"`);
     } catch (e) {
       console.error(`Failed to set tab title: ${e}`);
@@ -856,11 +853,7 @@ async function main() {
   }
   if (tabTitle) {
     try {
-      const { execSync } = await import('child_process');
-      const escapedTitle = tabTitle.replace(/'/g, "'\\''");
-      execSync(`printf '\\033]0;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]2;${escapedTitle}\\007' >&2`);
-      execSync(`printf '\\033]30;${escapedTitle}\\007' >&2`);
+      setTabTitle(tabTitle);
       console.error(`Tab title set to: "${tabTitle}"`);
     } catch (e) {
       console.error(`Failed to set tab title: ${e}`);
@@ -876,11 +869,7 @@ async function main() {
     const persistentName = await getPersistentTabName();
     if (persistentName) {
       try {
-        const { execSync } = await import('child_process');
-        const escaped = persistentName.replace(/'/g, "'\\''");
-        execSync(`printf '\\033]0;${escaped}\\007' >&2`);
-        execSync(`printf '\\033]2;${escaped}\\007' >&2`);
-        execSync(`printf '\\033]30;${escaped}\\007' >&2`);
+        setTabTitle(persistentName);
         process.stderr.write(`\x1b]2;${persistentName.slice(0, 50)}\x07`);
         console.error(`Tab title re-asserted to persistent name: "${persistentName}"`);
       } catch (e) {

@@ -17,10 +17,12 @@ import {
   copyFileSync,
   statSync,
   chmodSync,
+  openSync,
+  closeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { backupStorageFiles } from "../../storage/backup.js";
@@ -137,14 +139,23 @@ export function registerBackupCommands(program: Command): void {
         console.log(dim(`  Running pg_dump on ${DOCKER_CONTAINER} (this may take a moment)...`));
         try {
           // Check Docker is running and container exists
-          execSync(`docker inspect ${DOCKER_CONTAINER} --format='{{.State.Status}}'`, {
+          execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], {
             stdio: "pipe",
           });
 
-          execSync(
-            `docker exec ${DOCKER_CONTAINER} pg_dump -U ${PG_USER} ${PG_DATABASE} > "${sqlDest}"`,
-            { stdio: ["pipe", "pipe", "pipe"], shell: true as unknown as string }
-          );
+          const sqlFd = openSync(sqlDest, "w");
+          try {
+            const dump = spawnSync(
+              "docker",
+              ["exec", DOCKER_CONTAINER, "pg_dump", "-U", PG_USER, PG_DATABASE],
+              { stdio: ["pipe", sqlFd, "pipe"] }
+            );
+            if (dump.status !== 0) {
+              throw new Error(dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`);
+            }
+          } finally {
+            closeSync(sqlFd);
+          }
           results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok") });
         } catch (e) {
           const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);

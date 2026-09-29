@@ -147,7 +147,7 @@ describe("formatConfigGetOutput", () => {
 describe("secret masking", () => {
   it("masks postgres.connectionString and a *Key/token/secret/password field in list and get", () => {
     setConfigValueOp("postgres.connectionString", "postgresql://pai:hunter2@localhost:5432/pai", { force: true });
-    setConfigValueOp("tasks.providers.todoist.apiKey", "sk-super-secret-token-9999", { force: true });
+    setConfigValueOp("tasks.providers.todoist.apiKey", "fake-todoist-token-9999", { force: true });
 
     const got = getConfigValueOp("postgres.connectionString");
     expect(got.value).not.toContain("hunter2");
@@ -155,7 +155,7 @@ describe("secret masking", () => {
 
     const list = listConfigOp({});
     expect(list.yaml).not.toContain("hunter2");
-    expect(list.yaml).not.toContain("sk-super-secret-token-9999");
+    expect(list.yaml).not.toContain("fake-todoist-token-9999");
     expect(list.yaml).toContain("****9999");
     expect(JSON.stringify(list.data)).not.toContain("hunter2");
   });

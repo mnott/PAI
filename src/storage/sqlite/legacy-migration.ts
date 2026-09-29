@@ -7,7 +7,7 @@
  */
 
 import { existsSync, renameSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   paiHomePath,
   migratePaiFile,
@@ -40,15 +40,15 @@ export function migrateFederationDbOrphan(dryRun: boolean): MigrateFileResult {
   if (existsSync(oldPath) && !dryRun) {
     let heldOpen = false;
     try {
-      execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
+      execFileSync("lsof", [oldPath], { stdio: "pipe" });
       heldOpen = true;
     } catch {
       // lsof exits non-zero when nothing has the file open — the expected case.
     }
     if (heldOpen) {
       console.log("  federation database (orphan): held open by the daemon — restarting it first");
-      execSync("pai daemon restart", { stdio: "inherit" });
-      execSync("sleep 2");
+      execFileSync("pai", ["daemon", "restart"], { stdio: "inherit" });
+      execFileSync("sleep", ["2"]);
     }
   }
   return migrateOrphanFederationDb({ dryRun });
@@ -57,13 +57,13 @@ export function migrateFederationDbOrphan(dryRun: boolean): MigrateFileResult {
 function checkpointAndVerify(oldPath: string, newPath: string, label: string): void {
   let hasSqlite3 = true;
   try {
-    execSync("command -v sqlite3", { stdio: "pipe" });
+    execFileSync("which", ["sqlite3"], { stdio: "pipe" });
   } catch {
     hasSqlite3 = false;
   }
   if (hasSqlite3) {
     try {
-      execSync(`sqlite3 "${oldPath}" "PRAGMA wal_checkpoint(TRUNCATE);"`, { stdio: "pipe" });
+      execFileSync("sqlite3", [oldPath, "PRAGMA wal_checkpoint(TRUNCATE);"], { stdio: "pipe" });
     } catch {
       // Best-effort — the sidecar move below still catches an un-checkpointed WAL.
     }
@@ -83,7 +83,7 @@ function checkpointAndVerify(oldPath: string, newPath: string, label: string): v
 
   if (hasSqlite3) {
     try {
-      const check = execSync(`sqlite3 "${newPath}" "PRAGMA integrity_check;"`, { stdio: "pipe" })
+      const check = execFileSync("sqlite3", [newPath, "PRAGMA integrity_check;"], { stdio: "pipe" })
         .toString()
         .trim();
       if (check !== "ok") {
@@ -120,15 +120,15 @@ export function migrateRegistryDbFile(dryRun: boolean): MigrateFileResult {
 
   let heldOpen = false;
   try {
-    execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
+    execFileSync("lsof", [oldPath], { stdio: "pipe" });
     heldOpen = true;
   } catch {
     // lsof exits non-zero when nothing has the file open — the expected case.
   }
   if (heldOpen) {
     console.log("  registry database: held open by the daemon — restarting it first");
-    execSync("pai daemon restart", { stdio: "inherit" });
-    execSync("sleep 2");
+    execFileSync("pai", ["daemon", "restart"], { stdio: "inherit" });
+    execFileSync("sleep", ["2"]);
   }
 
   const result = migratePaiFile(newPath, [oldPath], { dryRun: false });
@@ -161,15 +161,15 @@ export function migrateFederationDbFile(dryRun: boolean): MigrateFileResult {
 
   let heldOpen = false;
   try {
-    execSync(`lsof "${oldPath}"`, { stdio: "pipe" });
+    execFileSync("lsof", [oldPath], { stdio: "pipe" });
     heldOpen = true;
   } catch {
     // lsof exits non-zero when nothing has the file open — the expected case.
   }
   if (heldOpen) {
     console.log("  federation database (live): held open by the daemon — restarting it first");
-    execSync("pai daemon restart", { stdio: "inherit" });
-    execSync("sleep 2");
+    execFileSync("pai", ["daemon", "restart"], { stdio: "inherit" });
+    execFileSync("sleep", ["2"]);
   }
 
   const result = migratePaiFile(newPath, [oldPath], { dryRun: false });

@@ -620,7 +620,7 @@ import json, os
 p = os.path.expanduser("~/.config/pai/config.json")
 os.makedirs(os.path.dirname(p), exist_ok=True)
 c = json.load(open(p)) if os.path.exists(p) else {}
-token = input("Paste your Todoist API token: ").strip()
+token = input("Paste your Todoist API token here: ").strip()
 c.setdefault("tasks", {}).setdefault("providers", {}).setdefault("todoist", {})
 c["tasks"]["enabled"] = True
 c["tasks"]["providers"]["todoist"].update({"enabled": True, "apiKey": token})

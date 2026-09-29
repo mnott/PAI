@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir, userInfo } from "node:os";
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
@@ -575,13 +575,13 @@ function cmdLogs(opts: { lines?: string; follow?: boolean }): void {
   if (opts.follow) {
     // exec stays running
     try {
-      execSync(`tail -f -n ${lines} "${DAEMON_LOG}"`, { stdio: "inherit" });
+      execFileSync("tail", ["-f", "-n", lines, DAEMON_LOG], { stdio: "inherit" });
     } catch {
       // User pressed Ctrl+C — that's fine
     }
   } else {
     try {
-      execSync(`tail -n ${lines} "${DAEMON_LOG}"`, { stdio: "inherit" });
+      execFileSync("tail", ["-n", lines, DAEMON_LOG], { stdio: "inherit" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(err(`Could not read log: ${msg}`));

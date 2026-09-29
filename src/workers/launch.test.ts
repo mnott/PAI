@@ -186,7 +186,7 @@ describe("detectCurrentModel", () => {
 describe("buildLaunchPlan — argv and env per provider shape", () => {
   const savedKey = process.env.ANTHROPIC_API_KEY;
   const withLeakedKey = <T>(fn: () => T): T => {
-    process.env.ANTHROPIC_API_KEY = "must-not-leak-to-a-child";
+    process.env.ANTHROPIC_API_KEY = "must-not-leak-to-a-child-example";
     try {
       return fn();
     } finally {
@@ -254,7 +254,7 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
 
 describe("maskLaunchEnv", () => {
   it("masks ANTHROPIC_AUTH_TOKEN to its last 4 characters", () => {
-    const masked = maskLaunchEnv({ ANTHROPIC_AUTH_TOKEN: "sk-verysecret1234", ANTHROPIC_BASE_URL: "https://x" });
+    const masked = maskLaunchEnv({ ANTHROPIC_AUTH_TOKEN: "example-verysecret1234", ANTHROPIC_BASE_URL: "https://x" });
     expect(masked.ANTHROPIC_AUTH_TOKEN).toBe("****1234");
     expect(masked.ANTHROPIC_AUTH_TOKEN).not.toContain("verysecret");
     expect(masked.ANTHROPIC_BASE_URL).toBe("https://x");

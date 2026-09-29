@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
@@ -205,13 +205,24 @@ export function registerRestoreCommands(program: Command): void {
         console.log(dim("  Restoring Postgres database (this may take a while)..."));
         try {
           // Verify container is running
-          execSync(`docker inspect ${DOCKER_CONTAINER} --format='{{.State.Status}}'`, {
+          execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], {
             stdio: "pipe",
           });
 
           // Drop and recreate the database, then restore
-          const dropCreate = `docker exec ${DOCKER_CONTAINER} psql -U ${PG_USER} -c "DROP DATABASE IF EXISTS ${PG_DATABASE}; CREATE DATABASE ${PG_DATABASE} OWNER ${PG_USER};"`;
-          execSync(dropCreate, { stdio: "pipe", shell: true as unknown as string });
+          execFileSync(
+            "docker",
+            [
+              "exec",
+              DOCKER_CONTAINER,
+              "psql",
+              "-U",
+              PG_USER,
+              "-c",
+              `DROP DATABASE IF EXISTS ${PG_DATABASE}; CREATE DATABASE ${PG_DATABASE} OWNER ${PG_USER};`,
+            ],
+            { stdio: "pipe" }
+          );
 
           // Pipe the SQL dump into psql
           const sqlContent = readFileSync(join(resolvedDir, "postgres-pai.sql"), "utf8");
