@@ -40,7 +40,7 @@ import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
-import { discardWorker, gcWorktrees, mergeWorker } from "../../../workers/worktree.js";
+import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../../workers/pending.js";
 import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
@@ -424,9 +424,32 @@ export function registerWorkerCommands(workerCmd: Command): void {
   workerCmd
     .command("merge <id>")
     .description("Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch")
-    .action((id: string) => {
+    .option("--no-commit", "apply the changes as uncommitted working-tree changes; keep branch and worktree")
+    .option("--patch", "alias for --no-commit")
+    .action((id: string, opts: { commit?: boolean; patch?: boolean }) => {
       try {
-        console.log(mergeWorker(currentLogDir(), id));
+        console.log(mergeWorker(currentLogDir(), id, { noCommit: opts.commit === false || opts.patch === true }));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("verify <id>")
+    .description(
+      "Compare a worker's committed changes with the working tree (or --against <ref>); exit 0 when every file is identical, so discarding is safe. Also reads an archived worker (refs/pai-archive/<id>)"
+    )
+    .option("--against <ref>", "compare against this ref instead of the working tree")
+    .option("--json", "print the result as JSON")
+    .action((id: string, opts: { against?: string; json?: boolean }) => {
+      try {
+        const r = verifyWorker(currentLogDir(), id, { against: opts.against });
+        if (opts.json) console.log(JSON.stringify(r, null, 2));
+        else {
+          for (const f of r.files) console.log(`${f.state.padEnd(9)} ${f.path}`);
+          console.log(`${r.ok ? "all identical" : "not applied"} (${r.files.length} file(s), ${r.ref} vs ${r.against})`);
+        }
+        if (!r.ok) process.exitCode = 1;
       } catch (e) {
         fail(e);
       }

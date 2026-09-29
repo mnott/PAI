@@ -30,6 +30,7 @@ pai worker <subcommand> [options]
 | [`pai worker goal <id> <text>`](#pai-worker-goal-id-text) | Relabel a running worker (its ps / pane goal) without sending it a message |
 | [`pai worker handoff <json>`](#pai-worker-handoff-json) | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
 | [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
+| [`pai worker verify <id>`](#pai-worker-verify-id) | Compare a worker's committed changes with the working tree (or --against <ref>); exit 0 when every file is identical, so discarding is safe. Also reads an archived worker (refs/pai-archive/<id>) |
 | [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
 | [`pai worker gc`](#pai-worker-gc) | Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept) |
@@ -242,6 +243,31 @@ Merge a worker's worktree branch (worker/<id>) into the original checkout, then 
 | Argument | Kind |
 |----------|------|
 | `<id>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--no-commit` | apply the changes as uncommitted working-tree changes; keep branch and worktree |  |
+| `--patch` | alias for --no-commit |  |
+
+
+### pai worker verify <id>
+
+Compare a worker's committed changes with the working tree (or --against <ref>); exit 0 when every file is identical, so discarding is safe. Also reads an archived worker (refs/pai-archive/<id>)
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--against <ref>` | compare against this ref instead of the working tree |  |
+| `--json` | print the result as JSON |  |
 
 
 ### pai worker wait <ids...>
