@@ -56,6 +56,17 @@ export function resetAg2SpecCache(): void {
   cachedSpec = null;
 }
 
+/**
+ * Strip what workers wrap around a report: one surrounding ``` fence (opening
+ * line may carry a language tag) and a leading `[YYYY-MM-DD HH:MM]` stamp line.
+ */
+export function unwrapAg2(text: string): string {
+  let t = (text ?? "").trim();
+  const fenced = t.match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
+  if (fenced) t = fenced[1].trim();
+  return t.replace(/^\[\d{4}-\d{2}-\d{2}[^\]\n]*\][ \t]*\n/, "").trim();
+}
+
 export interface ParsedAg2 {
   kind: string;
   fields: Record<string, string>;
@@ -71,7 +82,7 @@ export interface ParsedAg2 {
  */
 export function parseAg2Report(text: string): ParsedAg2 | null {
   const kinds = new Set(["T", "R", "S", "Q", "A", "X"]);
-  const lines = (text ?? "")
+  const lines = unwrapAg2(text)
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("```"));
@@ -171,7 +182,7 @@ interface AibrokerCheckJson {
 export function validateAg2(text: string): Ag2ValidationResult {
   try {
     const out = execFileSync("aibroker", ["agentish", "check", "-", "--json"], {
-      input: text,
+      input: unwrapAg2(text),
       timeout: 5000,
       stdio: ["pipe", "pipe", "ignore"],
       encoding: "utf8",

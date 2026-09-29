@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, utimesSync, symlinkSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -277,8 +277,9 @@ describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
     writeFileSync(join(info.dir, "salvaged.txt"), "untracked\n", "utf8"); // never added
     expect(uncommittedPaths(info.dir).sort()).toEqual(["base.txt", "salvaged.txt"]);
 
-    const salvaged = salvageUncommitted(info.dir, "label s1");
-    expect(salvaged.sort()).toEqual(["base.txt", "salvaged.txt"]);
+    const salvage = salvageUncommitted(info.dir, "label s1");
+    expect(salvage.committed.sort()).toEqual(["base.txt", "salvaged.txt"]);
+    expect(salvage.skipped).toEqual([]);
     expect(git(info.dir, ["log", "-1", "--format=%s"])).toBe("salvaged: label s1");
     expect(uncommittedPaths(info.dir)).toEqual([]);
 
@@ -288,8 +289,41 @@ describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
   it("salvages nothing from a clean worktree", () => {
     const info = addWorktree(logDir, "s2", repo);
     status("s2", { branch: worktreeBranch("s2"), worktreeDir: info.dir });
-    expect(salvageUncommitted(info.dir, "label s2")).toEqual([]);
+    expect(salvageUncommitted(info.dir, "label s2")).toEqual({ committed: [], skipped: [] });
     discardWorker(logDir, "s2");
+  });
+
+  it("skips a symlink whose target resolves outside the worktree, and reports it", () => {
+    // the bug this guards against: a repo whose .gitignore uses `node_modules/`
+    // (directories only) does not ignore a *symlink* named node_modules, so a
+    // worker's convenience link to the main checkout's real node_modules
+    // turns up as untracked and would otherwise be salvaged, merged, and
+    // checked out over the real directory on the other side.
+    writeFileSync(join(repo, ".gitignore"), "node_modules/\n", "utf8");
+    git(repo, ["add", ".gitignore"]);
+    git(repo, ["commit", "-q", "-m", "ignore node_modules dirs"]);
+    mkdirSync(join(repo, "node_modules"));
+    writeFileSync(join(repo, "node_modules", "marker.txt"), "real node_modules\n", "utf8");
+
+    const info = addWorktree(logDir, "s4", repo);
+    status("s4", { branch: worktreeBranch("s4"), worktreeDir: info.dir });
+    writeFileSync(join(info.dir, "real.txt"), "real uncommitted work\n", "utf8");
+    symlinkSync(join(repo, "node_modules"), join(info.dir, "node_modules"));
+
+    const salvage = salvageUncommitted(info.dir, "label s4");
+    expect(salvage.committed).toEqual(["real.txt"]);
+    expect(salvage.skipped).toHaveLength(1);
+    expect(salvage.skipped[0]).toMatch(/^symlink node_modules -> .*\(points outside the worktree\)$/);
+    expect(git(info.dir, ["log", "-1", "--name-only", "--format=%s"])).not.toMatch(/node_modules/);
+    expect(lstatSync(join(info.dir, "node_modules")).isSymbolicLink()).toBe(true);
+
+    const msg = mergeWorker(logDir, "s4");
+    expect(msg).toMatch(/skipped symlink node_modules ->/);
+    // the merge-level assertion: the main checkout's real node_modules
+    // directory is untouched, not replaced by a symlink
+    expect(lstatSync(join(repo, "node_modules")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(repo, "node_modules", "marker.txt"), "utf8")).toBe("real node_modules\n");
+    expect(existsSync(join(repo, "real.txt"))).toBe(true);
   });
 
   it("assertWorktreeClean throws on dirt, passes on a clean worktree", () => {

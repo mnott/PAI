@@ -15,8 +15,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { loadStatus, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
@@ -286,18 +286,61 @@ export function uncommittedPaths(wtDir: string): string[] {
 }
 
 /**
+ * True when `wtDir`/`relPath` is a symlink whose target resolves outside
+ * `wtDir` — e.g. a worker's `node_modules -> <main checkout>/node_modules`
+ * convenience link. A `.gitignore` using `dir/` (directories only) does not
+ * ignore such a link, so it turns up as untracked; staging and merging it
+ * lets git replace the real directory on the other side with a symlink to
+ * itself. Never a candidate for salvage.
+ */
+function symlinkEscapesWorktree(wtDir: string, relPath: string): boolean {
+  const full = join(wtDir, relPath);
+  let stat;
+  try {
+    stat = lstatSync(full);
+  } catch {
+    return false; // vanished; nothing to skip
+  }
+  if (!stat.isSymbolicLink()) return false;
+  const target = readlinkSync(full);
+  const resolvedTarget = isAbsolute(target) ? target : resolve(dirname(full), target);
+  const realTarget = existsSync(resolvedTarget) ? realpathSync(resolvedTarget) : resolvedTarget;
+  const realWtDir = realpathSync(wtDir);
+  return realTarget !== realWtDir && !realTarget.startsWith(realWtDir + sep);
+}
+
+export interface SalvageResult {
+  /** Paths committed onto the branch. */
+  committed: string[];
+  /** Human-readable notes for paths left on disk, uncommitted, and why. */
+  skipped: string[];
+}
+
+/**
  * Commit a worktree's uncommitted changes to its branch so the merge carries
  * them. `git merge` only moves committed work, so a worker that stopped
  * without committing would lose its edits to `worktree remove` — exactly
- * what happened live on 2026-09-17. Returns the salvaged paths, [] when the
- * worktree is clean. A failed commit throws with the worktree untouched:
+ * what happened live on 2026-09-17. Returns the salvaged paths, empty when
+ * the worktree is clean. A symlink pointing outside the worktree (see
+ * `symlinkEscapesWorktree`) is never staged; it is left on disk and reported
+ * as skipped instead. A failed commit throws with the worktree untouched:
  * its edits are still on disk, so nothing is lost.
  */
-export function salvageUncommitted(wtDir: string, label: string): string[] {
+export function salvageUncommitted(wtDir: string, label: string): SalvageResult {
   const paths = uncommittedPaths(wtDir);
-  if (!paths.length) return [];
+  if (!paths.length) return { committed: [], skipped: [] };
+  const skipped: string[] = [];
+  const toStage: string[] = [];
+  for (const p of paths) {
+    if (symlinkEscapesWorktree(wtDir, p)) {
+      skipped.push(`symlink ${p} -> ${readlinkSync(join(wtDir, p))} (points outside the worktree)`);
+    } else {
+      toStage.push(p);
+    }
+  }
+  if (!toStage.length) return { committed: [], skipped };
   try {
-    git(wtDir, ["add", "-A"]);
+    git(wtDir, ["add", "--", ...toStage]);
     git(wtDir, ["commit", "-m", `salvaged: ${label}`]);
   } catch (e) {
     throw new Error(
@@ -305,7 +348,7 @@ export function salvageUncommitted(wtDir: string, label: string): string[] {
         `nothing was lost: commit them there by hand, then re-run merge`
     );
   }
-  return paths;
+  return { committed: toStage, skipped };
 }
 
 /**
@@ -361,9 +404,14 @@ function assertNoDirtyOverlap(
   );
 }
 
-/** Never remove a worktree that still holds uncommitted changes. */
+/**
+ * Never remove a worktree that still holds uncommitted changes — except a
+ * symlink escaping the worktree (see `symlinkEscapesWorktree`): it was
+ * deliberately left uncommitted by `salvageUncommitted`, and deleting the
+ * link itself touches nothing outside the worktree.
+ */
 export function assertWorktreeClean(wtDir: string, id: string): void {
-  const leftover = uncommittedPaths(wtDir);
+  const leftover = uncommittedPaths(wtDir).filter((p) => !symlinkEscapesWorktree(wtDir, p));
   if (leftover.length) {
     throw new Error(
       `worker ${id}: the worktree ${wtDir} still holds uncommitted changes ` +
@@ -427,7 +475,9 @@ function mergeSnapshotWorker(
   const snapshot = st.worktreeBase!;
   const branch = st.branch!;
   const worktreeDir = st.worktreeDir!;
-  const salvaged = existsSync(worktreeDir) ? salvageUncommitted(worktreeDir, st.label || UNLABELED) : [];
+  const salvage = existsSync(worktreeDir)
+    ? salvageUncommitted(worktreeDir, st.label || UNLABELED)
+    : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `${snapshot}..${branch}`]), 10) || 0;
   if (incoming <= 0) {
     throw new Error(
@@ -474,9 +524,16 @@ function mergeSnapshotWorker(
   const base =
     `applied worker ${id}'s changes (branch ${branch}) to ${st.cwd} as uncommitted changes: ` +
     `${changedPaths.join(", ")} (worktree removed, branch deleted)`;
-  return salvaged.length
-    ? `${base}; salvaged ${salvaged.length} uncommitted change(s) onto the branch first: ${salvaged.join(", ")}`
-    : base;
+  const notes: string[] = [];
+  if (salvage.committed.length) {
+    notes.push(
+      `salvaged ${salvage.committed.length} uncommitted change(s) onto the branch first: ${salvage.committed.join(", ")}`
+    );
+  }
+  if (salvage.skipped.length) {
+    notes.push(`skipped ${salvage.skipped.join(", ")}`);
+  }
+  return notes.length ? `${base}; ${notes.join("; ")}` : base;
 }
 
 /**
@@ -493,9 +550,9 @@ export function mergeWorker(logDir: string, id: string): string {
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st);
   // salvage first: only a commit can carry uncommitted work through the merge
-  const salvaged = existsSync(st.worktreeDir!)
+  const salvage = existsSync(st.worktreeDir!)
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
-    : [];
+    : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
   if (incoming <= 0) {
     throw new Error(
@@ -518,7 +575,9 @@ export function mergeWorker(logDir: string, id: string): string {
     );
   }
   if (existsSync(st.worktreeDir!)) assertWorktreeClean(st.worktreeDir!, id);
-  removeWorktree(st.cwd, st.worktreeDir!, false);
+  // force: assertWorktreeClean already confirmed nothing but a skipped
+  // outside-pointing symlink (if anything) remains uncommitted
+  removeWorktree(st.cwd, st.worktreeDir!, true);
   let branchGone = true;
   try {
     git(st.cwd, ["branch", "-d", st.branch!]);
@@ -528,9 +587,14 @@ export function mergeWorker(logDir: string, id: string): string {
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   const base = `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
-  return salvaged.length
-    ? `${base}; salvaged ${salvaged.length} uncommitted change(s): ${salvaged.join(", ")}`
-    : base;
+  const notes: string[] = [];
+  if (salvage.committed.length) {
+    notes.push(`salvaged ${salvage.committed.length} uncommitted change(s): ${salvage.committed.join(", ")}`);
+  }
+  if (salvage.skipped.length) {
+    notes.push(`skipped ${salvage.skipped.join(", ")}`);
+  }
+  return notes.length ? `${base}; ${notes.join("; ")}` : base;
 }
 
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */

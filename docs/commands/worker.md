@@ -570,6 +570,7 @@ Capability names are open (default, fast, image, … — any ^[a-z][a-z0-9-]*$ n
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--provider <name>` | Provider to read or change (default: the active one) |  |
+| `--capability <name>` | Capability to set/show, with a model id as the only argument (same as the MCP tool) |  |
 
 
 ### pai worker capability [name] [providers]

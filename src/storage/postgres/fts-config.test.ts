@@ -153,4 +153,23 @@ describe("Postgres FTS config migration (fts_vector 'english' -> 'simple')", () 
       expect(updates).toHaveLength(0);
     });
   }, 30000);
+
+  it("interrupted run resumes after the stored id", async () => {
+    await withScratchDb(async (pool) => {
+      await pool.query(initSql);
+      await pool.query(LEGACY_TRIGGER_FN);
+      for (const id of ["c1", "c2", "c3"]) await insertChunk(pool, id, "running now");
+      await pool.query(
+        `COMMENT ON COLUMN pai_chunks.fts_vector IS 'fts:simple:inprogress:c2'`
+      );
+
+      await migrateFtsConfig(backendFor(pool));
+
+      expect(await marker(pool)).toBe("fts:simple");
+      // c1, c2 were "done" per the stored id, so they were skipped; c3 rebuilt.
+      expect(await findsRunning(pool, "c1")).toBe(false);
+      expect(await findsRunning(pool, "c2")).toBe(false);
+      expect(await findsRunning(pool, "c3")).toBe(true);
+    });
+  }, 30000);
 });

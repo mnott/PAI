@@ -15,6 +15,7 @@ import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
 import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
+  finaliseRun,
   announcePane,
   bumpContextTokens,
   chromeGrantArgs,
@@ -886,5 +887,72 @@ describe("announcePane", () => {
     await announcePane(dir, cfg, "w1", "term-1", false, ledger);
     expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: PAI_WORKER_AUTOPANE=0\n");
     expect(pane.openPaneForWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("finaliseRun", () => {
+  let logDir: string;
+  beforeEach(() => {
+    logDir = mkdtempSync(join(tmpdir(), "pai-finalise-"));
+  });
+  afterEach(() => rmSync(logDir, { recursive: true, force: true }));
+
+  const worker = (id: string, over: Partial<WorkerStatus> = {}): WorkerStatus => {
+    const s: WorkerStatus = {
+      id,
+      pid: -1,
+      label: id,
+      cwd: logDir,
+      term: "",
+      provider: "p",
+      model: "m",
+      state: "running",
+      started: "2026-09-29 10:00:00",
+      updated: "2026-09-29 10:00:00",
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+      ...over,
+    };
+    saveStatus(logDir, s);
+    return s;
+  };
+
+  it("a codex-style run that exits ok but orphaned a child fails with the reason", async () => {
+    const parent = worker("cx-parent");
+    worker("cx-child", { parent: "cx-parent" }); // dead pid, still "running"
+    const ledger = join(logDir, "ledger.log");
+    const rc = await finaliseRun({
+      logDir,
+      ledger,
+      status: parent,
+      ok: true,
+      rc: 0,
+      secs: 1,
+      end: { engine: "codex" },
+      report: null,
+    });
+    expect(rc).toBe(1);
+    expect(parent.state).toBe("failed");
+    expect(parent.last).toMatch(/1 sub-worker still running \(cx-child\)/);
+    expect(readFileSync(ledger, "utf8")).toContain("WORKER-ORPHAN-CHILDREN");
+  });
+
+  it("no children: done, rc 0", async () => {
+    const parent = worker("solo");
+    const rc = await finaliseRun({
+      logDir,
+      ledger: join(logDir, "ledger.log"),
+      status: parent,
+      ok: true,
+      rc: 0,
+      secs: 1,
+      end: {},
+      report: null,
+    });
+    expect(rc).toBe(0);
+    expect(parent.state).toBe("done");
   });
 });

@@ -69,6 +69,21 @@ describe("markControlsHeld / returnControlsIfHeld", () => {
     expect(loadStatus(dir, "w1")?.controlsHeld).toBe(true);
   });
 
+  it("the runner's own later saveStatus keeps a flag set externally, and exit still returns controls", async () => {
+    dir = mkdtempSync(join(tmpdir(), "pai-controls-"));
+    const runnerStatus = fakeStatus("w1");
+    saveStatus(dir, runnerStatus); // runner's first write
+    markControlsHeld(dir, "w1"); // external `pai worker controls`
+    saveStatus(dir, runnerStatus); // runner's stale in-memory copy
+    expect(loadStatus(dir, "w1")?.controlsHeld).toBe(true);
+    const proc = new EventEmitter();
+    vi.mocked(childProcess.spawn).mockReturnValue(proc as unknown as ReturnType<typeof childProcess.spawn>);
+    const done = returnControlsIfHeld(dir, "w1");
+    expect(childProcess.spawn).toHaveBeenCalledWith("clickr", ["controls", "return", "--agent", "w1"], expect.anything());
+    proc.emit("close", 0);
+    await done;
+  });
+
   it("markControlsHeld on an unknown id is a no-op, not a throw", () => {
     dir = mkdtempSync(join(tmpdir(), "pai-controls-"));
     expect(() => markControlsHeld(dir, "nope")).not.toThrow();

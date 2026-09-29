@@ -11,6 +11,7 @@ import {
   ag2ToWorkerReport,
   parseAg2Report,
   resetAg2SpecCache,
+  unwrapAg2,
   validateAg2,
 } from "./agentish.js";
 
@@ -76,6 +77,21 @@ describe("parseAg2Report", () => {
 
   it("takes only the first character of the kind line as the kind", () => {
     expect(parseAg2Report("R\ni=x")?.kind).toBe("R");
+  });
+
+  it("parses a fenced report identically to the unfenced one, with or without language tag", () => {
+    const bare = "R z=done\ni=x\nr=+";
+    expect(parseAg2Report("```\n" + bare + "\n```")).toEqual(parseAg2Report(bare));
+    expect(parseAg2Report("```text\n" + bare + "\n```\n")).toEqual(parseAg2Report(bare));
+  });
+
+  it("tolerates a leading timestamp line", () => {
+    expect(parseAg2Report("[2026-09-29 11:52]\nR\ni=x")).toEqual(parseAg2Report("R\ni=x"));
+  });
+
+  it("unwrapAg2 leaves an unfenced report unchanged and a wrong kind still fails", () => {
+    expect(unwrapAg2("R\ni=x")).toBe("R\ni=x");
+    expect(parseAg2Report("```\nZ\ni=x\n```")).toBeNull();
   });
 });
 

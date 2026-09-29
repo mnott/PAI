@@ -742,6 +742,79 @@ interface ImageExecuteArgs {
   id?: string;
 }
 
+interface FinaliseArgs {
+  logDir: string;
+  ledger: string;
+  status: WorkerStatus;
+  /** The process's real outcome; recordWorktree sees this, never the orphan verdict. */
+  ok: boolean;
+  rc: number;
+  secs: number;
+  /** Engine-specific WORKER-END fields (provider, mode, engine, model, label, ...). */
+  end: Record<string, unknown>;
+  report: WorkerReport | null;
+  /** Handoff text when the report has no notes. */
+  fallbackText?: string;
+  worktree?: WorktreeInfo | null;
+  /**
+   * Runs after the worktree outcome is recorded, before the parent handoff
+   * (print the result, quota reroute). A returned number ends the run with
+   * it, skipping the handoff — the reroute's own run reports instead.
+   */
+  beforeHandoff?: (status: WorkerStatus, report: WorkerReport | null) => Promise<number | void> | number | void;
+}
+
+/**
+ * The finalisation every engine shares: orphaned-children check, state, the
+ * WORKER-END ledger line, worktree outcome, parent handoff, final rc. A worker
+ * owns its children's results (the worker contract says so): if it
+ * backgrounded a sub-worker and exited without waiting, the run must not
+ * report success, whatever the process returned.
+ */
+export async function finaliseRun(f: FinaliseArgs): Promise<number> {
+  const { logDir, ledger, ok, rc } = f;
+  let { status, report } = f;
+  const wid = status.id;
+  const orphanReason = checkOrphanedChildren(logDir, wid);
+  const succeeded = ok && !orphanReason;
+  status.state = succeeded ? "done" : "failed";
+  status.rc = rc;
+  status.secs = f.secs;
+  if (orphanReason) {
+    status.last = shortText(orphanReason, 90);
+    report = { ...(report ?? {}), notes: orphanReason, result: "-" };
+    appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
+  }
+  saveStatus(logDir, status);
+  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs });
+
+  if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
+
+  const early = await f.beforeHandoff?.(status, report);
+  if (typeof early === "number") return early;
+
+  const finalRc = rc !== 0 ? rc : succeeded ? 0 : 1;
+  if (status.parent && isWorkerId(logDir, status.parent)) {
+    try {
+      await deliverHandoff(logDir, {
+        from: wid,
+        to: status.parent,
+        kind: "result",
+        text: shortText(report?.notes ?? f.fallbackText ?? (succeeded ? "done" : "failed"), 400),
+        data: {
+          rc: finalRc,
+          ok: succeeded,
+          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
+          ...(report ? { report } : {}),
+        },
+      });
+    } catch {
+      // the inbox line is best effort; it must never fail the exit path
+    }
+  }
+  return finalRc;
+}
+
 async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof readWorkersSection>["workers"] }): Promise<number> {
   const { logDir, target, model, label, parsed } = a;
   if (!parsed.headless || parsed.prompt === null) {
@@ -792,6 +865,14 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
     ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
+  const imageEnd = {
+    provider: target.providerName,
+    mode: "headless",
+    engine: "image",
+    model,
+    label,
+    capability: a.capability,
+  };
   const t0 = Date.now();
   try {
     const result = await runImageCapability({
@@ -804,43 +885,24 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
       timeoutMs: a.timeoutMs,
     });
     const secs = Math.round((Date.now() - t0) / 1000);
-    status.state = "done";
-    status.rc = 0;
-    status.secs = secs;
     status.last = `wrote ${result.path}`;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      engine: "image",
-      model,
+    return await finaliseRun({
+      logDir,
+      ledger,
+      status,
+      ok: true,
       rc: 0,
       secs,
-      label,
-      capability: a.capability,
+      end: imageEnd,
+      report: null,
+      beforeHandoff: () => {
+        if (!a.quiet) process.stdout.write(JSON.stringify(result) + "\n");
+      },
     });
-    if (!a.quiet) process.stdout.write(JSON.stringify(result) + "\n");
-    return 0;
   } catch (e) {
     const secs = Math.round((Date.now() - t0) / 1000);
-    const message = e instanceof Error ? e.message : String(e);
-    status.state = "failed";
-    status.rc = 1;
-    status.secs = secs;
-    status.last = message;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      engine: "image",
-      model,
-      rc: 1,
-      secs,
-      label,
-      capability: a.capability,
-    });
+    status.last = e instanceof Error ? e.message : String(e);
+    await finaliseRun({ logDir, ledger, status, ok: false, rc: 1, secs, end: imageEnd, report: null });
     throw e;
   }
 }
@@ -1264,20 +1326,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (eventsFd !== null) closeSync(eventsFd);
   cleanup();
 
-  // A worker owns its children's results (the worker contract says so): if
-  // it backgrounded a sub-worker and exited without waiting, this run must
-  // not report success, whatever the claude process itself returned. Kept
-  // separate from `ok` below — recordWorktree(...) must still see the
-  // process's real outcome, or an orphaned child would wrongly delete a
-  // worktree/branch that holds genuine, committed work.
-  const orphanReason = checkOrphanedChildren(logDir, wid);
-
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = ctx.resultEvent;
   const ok = runSucceeded(headless, rc, resultEvent);
-  status.state = ok && !orphanReason ? "done" : "failed";
-  status.rc = rc;
-  status.secs = secs;
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
   if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
@@ -1329,96 +1380,67 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       });
     }
   }
-  if (orphanReason) {
-    status.last = shortText(orphanReason, 90);
-    ctx.resultReport = { ...(ctx.resultReport ?? {}), notes: orphanReason, result: "-" };
-    appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
-  }
-  saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", {
-    id: wid,
-    provider: target.providerName,
-    mode: headless ? "headless" : "interactive",
-    model,
+  return finaliseRun({
+    logDir,
+    ledger,
+    status,
+    ok,
     rc,
     secs,
-    turns: status.turns,
-    tools: status.tools,
-    label,
+    end: {
+      provider: target.providerName,
+      mode: headless ? "headless" : "interactive",
+      model,
+      turns: status.turns,
+      tools: status.tools,
+      label,
+    },
+    report: ctx.resultReport,
+    fallbackText: resultEvent?.result,
+    worktree,
+    beforeHandoff: async (st, rep) => {
+      if (headless && !a.quiet) {
+        printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
+      }
+
+    // Quota reroute: only auto-routed runs, dead before the first tool call.
+    const resultText = resultEvent?.result ?? "";
+    if (
+      !ok &&
+      headless &&
+      a.target.via === "auto" &&
+      config.routing.retryOnQuota &&
+      status.turns <= 1 &&
+      status.tools === 0 &&
+      isQuotaFailure(resultText)
+    ) {
+      setCooldown(logDir, target.providerName, config.routing.cooldownMinutes);
+      const next = nextAutoProvider(config, logDir, target.providerName);
+      if (next && a.reroutes < config.routing.order.length) {
+        appendLedger(ledger, "WORKER-REROUTE", {
+          from: target.providerName,
+          to: next,
+          reason: "quota",
+        });
+        return runWorker({
+          providerFlag: next,
+          label,
+          noPane: a.noPane,
+          mcpFlag: a.mcpFlag,
+          cwd: a.cwd,
+          specPath: a.specPath,
+          parent: a.parent,
+          stage: a.stage,
+          claudeArgs: a.claudeArgs,
+          onWorkerStart: a.onWorkerStart,
+          worktreeFlag: a.worktreeFlag,
+          className: a.className,
+          _reroutes: a.reroutes + 1,
+        });
+      }
+    }
+    },
   });
-
-  // worktree outcome: keep branch + commit count on success, clean up on failure
-  if (worktree) status = recordWorktree(logDir, status, worktree, ok);
-
-  if (headless && !a.quiet) {
-    printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, ctx.resultReport, worktreeExtras(status));
-  }
-
-  // Quota reroute: only auto-routed runs, dead before the first tool call.
-  const resultText = resultEvent?.result ?? "";
-  if (
-    !ok &&
-    headless &&
-    a.target.via === "auto" &&
-    config.routing.retryOnQuota &&
-    status.turns <= 1 &&
-    status.tools === 0 &&
-    isQuotaFailure(resultText)
-  ) {
-    setCooldown(logDir, target.providerName, config.routing.cooldownMinutes);
-    const next = nextAutoProvider(config, logDir, target.providerName);
-    if (next && a.reroutes < config.routing.order.length) {
-      appendLedger(ledger, "WORKER-REROUTE", {
-        from: target.providerName,
-        to: next,
-        reason: "quota",
-      });
-      return runWorker({
-        providerFlag: next,
-        label,
-        noPane: a.noPane,
-        mcpFlag: a.mcpFlag,
-        cwd: a.cwd,
-        specPath: a.specPath,
-        parent: a.parent,
-        stage: a.stage,
-        claudeArgs: a.claudeArgs,
-        onWorkerStart: a.onWorkerStart,
-        worktreeFlag: a.worktreeFlag,
-        className: a.className,
-        _reroutes: a.reroutes + 1,
-      });
-    }
-  }
-
-  // A finishing child reports to its worker parent automatically: the report
-  // lands in the parent's inbox and (when the parent still runs) is said to
-  // it so it enters the parent's conversation.
-  const succeeded = ok && !orphanReason;
-  const finalRc = rc !== 0 ? rc : succeeded ? 0 : 1;
-  if (status.parent && isWorkerId(logDir, status.parent)) {
-    try {
-      await deliverHandoff(logDir, {
-        from: wid,
-        to: status.parent,
-        kind: "result",
-        text: shortText(
-          ctx.resultReport?.notes ?? resultEvent?.result ?? (succeeded ? "done" : "failed"),
-          400
-        ),
-        data: {
-          rc: finalRc,
-          ok: succeeded,
-          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
-          ...(ctx.resultReport ? { report: ctx.resultReport } : {}),
-        },
-      });
-    } catch {
-      // the inbox line is best effort; it must never fail the exit path
-    }
-  }
-
-  return finalRc;
 }
 
 /** The worktree fields printResult adds to a json payload, when there is one. */
@@ -1657,9 +1679,6 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   writeEvent(resultEvent);
 
   const ok = rc === 0 && !fold.isError;
-  status.state = ok ? "done" : "failed";
-  status.rc = rc;
-  status.secs = secs;
   status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
   if (report?.changed?.length) {
     const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0);
@@ -1675,45 +1694,29 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       });
     }
   }
-  saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", {
-    id: wid,
-    provider: target.providerName,
-    mode: "headless",
-    engine: "codex",
-    model,
+  return finaliseRun({
+    logDir,
+    ledger,
+    status,
+    ok,
     rc,
     secs,
-    turns: status.turns,
-    tools: status.tools,
-    label,
+    end: {
+      provider: target.providerName,
+      mode: "headless",
+      engine: "codex",
+      model,
+      turns: status.turns,
+      tools: status.tools,
+      label,
+    },
+    report,
+    fallbackText: finalText,
+    worktree,
+    beforeHandoff: (st, rep) => {
+      if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
+    },
   });
-
-  if (worktree) status = recordWorktree(logDir, status, worktree, ok);
-
-  if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, report, worktreeExtras(status));
-
-  // the codex engine reports to its worker parent the same way (handoff.ts)
-  const finalRc = rc !== 0 ? rc : ok ? 0 : 1;
-  if (status.parent && isWorkerId(logDir, status.parent)) {
-    try {
-      await deliverHandoff(logDir, {
-        from: wid,
-        to: status.parent,
-        kind: "result",
-        text: shortText(report?.notes ?? finalText ?? (ok ? "done" : "failed"), 400),
-        data: {
-          rc: finalRc,
-          ok,
-          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
-          ...(report ? { report } : {}),
-        },
-      });
-    } catch {
-      // best effort; never fail the exit path
-    }
-  }
-  return finalRc;
 }
 
 // ---------------------------------------------------------------------------

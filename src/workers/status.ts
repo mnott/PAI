@@ -211,9 +211,12 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
   const baseline = firstWrittenLabel.get(status.id);
   if (baseline === undefined) {
     firstWrittenLabel.set(status.id, status.label);
-  } else if (status.label === baseline) {
-    const onDisk = loadStatus(logDir, status.id);
-    if (onDisk && onDisk.label !== status.label) status.label = onDisk.label;
+  }
+  const onDisk = baseline === undefined ? undefined : loadStatus(logDir, status.id);
+  if (onDisk) {
+    if (status.label === baseline && onDisk.label !== status.label) status.label = onDisk.label;
+    // Set by another process (`pai worker controls`); a true flag is never dropped by a stale in-memory copy.
+    if (onDisk.controlsHeld) status.controlsHeld = true;
   }
   const tmp = statusTmpPath(logDir, status.id);
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });

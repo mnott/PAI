@@ -10,14 +10,16 @@
  * 'running')` against 142,559 chunks containing "running".
  *
  * Completion is marked by a comment on pai_chunks.fts_vector so this can run
- * on every daemon boot for free once migrated, and resume cleanly if a batch
- * run was interrupted (each batch is its own transaction, keyed on the PK).
+ * on every daemon boot for free once migrated, and resume if a batch run
+ * was interrupted: every 20 batches the last completed id is stored in the
+ * comment as `fts:simple:inprogress:<id>` and the next start continues after it.
  */
 
 import type { StorageBackend } from "../interface.js";
 import type { PostgresBackend } from "../postgres.js";
 
 const DONE_MARKER = "fts:simple";
+const PROGRESS_PREFIX = "fts:simple:inprogress:";
 const BATCH_SIZE = 5000;
 
 export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
@@ -37,7 +39,11 @@ export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
      FROM information_schema.columns
      WHERE table_name = 'pai_chunks' AND column_name = 'fts_vector'`
   );
-  if (commentCheck.rows[0]?.comment === DONE_MARKER) return;
+  const comment = commentCheck.rows[0]?.comment ?? null;
+  if (comment === DONE_MARKER) return;
+  const resumeId = comment?.startsWith(PROGRESS_PREFIX)
+    ? comment.slice(PROGRESS_PREFIX.length)
+    : "";
 
   process.stderr.write(
     "[pai-postgres] FTS config migration: starting (english -> simple)\n"
@@ -61,7 +67,10 @@ export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
     );
   }
 
-  let lastId: string | null = null;
+  let lastId: string | null = resumeId || null;
+  if (lastId !== null) {
+    process.stderr.write(`[pai-postgres] FTS config migration: resuming from ${lastId}\n`);
+  }
   let totalUpdated = 0;
   let batchN = 0;
   while (true) {
@@ -82,6 +91,10 @@ export async function migrateFtsConfig(backend: StorageBackend): Promise<void> {
     lastId = ids[ids.length - 1];
     batchN++;
     if (batchN % 20 === 0) {
+      // COMMENT takes no bind params; double quotes to escape the literal.
+      await pool.query(
+        `COMMENT ON COLUMN pai_chunks.fts_vector IS '${PROGRESS_PREFIX}${lastId.replace(/'/g, "''")}'`
+      );
       process.stderr.write(
         `[pai-postgres] FTS config migration: ${totalUpdated} chunks rebuilt so far...\n`
       );
