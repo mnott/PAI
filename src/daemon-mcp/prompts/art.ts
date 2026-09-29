@@ -26,5 +26,5 @@ Tron-meets-Excalidraw — dark slate backgrounds, neon orange + cyan accents, ha
 
 ### Image Generation
 
-\`bun run \${PAI_DIR}/Skills/art/tools/generate-ulart-image.ts --model nano-banana-pro --prompt "[PROMPT]" --size 2K\``,
+\`bun run \${PAI_DIR}/skills/art/tools/generate-ulart-image.ts --model nano-banana-pro --prompt "[PROMPT]" --size 2K\``,
 };

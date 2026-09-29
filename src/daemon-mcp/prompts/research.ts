@@ -16,7 +16,7 @@ USE WHEN user says 'do research', 'extract wisdom', 'analyze content', 'find inf
 
 ### Workflow Routing
 
-- Parallel research → read \`\${PAI_DIR}/Skills/research/workflows/conduct.md\`
+- Parallel research → read \`\${PAI_DIR}/skills/research/workflows/conduct.md\`
 - Claude research (free) → \`workflows/claude-research.md\`
 - Blocked content / CAPTCHA → escalate: WebFetch → BrightData → Apify
 - YouTube URL → \`fabric -y <URL>\` then pattern

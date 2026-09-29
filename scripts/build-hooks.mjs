@@ -7,8 +7,8 @@
  *
  * With --sync: also creates/updates symlinks (or copies on Windows) from
  * ~/.claude/Hooks/ and ~/.claude/ to the built/source files, plus the
- * PAI_HOME/agents and PAI_HOME/commands adapter symlinks at ~/.claude/Agents
- * and ~/.claude/Commands (once `pai config migrate` has populated them once).
+ * PAI_HOME/agents and PAI_HOME/commands adapter symlinks at ~/.claude/agents
+ * and ~/.claude/commands (once `pai config migrate` has populated them once).
  * This ensures that `bun run build` is the only step needed to deploy updates.
  */
 
@@ -260,9 +260,9 @@ if (skipReason) {
   syncFile(join(HOOKS_OUT, "worker-status-line.mjs"), join(claudeDir, "worker-status-line.mjs"));
 
   // 5. Content dirs with an adapter symlink: PAI_HOME/agents, PAI_HOME/commands
-  // → ~/.claude/Agents, ~/.claude/Commands. Only acts once `pai config migrate`
+  // → ~/.claude/agents, ~/.claude/commands. Only acts once `pai config migrate`
   // has populated the PAI_HOME copy on this machine — a real (non-symlink)
-  // Agents/Commands dir is the operator's un-migrated authored content and is
+  // agents/commands dir is the operator's un-migrated authored content and is
   // never touched here, same rule as syncFile() above.
   function syncContentDirSymlink(paiHomeSubdir, targetDir) {
     if (!existsSync(paiHomeSubdir)) return; // not migrated yet — nothing to link to
@@ -289,8 +289,8 @@ if (skipReason) {
   }
 
   const paiHomeDir = process.env.PAI_HOME || join(homedir(), ".claude", "pai");
-  syncContentDirSymlink(join(paiHomeDir, "agents"), join(claudeDir, "Agents"));
-  syncContentDirSymlink(join(paiHomeDir, "commands"), join(claudeDir, "Commands"));
+  syncContentDirSymlink(join(paiHomeDir, "agents"), join(claudeDir, "agents"));
+  syncContentDirSymlink(join(paiHomeDir, "commands"), join(claudeDir, "commands"));
 
   const parts = [];
   if (created > 0) parts.push(`${created} created`);

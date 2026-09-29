@@ -73,7 +73,7 @@ export function defaultFileSet(cwd: string): string[] {
     join(cwd, "CLAUDE.md"),
     join(cwd, ".claude", "CLAUDE.md"),
     ...parentClaudeMdFiles(dirname(cwd)),
-    join(homedir(), ".claude", "Skills", "CORE", "SKILL.md"),
+    join(homedir(), ".claude", "skills", "CORE", "SKILL.md"),
     whisperRulesPath(),
     join(homedir(), ".claude", "projects", encodeDir(cwd), "memory", "MEMORY.md"),
   ];

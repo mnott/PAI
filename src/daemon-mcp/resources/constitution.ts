@@ -33,7 +33,7 @@ User
 | Primitive | Location | Purpose |
 |-----------|----------|---------|
 | Memory | \${PAI_DIR}/projects/*/Notes/ | Session notes, todos |
-| Skills | ~/.claude/Skills/ | Workflow instructions |
+| Skills | ~/.claude/skills/ | Workflow instructions |
 | History | \${PAI_HOME}/History/ | Automated capture |
 | Config | ~/.claude/pai/ | Agent preferences (config.yaml, workers.yaml, etc.) |
 
@@ -46,7 +46,7 @@ User
 
 \`\`\`
 ~/.claude/
-├── Skills/
+├── skills/
 │   ├── CORE/          # PAI core skill (auto-loaded at session start)
 │   └── user/          # Personal custom skills (gitignored)
 ├── Hooks/             # Event-driven automation scripts

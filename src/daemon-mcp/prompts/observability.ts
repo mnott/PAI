@@ -7,10 +7,10 @@ USE WHEN user says 'start observability', 'stop dashboard', 'restart observabili
 ### Commands
 
 \`\`\`bash
-~/.claude/Skills/observability/manage.sh start    # Start server + dashboard
-~/.claude/Skills/observability/manage.sh stop     # Stop everything
-~/.claude/Skills/observability/manage.sh restart  # Restart both
-~/.claude/Skills/observability/manage.sh status   # Check status
+~/.claude/skills/observability/manage.sh start    # Start server + dashboard
+~/.claude/skills/observability/manage.sh stop     # Stop everything
+~/.claude/skills/observability/manage.sh restart  # Restart both
+~/.claude/skills/observability/manage.sh status   # Check status
 \`\`\`
 
 ### Access
