@@ -113,7 +113,13 @@ describe("timed-out status and ps", () => {
 
   it("labels remaining, overdue and timed out", () => {
     const now = Date.UTC(2026, 8, 29, 10, 0, 0);
+    expect(deadlineLabel(status({ deadlineAt: now + 36_000 }), now)).toBe("36s left");
+    expect(deadlineLabel(status({ deadlineAt: now + 59_000 }), now)).toBe("59s left");
+    expect(deadlineLabel(status({ deadlineAt: now + 60_000 }), now)).toBe("1m left");
+    expect(deadlineLabel(status({ deadlineAt: now + 12 * 60_000 }), now)).toBe("12m left");
     expect(deadlineLabel(status({ deadlineAt: now + 12.5 * 60_000 }), now)).toBe("12m left");
+    expect(deadlineLabel(status({ deadlineAt: now + 65 * 60_000 }), now)).toBe("1h05m left");
+    expect(deadlineLabel(status({ deadlineAt: now - 20_000 }), now)).toBe("OVERDUE 20s");
     expect(deadlineLabel(status({ deadlineAt: now - 3.2 * 60_000 }), now)).toBe("OVERDUE 3m");
     expect(deadlineLabel(status({ state: "failed", timedOut: true }), now)).toBe("timed out");
     expect(deadlineLabel(status({ state: "done", deadlineAt: now - 1 }), now)).toBeNull();

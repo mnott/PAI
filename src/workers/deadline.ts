@@ -55,15 +55,25 @@ export function deadlinePromptLine(limit: RunLimit): string {
   );
 }
 
-/** ps column: "12m left", "OVERDUE 3m" for a running worker, "timed out" for a stopped one; null otherwise. */
+/** ps column: "36s left", "12m left", "1h05m left" for running; "OVERDUE ..." for overdue; "timed out" for stopped; null otherwise. */
 export function deadlineLabel(
   s: Pick<WorkerStatus, "state" | "deadlineAt" | "timedOut">,
   now: number = Date.now()
 ): string | null {
   if (s.timedOut) return "timed out";
   if (s.state !== "running" || !s.deadlineAt) return null;
-  const mins = Math.floor(Math.abs(s.deadlineAt - now) / 60_000);
-  return s.deadlineAt >= now ? `${mins}m left` : `OVERDUE ${mins}m`;
+  const secs = Math.abs(s.deadlineAt - now) / 1_000;
+  let label: string;
+  if (secs < 60) {
+    label = `${Math.floor(secs)}s`;
+  } else if (secs < 3600) {
+    label = `${Math.floor(secs / 60)}m`;
+  } else {
+    const hours = Math.floor(secs / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    label = `${hours}h${String(mins).padStart(2, "0")}m`;
+  }
+  return s.deadlineAt >= now ? `${label} left` : `OVERDUE ${label}`;
 }
 
 /** Grace between SIGTERM and SIGKILL. */
