@@ -442,22 +442,22 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
 
   it("anthropic with no --model resolves the sonnet default and passes --model", () => {
     const model = resolveRunModel(native(), "implement");
-    expect(model).toBe("claude-sonnet-5");
-    expect(modelArgs(model, false)).toEqual(["--model", "claude-sonnet-5"]);
+    expect(model).toBe("sonnet");
+    expect(modelArgs(model, false)).toEqual(["--model", "sonnet"]);
   });
 
   it("no class at all still resolves the default, never an empty model", () => {
     const model = resolveRunModel(native());
-    expect(model).toBe("claude-sonnet-5");
-    expect(modelArgs(model, false)).toEqual(["--model", "claude-sonnet-5"]);
+    expect(model).toBe("sonnet");
+    expect(modelArgs(model, false)).toEqual(["--model", "sonnet"]);
   });
 
   it("--class spotcheck and --class simple resolve the fast model (haiku)", () => {
-    expect(resolveRunModel(native(), "spotcheck")).toBe("claude-haiku-4-5-20251001");
-    expect(resolveRunModel(native(), "simple")).toBe("claude-haiku-4-5-20251001");
+    expect(resolveRunModel(native(), "spotcheck")).toBe("haiku");
+    expect(resolveRunModel(native(), "simple")).toBe("haiku");
     expect(modelArgs(resolveRunModel(native(), "spotcheck"), false)).toEqual([
       "--model",
-      "claude-haiku-4-5-20251001",
+      "haiku",
     ]);
   });
 
@@ -468,7 +468,7 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
 
   it("a class alias (provider/fast) names the capability on any provider", () => {
     expect(resolveRunModel({ provider: nativeAnthropicProvider(), modelAlias: "fast" }, "implement")).toBe(
-      "claude-haiku-4-5-20251001"
+      "haiku"
     );
   });
 
@@ -487,7 +487,7 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
   it("the providers listing shows the built-in default and fast models", () => {
     const lines = describeProviders(parseWorkersConfig({ active: "anthropic", providers: {} }));
     expect(lines[0]).toMatch(/^anthropic {2}\[built-in, active\]/);
-    expect(lines[1]).toBe("    default claude-sonnet-5  fast claude-haiku-4-5-20251001  image (none)");
+    expect(lines[1]).toBe("    default sonnet  fast haiku  image (none)");
   });
 });
 
@@ -506,6 +506,12 @@ describe("adoptInitModel", () => {
     const status = { model: "glm-5.3[1m]" };
     adoptInitModel(status, init("claude-opus-5[1m]"));
     expect(status.model).toBe("glm-5.3[1m]");
+  });
+
+  it("swaps a native provider CLI alias for the init event's resolved id", () => {
+    const status = { model: "sonnet" };
+    adoptInitModel(status, init("claude-sonnet-5-5"));
+    expect(status.model).toBe("claude-sonnet-5-5");
   });
 
   it("leaves the field alone when the event announces nothing usable", () => {

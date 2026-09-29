@@ -150,11 +150,15 @@ export const ANTHROPIC_NATIVE = "anthropic";
  * the orchestrator's model. A bare headless `claude` takes the interactive
  * session default, and one probe came up on the most expensive tier because
  * the chat session had been switched to it. Sonnet is the working tier;
- * haiku serves the fast classes (spotcheck, simple).
+ * haiku serves the fast classes (spotcheck, simple). These are the Claude
+ * Code CLI's own tier aliases, not pinned ids: the CLI resolves each to its
+ * newest model on every run, so the tier tracks a release without a code
+ * change here (adoptInitModel in run.ts swaps the alias for the init event's
+ * resolved id once the run announces one).
  */
 export const NATIVE_ANTHROPIC_MODELS: WorkerProvider["models"] = {
-  default: "claude-sonnet-5",
-  fast: "claude-haiku-4-5-20251001",
+  default: "sonnet",
+  fast: "haiku",
 };
 
 /**

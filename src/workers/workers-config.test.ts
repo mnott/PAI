@@ -64,7 +64,7 @@ describe("starter workers.yaml", () => {
     expect(workers.classes.implement).toBe("anthropic");
     expect(workers.classes.spotcheck).toBe("anthropic/fast");
     expect(workers.mcpSets.desktop).toEqual(["clickr"]);
-    expect(workers.nativeModels.default).toBe("claude-sonnet-5");
+    expect(workers.nativeModels.default).toBe("sonnet");
     // the starter's example providers carry a placeholder inline key
     expect(workers.providers.glm.key).toBe("<your-api-key>");
   });
