@@ -261,7 +261,7 @@ export function renderReport(c: Paint, prefix: string, r: WorkerReport, cwd = ""
   if (has(r.checks)) {
     out.push(`${prefix}${c("bold", "checks")}`);
     for (const ck of r.checks!) {
-      const mark = ck.ok === false ? c("red", "✗") : c("green", "✓");
+      const mark = ck.ok === false ? c("red", "✗") : ck.ok === true ? c("green", "✓") : c("dim", "·");
       const detail = ck.detail ? c("dim", ` · ${shortText(ck.detail, 80)}`) : "";
       out.push(`${prefix}  ${mark} ${ck.name ?? "?"}${detail}`);
     }

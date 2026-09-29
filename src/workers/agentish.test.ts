@@ -114,6 +114,15 @@ describe("ag2ToWorkerReport", () => {
     expect(report.open).toContain("get the key");
   });
 
+  it("maps prose t= (not every token matches the grammar) to a single undecided check", () => {
+    const prose =
+      "vitest run (6 files): 255 passed (254→255, +1 new); npm run build: success";
+    const parsed = parseAg2Report(["R", "i=x", "r=+", `t=${prose}`].join("\n"))!;
+    const report = ag2ToWorkerReport(parsed);
+    expect(report.checks).toEqual([{ name: "tests", detail: prose }]);
+    expect(report.checks?.[0].ok).toBeUndefined();
+  });
+
   it("changed entries split on ':' or ' ', whichever comes first", () => {
     const parsed = parseAg2Report(["R", "i=x", "r=+", "c=src/a.ts:12 fixed the guard"].join("\n"))!;
     const report = ag2ToWorkerReport(parsed);

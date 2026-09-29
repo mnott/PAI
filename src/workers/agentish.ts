@@ -123,14 +123,15 @@ export function ag2ToWorkerReport(parsed: ParsedAg2): WorkerReport {
   }
 
   if (f.t) {
-    out.checks = f.t
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((entry) => ({
-        name: entry.slice(0, -1),
-        ok: passed(entry),
-        detail: entry.slice(-1),
-      }));
+    const tokens = f.t.split(/\s+/).filter(Boolean);
+    const isGrammar = tokens.length > 0 && tokens.every((tok) => /^\S+[+\-~?!]$/.test(tok));
+    out.checks = isGrammar
+      ? tokens.map((entry) => ({
+          name: entry.slice(0, -1),
+          ok: passed(entry),
+          detail: entry.slice(-1),
+        }))
+      : [{ name: "tests", detail: f.t }];
   }
 
   if (f.p) out.commands = f.p.split("|").map((s) => s.trim()).filter(Boolean);
