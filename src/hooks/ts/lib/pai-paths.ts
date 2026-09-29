@@ -6,8 +6,8 @@
  * Two different things live here, and they must not be confused:
  *
  * - ADAPTER_DIR (~/.claude by default) is the Claude Code harness adapter —
- *   fixed, hardcoded paths the harness itself loads from (Hooks/, Skills/,
- *   Agents/, Commands/, settings.json, statusline-command.sh,
+ *   fixed, hardcoded paths the harness itself loads from (Hooks/, skills/,
+ *   agents/, commands/, settings.json, statusline-command.sh,
  *   tab-color-command.sh). It is harness-specific: a future harness would
  *   need its own adapter directory with its own conventions.
  * - PAI_HOME (~/.claude/pai by default — see ../../../config/pai-home.ts) is
@@ -165,9 +165,9 @@ export const PAI_DIR = ADAPTER_DIR;
  * from. These stay under ADAPTER_DIR; they are not PAI state.
  */
 export const HOOKS_DIR = join(ADAPTER_DIR, 'Hooks');
-export const SKILLS_DIR = join(ADAPTER_DIR, 'Skills');
-export const AGENTS_DIR = join(ADAPTER_DIR, 'Agents');
-export const COMMANDS_DIR = join(ADAPTER_DIR, 'Commands');
+export const SKILLS_DIR = join(ADAPTER_DIR, 'skills');
+export const AGENTS_DIR = join(ADAPTER_DIR, 'agents');
+export const COMMANDS_DIR = join(ADAPTER_DIR, 'commands');
 
 // ---------------------------------------------------------------------------
 // PAI state written by hooks — resolves under PAI_HOME, falling back to the

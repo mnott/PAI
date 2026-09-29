@@ -1,10 +1,10 @@
 /**
  * adapter-content.ts — PAI_HOME/agents and PAI_HOME/commands: the operator's
  * authored Agent/Command .md content, made PAI-owned with an adapter symlink
- * back at ~/.claude/Agents and ~/.claude/Commands so Claude Code still loads
+ * back at ~/.claude/agents and ~/.claude/commands so Claude Code still loads
  * them from its fixed harness paths (confirmed empirically: Claude Code
  * follows a directory symlink for .claude/agents/ — see docs/workers-config.md,
- * "Where PAI lives"). Unlike Hooks/Skills (individual files symlinked by the
+ * "Where PAI lives"). Unlike Hooks/skills (individual files symlinked by the
  * build's --sync step), these were real, un-owned files with no PAI copy to
  * symlink from — this module is what gives them one.
  */
@@ -20,11 +20,11 @@ export interface MigrateContentDirResult extends MigrateDirResult {
 }
 
 function oldAgentsDir(): string {
-  return join(homedir(), ".claude", "Agents");
+  return join(homedir(), ".claude", "agents");
 }
 
 function oldCommandsDir(): string {
-  return join(homedir(), ".claude", "Commands");
+  return join(homedir(), ".claude", "commands");
 }
 
 function migrateContentDirWithSymlink(
@@ -67,12 +67,12 @@ function migrateContentDirWithSymlink(
   }
 }
 
-/** Move ~/.claude/Agents/*.md into PAI_HOME/agents/, then symlink it back. */
+/** Move ~/.claude/agents/*.md into PAI_HOME/agents/, then symlink it back. */
 export function migrateAgentsDir(opts: { dryRun?: boolean } = {}): MigrateContentDirResult {
   return migrateContentDirWithSymlink(paiHomePath("agents"), oldAgentsDir(), opts);
 }
 
-/** Move ~/.claude/Commands/*.md into PAI_HOME/commands/, then symlink it back. */
+/** Move ~/.claude/commands/*.md into PAI_HOME/commands/, then symlink it back. */
 export function migrateCommandsDir(opts: { dryRun?: boolean } = {}): MigrateContentDirResult {
   return migrateContentDirWithSymlink(paiHomePath("commands"), oldCommandsDir(), opts);
 }

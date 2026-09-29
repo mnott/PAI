@@ -55,12 +55,8 @@ async function main() {
     // Get CORE skill path using PAI paths library
     const coreSkillPath = join(SKILLS_DIR, 'CORE/SKILL.md');
 
-    // Verify CORE skill file exists
-    if (!existsSync(coreSkillPath)) {
-      console.error(`CORE skill not found at: ${coreSkillPath}`);
-      console.error(`Ensure CORE/SKILL.md exists or check ADAPTER_DIR environment variable`);
-      process.exit(1);
-    }
+    // CORE is an optional, user-provided skill (PAI ships none): absent = silent no-op
+    if (!existsSync(coreSkillPath)) process.exit(0);
 
     console.error('Reading CORE context from skill file...');
 

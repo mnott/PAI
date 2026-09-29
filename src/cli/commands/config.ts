@@ -201,8 +201,8 @@ export function registerConfigCommands(configCmd: Command): void {
       console.log(`  scheduler-state.json:     ${schedulerStatePath}`);
       console.log(`  identity.txt:             ${paiHomePath("identity.txt")} (L0 wake-up identity, optional)`);
       console.log(`  registry-scan.json:       ${paiHomePath("registry-scan.json")}`);
-      console.log(`  agents/:                  ${paiHomePath("agents")} (~/.claude/Agents symlinks here after migrate)`);
-      console.log(`  commands/:                ${paiHomePath("commands")} (~/.claude/Commands symlinks here after migrate)`);
+      console.log(`  agents/:                  ${paiHomePath("agents")} (~/.claude/agents symlinks here after migrate)`);
+      console.log(`  commands/:                ${paiHomePath("commands")} (~/.claude/commands symlinks here after migrate)`);
     });
 
   configCmd
@@ -307,12 +307,12 @@ export function registerConfigCommands(configCmd: Command): void {
         "session-scan-cache.json, queries/, summary-cooldowns.json, work-queue.json,\n" +
         "kg-backfill-state.json, voices.json, the orphaned legacy federation database,\n" +
         "the legacy registry database, the legacy live federation database, ~/.pai/backups/,\n" +
-        "~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/Agents/,\n" +
-        "~/.claude/Commands/ into PAI_HOME.\n" +
+        "~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/agents/,\n" +
+        "~/.claude/commands/ into PAI_HOME.\n" +
         "The registry and federation databases each get an extra WAL checkpoint and PRAGMA\n" +
         "integrity_check (sqlite3 CLI, if present) on top of the byte-identical copy.\n" +
         "backups/ is copied and sha256-verified file-by-file into\n" +
-        "backups/legacy-pai-backups/ rather than merged in place. Agents/ and Commands/ each\n" +
+        "backups/legacy-pai-backups/ rather than merged in place. agents/ and commands/ each\n" +
         "get a symlink left at the old ~/.claude path once their content has moved, so\n" +
         "Claude Code still finds them at its fixed harness paths.\n" +
         "Each file is copied, verified byte-identical, then the old file is renamed to\n" +
@@ -463,8 +463,8 @@ export function registerConfigCommands(configCmd: Command): void {
           console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
         }
       };
-      reportContentDir("Agents/", () => migrateAgentsDir({ dryRun }));
-      reportContentDir("Commands/", () => migrateCommandsDir({ dryRun }));
+      reportContentDir("agents/", () => migrateAgentsDir({ dryRun }));
+      reportContentDir("commands/", () => migrateCommandsDir({ dryRun }));
 
       if (opts.logs) {
         try {

@@ -128,7 +128,7 @@ USE WHEN user says 'journal'...
 
 \`\`\`
 // WRONG — hardcoded personal paths
-"Read ~/.claude/Skills/Share/SKILL.md for social media instructions"
+"Read ~/.claude/skills/Share/SKILL.md for social media instructions"
 \`\`\`
 
 **Problem:** Paths are personal, not portable. The file may not exist. Reading a file wastes a tool call.

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Every SessionStart hook entrypoint calls main() unconditionally at module
 // scope and (for most of them) blocks reading fd 0 — importing them in-process
@@ -44,5 +47,25 @@ describe("session-start hooks: worker sessions get no injected context", () => {
   it("load-core-context.ts omits the edit-gate notice when PAI_WORKER=1", () => {
     const stdout = runHook("src/hooks/ts/session-start/load-core-context.ts", { PAI_WORKER: "1" });
     expect(stdout).not.toContain("Edit/Write on code files is denied");
+  });
+});
+
+describe("load-core-context.ts: CORE is optional", () => {
+  it("exits 0 with empty stdout/stderr when ~/.claude/skills/CORE/SKILL.md is absent", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-core-"));
+    try {
+      mkdirSync(join(home, ".claude", "skills"), { recursive: true });
+      const r = spawnSync("bun", ["src/hooks/ts/session-start/load-core-context.ts"], {
+        input: JSON.stringify({ session_id: "t", hook_event_name: "SessionStart", source: "startup" }),
+        encoding: "utf8",
+        timeout: 15_000,
+        env: { ...process.env, HOME: home, ADAPTER_DIR: "", PAI_DIR: "", PAI_WORKER: "" },
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).not.toContain("CORE skill not found");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
