@@ -27,6 +27,8 @@ export interface ParsedRunnerArgs {
   callerMcpConfig: boolean;
   /** Caller passed --append-system-prompt: the contract is added alongside. */
   callerSystemPrompt: boolean;
+  /** The caller's --append-system-prompt texts, pulled out of `rest` (claude keeps only the last flag). */
+  callerSystemPrompts: string[];
   /** Caller passed --tools (or --tools=…): a project's `pai project tools` pin does not apply. */
   callerTools: boolean;
   /** --mcp values (repeatable, comma-separated inside one flag). */
@@ -43,6 +45,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
   let callerModel = false;
   let callerMcpConfig = false;
   let callerSystemPrompt = false;
+  const callerSystemPrompts: string[] = [];
   let callerTools = false;
   const mcp: string[] = [];
   const allowedTools: string[] = [];
@@ -67,6 +70,12 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
       if (v === "json" || v === "stream-json") outputFormat = v;
     } else if (a === "--verbose") {
       // dropped; re-added by the runner
+    } else if (a === "--append-system-prompt") {
+      callerSystemPrompt = true;
+      if (i + 1 < argv.length) callerSystemPrompts.push(argv[++i]);
+    } else if (a.startsWith("--append-system-prompt=")) {
+      callerSystemPrompt = true;
+      callerSystemPrompts.push(a.slice("--append-system-prompt=".length));
     } else if (a === "--mcp") {
       const v = argv[i + 1];
       if (v !== undefined && !v.startsWith("-")) {
@@ -92,8 +101,6 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
       if (a.startsWith("--model=")) callerModel = true;
       if (a === "--mcp-config") callerMcpConfig = true;
       if (a.startsWith("--mcp-config=")) callerMcpConfig = true;
-      if (a === "--append-system-prompt") callerSystemPrompt = true;
-      if (a.startsWith("--append-system-prompt=")) callerSystemPrompt = true;
       if (a === "--tools") callerTools = true;
       if (a.startsWith("--tools=")) callerTools = true;
       if (
@@ -115,10 +122,21 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
     callerModel,
     callerMcpConfig,
     callerSystemPrompt,
+    callerSystemPrompts,
     callerTools,
     mcp,
     allowedTools,
   };
+}
+
+/**
+ * The one --append-system-prompt flag for a spawn: claude keeps only the LAST
+ * occurrence, so every piece is joined (blank line between) into a single flag.
+ * Empty parts are dropped; no parts, no flag.
+ */
+export function appendSystemPromptArgs(parts: string[]): string[] {
+  const text = parts.filter((p) => p.trim()).join("\n\n");
+  return text ? ["--append-system-prompt", text] : [];
 }
 
 /**

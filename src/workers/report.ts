@@ -178,9 +178,10 @@ export function promptTrailer(format: "ag2" | "json"): string {
 
 /** The exact text sent to resend a final message that failed AG2 validation. */
 export const AG2_REASK_TEXT =
-  "Your final message was not a valid AG2 R message. Resend it now as a single AG2 R message only: " +
-  "first line R, then i=id r=result G=+ (gate, if r=+) t=tests(Name+) c=path summary p=proof z=the " +
-  "answer/note. No prose.";
+  "Your final message was not a valid AG2 R message. Resend it now as a single AG2 R message only, " +
+  "no prose, no code fence. Minimal example (one key=value per line, first line R):\n" +
+  "R\ni=task-id\nr=+\nG=+\nc=path summary\nt=Name+\np=proof command\nz=the answer, one line\n" +
+  "(r is + - ~ ? !; r=+ needs G=+ and p; when r is not +, add y=why.)";
 
 /** The full-contract AG2 prompt — the keepalive path's identical-construction baseline. */
 export const WORKER_CONTRACT_PROMPT = fullContractPrompt("ag2");

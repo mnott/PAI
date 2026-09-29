@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
-import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
+import { appendSystemPromptArgs, longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
   finaliseRun,
@@ -983,5 +983,24 @@ describe("finaliseRun", () => {
     expect(existsSync(join(wt.dir, "fix.txt"))).toBe(true);
     expect(st.branch ?? git(repo, ["branch", "--list", wt.branch])).toBeTruthy();
     expect(git(repo, ["show", `${wt.branch}:fix.txt`])).toBe("unsaved");
+  });
+});
+
+describe("single --append-system-prompt", () => {
+  it("helper joins every part into exactly one flag", () => {
+    const argv = appendSystemPromptArgs(["contract AG2", "", "worktree text", "caller text"]);
+    expect(argv.filter((a) => a === "--append-system-prompt")).toHaveLength(1);
+    expect(argv[1]).toBe("contract AG2\n\nworktree text\n\ncaller text");
+    expect(appendSystemPromptArgs([" ", ""])).toEqual([]);
+  });
+
+  it("parser pulls every caller flag (both forms) out of rest", () => {
+    const p = parseRunnerArgs([
+      "-p", "t", "--append-system-prompt", "one", "--append-system-prompt=two", "--model", "m",
+    ]);
+    expect(p.callerSystemPrompts).toEqual(["one", "two"]);
+    expect(p.callerSystemPrompt).toBe(true);
+    expect(p.rest.join(" ")).not.toContain("append-system-prompt");
+    expect(appendSystemPromptArgs(p.callerSystemPrompts).filter((a) => a.startsWith("--append"))).toHaveLength(1);
   });
 });
