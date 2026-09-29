@@ -31,6 +31,7 @@ pai worker <subcommand> [options]
 | [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
 | [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
+| [`pai worker gc`](#pai-worker-gc) | Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept) |
 | [`pai worker kill <id>`](#pai-worker-kill-id) | Send SIGTERM to a running worker process |
 | [`pai worker controls <id> <who>`](#pai-worker-controls-id-who) | Hand the desktop controls (clickr) to a worker or take them back. |
 | [`pai worker resume <id> <text>`](#pai-worker-resume-id-text) | Continue a finished worker on the same provider: claude --resume <session> |
@@ -257,6 +258,18 @@ Drop a worker's worktree and branch, keeping nothing
 | Argument | Kind |
 |----------|------|
 | `<id>` | required |
+
+
+### pai worker gc
+
+Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept)
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--older-than <hours>` | minimum age of a finished worker | `24` |
+| `--dry-run` | print what would be archived, change nothing |  |
 
 
 ### pai worker kill <id>

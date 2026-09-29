@@ -15,10 +15,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { loadStatus, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 
@@ -149,13 +149,6 @@ function snapshotUncommitted(cwd: string, id: string, head: string): string {
  * degrade to an in-place run.
  */
 export function addWorktree(logDir: string, id: string, cwd: string): WorktreeInfo {
-  const swept = sweepOrphanWorktrees(logDir);
-  if (swept.length) {
-    appendLedger(ledgerPath(logDir), "WORKER-NOTE", {
-      id,
-      note: `swept orphan worktree(s): ${swept.join(", ")}`,
-    });
-  }
   const dir = worktreePath(logDir, id);
   const branch = worktreeBranch(id);
   const head = git(cwd, ["rev-parse", "HEAD"]);
@@ -163,50 +156,6 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const base = dirty ? snapshotUncommitted(cwd, id, head) : head;
   git(cwd, ["worktree", "add", dir, "-b", branch, base]);
   return { dir, branch, base, snapshot: dirty };
-}
-
-/**
- * Remove worktrees (and their `worker/<id>` branches) whose worker no longer
- * exists — no status file left in the log dir. Killed and failed runs clean
- * up after themselves, but a `kill -9` or a crash strands a directory and a
- * branch; every worktree creation sweeps first so they cannot accumulate.
- * Directories younger than `minAgeMin` minutes are left alone: a run that is
- * just starting owns its worktree a moment before its status file exists.
- */
-export function sweepOrphanWorktrees(logDir: string, minAgeMin = 10): string[] {
-  const root = worktreesDir(logDir);
-  if (!existsSync(root)) return [];
-  const swept: string[] = [];
-  for (const ent of readdirSync(root, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const id = ent.name;
-    const dir = join(root, id);
-    if (existsSync(statusPath(logDir, id))) continue; // a known worker owns it
-    try {
-      const ageMin = (Date.now() - statSync(dir).mtimeMs) / 60_000;
-      if (ageMin < minAgeMin) continue;
-    } catch {
-      /* vanished mid-sweep; nothing to do */
-    }
-    let gitDir: string | null = null;
-    try {
-      const raw = git(dir, ["rev-parse", "--git-common-dir"]);
-      gitDir = isAbsolute(raw) ? raw : resolve(dir, raw);
-    } catch {
-      gitDir = null; // not a worktree anymore; just drop the directory
-    }
-    removeWorktree(gitDir ?? dir, dir, true);
-    if (gitDir) {
-      try {
-        git(gitDir, ["worktree", "prune"]);
-        git(gitDir, ["branch", "-D", worktreeBranch(id)]);
-      } catch {
-        // branch already gone or kept by git for a reason; the directory is
-      }
-    }
-    swept.push(id);
-  }
-  return swept;
 }
 
 /** Commits the branch collected on top of its base. */
@@ -666,4 +615,122 @@ export function inPlaceSystemPrompt(): string {
     "A hook blocks git stash (except list/show), reset, clean, checkout/restore of files, switch, rebase and merge — take baselines from measurements taken before you edit, not from stashing.",
     "Read-only git (status, diff, log, show, stash list) is fine.",
   ].join("\n");
+}
+
+export interface GcEntry {
+  id: string;
+  /** archive ref, or the reason the worktree was skipped. */
+  archive?: string;
+  skipped?: string;
+}
+
+const GC_STAMP = "gc-last";
+
+/**
+ * Archive worktrees of finished workers older than `olderThanHours` and
+ * status-less orphan directories: uncommitted state is salvaged onto the
+ * branch, the branch is x, the worktree is
+ * removed. Nothing is deleted without a salvage first; a failed salvage skips
+ * that worktree. Running workers are never touched. `dryRun` reports only.
+ */
+export function gcWorktrees(
+  logDir: string,
+  olderThanHours = 24,
+  dryRun = false,
+  now = Date.now()
+): GcEntry[] {
+  const cutoff = now - olderThanHours * 3_600_000;
+  const out: GcEntry[] = [];
+  const root = worktreesDir(logDir);
+  const known = new Set<string>();
+  const archive = (id: string, dir: string, repo: string | null, st: WorkerStatus | null): void => {
+    const target = `refs/pai-archive/${id}`;
+    if (dryRun) return void out.push({ id, archive: target });
+    try {
+      if (!repo) throw new Error("not a git worktree");
+      const label = `archive: leftover state of worker ${id}`;
+      if (uncommittedPaths(dir).length) {
+        // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
+        const res = salvageUncommitted(dir, label);
+        if (res.committed.length) git(dir, ["commit", "--amend", "-q", "-m", label]);
+        if (res.skipped.length && uncommittedPaths(dir).some((p) => !symlinkEscapesWorktree(dir, p))) {
+          throw new Error("uncommitted paths remain");
+        }
+      }
+      const src = worktreeBranch(id);
+      let hasBranch = true;
+      try {
+        git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${src}`]);
+      } catch {
+        hasBranch = false;
+      }
+      const tip = git(dir, ["rev-parse", "HEAD"]);
+      // never drop a branch whose tip the archive ref would not keep reachable
+      if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${src}`, tip]);
+      git(repo, ["update-ref", target, tip]);
+      git(repo, ["worktree", "remove", "--force", dir]);
+      if (hasBranch) git(repo, ["branch", "-D", src]);
+      if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
+      appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
+      out.push({ id, archive: target });
+    } catch (e) {
+      out.push({ id, skipped: (e as Error).message.split("\n")[0] });
+    }
+  };
+
+  for (const st of loadStatuses(logDir)) {
+    known.add(st.id);
+    if (!st.worktreeDir || !existsSync(st.worktreeDir) || isLive(st)) continue;
+    let end = 0;
+    try {
+      end = statSync(statusPath(logDir, st.id)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (end > cutoff) continue;
+    archive(st.id, st.worktreeDir, st.cwd, st);
+  }
+
+  if (existsSync(root)) {
+    for (const ent of readdirSync(root, { withFileTypes: true })) {
+      if (!ent.isDirectory() || known.has(ent.name) || existsSync(statusPath(logDir, ent.name))) continue;
+      const dir = join(root, ent.name);
+      try {
+        if (statSync(dir).mtimeMs > cutoff) continue;
+      } catch {
+        continue;
+      }
+      let repo: string | null = null;
+      try {
+        const raw = git(dir, ["rev-parse", "--git-common-dir"]);
+        repo = isAbsolute(raw) ? raw : resolve(dir, raw);
+      } catch {
+        repo = null;
+      }
+      archive(ent.name, dir, repo, null);
+    }
+  }
+  if (!dryRun) {
+    for (const repo of new Set(loadStatuses(logDir).map((s) => s.cwd))) {
+      try {
+        git(repo, ["worktree", "prune"]);
+      } catch {
+        // repo gone
+      }
+    }
+  }
+  return out;
+}
+
+/** Run `gcWorktrees` at most once per `everyMin` minutes (stamp file in the logDir). */
+export function gcWorktreesThrottled(logDir: string, everyMin = 60, now = Date.now()): GcEntry[] | null {
+  const stamp = join(logDir, GC_STAMP);
+  try {
+    if (now - statSync(stamp).mtimeMs < everyMin * 60_000) return null;
+  } catch {
+    // never ran
+  }
+  mkdirSync(logDir, { recursive: true });
+  writeFileSync(stamp, String(now), "utf8");
+  return gcWorktrees(logDir, 24, false, now);
 }

@@ -13,13 +13,14 @@ import {
   assertWorktreeClean,
   commitsSince,
   discardWorker,
+  gcWorktrees,
+  gcWorktreesThrottled,
   git,
   isGitRepo,
   mergeWorker,
   promptLooksReadonly,
   recordWorktree,
   salvageUncommitted,
-  sweepOrphanWorktrees,
   uncommittedPaths,
   worktreeBranch,
   worktreePath,
@@ -28,7 +29,7 @@ import {
   inPlaceSystemPrompt,
 } from "./worktree.js";
 import { statusPath } from "./paths.js";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-worktree-test-"));
 const repo = join(dir, "repo");
@@ -512,3 +513,61 @@ describe("worktreeBranch", () => {
   });
 });
 
+
+describe("gcWorktrees", () => {
+  const gcLog = join(dir, "gclog");
+  const DAY = 24 * 3_600_000;
+  function mk(id: string, over: Partial<WorkerStatus> = {}, ageMs = 0): string {
+    const wt = addWorktree(gcLog, id, repo);
+    saveStatus(gcLog, { ...status(id), cwd: repo, worktreeDir: wt.dir, branch: wt.branch, ...over });
+    writeFileSync(join(wt.dir, `${id}.txt`), "leftover\n", "utf8");
+    const t = new Date(Date.now() - ageMs);
+    utimesSync(statusPath(gcLog, id), t, t);
+    return wt.dir;
+  }
+  const refs = () => git(repo, ["for-each-ref", "--format=%(refname)"]);
+
+  it("archives old finished, spares running and young, dry run changes nothing", () => {
+    const old = mk("gc-old", {}, 3 * DAY);
+    const live = mk("gc-live", { state: "running", started: nowStamp() }, 3 * DAY);
+    const young = mk("gc-young", {}, 1000);
+
+    const dry = gcWorktrees(gcLog, 24, true);
+    expect(dry.map((r) => r.id)).toEqual(["gc-old"]);
+    expect(existsSync(old)).toBe(true);
+    expect(refs()).toContain("refs/heads/worker/gc-old");
+
+    const res = gcWorktrees(gcLog, 24);
+    expect(res).toEqual([{ id: "gc-old", archive: "refs/pai-archive/gc-old" }]);
+    expect(existsSync(old)).toBe(false);
+    expect(refs()).not.toContain("refs/heads/worker/gc-old");
+    expect(git(repo, ["show", "refs/pai-archive/gc-old:gc-old.txt"])).toBe("leftover");
+    expect(git(repo, ["log", "-1", "--format=%s", "refs/pai-archive/gc-old"])).toBe(
+      "archive: leftover state of worker gc-old"
+    );
+    expect(loadStatus(gcLog, "gc-old")?.archived).toBe("refs/pai-archive/gc-old");
+    expect(existsSync(live) && existsSync(young)).toBe(true);
+    expect(refs()).toContain("refs/heads/worker/gc-live");
+    expect(refs()).toContain("refs/heads/worker/gc-young");
+  });
+
+  it("archives a status-less orphan directory", () => {
+    const wt = addWorktree(gcLog, "gc-orphan", repo);
+    writeFileSync(join(wt.dir, "o.txt"), "orphan\n", "utf8");
+    const t = new Date(Date.now() - 3 * DAY);
+    utimesSync(wt.dir, t, t);
+    const res = gcWorktrees(gcLog, 24);
+    expect(res.map((r) => r.id)).toEqual(["gc-orphan"]);
+    expect(existsSync(wt.dir)).toBe(false);
+    expect(git(repo, ["show", "refs/pai-archive/gc-orphan:o.txt"])).toBe("orphan");
+    expect(refs()).not.toContain("refs/heads/worker/gc-orphan");
+  });
+
+  it("throttles to once per interval", () => {
+    const tl = join(dir, "gclog-throttle");
+    mkdirSync(tl, { recursive: true });
+    expect(gcWorktreesThrottled(tl, 60)).toEqual([]);
+    expect(gcWorktreesThrottled(tl, 60)).toBeNull();
+    expect(gcWorktreesThrottled(tl, 60, Date.now() + 2 * 3_600_000)).toEqual([]);
+  });
+});

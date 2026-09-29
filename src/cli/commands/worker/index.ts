@@ -40,7 +40,7 @@ import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
-import { discardWorker, mergeWorker } from "../../../workers/worktree.js";
+import { discardWorker, gcWorktrees, mergeWorker } from "../../../workers/worktree.js";
 import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../../workers/controls.js";
@@ -441,6 +441,26 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .action((id: string) => {
       try {
         console.log(discardWorker(currentLogDir(), id));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("gc")
+    .description("Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept)")
+    .option("--older-than <hours>", "minimum age of a finished worker", "24")
+    .option("--dry-run", "print what would be archived, change nothing")
+    .action((opts: { olderThan: string; dryRun?: boolean }) => {
+      try {
+        const hours = Number(opts.olderThan);
+        if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${opts.olderThan}"`);
+        const res = gcWorktrees(currentLogDir(), hours, opts.dryRun === true);
+        const verb = opts.dryRun ? "would archive" : "archived";
+        for (const r of res) {
+          console.log(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
+        }
+        console.log(`${res.filter((r) => r.archive).length} ${opts.dryRun ? "would be archived" : "archived"}`);
       } catch (e) {
         fail(e);
       }
