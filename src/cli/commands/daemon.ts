@@ -48,6 +48,11 @@ const SYSTEMD_UNIT_NAME = "pai-daemon.service";
 const SYSTEMD_USER_DIR = join(HOME, ".config", "systemd", "user");
 const SYSTEMD_UNIT_PATH = join(SYSTEMD_USER_DIR, SYSTEMD_UNIT_NAME);
 
+/** Service name `daemon install` registers on this platform: systemd unit on Linux, launchd label elsewhere. */
+export function daemonServiceName(plat: NodeJS.Platform = process.platform): string {
+  return plat === "linux" ? SYSTEMD_UNIT_NAME : PLIST_LABEL;
+}
+
 /**
  * Resolve the absolute path to the built daemon entry point.
  * tsdown may emit this module's own chunk directly under dist/ rather than

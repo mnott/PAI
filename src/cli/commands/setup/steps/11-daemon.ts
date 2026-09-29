@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { daemonServiceName } from "../../daemon.js";
 import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 
 export async function stepDaemon(rl: Rl): Promise<boolean> {
@@ -49,6 +50,6 @@ export async function stepDaemon(rl: Rl): Promise<boolean> {
     return false;
   }
 
-  console.log(c.ok(linux ? "Daemon installed as a systemd user unit." : "Daemon installed as com.pai.pai-daemon."));
+  console.log(c.ok(`Daemon installed as ${daemonServiceName()}.`));
   return true;
 }

@@ -2,6 +2,7 @@
 
 import chalk from "chalk";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
+import { daemonServiceName } from "../../daemon.js";
 import { line, section } from "../utils.js";
 
 export function stepSummary(
@@ -16,6 +17,7 @@ export function stepSummary(
   daName: string,
   daemonInstalled: boolean,
   mcpRegistered: boolean,
+  plat: NodeJS.Platform = process.platform,
 ): void {
   section("Setup Complete");
   line();
@@ -37,7 +39,7 @@ export function stepSummary(
   console.log(chalk.dim("  Hooks (TS):       ") + chalk.cyan(tsHooksInstalled ? "14 .mjs hooks installed to ~/.claude/Hooks/" : "(unchanged)"));
   console.log(chalk.dim("  Assistant name:   ") + chalk.cyan(daName));
   console.log(chalk.dim("  Settings:         ") + chalk.cyan(settingsPatched ? "env vars, hooks, permissions, flags (patched)" : "(unchanged)"));
-  console.log(chalk.dim("  Daemon:           ") + chalk.cyan(daemonInstalled ? "com.pai.pai-daemon (installed)" : "(unchanged)"));
+  console.log(chalk.dim("  Daemon:           ") + chalk.cyan(daemonInstalled ? `${daemonServiceName(plat)} (installed)` : "(not installed by setup)"));
   console.log(chalk.dim("  MCP:              ") + chalk.cyan(mcpRegistered ? "registered in ~/.claude.json" : "(unchanged)"));
   line();
   console.log(chalk.bold.yellow("  → RESTART Claude Code to activate all changes."));
