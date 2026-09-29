@@ -4,9 +4,9 @@
  * functions — no claude, no osascript.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
@@ -15,6 +15,7 @@ import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
 import { longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
+  announcePane,
   bumpContextTokens,
   chromeGrantArgs,
   ensureToolSearch,
@@ -47,10 +48,17 @@ import { describeProviders } from "./providers.js";
 import * as childProcess from "node:child_process";
 import { addWorktree, git, recordWorktree } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
+import { parseLedger } from "./ledger.js";
+import * as pane from "./pane.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawn: vi.fn() };
+});
+
+vi.mock("./pane.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane.js")>();
+  return { ...actual, openPaneForWorker: vi.fn() };
 });
 
 describe("headlessToolGrants", () => {
@@ -817,5 +825,60 @@ describe("worktree result: recordWorktree's return, not the stale local, must be
     status = recordWorktree(logDir, status, info, true);
 
     expect(worktreeExtras(status)).toEqual({ branch: "worker/wr1", commits: 1 });
+  });
+});
+
+describe("announcePane", () => {
+  const cfg = parseWorkersConfig({});
+  let dir: string;
+  let ledger: string;
+  let stderr: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-announce-pane-"));
+    ledger = join(dir, "ledger.jsonl");
+    stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.mocked(pane.openPaneForWorker).mockReset();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    stderr.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it("reports the new pane's iTerm session on success", async () => {
+    vi.mocked(pane.openPaneForWorker).mockResolvedValue({ message: "pane opened for w1", session: "SESS-1" });
+    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
+    expect(stderr).toHaveBeenCalledWith("[pai worker] pane opened for w1 (iTerm session SESS-1)\n");
+  });
+
+  it("reports failure on stderr and keeps the PANE-FAIL ledger line", async () => {
+    vi.mocked(pane.openPaneForWorker).mockRejectedValue(new Error("boom"));
+    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
+    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: boom\n");
+    const lines = parseLedger(readFileSync(ledger, "utf8"));
+    expect(lines.some((l) => l.event === "PANE-FAIL" && l.fields.id === "w1")).toBe(true);
+  });
+
+  it.each([
+    ["--no-pane flag", { noPane: true, config: cfg, term: "term-1" }, "--no-pane"],
+    [
+      "workers.pane.enabled false",
+      { noPane: false, config: { ...cfg, pane: { ...cfg.pane, enabled: false } }, term: "term-1" },
+      "workers.pane.enabled is false",
+    ],
+    ["not in iTerm2", { noPane: false, config: cfg, term: "" }, "not in iTerm2 (no ITERM_SESSION_ID)"],
+  ] as const)("skips and names why: %s", async (_label, o, reason) => {
+    await announcePane(dir, o.config, "w1", o.term, o.noPane, ledger);
+    expect(stderr).toHaveBeenCalledWith(`[pai worker] no pane for w1: ${reason}\n`);
+    expect(pane.openPaneForWorker).not.toHaveBeenCalled();
+  });
+
+  it("skips with PAI_WORKER_AUTOPANE=0", async () => {
+    vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
+    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
+    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: PAI_WORKER_AUTOPANE=0\n");
+    expect(pane.openPaneForWorker).not.toHaveBeenCalled();
   });
 });

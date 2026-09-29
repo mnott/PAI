@@ -837,6 +837,44 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
   }
 }
 
+/**
+ * Follow pane, made observable on stderr (stdout stays pure JSON for
+ * `--output-format json`): one line naming the outcome — opened, skipped
+ * (with reason), or failed (with reason, alongside the existing PANE-FAIL
+ * ledger line). Fire-and-forget, never blocks the worker.
+ */
+export async function announcePane(
+  logDir: string,
+  config: ReturnType<typeof readWorkersSection>["workers"],
+  wid: string,
+  term: string,
+  noPane: boolean,
+  ledger: string
+): Promise<void> {
+  const skip = !noPane
+    ? !config.pane.enabled
+      ? "workers.pane.enabled is false"
+      : process.env.PAI_WORKER_AUTOPANE === "0"
+        ? "PAI_WORKER_AUTOPANE=0"
+        : !term
+          ? "not in iTerm2 (no ITERM_SESSION_ID)"
+          : null
+    : "--no-pane";
+  if (skip) {
+    process.stderr.write(`[pai worker] no pane for ${wid}: ${skip}\n`);
+    return;
+  }
+  try {
+    const r = await openPaneForWorker(logDir, config, wid, term);
+    const suffix = r.session ? ` (iTerm session ${r.session})` : "";
+    process.stderr.write(`[pai worker] pane opened for ${wid}${suffix}\n`);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[pai worker] no pane for ${wid}: ${message.slice(0, 200)}\n`);
+    appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
+  }
+}
+
 interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
@@ -1026,13 +1064,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
-  // Follow pane: headless only, best effort, never blocking the worker.
-  if (headless && !noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
-    void openPaneForWorker(logDir, config, wid, term).catch((e) => {
-      const message = e instanceof Error ? e.message : String(e);
-      appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
-    });
-  }
+  // Follow pane: headless only (interactive runs ARE the chat pane), best
+  // effort, never blocking the worker.
+  if (headless) void announcePane(logDir, config, wid, term, noPane, ledger);
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
@@ -1512,12 +1546,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  if (!noPane && config.pane.enabled && term && process.env.PAI_WORKER_AUTOPANE !== "0") {
-    void openPaneForWorker(logDir, config, wid, term).catch((e) => {
-      const message = e instanceof Error ? e.message : String(e);
-      appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
-    });
-  }
+  void announcePane(logDir, config, wid, term, noPane, ledger);
 
   const t0 = Date.now();
   const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {
