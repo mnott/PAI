@@ -3,6 +3,9 @@
  */
 
 import type { ToolResult } from "./types.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { PaiClient } from "../../daemon/ipc-client.js";
 
 // ---------------------------------------------------------------------------
 // Tool: topic_detect
@@ -32,7 +35,6 @@ export async function toolTopicDetect(
   params: TopicDetectParams
 ): Promise<ToolResult> {
   try {
-    const { PaiClient } = await import("../../daemon/ipc-client.js");
     const client = new PaiClient();
 
     const result = await client.topicCheck({

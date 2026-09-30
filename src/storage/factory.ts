@@ -16,6 +16,16 @@ import type { PaiDaemonConfig } from "../daemon/config.js";
 import type { StorageBackend } from "./interface.js";
 import type { RegistryBackend } from "./registry-interface.js";
 import { setBackendOutage, clearBackendOutage } from "./outage.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
+import { PostgresBackend } from "./postgres.js";
+import { routeNotification } from "../notifications/router.js";
+import { loadConfig } from "../daemon/config.js";
+import { openFederation } from "./sqlite/federation-db.js";
+import { SQLiteBackend } from "./sqlite.js";
+import { PostgresRegistryBackend } from "./registry-postgres.js";
+import { openRegistry } from "./sqlite/registry-db.js";
+import { SQLiteRegistryBackend } from "./registry-sqlite.js";
 
 export interface StorageBackendOptions {
   /**
@@ -58,7 +68,6 @@ export async function createStorageBackend(
 async function attemptPostgres(
   config: PaiDaemonConfig
 ): Promise<{ backend: StorageBackend } | { error: string }> {
-  const { PostgresBackend } = await import("./postgres.js");
   const pgConfig = config.postgres ?? {};
 
   let backend: InstanceType<typeof PostgresBackend> | null = null;
@@ -92,8 +101,6 @@ const ESCALATE_AFTER_ATTEMPTS = 5;
 /** Tell the user the backend is down, through whatever channels are configured. */
 async function notifyBackendDown(attempts: number, lastError: string): Promise<void> {
   try {
-    const { routeNotification } = await import("../notifications/router.js");
-    const { loadConfig } = await import("../daemon/config.js");
     await routeNotification(
       {
         event: "error",
@@ -117,8 +124,6 @@ async function notifyBackendRecovered(
   since: number | null
 ): Promise<void> {
   try {
-    const { routeNotification } = await import("../notifications/router.js");
-    const { loadConfig } = await import("../daemon/config.js");
     const mins = since ? Math.max(1, Math.round((Date.now() - since) / 60_000)) : null;
     await routeNotification(
       {
@@ -235,8 +240,6 @@ function getSharedPostgresBackend(
 }
 
 async function createSQLiteBackend(): Promise<StorageBackend> {
-  const { openFederation } = await import("./sqlite/federation-db.js");
-  const { SQLiteBackend } = await import("./sqlite.js");
   const db = openFederation();
   return new SQLiteBackend(db);
 }
@@ -254,7 +257,6 @@ export async function createRegistryBackend(
     // Reuses the storage backend's pool (getSharedPostgresBackend) rather
     // than opening a second one against the same database.
     const storage = await getSharedPostgresBackend(config, opts.waitForPostgres ?? false);
-    const { PostgresRegistryBackend } = await import("./registry-postgres.js");
     const pool = (storage as unknown as { getPool: () => import("pg").Pool }).getPool();
     return new PostgresRegistryBackend(pool);
   }
@@ -262,8 +264,6 @@ export async function createRegistryBackend(
 }
 
 async function createSQLiteRegistryBackend(): Promise<RegistryBackend> {
-  const { openRegistry } = await import("./sqlite/registry-db.js");
-  const { SQLiteRegistryBackend } = await import("./registry-sqlite.js");
   const db = openRegistry();
   return new SQLiteRegistryBackend(db);
 }
@@ -301,7 +301,6 @@ function registerBeforeExit(): void {
 export async function getStorageBackend(): Promise<StorageBackend> {
   if (!storagePromise) {
     storagePromise = (async () => {
-      const { loadConfig } = await import("../daemon/config.js");
       registerBeforeExit();
       return await createStorageBackend(loadConfig());
     })();
@@ -313,7 +312,6 @@ export async function getStorageBackend(): Promise<StorageBackend> {
 export async function getRegistryBackend(): Promise<RegistryBackend> {
   if (!registryPromise) {
     registryPromise = (async () => {
-      const { loadConfig } = await import("../daemon/config.js");
       registerBeforeExit();
       return await createRegistryBackend(loadConfig());
     })();

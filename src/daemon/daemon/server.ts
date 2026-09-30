@@ -24,6 +24,7 @@ import {
   embedSchedulerTimer,
   cacheKeepaliveTimer,
   storageBackend,
+  notificationConfig,
 } from "./state.js";
 import { startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive } from "./scheduler.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -124,7 +125,6 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   process.stderr.write("[pai-daemon] Starting daemon...\n");
   process.stderr.write(`[pai-daemon] Socket: ${config.socketPath}\n`);
   process.stderr.write(`[pai-daemon] Storage backend: ${config.storageBackend}\n`);
-  const { notificationConfig } = await import("./state.js");
   process.stderr.write(
     `[pai-daemon] Notification mode: ${notificationConfig.mode}\n`
   );

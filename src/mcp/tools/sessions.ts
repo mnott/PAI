@@ -4,6 +4,9 @@
 
 import type { StorageBackend } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { autoRoute, formatAutoRouteJson } from "../../session/auto-route.js";
 import {
   lookupProjectId,
   type ToolResult,
@@ -101,7 +104,6 @@ export async function toolSessionRoute(
   params: SessionRouteParams
 ): Promise<ToolResult> {
   try {
-    const { autoRoute, formatAutoRouteJson } = await import("../../session/auto-route.js");
 
     const result = await autoRoute(
       registry,

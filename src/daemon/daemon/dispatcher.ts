@@ -21,6 +21,14 @@ import {
 } from "../../mcp/tools.js";
 import { detectTopicShift } from "../../topics/detector.js";
 import { registryBackend, storageBackend, daemonConfig } from "./state.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
+import { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes, toolZettelGodNotes, toolZettelCommunities, toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions, toolMemoryTunnels } from "../../mcp/tools.js";
+import { handleGraphClusters } from "../../graph/clusters.js";
+import { handleGraphNeighborhood } from "../../graph/neighborhood.js";
+import { handleGraphNoteContext } from "../../graph/note-context.js";
+import { handleGraphTrace } from "../../graph/trace.js";
+import { handleGraphLatentIdeas, handleIdeaMaterialize } from "../../graph/latent-ideas.js";
 
 /**
  * Dispatch an IPC tool call to the appropriate tool function.
@@ -94,7 +102,6 @@ export async function dispatchTool(
     case "zettel_themes":
     case "zettel_god_notes":
     case "zettel_communities": {
-      const { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes, toolZettelGodNotes, toolZettelCommunities } = await import("../../mcp/tools.js");
 
       switch (method) {
         case "zettel_explore": return toolZettelExplore(storageBackend, p as Parameters<typeof toolZettelExplore>[1]);
@@ -110,32 +117,26 @@ export async function dispatchTool(
     }
 
     case "graph_clusters": {
-      const { handleGraphClusters } = await import("../../graph/clusters.js");
       return handleGraphClusters(storageBackend, p as Parameters<typeof handleGraphClusters>[1]);
     }
 
     case "graph_neighborhood": {
-      const { handleGraphNeighborhood } = await import("../../graph/neighborhood.js");
       return handleGraphNeighborhood(storageBackend, p as Parameters<typeof handleGraphNeighborhood>[1]);
     }
 
     case "graph_note_context": {
-      const { handleGraphNoteContext } = await import("../../graph/note-context.js");
       return handleGraphNoteContext(storageBackend, p as Parameters<typeof handleGraphNoteContext>[1]);
     }
 
     case "graph_trace": {
-      const { handleGraphTrace } = await import("../../graph/trace.js");
       return handleGraphTrace(storageBackend, p as Parameters<typeof handleGraphTrace>[1]);
     }
 
     case "graph_latent_ideas": {
-      const { handleGraphLatentIdeas } = await import("../../graph/latent-ideas.js");
       return handleGraphLatentIdeas(storageBackend, p as Parameters<typeof handleGraphLatentIdeas>[1]);
     }
 
     case "idea_materialize": {
-      const { handleIdeaMaterialize } = await import("../../graph/latent-ideas.js");
       if (!daemonConfig.vaultPath) {
         throw new Error("idea_materialize requires vaultPath to be configured in the daemon config");
       }
@@ -149,7 +150,6 @@ export async function dispatchTool(
     case "kg_query":
     case "kg_invalidate":
     case "kg_contradictions": {
-      const { toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions } = await import("../../mcp/tools.js");
       if (!storageBackend.supportsPostgresFeatures) {
         throw new Error(`${method} requires a Postgres storage backend`);
       }
@@ -163,7 +163,6 @@ export async function dispatchTool(
     }
 
     case "memory_tunnels": {
-      const { toolMemoryTunnels } = await import("../../mcp/tools.js");
       return toolMemoryTunnels(registryBackend, storageBackend, p as Parameters<typeof toolMemoryTunnels>[2]);
     }
 

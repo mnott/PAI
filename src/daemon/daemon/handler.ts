@@ -20,6 +20,7 @@ import {
   lastEmbedTime,
   vaultIndexInProgress,
   lastVaultIndexTime,
+  passFailures,
   notificationConfig,
   setNotificationConfig,
 } from "./state.js";
@@ -85,6 +86,9 @@ export async function handleRequest(
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
         vaultPath: daemonConfig.vaultPath ?? null,
         workQueue: getQueueStats(),
+        passFailures: Object.fromEntries(
+          [...passFailures].map(([k, v]) => [k, { ...v, at: new Date(v.at).toISOString() }])
+        ),
         // Null when the backend is answering. Present, this is the reason
         // everything else in this payload is stalled — and the reason status
         // used to report "idle" for two days while nothing progressed.

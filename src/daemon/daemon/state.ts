@@ -76,3 +76,20 @@ export function setEmbedSchedulerTimer(v: ReturnType<typeof setInterval> | null)
 export function setVaultIndexInProgress(v: boolean): void { vaultIndexInProgress = v; }
 export function setLastVaultIndexTime(v: number): void { lastVaultIndexTime = v; }
 export function setCacheKeepaliveTimer(v: ReturnType<typeof setInterval> | null): void { cacheKeepaliveTimer = v; }
+
+// ---------------------------------------------------------------------------
+// Scheduled-pass failures (index / embed / vault)
+// ---------------------------------------------------------------------------
+
+export interface PassFailure {
+  /** Epoch ms of the most recent failed attempt. */
+  at: number;
+  error: string;
+  /** Failed attempts in a row; a success clears the entry. */
+  attempts: number;
+  /** True once the retries are used up. */
+  gaveUp: boolean;
+}
+
+/** Failing passes by name ("index" | "embed" | "vault"); absent = healthy. */
+export const passFailures = new Map<string, PassFailure>();

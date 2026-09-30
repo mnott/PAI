@@ -7,6 +7,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { detectProject, formatDetectionJson } from "../../cli/commands/detect.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
+// Static on purpose: a lazy dist import breaks a long-running daemon after a rebuild.
+import { encodeDir } from "../../cli/utils.js";
 import {
   lookupProjectId,
   detectProjectFromPath,
@@ -177,7 +179,7 @@ export async function toolProjectHealth(
       basename: pathBasename,
     } = await import("node:path");
     const { homedir } = await import("node:os");
-    const { encodeDir: enc } = await import("../../cli/utils.js");
+    const enc = encodeDir;
 
     const rows = (await registry.listProjectsWithSessionStats())
       .slice()

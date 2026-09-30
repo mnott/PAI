@@ -26,6 +26,8 @@ export interface HealthLine {
 
 /** The subset of the daemon status payload that describes storage health. */
 export interface StorageHealthStatus {
+  /** Failing scheduled passes by name; `at` is an ISO timestamp. */
+  passFailures?: Record<string, { at: string; error: string; attempts: number; gaveUp: boolean }> | null;
   backendOutage?: BackendOutage | null;
   workQueue?: {
     pending?: number;
@@ -58,6 +60,15 @@ export function formatStorageHealth(
     lines.push({
       severity: "warn",
       text: `${outage.attempts} attempts — ${outage.lastError}`,
+    });
+  }
+
+  for (const [name, f] of Object.entries(s.passFailures ?? {})) {
+    lines.push({
+      severity: "error",
+      text:
+        `last ${name}: FAILED ${f.at} ${f.error}` +
+        (f.gaveUp ? " (retries exhausted)" : ` (attempt ${f.attempts}, retrying)`),
     });
   }
 

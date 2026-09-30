@@ -114,3 +114,18 @@ describe("queue depth — the number that was collected and never printed", () =
     );
   });
 });
+
+describe("a failed scheduled pass is reported", () => {
+  it("shows last embed: FAILED with time and error", () => {
+    const lines = formatStorageHealth({
+      passFailures: {
+        embed: { at: "2026-09-30T03:00:00.000Z", error: "Cannot find module", attempts: 4, gaveUp: true },
+      },
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].severity).toBe("error");
+    expect(lines[0].text).toBe(
+      "last embed: FAILED 2026-09-30T03:00:00.000Z Cannot find module (retries exhausted)"
+    );
+  });
+});
