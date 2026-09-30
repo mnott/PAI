@@ -28,6 +28,7 @@ import {
   yieldToEventLoop,
   INDEX_YIELD_EVERY,
 } from "./helpers.js";
+import { retryTransient } from "./retry.js";
 import type { IndexResult } from "./types.js";
 
 export type { IndexResult };
@@ -302,7 +303,7 @@ export async function embedChunksWithBackend(
   const maxMillis = options?.maxMillis ?? DEFAULT_MAX_MILLIS_PER_PASS;
   const deadline = Date.now() + maxMillis;
 
-  const rows = await backend.getUnembeddedChunkIds(undefined, maxChunks);
+  const rows = await retryTransient(() => backend.getUnembeddedChunkIds(undefined, maxChunks));
   if (rows.length === 0) return 0;
 
   const total = rows.length;
@@ -362,7 +363,9 @@ export async function embedChunksWithBackend(
     // Concurrency is bounded by the batch size, which the pool handles; the
     // SQLite backend is synchronous and simply ignores the difference.
     await Promise.all(
-      batch.map((row, j) => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
+      batch.map((row, j) =>
+        retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
+      )
     );
 
     // Attribute the batch to projects only after it is durably stored, and walk
