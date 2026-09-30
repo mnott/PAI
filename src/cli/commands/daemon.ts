@@ -23,6 +23,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
+import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
@@ -187,6 +188,7 @@ async function cmdStatus(): Promise<void> {
     console.log(bold("  PAI Daemon Status"));
     console.log();
     console.log(ok(`  Daemon running`));
+    console.log(dim(`    PID:         ${resolveDaemonPid() ?? "unknown"}`));
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
 
@@ -236,11 +238,12 @@ async function cmdStatus(): Promise<void> {
 function cmdRestart(): void {
   if (!serviceManagerAllowed("pai daemon restart")) return;
   if (process.platform === "linux") {
+    const before = resolveDaemonPid();
     const result = spawnSync("systemctl", ["--user", "restart", SYSTEMD_UNIT_NAME], {
       encoding: "utf8",
     });
     if (result.status === 0) {
-      console.log(ok("Restarted via systemd."));
+      console.log(ok(`Restarted daemon pid ${before ?? "?"} -> ${resolveDaemonPid() ?? "?"}`));
     } else {
       console.error(err(`systemctl restart failed: ${(result.stderr || "").trim()}`));
       process.exitCode = 1;
@@ -256,42 +259,19 @@ function cmdRestart(): void {
     return;
   }
 
-  // Find and signal the running daemon
+  // kickstart -k kills and restarts the launchd job; the old PID comes from launchd, never a pattern
   try {
-    const result = spawnSync("pgrep", ["-f", "pai-daemon.*serve"], {
-      encoding: "utf8",
-    });
-
-    if (result.status !== 0 || !result.stdout.trim()) {
-      console.log(warn("No running pai-daemon process found."));
-
-      // If launchd is managing it, kick it via launchctl
-      const unloadResult = spawnSync(
-        "launchctl",
-        ["kickstart", "-k", `gui/${process.getuid?.() ?? 501}/${PLIST_LABEL}`],
-        { encoding: "utf8" }
-      );
-      if (unloadResult.status === 0) {
-        console.log(ok("Sent kickstart to launchd."));
-      } else {
-        console.log(dim("Not managed by launchd either. Run: pai daemon serve"));
-      }
+    const before = resolveDaemonPid();
+    const kick = spawnSync(
+      "launchctl",
+      ["kickstart", "-k", `gui/${process.getuid?.() ?? 501}/${PLIST_LABEL}`],
+      { encoding: "utf8" }
+    );
+    if (kick.status !== 0) {
+      console.log(dim("Not managed by launchd. Run: pai daemon serve"));
       return;
     }
-
-    const pids = result.stdout
-      .trim()
-      .split("\n")
-      .map((p) => p.trim());
-    for (const pid of pids) {
-      try {
-        process.kill(parseInt(pid, 10), "SIGTERM");
-        console.log(ok(`Sent SIGTERM to pid ${pid}.`));
-      } catch {
-        console.log(warn(`Could not signal pid ${pid}.`));
-      }
-    }
-    console.log(dim("launchd will restart the daemon automatically."));
+    console.log(ok(`Restarted daemon pid ${before ?? "?"} -> ${resolveDaemonPid() ?? "?"}`));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`restart error: ${msg}`));

@@ -9,6 +9,7 @@ import { setPriority } from "node:os";
 import { createStorageBackend, createRegistryBackend } from "../../storage/factory.js";
 import { configureEmbeddingModel } from "../../memory/embeddings.js";
 import { loadNotificationConfig } from "../../notifications/config.js";
+import { writeDaemonPidfile, removeDaemonPidfile } from "../daemon-pid.js";
 import type { PaiDaemonConfig } from "../config.js";
 import type { IpcRequest } from "./types.js";
 import {
@@ -261,9 +262,11 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
       // ignore
     }
 
+    removeDaemonPidfile();
     process.exit(0);
   };
 
+  writeDaemonPidfile();
   process.on("SIGINT", () => { shutdown("SIGINT").catch(() => process.exit(0)); });
   process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(0)); });
 

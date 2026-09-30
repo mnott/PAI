@@ -25,7 +25,7 @@ import { packageRoot } from "../../module-paths.js";
 import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../utils.js";
-import { daemonPidPath } from "../../runtime-paths.js";
+import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -283,19 +283,12 @@ function stepRestartDaemon(repoDir: string): void {
   step("Restarting PAI daemon...");
 
   // Try to find the daemon PID from the socket/pid file
-  const pidFile = daemonPidPath();
-  if (existsSync(pidFile)) {
-    try {
-      const pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-      if (!isNaN(pid) && pid > 0) {
-        const killed = capture(`kill -HUP ${pid}`);
-        if (killed !== null) {
-          success(`Sent SIGHUP to daemon (PID ${pid}).`);
-          return;
-        }
-      }
-    } catch {
-      // fall through to pai daemon restart
+  const pid = resolveDaemonPid();
+  if (pid) {
+    const killed = capture(`kill -HUP ${pid}`);
+    if (killed !== null) {
+      success(`Sent SIGHUP to daemon (PID ${pid}).`);
+      return;
     }
   }
 
