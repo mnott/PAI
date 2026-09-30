@@ -122,3 +122,29 @@ export function pendingCountCached(logDir: string, cwd: string, ttlMs = 60_000, 
   }
   return n;
 }
+
+/** Invalidate pending cache entries for a repo and its subdirectories. */
+export function invalidatePendingCache(logDir: string, repoRoot: string): void {
+  const file = join(logDir, "pending-cache.json");
+  let cache: Record<string, { at: number; n: number }> = {};
+  try {
+    cache = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    // no cache yet
+    return;
+  }
+  const resolved = repoRoot.endsWith("/") ? repoRoot : `${repoRoot}/`;
+  let changed = false;
+  for (const key of Object.keys(cache)) {
+    if (key === repoRoot || key.startsWith(resolved)) {
+      delete cache[key];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  try {
+    writeFileSync(file, JSON.stringify(cache));
+  } catch {
+    // read-only log dir: best effort
+  }
+}

@@ -21,6 +21,7 @@ import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
+import { invalidatePendingCache } from "./pending.js";
 
 export function worktreesDir(logDir: string): string {
   return join(logDir, "worktrees");
@@ -235,6 +236,7 @@ export function recordWorktree(
     s.worktreeSnapshot = null;
   }
   saveStatus(logDir, s);
+  invalidatePendingCache(logDir, s.cwd);
   return s;
 }
 
@@ -728,6 +730,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
+  invalidatePendingCache(logDir, st.cwd);
   const base = `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
   const notes: string[] = [];
   if (salvage.committed.length) {
@@ -760,6 +763,7 @@ export function discardWorker(logDir: string, id: string): string {
     merged: false,
   };
   saveStatus(logDir, s);
+  invalidatePendingCache(logDir, st.cwd);
   return `discarded worker ${id}: worktree removed${branchGone ? `, branch ${st.branch} deleted` : ""}`;
 }
 
@@ -911,6 +915,7 @@ export function gcWorktrees(
       } catch {
         // repo gone
       }
+      invalidatePendingCache(logDir, repo);
     }
   }
   return out;
