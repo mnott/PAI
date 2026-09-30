@@ -15,6 +15,7 @@
  */
 
 import pg from "pg";
+import { MergeError } from "../registry/merge.js";
 import type { Pool, PoolClient } from "pg";
 import type { PostgresConfig } from "./postgres/config.js";
 import type {
@@ -1083,7 +1084,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
   // -------------------------------------------------------------------------
 
   async planProjectMerge(fromSlug: string, intoSlug: string): Promise<MergePlan> {
-    const { MergeError } = await import("../registry/merge.js");
     if (fromSlug === intoSlug) {
       throw new MergeError(`Cannot merge ${fromSlug} into itself.`);
     }

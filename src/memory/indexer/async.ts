@@ -13,6 +13,9 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
+import { generateEmbeddings, serializeEmbedding } from "../embeddings.js";
 import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import {
   sha256File,
@@ -294,7 +297,6 @@ export async function embedChunksWithBackend(
   projectNames?: Map<number, string>,
   options?: EmbedPassOptions,
 ): Promise<number> {
-  const { generateEmbeddings, serializeEmbedding } = await import("../embeddings.js");
 
   const maxChunks = options?.maxChunks ?? DEFAULT_MAX_CHUNKS_PER_PASS;
   const maxMillis = options?.maxMillis ?? DEFAULT_MAX_MILLIS_PER_PASS;

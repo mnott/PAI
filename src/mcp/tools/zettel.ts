@@ -6,6 +6,10 @@
 
 import type { StorageBackend } from "../../storage/interface.js";
 import type { ToolResult } from "./types.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { zettelExplore, zettelHealth, zettelSurprise, zettelSuggest, zettelConverse, zettelThemes, zettelGodNotes, zettelCommunities } from "../../zettelkasten/index.js";
+import { saveQueryResult } from "../../zettelkasten/query-feedback.js";
 
 // ---------------------------------------------------------------------------
 // Tool: zettel_explore
@@ -23,7 +27,6 @@ export async function toolZettelExplore(
   params: ZettelExploreParams
 ): Promise<ToolResult> {
   try {
-    const { zettelExplore } = await import("../../zettelkasten/index.js");
     const result = await zettelExplore(backend, {
       startNote: params.start_note,
       depth: params.depth,
@@ -57,7 +60,6 @@ export async function toolZettelHealth(
   params: ZettelHealthParams
 ): Promise<ToolResult> {
   try {
-    const { zettelHealth } = await import("../../zettelkasten/index.js");
     const result = await zettelHealth(backend, {
       scope: params.scope as "full" | "recent" | "project" | undefined,
       projectPath: params.project_path,
@@ -92,7 +94,6 @@ export async function toolZettelSurprise(
   params: ZettelSurpriseParams
 ): Promise<ToolResult> {
   try {
-    const { zettelSurprise } = await import("../../zettelkasten/index.js");
     const results = await zettelSurprise(backend, {
       referencePath: params.reference_path,
       vaultProjectId: params.vault_project_id,
@@ -127,7 +128,6 @@ export async function toolZettelSuggest(
   params: ZettelSuggestParams
 ): Promise<ToolResult> {
   try {
-    const { zettelSuggest } = await import("../../zettelkasten/index.js");
     const results = await zettelSuggest(backend, {
       notePath: params.note_path,
       vaultProjectId: params.vault_project_id,
@@ -161,7 +161,6 @@ export async function toolZettelConverse(
   params: ZettelConverseParams
 ): Promise<ToolResult> {
   try {
-    const { zettelConverse } = await import("../../zettelkasten/index.js");
     const result = await zettelConverse(backend, {
       question: params.question,
       vaultProjectId: params.vault_project_id,
@@ -171,7 +170,6 @@ export async function toolZettelConverse(
 
     // Query feedback loop: save query + result metadata for future indexing
     try {
-      const { saveQueryResult } = await import("../../zettelkasten/query-feedback.js");
       saveQueryResult({
         query: params.question,
         timestamp: Date.now(),
@@ -215,7 +213,6 @@ export async function toolZettelThemes(
   params: ZettelThemesParams
 ): Promise<ToolResult> {
   try {
-    const { zettelThemes } = await import("../../zettelkasten/index.js");
     const result = await zettelThemes(backend, {
       vaultProjectId: params.vault_project_id,
       lookbackDays: params.lookback_days,
@@ -248,7 +245,6 @@ export async function toolZettelGodNotes(
   params: ZettelGodNotesParams
 ): Promise<ToolResult> {
   try {
-    const { zettelGodNotes } = await import("../../zettelkasten/index.js");
     const result = await zettelGodNotes(backend, {
       limit: params.limit,
       minInbound: params.min_inbound,
@@ -279,7 +275,6 @@ export async function toolZettelCommunities(
   params: ZettelCommunitiesParams
 ): Promise<ToolResult> {
   try {
-    const { zettelCommunities } = await import("../../zettelkasten/index.js");
     const result = await zettelCommunities(backend, {
       minSize: params.min_size,
       maxCommunities: params.max_communities,

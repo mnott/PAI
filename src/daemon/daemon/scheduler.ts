@@ -9,6 +9,12 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
+// Static on purpose: a running daemon must never need a file from dist/ again.
+// tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
+// so a lazy import() first hit after a rebuild throws "Cannot find module".
+import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
+import { indexVault } from "../../memory/vault-indexer.js";
+import { enqueueRegistryScan } from "../work-queue-worker.js";
 import {
   registryBackend,
   storageBackend,
@@ -16,6 +22,8 @@ import {
   indexInProgress,
   embedInProgress,
   vaultIndexInProgress,
+  lastVaultIndexTime,
+  passFailures,
   shutdownRequested,
   setIndexInProgress,
   setLastIndexTime,
@@ -27,6 +35,38 @@ import {
   setLastVaultIndexTime,
   setCacheKeepaliveTimer,
 } from "./state.js";
+
+// ---------------------------------------------------------------------------
+// Failed-pass bookkeeping
+// ---------------------------------------------------------------------------
+
+/** Wait before retry 1, 2, 3 of a failed pass: three retries over 30 minutes. */
+export const PASS_RETRY_DELAYS_MS = [5 * 60_000, 10 * 60_000, 15 * 60_000];
+
+const DIST_CHANGED_HINT =
+  "dist changed under the running daemon: run `pai daemon restart`";
+
+/**
+ * Record a failed scheduled pass in the daemon status and retry it with
+ * backoff. One log line was all a crashed embed pass left behind, and nobody
+ * read it for 7 hours; `pai daemon status` now shows it until a pass succeeds.
+ */
+function failPass(name: string, e: unknown, retry: () => Promise<void>): void {
+  let error = e instanceof Error ? e.message : String(e);
+  if (/Cannot find module .*dist\//.test(error)) error += ` — ${DIST_CHANGED_HINT}`;
+  const attempts = (passFailures.get(name)?.attempts ?? 0) + 1;
+  const delay = PASS_RETRY_DELAYS_MS[attempts - 1];
+  passFailures.set(name, { at: Date.now(), error, attempts, gaveUp: delay === undefined });
+  process.stderr.write(
+    `[pai-daemon] ${name} pass FAILED (attempt ${attempts}): ${error}\n` +
+      (delay === undefined
+        ? `[pai-daemon] ${name} pass: giving up until the next scheduled run\n`
+        : `[pai-daemon] ${name} pass: retrying in ${Math.round(delay / 60_000)} min\n`)
+  );
+  if (delay === undefined) return;
+  const t = setTimeout(() => void retry().catch(() => {}), delay);
+  if (t.unref) t.unref();
+}
 
 // ---------------------------------------------------------------------------
 // Index scheduler
@@ -59,6 +99,7 @@ export async function runIndex(): Promise<void> {
     const { projects, result } = await storageBackend.indexAll(registryBackend);
     const elapsed = Date.now() - t0;
     setLastIndexTime(Date.now());
+    passFailures.delete("index");
     process.stderr.write(
       `[pai-daemon] Index complete: ${projects} projects, ` +
         `${result.filesProcessed} files, ${result.chunksCreated} chunks ` +
@@ -67,6 +108,7 @@ export async function runIndex(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Index error: ${msg}\n`);
+    failPass("index", e, runIndex);
   } finally {
     setIndexInProgress(false);
   }
@@ -89,8 +131,6 @@ export async function runVaultIndex(): Promise<void> {
     return;
   }
 
-  // Import lastVaultIndexTime from state (re-read each call since it may change)
-  const { lastVaultIndexTime } = await import("./state.js");
   if (lastVaultIndexTime > 0 && Date.now() - lastVaultIndexTime < VAULT_INDEX_MIN_INTERVAL_MS) {
     return;
   }
@@ -110,10 +150,10 @@ export async function runVaultIndex(): Promise<void> {
   process.stderr.write("[pai-daemon] Starting vault index run...\n");
 
   try {
-    const { indexVault } = await import("../../memory/vault-indexer.js");
     const r = await indexVault(storageBackend, vaultProjectId, daemonConfig.vaultPath!);
     const elapsed = Date.now() - t0;
     setLastVaultIndexTime(Date.now());
+    passFailures.delete("vault");
     process.stderr.write(
       `[pai-daemon] Vault index complete: ${r.filesIndexed} files, ` +
       `${r.linksExtracted} links, ${r.deadLinksFound} dead, ` +
@@ -122,6 +162,7 @@ export async function runVaultIndex(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Vault index error: ${msg}\n`);
+    failPass("vault", e, runVaultIndex);
   } finally {
     setVaultIndexInProgress(false);
   }
@@ -248,7 +289,6 @@ export async function runEmbed(): Promise<void> {
       for (const r of rows) projectNames.set(r.id, r.slug);
     } catch { /* registry unavailable — IDs will be used instead */ }
 
-    const { embedChunksWithBackend } = await import("../../memory/indexer-backend.js");
     // Explicit budgets so one embed phase can never outlast an index cycle.
     // Backlogs drain across passes, not within one.
     const count = await embedChunksWithBackend(
@@ -271,12 +311,14 @@ export async function runEmbed(): Promise<void> {
 
     const elapsed = Date.now() - t0;
     setLastEmbedTime(Date.now());
+    passFailures.delete("embed");
     process.stderr.write(
       `[pai-daemon] Embed pass complete: ${count} chunks embedded (${elapsed}ms)\n`
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Embed error: ${msg}\n`);
+    failPass("embed", e, runEmbed);
   } finally {
     setEmbedInProgress(false);
   }
@@ -358,16 +400,16 @@ export function startRegistryScanScheduler(): void {
   );
 
   setTimeout(() => {
-    import("../../daemon/work-queue-worker.js")
-      .then(({ enqueueRegistryScan }) => enqueueRegistryScan())
+    Promise.resolve()
+      .then(() => enqueueRegistryScan())
       .catch((e) => {
         process.stderr.write(`[pai-daemon] Startup registry scan error: ${e}\n`);
       });
   }, REGISTRY_SCAN_STARTUP_DELAY_MS);
 
   const timer = setInterval(() => {
-    import("../../daemon/work-queue-worker.js")
-      .then(({ enqueueRegistryScan }) => enqueueRegistryScan())
+    Promise.resolve()
+      .then(() => enqueueRegistryScan())
       .catch((e) => {
         process.stderr.write(`[pai-daemon] Scheduled registry scan error: ${e}\n`);
       });

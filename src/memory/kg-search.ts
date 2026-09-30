@@ -14,7 +14,7 @@
  * augmented with graph-derived context that pure vector search would miss.
  */
 
-import { cosineSimilarity, deserializeEmbedding } from "./embeddings.js";
+import { cosineSimilarity, deserializeEmbedding, generateEmbedding } from "./embeddings.js";
 import type { SearchResult, SearchOptions } from "./search.js";
 import type { KgTriple } from "./kg.js";
 import type { StorageBackend } from "../storage/interface.js";
@@ -159,8 +159,6 @@ async function rerankTriples(
   maxTriples: number
 ): Promise<Array<KgTriple & { relevanceScore: number }>> {
   if (triples.length === 0) return [];
-
-  const { generateEmbedding } = await import("./embeddings.js");
 
   const scored = await Promise.all(
     triples.map(async (triple) => {

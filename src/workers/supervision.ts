@@ -56,6 +56,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./status.js";
 import { itermForClaudeSession } from "./scope.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { sendToSession } from "../cli/lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -400,7 +403,6 @@ export const aibrokerPush: PushFn = async (logDir, target, ev) => {
     target.iterm ?? (target.claudeSession ? itermForClaudeSession(logDir, target.claudeSession) : null);
   if (!iterm) return false;
   try {
-    const { sendToSession } = await import("../cli/lib/aibroker-client.js");
     const r = await sendToSession(iterm, ev.text);
     return r.ok || r.timedOut === true;
   } catch {

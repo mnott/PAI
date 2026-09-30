@@ -19,6 +19,9 @@ import type { RegistryBackend, Project } from "../storage/registry-interface.js"
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { readPaiMarker } from "../registry/pai-marker.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { detectTopicShift } from "../topics/detector.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,7 +97,6 @@ export async function autoRoute(
 
   if (context && context.trim().length > 0) {
     // Lazy import to avoid bundler pulling in daemon/index.mjs at module load time
-    const { detectTopicShift } = await import("../topics/detector.js");
     const topicResult = await detectTopicShift(
       registryBackend,
       federation,

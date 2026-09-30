@@ -15,6 +15,9 @@
 import type { ToolResult } from "./types.js";
 import type { StorageBackend } from "../../storage/interface.js";
 import { graphCompletionSearch } from "../../memory/kg-search.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { generateEmbedding } from "../../memory/embeddings.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,7 +60,6 @@ export async function toolMemoryKgSearch(
       };
     }
 
-    const { generateEmbedding } = await import("../../memory/embeddings.js");
     const queryVec = await generateEmbedding(params.query, true);
 
     const result = await graphCompletionSearch(federation, queryVec, {

@@ -10,6 +10,13 @@ import type { StorageBackend } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SearchConfig } from "../../daemon/config.js";
 import type { SearchResult } from "../../memory/search.js";
+// Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
+// throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { generateEmbedding } from "../../memory/embeddings.js";
+import { applyLinkBoost } from "../../memory/link-boost.js";
+import { rerankResults } from "../../memory/reranker.js";
+import { applyRecencyBoost } from "../../memory/search.js";
+import { saveQueryResult } from "../../zettelkasten/query-feedback.js";
 import {
   lookupProjectId,
   type ToolResult,
@@ -79,7 +86,6 @@ export async function toolMemorySearch(
     if (mode === "keyword") {
       results = await federation.searchKeyword(params.query, searchOpts);
     } else if (mode === "semantic" || mode === "hybrid") {
-      const { generateEmbedding } = await import("../../memory/embeddings.js");
       const queryEmbedding = await generateEmbedding(params.query, true);
 
       if (mode === "semantic") {
@@ -108,7 +114,6 @@ export async function toolMemorySearch(
     // Only EXTRACTED links count: INFERRED ones are themselves derived by
     // similarity, so folding them in would feed the ranking its own output.
     try {
-      const { applyLinkBoost } = await import("../../memory/link-boost.js");
       const paths = [...new Set(results.map((r) => r.path))];
       // Bounded: one lookup per distinct result path, not per chunk, and the
       // result set is already capped by maxResults.
@@ -141,7 +146,6 @@ export async function toolMemorySearch(
     // Cross-encoder reranking (on by default)
     const shouldRerank = params.rerank ?? (searchDefaults?.rerank ?? true);
     if (shouldRerank && results.length > 0) {
-      const { rerankResults } = await import("../../memory/reranker.js");
       results = await rerankResults(params.query, results, {
         topK: searchOpts.maxResults ?? 5,
       });
@@ -150,7 +154,6 @@ export async function toolMemorySearch(
     // Recency boost (off by default, applied after reranking)
     const recencyDays = params.recencyBoost ?? (searchDefaults?.recencyBoostDays ?? 0);
     if (recencyDays > 0 && results.length > 0) {
-      const { applyRecencyBoost } = await import("../../memory/search.js");
       results = applyRecencyBoost(results, recencyDays);
     }
 
@@ -190,7 +193,6 @@ export async function toolMemorySearch(
 
     // Query feedback loop: save query + result metadata for future indexing
     try {
-      const { saveQueryResult } = await import("../../zettelkasten/query-feedback.js");
       saveQueryResult({
         query: params.query,
         timestamp: Date.now(),
