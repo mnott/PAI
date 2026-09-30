@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import type { StorageBackend } from "../../../storage/interface.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { dim, bold, ok, err } from "../../utils.js";
+import { reexecBackground } from "../../../daemon/pass-priority.js";
 
 // ---------------------------------------------------------------------------
 // Shared embed runner (used by both index --embed and embed sub-command)
@@ -61,7 +62,9 @@ export function registerEmbedCommand(memoryCmd: Command): void {
     .command("embed [project-slug]")
     .description("Generate embeddings for un-embedded chunks (Phase 2.5)")
     .option("--batch-size <n>", "Chunks to embed per batch", "50")
-    .action(async (projectSlug: string | undefined, opts: { batchSize?: string }) => {
+    .option("--background", "Run at background priority (taskpolicy -b + nice)")
+    .action(async (projectSlug: string | undefined, opts: { batchSize?: string; background?: boolean }) => {
+      if (opts.background) reexecBackground();
       let backend: StorageBackend;
       try {
         backend = await getStorageBackend();

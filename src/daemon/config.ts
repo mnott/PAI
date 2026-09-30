@@ -119,6 +119,12 @@ export interface PaiDaemonConfig {
    *  the machine last booted. */
   maintenanceHour?: number;
 
+  /** Priority of the scheduled index/embed passes. "background" (default) runs
+   *  them in a child under `taskpolicy -b nice -n 19` (macOS) or
+   *  `nice -n 19 ionice -c3` (Linux); the daemon itself, which serves MCP,
+   *  keeps normal priority. "normal" runs them in-process. */
+  passPriority: "background" | "normal";
+
   /** Storage backend: "sqlite" (default) or "postgres" */
   storageBackend: "sqlite" | "postgres";
 
@@ -238,6 +244,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   indexIntervalSecs: 300,
   embedIntervalSecs: 600,
   embedOnStartup: false,
+  passPriority: "background",
   storageBackend: "sqlite",
   postgres: {
     connectionString: perUserConnectionString(),

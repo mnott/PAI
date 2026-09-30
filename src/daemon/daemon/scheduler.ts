@@ -15,6 +15,7 @@ import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
 import { enqueueRegistryScan } from "../work-queue-worker.js";
+import { PassSpawnError, runPassChild, type PassName } from "../pass-priority.js";
 import {
   registryBackend,
   storageBackend,
@@ -68,6 +69,22 @@ function failPass(name: string, e: unknown, retry: () => Promise<void>): void {
   if (t.unref) t.unref();
 }
 
+/**
+ * Run a heavy pass at background priority in a child process (passPriority
+ * "background"), else in-process. Falls back in-process, with a warning, only
+ * when the child cannot be spawned; a child that ran and failed is a failure.
+ */
+async function runPassPrioritised<T>(name: PassName, inProcess: () => Promise<T>): Promise<T> {
+  if (daemonConfig.passPriority !== "background") return inProcess();
+  try {
+    return await runPassChild<T>(name);
+  } catch (e) {
+    if (!(e instanceof PassSpawnError)) throw e;
+    process.stderr.write(`[pai-daemon] ${name} pass: ${e.message}; running in-process at normal priority\n`);
+    return inProcess();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Index scheduler
 // ---------------------------------------------------------------------------
@@ -96,7 +113,9 @@ export async function runIndex(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled index run...\n");
 
-    const { projects, result } = await storageBackend.indexAll(registryBackend);
+    const { projects, result } = await runPassPrioritised("index", () =>
+      storageBackend.indexAll(registryBackend)
+    );
     const elapsed = Date.now() - t0;
     setLastIndexTime(Date.now());
     passFailures.delete("index");
@@ -283,26 +302,29 @@ export async function runEmbed(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled embed pass...\n");
 
-    const projectNames = new Map<number, string>();
-    try {
-      const rows = await registryBackend.listProjects({ status: "active" });
-      for (const r of rows) projectNames.set(r.id, r.slug);
-    } catch { /* registry unavailable — IDs will be used instead */ }
+    const { count } = await runPassPrioritised("embed", async () => {
+      const projectNames = new Map<number, string>();
+      try {
+        const rows = await registryBackend.listProjects({ status: "active" });
+        for (const r of rows) projectNames.set(r.id, r.slug);
+      } catch { /* registry unavailable — IDs will be used instead */ }
 
-    // Explicit budgets so one embed phase can never outlast an index cycle.
-    // Backlogs drain across passes, not within one.
-    const count = await embedChunksWithBackend(
-      storageBackend,
-      () => shutdownRequested,
-      projectNames,
-      // Indexing settles to a few chunks per pass once caught up, so the daemon
-      // is idle most of the cycle and the embed budget is what actually sets
-      // drain rate. Measured 450 chunks per 90s against real (long) chunks, so
-      // a backlog only clears at roughly the budget's share of the cycle. What
-      // broke the starvation was bounding the pass at all, not this number —
-      // it can be raised freely as long as it stays finite.
-      { maxMillis: 240_000 },
-    );
+      // Explicit budgets so one embed phase can never outlast an index cycle.
+      // Backlogs drain across passes, not within one.
+      const count = await embedChunksWithBackend(
+        storageBackend,
+        () => shutdownRequested,
+        projectNames,
+        // Indexing settles to a few chunks per pass once caught up, so the daemon
+        // is idle most of the cycle and the embed budget is what actually sets
+        // drain rate. Measured 450 chunks per 90s against real (long) chunks, so
+        // a backlog only clears at roughly the budget's share of the cycle. What
+        // broke the starvation was bounding the pass at all, not this number —
+        // it can be raised freely as long as it stays finite.
+        { maxMillis: 240_000 },
+      );
+      return { count };
+    });
 
     // Vault chunks (project 999) are indexed through the same storageBackend
     // as everything else (indexVault() writes via backend.insertChunks()), so

@@ -38,6 +38,7 @@ Index memory files for one project or all projects
 | `--all` | Index all active projects (default when no slug given) |  |
 | `--embed` | Also generate embeddings for newly indexed chunks (Phase 2.5) |  |
 | `--direct` | Skip daemon IPC and run index directly (for debugging) |  |
+| `--background` | Run at background priority (taskpolicy -b + nice); implies --direct |  |
 
 
 ### pai memory embed [project-slug]
@@ -55,6 +56,7 @@ Generate embeddings for un-embedded chunks (Phase 2.5)
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--batch-size <n>` | Chunks to embed per batch | `50` |
+| `--background` | Run at background priority (taskpolicy -b + nice) |  |
 
 
 ### pai memory search <query>
