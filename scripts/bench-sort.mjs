@@ -1,0 +1,10 @@
+import { pipeline } from "@huggingface/transformers";
+import { performance } from "node:perf_hooks";
+const words = "memory chunk session project index vector query note daemon worker branch commit build test config".split(" ");
+const N = 64;
+const texts = Array.from({ length: N }, (_, i) => Array.from({ length: 60 + ((i * 37) % 300) }, (_, j) => words[(i * 31 + j * 17) % words.length]).join(" "));
+const ex = await pipeline("feature-extraction", "Snowflake/snowflake-arctic-embed-m-v1.5", { dtype: "q8" });
+await ex(texts.slice(0, 2), { pooling: "cls", normalize: true });
+const run = async (label, arr) => { const t = performance.now(); for (let i = 0; i < N; i += 16) await ex(arr.slice(i, i + 16), { pooling: "cls", normalize: true }); console.log(label, (N / ((performance.now() - t) / 1000)).toFixed(1), "chunks/s"); };
+await run("unsorted", texts);
+await run("sorted", [...texts].sort((a, b) => a.length - b.length));
