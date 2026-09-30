@@ -113,6 +113,13 @@ describe("closing panes", () => {
       ],
     };
     const ended = (w: string) => w !== "20260929-100001-2";
+    // S2 (running) is open in iTerm too; a registered-but-gone session is only forgotten
+    over.listIterm = async () => [
+      { id: "S2", name: "zsh" },
+      { id: "S1", name: "node pai worker follow 20260929-100000-1 --auto-exit 10" },
+      { id: "S9", name: "node pai worker follow 20260929-100009-9 --auto-exit 10" },
+    ];
+    seed("20260929-100005-5", "GONE", "2026-09-29 10:00:05"); // ended, session no longer in iTerm
 
     const dry = fakeOps(over);
     const d = await closeEndedPanes(dir, ended, true, dry);

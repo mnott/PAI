@@ -575,7 +575,7 @@ const LIST_SESSIONS_SCRIPT = `on run(argv)
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
-                    set out to out & (id of s as text) & tab & (name of s as text) & linefeed
+                    set out to out & (id of s as text) & (ASCII character 9) & (tty of s as text) & (ASCII character 9) & (name of s as text) & linefeed
                 end repeat
             end repeat
         end repeat
@@ -615,10 +615,20 @@ export const realPaneOps: PaneOps = {
     if (process.platform !== "darwin") return [];
     try {
       const p = await osascript(LIST_SESSIONS_SCRIPT, []);
+      // iTerm renames a pane after its running command ("node"), so the follow
+      // command is looked up by the session's tty instead
+      const cmdByTty = new Map<string, string>();
+      for (const line of psOutput("tty=,command=").split("\n")) {
+        const [tty, ...rest] = line.trim().split(/\s+/);
+        if (tty && tty !== "??") cmdByTty.set(`/dev/${tty}`, rest.join(" "));
+      }
       return p.stdout
         .split("\n")
         .filter(Boolean)
-        .map((l) => ({ id: l.split("\t")[0], name: l.split("\t").slice(1).join("\t") }));
+        .map((l) => {
+          const [id, tty, ...name] = l.split("\t");
+          return { id, name: `${name.join("\t")} ${cmdByTty.get(tty) ?? ""}`.trim() };
+        });
     } catch {
       return [];
     }
@@ -698,8 +708,17 @@ export async function closeEndedPanes(
     }
     res.closed.push(`${worker} ${key}${dryRun ? " (dry run)" : ""}`);
   };
-  for (const e of loadRegistry(logDir)) await handle("iterm", e.session, e.worker, e);
-  for (const s of await ops.listIterm()) {
+  const sessions = await ops.listIterm();
+  const open = new Set(sessions.map((s) => s.id));
+  for (const e of loadRegistry(logDir)) {
+    // iTerm answered and the session is gone: a stale entry, forgotten without a close
+    if (sessions.length && !open.has(e.session)) {
+      if (!dryRun) dropEntry(logDir, e);
+      continue;
+    }
+    await handle("iterm", e.session, e.worker, e);
+  }
+  for (const s of sessions) {
     const m = FOLLOW_ID.exec(s.name);
     if (m) await handle("iterm", s.id, m[1]);
   }
