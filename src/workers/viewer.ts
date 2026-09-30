@@ -26,7 +26,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
-import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
+import { isLive, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
@@ -911,6 +911,27 @@ export async function followWorkers(
     }
   }
 
+  /** Ended per the status file; a pid only counts while it still is the worker's (pid reuse). */
+  function statusEnded(rendered: boolean, st: WorkerStatus): boolean {
+    return workerEnded(rendered, st.state, st.state !== "running" && ownsPid(st));
+  }
+
+  /** Freeze the worker's clock and print the one final "ended" line. */
+  function markFinished(wid: string, st: WorkerStatus, multi: boolean): void {
+    finished.add(wid);
+    eraseLiveness();
+    const pre = multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  ";
+    out(`${pre}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`);
+    const why = [st.endReason, st.endBy].filter(Boolean).join(" ");
+    const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - Date.parse((st.started ?? "").replace(" ", "T"))) / 1000));
+    out(
+      c(
+        "dim",
+        `ended ${st.state ?? "?"} rc=${st.rc ?? "?"}${why ? " " + why : ""} after ${Number.isNaN(secs) ? "?" : secs + "s"}`
+      )
+    );
+  }
+
   /** What one poll decided: keep following, or the reason it is over. */
   type TickOutcome = { done: true; reason: string } | { done: false };
 
@@ -969,18 +990,17 @@ export async function followWorkers(
         }
         emitEvent(e, wid, st, multi);
       }
-      const ended = workerEnded(finished.has(wid), st.state, alive(st.pid));
-      if (ended) {
-        if (!finished.has(wid)) {
-          eraseLiveness();
-          out(
-            `${multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  "}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`
-          );
-          finished.add(wid);
-        }
+      if (statusEnded(finished.has(wid), st)) {
+        markFinished(wid, st, multi);
         closeSync(h.fd);
         handles.delete(wid);
       }
+    }
+    // a worker that never wrote an event log has no handle above — its end
+    // still has to stop the pane's clock and start the exit countdown
+    if (target !== null && !handles.has(target) && !finished.has(target)) {
+      const st = statuses.get(target);
+      if (st && statusEnded(false, st)) markFinished(target, st, false);
     }
 
     // inbox tail: new handoffs render as ◆ lines in the recipient's pane

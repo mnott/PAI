@@ -182,6 +182,8 @@ Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--check` | Only report whether the pane is open, plus the profile file's path, font, and the hosting window's bounds |  |
+| `--close-ended` | Close every open follow pane whose worker has ended (registry, then iTerm/tmux discovery) |  |
+| `--dry-run` | With --close-ended: only list what would be closed |  |
 
 
 ### pai worker log [what]

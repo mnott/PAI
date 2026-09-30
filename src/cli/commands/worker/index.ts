@@ -29,7 +29,7 @@ import { runChain } from "../../../workers/chain.js";
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
-import { openFollowPane, openPaneForWorker, checkPaneForWorker } from "../../../workers/pane.js";
+import { openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
@@ -322,10 +322,26 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .command("pane [id]")
     .description("Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on macOS, else prints the follow command)")
     .option("--check", "Only report whether the pane is open, plus the profile file's path, font, and the hosting window's bounds")
-    .action(async (id: string | undefined, opts: { check?: boolean }) => {
+    .option("--close-ended", "Close every open follow pane whose worker has ended (registry, then iTerm/tmux discovery)")
+    .option("--dry-run", "With --close-ended: only list what would be closed")
+    .action(async (id: string | undefined, opts: { check?: boolean; closeEnded?: boolean; dryRun?: boolean }) => {
       try {
         const { workers } = readWorkersSection();
         const logDir = currentLogDir();
+        if (opts.closeEnded) {
+          const r = await closeEndedPanes(
+            logDir,
+            (wid) => {
+              const st = loadStatus(logDir, wid);
+              return st !== null && st.state !== "running";
+            },
+            opts.dryRun === true
+          );
+          for (const l of r.closed) console.log(`${opts.dryRun ? "would close" : "closed"} ${l}`);
+          for (const l of r.kept) console.log(`kept ${l}`);
+          if (!r.closed.length) console.log("no ended worker panes open");
+          return;
+        }
         const term = process.env.ITERM_SESSION_ID ?? "";
         if (id) {
           const msg = opts.check

@@ -18,7 +18,7 @@
  * dynamic profile (Close Sessions On End), so panes disappear by themselves.
  *
  * Panes are tracked per scope (AIBroker session id, else tab key) in
- * <logDir>/panes/<key>.json, keyed by iTerm session unique id, newest first —
+ * <logDir>/panes/<key>/<worker id>.json (one file per worker), iTerm session unique id, newest first —
  * the split lands below the lowest live worker pane.
  *
  * The dynamic profile's font is the family of iTerm's DEFAULT profile (the
@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -490,27 +491,242 @@ export async function followProfile(
 // Pane registry
 // ---------------------------------------------------------------------------
 
-interface PaneEntry {
+export interface PaneEntry {
   session: string;
   worker: string;
   opened: string;
+  /** the scope (registry key) the entry was opened under */
+  scope?: string;
 }
 
-function loadRegistry(path: string): PaneEntry[] {
+/**
+ * One file per worker, `<panes>/<scope>/<worker id>.json`: concurrent opens
+ * for the same scope write different files, so none can be lost (the former
+ * shared `<scope>.json` list was a read-modify-write that dropped entries when
+ * workers started a second apart). Legacy `<scope>.json` lists are still read.
+ */
+function readEntry(path: string, scope: string): PaneEntry[] {
   try {
-    const reg = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return Array.isArray(reg) ? (reg as PaneEntry[]) : [];
+    const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return (Array.isArray(v) ? v : [v])
+      .filter((e): e is PaneEntry => !!e && typeof (e as PaneEntry).session === "string" && typeof (e as PaneEntry).worker === "string")
+      .map((e) => ({ ...e, scope }));
   } catch {
     return [];
   }
 }
 
-function saveRegistry(path: string, reg: PaneEntry[]): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(reg, null, 1), "utf8");
+/** Registry entries of one scope (`scope` set) or of all scopes, oldest first. */
+export function loadRegistry(logDir: string, scope?: string): PaneEntry[] {
+  const root = panesDir(logDir);
+  const out: PaneEntry[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return out;
+  }
+  for (const name of names.sort()) {
+    const full = join(root, name);
+    if (name.endsWith(".json")) {
+      const sc = name.slice(0, -5);
+      if (!scope || sc === scope) out.push(...readEntry(full, sc));
+    } else if (!scope || name === scope) {
+      try {
+        for (const f of readdirSync(full)) if (f.endsWith(".json")) out.push(...readEntry(join(full, f), name));
+      } catch {
+        /* not a directory */
+      }
+    }
+  }
+  return out.sort((x, y) => x.opened.localeCompare(y.opened));
+}
+
+function entryPath(logDir: string, e: PaneEntry): string {
+  return join(panesDir(logDir), e.scope ?? "", `${e.worker}.json`);
+}
+
+function saveEntry(logDir: string, e: PaneEntry): void {
+  const path = entryPath(logDir, e);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ session: e.session, worker: e.worker, opened: e.opened }, null, 1), "utf8");
   renameSync(tmp, path);
+}
+
+/** Forget an entry (its per-worker file; a legacy list is rewritten without it). */
+function dropEntry(logDir: string, e: PaneEntry): void {
+  const legacy = join(panesDir(logDir), `${e.scope}.json`);
+  rmSync(entryPath(logDir, e), { force: true });
+  if (existsSync(legacy)) {
+    const rest = readEntry(legacy, e.scope ?? "").filter((x) => x.session !== e.session);
+    writeFileSync(legacy, JSON.stringify(rest.map(({ scope: _s, ...x }) => x), null, 1), "utf8");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ending panes of finished workers
+// ---------------------------------------------------------------------------
+
+const LIST_SESSIONS_SCRIPT = `on run(argv)
+    set out to ""
+    tell application id "com.googlecode.iterm2"
+        if not running then return ""
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    set out to out & (id of s as text) & (ASCII character 9) & (tty of s as text) & (ASCII character 9) & (name of s as text) & linefeed
+                end repeat
+            end repeat
+        end repeat
+    end tell
+    return out
+end run`;
+
+// Ends one session by its unique id, never a window or the app.
+const END_SESSION_SCRIPT = `on run(argv)
+    set targetID to item 1 of argv
+    tell application id "com.googlecode.iterm2"
+        if not running then return "notrunning"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if id of s is targetID then
+                        close s
+                        return "closed"
+                    end if
+                end repeat
+            end repeat
+        end repeat
+    end tell
+    return "notfound"
+end run`;
+
+/** The real iTerm / tmux calls, swappable so tests never touch either. */
+export interface PaneOps {
+  listIterm(): Promise<Array<{ id: string; name: string }>>;
+  closeIterm(id: string): Promise<boolean>;
+  listTmux(): Array<{ id: string; command: string }>;
+  closeTmux(id: string): boolean;
+}
+
+export const realPaneOps: PaneOps = {
+  async listIterm() {
+    if (process.platform !== "darwin") return [];
+    try {
+      const p = await osascript(LIST_SESSIONS_SCRIPT, []);
+      // iTerm renames a pane after its running command ("node"), so the follow
+      // command is looked up by the session's tty instead
+      const cmdByTty = new Map<string, string>();
+      for (const line of psOutput("tty=,command=").split("\n")) {
+        const [tty, ...rest] = line.trim().split(/\s+/);
+        if (tty && tty !== "??") cmdByTty.set(`/dev/${tty}`, rest.join(" "));
+      }
+      return p.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => {
+          const [id, tty, ...name] = l.split("\t");
+          return { id, name: `${name.join("\t")} ${cmdByTty.get(tty) ?? ""}`.trim() };
+        });
+    } catch {
+      return [];
+    }
+  },
+  async closeIterm(id) {
+    const p = await osascript(END_SESSION_SCRIPT, [id]);
+    return p.stdout.trim() === "closed";
+  },
+  listTmux() {
+    try {
+      const out = execFileSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}\t#{pane_start_command}"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return out.split("\n").filter(Boolean).map((l) => ({ id: l.split("\t")[0], command: l.split("\t").slice(1).join(" ") }));
+    } catch {
+      return [];
+    }
+  },
+  closeTmux(id) {
+    try {
+      execFileSync("tmux", ["kill-pane", "-t", id], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+const FOLLOW_ID = /worker[- ]follow (\d{8}-\d{6}-\d+)/;
+
+/** End one worker's registered iTerm pane, found by worker id. True if a pane was closed. */
+export async function closePaneForWorker(logDir: string, wid: string, ops: PaneOps = realPaneOps): Promise<boolean> {
+  let closed = false;
+  for (const e of loadRegistry(logDir).filter((x) => x.worker === wid)) {
+    try {
+      if (await ops.closeIterm(e.session)) closed = true;
+    } catch {
+      /* iTerm gone: the entry is stale either way */
+    }
+    dropEntry(logDir, e);
+  }
+  return closed;
+}
+
+export interface CloseEndedResult {
+  closed: string[];
+  kept: string[];
+}
+
+/**
+ * Close every open follow pane whose worker has ended: registry entries first
+ * (by worker id), then any iTerm session named after / tmux pane started with a
+ * `worker follow <id>` command of an ended worker. `ended(id)` says whether
+ * that worker is over; unknown ids are never closed. `dryRun` only reports.
+ */
+export async function closeEndedPanes(
+  logDir: string,
+  ended: (wid: string) => boolean,
+  dryRun: boolean,
+  ops: PaneOps = realPaneOps
+): Promise<CloseEndedResult> {
+  const res: CloseEndedResult = { closed: [], kept: [] };
+  const seen = new Set<string>();
+  const handle = async (backend: "iterm" | "tmux", id: string, worker: string, entry?: PaneEntry): Promise<void> => {
+    const key = `${backend}:${id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (!ended(worker)) {
+      res.kept.push(`${worker} ${key} (running)`);
+      return;
+    }
+    if (!dryRun) {
+      const ok = backend === "tmux" ? ops.closeTmux(id) : await ops.closeIterm(id).catch(() => false);
+      if (entry) dropEntry(logDir, entry); // stale whether or not the pane still existed
+      if (!ok && !entry) return;
+    }
+    res.closed.push(`${worker} ${key}${dryRun ? " (dry run)" : ""}`);
+  };
+  const sessions = await ops.listIterm();
+  const open = new Set(sessions.map((s) => s.id));
+  for (const e of loadRegistry(logDir)) {
+    // iTerm answered and the session is gone: a stale entry, forgotten without a close
+    if (sessions.length && !open.has(e.session)) {
+      if (!dryRun) dropEntry(logDir, e);
+      continue;
+    }
+    await handle("iterm", e.session, e.worker, e);
+  }
+  for (const s of sessions) {
+    const m = FOLLOW_ID.exec(s.name);
+    if (m) await handle("iterm", s.id, m[1]);
+  }
+  for (const t of ops.listTmux()) {
+    const m = FOLLOW_ID.exec(t.command);
+    if (m) await handle("tmux", t.id, m[1]);
+  }
+  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -581,8 +797,8 @@ export async function openPaneForWorker(
     return { message: `pane opened for ${wid}`, session: null };
   }
   const uid = itermUuid(term);
-  const regPath = join(panesDir(logDir), `${scopeKey(term)}.json`);
-  const reg = loadRegistry(regPath);
+  const scope = scopeKey(term);
+  const reg = loadRegistry(logDir, scope);
   const profile = await followProfile(config.pane.fontSize);
   const cmd = followCommand(wid, config.pane.autoExitSecs);
   // registry newest first: the split lands below the lowest live worker pane
@@ -603,13 +819,13 @@ export async function openPaneForWorker(
     );
   }
   const live = new Set(out.slice(0, bar).split(",").filter(Boolean));
-  const pruned = reg.filter((e) => live.has(e.session));
-  pruned.push({
+  for (const e of reg) if (!live.has(e.session)) dropEntry(logDir, e);
+  saveEntry(logDir, {
     session: out.slice(bar + 1),
     worker: wid,
     opened: new Date().toISOString().replace("T", " ").slice(0, 19),
+    scope,
   });
-  saveRegistry(regPath, pruned);
   return { message: `pane opened for ${wid}`, session: out.slice(bar + 1) };
 }
 
