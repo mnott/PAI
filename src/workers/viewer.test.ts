@@ -700,4 +700,20 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(ledger).toContain(`id=${id}`);
     expect(ledger).toContain("reason=worker-ended");
   }, 8000);
+
+  it("stops on an ended status even when the recorded pid was reused by a live process, and prints the ended line", async () => {
+    const { dir, id } = chatFixture("done");
+    const sp = join(dir, `${id}.status`);
+    // pid of this very process: alive, but started long after the worker's stamp
+    writeFileSync(sp, JSON.stringify({ ...JSON.parse(readFileSync(sp, "utf8")), pid: process.pid }));
+    let buf = "";
+    const io: FollowIO = {
+      stdin: new PassThrough(),
+      stdout: { write: (s: string) => ((buf += s), true), rows: 24, columns: 80 },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    await followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, io);
+    expect(buf).toContain("ended done rc=0 after 2s");
+    expect(readFileSync(ledgerPath(dir), "utf8")).toContain("reason=worker-ended");
+  }, 8000);
 });
