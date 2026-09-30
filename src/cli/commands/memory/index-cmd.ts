@@ -9,6 +9,7 @@ import { dim, bold, ok, err } from "../../utils.js";
 import { PaiClient } from "../../../daemon/ipc-client.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { runEmbed } from "./embed.js";
+import { reexecBackground } from "../../../daemon/pass-priority.js";
 
 /**
  * Index every active project through the StorageBackend. Loops
@@ -38,7 +39,12 @@ export function registerIndexCommand(memoryCmd: Command): void {
     .option("--all", "Index all active projects (default when no slug given)")
     .option("--embed", "Also generate embeddings for newly indexed chunks (Phase 2.5)")
     .option("--direct", "Skip daemon IPC and run index directly (for debugging)")
-    .action(async (projectSlug: string | undefined, opts: { all?: boolean; embed?: boolean; direct?: boolean }) => {
+    .option("--background", "Run at background priority (taskpolicy -b + nice); implies --direct")
+    .action(async (projectSlug: string | undefined, opts: { all?: boolean; embed?: boolean; direct?: boolean; background?: boolean }) => {
+      if (opts.background) {
+        opts.direct = true;
+        reexecBackground();
+      }
       // If daemon is running and no --direct flag, trigger via IPC (non-blocking)
       if (!opts.direct && !projectSlug) {
         try {

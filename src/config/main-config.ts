@@ -110,6 +110,7 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   embedIntervalSecs: "How often the daemon runs the embedding pass, in seconds.",
   embedOnStartup:
     "Run an embed pass 60s after daemon start. Off by default: with a large backlog it makes every restart a CPU storm.",
+  passPriority: 'Priority of scheduled index/embed passes: "background" (default; low-priority child process) or "normal" (in-process).',
   maintenanceHour: "Local hour (0-23) to anchor the recurring index/embed cycle to, so maintenance runs in a fixed window.",
   storageBackend: 'Storage backend: "sqlite" (default) or "postgres".',
   postgres: 'PostgreSQL connection settings, used when storageBackend is "postgres".',
