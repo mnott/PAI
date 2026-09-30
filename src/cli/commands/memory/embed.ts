@@ -5,6 +5,7 @@ import type { StorageBackend } from "../../../storage/interface.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { dim, bold, ok, err } from "../../utils.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
+import { retryTransient } from "../../../memory/indexer/retry.js";
 
 // ---------------------------------------------------------------------------
 // Shared embed runner (used by both index --embed and embed sub-command)
@@ -34,13 +35,17 @@ export async function runEmbed(
   let after: { projectId: number; id: string } | null = null;
 
   while (true) {
-    const page = await backend.getUnembeddedChunkIds(projectId, pageSize, after);
+    const page = await retryTransient(() => backend.getUnembeddedChunkIds(projectId, pageSize, after));
     if (page.length === 0) break;
 
     for (let i = 0; i < page.length; i += batchSize) {
       const batch = page.slice(i, i + batchSize);
       const vecs = await generateEmbeddings(batch.map((r) => r.text));
-      await Promise.all(batch.map((row, j) => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j]))));
+      await Promise.all(
+        batch.map((row, j) =>
+          retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
+        )
+      );
       done += batch.length;
       process.stdout.write(`\r  ${done} / ~${totalEstimate} chunks embedded...`);
     }
