@@ -24,6 +24,8 @@
  * the environment held at import and make the override order matter.
  */
 
+import { paiHomePath } from "./config/pai-home.js";
+
 /** IPC socket for the PAI daemon. */
 export function paiSocketPath(): string {
   return process.env.PAI_SOCKET_PATH ?? "/tmp/pai.sock";
@@ -41,7 +43,7 @@ export function daemonLogPath(): string {
 
 /** Pidfile for the running daemon. */
 export function daemonPidPath(): string {
-  return process.env.PAI_DAEMON_PID_PATH ?? "/tmp/pai-daemon.pid";
+  return process.env.PAI_DAEMON_PID_PATH ?? paiHomePath("daemon.pid");
 }
 
 /** Where the launchd scheduler tick writes its output. */
