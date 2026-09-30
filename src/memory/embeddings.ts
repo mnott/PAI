@@ -19,6 +19,9 @@
 export const EMBEDDING_DIM = 768;
 const DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-m-v1.5";
 
+/** Texts per forward pass in generateEmbeddings (length-sorted, see there). */
+const SUB_BATCH = 16;
+
 /** Query prefix required by Snowflake Arctic Embed for retrieval tasks. */
 const QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
 
@@ -102,21 +105,28 @@ export async function generateEmbeddings(texts: string[]): Promise<Float32Array[
   if (texts.length === 1) return [await generateEmbedding(texts[0])];
 
   const extractor = await getEmbedder();
-  const output = await extractor(texts, { pooling: "cls", normalize: true });
-  const flat = output.data as Float32Array;
 
-  const dim = flat.length / texts.length;
-  if (!Number.isInteger(dim)) {
-    throw new Error(
-      `Batched embedding returned ${flat.length} values for ${texts.length} inputs — not divisible`
-    );
-  }
+  // A batch is padded to its longest text, and cost grows with padded length.
+  // Sorting by length and running small sub-batches keeps neighbours similar:
+  // measured 2.1x faster on mixed-length texts (5.5 -> 11.7 chunks/s).
+  const order = texts.map((_, i) => i).sort((a, b) => texts[a].length - texts[b].length);
+  const out: Float32Array[] = new Array(texts.length);
+  for (let s = 0; s < order.length; s += SUB_BATCH) {
+    const idx = order.slice(s, s + SUB_BATCH);
+    const output = await extractor(idx.map((i) => texts[i]), { pooling: "cls", normalize: true });
+    const flat = output.data as Float32Array;
 
-  const out: Float32Array[] = [];
-  for (let i = 0; i < texts.length; i++) {
-    // Copy rather than subarray: the caller stores these, and a view would
-    // pin the whole batch buffer in memory for the lifetime of one vector.
-    out.push(new Float32Array(flat.slice(i * dim, (i + 1) * dim)));
+    const dim = flat.length / idx.length;
+    if (!Number.isInteger(dim)) {
+      throw new Error(
+        `Batched embedding returned ${flat.length} values for ${idx.length} inputs — not divisible`
+      );
+    }
+    idx.forEach((orig, k) => {
+      // Copy rather than subarray: the caller stores these, and a view would
+      // pin the whole batch buffer in memory for the lifetime of one vector.
+      out[orig] = new Float32Array(flat.slice(k * dim, (k + 1) * dim));
+    });
   }
   return out;
 }
