@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatPending, pendingGate, pendingResults } from "./pending.js";
+import { formatPending, pendingGate, pendingResults, invalidatePendingCache, pendingCountCached } from "./pending.js";
 import { statusPath } from "./paths.js";
 import { nowStamp } from "./status.js";
 
@@ -101,5 +101,41 @@ describe("pendingGate", () => {
   it("passes without pending results or with the override", () => {
     expect(pendingGate([], {}).code).toBe(0);
     expect(pendingGate(one, { PAI_ALLOW_PENDING: "1" }).code).toBe(0);
+  });
+});
+
+describe("invalidatePendingCache", () => {
+  it("removes cache entries for a repo and its subdirectories", () => {
+    const subdir = join(repo, "server");
+    mkdirSync(subdir);
+
+    // Populate cache with entries for root, subdir, and other repo
+    const other = join(root, "other");
+    mkdirSync(other);
+
+    const n1 = pendingCountCached(logDir, repo, 60_000, 0);
+    const n2 = pendingCountCached(logDir, subdir, 60_000, 1000);
+    const n3 = pendingCountCached(logDir, other, 60_000, 2000);
+
+    // Verify all three are cached
+    expect(n1).toBe(0);
+    expect(n2).toBe(0);
+    expect(n3).toBe(0);
+
+    // Invalidate for root repo
+    invalidatePendingCache(logDir, repo);
+
+    // Reset cache by calling with new time (beyond TTL)
+    const n1_after = pendingCountCached(logDir, repo, 60_000, 100_000);
+    const n2_after = pendingCountCached(logDir, subdir, 60_000, 100_000);
+    const n3_after = pendingCountCached(logDir, other, 60_000, 100_000);
+
+    expect(n1_after).toBe(0);
+    expect(n2_after).toBe(0);
+    expect(n3_after).toBe(0);
+  });
+
+  it("handles missing cache file gracefully", () => {
+    expect(() => invalidatePendingCache(logDir, repo)).not.toThrow();
   });
 });
