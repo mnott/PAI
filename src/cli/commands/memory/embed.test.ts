@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorageBackend } from "../../../storage/interface.js";
 
 vi.mock("../../../memory/embeddings.js", () => ({
-  generateEmbeddings: vi.fn(async (texts: string[]) => texts.map(() => new Float32Array([1, 2, 3]))),
   serializeEmbedding: vi.fn((v: Float32Array) => Buffer.from(v.buffer)),
+}));
+vi.mock("../../../memory/embedding-gate.js", () => ({
+  gateBackend: vi.fn(async () => ({
+    ok: true,
+    backend: { embed: async (texts: string[]) => texts.map(() => new Float32Array([1, 2, 3])) },
+  })),
 }));
 
 /** Fake backend backed by an in-memory row set, paginating exactly like the real backends. */

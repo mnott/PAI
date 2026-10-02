@@ -10,7 +10,7 @@
 
 import type { Database } from "better-sqlite3";
 import type {
-  StorageBackend, ChunkRow, FileRow, FederationStats,
+  StorageBackend, EmbeddingBinding, ChunkRow, FileRow, FederationStats,
   MemorySourcesReport, FindTunnelsOptions, FindTunnelsResult,
   KgStats, ObservationRow, ObservationWithCwd, StoreObservationInput, QueryObservationsOptions,
   ObservationStats, SessionSummaryRow, StoreSessionSummaryInput,
@@ -21,6 +21,7 @@ import type { KgEntity, KgEntityUpsertParams } from "../memory/kg-entity.js";
 import type { KgAddParams, KgQueryParams, KgTriple, KgContradiction } from "../memory/kg.js";
 import type { IndexResult } from "../memory/indexer/types.js";
 import type { RegistryBackend } from "./registry-interface.js";
+import { LEGACY_EMBEDDING_BINDING } from "../memory/embedding-binding.js";
 import { indexAllSqlite } from "./sqlite/indexer.js";
 import { findTunnelsSqlite } from "./sqlite/tunnels.js";
 import { getMemorySourcesReportSqlite } from "./sqlite/sources.js";
@@ -258,6 +259,31 @@ export class SQLiteBackend implements StorageBackend {
     this.db
       .prepare("UPDATE memory_chunks SET embedding = ? WHERE id = ?")
       .run(embedding, chunkId);
+  }
+
+  async getEmbeddingBinding(): Promise<EmbeddingBinding | null> {
+    const row = this.db
+      .prepare("SELECT backend, model, dims FROM embedding_binding WHERE id = 1")
+      .get() as EmbeddingBinding | undefined;
+    if (row) return row;
+    const any = this.db.prepare("SELECT 1 FROM memory_chunks WHERE embedding IS NOT NULL LIMIT 1").get();
+    return any ? { ...LEGACY_EMBEDDING_BINDING } : null;
+  }
+
+  async setEmbeddingBinding(b: EmbeddingBinding): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO embedding_binding (id, backend, model, dims, updated_at) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET backend = excluded.backend, model = excluded.model,
+           dims = excluded.dims, updated_at = excluded.updated_at`,
+      )
+      .run(b.backend, b.model, b.dims, Date.now());
+  }
+
+  async clearEmbeddingsBatch(limit: number): Promise<number> {
+    return this.db
+      .prepare("UPDATE memory_chunks SET embedding = NULL WHERE id IN (SELECT id FROM memory_chunks WHERE embedding IS NOT NULL LIMIT ?)")
+      .run(limit).changes;
   }
 
   // -------------------------------------------------------------------------

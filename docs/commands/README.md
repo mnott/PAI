@@ -102,8 +102,13 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai mcp install` | Register the PAI MCP server (pai) in ~/.claude.json (restart Claude Code to activate) |
 | `pai mcp status` | Show whether the PAI MCP server (pai) is registered and the binary exists |
 | `pai memory` | Memory engine: index, search, and status |
+| `pai memory backend` | Embedding backends: detect, use, provision (an index is bound to the backend that embedded it) |
+| `pai memory backend detect` | Probe the available embedding backends (ollama, then transformers-cpu) and recommend the fastest |
+| `pai memory backend provision <backend>` | Provision a backend's model. ollama: download the F16 GGUF of arctic-embed-m-v1.5 and `ollama create` it |
+| `pai memory backend use <id>` | Write the embedding backend to config (ollama-f16 \| transformers-cpu-q8); does not touch the index |
 | `pai memory embed [project-slug]` | Generate embeddings for un-embedded chunks (Phase 2.5) |
 | `pai memory index [project-slug]` | Index memory files for one project or all projects |
+| `pai memory reembed` | Switch the index to an embedding backend: clears all vectors (batched, resumable); `pai memory embed` refills |
 | `pai memory search <query>` | Search indexed memory (BM25 keyword, semantic, or hybrid) |
 | `pai memory settings [key] [value]` | View or modify search settings in the PAI config file (`pai config path`) |
 | `pai memory sources` | Show what the indexer has taken in: composition by source, which roots |

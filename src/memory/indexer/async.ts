@@ -15,7 +15,8 @@ import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
-import { generateEmbeddings, serializeEmbedding } from "../embeddings.js";
+import { serializeEmbedding } from "../embeddings.js";
+import { gateBackend } from "../embedding-gate.js";
 import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import {
   sha256File,
@@ -306,6 +307,15 @@ export async function embedChunksWithBackend(
   const rows = await retryTransient(() => backend.getUnembeddedChunkIds(undefined, maxChunks));
   if (rows.length === 0) return 0;
 
+  // The configured backend must match the one that produced the index's vectors
+  // and be reachable. Otherwise pause: chunks stay NULL for a later pass, and
+  // no other backend is ever substituted.
+  const gate = await gateBackend(backend, { record: true });
+  if (!gate.ok) {
+    process.stderr.write(`[pai-daemon] Embed pass paused (${gate.kind}): ${gate.reason}\n`);
+    return 0;
+  }
+
   const total = rows.length;
   let embedded = 0;
 
@@ -355,7 +365,7 @@ export async function embedChunksWithBackend(
     // model, so yield before entering it rather than between chunks.
     await yieldToEventLoop();
 
-    const vecs = await generateEmbeddings(batch.map((r) => r.text));
+    const vecs = await gate.backend.embed(batch.map((r) => r.text));
     // Issue the writes together rather than one round-trip at a time. Measured
     // on this machine the model embeds 40-67 chunks/s in isolation while the
     // daemon managed ~5/s: the difference was one sequential UPDATE per chunk,

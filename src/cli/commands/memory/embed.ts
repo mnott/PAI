@@ -24,7 +24,16 @@ export async function runEmbed(
   const label = projectSlug ? `project ${projectSlug}` : "all projects";
   console.log(dim(`Generating embeddings for ${label} (this may take a while on first run)...`));
 
-  const { generateEmbeddings, serializeEmbedding } = await import("../../../memory/embeddings.js");
+  const { serializeEmbedding } = await import("../../../memory/embeddings.js");
+  const { gateBackend } = await import("../../../memory/embedding-gate.js");
+
+  const gate = await gateBackend(backend, { record: true });
+  if (!gate.ok) {
+    console.error(err(gate.reason));
+    process.exitCode = 1;
+    return;
+  }
+  const embedder = gate.backend;
 
   // Estimate, not an exact unembedded count: cheap (one row) vs. scanning the
   // whole backlog just to size a progress bar.
@@ -40,7 +49,7 @@ export async function runEmbed(
 
     for (let i = 0; i < page.length; i += batchSize) {
       const batch = page.slice(i, i + batchSize);
-      const vecs = await generateEmbeddings(batch.map((r) => r.text));
+      const vecs = await retryTransient(() => embedder.embed(batch.map((r) => r.text)));
       await Promise.all(
         batch.map((row, j) =>
           retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))

@@ -14,7 +14,7 @@ import type { Pool, PoolClient } from "pg";
 import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../../module-paths.js";
 import type {
-  StorageBackend, ChunkRow, FileRow, FederationStats,
+  StorageBackend, EmbeddingBinding, ChunkRow, FileRow, FederationStats,
   VaultFileRow, VaultAliasRow, VaultLinkRow, VaultHealthRow, VaultNameEntry,
   MemorySourcesReport, FindTunnelsOptions, FindTunnelsResult,
   KgStats, ObservationRow, ObservationWithCwd, StoreObservationInput, QueryObservationsOptions,
@@ -23,6 +23,7 @@ import type {
 } from "../interface.js";
 import type { SearchResult, SearchOptions } from "../../memory/search.js";
 import type { PostgresConfig } from "./config.js";
+import { LEGACY_EMBEDDING_BINDING } from "../../memory/embedding-binding.js";
 import { bufferToVector } from "./helpers.js";
 import { searchKeyword, searchSemantic } from "./search.js";
 import * as vault from "./vault.js";
@@ -500,6 +501,45 @@ export class PostgresBackend implements StorageBackend {
       "UPDATE pai_chunks SET embedding = $1::vector WHERE id = $2",
       [vecStr, chunkId]
     );
+  }
+
+  private async ensureBindingTable(): Promise<void> {
+    await this.pool.query(
+      `CREATE TABLE IF NOT EXISTS pai_embedding_binding (
+         id         INTEGER PRIMARY KEY CHECK (id = 1),
+         backend    TEXT    NOT NULL,
+         model      TEXT    NOT NULL,
+         dims       INTEGER NOT NULL,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    );
+  }
+
+  async getEmbeddingBinding(): Promise<EmbeddingBinding | null> {
+    await this.ensureBindingTable();
+    const r = await this.pool.query<EmbeddingBinding>(
+      "SELECT backend, model, dims FROM pai_embedding_binding WHERE id = 1"
+    );
+    if (r.rows[0]) return r.rows[0];
+    const any = await this.pool.query("SELECT 1 FROM pai_chunks WHERE embedding IS NOT NULL LIMIT 1");
+    return any.rowCount ? { ...LEGACY_EMBEDDING_BINDING } : null;
+  }
+
+  async setEmbeddingBinding(b: EmbeddingBinding): Promise<void> {
+    await this.ensureBindingTable();
+    await this.pool.query(
+      `INSERT INTO pai_embedding_binding (id, backend, model, dims) VALUES (1, $1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET backend = $1, model = $2, dims = $3, updated_at = CURRENT_TIMESTAMP`,
+      [b.backend, b.model, b.dims]
+    );
+  }
+
+  async clearEmbeddingsBatch(limit: number): Promise<number> {
+    const r = await this.pool.query(
+      "UPDATE pai_chunks SET embedding = NULL WHERE id IN (SELECT id FROM pai_chunks WHERE embedding IS NOT NULL LIMIT $1)",
+      [limit]
+    );
+    return r.rowCount ?? 0;
   }
 
   // -------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { registerSearchCommand } from "./search.js";
 import { registerStatsCommands } from "./stats.js";
 import { registerSourcesCommand } from "./sources-cmd.js";
 import { registerPassCommand } from "./pass.js";
+import { registerBackendCommands } from "./backend.js";
 
 export function registerMemoryCommands(memoryCmd: Command): void {
   registerIndexCommand(memoryCmd);
@@ -15,4 +16,5 @@ export function registerMemoryCommands(memoryCmd: Command): void {
   registerStatsCommands(memoryCmd);
   registerSourcesCommand(memoryCmd);
   registerPassCommand(memoryCmd);
+  registerBackendCommands(memoryCmd);
 }

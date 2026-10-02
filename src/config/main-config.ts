@@ -115,6 +115,8 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   storageBackend: 'Storage backend: "sqlite" (default) or "postgres".',
   postgres: 'PostgreSQL connection settings, used when storageBackend is "postgres".',
   embeddingModel: "Embedding model name, used for semantic/hybrid search.",
+  embedding:
+    'Embedding backend: backend ("transformers-cpu-q8" or "ollama-f16"), model, ollama.baseUrl. Switching needs `pai memory reembed`.',
   logLevel: "Daemon log level: debug, info, warn, or error.",
   vaultPath: "Obsidian vault root path for zettelkasten indexing, if any.",
   vaultProjectId: "Registry project_id used for vault chunks in memory_chunks. Default: auto-detected.",

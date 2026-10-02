@@ -28,6 +28,13 @@ export type { KgTriple, KgAddParams, KgQueryParams, KgContradiction };
 // Chunk types (mirrored from indexer but backend-independent)
 // ---------------------------------------------------------------------------
 
+/** Which embedding backend produced an index's vectors. */
+export interface EmbeddingBinding {
+  backend: string;
+  model: string;
+  dims: number;
+}
+
 export interface ChunkRow {
   id: string;
   projectId: number;
@@ -364,6 +371,23 @@ export interface StorageBackend {
    * Store an embedding for a single chunk.
    */
   updateEmbedding(chunkId: string, embedding: Buffer): Promise<void>;
+
+  /**
+   * The embedding backend that produced this index's vectors, or null for an
+   * index with no vectors yet. An index that holds vectors but no recorded
+   * binding predates backend binding: its vectors are transformers-cpu-q8.
+   */
+  getEmbeddingBinding(): Promise<EmbeddingBinding | null>;
+
+  /** Record which backend the index's vectors come from (first embed, reembed). */
+  setEmbeddingBinding(binding: EmbeddingBinding): Promise<void>;
+
+  /**
+   * Set up to `limit` stored embeddings to NULL; returns how many were cleared.
+   * Callers loop until 0 — one bounded statement per call, never one giant
+   * transaction, and resumable after a crash.
+   */
+  clearEmbeddingsBatch(limit: number): Promise<number>;
 
   // -------------------------------------------------------------------------
   // Search

@@ -99,6 +99,16 @@ export interface SessionsConfig {
   cacheKeepalive: SessionsCacheKeepaliveConfig;
 }
 
+export interface EmbeddingConfig {
+  /** Backend id: "transformers-cpu-q8" (default, in-process) or "ollama-f16". */
+  backend: string;
+  /** Model name for the backend. Ollama: the model name on the server
+   *  (default "arctic-embed-m-v1.5-f16"). Unset for transformers-cpu-q8,
+   *  which uses embeddingModel. */
+  model?: string;
+  ollama: { baseUrl: string };
+}
+
 export interface PaiDaemonConfig {
   /** Unix Domain Socket path for IPC */
   socketPath: string;
@@ -133,6 +143,9 @@ export interface PaiDaemonConfig {
 
   /** Embedding model name (used for semantic/hybrid search) */
   embeddingModel: string;
+
+  /** Embedding backend selection (see src/memory/backends/). */
+  embedding: EmbeddingConfig;
 
   /** Log level */
   logLevel: "debug" | "info" | "warn" | "error";
@@ -252,6 +265,7 @@ export const DEFAULTS: PaiDaemonConfig = {
     connectionTimeoutMs: 5000,
   },
   embeddingModel: "Snowflake/snowflake-arctic-embed-m-v1.5",
+  embedding: { backend: "transformers-cpu-q8", ollama: { baseUrl: "http://127.0.0.1:11434" } },
   logLevel: "info",
   notifications: DEFAULT_NOTIFICATION_CONFIG,
   tasks: DEFAULT_TASK_CONFIG,

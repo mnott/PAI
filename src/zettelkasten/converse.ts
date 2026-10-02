@@ -1,6 +1,6 @@
 import type { StorageBackend } from "../storage/interface.js";
 import type { SearchResult } from "../memory/search.js";
-import { generateEmbedding } from "../memory/embeddings.js";
+import { requireQueryEmbedding } from "../memory/embedding-gate.js";
 
 export interface ConverseOptions {
   /** The user's question or topic to explore. */
@@ -155,7 +155,7 @@ export async function zettelConverse(
   // ------------------------------------------------------------------
   // 1. Hybrid search: find top candidates via BM25 + semantic similarity
   // ------------------------------------------------------------------
-  const queryEmbedding = await generateEmbedding(opts.question, true);
+  const queryEmbedding = await requireQueryEmbedding(backend, opts.question);
 
   const searchResults = await hybridSearch(
     backend,
