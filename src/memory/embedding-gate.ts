@@ -9,7 +9,7 @@
 import type { StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "./backends/types.js";
 import { getConfiguredBackend } from "./backends/index.js";
-import { bindingMatches, describeBinding, isInferredBinding } from "./embedding-binding.js";
+import { bindingMatches, isInferredBinding, mismatchReason } from "./embedding-binding.js";
 
 export const QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
 
@@ -32,7 +32,7 @@ export async function gateBackend(
     return {
       ok: false,
       kind: "mismatch",
-      reason: `index embedded with ${describeBinding(binding)}, configured ${describeBinding({ backend: backend.id, model: backend.model })}: run \`pai memory reembed\` to switch`,
+      reason: mismatchReason(binding, backend),
     };
   }
   const avail = await backend.available();

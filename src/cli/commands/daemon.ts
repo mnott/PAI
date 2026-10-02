@@ -191,6 +191,7 @@ async function cmdStatus(): Promise<void> {
     console.log(dim(`    PID:         ${resolveDaemonPid() ?? "unknown"}`));
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
+    if (s["dashboard"]) console.log(dim(`    Dashboard:   ${s["dashboard"]}`));
 
     // Lead with the outage and the backlog. Everything below them — index
     // state, totals — describes a system that is not moving, and printing those
