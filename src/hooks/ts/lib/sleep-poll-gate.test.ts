@@ -51,7 +51,7 @@ describe("sleep-poll gate", () => {
 
   it("worker session (PAI_WORKER=1): deny reason points at a foreground timeout and a kill -0 loop instead", () => {
     const out = decisionOf(bash("sleep 590"), { PAI_WORKER: "1" });
-    expect(out.permissionDecisionReason).toContain("FOREGROUND with a Bash timeout up to 600000 ms");
+    expect(out.permissionDecisionReason).toContain("pai worker wait-on $(cat /tmp/job.pid)");
     expect(out.permissionDecisionReason).not.toContain("run_in_background: true");
   });
 
@@ -71,7 +71,7 @@ describe("sleep-poll gate", () => {
   it("worker: run_in_background is denied with foreground advice; interactive keeps it", () => {
     const out = decisionOf(bash("npm test", true), { PAI_WORKER: "1" });
     expect(out.permissionDecision).toBe("deny");
-    expect(out.permissionDecisionReason).toContain("FOREGROUND");
+    expect(out.permissionDecisionReason).toContain("detached");
     expect(decisionOf(bash("npm test", true), {}).permissionDecision).toBe("allow");
     expect(decisionOf(bash("npm test", false), { PAI_WORKER: "1" }).permissionDecision).toBe("allow");
   });

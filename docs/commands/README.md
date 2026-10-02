@@ -272,6 +272,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker status-line [term] [cwd] [session]` | One-line worker summary for a status bar (empty when none in scope). |
 | `pai worker verify <id>` | Compare a worker's committed changes with the working tree (or --against <ref>); exit 0 when every file is identical, so discarding is safe. Also reads an archived worker (refs/pai-archive/<id>) |
 | `pai worker wait <ids...>` | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
+| `pai worker wait-on <pid>` | Wait at most --max seconds (default 110, cap 115) for a detached job's pid; exit 0 gone, 3 still running, 2 never existed. |
 | `pai worker watch` | ps refreshed every 2 seconds (plain `watch`, colors kept) |
 | `pai zettel` | Zettelkasten intelligence: explore, surprise, converse, themes, health, suggest |
 | `pai zettel converse <question>` | Ask the vault a question and get a synthesis prompt with relevant notes |

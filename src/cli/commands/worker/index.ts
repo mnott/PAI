@@ -26,6 +26,7 @@ import { workersLogDir, eventsPath, ledgerPath } from "../../../workers/paths.js
 import { longInlinePromptHint, parseRunnerArgs } from "../../../workers/args.js";
 import { runWorker } from "../../../workers/run.js";
 import { runChain } from "../../../workers/chain.js";
+import { waitOn } from "../../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
@@ -477,6 +478,23 @@ export function registerWorkerCommands(workerCmd: Command): void {
           console.log(`${r.ok ? "all identical" : "not applied"} (${r.files.length} file(s), ${r.ref} vs ${r.against})`);
         }
         if (!r.ok) process.exitCode = 1;
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("wait-on <pid>")
+    .description(
+      "Wait at most --max seconds (default 110, cap 115) for a detached job's pid; exit 0 gone, 3 still running, 2 never existed.\n" +
+        "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid ; then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until exit 0."
+    )
+    .option("--log <file>", "Log file whose last lines are printed on return; <file>.rc holds the exit code")
+    .option("--max <secs>", "Maximum seconds to block (default 110, hard cap 115)", parseIntArg)
+    .option("--tail <n>", "Log lines printed on return (default 20)", parseIntArg)
+    .action(async (pid: string, opts: { log?: string; max?: number; tail?: number }) => {
+      try {
+        process.exitCode = await waitOn({ pid: Number(pid), log: opts.log, maxSecs: opts.max, tail: opts.tail });
       } catch (e) {
         fail(e);
       }
