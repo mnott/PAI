@@ -11,6 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { shortText } from "./args.js";
+import { WAIT_RECIPE } from "./wait-on.js";
 import type { Paint } from "./render.js";
 import { ag2Spec, ag2ToWorkerReport, parseAg2Report } from "./agentish.js";
 
@@ -116,8 +117,8 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "Never sleep-poll: no `sleep N` over 60 seconds, anywhere in a command — standalone, after `&&`/`||`/",
     "`;`/`|`, or inside a loop or subshell — and the sleeps of one command add up (`sleep 58; sleep 58` is",
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
-    "run_in_background is denied. Run the long command in the FOREGROUND with a Bash timeout up to 600000 ms",
-    "and split longer jobs into steps that each fit it.",
+    "run_in_background is denied. Foreground Bash calls stay under 2 min (longer ones block operator messages and supervision and are denied);",
+    `run a long job detached: ${WAIT_RECIPE}.`,
     "Kill only processes you started, by PID (`cmd & echo $! > /tmp/x.pid`, then `kill $(cat /tmp/x.pid)`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",

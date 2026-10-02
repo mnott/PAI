@@ -12,6 +12,7 @@
  */
 
 import { SLEEP_FLOOR_SECS, totalSleepSecs } from "../../../workers/status.js";
+import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 
 export interface SleepPollGateInput {
   tool_name?: string;
@@ -32,8 +33,7 @@ export function denyReason(secs: number, isWorker: boolean): string {
   if (isWorker) {
     return (
       lead +
-      "In a worker, run the long command in the FOREGROUND with a Bash timeout up to 600000 ms " +
-        "and split longer jobs into steps; run_in_background is denied here."
+      `In a worker, run a long job detached: ${WAIT_RECIPE}. run_in_background is denied here.`
     );
   }
   return (
@@ -50,8 +50,8 @@ export function denyReason(secs: number, isWorker: boolean): string {
  */
 const BACKGROUND_WORKER_REASON =
   "run_in_background is blocked in a worker: ending your turn ends this process and kills the job, " +
-  "there is no completion notification. Run the command in the FOREGROUND with a Bash timeout up to " +
-  "600000 ms, and split a longer job into steps that each fit in that.";
+  "there is no completion notification. Run a long job detached: " +
+  WAIT_RECIPE + ".";
 
 export function decideSleepPollGate(
   input: SleepPollGateInput,

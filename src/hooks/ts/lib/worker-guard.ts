@@ -20,11 +20,13 @@ import { dirname, resolve } from "node:path";
 import { type GateDecision } from "./sleep-poll-gate.js";
 import { decideWorkerGitGuard } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
+import { totalSleepSecs } from "../../../workers/status.js";
+import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
   cwd?: string;
-  tool_input?: { command?: string; file_path?: string; path?: string };
+  tool_input?: { command?: string; file_path?: string; path?: string; timeout?: number };
 }
 
 export interface WorkerGuardContext {
@@ -200,7 +202,7 @@ const PATTERN_KILL_REASON =
   "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";
 
 /** Decide one segment; `st.cwd` is the tracked working directory. */
-function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext): GateDecision {
+function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
   const [cmd, ...args] = words;
   const boundary = ctx.worktreeRoot ?? ctx.cwd;
@@ -213,7 +215,7 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   if (!cmd) return ALLOW;
 
   if ((cmd === "bash" || cmd === "sh" || cmd === "zsh") && args[0] === "-c" && args[1]) {
-    return decideCommand(args[1], { ...ctx, cwd: st.cwd });
+    return decideCommand(args[1], { ...ctx, cwd: st.cwd }, detached);
   }
 
   const pos = args.filter((a) => !isFlag(a));
@@ -292,10 +294,49 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   return ALLOW;
 }
 
-function decideCommand(command: string, ctx: WorkerGuardContext): GateDecision {
+const MAX_FOREGROUND_SECS = 120;
+const WAIT_REASON_TAIL =
+  "calls longer than 2 min block operator messages and supervision; long jobs run fine detached: " + WAIT_RECIPE + ".";
+
+const unitSecs = (u: string): number => (u === "m" ? 60 : u === "h" ? 3600 : u === "d" ? 86_400 : 1);
+
+/** Longest `timeout N` (timeout/gtimeout, any flags) among the segments, in seconds. */
+function longestTimeoutSecs(segs: Segment[]): number {
+  let longest = 0;
+  for (const seg of segs) {
+    const [cmd, ...args] = stripPrefix(seg.words);
+    if (cmd !== "timeout" && cmd !== "gtimeout") continue;
+    for (let i = 0; i < args.length; i++) {
+      if (/^-[sk]$/.test(args[i])) i++;
+      else if (!isFlag(args[i])) {
+        const m = /^(\d+(?:\.\d+)?)([smhd]?)$/.exec(args[i]);
+        if (m) longest = Math.max(longest, Number(m[1]) * unitSecs(m[2]));
+        break;
+      }
+    }
+  }
+  return longest;
+}
+
+/** Deny a foreground command that would block longer than 2 min; `nohup …` segments are the detached launch and exempt. */
+function longWaitReason(command: string, segs: Segment[]): string | null {
+  const fg = segs.filter((s) => s.words[0] !== "nohup");
+  const t = longestTimeoutSecs(fg);
+  if (t > MAX_FOREGROUND_SECS) return `timeout ${t}s blocked: ${WAIT_REASON_TAIL}`;
+  // Quoted text and nohup launches are not foreground sleeps; loops count at least one sleep floor (one parser: totalSleepSecs).
+  const bare = command.replace(/'[^']*'|"[^"]*"/g, "''").replace(/\bnohup\b[^;&|\n]*/g, "");
+  const s = totalSleepSecs(bare);
+  if (s > MAX_FOREGROUND_SECS) return `sleep ${s}s blocked: ${WAIT_REASON_TAIL}`;
+  return null;
+}
+
+function decideCommand(command: string, ctx: WorkerGuardContext, detached = false): GateDecision {
   const st = { cwd: ctx.cwd, raw: command };
-  for (const seg of parseCommand(command)) {
-    const d = decideSegment(seg, st, ctx);
+  const segs = parseCommand(command);
+  const long = detached ? null : longWaitReason(command, segs);
+  if (long) return deny(long);
+  for (const seg of segs) {
+    const d = decideSegment(seg, st, ctx, seg.words[0] === "nohup");
     if (d.decision === "deny") return d;
   }
   return ALLOW;
@@ -314,6 +355,9 @@ export function decideWorkerGuard(
     return deny(`${tool} blocked: this worker runs with --no-browser`);
   }
   if (tool === "Bash") {
+    if (typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {
+      return deny(`Bash timeout ${ti.timeout} ms blocked: ${WAIT_REASON_TAIL}`);
+    }
     return typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
   }
   if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
