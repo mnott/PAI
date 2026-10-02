@@ -51,7 +51,7 @@ describe("prompt helpers under --yes", () => {
   it("a prompt with no default fails instead of returning an empty value", async () => {
     const u = await load();
     u.setupOptions.yes = true;
-    await expect(u.prompt(rl, "Paste your token: ")).rejects.toThrow(/no default.*--yes/);
+    await expect(u.prompt(rl, "Enter a required value: ")).rejects.toThrow(/no default.*--yes/);
   });
 });
 
