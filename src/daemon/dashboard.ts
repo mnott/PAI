@@ -25,6 +25,7 @@ const COUNTS_TTL_MS = 5 * 60_000;
 const STALL_MS = 5 * 60_000;
 const RATE_WINDOW_MS = 5 * 60_000;
 const EXACT_TIMEOUT_MS = 20_000;
+const HISTORY_MAX = 120; // 1 h of 30 s samples
 
 export type Level = "green" | "amber" | "red";
 const RANK: Record<Level, number> = { green: 0, amber: 1, red: 2 };
@@ -132,6 +133,23 @@ export interface JobView {
   lastProgressAt: number;
   stalled: boolean;
   level: Level;
+  /** Last hour of samples (oldest first); the page derives the per-interval rate from it. */
+  history: JobSample[];
+}
+
+export interface IndexSegments {
+  /** Vectors from the new backend (re-embed done count), 0 when no re-embed runs. */
+  fresh: number;
+  /** Embedded by the old backend, still to replace. */
+  old: number;
+  missing: number;
+}
+
+/** Stacked-bar numbers: done/embedded/total in, three non-negative segments out. `done` null = no re-embed. */
+export function indexSegments(total: number, embedded: number, done: number | null): IndexSegments {
+  const missing = Math.max(0, total - embedded);
+  if (done === null) return { fresh: 0, old: Math.max(0, embedded), missing };
+  return { fresh: done, old: Math.max(0, embedded - done), missing };
 }
 
 function phaseOf(s: Record<string, unknown>): JobView["phase"] {
@@ -144,7 +162,7 @@ function phaseOf(s: Record<string, unknown>): JobView["phase"] {
 
 export class DashboardState {
   private cache: Cache = { counts: null, binding: null, bindingError: null, jobs: [], backend: null, loaded: null };
-  private samples = new Map<string, { list: JobSample[]; progressAt: number; lastDone: number }>();
+  private samples = new Map<string, { list: JobSample[]; history: JobSample[]; progressAt: number; lastDone: number }>();
   private lastExactAt: number;
   private exactRunning = false;
 
@@ -194,9 +212,11 @@ export class DashboardState {
 
   private sample(j: RawJob, t: number): void {
     const done = Number(j.state.done ?? 0);
-    const s = this.samples.get(j.name) ?? { list: [], progressAt: t, lastDone: done };
+    const s = this.samples.get(j.name) ?? { list: [], history: [], progressAt: t, lastDone: done };
     if (done !== s.lastDone) { s.progressAt = t; s.lastDone = done; }
     s.list.push({ t, done });
+    s.history.push({ t, done });
+    if (s.history.length > HISTORY_MAX) s.history.shift();
     while (s.list.length > 2 && t - s.list[0].t > RATE_WINDOW_MS) s.list.shift();
     this.samples.set(j.name, s);
   }
@@ -213,7 +233,7 @@ export class DashboardState {
     // Progress time = when `done` last changed as seen by this daemon; first sight if never.
     const lastProgressAt = s?.progressAt ?? t;
     const stalled = phase !== "done" && t - lastProgressAt >= STALL_MS;
-    return { name: j.name, phase, done, total, rate, etaSecs, lastProgressAt, stalled, level: stalled ? "red" : "green" };
+    return { name: j.name, phase, done, total, rate, etaSecs, lastProgressAt, stalled, level: stalled ? "red" : "green", history: s?.history ?? [] };
   }
 
   status() {
@@ -249,9 +269,21 @@ export class DashboardState {
       }
     }
 
+    const level = worst([indexLevel, backendLevel, ...jobs.map((j) => j.level), ...passes.map((p) => p.level)]);
+    const reason =
+      level === "green" ? "all systems healthy"
+      : c.bindingError ? `binding check failed: ${c.bindingError}`
+      : jobs.find((j) => j.stalled) ? `job ${jobs.find((j) => j.stalled)!.name} stalled`
+      : c.backend && !c.backend.ok ? `backend unavailable: ${c.backend.reason}`
+      : passes.find((p) => p.failure) ? `pass ${passes.find((p) => p.failure)!.name} failed`
+      : hint ?? (reembedActive ? `re-embed ${reembedJob!.name} running` : c.backend ? "degraded" : "backend not probed yet");
+    const activeJob = reembedActive ? jobs.find((j) => j.name === reembedJob!.name) : undefined;
+    const segments = counts && counts.embedded !== null ? indexSegments(counts.chunks, counts.embedded, activeJob ? activeJob.done : null) : null;
+
     return {
       generatedAt: t,
-      level: worst([indexLevel, backendLevel, ...jobs.map((j) => j.level), ...passes.map((p) => p.level)]),
+      level,
+      reason,
       daemon: { pid: d.pid, uptimeSecs: Math.floor((t - d.startTime) / 1000), version: d.version, storage: this.src.storage },
       index: {
         level: indexLevel,
@@ -261,6 +293,7 @@ export class DashboardState {
         coverage: counts && counts.embedded !== null && counts.chunks > 0 ? Math.min(1, counts.embedded / counts.chunks) : null,
         countsExact: counts?.exact ?? false,
         countsAt: counts?.at ?? null,
+        segments,
         binding: c.binding,
         configured: { backend: be.id, model: be.model, dims: be.dims },
         mismatch,

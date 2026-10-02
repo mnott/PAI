@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DashboardState, hostAllowed, startDashboard, type DashboardSource, type PassSnapshot } from "./dashboard.js";
+import { DashboardState, hostAllowed, indexSegments, startDashboard, type DashboardSource, type PassSnapshot } from "./dashboard.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 
 const MIN = 60_000;
@@ -132,6 +132,34 @@ describe("status assembly", () => {
     const s = st.status();
     expect(s.jobs).toHaveLength(1);
     expect(s.jobs[0]).toMatchObject({ phase: "done", stalled: false, level: "green" });
+  });
+});
+
+describe("history and index segments", () => {
+  it("keeps at most 120 samples (1 h), oldest dropped, and exposes them in status", async () => {
+    let now = 0;
+    let done = 0;
+    const st = new DashboardState(source({ jobs: async () => [{ name: "j", state: { prepared: true, done, total: 9999 } }] }), () => now);
+    for (let i = 0; i < 130; i++) { await st.tick(); now += 30_000; done += 5; }
+    const h = st.status().jobs[0].history;
+    expect(h).toHaveLength(120);
+    expect(h[0]).toEqual({ t: 10 * 30_000, done: 50 });
+    expect(h[119]).toEqual({ t: 129 * 30_000, done: 645 });
+  });
+
+  it("splits vectors into new/old/missing and floors old at 0", () => {
+    expect(indexSegments(1000, 600, 100)).toEqual({ fresh: 100, old: 500, missing: 400 });
+    expect(indexSegments(1000, 600, 800)).toEqual({ fresh: 800, old: 0, missing: 400 });
+    expect(indexSegments(1000, 1200, null)).toEqual({ fresh: 0, old: 1200, missing: 0 });
+    expect(indexSegments(1000, 600, null)).toEqual({ fresh: 0, old: 600, missing: 400 });
+  });
+
+  it("puts segments and a reason into status", async () => {
+    const st = new DashboardState(source({ jobs: async () => [{ name: "ollama-f16-reembed", state: { prepared: true, done: 20, total: 100 } }], binding: async () => ({ backend: "x", model: "", dims: 0 }) }));
+    await st.tick();
+    const s = st.status();
+    expect(s.index.segments).toEqual({ fresh: 20, old: 30, missing: 50 });
+    expect(s.reason).toContain("re-embed");
   });
 });
 
