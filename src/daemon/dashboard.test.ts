@@ -52,6 +52,35 @@ describe("status assembly", () => {
     expect(s.index.hint).toContain("pai memory reembed");
   });
 
+  it("flags a binding mismatch amber with re-embed hint when an active re-embed job for that backend exists", async () => {
+    const st = new DashboardState(
+      source({
+        binding: async () => ({ backend: "transformers-cpu-q8", model: "", dims: 0 }),
+        jobs: async () => [{ name: "ollama-f16-reembed", state: { prepared: true, carryDone: false, done: 100, total: 1000 } }],
+      }),
+    );
+    await st.tick();
+    const s = st.status();
+    expect(s.level).toBe("amber");
+    expect(s.index.level).toBe("amber");
+    expect(s.index.mismatch).toBe(true);
+    expect(s.index.hint).toContain("re-embed to ollama-f16 in progress");
+    expect(s.index.hint).toContain("keyword-only");
+  });
+
+  it("shows mismatch red when re-embed job is finished or stalled", async () => {
+    const st = new DashboardState(
+      source({
+        binding: async () => ({ backend: "transformers-cpu-q8", model: "", dims: 0 }),
+        jobs: async () => [{ name: "ollama-f16-reembed", state: { finished: true, done: 1000, total: 1000 } }],
+      }),
+    );
+    await st.tick();
+    const s = st.status();
+    expect(s.index.level).toBe("red");
+    expect(s.index.hint).toContain("pai memory reembed");
+  });
+
   it("flags an unavailable backend red", async () => {
     const st = new DashboardState(source({ backend: () => backend(false) }));
     await st.tick();

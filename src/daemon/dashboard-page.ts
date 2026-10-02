@@ -71,7 +71,8 @@ function render(s) {
     fill.style.width = pct + "%";
     bar.append(fill);
     js.append(row("phase", j.phase), bar, row("progress", n(j.done) + " / " + n(j.total) + " (" + pct.toFixed(1) + "%)"));
-    js.append(row("rate", j.rate === null ? "?" : j.rate.toFixed(1) + " /s"), row("ETA", dur(j.etaSecs)));
+    const etaText = j.etaSecs !== null ? dur(j.etaSecs) + " (about " + new Date(s.generatedAt + j.etaSecs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")" : "?";
+    js.append(row("rate", j.rate === null ? "?" : j.rate.toFixed(1) + " /s"), row("ETA", etaText));
     js.append(row("last progress", when(j.lastProgressAt)));
     if (j.stalled) js.append(row("state", "STALLED", true));
     frag.append(js);

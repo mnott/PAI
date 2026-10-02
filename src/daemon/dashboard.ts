@@ -226,13 +226,28 @@ export class DashboardState {
 
     const mismatch = !!c.binding && !bindingMatches(c.binding, be);
     const counts = c.counts;
-    const indexLevel: Level = mismatch || c.bindingError ? "red" : "green";
+
+    // Check for active re-embed job for the configured backend
+    const reembedJob = this.findReembedJob(c.jobs, be.id);
+    const reembedActive = reembedJob && !["done"].includes(phaseOf(reembedJob.state));
+
+    const indexLevel: Level = (mismatch && !reembedActive) || c.bindingError ? "red" : reembedActive ? "amber" : "green";
     const backendLevel: Level = c.backend && !c.backend.ok ? "red" : c.backend ? "green" : "amber";
 
     const passes = this.src.passes().map((p) => ({
       ...p,
       level: (p.failure ? "red" : "green") as Level,
     }));
+
+    let hint: string | null = null;
+    if (mismatch && c.binding) {
+      if (reembedActive) {
+        const jobBackend = this.deriveBackendFromJobName(reembedJob!.name);
+        hint = `re-embed to ${jobBackend} in progress, semantic search keyword-only until it finishes`;
+      } else {
+        hint = mismatchReason(c.binding, be);
+      }
+    }
 
     return {
       generatedAt: t,
@@ -249,7 +264,7 @@ export class DashboardState {
         binding: c.binding,
         configured: { backend: be.id, model: be.model, dims: be.dims },
         mismatch,
-        hint: mismatch && c.binding ? mismatchReason(c.binding, be) : null,
+        hint,
         error: c.bindingError,
       },
       jobs,
@@ -263,6 +278,15 @@ export class DashboardState {
         loaded: c.loaded?.map((m) => ({ name: m.name, size: m.size, sizeVram: m.sizeVram, gpuShare: m.size > 0 ? m.sizeVram / m.size : null })) ?? null,
       },
     };
+  }
+
+  private findReembedJob(jobs: RawJob[], configuredBackendId: string): RawJob | undefined {
+    return jobs.find((j) => j.name.endsWith("-reembed") && this.deriveBackendFromJobName(j.name) === configuredBackendId);
+  }
+
+  private deriveBackendFromJobName(jobName: string): string {
+    const match = jobName.match(/^(.+)-reembed$/);
+    return match ? match[1] : jobName;
   }
 }
 
