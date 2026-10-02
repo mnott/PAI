@@ -90,12 +90,16 @@ export function registerSearchCommand(memoryCmd: Command): void {
           results = await backend.searchKeyword(query, searchOpts);
 
         } else {
-          const { generateEmbedding } = await import("../../../memory/embeddings.js");
+          const { embedQuery } = await import("../../../memory/embedding-gate.js");
 
           console.log(dim("Generating query embedding..."));
-          const queryEmbedding = await generateEmbedding(query, true);
+          const q = await embedQuery(backend, query);
+          const queryEmbedding = q.vec;
 
-          if (mode === "semantic") {
+          if (!queryEmbedding) {
+            console.log(dim(`  ${q.note}`));
+            results = await backend.searchKeyword(query, searchOpts);
+          } else if (mode === "semantic") {
             results = await backend.searchSemantic(queryEmbedding, searchOpts);
           } else {
             // Hybrid: combine keyword (BM25) and semantic results with min-max normalization

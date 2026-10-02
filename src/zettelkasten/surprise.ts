@@ -1,9 +1,9 @@
 import type { StorageBackend } from "../storage/interface.js";
 import {
   deserializeEmbedding,
-  generateEmbedding,
   cosineSimilarity,
 } from "../memory/embeddings.js";
+import { requireQueryEmbedding } from "../memory/embedding-gate.js";
 
 export interface SurpriseOptions {
   referencePath: string;
@@ -163,7 +163,7 @@ export async function zettelSurprise(
   if (!found) {
     const files = await backend.getVaultFilesByPaths([opts.referencePath]);
     const text = files[0]?.title ?? opts.referencePath;
-    refEmbedding = await generateEmbedding(text, true);
+    refEmbedding = await requireQueryEmbedding(backend, text);
   }
 
   const allFileEmbeddings = await getFileEmbeddings(backend, opts.vaultProjectId);

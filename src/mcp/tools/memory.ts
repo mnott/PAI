@@ -12,7 +12,7 @@ import type { SearchConfig } from "../../daemon/config.js";
 import type { SearchResult } from "../../memory/search.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
-import { generateEmbedding } from "../../memory/embeddings.js";
+import { embedQuery } from "../../memory/embedding-gate.js";
 import { applyLinkBoost } from "../../memory/link-boost.js";
 import { rerankResults } from "../../memory/reranker.js";
 import { applyRecencyBoost } from "../../memory/search.js";
@@ -82,13 +82,18 @@ export async function toolMemorySearch(
     };
 
     let results: SearchResult[];
+    let embedNote = "";
 
     if (mode === "keyword") {
       results = await federation.searchKeyword(params.query, searchOpts);
     } else if (mode === "semantic" || mode === "hybrid") {
-      const queryEmbedding = await generateEmbedding(params.query, true);
-
-      if (mode === "semantic") {
+      const q = await embedQuery(federation, params.query);
+      const queryEmbedding = q.vec;
+      if (!queryEmbedding) {
+        // Mismatched or unavailable backend: keyword-only, never another backend.
+        embedNote = `\nNote: ${q.note}`;
+        results = await federation.searchKeyword(params.query, searchOpts);
+      } else if (mode === "semantic") {
         results = await federation.searchSemantic(queryEmbedding, searchOpts);
       } else {
         // Hybrid: combine keyword + semantic
@@ -164,7 +169,7 @@ export async function toolMemorySearch(
         content: [
           {
             type: "text",
-            text: `No results found for query: "${params.query}" (mode: ${mode})`,
+            text: `No results found for query: "${params.query}" (mode: ${mode})${embedNote}`,
           },
         ],
       };
@@ -209,7 +214,7 @@ export async function toolMemorySearch(
       content: [
         {
           type: "text",
-          text: `Found ${withSlugs.length} result(s) for "${params.query}" (mode: ${mode}${rerankLabel}):\n\n${formatted}`,
+          text: `Found ${withSlugs.length} result(s) for "${params.query}" (mode: ${mode}${rerankLabel}):${embedNote}\n\n${formatted}`,
         },
       ],
     };

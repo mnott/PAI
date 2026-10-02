@@ -1,7 +1,28 @@
 /** Step 3: Embedding model selection for semantic search. */
 
-import { c, line, section, type Rl, promptMenu, readConfigRaw } from "../utils.js";
+import { c, line, section, type Rl, promptMenu, promptYesNo, readConfigRaw } from "../utils.js";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
+import { detectBackends, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL } from "../../../../memory/backends/index.js";
+
+/**
+ * Probe the embedding backends (also under --yes). A fresh install adopts the
+ * fastest available one; an existing install (embeddingModel already set) may
+ * hold vectors from the current backend, so it is only told what is available.
+ */
+async function stepBackend(rl: Rl, fresh: boolean): Promise<Record<string, unknown>> {
+  const { results, recommended } = await detectBackends();
+  line();
+  for (const r of results) console.log(`  ${r.ok ? c.ok(r.id) : c.dim(r.id)}: ${r.reason}`);
+  if (!recommended) return {};
+  if (!fresh) {
+    console.log(c.dim(`  Recommended: ${recommended}. Switch with \`pai memory backend use ${recommended}\` + \`pai memory reembed\`.`));
+    return {};
+  }
+  if (recommended === OLLAMA_ID && (await promptYesNo(rl, "Use Ollama (GPU, several times faster)?", true))) {
+    return { embedding: { backend: OLLAMA_ID, model: OLLAMA_DEFAULT_MODEL, ollama: { baseUrl: OLLAMA_DEFAULT_URL } } };
+  }
+  return {};
+}
 
 export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   section("Step 3: Embedding Model");
@@ -9,7 +30,7 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   const existing = readConfigRaw();
   if (existing.embeddingModel) {
     console.log(c.ok(`Embedding model: ${existing.embeddingModel}. Skipping.`));
-    return { embeddingModel: existing.embeddingModel };
+    return { embeddingModel: existing.embeddingModel, ...(await stepBackend(rl, false)) };
   }
 
   line();
@@ -54,5 +75,7 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
     console.log(c.dim(`  Add later: update embeddingModel in ${CONFIG_FILE}`));
   }
 
-  return { embeddingModel: selectedModel ?? "none" };
+  // Backends embed the Arctic model only; other choices stay on the in-process path.
+  const backendUpdate = selectedModel === models[0] ? await stepBackend(rl, true) : {};
+  return { embeddingModel: selectedModel ?? "none", ...backendUpdate };
 }

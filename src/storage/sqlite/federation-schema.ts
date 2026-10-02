@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS memory_chunks (
   embedding        BLOB
 );
 
+CREATE TABLE IF NOT EXISTS embedding_binding (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  backend    TEXT    NOT NULL,
+  model      TEXT    NOT NULL,
+  dims       INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
   text,
   id UNINDEXED,
