@@ -263,7 +263,7 @@ export function startIndexScheduler(): void {
  * Milliseconds until the next occurrence of `hour`:00 local time.
  * Falls back to the plain interval when no anchor hour is configured.
  */
-function msUntilNextAnchor(hour: number | undefined, intervalMs: number): number {
+export function msUntilNextAnchor(hour: number | undefined, intervalMs: number): number {
   if (hour === undefined || !Number.isInteger(hour) || hour < 0 || hour > 23) {
     return intervalMs;
   }

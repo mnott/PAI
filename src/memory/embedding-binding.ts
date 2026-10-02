@@ -31,3 +31,8 @@ export function bindingMatches(b: EmbeddingBinding, cur: { id: string; model: st
 export function describeBinding(b: { backend: string; model: string }): string {
   return b.model ? `${b.backend} (${b.model})` : b.backend;
 }
+
+/** The hint shown wherever a binding mismatch pauses embedding (CLI, gate, dashboard). */
+export function mismatchReason(b: EmbeddingBinding, cur: { id: string; model: string }): string {
+  return `index embedded with ${describeBinding(b)}, configured ${describeBinding({ backend: cur.id, model: cur.model })}: run \`pai memory reembed\` to switch`;
+}

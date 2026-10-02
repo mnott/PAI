@@ -86,6 +86,9 @@ export async function handleRequest(
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
         vaultPath: daemonConfig.vaultPath ?? null,
         workQueue: getQueueStats(),
+        dashboard: daemonConfig.dashboard.enabled
+          ? `http://${daemonConfig.dashboard.bind}:${daemonConfig.dashboard.port}/`
+          : null,
         passFailures: Object.fromEntries(
           [...passFailures].map(([k, v]) => [k, { ...v, at: new Date(v.at).toISOString() }])
         ),

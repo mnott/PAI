@@ -109,6 +109,15 @@ export interface EmbeddingConfig {
   ollama: { baseUrl: string };
 }
 
+export interface DashboardConfig {
+  /** Serve the read-only status dashboard. Default: true. */
+  enabled: boolean;
+  /** TCP port. Default: 8770 (8765-8768 are taken by other local services). */
+  port: number;
+  /** Bind address. Default "127.0.0.1"; add the tailnet IP to reach it from a phone. */
+  bind: string;
+}
+
 export interface PaiDaemonConfig {
   /** Unix Domain Socket path for IPC */
   socketPath: string;
@@ -170,6 +179,9 @@ export interface PaiDaemonConfig {
 
   /** Interactive-session settings (currently just the cache keepalive). */
   sessions: SessionsConfig;
+
+  /** Read-only memory status dashboard (src/daemon/dashboard.ts). */
+  dashboard: DashboardConfig;
 }
 
 /**
@@ -273,6 +285,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   // guess here is an address that can be mailed without review.
   identity: { selfEmails: [] },
   sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
+  dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
   search: {
     mode: "keyword",
     rerank: true,

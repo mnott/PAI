@@ -58,6 +58,10 @@ describe("loadConfig", () => {
     expect(cfg.logLevel).toBe("info");
   });
 
+  it("defaults the dashboard to enabled on loopback port 8770", () => {
+    expect(loadConfig().dashboard).toEqual({ enabled: true, port: 8770, bind: "127.0.0.1" });
+  });
+
   it("loads config.json when no config.yaml exists", () => {
     writeFileSync(configFile, JSON.stringify({ logLevel: "debug" }), "utf-8");
     expect(loadConfig().logLevel).toBe("debug");
