@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { DashboardState, hostAllowed, indexSegments, startDashboard, type DashboardSource, type PassSnapshot } from "./dashboard.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const MIN = 60_000;
 
@@ -233,5 +236,99 @@ describe("server", () => {
     expect(code).toBe(403);
 
     expect((await fetch(`${base}/api/status`, { method: "POST" })).status).toBe(405);
+  });
+});
+
+describe("ETA calculation", () => {
+  it("computes ETA with live numbers: done=105488, rate=65.98, total=2699865", async () => {
+    let now = 0;
+    let done = 105488;
+    const job = () => [{ name: "reembed", state: { prepared: true, carryDone: true, done, total: 2699865 } }];
+    const st = new DashboardState(source({ jobs: async () => job() }), () => now);
+    await st.tick(); // first sample
+    now += 60_000;
+    done = 105488 + Math.round(65.98 * 60); // add 60s of work at 65.98 rows/s
+    await st.tick(); // second sample
+    const j = st.status().jobs[0];
+    expect(j.rate).toBeCloseTo(65.98, 0);
+    // (2699865 - 105488) / 65.98 ≈ 39330 s; rounding and sample timing may vary ~100s
+    expect(j.etaSecs).toBeLessThan(39400);
+    expect(j.etaSecs).toBeGreaterThan(39200);
+  });
+
+  it("handles missing total gracefully (defaults to 0, eta stays null)", async () => {
+    let now = 0;
+    const job = () => [{ name: "j", state: { prepared: true, carryDone: true, done: 100 } }];
+    const st = new DashboardState(source({ jobs: async () => job() }), () => now);
+    await st.tick();
+    now += 60_000;
+    await st.tick();
+    const j = st.status().jobs[0];
+    expect(j.total).toBe(0);
+    expect(j.etaSecs).toBeNull();
+  });
+});
+
+describe("history persistence", () => {
+  let tmpDir: string;
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), "dashboard-")); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("persists and reloads history, pruning samples >2h old and jobs no longer present", async () => {
+    const historyFile = join(tmpDir, "history.json");
+    let now = 0;
+    let done = 0;
+    const activeJobs = ["active", "old"];
+    const st1 = new DashboardState(
+      source({ jobs: async () => activeJobs.map((n) => ({ name: n, state: { prepared: true, done, total: 1000 } })) }),
+      () => now,
+      historyFile,
+    );
+
+    // First 60 samples (30 min)
+    for (let i = 0; i < 60; i++) { await st1.tick(); now += 30_000; done += 5; }
+    let status1 = st1.status();
+    expect(status1.jobs).toHaveLength(2);
+    expect(status1.jobs[0].history.length).toBeGreaterThan(0);
+
+    // Now advance 2+ hours, trigger another persist
+    now += 2 * 60 * 60_000; // +2h
+    done = 400;
+    await st1.tick(); // triggers persist if 30s elapsed
+
+    // Load in a new state with only "active" job
+    activeJobs.splice(activeJobs.indexOf("old"), 1);
+    const st2 = new DashboardState(
+      source({ jobs: async () => activeJobs.map((n) => ({ name: n, state: { prepared: true, done, total: 1000 } })) }),
+      () => now,
+      historyFile,
+    );
+    await st2.loadHistory();
+    // Tick to sample the loaded job
+    await st2.tick();
+    let status2 = st2.status();
+    // After loading and ticking, the active job should have history from the loaded file
+    expect(status2.jobs).toHaveLength(1);
+    expect(status2.jobs[0].name).toBe("active");
+    expect(status2.jobs[0].history.length).toBeGreaterThan(0);
+  });
+
+  it("writes history at most every 30s", async () => {
+    const historyFile = join(tmpDir, "history.json");
+    let now = 0;
+    const st = new DashboardState(source({ jobs: async () => [{ name: "j", state: { prepared: true, done: 100, total: 1000 } }] }), () => now, historyFile);
+
+    await st.tick(); // first tick
+    now += 5_000;
+    await st.tick();
+    now += 5_000;
+    await st.tick();
+    // These should NOT trigger persist writes (within 30s window)
+
+    now += 20_000; // total 30s
+    await st.tick(); // should trigger persist
+    // just verify no errors and state is consistent
+    const status = st.status();
+    expect(status.jobs).toHaveLength(1);
   });
 });

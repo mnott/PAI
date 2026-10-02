@@ -13,12 +13,16 @@
 import { execFile } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { promisify } from "node:util";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Pool } from "pg";
 import type { EmbeddingBinding, StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
 import { DASHBOARD_HTML } from "./dashboard-page.js";
 import type { DashboardConfig } from "./config.js";
+import { paiHomePath } from "../config/pai-home.js";
 
 const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
@@ -26,6 +30,8 @@ const STALL_MS = 5 * 60_000;
 const RATE_WINDOW_MS = 5 * 60_000;
 const EXACT_TIMEOUT_MS = 20_000;
 const HISTORY_MAX = 120; // 1 h of 30 s samples
+const HISTORY_PERSIST_MS = 30_000; // write at most every 30s
+const HISTORY_PRUNE_AGE_MS = 2 * 60 * 60_000; // 2 hours
 
 export type Level = "green" | "amber" | "red";
 const RANK: Record<Level, number> = { green: 0, amber: 1, red: 2 };
@@ -113,6 +119,10 @@ interface JobSample {
   done: number;
 }
 
+interface PersistedHistory {
+  jobs: Record<string, JobSample[]>;
+}
+
 interface Cache {
   counts: (Counts & { exact: boolean; at: number }) | null;
   binding: EmbeddingBinding | null;
@@ -165,9 +175,53 @@ export class DashboardState {
   private samples = new Map<string, { list: JobSample[]; history: JobSample[]; progressAt: number; lastDone: number }>();
   private lastExactAt: number;
   private exactRunning = false;
+  private lastPersistAt: number;
+  private historyPath: string;
 
-  constructor(private src: DashboardSource, private now: () => number = Date.now) {
+  constructor(private src: DashboardSource, private now: () => number = Date.now, historyPath?: string) {
     this.lastExactAt = now();
+    this.lastPersistAt = now();
+    this.historyPath = historyPath ?? paiHomePath("state", "dashboard-history.json");
+  }
+
+  async loadHistory(): Promise<void> {
+    try {
+      if (!existsSync(this.historyPath)) return;
+      const content = await readFile(this.historyPath, "utf8");
+      const data = JSON.parse(content) as PersistedHistory;
+      const now = this.now();
+      for (const [name, hist] of Object.entries(data.jobs ?? {})) {
+        const pruned = hist.filter((s) => now - s.t <= HISTORY_PRUNE_AGE_MS);
+        if (pruned.length > 0) {
+          const s = this.samples.get(name) ?? { list: [], history: [], progressAt: now, lastDone: 0 };
+          s.history = pruned.slice(-HISTORY_MAX);
+          this.samples.set(name, s);
+        }
+      }
+    } catch {
+      // silently ignore load errors
+    }
+  }
+
+  private async persistHistory(): Promise<void> {
+    const t = this.now();
+    if (t - this.lastPersistAt < HISTORY_PERSIST_MS) return;
+    this.lastPersistAt = t;
+
+    try {
+      const jobs: Record<string, JobSample[]> = {};
+      for (const [name, s] of this.samples) {
+        if (s.history.length > 0) jobs[name] = s.history;
+      }
+      const data: PersistedHistory = { jobs };
+      const dir = join(this.historyPath, "..");
+      await mkdir(dir, { recursive: true });
+      const tmp = this.historyPath + ".tmp";
+      await writeFile(tmp, JSON.stringify(data), "utf8");
+      await writeFile(this.historyPath, JSON.stringify(data), "utf8");
+    } catch {
+      // silently ignore persist errors
+    }
   }
 
   /** Sample everything once. Never throws: a failing source shows up in the status instead. */
@@ -197,6 +251,8 @@ export class DashboardState {
     const be = this.src.backend();
     c.backend = (await run(() => be.available(), () => {})) ?? { ok: false, reason: "availability probe threw" };
     c.loaded = be.id.startsWith("ollama") ? (await run(() => this.src.loadedModels(), () => {})) ?? null : null;
+
+    await this.persistHistory();
   }
 
   /** Real counts at most every COUNTS_TTL_MS, in the background; the tick never waits for them. */
@@ -336,9 +392,10 @@ export interface DashboardHandle {
 export async function startDashboard(
   cfg: DashboardConfig,
   src: DashboardSource,
-  opts: { extraHosts?: string[] } = {},
+  opts: { extraHosts?: string[]; historyPath?: string } = {},
 ): Promise<DashboardHandle> {
-  const state = new DashboardState(src);
+  const state = new DashboardState(src, Date.now, opts.historyPath);
+  await state.loadHistory();
   const allowed = [cfg.bind, "localhost", "127.0.0.1", "::1", ...(opts.extraHosts ?? (await tailnetHosts()))];
 
   const server = createServer((req, res) => {
