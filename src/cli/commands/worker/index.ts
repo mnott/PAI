@@ -105,7 +105,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--no-pane", "Do not open a follow pane for this worker")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
-    .option("--max-minutes <n>", "Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60)", parseMinutesArg)
+    .option("--max-minutes <n>", "Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60, headless runs only: interactive launches have no limit)", parseMinutesArg)
     .option("--deadline <HH:MM>", "Stop the run at this local time (tomorrow if already past); exclusive with --max-minutes")
     .option("--browser", "Allow browser tools (re-enables them when workers.noBrowserByDefault is on)")
     .option("--no-browser", "Strip --chrome and every browser MCP tool from this worker and deny them in its hooks")

@@ -32,6 +32,14 @@ describe("deadline parsing", () => {
     expect(resolveLimit({}, 60, now)?.minutes).toBe(60);
     expect(resolveLimit({}, 0, now)).toBeNull();
   });
+  it("interactive default is 0 (no limit) but explicit flags still apply; headless keeps the config default", () => {
+    const now = at(10, 0);
+    expect(resolveLimit({}, 0, now)).toBeNull();
+    expect(resolveLimit({ maxMinutes: 5 }, 0, now)?.minutes).toBe(5);
+    expect(resolveLimit({ deadline: "10:30" }, 0, now)?.deadlineAt).toBe(at(10, 30).getTime());
+    expect(resolveLimit({}, 60, now)?.minutes).toBe(60);
+    expect(resolveLimit({ maxMinutes: 0 }, 60, now)).toBeNull();
+  });
   it("--deadline gives minutes to the deadline; both flags are exclusive", () => {
     const now = at(10, 0);
     expect(resolveLimit({ deadline: "10:45" }, 60, now)?.minutes).toBe(45);

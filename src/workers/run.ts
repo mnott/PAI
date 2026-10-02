@@ -521,9 +521,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
   assertProviderRunnable(target.providerName, target.provider);
 
-  const limit = resolveLimit(opts, config.defaultMaxMinutes);
   const noBrowser = opts.browser === undefined ? config.noBrowserByDefault : !opts.browser;
   const parsed = parseRunnerArgs(noBrowser ? stripBrowserArgs(opts.claudeArgs) : opts.claudeArgs);
+  // The config default is a headless-run guard; an interactive launch is the operator's own session and is
+  // limited only by an explicit --max-minutes / --deadline.
+  const limit = resolveLimit(opts, parsed.headless ? config.defaultMaxMinutes : 0);
   const label =
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
@@ -1173,7 +1175,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         cmd,
         cwd: worktree?.dir ?? cwd,
         browser: noBrowser ? "off" : "on",
-        ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : {}),
+        ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : { limit: "none" }),
       })
     );
     return 0;
