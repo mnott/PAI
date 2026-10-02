@@ -94,3 +94,50 @@ Every chunk row carries a `last_accessed_at` timestamp updated on each `memory_g
 ### Multi-Tenant Support
 
 PAI isolates memory by project. Every chunk, entity, and observation row carries a `project_id` foreign key. Searches default to the current project; the `all_projects: true` flag (or `--all` CLI option) lifts the filter. Knowledge-graph triples carry a `project_id` as well, so cross-project tunnels (`memory_tunnels`) are detected explicitly rather than accidentally.
+
+## Embedding Backends
+
+Semantic search needs vectors. PAI embeds with `Snowflake/snowflake-arctic-embed-m-v1.5` (768 dims, CLS pooling, L2-normalized, 512-token context) and can run it on two backends:
+
+| id | what it is | speed (Apple M5) |
+|----|------------|------------------|
+| `transformers-cpu-q8` | in-process transformers.js, q8, CPU. Default, no server. | ~8 chunks/s |
+| `ollama-f16` | local Ollama server (Metal GPU), F16 GGUF of the same model | ~50 chunks/s |
+
+Both live behind one contract (`src/memory/backends/types.ts`: `id`, `model`, `dims`, `maxTokens`, `available()`, `embed()`); the daemon embed pass, `pai memory embed [--background]` and query embedding in search all go through the configured backend. A remote `http` backend (for example an MLX server) is a future addition behind the same contract.
+
+### Commands
+
+```
+pai memory backend detect                 # probe ollama, then transformers-cpu; recommend the fastest available
+pai memory backend provision ollama       # download the F16 GGUF from Hugging Face and `ollama create` it
+pai memory backend use <id> [--model <n>] # write embedding.backend (and embedding.model) to config
+pai memory reembed [--backend <id>] [--yes]
+```
+
+`pai setup` runs the same detection (also with `--yes`). A fresh install adopts the fastest available backend; an existing install is only told what is available.
+
+- **provision** is idempotent (skipped when the model exists on the server), needs no sudo, verifies the download's size and SHA-256, and imports it under the configured model name (default `arctic-embed-m-v1.5-f16`).
+- **reembed** prints the chunk count and an ETA from a quick throughput probe and refuses without `--yes`. It sets every stored vector to NULL in bounded batches (never one giant transaction; an interrupted run is resumed by running it again), then records the new binding. `pai memory embed` or the daemon pass refills the vectors; keyword search keeps working meanwhile.
+
+Config (`pai config get embedding`):
+
+```yaml
+embedding:
+  backend: ollama-f16            # default: transformers-cpu-q8
+  model: arctic-embed-m-v1.5-f16 # model name on the Ollama server
+  ollama:
+    baseUrl: http://127.0.0.1:11434
+```
+
+### Why vectors cannot be mixed
+
+Vectors from different backends of the "same" model differ: q8-CPU against F16/fp32 vectors has a cosine of only about 0.97, so a query embedded by one backend ranks an index embedded by the other noticeably worse, and nothing signals it. The index is therefore bound to the backend that produced its vectors: backend id, model and dimensions are stored with the index (SQLite table `embedding_binding`, Postgres `pai_embedding_binding`), set on the first embed. An index that holds vectors but no binding is treated as `transformers-cpu-q8`.
+
+When the configured backend differs from the recorded one, PAI does not embed and does not query with it. It reports `index embedded with X, configured Y: run pai memory reembed to switch`, the embed pass pauses, and searches fall back to keyword-only with that note. It never silently falls back to another backend.
+
+When the configured backend is unavailable (for example Ollama is not running), embedding pauses with the chunks left unembedded and is retried by the next pass; queries go keyword-only with a visible note.
+
+### Token cap
+
+Ollama cuts inputs longer than 510 tokens differently from the model itself (cosine about 0.45 against the reference). For `ollama-f16`, each text is therefore cut to 510 content tokens with the model's own tokenizer at embed time (the count is logged). Chunk boundaries in the database are not changed.

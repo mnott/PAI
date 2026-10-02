@@ -20,6 +20,8 @@ pai memory <subcommand> [options]
 | [`pai memory status [project-slug]`](#pai-memory-status-project-slug) | Show memory index statistics |
 | [`pai memory settings [key] [value]`](#pai-memory-settings-key-value) | View or modify search settings in the PAI config file (`pai config path`) |
 | [`pai memory sources`](#pai-memory-sources) | Show what the indexer has taken in: composition by source, which roots |
+| [`pai memory backend`](#pai-memory-backend) | Embedding backends: detect, use, provision (an index is bound to the backend that embedded it) |
+| [`pai memory reembed`](#pai-memory-reembed) | Switch the index to an embedding backend: clears all vectors (batched, resumable); `pai memory embed` refills |
 
 ### pai memory index [project-slug]
 
@@ -116,6 +118,56 @@ rewritten per day (which distinguishes a finite backlog from a treadmill).
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--limit <n>` | Rows per section (default 8) | `8` |
+
+
+### pai memory backend
+
+Embedding backends: detect, use, provision (an index is bound to the backend that embedded it)
+
+
+### pai memory backend detect
+
+Probe the available embedding backends (ollama, then transformers-cpu) and recommend the fastest
+
+
+### pai memory backend use <id>
+
+Write the embedding backend to config (ollama-f16 | transformers-cpu-q8); does not touch the index
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<id>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--model <name>` | Model name on the backend (ollama: server-side model name) |  |
+
+
+### pai memory backend provision <backend>
+
+Provision a backend's model. ollama: download the F16 GGUF of arctic-embed-m-v1.5 and `ollama create` it
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<backend>` | required |
+
+
+### pai memory reembed
+
+Switch the index to an embedding backend: clears all vectors (batched, resumable); `pai memory embed` refills
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--backend <id>` | Target backend (default: the configured one); also written to config |  |
+| `--yes` | Confirm; without it only the plan is printed |  |
 
 
 ## Examples
