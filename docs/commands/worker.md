@@ -31,6 +31,7 @@ pai worker <subcommand> [options]
 | [`pai worker handoff <json>`](#pai-worker-handoff-json) | From inside a worker: append a handoff to the parent's inbox and (when it runs) say it to the parent. |
 | [`pai worker merge <id>`](#pai-worker-merge-id) | Merge a worker's worktree branch (worker/<id>) into the original checkout, then remove the worktree and delete the branch |
 | [`pai worker verify <id>`](#pai-worker-verify-id) | Compare a worker's committed changes with the working tree (or --against <ref>); exit 0 when every file is identical, so discarding is safe. Also reads an archived worker (refs/pai-archive/<id>) |
+| [`pai worker wait-on <pid>`](#pai-worker-wait-on-pid) | Wait at most --max seconds (default 110, cap 115) for a detached job's pid; exit 0 gone, 3 still running, 2 never existed. |
 | [`pai worker wait <ids...>`](#pai-worker-wait-ids) | Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout |
 | [`pai worker discard <id>`](#pai-worker-discard-id) | Drop a worker's worktree and branch, keeping nothing |
 | [`pai worker gc`](#pai-worker-gc) | Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept) |
@@ -274,6 +275,27 @@ Compare a worker's committed changes with the working tree (or --against <ref>);
 |--------|-------------|---------|
 | `--against <ref>` | compare against this ref instead of the working tree |  |
 | `--json` | print the result as JSON |  |
+
+
+### pai worker wait-on <pid>
+
+Wait at most --max seconds (default 110, cap 115) for a detached job's pid; exit 0 gone, 3 still running, 2 never existed.
+
+Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid ; then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until exit 0.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<pid>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--log <file>` | Log file whose last lines are printed on return; <file>.rc holds the exit code |  |
+| `--max <secs>` | Maximum seconds to block (default 110, hard cap 115) |  |
+| `--tail <n>` | Log lines printed on return (default 20) |  |
 
 
 ### pai worker wait <ids...>
