@@ -34,6 +34,7 @@ import type { RegistryBackend } from "../registry-interface.js";
 import { indexAllWithBackend } from "../../memory/indexer/async.js";
 import { findTunnelsPostgres } from "./tunnels.js";
 import { getMemorySourcesReportPostgres } from "./sources.js";
+import { estimateCountsPostgres, exactCountsPostgres, embeddingJobsPostgres } from "./dashboard-queries.js";
 import * as kgTriples from "./kg-triples.js";
 import * as observations from "./observations.js";
 
@@ -304,6 +305,18 @@ export class PostgresBackend implements StorageBackend {
    */
   getPool(): Pool {
     return this.pool;
+  }
+
+  estimateCounts() {
+    return estimateCountsPostgres(this.pool);
+  }
+
+  exactCounts() {
+    return exactCountsPostgres(this.pool);
+  }
+
+  embeddingJobs() {
+    return embeddingJobsPostgres(this.pool);
   }
 
   async getStats(): Promise<FederationStats> {

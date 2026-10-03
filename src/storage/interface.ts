@@ -263,6 +263,18 @@ export interface MemorySourcesReport {
 // StorageBackend interface
 // ---------------------------------------------------------------------------
 
+/** File/chunk counts; `embedded` is null when unknown. */
+export interface StorageCounts {
+  files: number;
+  chunks: number;
+  embedded: number | null;
+}
+
+export interface EmbeddingJobRow {
+  name: string;
+  state: Record<string, unknown>;
+}
+
 export interface StorageBackend {
   /** Backend identifier — useful for logging */
   readonly backendType: "sqlite" | "postgres";
@@ -288,6 +300,15 @@ export interface StorageBackend {
    * Return aggregate statistics for health/status reporting.
    */
   getStats(): Promise<FederationStats>;
+
+  /** Cheap approximate counts for the status dashboard (Postgres only; SQLite falls back to getStats()). */
+  estimateCounts?(): Promise<StorageCounts>;
+
+  /** Exact counts under a statement timeout for the status dashboard (Postgres only). */
+  exactCounts?(): Promise<StorageCounts>;
+
+  /** Embedding re-index job states for the status dashboard (Postgres only). */
+  embeddingJobs?(): Promise<EmbeddingJobRow[]>;
 
   /**
    * Return file/chunk counts scoped to a single project (memory_files/memory_chunks

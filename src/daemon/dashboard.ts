@@ -16,7 +16,6 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Pool } from "pg";
 import type { EmbeddingBinding, StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
@@ -28,7 +27,6 @@ const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
 const STALL_MS = 5 * 60_000;
 const RATE_WINDOW_MS = 5 * 60_000;
-const EXACT_TIMEOUT_MS = 20_000;
 const HISTORY_MAX = 120; // 1 h of 30 s samples
 const HISTORY_PERSIST_MS = 30_000; // write at most every 30s
 const HISTORY_PRUNE_AGE_MS = 2 * 60 * 60_000; // 2 hours
@@ -432,45 +430,6 @@ export async function startDashboard(
 // Live source (Postgres or SQLite storage + configured backend)
 // ---------------------------------------------------------------------------
 
-/** Postgres statements for the dashboard; table names are the existing pai_* ones. */
-async function pgEstimate(pool: Pool): Promise<Counts> {
-  const rel = await pool.query<{ relname: string; n: string }>(
-    "SELECT relname, reltuples::bigint::text AS n FROM pg_class WHERE relname IN ('pai_files', 'pai_chunks')",
-  );
-  const n = (name: string) => Math.max(0, Number(rel.rows.find((r) => r.relname === name)?.n ?? 0));
-  const nf = await pool.query<{ null_frac: number }>(
-    "SELECT null_frac FROM pg_stats WHERE tablename = 'pai_chunks' AND attname = 'embedding' LIMIT 1",
-  );
-  const frac = nf.rows[0]?.null_frac;
-  const chunks = n("pai_chunks");
-  return { files: n("pai_files"), chunks, embedded: frac === undefined ? null : Math.round(chunks * (1 - frac)) };
-}
-
-async function pgExact(pool: Pool): Promise<Counts> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN READ ONLY");
-    await client.query(`SET LOCAL statement_timeout = ${EXACT_TIMEOUT_MS}`);
-    const f = await client.query<{ n: string }>("SELECT count(*)::text AS n FROM pai_files");
-    const c = await client.query<{ n: string; e: string }>(
-      "SELECT count(*)::text AS n, count(embedding)::text AS e FROM pai_chunks",
-    );
-    return { files: Number(f.rows[0].n), chunks: Number(c.rows[0].n), embedded: Number(c.rows[0].e) };
-  } finally {
-    await client.query("ROLLBACK").catch(() => {});
-    client.release();
-  }
-}
-
-async function pgJobs(pool: Pool): Promise<RawJob[]> {
-  const exists = await pool.query<{ t: string | null }>("SELECT to_regclass('pai_embedding_jobs')::text AS t");
-  if (!exists.rows[0]?.t) return [];
-  const r = await pool.query<{ column_name: string; state: Record<string, unknown> | null }>(
-    "SELECT column_name, state FROM pai_embedding_jobs",
-  );
-  return r.rows.map((x) => ({ name: x.column_name, state: x.state ?? {} }));
-}
-
 async function ollamaPs(baseUrl: string): Promise<LoadedModel[] | null> {
   try {
     const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(2000) });
@@ -489,15 +448,15 @@ export function liveSource(deps: {
   daemon: DashboardSource["daemon"];
   passes: DashboardSource["passes"];
 }): DashboardSource {
-  const pool = (deps.storage as unknown as { getPool?: () => Pool }).getPool?.();
+  const st = deps.storage;
   const sqliteCounts = async (): Promise<Counts> => ({ ...(await deps.storage.getStats()), embedded: null });
   return {
     storage: deps.storage.backendType,
     daemon: deps.daemon,
-    estimate: pool ? () => pgEstimate(pool) : sqliteCounts,
-    exact: pool ? () => pgExact(pool) : sqliteCounts,
+    estimate: st.estimateCounts?.bind(st) ?? sqliteCounts,
+    exact: st.exactCounts?.bind(st) ?? sqliteCounts,
     binding: () => deps.storage.getEmbeddingBinding(),
-    jobs: pool ? () => pgJobs(pool) : async () => [],
+    jobs: st.embeddingJobs?.bind(st) ?? (async () => []),
     backend: deps.backend,
     loadedModels: () => ollamaPs(deps.ollamaBaseUrl),
     passes: deps.passes,
