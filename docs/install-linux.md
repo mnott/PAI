@@ -24,6 +24,7 @@ pai setup --yes --storage sqlite
 sudo apt install -y docker.io docker-compose-v2
 sudo usermod -aG docker "$USER"                  # then log out and in, or prefix the next command with: sg docker -c "…"
 export PAI_PG_SHARED_BUFFERS=256MB               # only on small machines; the default 1GB must fit in RAM
+export PAI_PG_SHM_SIZE=3g                        # optional; shared memory for parallel vector index builds (3g is the default)
 pai setup --yes --storage postgres
 ```
 
