@@ -4,10 +4,12 @@
  * load-core-context.ts
  *
  * Automatically loads your CORE skill context at session start by reading and injecting
- * the CORE SKILL.md file contents directly into Claude's context as a system-reminder.
+ * the core SKILL.md contents directly into Claude's context as a system-reminder.
+ * The file is the first existing of skills/CORE/SKILL.md, skills/PAI/SKILL.md
+ * (the latter is what `pai setup` installs); neither = silent no-op.
  *
  * Purpose:
- * - Read CORE SKILL.md file content
+ * - Read core SKILL.md file content
  * - Output content as system-reminder for Claude to process
  * - Ensure complete context (contacts, preferences, security, identity) available at session start
  * - Bypass skill activation logic by directly injecting context
@@ -52,13 +54,14 @@ async function main() {
       process.exit(0);
     }
 
-    // Get CORE skill path using PAI paths library
-    const coreSkillPath = join(SKILLS_DIR, 'CORE/SKILL.md');
+    // CORE wins; PAI/SKILL.md is where `pai setup` installs the core skill
+    const coreSkillPath = [join(SKILLS_DIR, 'CORE/SKILL.md'), join(SKILLS_DIR, 'PAI/SKILL.md')]
+      .find(existsSync);
 
     // CORE is an optional, user-provided skill (PAI ships none): absent = silent no-op
-    if (!existsSync(coreSkillPath)) process.exit(0);
+    if (!coreSkillPath) process.exit(0);
 
-    console.error('Reading CORE context from skill file...');
+    console.error(`Reading CORE context from ${coreSkillPath}...`);
 
     // Read the CORE SKILL.md file content
     let coreContent = readFileSync(coreSkillPath, 'utf-8');
@@ -75,7 +78,7 @@ async function main() {
       .replace(/\{\{DA_COLOR\}\}/g, daColor)
       .replace(/\{\{ENGINEER_NAME\}\}/g, engineerName);
 
-    console.error(`Read ${coreContent.length} characters from CORE SKILL.md (Personalized for ${engineerName} & ${daName})`);
+    console.error(`Read ${coreContent.length} characters from ${coreSkillPath} (Personalized for ${engineerName} & ${daName})`);
 
     // Output the CORE content as a system-reminder, minus the frontmatter
     // (catalogue metadata the session already has from its skill list) —
@@ -98,7 +101,7 @@ ${stripFrontmatter(coreContent)}
       `<system-reminder>\n` +
         `Edit/Write on code files is denied in this session by policy (only .md/.txt and Notes/ are editable). ` +
         `For any code change: write a spec file, then ` +
-        `\`pai worker run --provider anthropic --class implement -p "$(cat <spec>)"\`.\n` +
+        `\`pai worker run --class implement -p "$(cat <spec>)"\`.\n` +
         `</system-reminder>`
     );
 
