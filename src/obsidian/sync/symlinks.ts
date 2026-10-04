@@ -14,6 +14,7 @@ import {
 import { join } from "node:path";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SyncStats } from "./types.js";
+import { worktreeReason } from "../../registry/registrable.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -200,6 +201,7 @@ export async function syncVault(vaultPath: string, registry: RegistryBackend): P
 
   for (const project of projects) {
     if (project.status === "active") {
+      if (worktreeReason(project.root_path)) continue;
       const notesDir = findNotesDir(project.root_path);
       const claudeNotesDir = findClaudeNotesDir(project.claude_notes_dir, notesDir);
 

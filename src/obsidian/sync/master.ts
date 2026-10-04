@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { collectSessionFiles, walkNotesDir } from "./walk.js";
+import { worktreeReason } from "../../registry/registrable.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,6 +126,9 @@ export async function generateMasterNotes(
   let written = 0;
 
   for (const project of projects) {
+    // A row rooted in a worktree must not stamp its slug (the worker id) into
+    // notes it shares with the main repo; the merge would publish the footer.
+    if (worktreeReason(project.root_path)) continue;
     const slugPath = join(vaultPath, project.slug);
     if (!existsSync(slugPath)) continue;
 
