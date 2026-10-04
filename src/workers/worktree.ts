@@ -158,8 +158,10 @@ export function provisionDeps(logDir: string, id: string, cwd: string, wtDir: st
     const dest = join(wtDir, "node_modules");
     if (!existsSync(main) || lstatSync(main).isSymbolicLink() || existsSync(dest)) return;
     try {
-      // an unignored node_modules would be committed by salvage
-      git(wtDir, ["check-ignore", "-q", "node_modules"]);
+      // an unignored node_modules would be committed by salvage; the trailing
+      // slash makes git test a directory (the path does not exist yet), so a
+      // dir-only `node_modules/` rule matches too
+      git(wtDir, ["check-ignore", "-q", "node_modules/"]);
     } catch {
       return;
     }
@@ -361,6 +363,8 @@ export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: num
       skipped.push(`${p} (missing, not committed)`);
     } else if (symlinkEscapesWorktree(wtDir, p)) {
       skipped.push(`symlink ${p} -> ${readlinkSync(join(wtDir, p))} (points outside the worktree)`);
+    } else if (p === "node_modules" || p.startsWith("node_modules/")) {
+      skipped.push(`${p} (node_modules is never committed)`);
     } else {
       toStage.push(p);
     }
@@ -384,6 +388,20 @@ export function salvageUncommitted(wtDir: string, label: string, timeoutMs?: num
     );
   }
   return { committed: toStage, skipped };
+}
+
+/**
+ * Refuse a merge whose branch adds or changes a top-level `node_modules` of
+ * any type (a worker's own commit of its symlink included): merging it would
+ * replace the checkout's real directory. Both merge paths call this.
+ */
+export function assertNoNodeModules(cwd: string, from: string, branch: string, id: string): void {
+  if (git(cwd, ["diff", "--name-only", from, branch, "--", "node_modules"])) {
+    throw new Error(
+      `worker ${id}: branch ${branch} commits node_modules, which would replace the checkout's real directory. ` +
+        `Remove it on the branch (git rm -r --cached node_modules, amend), then re-run merge`
+    );
+  }
 }
 
 /** A salvage commit that deletes more tracked files than this is refused. */
@@ -526,6 +544,7 @@ function mergeSnapshotWorker(
     );
   }
   const changedPaths = git(st.cwd, ["diff", "--name-only", snapshot, branch]).split("\n").filter(Boolean);
+  assertNoNodeModules(st.cwd, snapshot, branch, id);
   assertNoSnapshotDrift(st.cwd, snapshot, changedPaths, id);
   const diff = execFileSync("git", ["-C", st.cwd, "diff", "--binary", snapshot, branch], {
     encoding: "utf8",
@@ -708,6 +727,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   const incomingPaths = git(st.cwd, ["diff", "--name-only", mergeBase, st.branch!])
     .split("\n")
     .filter(Boolean);
+  assertNoNodeModules(st.cwd, mergeBase, st.branch!, id);
   assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
   if (opts.noCommit) return applyNoCommit(st.cwd, id, st.branch!, st.worktreeDir!, mergeBase, incomingPaths);
   try {

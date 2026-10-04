@@ -293,6 +293,7 @@ describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {
     const info = addWorktree(logDir, "s4", repo);
     status("s4", { branch: worktreeBranch("s4"), worktreeDir: info.dir });
     writeFileSync(join(info.dir, "real.txt"), "real uncommitted work\n", "utf8");
+    rmSync(join(info.dir, "node_modules"), { recursive: true, force: true }); // provisioned clone
     symlinkSync(join(repo, "node_modules"), join(info.dir, "node_modules"));
 
     const salvage = salvageUncommitted(info.dir, "label s4");
