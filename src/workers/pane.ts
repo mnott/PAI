@@ -63,205 +63,121 @@ export function dynamicProfilePath(): string {
 }
 
 // ---------------------------------------------------------------------------
-// AppleScripts (arguments are passed as argv items, never interpolated)
+// JXA scripts (arguments are passed as argv items, never interpolated).
+// JXA, not AppleScript: iTerm's AppleScript window collection can get stuck
+// failing every enumeration ("every window doesn't understand the count
+// message", -1708) while the JXA object model keeps answering.
 // ---------------------------------------------------------------------------
+
+// Shared prelude: locate the window/tab/session with a given unique id.
+const FIND_SESSION = `function findSession(app, id) {
+    var ws = app.windows();
+    for (var i = 0; i < ws.length; i++) {
+        var ts = ws[i].tabs();
+        for (var j = 0; j < ts.length; j++) {
+            var ss = ts[j].sessions();
+            for (var k = 0; k < ss.length; k++) {
+                if (ss[k].id() === id) return { w: ws[i], t: ts[j], s: ss[k], all: ss };
+            }
+        }
+    }
+    return null;
+}`;
 
 // One pane per worker: split the launching session vertically, or the lowest
 // live candidate horizontally. Returns "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
-export const WORKER_SPLIT_SCRIPT = `on run(argv)
-    set targetID to item 1 of argv
-    set candList to item 2 of argv
-    set followCmd to item 3 of argv
-    set profileName to item 4 of argv
-    tell application id "com.googlecode.iterm2"
-        if not running then return "notrunning"
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    if id of s is targetID then
-                        -- sizing the new session would grow the whole window:
-                        -- pin the window's bounds now and restore them after
-                        -- the split, so the panes share the existing space.
-                        -- copy, never set: set stores the property
-                        -- reference lazily, so restoring it would re-read the
-                        -- post-split bounds instead of these — observed as the
-                        -- window jumping to the main display
-                        copy bounds of w to winBounds
-                        set sessIDs to {}
-                        repeat with other in sessions of t
-                            set end of sessIDs to (id of other as text)
-                        end repeat
-                        set lived to {}
-                        set splitS to missing value
-                        repeat with cid in my splitIds(candList)
-                            set cidText to (cid as text)
-                            if sessIDs contains cidText then
-                                set end of lived to cidText
-                                if splitS is missing value then
-                                    set splitS to first session of t whose id is cidText
-                                end if
-                            end if
-                        end repeat
-                        -- the follow command is part of the split itself: the
-                        -- pane is born already running it, so no text is ever
-                        -- typed into any session — a typing step raced the
-                        -- operator's keystrokes and could even land in the
-                        -- operator's own session
-                        if profileName is "" then
-                            if splitS is missing value then
-                                tell s
-                                    set newS to split vertically with default profile command followCmd
-                                end tell
-                            else
-                                tell splitS
-                                    set newS to split horizontally with default profile command followCmd
-                                end tell
-                            end if
-                        else
-                            if splitS is missing value then
-                                tell s
-                                    set newS to split vertically with profile profileName command followCmd
-                                end tell
-                            else
-                                tell splitS
-                                    set newS to split horizontally with profile profileName command followCmd
-                                end tell
-                            end if
-                        end if
-                        -- a split makes the new session the tab's active one:
-                        -- re-select the launching session so focus returns to
-                        -- where the operator was typing, never the new pane
-                        try
-                            select s
-                        end try
-                        try
-                            set bounds of w to winBounds
-                        end try
-                        set out to ""
-                        repeat with lid in lived
-                            set out to out & lid & ","
-                        end repeat
-                        return out & "|" & (id of newS as text)
-                    end if
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return "notfound"
-end run
+export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var targetID = argv[0], candList = argv[1], followCmd = argv[2], profileName = argv[3];
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, targetID);
+    if (!f) return "notfound";
+    // sizing the new session would grow the whole window: pin the window's
+    // bounds now and restore them after the split, so the panes share the
+    // existing space
+    var winBounds = f.w.bounds();
+    var sessIDs = f.all.map(function (o) { return o.id(); });
+    var lived = [];
+    var splitS = null;
+    (candList === "" ? [] : candList.split(",")).forEach(function (cid) {
+        var at = sessIDs.indexOf(cid);
+        if (at < 0) return;
+        lived.push(cid);
+        if (!splitS) splitS = f.all[at];
+    });
+    // the follow command is part of the split itself: the pane is born already
+    // running it, so no text is ever typed into any session — a typing step
+    // raced the operator's keystrokes and could even land in the operator's
+    // own session
+    var newS;
+    if (!splitS) {
+        newS = profileName === ""
+            ? f.s.splitVerticallyWithDefaultProfile({ command: followCmd })
+            : f.s.splitVertically({ withProfile: profileName, command: followCmd });
+    } else {
+        newS = profileName === ""
+            ? splitS.splitHorizontallyWithDefaultProfile({ command: followCmd })
+            : splitS.splitHorizontally({ withProfile: profileName, command: followCmd });
+    }
+    // a split makes the new session the tab's active one: re-select the
+    // launching session so focus returns to where the operator was typing,
+    // never the new pane
+    try { f.s.select(); } catch (e) {}
+    try { f.w.bounds = winBounds; } catch (e) {}
+    return lived.map(function (l) { return l + ","; }).join("") + "|" + newS.id();
+}`;
 
-on splitIds(s)
-    set out to {}
-    if s is "" then return out
-    set prevDels to AppleScript's text item delimiters
-    set AppleScript's text item delimiters to ","
-    repeat with part in text items of s
-        set end of out to (part as text)
-    end repeat
-    set AppleScript's text item delimiters to prevDels
-    return out
-end splitIds`;
-
-// TTys of every session in the launching session's tab (no-worker pane variant).
-const TAB_TTYS_SCRIPT = `on run(argv)
-    set targetID to item 1 of argv
-    tell application id "com.googlecode.iterm2"
-        if not running then return "notrunning"
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    if id of s is targetID then
-                        set ttys to {}
-                        repeat with other in sessions of t
-                            copy (tty of other) to end of ttys
-                        end repeat
-                        return ttys
-                    end if
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return "notfound"
-end run`;
+// TTys of every session in the launching session's tab (no-worker pane variant),
+// comma-joined.
+const TAB_TTYS_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[0]);
+    if (!f) return "notfound";
+    return f.all.map(function (o) { return o.tty(); }).join(",");
+}`;
 
 // Bounds (x1, y1, x2, y2, comma-joined) of the window hosting one iTerm
 // session — read-only, for `pai worker pane <id> --check`. Exported for the
 // script-content tests (reads bounds, never sets them).
-export const WINDOW_BOUNDS_SCRIPT = `on run(argv)
-    set targetID to item 1 of argv
-    tell application id "com.googlecode.iterm2"
-        if not running then return "notrunning"
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    if id of s is targetID then
-                        copy bounds of w to winBounds
-                        set prevDels to AppleScript's text item delimiters
-                        set AppleScript's text item delimiters to ", "
-                        set out to winBounds as text
-                        set AppleScript's text item delimiters to prevDels
-                        return out
-                    end if
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return "notfound"
-end run`;
+export const WINDOW_BOUNDS_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[0]);
+    if (!f) return "notfound";
+    var b = f.w.bounds();
+    return [b.x, b.y, b.x + b.width, b.y + b.height].join(", ");
+}`;
 
 // Split the launching session vertically and run followCmd in the new pane.
 // Exported for the script-content tests (focus stays on the launching session).
-export const SPLIT_SCRIPT = `on run(argv)
-    set targetID to item 1 of argv
-    set followCmd to item 2 of argv
-    tell application id "com.googlecode.iterm2"
-        if not running then return "notrunning"
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    if id of s is targetID then
-                        -- the follow command is part of the split itself (see
-                        -- WORKER_SPLIT_SCRIPT): nothing is ever typed into a
-                        -- session afterwards
-                        tell s
-                            set newS to split vertically with default profile command followCmd
-                        end tell
-                        -- keep the tab's active session where it was (see
-                        -- WORKER_SPLIT_SCRIPT)
-                        try
-                            select s
-                        end try
-                        return "opened"
-                    end if
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return "notfound"
-end run`;
+export const SPLIT_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var followCmd = argv[1];
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[0]);
+    if (!f) return "notfound";
+    // the follow command is part of the split itself (see WORKER_SPLIT_SCRIPT):
+    // nothing is ever typed into a session afterwards
+    f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
+    // keep the tab's active session where it was (see WORKER_SPLIT_SCRIPT)
+    try { f.s.select(); } catch (e) {}
+    return "opened";
+}`;
 
 // ---------------------------------------------------------------------------
 // osascript / ps / defaults helpers
 // ---------------------------------------------------------------------------
 
-/**
- * True for the transient "every window doesn't understand the count message"
- * (-1708) failure iTerm throws while enumerating windows during a race with
- * window/session churn — seen to succeed on immediate retry. No other error
- * matches: a retry here only re-runs the enumeration, before any split, so it
- * cannot double-create a pane.
- */
-export function isRetryableIterm2Error(stderr: string): boolean {
-  return stderr.includes("every window doesn") && stderr.includes("(-1708)");
-}
-
-const OSASCRIPT_MAX_ATTEMPTS = 6;
-const OSASCRIPT_RETRY_DELAY_MS = 500;
-
-function runOsascriptOnce(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+/** Run a JXA script with argv. Rejects when osascript itself cannot run. */
+function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("osascript", ["-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn("osascript", ["-l", "JavaScript", "-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     proc.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
@@ -271,16 +187,6 @@ function runOsascriptOnce(script: string, args: string[]): Promise<{ stdout: str
     proc.stdin.write(script);
     proc.stdin.end();
   });
-}
-
-/** Run an AppleScript with argv. Rejects when osascript itself cannot run. */
-async function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  let result = await runOsascriptOnce(script, args);
-  for (let attempt = 1; attempt < OSASCRIPT_MAX_ATTEMPTS && isRetryableIterm2Error(result.stderr); attempt++) {
-    await new Promise((r) => setTimeout(r, OSASCRIPT_RETRY_DELAY_MS));
-    result = await runOsascriptOnce(script, args);
-  }
-  return result;
 }
 
 function psOutput(format: string): string {
@@ -568,39 +474,30 @@ function dropEntry(logDir: string, e: PaneEntry): void {
 // Ending panes of finished workers
 // ---------------------------------------------------------------------------
 
-const LIST_SESSIONS_SCRIPT = `on run(argv)
-    set out to ""
-    tell application id "com.googlecode.iterm2"
-        if not running then return ""
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    set out to out & (id of s as text) & (ASCII character 9) & (tty of s as text) & (ASCII character 9) & (name of s as text) & linefeed
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return out
-end run`;
+const LIST_SESSIONS_SCRIPT = `function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "";
+    var out = "";
+    app.windows().forEach(function (w) {
+        w.tabs().forEach(function (t) {
+            t.sessions().forEach(function (s) {
+                out += s.id() + "\t" + s.tty() + "\t" + s.name() + "\n";
+            });
+        });
+    });
+    return out;
+}`;
 
 // Ends one session by its unique id, never a window or the app.
-const END_SESSION_SCRIPT = `on run(argv)
-    set targetID to item 1 of argv
-    tell application id "com.googlecode.iterm2"
-        if not running then return "notrunning"
-        repeat with w in windows
-            repeat with t in tabs of w
-                repeat with s in sessions of t
-                    if id of s is targetID then
-                        close s
-                        return "closed"
-                    end if
-                end repeat
-            end repeat
-        end repeat
-    end tell
-    return "notfound"
-end run`;
+const END_SESSION_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[0]);
+    if (!f) return "notfound";
+    f.s.close();
+    return "closed";
+}`;
 
 /** The real iTerm / tmux calls, swappable so tests never touch either. */
 export interface PaneOps {

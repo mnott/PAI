@@ -23,7 +23,6 @@ import {
   dynamicProfilePath,
   followCommand,
   followProfile,
-  isRetryableIterm2Error,
   noPaneMessage,
   paneBackend,
   itermPrefs,
@@ -227,60 +226,58 @@ describe("checkPaneForWorker", () => {
 
 describe("WINDOW_BOUNDS_SCRIPT", () => {
   it("reads the hosting window's bounds and never writes anything", () => {
-    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/on run\(argv\)/); // argv-only arguments
-    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/bounds of w/);
-    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/set bounds/); // read-only, never moves a window
+    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/function run\(argv\)/); // argv-only arguments
+    expect(WINDOW_BOUNDS_SCRIPT).toMatch(/w\.bounds\(\)/);
+    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/bounds =/); // read-only, never moves a window
+  });
+});
+
+describe("iTerm scripts are JXA", () => {
+  it("take argv through run(argv) and never use AppleScript syntax", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT, WINDOW_BOUNDS_SCRIPT]) {
+      expect(script).toMatch(/function run\(argv\)/);
+      expect(script).toMatch(/Application\("iTerm2"\)/);
+      expect(script).not.toMatch(/tell application|\bon run\b/);
+    }
   });
 });
 
 describe("WORKER_SPLIT_SCRIPT window size", () => {
   it("never sizes the new session (columns/rows grow the whole window)", () => {
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set columns/);
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set rows/);
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.columns\s*=/);
+    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.rows\s*=/);
   });
 
-  it("captures the bounds as a list value before the split and restores them verbatim after", () => {
-    const pin = WORKER_SPLIT_SCRIPT.indexOf("copy bounds of w to winBounds");
-    const split = WORKER_SPLIT_SCRIPT.indexOf("split vertically");
-    const restore = WORKER_SPLIT_SCRIPT.indexOf("set bounds of w to winBounds");
+  it("captures the bounds as a plain value before the split and restores them verbatim after", () => {
+    const pin = WORKER_SPLIT_SCRIPT.indexOf("var winBounds = f.w.bounds()");
+    const split = WORKER_SPLIT_SCRIPT.indexOf("splitVertically");
+    const restore = WORKER_SPLIT_SCRIPT.indexOf("f.w.bounds = winBounds");
     expect(pin).toBeGreaterThan(-1);
     expect(split).toBeGreaterThan(pin); // captured before the split
     expect(restore).toBeGreaterThan(split); // restored after it
-    expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command followCmd"));
-    // `set winBounds to bounds of w` stores the property reference lazily —
-    // the restore then re-reads the post-split bounds and iTerm clamps the
-    // window onto the main display. copy forces the plain list value.
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/set winBounds to bounds/);
-    // bounds never travel as a string: nothing coerces them to text
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/winBounds as text/);
+    expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command: followCmd"));
     // capture and restore live in the same script (one osascript invocation)
-    expect(WORKER_SPLIT_SCRIPT.indexOf("on run")).toBeLessThan(pin);
-    expect(WORKER_SPLIT_SCRIPT.trimEnd().lastIndexOf("end run")).toBeGreaterThan(restore);
-  });
-
-  it("passes arguments as argv items, never interpolated", () => {
-    expect(WORKER_SPLIT_SCRIPT).toMatch(/on run\(argv\)/);
+    expect(WORKER_SPLIT_SCRIPT.indexOf("function run(argv)")).toBeLessThan(pin);
   });
 });
 
 describe("split scripts never leak keystrokes", () => {
   it("creates every new session with its command from the start", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      // iTerm's `split … command <text>` runs the command in the new session
-      // as it is born — the only way no typing step can race the operator's
-      // keystrokes or land in the wrong session
-      const calls = script.match(/split (vertically|horizontally)[^\n]*/g) ?? [];
+      // iTerm's split `command` runs it in the new session as it is born — the
+      // only way no typing step can race the operator's keystrokes or land in
+      // the wrong session
+      const calls = script.match(/\.split(Vertically|Horizontally)[^\n]*/g) ?? [];
       expect(calls.length).toBeGreaterThan(0);
       for (const call of calls) {
-        expect(call).toMatch(/ command followCmd$/);
+        expect(call).toMatch(/command: followCmd/);
       }
     }
   });
 
-  it("never types text into any session (no write text, scoped or not)", () => {
+  it("never types text into any session (no write)", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      expect(script).not.toMatch(/write text/);
-      expect(script).not.toMatch(/\bwrite\b/);
+      expect(script).not.toMatch(/\.write\(/);
     }
   });
 });
@@ -288,38 +285,20 @@ describe("split scripts never leak keystrokes", () => {
 describe("split scripts never steal input focus", () => {
   it("re-selects the launching session after the split (a split makes the new session active)", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      const split = script.indexOf("split");
-      const select = script.indexOf("select s");
-      expect(split).toBeGreaterThan(-1);
-      expect(select).toBeGreaterThan(script.lastIndexOf("command followCmd"));
+      const select = script.indexOf("f.s.select()");
+      expect(script.indexOf("split")).toBeGreaterThan(-1);
+      expect(select).toBeGreaterThan(script.lastIndexOf("command: followCmd"));
     }
   });
 
   it("never activates and never selects the new session", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      expect(script).toMatch(/select s\b/);
-      expect(script).not.toMatch(/select newS/);
+      expect(script).toMatch(/f\.s\.select\(\)/);
+      expect(script).not.toMatch(/newS\.select/);
       expect(script).not.toMatch(/activate/);
     }
     expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/select/);
     expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/activate/);
-  });
-});
-
-describe("isRetryableIterm2Error", () => {
-  it("matches the transient -1708 window-enumeration error", () => {
-    expect(
-      isRetryableIterm2Error(
-        `execution error: iTerm got an error: every window doesn't understand the "count" message. (-1708)`,
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects other osascript errors", () => {
-    expect(isRetryableIterm2Error("")).toBe(false);
-    expect(isRetryableIterm2Error("execution error: some other failure (-2700)")).toBe(false);
-    expect(isRetryableIterm2Error("every window doesn't understand the count message.")).toBe(false);
-    expect(isRetryableIterm2Error("(-1708)")).toBe(false);
   });
 });
 
