@@ -6,6 +6,18 @@ import { cmdHere, findProjectsByName, slugFromName } from "./here.js";
 import { getRegistryBackend, closeStorage, __resetStorageForTests } from "../../../storage/factory.js";
 import type { SQLiteRegistryBackend } from "../../../storage/registry-sqlite.js";
 
+// Fixtures live under the system temp dir, which the real guard refuses by
+// design; the guard is off except in the test that documents the refusal.
+let guardOn = false;
+vi.mock("../../../registry/registrable.js", async (orig) => {
+  const real = await orig<typeof import("../../../registry/registrable.js")>();
+  return {
+    ...real,
+    unregistrableReason: (...a: Parameters<typeof real.unregistrableReason>) =>
+      guardOn ? real.unregistrableReason(...a) : undefined,
+  };
+});
+
 /**
  * "This is this project" has to work from inside the directory, because that is
  * the moment the user actually knows what the directory is. Directories get
@@ -48,6 +60,7 @@ const countProjects = async () => {
 beforeEach(async () => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "pai-here-")));
   paiHome = mkdtempSync(join(tmpdir(), "pai-here-home-"));
+  guardOn = false;
   originalPaiHome = process.env.PAI_HOME;
   process.env.PAI_HOME = paiHome;
   __resetStorageForTests();
@@ -120,6 +133,19 @@ describe("symlinked parents must not create a second identity", () => {
 });
 
 describe("creating a project that does not exist yet", () => {
+  it("refuses a directory the registry guard rejects, such as a temp dir", async () => {
+    guardOn = true;
+    const dest = join(tmp, "fresh");
+    mkdirSync(dest);
+
+    await cmdHere("Brand New", { cwd: dest });
+
+    expect(await rowFor("brand-new")).toBeUndefined();
+    expect(process.exitCode).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Not registering"));
+    process.exitCode = undefined;
+  });
+
   it("creates it pointing here, with a slug from the name", async () => {
     const dest = join(tmp, "fresh");
     mkdirSync(dest);
