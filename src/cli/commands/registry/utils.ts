@@ -3,6 +3,7 @@
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import { now } from "../../utils.js";
 import { basename, join } from "node:path";
+import { worktreeReason } from "../../../registry/registrable.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 
 /**
@@ -34,7 +35,7 @@ async function worthWriting(backend: RegistryBackend, projectId: number, encoded
 }
 
 /**
- * Upsert a project row. Returns { id, isNew }.
+ * Upsert a project row. Returns { id, isNew }, or null for an unregistrable path.
  *
  * Matching priority:
  *  1. root_path  — most reliable; handles slug collisions
@@ -49,7 +50,10 @@ export async function upsertProject(
   slug: string,
   rootPath: string,
   encodedDir: string
-): Promise<{ id: number; isNew: boolean }> {
+): Promise<{ id: number; isNew: boolean } | null> {
+  // Single registration gate for scan/migrate: worktrees and temp dirs are no-ops.
+  if (worktreeReason(rootPath)) return null;
+
   const ts = now();
 
   const byPath = await backend.getProjectByRootPath(rootPath);
