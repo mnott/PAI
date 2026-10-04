@@ -24,7 +24,7 @@
  * Found by the AIBroker session while we were dividing up the dead-path work.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
@@ -75,6 +75,12 @@ const EPHEMERAL: ReadonlyArray<{ fragment: string; because: string }> = [
     // one task and removed afterwards.
     fragment: `${sep}.claude${sep}worktrees${sep}`,
     because: "a git worktree created for agent isolation — it is meant to be removed",
+  },
+  {
+    // Worker log dirs and their worktrees, current (`<pai home>/logs/workers`)
+    // and legacy (`~/.claude/logs/workers`) layouts, including the dir itself.
+    fragment: `${sep}logs${sep}workers${sep}`,
+    because: "a worker log directory or worktree — it is meant to be removed",
   },
   {
     fragment: `${sep}private${sep}tmp${sep}`,
@@ -133,9 +139,9 @@ export function unregistrableReason(
 }
 
 /**
- * Remove registry rows whose root is a linked worktree or lies under the worker
- * worktrees root (rows registered before the guard existed). Returns the slugs
- * removed. Sessions on those rows are worker/agent scratch history.
+ * Remove registry rows whose root is unregistrable (linked worktree, worker
+ * worktree/log dir, temp dir; rows registered before the guard existed). Returns
+ * the slugs removed. Sessions on those rows are worker/agent scratch history.
  */
 export async function pruneWorktreeProjects(
   backend: RegistryBackend,
@@ -143,9 +149,7 @@ export async function pruneWorktreeProjects(
 ): Promise<string[]> {
   const removed: string[] = [];
   for (const p of await backend.listProjects({})) {
-    const abs = resolve(p.root_path);
-    const underRoot = worktreesRoot && (abs === worktreesRoot || abs.startsWith(worktreesRoot + sep));
-    if (underRoot || (existsSync(abs) && isLinkedWorktree(abs))) {
+    if (unregistrableReason(p.root_path, worktreesRoot)) {
       await backend.deleteProjectCascade(p.id);
       removed.push(p.slug);
     }
