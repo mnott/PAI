@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
 import { upsertProject } from "../cli/commands/registry/utils.js";
 import { ensurePaiMarker } from "./pai-marker.js";
-import { isLinkedWorktree, mainRepoOf, worktreeReason, pruneWorktreeProjects } from "./registrable.js";
+import { isLinkedWorktree, mainRepoOf, worktreeReason, pruneWorktreeProjects, unregistrableReason } from "./registrable.js";
 
 let dir: string;
 let worktree: string;
@@ -71,11 +71,24 @@ describe("pruneWorktreeProjects", () => {
       });
     await add("linked", worktree);
     await add("gone", join(dir, "wts", "gone-worker"));
-    await add("real", normal);
+    await add("legacy", join(sep, "home", "u", ".claude", "logs", "workers", "worktrees", "old-id"));
+    await add("workers", join(sep, "home", "u", ".claude", "pai", "logs", "workers"));
+    // not under a temp dir, so the temp-dir rule cannot touch it
+    await add("real", join(sep, "home", "u", "dev", "proj"));
 
     const removed = await pruneWorktreeProjects(backend, join(dir, "wts"));
-    expect(removed.sort()).toEqual(["gone", "linked"]);
+    expect(removed.sort()).toEqual(["gone", "legacy", "linked", "workers"]);
     expect((await backend.listProjects({})).map((p) => p.slug)).toEqual(["real"]);
     db.close();
+  });
+});
+
+describe("worker log dirs are unregistrable", () => {
+  const legacy = join(sep, "home", "u", ".claude", "logs", "workers", "worktrees", "old-id");
+  const logDir = join(sep, "home", "u", ".claude", "pai", "logs", "workers");
+  it("rejects legacy worktree root, the log dir itself, and normal paths pass", () => {
+    expect(unregistrableReason(legacy, undefined)).toContain("worker log");
+    expect(unregistrableReason(logDir, undefined)).toContain("worker log");
+    expect(unregistrableReason(join(sep, "home", "u", "dev", "workers"), undefined)).toBeUndefined();
   });
 });
