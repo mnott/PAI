@@ -3,7 +3,7 @@
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import { now } from "../../utils.js";
 import { basename, join } from "node:path";
-import { worktreeReason } from "../../../registry/registrable.js";
+import { unregistrableReason } from "../../../registry/registrable.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 
 /**
@@ -52,7 +52,7 @@ export async function upsertProject(
   encodedDir: string
 ): Promise<{ id: number; isNew: boolean } | null> {
   // Single registration gate for scan/migrate: worktrees and temp dirs are no-ops.
-  if (worktreeReason(rootPath)) return null;
+  if (unregistrableReason(rootPath)) return null;
 
   const ts = now();
 

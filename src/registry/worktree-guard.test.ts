@@ -92,3 +92,16 @@ describe("worker log dirs are unregistrable", () => {
     expect(unregistrableReason(join(sep, "home", "u", "dev", "workers"), undefined)).toBeUndefined();
   });
 });
+
+describe("upsertProject uses the prune guard", () => {
+  it("returns null and creates no row for a worker log dir; prune -> upsert leaves none", async () => {
+    const db = new DatabaseCtor(":memory:");
+    initializeSchema(db);
+    const backend = new SQLiteRegistryBackend(db);
+    const logDir = join(sep, "home", "u", ".claude", "pai", "logs", "workers");
+    await pruneWorktreeProjects(backend, join(dir, "wts"));
+    expect(await upsertProject(backend, "workers", logDir, "enc-workers")).toBeNull();
+    expect(await backend.listProjects({})).toEqual([]);
+    db.close();
+  });
+});
