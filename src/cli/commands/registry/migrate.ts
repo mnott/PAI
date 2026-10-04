@@ -77,7 +77,12 @@ export async function cmdMigrate(): Promise<void> {
     const slug = slugify(rootPath);
 
     try {
-      const { isNew, id } = await upsertProject(backend, slug, rootPath, encodedDir);
+      const upserted = await upsertProject(backend, slug, rootPath, encodedDir);
+      if (!upserted) {
+        projectsSkipped++;
+        continue;
+      }
+      const { isNew, id } = upserted;
       if (isNew) projectsNew++;
       else projectsSkipped++;
 

@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { isLinkedWorktree } from "./registrable.js";
 
 // ---------------------------------------------------------------------------
 // Container directories
@@ -233,6 +234,10 @@ export function ensurePaiMarker(
   slug: string,
   displayName?: string
 ): void {
+  // A linked worktree shares its tracked files with the main repo: writing the
+  // slug here lands in the main repo's PAI.md when the branch is merged.
+  if (isLinkedWorktree(projectRoot)) return;
+
   const notesDir = join(projectRoot, "Notes");
   const markerPath = join(notesDir, "PAI.md");
   const name = displayName ?? slug;
