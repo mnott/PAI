@@ -9,7 +9,7 @@ import { encodeDir } from "../../utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../../registry/migrate.js";
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
-import { worktreeReason, pruneWorktreeProjects } from "../../../registry/registrable.js";
+import { unregistrableReason, pruneWorktreeProjects } from "../../../registry/registrable.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
@@ -229,7 +229,7 @@ export async function performScan(): Promise<ScanResult> {
     const slug = slugify(basename(rootPath) || encodedDir);
     const upserted = await upsertProject(backend, slug, rootPath, encodedDir);
     if (!upserted) {
-      result.skipped.push(`${encodedDir} (${rootPath} — ${worktreeReason(rootPath)})`);
+      result.skipped.push(`${encodedDir} (${rootPath} — ${unregistrableReason(rootPath)})`);
       result.projectsScanned++;
       continue;
     }
@@ -343,7 +343,7 @@ export async function performScan(): Promise<ScanResult> {
 
         const upserted = await upsertProject(backend, childSlug, childPath, childEncoded);
         if (!upserted) {
-          result.skipped.push(`${childPath} (${worktreeReason(childPath)})`);
+          result.skipped.push(`${childPath} (${unregistrableReason(childPath)})`);
           continue;
         }
         const { id, isNew } = upserted;

@@ -27,7 +27,7 @@
 import { realpathSync } from "node:fs";
 import { ok, err, dim, bold, encodeDir, now } from "../../utils.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
-import { worktreeReason } from "../../../registry/registrable.js";
+import { unregistrableReason } from "../../../registry/registrable.js";
 
 interface ProjectRow {
   id: number;
@@ -169,7 +169,7 @@ export async function cmdHere(
     return;
   }
 
-  const unregistrable = worktreeReason(target);
+  const unregistrable = unregistrableReason(target);
   if (unregistrable) {
     console.error(err(`Not registering ${target}: it is ${unregistrable}.`));
     process.exitCode = 1;
