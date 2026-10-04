@@ -424,6 +424,11 @@ export async function followWorkers(
   // FORCE_TTY=1: the TTY layout over a pipe (tests, recorded panes)
   const tty = out_.isTTY === true || env.FORCE_TTY === "1";
   const term = env.ITERM_SESSION_ID ?? "";
+  // iTerm user variable: lets AIBroker leave worker panes out of its Claude
+  // session list. Real TTY only (not FORCE_TTY); no tmux passthrough helper exists.
+  if (out_.isTTY === true && target) {
+    safeWrite(`\x1b]1337;SetUserVar=paiWorkerPane=${Buffer.from(target).toString("base64")}\x07`);
+  }
   const scopeTab = target || showAll ? "" : currentTabKey(env);
   const handles = new Map<string, FollowHandle>();
   const seenHeader = new Set<string>();

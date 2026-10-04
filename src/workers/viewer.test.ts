@@ -350,6 +350,23 @@ const PLACEHOLDER = `\x1b[23;1H\x1b[K› ${CHAT_HINT}\x1b[23;3H`;
 describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  it("sets the iTerm paiWorkerPane user variable on a real TTY only", async () => {
+    const { dir, id } = chatFixture();
+    const run = async (isTTY: boolean) => {
+      const input = new PassThrough();
+      let buf = "";
+      const stdout = { write: (s: string) => ((buf += s), true), rows: 24, columns: 80, isTTY };
+      const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, { stdin: input, stdout });
+      await sleep(200);
+      input.write("/quit\n");
+      await done;
+      return buf;
+    };
+    const seq = `\x1b]1337;SetUserVar=paiWorkerPane=${Buffer.from(id).toString("base64")}\x07`;
+    expect(await run(true)).toContain(seq);
+    expect(await run(false)).not.toContain("SetUserVar");
+  });
+
   it("draws the layout, echoes a submitted line and resumes the finished worker", async () => {
     const { dir, id } = chatFixture();
     const input = new PassThrough();
