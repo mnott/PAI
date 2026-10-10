@@ -869,6 +869,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   }
   const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined });
   status.endReason = end.reason;
+  // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
+  status.claimsContinue = report?.result === "~";
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end) });
 

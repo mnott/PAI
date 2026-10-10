@@ -26,6 +26,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
+import { issueClaim, issueClaims } from "../session/issue-claims.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
 import { dropItermBundleId } from "../utils/env.js";
 
@@ -603,6 +604,32 @@ async function startShim(): Promise<void> {
         ),
     },
     async (args) => proxyTool("project_todo", args)
+  );
+
+  // -------------------------------------------------------------------------
+  // Tools: issue_claim / issue_release / issue_claims (run locally, not via the daemon)
+  // -------------------------------------------------------------------------
+
+  const issueTool = (f: () => unknown) => {
+    try {
+      return { content: [{ type: "text" as const, text: JSON.stringify(f(), null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `issue error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+    }
+  };
+  for (const [name, add] of [["issue_claim", true], ["issue_release", false]] as const) {
+    server.tool(
+      name,
+      `${add ? "Claim" : "Release"} a forge issue of the current project (assignee claude + label in-progress). Never closes issues. Inside a worker the claim is recorded and released when the worker ends (unless it reports r=~).`,
+      { issue: z.number().int().positive().describe("Issue number"), dry_run: z.boolean().optional().describe("Return the requests that would be sent; send none") },
+      async (args) => issueTool(() => issueClaim(process.cwd(), args.issue, add, { dryRun: args.dry_run }))
+    );
+  }
+  server.tool(
+    "issue_claims",
+    "List open issues of the current project carrying the in-progress label.",
+    {},
+    async () => issueTool(() => issueClaims(process.cwd()))
   );
 
   // -------------------------------------------------------------------------

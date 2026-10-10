@@ -137,9 +137,9 @@ describe("applyContinue sink", () => {
 });
 
 describe("scope", () => {
-  it("the sink switch lives only in the Continue writer, never in session-note code", () => {
+  it("the sink switch lives only in the Continue writer; claims reuse the client elsewhere", () => {
     const hits = execFileSync("grep", ["-rl", "forge-sink", "src", "--include=*.ts"], { encoding: "utf8" })
-      .split("\n").filter(Boolean).filter(f => !f.endsWith("forge-sink.test.ts") && !f.endsWith("forge-sink.ts"));
-    expect(hits).toEqual(["src/session/checkpoint-block.ts"]);
+      .split("\n").filter(Boolean).filter(f => !f.endsWith(".test.ts") && !f.endsWith("forge-sink.ts"));
+    expect(hits.sort()).toEqual(["src/session/checkpoint-block.ts", "src/session/issue-claims.ts", "src/workers/status.ts"]);
   });
 });

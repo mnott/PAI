@@ -38,6 +38,7 @@ function ag2ReportBlock(): string[] {
     "R requires i (id), r (+ - ~ ? !), t (tests, Name+ Name-), c (path summary|path summary).",
     "r=+ requires G=+ (gate) and p non-empty (proof command), and every t entry +. z= the answer/note,",
     "one line, always present. x= what is left (omit if nothing). y= one line why when r is not +.",
+    "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
     "Example:",
     "R",
     "i=count-audit-ts",

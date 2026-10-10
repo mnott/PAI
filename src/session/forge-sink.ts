@@ -39,7 +39,7 @@ export interface StatusConfig {
 
 export interface HttpResult { status: number; text: string }
 /** Injected in tests. Throws on transport failure. */
-export type Http = (method: "GET" | "PATCH", url: string, token: string, body: string | undefined, timeoutMs: number) => HttpResult;
+export type Http = (method: "GET" | "PATCH" | "POST" | "DELETE", url: string, token: string, body: string | undefined, timeoutMs: number) => HttpResult;
 
 export class ForgeError extends Error {}
 
@@ -124,9 +124,10 @@ export function upsertSection(body: string, markdown: string): string {
 
 export interface ForgeDeps { http?: Http; token?: string; originUrl?: string; dryRun?: boolean }
 
-/** Returns the issue number written (or, dry run, that would be). Throws ForgeError with the reason. */
-export function writeContinueToForge(cwd: string, cfg: StatusConfig, markdown: string, deps: ForgeDeps = {}): { issue: number; body: string } {
-  if (!cfg.anchor || !cfg.marker) throw new ForgeError("status.forge.anchor/marker missing");
+type Method = "GET" | "PATCH" | "POST" | "DELETE";
+
+/** One forge repo + token + 5 s budget; dry run records mutating calls in `planned` instead of sending them. */
+function forgeClient(cwd: string, cfg: StatusConfig, deps: ForgeDeps) {
   const token = deps.token ?? resolveToken();
   if (!token) throw new ForgeError("no forge token");
   const http = deps.http ?? curlHttp;
@@ -139,24 +140,88 @@ export function writeContinueToForge(cwd: string, cfg: StatusConfig, markdown: s
   const derived = deriveRepo(origin);
   const repo = cfg.repo ?? derived.repo;
   const deadline = Date.now() + FORGE_BUDGET_MS;
-  const call = (method: "GET" | "PATCH", n: number, body?: string): HttpResult => {
+  const planned: string[] = [];
+  const call = (method: Method, path: string, body?: string): HttpResult => {
+    if (deps.dryRun && method !== "GET") {
+      planned.push(`${method} ${derived.apiBase}/repos/${repo}/${path}${body ? ` ${body}` : ""}`);
+      return { status: 200, text: "{}" };
+    }
     const left = deadline - Date.now();
     if (left < 300) throw new ForgeError("time budget exhausted");
     let r: HttpResult;
-    try { r = http(method, `${derived.apiBase}/repos/${repo}/issues/${n}`, token, body, left); }
+    try { r = http(method, `${derived.apiBase}/repos/${repo}/${path}`, token, body, left); }
     catch (e) { throw e instanceof ForgeError ? e : new ForgeError(`request failed (${(e as Error).message})`); }
-    if (r.status < 200 || r.status >= 300) throw new ForgeError(`HTTP ${r.status} on ${method} #${n}`);
+    if (r.status < 200 || r.status >= 300) throw new ForgeError(`HTTP ${r.status} on ${method} ${path}`);
     return r;
   };
-  const bodyOf = (r: HttpResult): string => {
-    try { return String((JSON.parse(r.text) as { body?: unknown }).body ?? ""); }
-    catch { throw new ForgeError("unparseable forge response"); }
-  };
-  const anchorBody = bodyOf(call("GET", cfg.anchor));
+  return { repo, call, planned };
+}
+
+function json<T>(r: HttpResult): T {
+  try { return JSON.parse(r.text) as T; } catch { throw new ForgeError("unparseable forge response"); }
+}
+
+/** Returns the issue number written (or, dry run, that would be). Throws ForgeError with the reason. */
+export function writeContinueToForge(cwd: string, cfg: StatusConfig, markdown: string, deps: ForgeDeps = {}): { issue: number; body: string } {
+  if (!cfg.anchor || !cfg.marker) throw new ForgeError("status.forge.anchor/marker missing");
+  const { call } = forgeClient(cwd, cfg, deps);
+  const bodyOf = (n: number): string => String(json<{ body?: unknown }>(call("GET", `issues/${n}`)).body ?? "");
+  const anchorBody = bodyOf(cfg.anchor);
   if (!anchorBody.includes(cfg.marker)) throw new ForgeError(`anchor #${cfg.anchor} lacks marker`);
   const handover = extractHandoverNumber(anchorBody, cfg.marker);
   if (!handover) throw new ForgeError(`no handover number in anchor #${cfg.anchor}`);
-  const next = upsertSection(bodyOf(call("GET", handover)), markdown);
-  if (!deps.dryRun) call("PATCH", handover, JSON.stringify({ body: next }));
+  const next = upsertSection(bodyOf(handover), markdown);
+  if (!deps.dryRun) call("PATCH", `issues/${handover}`, JSON.stringify({ body: next }));
   return { issue: handover, body: next };
+}
+
+// Claim convention (identical on the AIBroker side): assignee CLAIM_ASSIGNEE + label CLAIM_LABEL.
+// PAI never closes issues.
+export const CLAIM_ASSIGNEE = "claude";
+export const CLAIM_LABEL = "in-progress";
+
+export interface ClaimResult { repo: string; issue: number; message: string; planned: string[] }
+export interface ClaimRecord { issue: number; repo: string; at: string }
+
+interface IssueView { assignees?: Array<{ login: string }> | null; labels?: Array<{ id: number; name: string }> | null }
+
+/** Claim (add=true) or release (add=false) issue `n`; other assignees and labels are left alone. */
+export function setClaim(cwd: string, cfg: StatusConfig, n: number, add: boolean, deps: ForgeDeps = {}): ClaimResult {
+  const { repo, call, planned } = forgeClient(cwd, cfg, deps);
+  const issue = json<IssueView>(call("GET", `issues/${n}`));
+  const logins = (issue.assignees ?? []).map((a) => a.login);
+  const next = add ? [...new Set([...logins, CLAIM_ASSIGNEE])] : logins.filter((l) => l !== CLAIM_ASSIGNEE);
+  if (next.length !== logins.length || next.some((l, i) => l !== logins[i])) {
+    call("PATCH", `issues/${n}`, JSON.stringify({ assignees: next }));
+  }
+  const verb = add ? "claimed" : "released";
+  let message = `${verb} ${repo}#${n}`;
+  const has = (issue.labels ?? []).find((l) => l.name === CLAIM_LABEL);
+  if (add && !has) {
+    const label = json<Array<{ id: number; name: string }>>(call("GET", "labels?limit=100")).find((l) => l.name === CLAIM_LABEL);
+    if (label) call("POST", `issues/${n}/labels`, JSON.stringify({ labels: [label.id] }));
+    else message += ` (assignee only: label "${CLAIM_LABEL}" does not exist in ${repo})`;
+  } else if (!add && has) {
+    call("DELETE", `issues/${n}/labels/${has.id}`);
+  }
+  return { repo, issue: n, message, planned };
+}
+
+/** Open issues in the repo currently carrying the claim label. */
+export function listClaims(cwd: string, cfg: StatusConfig, deps: ForgeDeps = {}): Array<{ issue: number; title: string; assignees: string[] }> {
+  const { call } = forgeClient(cwd, cfg, deps);
+  const rows = json<Array<{ number: number; title: string; pull_request?: unknown } & IssueView>>(
+    call("GET", `issues?state=open&type=issues&labels=${CLAIM_LABEL}&limit=50`),
+  );
+  return rows.map((r) => ({ issue: r.number, title: r.title, assignees: (r.assignees ?? []).map((a) => a.login) }));
+}
+
+/** Release every claim best-effort; returns the per-issue errors (never throws). */
+export function releaseClaims(cwd: string, claims: ClaimRecord[], deps: ForgeDeps = {}): string[] {
+  const errors: string[] = [];
+  for (const c of claims) {
+    try { setClaim(cwd, { ...loadStatusConfig(cwd), repo: c.repo }, c.issue, false, deps); }
+    catch (e) { errors.push(`${c.repo}#${c.issue}: ${(e as Error).message}`); }
+  }
+  return errors;
 }

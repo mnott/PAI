@@ -31,6 +31,7 @@ import { registerObsidianCommands } from "./commands/obsidian.js";
 import { registerZettelCommands } from "./commands/zettel.js";
 import { registerObservationCommands } from "./commands/observation.js";
 import { registerAuditCommands } from "./commands/audit.js";
+import { registerIssueCommands } from "./commands/issue.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerNotifyCommands } from "./commands/notify.js";
@@ -365,6 +366,8 @@ Examples:
     .description("Skill telemetry and (future) discovery for the self-educating skill system");
 
   registerSkillCommands(skillCmd);
+
+  registerIssueCommands(program.command("issue").description("Claim and release forge issues (assignee claude + label in-progress)"));
 
   // -------------------------------------------------------------------------
   // pai help [area]  — rich man-page viewer for the generated docs

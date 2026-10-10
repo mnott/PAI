@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
 import { closePaneIfEnded } from "./pane.js";
+import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
 
@@ -146,6 +147,12 @@ export interface WorkerStatus {
    * while it waits (null once it returns), rendered by waiting.ts.
    */
   waitingOn?: WaitingOn | null;
+  /** Forge issues this worker claimed (`pai issue claim` inside it); released when it ends unless claimsContinue. */
+  claims?: ClaimRecord[];
+  /** The final report said the work continues (r=~): claims stay. Set by finaliseRun before the end write. */
+  claimsContinue?: boolean;
+  /** Per-issue errors from the best-effort release at worker end. */
+  claimReleaseErrors?: string[];
   /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
   controlsHeld?: boolean;
 }
@@ -266,6 +273,17 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (onDisk.controlsHeld) status.controlsHeld = true;
     // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
     if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
+    // Recorded by `pai issue claim` (another process).
+    if (status.claims === undefined && onDisk.claims) status.claims = onDisk.claims;
+  }
+  // The one owner of "an ended worker holds no claims" (like its pane, below): every end path saves through here.
+  if (status.state !== "running" && status.claims?.length && !status.claimsContinue) {
+    const errors = releaseClaims(status.cwd, status.claims);
+    status.claims = [];
+    if (errors.length) {
+      status.claimReleaseErrors = errors;
+      process.stderr.write(`claim release failed: ${errors.join("; ")}\n`);
+    }
   }
   const tmp = statusTmpPath(logDir, status.id);
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
