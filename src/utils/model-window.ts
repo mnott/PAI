@@ -33,3 +33,14 @@ export function contextWindowFromModelId(model: string | null | undefined): numb
   if (!Number.isFinite(millions) || millions < 1) return null;
   return millions * 1_000_000;
 }
+
+/**
+ * A window we are certain of from the id alone: the `[Nm]` variant suffix, or
+ * a plain `claude-*` id (200k). Anything else (local or third-party models)
+ * is null — the caller shows no window rather than a guess.
+ */
+export function certainContextWindow(model: string | null | undefined): number | null {
+  const declared = contextWindowFromModelId(model);
+  if (declared) return declared;
+  return typeof model === "string" && /^claude-/i.test(model.trim()) ? DEFAULT_CONTEXT_WINDOW : null;
+}

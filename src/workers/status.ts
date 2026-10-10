@@ -58,6 +58,8 @@ export interface WorkerStatus {
   spawnerSession?: string | null;
   /** Context meter: tokens of the last assistant turn (input+cache+output). */
   contextTokens?: number | null;
+  /** Current context fill: input+cache_read+cache_creation of the latest assistant turn. */
+  contextUsed?: number | null;
   /** Context meter: window size (init model info or provider default). */
   contextWindow?: number | null;
   /** Path the prompt was read from via --spec ("-" for stdin), when it was. */
@@ -159,6 +161,18 @@ export function contextPercent(s: Pick<WorkerStatus, "contextTokens" | "contextW
 /** Compact token count: 84k, 200k, 900. */
 export function fmtContextK(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/** Footer token count: 48k, 1M, 1.5M. */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(1))}M`;
+  return fmtContextK(n);
+}
+
+/** `<used> / <window>`, or just `<used>` when the window is unknown; "" with no reading. */
+export function contextFooter(s: Pick<WorkerStatus, "contextUsed" | "contextWindow">): string {
+  if (!s.contextUsed) return "";
+  return s.contextWindow ? `${fmtTokens(s.contextUsed)} / ${fmtTokens(s.contextWindow)}` : fmtTokens(s.contextUsed);
 }
 
 /**

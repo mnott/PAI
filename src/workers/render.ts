@@ -11,7 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { ageOf, elapsedOf, contextLabel, contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
+import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
@@ -612,11 +612,11 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
  * than rendering a bare gap.
  */
 export function paneStatusRow(
-  s: Pick<WorkerStatus, "label" | "model" | "started">,
+  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow">,
   now: Date = new Date(),
   columns: number | null = null
 ): string {
-  const model = shortModel(s.model);
+  const model = [shortModel(s.model), contextFooter(s)].filter(Boolean).join(" · ");
   const started = String(s.started ?? "").slice(11, 16);
   const elapsed = elapsedOf(s.started, now);
   const tail = [model, started ? `started ${started}` : "", elapsed].filter(Boolean).join(" · ");

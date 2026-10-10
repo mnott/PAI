@@ -79,6 +79,7 @@ import {
   parseSleepSecs,
   UNLABELED,
 } from "./status.js";
+import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
 import {
@@ -272,6 +273,13 @@ export function usageContextTokens(u: UsageBlock | undefined): number | null {
     (u.cache_read_input_tokens ?? 0) +
     (u.cache_creation_input_tokens ?? 0) +
     (u.output_tokens ?? 0);
+  return t > 0 ? t : null;
+}
+
+/** Current context fill of one assistant turn: input + cache read + cache creation (no output). */
+export function usageContextUsed(u: UsageBlock | undefined): number | null {
+  if (!u) return null;
+  const t = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
   return t > 0 ? t : null;
 }
 
@@ -1378,7 +1386,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       if (e.type === "system" && e.subtype === "init") {
         if (e.session_id) status.claudeSession = e.session_id;
         adoptInitModel(status, e);
-        const cw = initContextWindow(e);
+        const cw =
+          initContextWindow(e) ?? target.provider.contextWindow ?? certainContextWindow(status.model);
         if (cw) status.contextWindow = cw;
         saveStatus(logDir, status);
       } else if (isCompactBoundary(e)) {
@@ -1387,6 +1396,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       } else if (e.type === "assistant") {
         status.turns += 1;
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
+        status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
             status.tools += 1;
