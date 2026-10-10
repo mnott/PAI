@@ -18,6 +18,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai help`](help.md) | Show the man page for a command area (pai help <area>), or list all areas |
 | [`pai hooks-db`](hooks-db.md) | Registry updates for the shell hooks (session-stop, pre-compact) |
 | [`pai identity`](identity.md) | Declare who you are: self addresses and where mail is delivered |
+| [`pai issue`](issue.md) | Claim and release forge issues (assignee claude + label in-progress) |
 | [`pai kg`](kg.md) | Temporal knowledge graph: backfill, query, list, stats |
 | [`pai launch`](launch.md) | Start the Claude Code harness on any provider/model from workers.yaml. |
 | [`pai mcp`](mcp.md) | MCP server management: install and status |
@@ -92,6 +93,10 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai identity remove <email>` | Stop treating an address as your own |
 | `pai identity set-delivery <email>` | Set where digests and 'mail me X' are delivered |
 | `pai identity show` | Show the configured identity |
+| `pai issue` | Claim and release forge issues (assignee claude + label in-progress) |
+| `pai issue claim <n>` | Claim forge issue <n> of this project (assignee claude + label in-progress) |
+| `pai issue claims` | List open issues of this project carrying the in-progress label |
+| `pai issue release <n>` | Release forge issue <n> of this project (assignee claude + label in-progress) |
 | `pai kg` | Temporal knowledge graph: backfill, query, list, stats |
 | `pai kg backfill` | Populate the KG from existing session notes (idempotent) |
 | `pai kg list` | List currently-valid triples |
