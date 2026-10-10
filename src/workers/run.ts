@@ -92,7 +92,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
-import { openPaneForWorker, paneBackend } from "./pane.js";
+import { openPaneForWorker, paneBackend, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -116,6 +116,7 @@ import {
   type WorkerReport,
 } from "./report.js";
 import { validateAg2 } from "./agentish.js";
+import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
@@ -1000,29 +1001,36 @@ export async function announcePane(
   wid: string,
   term: string,
   noPane: boolean,
-  ledger: string
+  ledger: string,
+  status?: WorkerStatus
 ): Promise<void> {
+  const setPane = (p: NonNullable<WorkerStatus["pane"]>): void => {
+    if (status) status.pane = p;
+  };
   const skip = !noPane
     ? !config.pane.enabled
       ? "workers.pane.enabled is false"
       : process.env.PAI_WORKER_AUTOPANE === "0"
         ? "PAI_WORKER_AUTOPANE=0"
-        : paneBackend() === "none"
+        : paneBackend(process.env, process.platform, term) === "none"
           ? "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"
           : null
     : "--no-pane";
   if (skip) {
     process.stderr.write(`[pai worker] no pane for ${wid}: ${skip}\n`);
+    setPane({ opened: false, reason: skip });
     return;
   }
   try {
     const r = await openPaneForWorker(logDir, config, wid, term);
     const suffix = r.session ? ` (iTerm session ${r.session})` : "";
     process.stderr.write(`[pai worker] pane opened for ${wid}${suffix}\n`);
+    setPane({ opened: true, ...(r.session ? { session: r.session } : {}) });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai worker] no pane for ${wid}: ${message.slice(0, 200)}\n`);
     appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
+    setPane({ opened: false, reason: message.slice(0, 200) });
   }
 }
 
@@ -1071,7 +1079,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
-  const term = process.env.ITERM_SESSION_ID ?? "";
+  const term = (await resolveHostSession()).term;
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
@@ -1094,6 +1102,18 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       process.stderr.write(`pai worker: no worktree (${why}) — running in place\n`);
       appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
     }
+  }
+  // project preamble (.pai/worker.md): headless only, oversize refuses the run
+  let preamble: Preamble | null = null;
+  if (headless) {
+    const loaded = loadPreamble(cwd);
+    if ("refused" in loaded) {
+      process.stderr.write(`pai worker: preamble refused: ${loaded.refused}\n`);
+      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `preamble refused: ${loaded.refused}` });
+      return 1;
+    }
+    preamble = loaded.preamble;
+    if (!a.quiet) process.stderr.write(preambleLine(preamble) + "\n");
   }
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
@@ -1167,6 +1187,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   cmd.push(
     ...appendSystemPromptArgs([
       ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless
         ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
         : []),
@@ -1211,6 +1232,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     outputFormat: parsed.outputFormat,
     ...(headless ? { reportFormat: a.reportFormat } : {}),
     ...(trailerApplied ? { promptTrailer: true } : {}),
+    ...(preamble ? { preamble: { path: preamble.path, hash: preamble.hash } } : {}),
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
@@ -1243,7 +1265,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Follow pane: headless only (interactive runs ARE the chat pane), best
   // effort, never blocking the worker.
-  if (headless) void announcePane(logDir, config, wid, term, noPane, ledger);
+  if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
@@ -1370,6 +1392,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       }
     }
     eventsFd = openSync(eventsPath(logDir, wid), "a");
+    writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
     const rl = createInterface({ input: proc.stdout! });
     rl.on("line", (line) => {
       if (parsed.outputFormat === "stream-json") {
@@ -1637,7 +1660,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const env = buildCodexEnv(target.provider);
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
-  const term = process.env.ITERM_SESSION_ID ?? "";
+  const term = (await resolveHostSession()).term;
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
@@ -1717,7 +1740,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  void announcePane(logDir, config, wid, term, noPane, ledger);
+  void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {

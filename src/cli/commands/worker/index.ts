@@ -30,7 +30,7 @@ import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../../workers/w
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
-import { openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes } from "../../../workers/pane.js";
+import { openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes, resolveHostSession } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
@@ -343,7 +343,11 @@ export function registerWorkerCommands(workerCmd: Command): void {
           if (!r.closed.length) console.log("no ended worker panes open");
           return;
         }
-        const term = process.env.ITERM_SESSION_ID ?? "";
+        const host = await resolveHostSession();
+        const term = host.term;
+        console.error(
+          host.via === "none" ? `host session: none (${host.reason})` : `host session: ${host.uid} via ${host.via}`
+        );
         if (id) {
           const msg = opts.check
             ? await checkPaneForWorker(id, workers.pane.fontSize, term)

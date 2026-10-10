@@ -474,19 +474,44 @@ function dropEntry(logDir: string, e: PaneEntry): void {
 // Ending panes of finished workers
 // ---------------------------------------------------------------------------
 
+// One listing for every caller. Each property is read on its own: iTerm 3.7 can
+// throw on name() for a session, which must not drop the others.
 const LIST_SESSIONS_SCRIPT = `function run(argv) {
     var app = Application("iTerm2");
     if (!app.running()) return "";
+    function get(s, k) { try { return String(s[k]()); } catch (e) { return ""; } }
     var out = "";
     app.windows().forEach(function (w) {
         w.tabs().forEach(function (t) {
             t.sessions().forEach(function (s) {
-                out += s.id() + "\t" + s.tty() + "\t" + s.name() + "\n";
+                var id = get(s, "id");
+                if (id) out += id + "\\t" + get(s, "tty") + "\\t" + get(s, "name") + "\\n";
             });
         });
     });
     return out;
 }`;
+
+export interface ItermSession {
+  id: string;
+  tty: string;
+  /** Undefined when iTerm would not give the session's name. */
+  name?: string;
+}
+
+/** Every open iTerm session. [] when iTerm is not running; rejects when the script fails. */
+export async function listItermSessions(
+  run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascript
+): Promise<ItermSession[]> {
+  const p = await run(LIST_SESSIONS_SCRIPT, []);
+  return p.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const [id, tty, ...name] = l.split("\t");
+      return { id, tty, name: name.join("\t") || undefined };
+    });
+}
 
 // Ends one session by its unique id, never a window or the app.
 const END_SESSION_SCRIPT = `${FIND_SESSION}
@@ -510,25 +535,15 @@ export interface PaneOps {
 export const realPaneOps: PaneOps = {
   async listIterm() {
     if (process.platform !== "darwin") return [];
-    try {
-      const p = await osascript(LIST_SESSIONS_SCRIPT, []);
-      // iTerm renames a pane after its running command ("node"), so the follow
-      // command is looked up by the session's tty instead
-      const cmdByTty = new Map<string, string>();
-      for (const line of psOutput("tty=,command=").split("\n")) {
-        const [tty, ...rest] = line.trim().split(/\s+/);
-        if (tty && tty !== "??") cmdByTty.set(`/dev/${tty}`, rest.join(" "));
-      }
-      return p.stdout
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => {
-          const [id, tty, ...name] = l.split("\t");
-          return { id, name: `${name.join("\t")} ${cmdByTty.get(tty) ?? ""}`.trim() };
-        });
-    } catch {
-      return [];
+    const sessions = await listItermSessions();
+    // iTerm renames a pane after its running command ("node"), so the follow
+    // command is looked up by the session's tty instead
+    const cmdByTty = new Map<string, string>();
+    for (const line of psOutput("tty=,command=").split("\n")) {
+      const [tty, ...rest] = line.trim().split(/\s+/);
+      if (tty && tty !== "??") cmdByTty.set(`/dev/${tty}`, rest.join(" "));
     }
+    return sessions.map((x) => ({ id: x.id, name: `${x.name ?? ""} ${cmdByTty.get(x.tty) ?? ""}`.trim() }));
   },
   async closeIterm(id) {
     const p = await osascript(END_SESSION_SCRIPT, [id]);
@@ -627,7 +642,8 @@ export async function closeEndedPanes(
     }
     res.closed.push(`${worker} ${key}${dryRun ? " (dry run)" : ""}`);
   };
-  const sessions = await ops.listIterm();
+  // iTerm unreachable: no live-session view, registry entries are still handled
+  const sessions = await ops.listIterm().catch(() => []);
   const open = new Set(sessions.map((s) => s.id));
   for (const e of loadRegistry(logDir)) {
     // iTerm answered and the session is gone: a stale entry, forgotten without a close
@@ -671,14 +687,109 @@ function absoluteCliPath(): string {
   return "pai";
 }
 
+// ---------------------------------------------------------------------------
+// Host session — which iTerm session launched this process
+// ---------------------------------------------------------------------------
+
+/** Lookups behind resolveHostSession, swappable so tests never touch ps or iTerm. */
+export interface HostDeps {
+  /** [ppid, tty] of a pid, null when ps cannot say. tty is as ps prints it ("ttys004", "??"). */
+  psOf(pid: number): [number, string] | null;
+  /** Every open iTerm session (unique id + tty). Empty when iTerm is not running or unreachable. */
+  listSessions(): Promise<Array<{ id: string; tty: string }>>;
+}
+
+export const realHostDeps: HostDeps = {
+  psOf(pid) {
+    try {
+      const out = execFileSync("ps", ["-o", "ppid=,tty=", "-p", String(pid)], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: "C" },
+      }).trim();
+      const [ppid, tty] = out.split(/\s+/);
+      return ppid && tty ? [Number(ppid), tty] : null;
+    } catch {
+      return null;
+    }
+  },
+  async listSessions() {
+    if (process.platform !== "darwin") return [];
+    try {
+      return await listItermSessions();
+    } catch {
+      return [];
+    }
+  },
+};
+
+/** /dev/ttysNNN of the nearest ancestor (self included) that has a real tty, null when none. */
+export function ancestorTty(deps: HostDeps = realHostDeps, start: number = process.pid): string | null {
+  let pid = start;
+  for (let i = 0; i < 64 && pid > 1; i++) {
+    const row = deps.psOf(pid);
+    if (!row) return null;
+    const [ppid, tty] = row;
+    if (tty && tty !== "??" && tty !== "?") return tty.startsWith("/dev/") ? tty : `/dev/${tty}`;
+    pid = ppid;
+  }
+  return null;
+}
+
+export interface HostSession {
+  /** iTerm unique id of the host session, "" when none was found. */
+  uid: string;
+  /** ITERM_SESSION_ID-shaped value for status/scope: the env value when it names the host, else the bare uid. "" when none. */
+  term: string;
+  via: "tty" | "env" | "none";
+  reason?: string;
+}
+
+/**
+ * The one place that decides which iTerm session hosts this process. Facts
+ * first: the tty of the nearest ancestor with one, matched against the live
+ * iTerm sessions. ITERM_SESSION_ID is only a fallback and only when it names a
+ * session that is live right now — a reattached session keeps its old id in
+ * the process env for good.
+ */
+export async function resolveHostSession(
+  env: NodeJS.ProcessEnv = process.env,
+  deps: HostDeps = realHostDeps,
+  start: number = process.pid
+): Promise<HostSession> {
+  const sessions = await deps.listSessions();
+  const tty = ancestorTty(deps, start);
+  const envTerm = env.ITERM_SESSION_ID ?? "";
+  const envUid = itermUuid(envTerm);
+  const byTty = tty ? sessions.find((s) => s.tty === tty) : undefined;
+  if (byTty) {
+    return { uid: byTty.id, term: byTty.id === envUid ? envTerm : byTty.id, via: "tty" };
+  }
+  if (envUid && sessions.some((s) => s.id === envUid)) {
+    return { uid: envUid, term: envTerm, via: "env" };
+  }
+  const why = sessions.length === 0 ? "iTerm2 not running or unreachable" : "no live iTerm2 session matched";
+  return {
+    uid: "",
+    term: "",
+    via: "none",
+    reason: `${why}; ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}; ${tty ? `ancestor tty ${tty} matched no session` : "no tty ancestor"}`,
+  };
+}
+
 export type PaneBackend = "tmux" | "iterm" | "none";
 
 /** The one place that decides where a follow pane opens: tmux (any OS) > iTerm2 (macOS) > nowhere. */
-export function paneBackend(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): PaneBackend {
+export function paneBackend(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: string = process.platform,
+  hostTerm: string = ""
+): PaneBackend {
   if (env.TMUX) return "tmux";
-  if (platform === "darwin" && env.ITERM_SESSION_ID) return "iterm";
+  if (platform === "darwin" && (env.ITERM_SESSION_ID || hostTerm)) return "iterm";
   return "none";
 }
+
+const NO_HOST = "pai worker pane: no live iTerm2 host session (tty lookup found none, ITERM_SESSION_ID not live)";
 
 export function noPaneMessage(wid?: string): string {
   return `no pane support here, use: pai worker follow${wid ? ` ${wid}` : ""}`;
@@ -709,13 +820,14 @@ export async function openPaneForWorker(
   term: string
 ): Promise<PaneOpenResult> {
   if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
-  const backend = paneBackend();
+  const backend = paneBackend(process.env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
     tmuxSplit(followCommand(wid, config.pane.autoExitSecs));
     return { message: `pane opened for ${wid}`, session: null };
   }
   const uid = itermUuid(term);
+  if (!uid) throw new Error(NO_HOST);
   const scope = scopeKey(term);
   const reg = loadRegistry(logDir, scope);
   const profile = await followProfile(config.pane.fontSize);
@@ -727,7 +839,7 @@ export async function openPaneForWorker(
   if (out === "notfound" || out === "notrunning") {
     throw new Error(
       out === "notfound"
-        ? "pai worker pane: no open iTerm2 session matches ITERM_SESSION_ID"
+        ? "pai worker pane: resolved iTerm2 session vanished"
         : "pai worker pane: iTerm2 is not running"
     );
   }
@@ -778,7 +890,7 @@ async function windowBoundsLine(term: string): Promise<string> {
  */
 export async function checkPaneForWorker(wid: string, fontSize: number, term: string): Promise<string> {
   const lines = [workerPaneOpen(wid) ? `pane for ${wid} open` : `no pane for ${wid}`];
-  if (paneBackend() !== "iterm") return lines.join("\n");
+  if (paneBackend(process.env, process.platform, term) !== "iterm") return lines.join("\n");
   lines.push(await windowBoundsLine(term));
   const path = dynamicProfilePath();
   if (existsSync(path)) {
@@ -813,7 +925,7 @@ export async function openFollowPane(
   checkOnly: boolean
 ): Promise<string> {
   void logDir;
-  const backend = paneBackend();
+  const backend = paneBackend(process.env, process.platform, term);
   if (backend === "none") return noPaneMessage();
   if (backend === "tmux") {
     if (checkOnly) return "no follow pane";
@@ -821,9 +933,10 @@ export async function openFollowPane(
     return "follow pane opened";
   }
   const uid = itermUuid(term);
+  if (!uid) throw new Error(NO_HOST);
   const p = await osascript(TAB_TTYS_SCRIPT, [uid]);
   const out = p.stdout.trim();
-  if (out === "notfound") throw new Error("pai worker pane: no open iTerm2 session matches ITERM_SESSION_ID");
+  if (out === "notfound") throw new Error("pai worker pane: resolved iTerm2 session vanished");
   if (out === "notrunning") throw new Error("pai worker pane: iTerm2 is not running");
   const tabTtys = new Set(out.split(",").map((t) => t.trim()).filter(Boolean));
   const overlap = [...tabTtys].filter((t) => followTtys().has(t));
@@ -834,6 +947,6 @@ export async function openFollowPane(
   const s = await osascript(SPLIT_SCRIPT, [uid, cmd]);
   const sout = s.stdout.trim();
   if (sout === "opened") return "follow pane opened";
-  if (sout === "notfound") throw new Error("pai worker pane: no open iTerm2 session matches ITERM_SESSION_ID");
+  if (sout === "notfound") throw new Error("pai worker pane: resolved iTerm2 session vanished");
   throw new Error(`pai worker pane: osascript failed: ${(s.stderr || sout).slice(0, 200)}`);
 }

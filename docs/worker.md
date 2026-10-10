@@ -582,6 +582,19 @@ until `--chrome` is passed. Allowlisting any
 appends `--chrome` automatically; a `--chrome` passed by hand is kept
 rather than duplicated.
 
+### Project preamble: `.pai/worker.md`
+
+A project keeps its standing worker rules in `.pai/worker.md` at the project
+root (the git toplevel of the cwd; the cwd itself outside git). Headless
+`pai worker run` appends its raw content to the system prompt, in the same single
+`--append-system-prompt`, right after the worker contract and under a fixed
+`## Project worker rules` header — no ids, paths or hashes, so every worker of a
+project shares one cacheable prefix. The spec stays in the user message. A
+missing or empty file adds nothing; a file over 16 KB is refused (stderr, ledger
+note, rc 1), never truncated. Each run prints `preamble: .pai/worker.md (N lines)`
+(or `preamble: none`) at start, mirrors it into the event log, and records the
+path and a short hash in the worker status.
+
 ## Scoping (who sees whose workers)
 
 `ps`/`follow`/status line show the workers of the asking terminal:

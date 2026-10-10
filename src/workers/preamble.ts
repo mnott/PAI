@@ -1,0 +1,60 @@
+/**
+ * Per-project worker preamble: `.pai/worker.md` at the project root (git
+ * toplevel of the cwd; the cwd itself outside git). Its text is appended to the
+ * worker's system prompt right after the contract, so a project's standing
+ * rules ride on every worker started there.
+ */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+export const PREAMBLE_REL = ".pai/worker.md";
+export const PREAMBLE_MAX_BYTES = 16 * 1024;
+
+export interface Preamble {
+  path: string;
+  text: string;
+  lines: number;
+  hash: string;
+}
+
+export type PreambleResult = { preamble: Preamble | null } | { refused: string };
+
+function projectRoot(cwd: string): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return cwd;
+  }
+}
+
+/** Missing or empty file: no preamble. Over PREAMBLE_MAX_BYTES: refused, never truncated. */
+export function loadPreamble(cwd: string): PreambleResult {
+  const path = join(projectRoot(cwd), PREAMBLE_REL);
+  if (!existsSync(path)) return { preamble: null };
+  const size = statSync(path).size;
+  if (size > PREAMBLE_MAX_BYTES) {
+    return { refused: `${path} is ${size} bytes, over the ${PREAMBLE_MAX_BYTES} byte limit — shorten it` };
+  }
+  const text = readFileSync(path, "utf8");
+  if (!text.trim()) return { preamble: null };
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 8);
+  return { preamble: { path, text: text.trim(), lines: text.trimEnd().split("\n").length, hash } };
+}
+
+/**
+ * The system-prompt block: a fixed header plus the raw file text, nothing run-specific
+ * (no ids, paths, hashes), so every worker of a project shares one cacheable prefix.
+ */
+export function preambleBlock(p: Preamble): string {
+  return `## Project worker rules\n\n${p.text}`;
+}
+
+export function preambleLine(p: Preamble | null): string {
+  return p ? `preamble: ${PREAMBLE_REL} (${p.lines} lines)` : "preamble: none";
+}

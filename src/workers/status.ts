@@ -57,6 +57,8 @@ export interface WorkerStatus {
    * claudeSession, which is the run's own session.
    */
   spawnerSession?: string | null;
+  /** Follow-pane outcome of the run start: opened, or why not. */
+  pane?: { opened: boolean; reason?: string; session?: string } | null;
   /** Context meter: tokens of the last assistant turn (input+cache+output). */
   contextTokens?: number | null;
   /** Current context fill: input+cache_read+cache_creation of the latest assistant turn. */
@@ -103,6 +105,8 @@ export interface WorkerStatus {
   reportErrors?: string[];
   /** Whether the headless prompt got the end-of-turn "final message must be…" trailer line. */
   promptTrailer?: boolean;
+  /** The project preamble (.pai/worker.md) appended to this run's prompt: path + short content hash. */
+  preamble?: { path: string; hash: string };
   /** Whether an invalid AG2 final message triggered the one bounded re-ask (see run.ts). */
   reportRetried?: boolean;
   /**
