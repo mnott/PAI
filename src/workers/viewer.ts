@@ -65,6 +65,7 @@ import {
   type StatusRow,
   type StreamEventLike,
 } from "./render.js";
+import { parseWaitOn, waitingLine } from "./waiting.js";
 
 /** How many existing events a fresh follow pane replays before going live. */
 export const BACKFILL_EVENTS = 200;
@@ -184,7 +185,10 @@ export function applyEvent(
   const tools = { ...s.tools };
   if (e.type === "assistant") {
     for (const b of e.message?.content ?? []) {
-      if (b.type === "tool_use" && b.id) tools[b.id] = b.name ?? "?";
+      if (b.type === "tool_use" && b.id) {
+        const cmd = (b.input as { command?: unknown } | undefined)?.command;
+        tools[b.id] = b.name === "Bash" && typeof cmd === "string" && parseWaitOn(cmd) ? "Bash:wait-on" : (b.name ?? "?");
+      }
     }
   }
   const day = typeof e._ts === "string" ? (dayOf(e._ts, offMin) ?? rawDay(e._ts)) : "";
@@ -519,9 +523,14 @@ export async function followWorkers(
       elapsed,
       idle: secs,
       intent: ticker.intent,
-      tool: ticker.tool,
+      tool: waitingNow() ?? ticker.tool,
       state: fin ? (st.state === "running" ? "done" : st.state) : null,
     };
+  };
+  // what a blocked worker waits on, from the freshest status the pane has
+  const waitingNow = (): string | null => {
+    const w = (paneStatus ?? meterStatus)?.waitingOn;
+    return w ? waitingLine(w) : null;
   };
   const writeLiveness = () => {
     if (!tty) return;
@@ -538,7 +547,7 @@ export async function followWorkers(
     } else {
       const meter = meterStatus ? contextMeter(c, meterStatus) : null;
       safeWrite("\r\x1b[K");
-      safeWrite(tickerText(secs, ticker.intent, ticker.tool, meter));
+      safeWrite(tickerText(secs, ticker.intent, waitingNow() ?? ticker.tool, meter));
     }
   };
 

@@ -249,6 +249,44 @@ describe("addWorktree snapshot: dirty parent checkout", () => {
     expect(msg).toMatch(/applied worker snap3's changes/);
     expect(readFileSync(join(repoSnap, "base.txt"), "utf8")).toBe("edited by worker\n");
   });
+
+  it("a checkout dirty only in PAI bookkeeping makes no snapshot: the branch starts at HEAD", () => {
+    resetRepoSnap();
+    mkdirSync(join(repoSnap, "Notes"), { recursive: true });
+    writeFileSync(join(repoSnap, "Notes", "TODO.md"), "todo\n", "utf8");
+    writeFileSync(join(repoSnap, "TODO.md"), "root todo\n", "utf8");
+    const info = addWorktree(logDir, "snap-bk", repoSnap);
+    expect(info.snapshot).toBe(false);
+    expect(info.base).toBe(git(repoSnap, ["rev-parse", "HEAD"]));
+    expect(git(repoSnap, ["rev-parse", info.branch])).toBe(info.base);
+    status("snap-bk", { cwd: repoSnap, branch: info.branch, worktreeDir: info.dir });
+    discardWorker(logDir, "snap-bk");
+  });
+
+  it("the snapshot holds only non-bookkeeping dirt, and a merge survives bookkeeping changing again", () => {
+    resetRepoSnap();
+    mkdirSync(join(repoSnap, "Notes"), { recursive: true });
+    mkdirSync(join(repoSnap, "src"), { recursive: true });
+    writeFileSync(join(repoSnap, "Notes", "x.md"), "note\n", "utf8");
+    writeFileSync(join(repoSnap, "Notes", "TODO.md"), "todo v1\n", "utf8");
+    writeFileSync(join(repoSnap, "src", "a.ts"), "export {};\n", "utf8");
+
+    const info = addWorktree(logDir, "snap-bk2", repoSnap);
+    expect(info.snapshot).toBe(true);
+    expect(git(repoSnap, ["diff", "--name-only", "HEAD", info.base])).toBe("src/a.ts");
+    expect(existsSync(join(repoSnap, "Notes", "x.md"))).toBe(true); // checkout untouched
+    const st = status("snap-bk2", { cwd: repoSnap });
+    recordWorktree(logDir, st, info, true);
+
+    writeFileSync(join(info.dir, "src", "b.ts"), "export {};\n", "utf8");
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-q", "-m", "worker work"]);
+    writeFileSync(join(repoSnap, "Notes", "TODO.md"), "todo v2\n", "utf8"); // autosave rewrote it
+
+    expect(mergeWorker(logDir, "snap-bk2")).toMatch(/applied worker snap-bk2's changes/);
+    expect(existsSync(join(repoSnap, "src", "b.ts"))).toBe(true);
+    expect(readFileSync(join(repoSnap, "Notes", "TODO.md"), "utf8")).toBe("todo v2\n");
+  });
 });
 
 describe("uncommittedPaths / salvageUncommitted / assertWorktreeClean", () => {

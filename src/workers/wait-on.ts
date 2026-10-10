@@ -9,6 +9,8 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { loadStatus, saveStatus } from "./status.js";
+import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
 export const WAIT_DEFAULT_SECS = 110;
 export const WAIT_CAP_SECS = 115;
@@ -32,6 +34,20 @@ export interface WaitOnDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   out: (line: string) => void;
+  /** Command line + start of the awaited pid; absent = not recorded. */
+  proc?: (pid: number) => ProcInfo | null;
+  /** Record (or, with null, clear) what this worker waits on in its status. */
+  mark?: (w: WaitingOn | null) => void;
+}
+
+/** A `mark` that writes `waitingOn` into worker `id`'s status file; a no-op for an unknown id. */
+export function statusMarker(logDir: string, id: string): (w: WaitingOn | null) => void {
+  return (w) => {
+    const s = loadStatus(logDir, id);
+    if (!s) return;
+    s.waitingOn = w;
+    saveStatus(logDir, s);
+  };
 }
 
 export const realDeps: WaitOnDeps = {
@@ -45,7 +61,7 @@ export const realDeps: WaitOnDeps = {
   },
   startTime(pid) {
     try {
-      const t = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim());
+      const t = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).trim());
       return Number.isFinite(t) ? t : null;
     } catch {
       return null;
@@ -54,6 +70,7 @@ export const realDeps: WaitOnDeps = {
   now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   out: (l) => console.log(l),
+  proc: realProc,
 };
 
 const readLines = (file: string | undefined): string[] => {
@@ -75,9 +92,11 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   const t0 = d.now();
   const baseLines = readLines(o.log).length;
 
+  let ranSince: number | null = null;
   const finish = (): number => {
     const rc = rcOf(o.pid, o.log);
-    d.out(`pid ${o.pid} gone${rc !== null ? `, exit code ${rc}` : ""}`);
+    const after = ranSince !== null ? ` after ${fmtElapsed((d.now() - ranSince) / 1000)}` : "";
+    d.out(`pid ${o.pid} gone${after}${rc !== null ? `, exit code ${rc}` : ""}`);
     if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
     return 0;
   };
@@ -98,19 +117,26 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     return 2;
   }
 
-  let nextBeat = t0 + HEARTBEAT_MS;
-  while (d.now() - t0 < maxMs) {
-    await d.sleep(Math.min(POLL_MS, Math.max(0, maxMs - (d.now() - t0))));
-    const st = d.startTime(o.pid);
-    if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
-    if (d.now() >= nextBeat) {
-      d.out(`running ${Math.round((d.now() - t0) / 1000)}s, log +${readLines(o.log).length - baseLines} lines`);
-      nextBeat += HEARTBEAT_MS;
+  const p = d.proc?.(o.pid) ?? null;
+  ranSince = p?.startedAt ?? null;
+  d.mark?.({ pid: o.pid, cmd: p?.cmd ?? "", startedAt: p?.startedAt ?? null, log: o.log ?? null });
+  try {
+    let nextBeat = t0 + HEARTBEAT_MS;
+    while (d.now() - t0 < maxMs) {
+      await d.sleep(Math.min(POLL_MS, Math.max(0, maxMs - (d.now() - t0))));
+      const st = d.startTime(o.pid);
+      if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
+      if (d.now() >= nextBeat) {
+        d.out(`running ${Math.round((d.now() - t0) / 1000)}s, log +${readLines(o.log).length - baseLines} lines`);
+        nextBeat += HEARTBEAT_MS;
+      }
     }
+    d.out(`still running after ${Math.round((d.now() - t0) / 1000)}s (pid ${o.pid}); call wait-on again`);
+    if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
+    return 3;
+  } finally {
+    d.mark?.(null);
   }
-  d.out(`still running after ${Math.round((d.now() - t0) / 1000)}s (pid ${o.pid}); call wait-on again`);
-  if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
-  return 3;
 }
 
 /** The documented long-job recipe, quoted by the worker contract and every deny message. */

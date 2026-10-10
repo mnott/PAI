@@ -11,6 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
+import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
 import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
@@ -208,11 +209,7 @@ export interface StatusRow {
   state?: string | null;
 }
 
-/** `4m12s` — the runtime shape the status row shows. */
-export function fmtElapsed(secs: number): string {
-  const s = Math.max(0, Math.floor(secs));
-  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
-}
+export { fmtElapsed };
 
 /**
  * The chat pane's status row (always visible while following):
@@ -293,6 +290,9 @@ function renderToolUse(
     ];
   }
   if (name === "Bash") {
+    // the job, not the mechanism: wait-on and detached starts read in plain words (raw command: `pai worker replay`)
+    const plain = waitOnCallLine(get("command")) ?? detachedLine(get("command"));
+    if (plain) return [`${prefix}${c("yellow", plain)}`];
     return [`${prefix}${c("dim", "$")} ${shortText(get("command"), 160)}`];
   }
   if (name === "Edit") {
@@ -360,7 +360,10 @@ export function renderEvent(
       }
       const text = String(content);
       const isError = (b as { is_error?: boolean }).is_error === true;
-      if (!isError && tools[(b as { tool_use_id?: string }).tool_use_id ?? ""] === "Read") {
+      const waited = !isError && tools[(b as { tool_use_id?: string }).tool_use_id ?? ""] === "Bash:wait-on" ? waitOnResultLine(text) : null;
+      if (waited) {
+        out.push(`${prefix}${c("yellow", waited)}`);
+      } else if (!isError && tools[(b as { tool_use_id?: string }).tool_use_id ?? ""] === "Read") {
         // keep Read results as the tool returned them (`<lineno>\t<code>`),
         // only their count is summarised
         const lines = text.split("\n");
@@ -521,7 +524,13 @@ export function renderTable(
     );
     lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
     lines.push(
-      treeLine(`${q}now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`, chain, last)
+      treeLine(
+        s.waitingOn
+          ? `${q}${c("yellow", waitingLine(s.waitingOn, now.getTime()))}`
+          : `${q}now:  ${c("yellow", s.last)}  (${ageOf(s.updated, now)} ago)`,
+        chain,
+        last
+      )
     );
   }
   lines.push("");
@@ -612,7 +621,7 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
  * than rendering a bare gap.
  */
 export function paneStatusRow(
-  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow">,
+  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn">,
   now: Date = new Date(),
   columns: number | null = null
 ): string {
@@ -621,7 +630,9 @@ export function paneStatusRow(
   const elapsed = elapsedOf(s.started, now);
   const tail = [model, started ? `started ${started}` : "", elapsed].filter(Boolean).join(" · ");
   const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
-  return `${goalOf(s, budget)} · ${tail}`;
+  // a blocked worker's footer says what it waits on instead of its goal
+  const head = s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget);
+  return `${head} · ${tail}`;
 }
 
 /**

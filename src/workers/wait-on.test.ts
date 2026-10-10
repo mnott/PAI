@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { waitOn, type WaitOnDeps } from "./wait-on.js";
+import { waitOn, statusMarker, type WaitOnDeps } from "./wait-on.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import type { WaitingOn } from "./waiting.js";
 
 /** Fake clock: sleep advances time; the process is alive until `diesAt` ms. */
 function fake(o: { diesAt?: number; initial?: "alive" | "gone" | "foreign"; start?: number }) {
@@ -67,5 +69,33 @@ describe("waitOn", () => {
     const f = fake({ start: 1_000_000 + 10_000 });
     expect(await waitOn({ pid: 42, tail: 0 }, f.deps)).toBe(0);
     expect(f.out[0]).toBe("pid 42 gone");
+  });
+  it("records waitingOn while waiting and clears it on return, on both exits", async () => {
+    const marks: (WaitingOn | null)[] = [];
+    const proc = () => ({ cmd: "sleep 120", startedAt: 1_000_000 - 252_000 });
+    const a = fake({ diesAt: 5000 });
+    expect(await waitOn({ pid: 42, log: "/tmp/x.log", tail: 0 }, { ...a.deps, proc, mark: (w) => marks.push(w) })).toBe(0);
+    expect(marks).toEqual([{ pid: 42, cmd: "sleep 120", startedAt: 1_000_000 - 252_000, log: "/tmp/x.log" }, null]);
+    expect(a.out[0]).toBe("pid 42 gone after 4m18s");
+    marks.length = 0;
+    expect(await waitOn({ pid: 42, maxSecs: 1, tail: 0 }, { ...fake({}).deps, proc, mark: (w) => marks.push(w) })).toBe(3);
+    expect(marks.at(-1)).toBeNull();
+    expect(marks).toHaveLength(2);
+  });
+
+  it("statusMarker writes and clears waitingOn in the worker's status file", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "waiton-st-"));
+    const st = { id: "w9", pid: 1, label: "l", cwd: "/", term: "", provider: "p", model: "m", state: "running", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null } as WorkerStatus;
+    saveStatus(logDir, st);
+    const mark = statusMarker(logDir, "w9");
+    const w = { pid: 5, cmd: "sleep 9", startedAt: null, log: null };
+    mark(w);
+    expect(loadStatus(logDir, "w9")?.waitingOn).toEqual(w);
+    // the runner's own periodic write (no waitingOn in memory) keeps it
+    saveStatus(logDir, { ...st, turns: 1 });
+    expect(loadStatus(logDir, "w9")?.waitingOn).toEqual(w);
+    mark(null);
+    expect(loadStatus(logDir, "w9")?.waitingOn).toBeNull();
+    expect(() => statusMarker(logDir, "nope")(w)).not.toThrow();
   });
 });

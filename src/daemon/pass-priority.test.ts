@@ -1,4 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
+
+// A scripted child: the real spawn (taskpolicy -b + nice 19 + node start) outlasts
+// vitest's 5s timeout when the full suite saturates the CPUs.
+vi.mock("node:child_process", async (orig) => ({
+  ...(await orig<typeof import("node:child_process")>()),
+  spawn: () => {
+    const child: any = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 1, null));
+    return child;
+  },
+}));
 import { buildPassCommand, runPassChild } from "./pass-priority.js";
 
 const all = () => true;
@@ -30,7 +44,7 @@ describe("buildPassCommand", () => {
 
 describe("runPassChild", () => {
   it("rejects when the child cannot report", async () => {
-    // argv[1] in vitest points at no cli entry: the child exits non-zero without a JSON line.
+    // The scripted child exits 1 without a JSON line.
     await expect(runPassChild("noop")).rejects.toThrow(/pass child noop exited|cannot spawn/);
   });
 });

@@ -94,6 +94,11 @@ export interface WorktreeInfo {
   snapshot: boolean;
 }
 
+/** Paths PAI itself rewrites (Notes/, TODO*.md at the root or in Notes/): never part of a snapshot. */
+export function isPaiBookkeepingPath(path: string): boolean {
+  return /^notes\//i.test(path) || /^TODO[^/]*\.md$/.test(path);
+}
+
 /**
  * Commit `cwd`'s current index + working tree (including untracked files) as
  * a floating commit on top of HEAD, without touching the real index, working
@@ -102,13 +107,15 @@ export interface WorktreeInfo {
  * caller then branches a worktree from that commit, so the worktree sees
  * exactly what was on disk, uncommitted or not.
  */
-function snapshotUncommitted(cwd: string, id: string, head: string): string {
+function snapshotUncommitted(cwd: string, id: string, head: string, bookkeeping: string[]): string {
   const idxDir = mkdtempSync(join(tmpdir(), "pai-worktree-idx-"));
   const idx = join(idxDir, "index");
   try {
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     runGit(cwd, ["read-tree", head], env);
     runGit(cwd, ["add", "-A"], env);
+    // PAI's own bookkeeping stays at its HEAD state in the snapshot
+    if (bookkeeping.length) runGit(cwd, ["--literal-pathspecs", "reset", "-q", head, "--", ...bookkeeping], env);
     const tree = runGit(cwd, ["write-tree"], env);
     return runGit(cwd, [
       "commit-tree",
@@ -135,8 +142,10 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const dir = worktreePath(logDir, id);
   const branch = worktreeBranch(id);
   const head = git(cwd, ["rev-parse", "HEAD"]);
-  const dirty = dirtyPaths(cwd).length > 0;
-  const base = dirty ? snapshotUncommitted(cwd, id, head) : head;
+  const all = dirtyPaths(cwd);
+  const bookkeeping = all.filter(isPaiBookkeepingPath);
+  const dirty = all.length > bookkeeping.length;
+  const base = dirty ? snapshotUncommitted(cwd, id, head, bookkeeping) : head;
   git(cwd, ["worktree", "add", dir, "-b", branch, base]);
   provisionDeps(logDir, id, cwd, dir);
   return { dir, branch, base, snapshot: dirty };

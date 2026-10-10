@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
 import { closePaneIfEnded } from "./pane.js";
+import type { WaitingOn } from "./waiting.js";
 
 export interface WorkerSessionRef {
   /** AIBroker/iTerm session id (the iTerm UUID). */
@@ -132,6 +133,11 @@ export interface WorkerStatus {
   endBy?: string;
   /** Detail for the reason (signal, sender note). */
   endNote?: string;
+  /**
+   * What the worker is blocked on right now: written by `pai worker wait-on`
+   * while it waits (null once it returns), rendered by waiting.ts.
+   */
+  waitingOn?: WaitingOn | null;
   /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
   controlsHeld?: boolean;
 }
@@ -250,6 +256,8 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (status.label === baseline && onDisk.label !== status.label) status.label = onDisk.label;
     // Set by another process (`pai worker controls`); a true flag is never dropped by a stale in-memory copy.
     if (onDisk.controlsHeld) status.controlsHeld = true;
+    // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
+    if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
   }
   const tmp = statusTmpPath(logDir, status.id);
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });

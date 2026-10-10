@@ -26,7 +26,7 @@ import { workersLogDir, eventsPath, ledgerPath } from "../../../workers/paths.js
 import { longInlinePromptHint, parseRunnerArgs } from "../../../workers/args.js";
 import { runWorker } from "../../../workers/run.js";
 import { runChain } from "../../../workers/chain.js";
-import { waitOn } from "../../../workers/wait-on.js";
+import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
@@ -494,7 +494,19 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--tail <n>", "Log lines printed on return (default 20)", parseIntArg)
     .action(async (pid: string, opts: { log?: string; max?: number; tail?: number }) => {
       try {
-        process.exitCode = await waitOn({ pid: Number(pid), log: opts.log, maxSecs: opts.max, tail: opts.tail });
+        const wid = process.env.PAI_WORKER_ID;
+        const mark = wid ? statusMarker(currentLogDir(), wid) : undefined;
+        // a killed wait-on must not leave a stale waitingOn behind
+        for (const sig of ["SIGINT", "SIGTERM"] as const) {
+          process.once(sig, () => {
+            mark?.(null);
+            process.exit(128 + (sig === "SIGINT" ? 2 : 15));
+          });
+        }
+        process.exitCode = await waitOn(
+          { pid: Number(pid), log: opts.log, maxSecs: opts.max, tail: opts.tail },
+          { ...waitOnDeps, mark }
+        );
       } catch (e) {
         fail(e);
       }
