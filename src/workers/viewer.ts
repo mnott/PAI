@@ -32,6 +32,7 @@ import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
 import { appendLedger } from "./ledger.js";
+import { closeOwnPane } from "./pane.js";
 import {
   CHAT_HELP,
   chatBlankRow,
@@ -913,6 +914,8 @@ export async function followWorkers(
         reason: exitReason,
         secs: Math.floor((Date.now() - started) / 1000),
       });
+      // pane mode (--auto-exit): the pane ends with its follow, whatever the profile does
+      if (autoExit) await closeOwnPane(env);
     }
   }
 

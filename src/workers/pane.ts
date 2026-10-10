@@ -571,6 +571,28 @@ export async function closePaneForWorker(logDir: string, wid: string, ops: PaneO
   return closed;
 }
 
+/**
+ * The owner of "a finished worker has no pane": saveStatus calls this on every
+ * write, so every path that ends a worker (normal end, kill, deadline, lost,
+ * parent exit) closes its registered pane through here, and a running worker's
+ * pane is kept. Idempotent: closing drops the registry entry.
+ */
+export async function closePaneIfEnded(logDir: string, status: { id: string; state: string }, ops: PaneOps = realPaneOps): Promise<boolean> {
+  if (status.state === "running") return false;
+  return closePaneForWorker(logDir, status.id, ops).catch(() => false);
+}
+
+/**
+ * The follow pane closing its own iTerm session on exit, so a pane closes even
+ * when the runner died and even under a profile without Close Sessions On End.
+ * No-op outside iTerm.
+ */
+export async function closeOwnPane(env: NodeJS.ProcessEnv = process.env, ops: PaneOps = realPaneOps): Promise<boolean> {
+  const uid = itermUuid(env.ITERM_SESSION_ID ?? "");
+  if (!uid) return false;
+  return ops.closeIterm(uid).catch(() => false);
+}
+
 export interface CloseEndedResult {
   closed: string[];
   kept: string[];

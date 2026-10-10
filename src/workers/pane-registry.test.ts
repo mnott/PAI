@@ -31,7 +31,8 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { closeEndedPanes, closePaneForWorker, loadRegistry, openPaneForWorker, type PaneOps } from "./pane.js";
+import { closeEndedPanes, closeOwnPane, closePaneForWorker, closePaneIfEnded, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 import type { WorkersConfig } from "./config.js";
 
 const config = { pane: { fontSize: 13, autoExitSecs: 10 } } as unknown as WorkersConfig;
@@ -134,5 +135,45 @@ describe("closing panes", () => {
     expect(live.closedTmux).toEqual(["%3"]);
     expect(r.kept.join("\n")).toContain("20260929-100001-2");
     expect(readdirSync(join(dir, "panes", "SCOPE"))).toEqual(["20260929-100001-2.json"]);
+  });
+});
+
+describe("ended workers keep no pane", () => {
+  const seed = (worker: string, session: string) => {
+    mkdirSync(join(dir, "panes", "SCOPE"), { recursive: true });
+    writeFileSync(join(dir, "panes", "SCOPE", `${worker}.json`), JSON.stringify({ session, worker, opened: "2026-10-10 10:00:00" }));
+  };
+
+  it("closePaneIfEnded closes done/failed/killed/lost, keeps running", async () => {
+    const ops = fakeOps();
+    for (const [i, state] of ["done", "failed", "killed", "lost"].entries()) {
+      seed(`2026101-${i}`, `S${i}`);
+      expect(await closePaneIfEnded(dir, { id: `2026101-${i}`, state }, ops)).toBe(true);
+    }
+    seed("run-1", "SR");
+    expect(await closePaneIfEnded(dir, { id: "run-1", state: "running" }, ops)).toBe(false);
+    expect(ops.closedIterm).toEqual(["S0", "S1", "S2", "S3"]);
+    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["run-1"]);
+  });
+
+  it("saveStatus of an ended worker (normal end, kill, discard) closes its pane", async () => {
+    const closed: string[] = [];
+    const spy = vi.spyOn(realPaneOps, "closeIterm").mockImplementation(async (id) => (closed.push(id), true));
+    const base = { id: "20261010-100000-1", label: "x", cwd: dir, provider: "p" } as unknown as WorkerStatus;
+    seed(base.id, "SA");
+    saveStatus(dir, { ...base, state: "running" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(closed).toEqual([]);
+    saveStatus(dir, { ...base, state: "killed" });
+    await vi.waitFor(() => expect(closed).toEqual(["SA"]));
+    expect(loadRegistry(dir)).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it("closeOwnPane closes this iTerm session by its uuid", async () => {
+    const ops = fakeOps();
+    expect(await closeOwnPane({ ITERM_SESSION_ID: TERM }, ops)).toBe(true);
+    expect(ops.closedIterm).toEqual(["D38D3E5D-19E8-4FE5-A78A-26E8E571FE27"]);
+    expect(await closeOwnPane({}, ops)).toBe(false);
   });
 });

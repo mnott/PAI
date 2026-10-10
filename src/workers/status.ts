@@ -20,6 +20,7 @@ import {
 import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
+import { closePaneIfEnded } from "./pane.js";
 
 export interface WorkerSessionRef {
   /** AIBroker/iTerm session id (the iTerm UUID). */
@@ -249,6 +250,8 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     }
     throw e;
   }
+  // an ended worker keeps no pane (see closePaneIfEnded)
+  void closePaneIfEnded(logDir, status);
 }
 
 /**
