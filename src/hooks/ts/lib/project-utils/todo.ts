@@ -214,6 +214,15 @@ export function updateTodoContinue(
     return;
   }
 
+  if (result.path === null) {
+    console.error(
+      result.action === 'written'
+        ? 'handover written to forge issue'
+        : 'forge handover left intact — nothing to say'
+    );
+    return;
+  }
+
   if (result.action === 'failed') {
     console.error(`TODO.md ## Continue update failed: ${result.error}`);
     return;

@@ -21,7 +21,7 @@ export interface Preamble {
 
 export type PreambleResult = { preamble: Preamble | null } | { refused: string };
 
-function projectRoot(cwd: string): string {
+export function projectRoot(cwd: string): string {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd,

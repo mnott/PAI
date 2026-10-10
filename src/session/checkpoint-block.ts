@@ -43,6 +43,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { loadStatusConfig, writeContinueToForge } from "./forge-sink.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -693,6 +694,25 @@ function archiveInto(rest: string, entry: string[]): string {
 }
 
 export function applyContinue(opts: ApplyOptions): ApplyResult {
+  // Status sink switch (.pai/project.yaml status.sink): the one place every
+  // writer of the handover passes through. Forge failure falls back to TODO.md.
+  if (!opts.dryRun) {
+    try {
+      const cfg = loadStatusConfig(opts.rootPath);
+      if (cfg.sink === "forge") {
+        const block = buildContinueBlock(opts);
+        // An empty auto write must not overwrite a real handover on the issue.
+        if (opts.authored === "auto" && !hasSubstance(opts.body)) {
+          return { action: "preserved", path: null, block };
+        }
+        writeContinueToForge(opts.rootPath, cfg, block, {});
+        return { action: "written", path: null, block };
+      }
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      console.error(`handover: forge write failed (${why}) - wrote Notes/TODO.md instead`);
+    }
+  }
   const target = resolveTodoTarget(opts.rootPath, { create: !opts.dryRun });
   if (!target) {
     return {
