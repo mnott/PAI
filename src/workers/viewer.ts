@@ -66,6 +66,7 @@ import {
   type StreamEventLike,
 } from "./render.js";
 import { parseWaitOn, waitingLine } from "./waiting.js";
+import { denialLines } from "./denials.js";
 
 /** How many existing events a fresh follow pane replays before going live. */
 export const BACKFILL_EVENTS = 200;
@@ -252,7 +253,7 @@ export function replayOutput(
     loadStatuses(logDir).find((s) => s.id === wid) ??
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
   const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : null;
-  const out: string[] = [headerLine(c, st)];
+  const out: string[] = [headerLine(c, st), ...denialLines(st)];
   const raw = readFileSync(path, "utf8");
   const lines = tailLines !== undefined ? raw.split("\n").slice(-tailLines) : raw.split("\n");
   // the worker's inbox handoffs join the transcript where they happened (_ts)

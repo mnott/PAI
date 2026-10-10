@@ -11,6 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
+import { denialMark } from "./denials.js";
 import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
 import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { workerDepth } from "./tree.js";
@@ -488,6 +489,10 @@ export function renderTable(
       ? "  " + c("red", s.reportFormat === "ag2" && (s.reportErrors ?? []).length ? "R!" : "R?")
       : "";
 
+  const deniedMark = (s: WorkerStatus): string => {
+    const m = denialMark(s);
+    return m ? "  " + c("red", m) : "";
+  };
   const timeMark = (s: WorkerStatus): string => {
     const l = deadlineLabel(s, now.getTime());
     return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l) : "";
@@ -517,7 +522,7 @@ export function renderTable(
     const q = chain ? "      " : rowCont(depth, subLast);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )
@@ -555,7 +560,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${deniedMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
         chain,
         last
       )
@@ -621,14 +626,14 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
  * than rendering a bare gap.
  */
 export function paneStatusRow(
-  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn">,
+  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount">,
   now: Date = new Date(),
   columns: number | null = null
 ): string {
   const model = [shortModel(s.model), contextFooter(s)].filter(Boolean).join(" · ");
   const started = String(s.started ?? "").slice(11, 16);
   const elapsed = elapsedOf(s.started, now);
-  const tail = [model, started ? `started ${started}` : "", elapsed].filter(Boolean).join(" · ");
+  const tail = [model, started ? `started ${started}` : "", elapsed, denialMark(s)].filter(Boolean).join(" · ");
   const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
   // a blocked worker's footer says what it waits on instead of its goal
   const head = s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget);

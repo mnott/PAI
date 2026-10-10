@@ -22,6 +22,7 @@ import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
 import { closePaneIfEnded } from "./pane.js";
 import type { WaitingOn } from "./waiting.js";
+import type { Denial } from "./denials.js";
 
 export interface WorkerSessionRef {
   /** AIBroker/iTerm session id (the iTerm UUID). */
@@ -115,6 +116,9 @@ export interface WorkerStatus {
    * reader must treat that as "no signal".
    */
   consecFails?: number | null;
+  /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */
+  denials?: Denial[];
+  denialCount?: number;
   /**
    * Seconds of the most recent single long sleep observed in a Bash tool_use
    * (see parseSleepSecs), cleared when the command completes. Absent on old

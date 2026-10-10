@@ -115,6 +115,7 @@ import {
   verifyFailNote,
   type WorkerReport,
 } from "./report.js";
+import { recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
@@ -249,6 +250,7 @@ export type StreamEvent = {
       text?: string;
       name?: string;
       id?: string;
+      tool_use_id?: string;
       input?: unknown;
       /** tool_result blocks: the result payload (string or text blocks). */
       content?: unknown;
@@ -319,7 +321,7 @@ function bashCommand(input: unknown): string {
   return "";
 }
 
-function toolResultText(content: unknown): string {
+export function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
@@ -1394,6 +1396,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     eventsFd = openSync(eventsPath(logDir, wid), "a");
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
     const rl = createInterface({ input: proc.stdout! });
+    const toolUses = new Map<string, { name: string; input: unknown }>();
     rl.on("line", (line) => {
       if (parsed.outputFormat === "stream-json") {
         process.stdout.write(line + "\n");
@@ -1423,6 +1426,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
             status.tools += 1;
+            if (block.id) toolUses.set(block.id, { name: block.name ?? "?", input: block.input });
             status.last = describeTool(block.name ?? "?", block.input);
             // a long single sleep is worth seeing while it runs (supervision's
             // "sleeping" kind) — set when issued, cleared when it completes
@@ -1445,6 +1449,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
             sawResult = true;
             status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
             status.sleepSec = null;
+            recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString());
           }
           if (sawResult) saveStatus(logDir, status);
         }
@@ -1512,6 +1517,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       }
     }
   }
+  if (ctx.resultReport && status.denials?.length) ctx.resultReport.denials = status.denials;
   if (headless && ctx.resultReport?.changed?.length) {
     const verify = verifyReportChanges(ctx.resultReport.changed, worktree?.dir ?? cwd, t0);
     if (!verify.ok) {

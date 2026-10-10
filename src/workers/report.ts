@@ -13,6 +13,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { shortText } from "./args.js";
 import { WAIT_RECIPE } from "./wait-on.js";
 import type { Paint } from "./render.js";
+import type { Denial } from "./denials.js";
 import { ag2Spec, ag2ToWorkerReport, parseAg2Report } from "./agentish.js";
 
 /** The marker the runner puts on operator messages the worker must answer. */
@@ -198,6 +199,8 @@ export interface WorkerReport {
   result?: "+" | "-" | "~" | "?" | "!";
   /** AG2 `y` (why): one line explaining a non-"+" result. */
   why?: string;
+  /** Runner-side: hook/permission denials the run hit (never written by the worker). */
+  denials?: Denial[];
   /** Which wire format the final message was parsed as. */
   format?: "ag2" | "json";
 }
