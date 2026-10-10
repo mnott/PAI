@@ -17,6 +17,7 @@ pai issue <subcommand> [options]
 | [`pai issue claim <n>`](#pai-issue-claim-n) | Claim forge issue <n> of this project (assignee claude + label in-progress) |
 | [`pai issue release <n>`](#pai-issue-release-n) | Release forge issue <n> of this project (assignee claude + label in-progress) |
 | [`pai issue claims`](#pai-issue-claims) | List open issues of this project carrying the in-progress label |
+| [`pai issue stale`](#pai-issue-stale) | List open issues that landed in the integration branch (merged branch named by number, or a 'fixes #N' commit subject; plain mentions do not count) or are idle (report only; never closes) |
 
 ### pai issue claim <n>
 
@@ -55,6 +56,19 @@ Release forge issue <n> of this project (assignee claude + label in-progress)
 ### pai issue claims
 
 List open issues of this project carrying the in-progress label
+
+
+### pai issue stale
+
+List open issues that landed in the integration branch (merged branch named by number, or a 'fixes #N' commit subject; plain mentions do not count) or are idle (report only; never closes)
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--days <n>` | Idle threshold in days | `7` |
+| `--json` | JSON output |  |
+| `--dry-run` | Also show the handover-issue section the daemon would write; send nothing |  |
 
 
 ## See also

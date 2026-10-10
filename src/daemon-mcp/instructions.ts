@@ -22,7 +22,7 @@ Fetch full instructions with prompts/get { name }. Skills are already listed wit
 
 Fetch with resources/read { uri }. Available: pai://aesthetic, pai://constitution, pai://prompting,
 pai://prosody-guide, pai://prosody-agent-template, pai://voice, pai://skill-system, pai://hook-system,
-pai://history-system, pai://terminal-tabs, pai://mcp-dev-guide
+pai://history-system, pai://terminal-tabs, pai://mcp-dev-guide, pai://worker-setup
 
 ### Core rules
 

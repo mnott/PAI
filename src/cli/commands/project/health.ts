@@ -18,6 +18,7 @@ import type {
 import { suggestMovedPath } from "./relocate.js";
 import { unregistrableReason } from "../../../registry/registrable.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
+import { formatCheck, isGitProject, projectChecks } from "../../../session/project-setup.js";
 
 function findOrphanedNotesDirs(project: ProjectRow): string[] {
   const claudeProjects = join(homedir(), ".claude", "projects");
@@ -324,5 +325,11 @@ export async function cmdHealth(
   if (!opts.fix && (stale.length > 0 || dead.length > 0)) {
     console.log();
     console.log(warn("  Run with --fix to auto-remediate where possible."));
+  }
+
+  if (isGitProject(process.cwd())) {
+    console.log();
+    console.log(bold("  This project (worker setup):"));
+    for (const c of await projectChecks(process.cwd())) console.log("  " + formatCheck(c));
   }
 }

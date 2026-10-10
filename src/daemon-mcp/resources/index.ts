@@ -9,3 +9,4 @@ export { hookSystem } from "./hook-system.js";
 export { historySystem } from "./history-system.js";
 export { terminalTabs } from "./terminal-tabs.js";
 export { mcpDevGuide } from "./mcp-dev-guide.js";
+export { workerSetup } from "./worker-setup.js";

@@ -97,6 +97,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai issue claim <n>` | Claim forge issue <n> of this project (assignee claude + label in-progress) |
 | `pai issue claims` | List open issues of this project carrying the in-progress label |
 | `pai issue release <n>` | Release forge issue <n> of this project (assignee claude + label in-progress) |
+| `pai issue stale` | List open issues that landed in the integration branch (merged branch named by number, or a 'fixes #N' commit subject; plain mentions do not count) or are idle (report only; never closes) |
 | `pai kg` | Temporal knowledge graph: backfill, query, list, stats |
 | `pai kg backfill` | Populate the KG from existing session notes (idempotent) |
 | `pai kg list` | List currently-valid triples |
@@ -146,6 +147,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai project health` | Audit all registered projects: check which paths still exist, find moved/dead projects |
 | `pai project here <name>` | Declare that the CURRENT directory is this project — no slug, no path. |
 | `pai project info <slug>` | Show full details for a project |
+| `pai project init` | Set up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks |
 | `pai project list` | Show the unified deduped listing (same as `pai`). |
 | `pai project list-raw` | Raw registry listing with slug, path, status, last_active columns |
 | `pai project mcp [names...]` | View or set the MCP servers this project's interactive supervisor session |
@@ -174,6 +176,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai projects health` | Audit all registered projects: check which paths still exist, find moved/dead projects |
 | `pai projects here <name>` | Declare that the CURRENT directory is this project — no slug, no path. |
 | `pai projects info <slug>` | Show full details for a project |
+| `pai projects init` | Set up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks |
 | `pai projects list` | Show the unified deduped listing (same as `pai`). |
 | `pai projects list-raw` | Raw registry listing with slug, path, status, last_active columns |
 | `pai projects mcp [names...]` | View or set the MCP servers this project's interactive supervisor session |

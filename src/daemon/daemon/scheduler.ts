@@ -9,6 +9,7 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
+import { runStalePassDaily } from "../stale-pass.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -208,6 +209,7 @@ export function startIndexScheduler(): void {
     runIndex()
       .then(() => runVaultIndex())
       .then(() => (withEmbed ? runEmbed() : undefined))
+      .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });

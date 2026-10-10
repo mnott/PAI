@@ -31,6 +31,7 @@ pai project <subcommand> [options]
 | [`pai project edit <slug>`](#pai-project-edit-slug) | Edit project metadata |
 | [`pai project detect [path]`](#pai-project-detect-path) | Detect which registered project the given path (or CWD) belongs to |
 | [`pai project health`](#pai-project-health) | Audit all registered projects: check which paths still exist, find moved/dead projects |
+| [`pai project init`](#pai-project-init) | Set up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks |
 | [`pai project consolidate <identifier>`](#pai-project-consolidate-identifier) | Consolidate scattered ~/.claude/projects/.../Notes/ directories for a project into its canonical Notes/ location |
 | [`pai project promote`](#pai-project-promote) | Promote a session note into a new standalone project |
 | [`pai project go <query>`](#pai-project-go-query) | Print the root path for a project by slug, partial name, or fuzzy match. |
@@ -289,6 +290,20 @@ Audit all registered projects: check which paths still exist, find moved/dead pr
 | `--fix` | Auto-remediate where possible |  |
 | `--json` | Output raw JSON report |  |
 | `--status <category>` | Filter output to: active \| stale \| dead |  |
+
+
+### pai project init
+
+Set up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--anchor <n>` | Forge anchor issue number (sink forge) |  |
+| `--marker <text>` | Marker text that must occur in the anchor body |  |
+| `--force` | Overwrite existing files (old copies kept as .bak) |  |
+| `--dry-run` | Print what would be written; write nothing |  |
 
 
 ### pai project consolidate <identifier>

@@ -26,7 +26,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
-import { issueClaim, issueClaims } from "../session/issue-claims.js";
+import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
+import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
 import { dropItermBundleId } from "../utils/env.js";
 
@@ -70,6 +71,7 @@ import {
   historySystem,
   terminalTabs,
   mcpDevGuide,
+  workerSetup,
 } from "./resources/index.js";
 import { CAPABILITY_NAME_RE, MODEL_CAPABILITIES, readWorkersSection } from "../workers/config.js";
 import { workersLogDir, ledgerPath } from "../workers/paths.js";
@@ -238,6 +240,7 @@ async function startShim(): Promise<void> {
     historySystem,
     terminalTabs,
     mcpDevGuide,
+    workerSetup,
     constitution,
     prompting,
   ];
@@ -571,7 +574,34 @@ async function startShim(): Promise<void> {
         .optional()
         .describe("Filter results to a specific health category. Default: all."),
     },
-    async (args) => proxyTool("project_health", args)
+    async (args) => {
+      const r = await proxyTool("project_health", args);
+      if (isGitProject(process.cwd())) {
+        const checks = await projectChecks(process.cwd());
+        r.content.push({ type: "text" as const, text: `Project checks (${process.cwd()}):\n${checks.map(formatCheck).join("\n")}` });
+      }
+      return r;
+    }
+  );
+
+  server.tool(
+    "project_setup",
+    "Set up the current project for PAI workers: writes .pai/project.yaml (status sink from the origin kind) and a starter .pai/worker.md, never overwriting without force, then runs the project checks. Same as `pai project init`.",
+    {
+      anchor: z.number().int().positive().optional().describe("Forge anchor issue number (sink forge only)"),
+      marker: z.string().optional().describe("Marker text that must occur in the anchor body"),
+      force: z.boolean().optional().describe("Overwrite existing files (old copies kept as .bak)"),
+      dry_run: z.boolean().optional().describe("Report what would be written; write nothing"),
+    },
+    async (args) => {
+      try {
+        const r = initProject(process.cwd(), { anchor: args.anchor, marker: args.marker, force: args.force, dryRun: args.dry_run });
+        const checks = (await projectChecks(r.root)).map(formatCheck);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ ...r, checks }, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `project_setup error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      }
+    }
   );
 
   // -------------------------------------------------------------------------
@@ -630,6 +660,13 @@ async function startShim(): Promise<void> {
     "List open issues of the current project carrying the in-progress label.",
     {},
     async () => issueTool(() => issueClaims(process.cwd()))
+  );
+
+  server.tool(
+    "issue_stale",
+    "List open issues of the current project that landed in the integration branch or are idle >= days. Report only; never closes.",
+    { days: z.number().int().min(0).optional().describe("Idle threshold in days (default 7)") },
+    async (args) => issueTool(() => issueStale(process.cwd(), args.days ?? 7))
   );
 
   // -------------------------------------------------------------------------

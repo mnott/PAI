@@ -4,7 +4,8 @@
  */
 import type { Command } from "commander";
 import { err } from "../utils.js";
-import { issueClaim, issueClaims } from "../../session/issue-claims.js";
+import { formatStale, loadStatusConfig, upsertSection, writeSectionToForge } from "../../session/forge-sink.js";
+import { issueClaim, issueClaims, issueStale } from "../../session/issue-claims.js";
 
 function num(s: string): number {
   const n = Number(s.replace(/^#/, ""));
@@ -40,5 +41,22 @@ export function registerIssueCommands(cmd: Command): void {
         const rows = issueClaims(process.cwd());
         if (!rows.length) console.log("no claimed issues");
         for (const r of rows) console.log(`#${r.issue}  ${r.title}  [${r.assignees.join(", ")}]`);
+      }));
+  cmd
+    .command("stale")
+    .description("List open issues that landed in the integration branch (merged branch named by number, or a 'fixes #N' commit subject; plain mentions do not count) or are idle (report only; never closes)")
+    .option("--days <n>", "Idle threshold in days", "7")
+    .option("--json", "JSON output")
+    .option("--dry-run", "Also show the handover-issue section the daemon would write; send nothing")
+    .action((opts: { days: string; json?: boolean; dryRun?: boolean }) =>
+      run(() => {
+        const days = Number(opts.days);
+        if (!Number.isFinite(days) || days < 0) throw new Error(`bad --days: ${opts.days}`);
+        const rows = issueStale(process.cwd(), days);
+        console.log(opts.json ? JSON.stringify(rows, null, 2) : formatStale(rows));
+        if (opts.dryRun) {
+          const w = writeSectionToForge(process.cwd(), loadStatusConfig(process.cwd()), formatStale(rows), "stale", { dryRun: true });
+          console.log(`\nDRY RUN: would write into handover #${w.issue}:\n${upsertSection("", formatStale(rows), "stale")}`);
+        }
       }));
 }

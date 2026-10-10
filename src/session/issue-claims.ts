@@ -6,7 +6,7 @@
 import { loadStatus, saveStatus } from "../workers/status.js";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
-import { listClaims, loadStatusConfig, setClaim, type ForgeDeps } from "./forge-sink.js";
+import { listClaims, listStale, loadStatusConfig, setClaim, type ForgeDeps, type StaleDeps } from "./forge-sink.js";
 
 export interface IssueOpts extends ForgeDeps { logDir?: string; workerId?: string }
 
@@ -27,4 +27,8 @@ export function issueClaim(cwd: string, n: number, add: boolean, o: IssueOpts = 
 
 export function issueClaims(cwd: string, o: IssueOpts = {}) {
   return listClaims(cwd, loadStatusConfig(cwd), o);
+}
+
+export function issueStale(cwd: string, days = 7, o: StaleDeps = {}) {
+  return listStale(cwd, loadStatusConfig(cwd), days, o);
 }

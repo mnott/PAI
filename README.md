@@ -43,6 +43,9 @@ Only the orchestrator session runs on Anthropic; every worker runs on a provider
 
 → [docs/worker-providers.md](docs/worker-providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
 
+Per-project worker setup (`pai project init`, checks in `pai project health`):
+[docs/worker-project-setup.md](docs/worker-project-setup.md) · [panes](docs/worker-panes.md) · [pane footer and long jobs](docs/worker-pane-footer.md) · [snapshots](docs/worker-snapshots.md) · [`.pai/worker.md`](docs/worker-rules.md) · [status sink](docs/project-status-sink.md) · [issue claims](docs/issue-claims.md) · [hook denials](docs/worker-denials.md)
+
 ## Automatic Session Notes
 
 A background daemon documents every session as it happens, from the transcript and git history, and starts a new note when the topic changes.

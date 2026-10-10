@@ -28,6 +28,7 @@ import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../uti
 import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig, cmdMcp, cmdTools } from "./session-config.js";
 import { cmdHealth } from "./health.js";
+import { cmdInit } from "./init.js";
 import { cmdMerge } from "./merge.js";
 import { cmdHere } from "./here.js";
 import { cmdUnregister } from "./unregister.js";
@@ -289,6 +290,18 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .option("--status <category>", "Filter output to: active | stale | dead")
     .action(async (opts: { fix?: boolean; json?: boolean; status?: string }) => {
       await cmdHealth(opts);
+    });
+
+  // pai projects init
+  projectsCmd
+    .command("init")
+    .description("Set up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks")
+    .option("--anchor <n>", "Forge anchor issue number (sink forge)", (v: string) => Number(v.replace(/^#/, "")))
+    .option("--marker <text>", "Marker text that must occur in the anchor body")
+    .option("--force", "Overwrite existing files (old copies kept as .bak)")
+    .option("--dry-run", "Print what would be written; write nothing")
+    .action(async (opts: { anchor?: number; marker?: string; force?: boolean; dryRun?: boolean }) => {
+      await cmdInit(opts);
     });
 
   // pai projects consolidate <identifier>
