@@ -485,7 +485,8 @@ const LIST_SESSIONS_SCRIPT = `function run(argv) {
         w.tabs().forEach(function (t) {
             t.sessions().forEach(function (s) {
                 var id = get(s, "id");
-                if (id) out += id + "\\t" + get(s, "tty") + "\\t" + get(s, "name") + "\\n";
+                function v(n) { try { return String(s.variable({ named: n })); } catch (e) { return ""; } }
+                if (id) out += id + "\\t" + get(s, "tty") + "\\t" + v("jobPid") + "\\t" + v("pid") + "\\t" + get(s, "name") + "\\n";
             });
         });
     });
@@ -495,6 +496,10 @@ const LIST_SESSIONS_SCRIPT = `function run(argv) {
 export interface ItermSession {
   id: string;
   tty: string;
+  /** Pid of the session's foreground job (variable "jobPid"), undefined when iTerm gave none. */
+  jobPid?: number;
+  /** Pid of the session's root process (variable "pid"). */
+  pid?: number;
   /** Undefined when iTerm would not give the session's name. */
   name?: string;
 }
@@ -508,8 +513,8 @@ export async function listItermSessions(
     .split("\n")
     .filter(Boolean)
     .map((l) => {
-      const [id, tty, ...name] = l.split("\t");
-      return { id, tty, name: name.join("\t") || undefined };
+      const [id, tty, jobPid, pid, ...name] = l.split("\t");
+      return { id, tty, jobPid: Number(jobPid) || undefined, pid: Number(pid) || undefined, name: name.join("\t") || undefined };
     });
 }
 
@@ -695,8 +700,10 @@ function absoluteCliPath(): string {
 export interface HostDeps {
   /** [ppid, tty] of a pid, null when ps cannot say. tty is as ps prints it ("ttys004", "??"). */
   psOf(pid: number): [number, string] | null;
-  /** Every open iTerm session (unique id + tty). Empty when iTerm is not running or unreachable. */
-  listSessions(): Promise<Array<{ id: string; tty: string }>>;
+  /** Command line per pid, one batched ps call; pids ps does not know are absent. */
+  commandsOf(pids: number[]): Map<number, string>;
+  /** Every open iTerm session. Empty when iTerm is not running or unreachable. */
+  listSessions(): Promise<ItermSession[]>;
 }
 
 export const realHostDeps: HostDeps = {
@@ -712,6 +719,24 @@ export const realHostDeps: HostDeps = {
       return null;
     }
   },
+  commandsOf(pids) {
+    const m = new Map<number, string>();
+    if (!pids.length) return m;
+    let out = "";
+    try {
+      out = execFileSync("ps", ["-o", "pid=,command=", "-p", pids.join(",")], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: "C" },
+      });
+    } catch (e) {
+      out = (e as { stdout?: string }).stdout ?? ""; // ps exits 1 when some pid is gone
+    }
+    for (const l of out.split("\n")) {
+      const r = /^\s*(\d+)\s+(.*)$/.exec(l);
+      if (r) m.set(Number(r[1]), r[2]);
+    }
+    return m;
+  },
   async listSessions() {
     if (process.platform !== "darwin") return [];
     try {
@@ -721,6 +746,18 @@ export const realHostDeps: HostDeps = {
     }
   },
 };
+
+/** Pids from `start` up through its parents (self included), stopping at init or an unknown pid. */
+function ancestorPids(deps: HostDeps, start: number): number[] {
+  const pids: number[] = [];
+  for (let pid = start; pids.length < 64 && pid > 1; ) {
+    pids.push(pid);
+    const row = deps.psOf(pid);
+    if (!row) break;
+    pid = row[0];
+  }
+  return pids;
+}
 
 /** /dev/ttysNNN of the nearest ancestor (self included) that has a real tty, null when none. */
 export function ancestorTty(deps: HostDeps = realHostDeps, start: number = process.pid): string | null {
@@ -740,16 +777,28 @@ export interface HostSession {
   uid: string;
   /** ITERM_SESSION_ID-shaped value for status/scope: the env value when it names the host, else the bare uid. "" when none. */
   term: string;
-  via: "tty" | "env" | "none";
+  /** Which step resolved it: "foreground jobPid", "attach <short>", "tty", "env", or "none". */
+  via: string;
   reason?: string;
 }
 
+const UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/** Claude session id from a Claude process command line: `--session-id <uuid>` or `--bg-pty-host …/pty/<short>.sock`. */
+function claudeIdOf(cmd: string): string | undefined {
+  return new RegExp(`--session-id[ =](${UUID_RE})`, "i").exec(cmd)?.[1] ?? /--bg-pty-host\s+\S*\/pty\/([0-9a-f]{8})\.sock/i.exec(cmd)?.[1];
+}
+
 /**
- * The one place that decides which iTerm session hosts this process. Facts
- * first: the tty of the nearest ancestor with one, matched against the live
- * iTerm sessions. ITERM_SESSION_ID is only a fallback and only when it names a
- * session that is live right now — a reattached session keeps its old id in
- * the process env for good.
+ * The one place that decides which iTerm session hosts this process; first hit
+ * wins:
+ *  1. foreground: a session whose jobPid is CLAUDE_PID or an ancestor pid
+ *  2. background (`claude attach <short>`): the Claude session id from env or an
+ *     ancestor's command line, matched against each session's jobPid command;
+ *     several matches are ambiguous and fail loudly
+ *  3. the tty of the nearest ancestor that has one
+ *  4. ITERM_SESSION_ID, only when it names a live session — a reattached session
+ *     keeps its old id in the process env for good
  */
 export async function resolveHostSession(
   env: NodeJS.ProcessEnv = process.env,
@@ -757,23 +806,44 @@ export async function resolveHostSession(
   start: number = process.pid
 ): Promise<HostSession> {
   const sessions = await deps.listSessions();
-  const tty = ancestorTty(deps, start);
   const envTerm = env.ITERM_SESSION_ID ?? "";
   const envUid = itermUuid(envTerm);
+  const found = (s: { id: string }, via: string): HostSession => ({ uid: s.id, term: s.id === envUid ? envTerm : s.id, via });
+  const notes: string[] = [];
+
+  const ancestors = ancestorPids(deps, start);
+  const jobPids = sessions.flatMap((s) => (s.jobPid ? [s.jobPid] : []));
+  const cmds = deps.commandsOf([...new Set([...ancestors, ...jobPids])]);
+
+  const fg = new Set(ancestors);
+  if (Number(env.CLAUDE_PID)) fg.add(Number(env.CLAUDE_PID));
+  const byJob = sessions.find((s) => s.jobPid && fg.has(s.jobPid));
+  if (byJob) return found(byJob, "foreground jobPid");
+  notes.push(`foreground: no session jobPid is CLAUDE_PID ${env.CLAUDE_PID || "(unset)"} or an ancestor`);
+
+  const cid = env.CLAUDE_CODE_SESSION_ID || ancestors.map((p) => claudeIdOf(cmds.get(p) ?? "")).find(Boolean);
+  if (cid) {
+    const short = cid.slice(0, 8);
+    const attach = new RegExp(`\\battach\\s+(${short}|${cid})\\b`, "i");
+    const hits = sessions.filter((s) => s.jobPid && attach.test(cmds.get(s.jobPid) ?? ""));
+    if (hits.length === 1) return found(hits[0], `attach ${short}`);
+    const why = hits.length ? `ambiguous, ${hits.length} sessions run attach ${short}: ${hits.map((s) => s.id).join(", ")}` : `no session runs attach ${short}`;
+    if (hits.length) return { uid: "", term: "", via: "none", reason: [...notes, `attach: ${why}`].join("; ") };
+    notes.push(`attach: ${why}`);
+  } else {
+    notes.push("attach: no Claude session id in env or ancestors");
+  }
+
+  const tty = ancestorTty(deps, start);
   const byTty = tty ? sessions.find((s) => s.tty === tty) : undefined;
-  if (byTty) {
-    return { uid: byTty.id, term: byTty.id === envUid ? envTerm : byTty.id, via: "tty" };
-  }
-  if (envUid && sessions.some((s) => s.id === envUid)) {
-    return { uid: envUid, term: envTerm, via: "env" };
-  }
+  if (byTty) return found(byTty, "tty");
+  notes.push(tty ? `tty: ancestor tty ${tty} matched no session` : "tty: no tty ancestor");
+
+  if (envUid && sessions.some((s) => s.id === envUid)) return { uid: envUid, term: envTerm, via: "env" };
+  notes.push(`env: ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}`);
+
   const why = sessions.length === 0 ? "iTerm2 not running or unreachable" : "no live iTerm2 session matched";
-  return {
-    uid: "",
-    term: "",
-    via: "none",
-    reason: `${why}; ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}; ${tty ? `ancestor tty ${tty} matched no session` : "no tty ancestor"}`,
-  };
+  return { uid: "", term: "", via: "none", reason: `${why}; ${notes.join("; ")}` };
 }
 
 export type PaneBackend = "tmux" | "iterm" | "none";
@@ -789,7 +859,7 @@ export function paneBackend(
   return "none";
 }
 
-const NO_HOST = "pai worker pane: no live iTerm2 host session (tty lookup found none, ITERM_SESSION_ID not live)";
+const NO_HOST = "pai worker pane: no live iTerm2 host session (foreground, attach, tty lookups found none, ITERM_SESSION_ID not live)";
 
 export function noPaneMessage(wid?: string): string {
   return `no pane support here, use: pai worker follow${wid ? ` ${wid}` : ""}`;

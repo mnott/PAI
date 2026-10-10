@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { ancestorTty, resolveHostSession, type HostDeps } from "./pane.js";
+import { ancestorTty, resolveHostSession, type HostDeps, type ItermSession } from "./pane.js";
 
 const LIVE = "88D76B26-0000-0000-0000-000000000001";
 const DEAD = "78C67D79-0000-0000-0000-000000000002";
 
-function deps(procs: Record<number, [number, string]>, sessions: Array<{ id: string; tty: string }>): HostDeps {
-  return { psOf: (pid) => procs[pid] ?? null, listSessions: async () => sessions };
+function deps(
+  procs: Record<number, [number, string]>,
+  sessions: ItermSession[],
+  cmds: Record<number, string> = {},
+): HostDeps {
+  return {
+    psOf: (pid) => procs[pid] ?? null,
+    commandsOf: (pids) => new Map(pids.flatMap((p) => (p in cmds ? [[p, cmds[p]] as [number, string]] : []))),
+    listSessions: async () => sessions,
+  };
 }
 
 const chain = { [500]: [400, "??"], [400]: [300, "ttys004"], [300]: [1, "ttys004"] } as Record<number, [number, string]>;
@@ -42,6 +50,53 @@ describe("resolveHostSession", () => {
     expect(h.uid).toBe("");
     expect(h.reason).toContain(`${DEAD} is not live`);
     expect(h.reason).toContain("no tty ancestor");
+  });
+});
+
+// The measured background case: the real session runs under the Claude daemon, outside iTerm's tree
+const SHORT = "cdd93e8d";
+const FULL = `${SHORT}-458c-4a63-a9cf-c24488cdd6f4`;
+const bgChain = { 75840: [6520, "ttys011"], 6520: [6488, "ttys011"], 6488: [6445, "??"], 6445: [1, "??"] } as Record<number, [number, string]>;
+const bgCmds = { 6520: `claude.exe --session-id ${FULL} --resume`, 6488: `claude.exe --bg-pty-host /tmp/cc-daemon-501/d/pty/${SHORT}.sock` };
+const attachSession = (id: string, jobPid: number): ItermSession => ({ id, tty: "/dev/ttys009", jobPid });
+
+describe("resolveHostSession: background and foreground", () => {
+  it("background session resolves via claude attach (id from ancestor command line)", async () => {
+    const d = deps(bgChain, [attachSession(LIVE, 38664), attachSession(DEAD, 111)], { ...bgCmds, 38664: `claude attach ${SHORT}`, 111: "-zsh" });
+    expect(await resolveHostSession({ ITERM_SESSION_ID: `w1t0p0:${DEAD}x` }, d, 75840)).toMatchObject({ uid: LIVE, via: `attach ${SHORT}` });
+  });
+
+  it("session id from CLAUDE_CODE_SESSION_ID, full uuid in the attach command", async () => {
+    const d = deps({ 500: [1, "??"] }, [attachSession(LIVE, 38664)], { 38664: `claude attach ${FULL}` });
+    expect(await resolveHostSession({ CLAUDE_CODE_SESSION_ID: FULL }, d, 500)).toMatchObject({ uid: LIVE, via: `attach ${SHORT}` });
+  });
+
+  it("foreground resolves via CLAUDE_PID", async () => {
+    const d = deps({ 500: [1, "??"] }, [attachSession(LIVE, 54342), attachSession(DEAD, 111)]);
+    expect(await resolveHostSession({ CLAUDE_PID: "54342" }, d, 500)).toMatchObject({ uid: LIVE, via: "foreground jobPid" });
+  });
+
+  it("foreground resolves via an ancestor pid", async () => {
+    const d = deps(chain, [attachSession(LIVE, 300)]);
+    expect(await resolveHostSession({}, d, 500)).toMatchObject({ uid: LIVE, via: "foreground jobPid" });
+  });
+
+  it("stale env and no match -> loud with a reason per step", async () => {
+    const d = deps(bgChain, [attachSession(LIVE, 38664)], { ...bgCmds, 38664: "claude attach 11111111" });
+    const h = await resolveHostSession({ ITERM_SESSION_ID: `w1t0p0:${DEAD}` }, d, 75840);
+    expect(h.via).toBe("none");
+    for (const part of ["foreground:", `no session runs attach ${SHORT}`, "tty: ancestor tty /dev/ttys011", `${DEAD} is not live`]) {
+      expect(h.reason).toContain(part);
+    }
+  });
+
+  it("two attach matches -> ambiguous, nothing picked", async () => {
+    const d = deps(bgChain, [attachSession(LIVE, 38664), attachSession(DEAD, 38665)], { ...bgCmds, 38664: `claude attach ${SHORT}`, 38665: `claude attach ${SHORT}` });
+    const h = await resolveHostSession({ ITERM_SESSION_ID: `w1t0p0:${LIVE}` }, d, 75840);
+    expect(h).toMatchObject({ uid: "", via: "none" });
+    expect(h.reason).toContain("ambiguous");
+    expect(h.reason).toContain(LIVE);
+    expect(h.reason).toContain(DEAD);
   });
 });
 
