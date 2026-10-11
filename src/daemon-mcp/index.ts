@@ -1472,6 +1472,7 @@ async function startShim(): Promise<void> {
           label: `↩ ${old.label}`,
           noPane: true,
           claudeArgs: ["--resume", old.claudeSession, "-p", args.text],
+          resumeOf: args.id,
           onWorkerStart: (wid) => {
             newId = wid;
           },

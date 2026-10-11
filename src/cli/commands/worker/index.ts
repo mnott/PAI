@@ -712,6 +712,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
             label: opts.label || `↩ ${old.label}`,
             noPane: opts.pane === false,
             claudeArgs,
+            resumeOf: id,
             onWorkerStart: (wid) => {
               newId = wid;
             },

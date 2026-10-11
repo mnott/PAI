@@ -14,6 +14,7 @@ import { shortText } from "./args.js";
 import { denialMark } from "./denials.js";
 import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
 import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
+import { ownedTree } from "./worktree.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
@@ -478,6 +479,16 @@ export function renderTable(
     depth <= 0 ? "      " : "  " + "│ ".repeat(depth - 1) + (last ? "  " : "│ ");
   const branchMark = (s: WorkerStatus): string =>
     s.branch && !s.merged ? "  " + c("yellow", "⎇" + (s.commits ? String(s.commits) : "")) : "";
+  // tree path relative to the worktrees dir, and the resume chain links
+  const treeMark = (s: WorkerStatus): string => {
+    const t = ownedTree(s);
+    const parts = [
+      ...(t ? [`tree ${basename(t.dir)}`] : []),
+      ...(s.resumedFrom ? [`resumed from ${s.resumedFrom}`] : []),
+      ...(s.resumedBy ? [`resumed by ${s.resumedBy}`] : []),
+    ];
+    return parts.length ? "  " + c("dim", parts.join("  ")) : "";
+  };
   const inboxMark = (s: WorkerStatus): string =>
     inbox[s.id] ? " " + c("mag", `◆${inbox[s.id]}`) : "";
   // "R!" an AG2 report that failed `aibroker agentish check`, "R?" either
@@ -522,7 +533,7 @@ export function renderTable(
     const q = chain ? "      " : rowCont(depth, subLast);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} [${s.provider}]  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )
@@ -560,7 +571,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${timeMark(s)}${deniedMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} [${s.provider}]${tag ? " " + tag : ""}  ${c(col, s.state.padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
         chain,
         last
       )

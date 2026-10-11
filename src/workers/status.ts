@@ -83,6 +83,10 @@ export interface WorkerStatus {
   worktreeDir?: string | null;
   /** Branch the worker committed on (worker/<id>), set on worktree runs. */
   branch?: string | null;
+  /** Set on a resumed worker: the id whose worktree it took over (see worktree.ts adoptTree). */
+  resumedFrom?: string;
+  /** Set on the old id when a resume took its worktree: that id owns the tree now. */
+  resumedBy?: string;
   /** Commit the branch started from (worktree base) for the commits count. */
   worktreeBase?: string | null;
   /** Whether `worktreeBase` is a snapshot of uncommitted checkout state, not HEAD. */

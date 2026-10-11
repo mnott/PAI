@@ -97,6 +97,8 @@ import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } f
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
   addWorktree,
+  adoptTree,
+  markResumed,
   salvageOnExit,
   gcWorktreesThrottled,
   inPlaceSystemPrompt,
@@ -161,6 +163,8 @@ export interface RunOptions {
   id?: string;
   /** --worktree/--no-worktree; undefined lets the class default decide. */
   worktreeFlag?: boolean;
+  /** Resume: the id whose worktree this run takes over (see adoptTree). */
+  resumeOf?: string;
   /** --max-minutes: stop the run after N minutes (0 = no limit; default workers.defaultMaxMinutes). */
   maxMinutes?: number;
   /** --deadline HH:MM (local): stop the run then; exclusive with maxMinutes. */
@@ -621,6 +625,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         id: opts.id,
         capability: capability ?? undefined,
         worktreeFlag: opts.worktreeFlag,
+        resumeOf: opts.resumeOf,
         className: opts.className,
         reroutes: opts._reroutes ?? 0,
         printCmd: opts.printCmd,
@@ -1056,6 +1061,7 @@ interface ExecuteArgs {
   onWorkerStart?: (wid: string) => void;
   id?: string;
   worktreeFlag?: boolean;
+  resumeOf?: string;
   className?: string;
   reroutes: number;
   printCmd?: boolean;
@@ -1082,7 +1088,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const env = buildRunEnv(target.provider, headless, proxyUrl);
 
   const wid = a.id ?? newWorkerId();
-  const cwd = a.cwd ?? process.cwd();
+  // a resume takes over the old id's tree and runs against its repo
+  const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
+  const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
@@ -1093,8 +1101,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal
   // degrades to an in-place run — the worker itself must still run.
   // Skipped for --print-cmd: it is a dry-run and must not touch git.
-  let worktree: WorktreeInfo | null = null;
+  let worktree: WorktreeInfo | null = adopted;
   if (
+    !adopted &&
     headless &&
     !a.printCmd &&
     worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })
@@ -1250,10 +1259,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           worktreeSnapshot: worktree.snapshot,
         }
       : {}),
+    ...(adopted ? { resumedFrom: a.resumeOf } : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(limit ? { deadlineAt: limit.deadlineAt, maxMinutes: limit.minutes } : {}),
   };
   saveStatus(logDir, status);
+  if (adopted && a.resumeOf) markResumed(logDir, a.resumeOf, wid);
   a.onWorkerStart?.(wid);
   const ledger = ledgerPath(logDir);
   appendLedger(ledger, "WORKER-START", {
@@ -1589,6 +1600,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           claudeArgs: a.claudeArgs,
           onWorkerStart: a.onWorkerStart,
           worktreeFlag: a.worktreeFlag,
+          resumeOf: a.resumeOf,
           className: a.className,
           _reroutes: a.reroutes + 1,
         });

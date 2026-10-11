@@ -35,6 +35,45 @@ export function worktreePath(logDir: string, id: string): string {
   return join(worktreesDir(logDir), id);
 }
 
+/**
+ * The one answer to "which tree does this worker own?": its recorded
+ * worktreeDir + branch, or null when it has none or was superseded by a
+ * resume (the tree moved to the resuming id, see `adoptTree`). discard, merge,
+ * gc and ps all ask here.
+ */
+export function ownedTree(st: WorkerStatus): { dir: string; branch: string } | null {
+  if (st.resumedBy || !st.worktreeDir || !st.branch) return null;
+  return { dir: st.worktreeDir, branch: st.branch };
+}
+
+/**
+ * `pai worker resume`: the resuming id takes over the old id's tree. Returns
+ * the tree as a WorktreeInfo for the new run, or null when the old id owns
+ * none (or its directory is gone). Nothing is written until `markResumed`.
+ */
+export function adoptTree(logDir: string, oldId: string): (WorktreeInfo & { cwd: string }) | null {
+  const old = loadStatus(logDir, oldId);
+  const t = old && ownedTree(old);
+  if (!old || !t || !existsSync(t.dir)) return null;
+  return { dir: t.dir, branch: t.branch, base: old.worktreeBase ?? "", snapshot: !!old.worktreeSnapshot, cwd: old.cwd };
+}
+
+/** Hand the old id's tree over: it records `resumedBy` and no longer owns anything. */
+export function markResumed(logDir: string, oldId: string, newId: string): void {
+  const old = loadStatus(logDir, oldId);
+  if (!old) return;
+  saveStatus(logDir, {
+    ...old,
+    resumedBy: newId,
+    worktreeDir: null,
+    branch: null,
+    worktreeBase: null,
+    worktreeSnapshot: null,
+    commits: null,
+  });
+  invalidatePendingCache(logDir, old.cwd);
+}
+
 /** Run git in `cwd` with an optional env override, trimmed stdout, stderr on failure. */
 function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv, timeout = 30_000): string {
   try {
@@ -680,8 +719,9 @@ export function verifyWorker(logDir: string, id: string, opts: { against?: strin
     }
   };
   const has = (ref: string): boolean => bytes(["rev-parse", "--verify", "-q", `${ref}^{commit}`]) !== null;
-  const ref = [`refs/heads/${worktreeBranch(id)}`, `refs/pai-archive/${id}`].find(has);
-  if (!ref) throw new Error(`worker ${id}: neither ${worktreeBranch(id)} nor refs/pai-archive/${id} exists in ${st.cwd}`);
+  const branch = st.branch ?? worktreeBranch(id);
+  const ref = [`refs/heads/${branch}`, `refs/pai-archive/${id}`].find(has);
+  if (!ref) throw new Error(`worker ${id}: neither ${branch} nor refs/pai-archive/${id} exists in ${st.cwd}`);
   const base = st.worktreeSnapshot && st.worktreeBase ? st.worktreeBase : git(st.cwd, ["merge-base", "HEAD", ref]);
   const list = (bytes(["diff", "--name-status", "--no-renames", "-z", `${base}..${ref}`]) ?? Buffer.alloc(0))
     .toString("utf8")
@@ -799,7 +839,8 @@ export function discardWorker(logDir: string, id: string): string {
 function mustHaveBranch(logDir: string, id: string): WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">> {
   const st = loadStatus(logDir, id);
   if (!st) throw new Error(`no worker named "${id}"`);
-  if (!st.branch || !st.worktreeDir) {
+  if (st.resumedBy) throw new Error(`worker ${id} is superseded by ${st.resumedBy}, use that id`);
+  if (!ownedTree(st)) {
     throw new Error(
       `worker ${id} has no worktree branch to ${st.branch ? "clean up" : "merge"} — ` +
         `it ran in place or its branch was already handled`
@@ -868,8 +909,9 @@ export function gcWorktrees(
   const cutoff = now - olderThanHours * 3_600_000;
   const out: GcEntry[] = [];
   const root = worktreesDir(logDir);
-  const known = new Set<string>();
-  const archive = (id: string, dir: string, st: WorkerStatus | null): void => {
+  const statuses = loadStatuses(logDir);
+  const owned = new Set(statuses.map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
+  const archive = (id: string, dir: string, branch: string, st: WorkerStatus | null): void => {
     const target = `refs/pai-archive/${id}`;
     if (dryRun) return void out.push({ id, archive: target });
     try {
@@ -891,7 +933,7 @@ export function gcWorktrees(
           throw new Error("uncommitted paths remain");
         }
       }
-      const src = worktreeBranch(id);
+      const src = branch;
       let hasBranch = true;
       try {
         git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${src}`]);
@@ -912,9 +954,9 @@ export function gcWorktrees(
     }
   };
 
-  for (const st of loadStatuses(logDir)) {
-    known.add(st.id);
-    if (!st.worktreeDir || !existsSync(st.worktreeDir) || isLive(st)) continue;
+  for (const st of statuses) {
+    const tree = ownedTree(st);
+    if (!tree || !existsSync(tree.dir) || isLive(st)) continue;
     let end = 0;
     try {
       end = statSync(statusPath(logDir, st.id)).mtimeMs;
@@ -922,23 +964,24 @@ export function gcWorktrees(
       continue;
     }
     if (end > cutoff) continue;
-    archive(st.id, st.worktreeDir, st);
+    archive(st.id, tree.dir, tree.branch, st);
   }
 
   if (existsSync(root)) {
     for (const ent of readdirSync(root, { withFileTypes: true })) {
-      if (!ent.isDirectory() || known.has(ent.name) || existsSync(statusPath(logDir, ent.name))) continue;
       const dir = join(root, ent.name);
+      // owned by a status (the last id of a resume chain) is that status's business
+      if (!ent.isDirectory() || owned.has(resolve(dir))) continue;
       try {
         if (statSync(dir).mtimeMs > cutoff) continue;
       } catch {
         continue;
       }
-      archive(ent.name, dir, null);
+      archive(ent.name, dir, worktreeBranch(ent.name), null);
     }
   }
   if (!dryRun) {
-    for (const repo of new Set(loadStatuses(logDir).map((s) => s.cwd))) {
+    for (const repo of new Set(statuses.map((s) => s.cwd))) {
       try {
         git(repo, ["worktree", "prune"]);
       } catch {
