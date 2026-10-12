@@ -60,6 +60,9 @@ const ENQUEUE_TIMEOUT_MS = 2_000;
  */
 const PENDING_TIMEOUT_MS = 5 * 60 * 1000;
 
+/** A confirmed handover older than this is regenerated while fill stays at/above refresh. */
+const REARM_AGE_MS = 30 * 60 * 1000;
+
 /** Both thresholds confirmed — nothing left to check for the rest of the session. */
 const ALL_THRESHOLDS: ThresholdName[] = ["warmup", "refresh"];
 
@@ -271,7 +274,21 @@ export async function checkAndEnqueueContextHandover(
   }
 
   let state = deps.loadState(input.sessionId);
-  if (ALL_THRESHOLDS.every((t) => state.confirmed.includes(t))) return NOTHING;
+  if (ALL_THRESHOLDS.every((t) => state.confirmed.includes(t))) {
+    // "Confirmed" must not mean "done for the rest of the fill cycle": a
+    // cache written hours before compaction (observed 2026-10-12: one from
+    // 17h earlier was injected) misses everything since. Re-arm once the
+    // confirmed cache is older than REARM_AGE_MS and fill is still at or
+    // above the refresh threshold.
+    const cache = deps.readCache(input.sessionId);
+    if (cache && deps.now() - Date.parse(cache.generatedAt) < REARM_AGE_MS) return NOTHING;
+    const reading = deps.getReading(input);
+    if (reading.status !== "ok" || reading.usedTokens === null) return NOTHING;
+    const t = contextFillThresholds(reading, process.env, { cwd: input.cwd });
+    if (reading.usedTokens < t.refreshTokens) return NOTHING;
+    state = { confirmed: [], pending: null };
+    deps.saveState(input.sessionId, state);
+  }
 
   // Thresholds confirmed DURING this check (from the pending-resolution step
   // below) — carried through every return path so a confirm that falls

@@ -200,6 +200,7 @@ describe("checkAndEnqueueContextHandover — enqueue attempt vs confirmed outcom
     const getReading = vi.fn(() => readingAt(999_000));
     const { deps, enqueued } = makeDeps({
       state: { confirmed: ["warmup", "refresh"], pending: null },
+      cache: { sessionId: "s", cwd: "/p", threshold: "refresh", generatedAt: new Date().toISOString(), model: "sonnet", summary: "h" },
       getReading,
     });
     const result = await checkAndEnqueueContextHandover(input, deps);
@@ -216,6 +217,31 @@ describe("checkAndEnqueueContextHandover — enqueue attempt vs confirmed outcom
       },
     });
     await expect(checkAndEnqueueContextHandover(input, deps)).resolves.toEqual({ attempted: [], confirmed: [] });
+  });
+});
+
+describe("re-arm after confirmation", () => {
+  const cacheAt = (generatedAt: string): ContextHandoverCache => ({
+    sessionId: "s", cwd: "/p", threshold: "refresh", generatedAt, model: "sonnet", summary: "h",
+  });
+  const confirmed: HandoverTriggerState = { confirmed: ["warmup", "refresh"], pending: null };
+
+  it("enqueues again when the confirmed cache is hours old and fill is still above refresh", async () => {
+    const now = Date.parse("2026-10-12T12:00:00Z");
+    const { deps, enqueued } = makeDeps({
+      state: confirmed, cache: cacheAt("2026-10-11T19:47:57Z"), now, getReading: () => readingAt(990_000),
+    });
+    await checkAndEnqueueContextHandover({ sessionId: "s", cwd: "/p" }, deps);
+    expect(enqueued.length).toBe(1);
+  });
+
+  it("stays quiet when the confirmed cache is recent", async () => {
+    const now = Date.parse("2026-10-12T12:00:00Z");
+    const { deps, enqueued } = makeDeps({
+      state: confirmed, cache: cacheAt("2026-10-12T11:50:00Z"), now, getReading: () => readingAt(990_000),
+    });
+    await checkAndEnqueueContextHandover({ sessionId: "s", cwd: "/p" }, deps);
+    expect(enqueued.length).toBe(0);
   });
 });
 

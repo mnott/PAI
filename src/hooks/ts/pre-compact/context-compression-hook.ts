@@ -34,7 +34,7 @@ import {
 } from '../lib/project-utils.js';
 import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
-import { readContextHandoverCache } from '../lib/context-handover-cache.js';
+import { readContextHandoverCache, judgeHandover } from '../lib/context-handover-cache.js';
 import { bindHandoverEvidence } from '../lib/handover-evidence.js';
 
 interface HookInput {
@@ -513,6 +513,52 @@ function enqueueSessionSummary(payload: {
 }
 
 // ---------------------------------------------------------------------------
+// Handover generation at the compaction boundary (safety net)
+// ---------------------------------------------------------------------------
+
+/** Last compact_boundary in the transcript = the previous compaction, even
+ *  when .compact-state.json is missing or in another directory. */
+function lastBoundaryInTranscript(transcriptPath: string): string | null {
+  try {
+    let last: string | null = null;
+    for (const line of readFileSync(transcriptPath, 'utf-8').split('\n')) {
+      if (!line.includes('"compact_boundary"')) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e.subtype === 'compact_boundary' && typeof e.timestamp === 'string') last = e.timestamp;
+      } catch { /* skip */ }
+    }
+    return last;
+  } catch {
+    return null;
+  }
+}
+
+/** Ask the daemon for an urgent refresh handover. Fire-and-forget. */
+function enqueueUrgentHandover(p: { cwd: string; sessionId: string; transcriptPath?: string }): Promise<void> {
+  return new Promise((resolve) => {
+    const client = connect(DAEMON_SOCKET, () => {
+      client.write(JSON.stringify({
+        id: randomUUID(),
+        method: 'work_queue_enqueue',
+        params: {
+          type: 'context-handover',
+          priority: 1,
+          payload: { ...p, threshold: 'refresh', urgent: true },
+        },
+      }) + '\n');
+    });
+    const done = () => { try { client.destroy(); } catch { /* ignore */ } resolve(); };
+    client.on('data', done);
+    client.on('error', done);
+    setTimeout(done, DAEMON_TIMEOUT_MS);
+  });
+}
+
+/** How long the hook waits for the urgent handover (the hook's own timeout is 60s). */
+const HANDOVER_WAIT_MS = 35_000;
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -719,22 +765,39 @@ async function main() {
       let handoverBlock: string;
       let handoverSummary: string | null = null;
       try {
-        const cachedHandover = readContextHandoverCache(hookInput.session_id);
-        const handoverIsFresh =
-          cachedHandover !== null &&
-          (!previousCompactionAt || new Date(cachedHandover.generatedAt) > new Date(previousCompactionAt));
-        handoverSummary = handoverIsFresh ? cachedHandover!.summary : null;
+        // Previous compaction = the later of .compact-state.json and the
+        // transcript's last compact_boundary (either may be missing).
+        const prevAt = [previousCompactionAt, lastBoundaryInTranscript(hookInput.transcript_path)]
+          .filter((x): x is string => !!x)
+          .sort()
+          .pop() ?? null;
+        let cachedHandover = readContextHandoverCache(hookInput.session_id);
+        let verdict = judgeHandover(cachedHandover, prevAt, Date.now());
+        if (!verdict.fresh && hookInput.cwd) {
+          // No current handover: generate one now rather than inject a stale one silently.
+          await enqueueUrgentHandover({
+            cwd: hookInput.cwd,
+            sessionId: hookInput.session_id,
+            transcriptPath: hookInput.transcript_path,
+          });
+          const deadline = Date.now() + HANDOVER_WAIT_MS;
+          while (!verdict.fresh && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2_000));
+            cachedHandover = readContextHandoverCache(hookInput.session_id);
+            verdict = judgeHandover(cachedHandover, prevAt, Date.now());
+          }
+        }
+        handoverSummary = verdict.fresh ? cachedHandover!.summary : null;
+        sourceLabel = verdict.label;
 
-        sourceLabel = handoverIsFresh
-          ? `model-written handover (${cachedHandover!.model}, generated ${cachedHandover!.generatedAt}, ` +
-            `threshold=${cachedHandover!.threshold}) + mechanical scrape`
-          : 'mechanical scrape only (no fresh model-written handover was available)';
-
-        handoverBlock = handoverIsFresh
+        // A stale cache is still injected, but labelled in its own header.
+        handoverBlock = cachedHandover
           ? [
               '',
-              '--- MODEL-WRITTEN HANDOVER (decisions, reasoning, open threads — not in the scrape above) ---',
-              cachedHandover!.summary,
+              verdict.fresh
+                ? '--- MODEL-WRITTEN HANDOVER (decisions, reasoning, open threads — not in the scrape above) ---'
+                : `--- STALE MODEL-WRITTEN HANDOVER — NOT CURRENT, verify before relying on it (${verdict.label}) ---`,
+              cachedHandover.summary,
               '--- end model-written handover ---',
             ].join('\n')
           : '';
