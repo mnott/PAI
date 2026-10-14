@@ -153,3 +153,20 @@ describe("claudeCommand", () => {
     expect(parsed.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
   });
 });
+
+describe("buildRunEnv PAI_WORKER_PROVIDER", () => {
+  it("names the provider for a headless worker, anthropic for the native one", () => {
+    expect(buildRunEnv(provider, true, undefined, "local30").PAI_WORKER_PROVIDER).toBe("local30");
+    expect(buildRunEnv(nativeAnthropicProvider(), true).PAI_WORKER_PROVIDER).toBe("anthropic");
+  });
+
+  it("is not set for an interactive run", () => {
+    const saved = process.env.PAI_WORKER_PROVIDER;
+    delete process.env.PAI_WORKER_PROVIDER;
+    try {
+      expect(buildRunEnv(provider, false, undefined, "local30").PAI_WORKER_PROVIDER).toBeUndefined();
+    } finally {
+      if (saved !== undefined) process.env.PAI_WORKER_PROVIDER = saved;
+    }
+  });
+});

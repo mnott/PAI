@@ -1118,7 +1118,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
     proxyUrl = `${base}/${target.providerName}`;
   }
-  const env = buildRunEnv(target.provider, headless, proxyUrl);
+  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName);
 
   const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo
@@ -2047,7 +2047,7 @@ export async function testProvider(
     const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
     proxyUrl = `${base}/${providerName}`;
   }
-  const env = buildRunEnv(provider, true, proxyUrl);
+  const env = buildRunEnv(provider, true, proxyUrl, providerName);
   const [bin, ...head] = claudeCommand(env, caveman);
   const t0 = Date.now();
   const proc = spawn(

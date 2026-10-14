@@ -56,7 +56,8 @@ const NATIVE_STRIP_VARS = [
 export function buildRunEnv(
   provider: WorkerProvider,
   headless: boolean,
-  proxyUrl?: string
+  proxyUrl?: string,
+  providerName?: string
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -73,6 +74,7 @@ export function buildRunEnv(
     env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     if (headless) {
       env.PAI_WORKER = "1";
+      env.PAI_WORKER_PROVIDER = "anthropic";
     } else {
       env.ENABLE_TOOL_SEARCH = "true";
     }
@@ -98,6 +100,8 @@ export function buildRunEnv(
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   if (headless) {
     env.PAI_WORKER = "1";
+    // read by the whisper-rules hook: a non-anthropic worker gets no operator rules
+    if (providerName) env.PAI_WORKER_PROVIDER = providerName;
   } else {
     env.ENABLE_TOOL_SEARCH = "true";
   }

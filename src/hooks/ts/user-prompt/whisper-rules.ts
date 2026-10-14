@@ -54,9 +54,11 @@ function isSectionHeader(line: string): boolean {
  * section's own header/divider box, which the tag line sits inside, does not
  * count as the next section). An untagged section reaches both. `isWorker`
  * selects which side of the tag this process is on — see PAI_WORKER in
- * run-env.ts.
+ * run-env.ts. `workerOnly` (a worker on a non-anthropic provider) keeps only
+ * the "# @worker" sections: untagged operator rules read as instructions to a
+ * local model, which echoes them instead of working.
  */
-function getWhisperRules(isWorker: boolean): string {
+function getWhisperRules(isWorker: boolean, workerOnly = false): string {
   if (!existsSync(WHISPER_FILE)) return "";
   try {
     const lines = readFileSync(WHISPER_FILE, "utf-8").split("\n");
@@ -71,6 +73,7 @@ function getWhisperRules(isWorker: boolean): string {
         else if (line === "# @worker") tag = "worker";
         continue;
       }
+      if (workerOnly && tag !== "worker") continue;
       if (tag === "orchestrator" && isWorker) continue;
       if (tag === "worker" && !isWorker) continue;
       out.push(line.startsWith("\\#") ? line.slice(1) : line);
@@ -242,14 +245,19 @@ function main() {
   if (isRelayedPrompt(prompt)) return;
 
   const isWorker = process.env.PAI_WORKER === "1";
+  const provider = process.env.PAI_WORKER_PROVIDER;
+  // ponytail: an unset provider (older spawner) keeps today's output
+  const localWorker = isWorker && !!provider && provider !== "anthropic";
   const parts: string[] = [];
 
-  parts.push(`CURRENT LOCAL TIME: ${currentLocalTime()} — use this verbatim for any [YYYY-MM-DD HH:MM] stamp; never estimate or increment it.`);
+  if (!localWorker) {
+    parts.push(`CURRENT LOCAL TIME: ${currentLocalTime()} — use this verbatim for any [YYYY-MM-DD HH:MM] stamp; never estimate or increment it.`);
+  }
 
-  const rules = getWhisperRules(isWorker);
+  const rules = getWhisperRules(isWorker, localWorker);
   if (rules) parts.push(rules);
 
-  const advisor = getAdvisorGuidance();
+  const advisor = localWorker ? "" : getAdvisorGuidance();
   if (advisor) parts.push(advisor);
 
   if (parts.length === 0) return;
