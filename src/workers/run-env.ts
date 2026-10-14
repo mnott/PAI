@@ -102,6 +102,13 @@ export function buildRunEnv(
     env.PAI_WORKER = "1";
     // read by the whisper-rules hook: a non-anthropic worker gets no operator rules
     if (providerName) env.PAI_WORKER_PROVIDER = providerName;
+    // A local model gets the task, not the operator's interactive-session
+    // overhead (user+project CLAUDE.md, memory index): it echoed that text
+    // instead of working (2026-10-15). The two switches cannot separate user
+    // from project CLAUDE.md, so both go. The output style is dropped in
+    // claudeCommand via --settings.
+    env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
+    env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   } else {
     env.ENABLE_TOOL_SEARCH = "true";
   }
@@ -129,7 +136,10 @@ export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean): string[
     if (onPath("caveman", env)) return ["caveman", "claude"];
     process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
   }
-  return ["claude", "--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: route || ANTHROPIC_FIRST_PARTY_URL } })];
+  const settings: Record<string, unknown> = { env: { ANTHROPIC_BASE_URL: route || ANTHROPIC_FIRST_PARTY_URL } };
+  // set by buildRunEnv for a headless non-anthropic worker: no operator output style
+  if (env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === "1") settings.outputStyle = "default";
+  return ["claude", "--settings", JSON.stringify(settings)];
 }
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {

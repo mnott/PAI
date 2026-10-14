@@ -170,3 +170,24 @@ describe("buildRunEnv PAI_WORKER_PROVIDER", () => {
     }
   });
 });
+
+describe("local-provider worker prompt overhead", () => {
+  const strip = ["CLAUDE_CODE_DISABLE_CLAUDE_MDS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY"] as const;
+  const saved = strip.map((k) => process.env[k]);
+  beforeAll(() => strip.forEach((k) => delete process.env[k]));
+  afterAll(() => strip.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i]))));
+
+  it("headless non-anthropic worker: CLAUDE.md and memory off, output style default", () => {
+    const env = buildRunEnv(provider, true, undefined, "local30");
+    expect(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe("1");
+    expect(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(JSON.parse(claudeCommand(env, false)[2]).outputStyle).toBe("default");
+  });
+
+  it("anthropic worker and interactive runs are untouched", () => {
+    for (const env of [buildRunEnv(nativeAnthropicProvider(), true), buildRunEnv(nativeAnthropicProvider(), false), buildRunEnv(provider, false, undefined, "local30")]) {
+      for (const k of strip) expect(env[k]).toBeUndefined();
+      expect(JSON.parse(claudeCommand(env, false)[2])).not.toHaveProperty("outputStyle");
+    }
+  });
+});
