@@ -780,7 +780,7 @@ pai worker run --local-ok ...     # this run may go local under prefer-cloud
 
 **Routing policy.** `cloud-only` never uses a local provider; `local-only` never uses the cloud
 and fails when no local server answers; `prefer-local` tries the first enabled loopback provider
-(one `/v1/models` ping, 1.5 s) and uses the cloud when none answers or none is configured;
+(one `/v1/models` ping, 4 s: a busy server answers slowly) and uses the cloud when none answers or none is configured;
 `prefer-cloud` uses the cloud and goes local only when the cloud is in cooldown or over its quota
 (or on `--local-ok`); `auto` is `prefer-local`, but cloud on battery (`pmset -g batt`) and for an
 `--urgent` run. The chosen route and its reason (`policy prefer-local`, `battery`, `urgent`,

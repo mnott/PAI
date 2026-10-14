@@ -144,7 +144,7 @@ export function isLocalProvider(baseUrl: string): boolean {
 }
 
 /** One cheap models request; any answer below 500 (a 401 included) means the server is up. */
-export async function pingLocal(baseUrl: string, timeoutMs = 1500): Promise<boolean> {
+export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<boolean> {
   try {
     const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
     return r.status < 500;
