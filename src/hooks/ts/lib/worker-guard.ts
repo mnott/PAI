@@ -298,6 +298,8 @@ const MAX_FOREGROUND_SECS = 120;
 const WAIT_REASON_TAIL =
   "calls longer than 2 min block operator messages and supervision; long jobs run fine detached: " + WAIT_RECIPE + ".";
 
+const CLAMP_NOTE = "timeout clamped to 120 s; `--wait` commands return by themselves, rc=3 = run again";
+
 const unitSecs = (u: string): number => (u === "m" ? 60 : u === "h" ? 3600 : u === "d" ? 86_400 : 1);
 
 /** Longest `timeout N` (timeout/gtimeout, any flags) among the segments, in seconds. */
@@ -355,10 +357,12 @@ export function decideWorkerGuard(
     return deny(`${tool} blocked: this worker runs with --no-browser`);
   }
   if (tool === "Bash") {
-    if (typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {
-      return deny(`Bash timeout ${ti.timeout} ms blocked: ${WAIT_REASON_TAIL}`);
+    const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
+    // A too-long tool timeout alone is clamped, not refused: models re-issued the same call and burned turns on denials.
+    if (d.decision === "allow" && typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {
+      return { decision: "allow", updatedInput: { ...ti, timeout: MAX_FOREGROUND_SECS * 1000 }, context: CLAMP_NOTE };
     }
-    return typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
+    return d;
   }
   if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
     const f = ti.file_path ?? ti.path;
