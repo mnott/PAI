@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type GateDecision } from "./sleep-poll-gate.js";
-import { decideWorkerGitGuard } from "./worker-git-guard.js";
+import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
@@ -281,7 +281,7 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
       const listing = !g.rest.some((a) => !isFlag(a)) || g.rest.some((a) => /^(-l|--list|-n\d*|--contains|--points-at)$/.test(a));
       if (!listing) return deny("git tag blocked: releases are the orchestrator's");
     }
-    if (!ctx.inWorktree) {
+    if (!ctx.inWorktree && !isPrivateClone(ctx.cwd)) {
       if (GIT_TREE_CMDS.has(g.sub)) {
         const r = decideWorkerGitGuard(words.join(" "), true, st.cwd, null);
         if (r.blocked) return deny(`${r.cmd} blocked: you run in a shared checkout, not a worktree; it can destroy other workers' edits, use --worktree`);
