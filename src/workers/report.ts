@@ -120,7 +120,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "`;`/`|`, or inside a loop or subshell — and the sleeps of one command add up (`sleep 58; sleep 58` is",
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
     "run_in_background is denied. Foreground Bash calls stay under 2 min (longer ones block operator messages and supervision and are denied);",
-    `run a long job detached: ${WAIT_RECIPE}.`,
+    `Prefer the project's own blocking command for builds and tests (e.g. a build script's --wait, repeated while it says to call again); for a long job that has none, run it detached: ${WAIT_RECIPE}.`,
     "Kill only processes you started, by PID (`cmd & echo $! > /tmp/x.pid`, then `kill $(cat /tmp/x.pid)`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",

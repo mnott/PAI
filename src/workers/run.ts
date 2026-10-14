@@ -119,6 +119,7 @@ import {
 } from "./report.js";
 import { recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
+import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
@@ -1157,6 +1158,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     preamble = loaded.preamble;
     if (!a.quiet) process.stderr.write(preambleLine(preamble) + "\n");
   }
+  // provider contract addendum (<PAI_HOME>/contracts/<provider>.md): headless, only with the generic contract
+  const addendum: ContractAddendum | null =
+    headless && !parsed.callerSystemPrompt ? loadContractAddendum(target.providerName, target.provider.contract) : null;
+  if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
   if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
@@ -1229,6 +1234,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   cmd.push(
     ...appendSystemPromptArgs([
       ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(addendum ? [addendum.text] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless
         ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
@@ -1275,6 +1281,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(headless ? { reportFormat: a.reportFormat } : {}),
     ...(trailerApplied ? { promptTrailer: true } : {}),
     ...(preamble ? { preamble: { path: preamble.path, hash: preamble.hash } } : {}),
+    ...(addendum ? { contractAddendum: { path: addendum.path, sha: addendum.sha } } : {}),
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
@@ -1438,6 +1445,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     }
     eventsFd = openSync(eventsPath(logDir, wid), "a");
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
+    if (addendum) writeEvent({ type: "contract-addendum", text: `${addendum.path} sha ${addendum.sha}`, sha: addendum.sha });
     const rl = createInterface({ input: proc.stdout! });
     const toolUses = new Map<string, { name: string; input: unknown }>();
     rl.on("line", (line) => {

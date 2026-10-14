@@ -112,6 +112,8 @@ export interface WorkerStatus {
   promptTrailer?: boolean;
   /** The project preamble (.pai/worker.md) appended to this run's prompt: path + short content hash. */
   preamble?: { path: string; hash: string };
+  /** The provider contract addendum appended to this run's prompt: path + sha256 prefix. */
+  contractAddendum?: { path: string; sha: string };
   /** Whether an invalid AG2 final message triggered the one bounded re-ask (see run.ts). */
   reportRetried?: boolean;
   /**

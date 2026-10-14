@@ -102,6 +102,8 @@ export interface WorkerProvider {
   /** Extra environment variables for runs through this provider (string values). */
   env: Record<string, string>;
   note?: string;
+  /** Contract addendum file for this provider; default <PAI_HOME>/contracts/<name>.md. */
+  contract?: string;
   /**
    * OpenAI Chat Completions base (e.g. "https://api.openai.com/v1"). Required
    * for protocol "openai"; read by the PAI proxy, never by the runner.
@@ -658,6 +660,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(modelTiers ? { modelTiers } : {}),
     env,
     ...(str(p.note) ? { note: str(p.note) } : {}),
+    ...(str(p.contract) ? { contract: str(p.contract) } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
