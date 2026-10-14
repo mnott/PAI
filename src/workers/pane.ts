@@ -1109,8 +1109,8 @@ export function headlessAllowed(env: NodeJS.ProcessEnv = process.env, file: stri
   return null;
 }
 
-// Brings the host's window and tab to the front, then reports where the pane
-// sits. JSON on stdout; `fail` set when the pane is not a visible, usable
+// Reports where the pane sits, without raising or focusing anything: a window
+// need not be frontmost, only visible (several sessions live in several windows). JSON on stdout; `fail` set when the pane is not a visible, usable
 // neighbour of the host session.
 export const VERIFY_PANE_SCRIPT = `${FIND_SESSION}
 function run(argv) {
@@ -1123,19 +1123,23 @@ function run(argv) {
     function ids(ss) { return ss.map(function (o) { return o.id(); }); }
     if (h.w.id() !== p.w.id()) return JSON.stringify({ fail: "pane is in window " + p.w.id() + ", host in window " + h.w.id() });
     if (ids(h.all).indexOf(argv[1]) < 0) return JSON.stringify({ fail: "pane is not in the host's tab" });
-    try { h.w.miniaturized = false; } catch (e) {}
-    try { h.t.select(); } catch (e) {}
-    try { h.w.select(); } catch (e) {}
-    try { h.s.select(); } catch (e) {}
     var tabs = h.w.tabs();
     var tabIdx = 0;
     for (var i = 0; i < tabs.length; i++) if (ids(tabs[i].sessions()).indexOf(argv[0]) >= 0) tabIdx = i + 1;
     var selected = ids(h.w.currentTab().sessions()).indexOf(argv[1]) >= 0;
-    var front = app.currentWindow().id() === h.w.id();
     var b = h.w.bounds();
+    // On screen: the frame intersects a display (NSScreen is bottom-left origin, iTerm top-left).
+    ObjC.import("AppKit");
+    var scr = $.NSScreen.screens, top = scr.objectAtIndex(0).frame.size.height, onScreen = false;
+    for (var k = 0; k < scr.count; k++) {
+        var f = scr.objectAtIndex(k).frame, fy = top - f.origin.y - f.size.height;
+        if (b.x < f.origin.x + f.size.width && b.x + b.width > f.origin.x && b.y < fy + f.size.height && b.y + b.height > fy) onScreen = true;
+    }
+    var hidden = false;
+    try { hidden = Application("System Events").processes.byName("iTerm2").visible() === false; } catch (e) {}
     return JSON.stringify({
         window: h.w.id(), bounds: [b.x, b.y, b.width, b.height], tab: tabIdx + "/" + tabs.length,
-        selectedTab: selected, frontWindow: front, miniaturized: h.w.miniaturized(),
+        selectedTab: selected, onScreen: onScreen, hidden: hidden, miniaturized: h.w.miniaturized(),
         rows: p.s.rows(), cols: p.s.columns(), tty: p.s.tty(), hostRows: h.s.rows(), hostCols: h.s.columns()
     });
 }`;
@@ -1155,7 +1159,7 @@ function followRunsOn(tty: string, wid: string): boolean {
  * Check, and bring forward, the iTerm pane of a worker. Resolves with a line
  * naming window, tab and size; rejects with the reason when the pane is not
  * something the operator can see: gone, other window or tab, tab not selected,
- * window behind or minimised, too small, or its follow command not running
+ * window off screen, hidden or minimised, too small, or its follow command not running
  * (polled for up to 5 s while the new session starts it).
  */
 export async function verifyPane(
@@ -1181,7 +1185,8 @@ export async function verifyPane(
     const where = `window ${r.window} [${(r.bounds as number[]).join(",")}] tab ${r.tab}, pane ${cols}x${rows}, ${r.tty}`;
     if (r.miniaturized === true) throw new Error(`pane verification failed: window is minimised (${where})`);
     if (r.selectedTab !== true) throw new Error(`pane verification failed: its tab is not the selected one (${where})`);
-    if (r.frontWindow !== true) throw new Error(`pane verification failed: its window is not the front iTerm2 window (${where})`);
+    if (r.hidden === true) throw new Error(`pane verification failed: iTerm2 is hidden (${where})`);
+    if (r.onScreen !== true) throw new Error(`pane verification failed: its window is off screen (${where})`);
     if (rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS) {
       throw new Error(`pane verification failed: pane too small, ${cols}x${rows} < ${MIN_PANE_COLS}x${MIN_PANE_ROWS} (${where})`);
     }
