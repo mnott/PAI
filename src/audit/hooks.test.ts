@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditHooks } from "./hooks.js";
+import { auditHooks, type HookRunner } from "./hooks.js";
 import { countTokens } from "./tokens.js";
 
 const dirs: string[] = [];
@@ -20,6 +20,14 @@ function writeSettings(cwd: string, hooks: unknown): void {
   writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ hooks }), "utf8");
 }
 
+/** Scripted runner: no real shell, so no wall-clock timeout can bite under load. */
+function scripted(outputs: Record<string, { stdout: string; error?: string }>, seen: string[] = []): HookRunner {
+  return (command) => {
+    seen.push(command);
+    return outputs[command] ?? { stdout: "" };
+  };
+}
+
 describe("auditHooks", () => {
   it("counts a SessionStart hook's stdout in the encoding's own tokens", () => {
     const cwd = newDir();
@@ -31,7 +39,7 @@ describe("auditHooks", () => {
       SessionStart: [{ hooks: [{ type: "command", command: `cat ${fixture}` }] }],
     });
 
-    const report = auditHooks(cwd);
+    const report = auditHooks(cwd, scripted({ [`cat ${fixture}`]: { stdout: fixtureText } }));
     expect(report.readings).toHaveLength(1);
     expect(report.readings[0].event).toBe("SessionStart");
     expect(report.readings[0].tokens).toBe(countTokens(fixtureText));
@@ -47,7 +55,7 @@ describe("auditHooks", () => {
       ],
     });
 
-    const report = auditHooks(cwd);
+    const report = auditHooks(cwd, scripted({ "printf hello": { stdout: "hello" }, "printf world": { stdout: "world" } }));
     expect(report.totalsByEvent.UserPromptSubmit).toBe(countTokens("hello") + countTokens("world"));
   });
 
@@ -57,8 +65,9 @@ describe("auditHooks", () => {
       SessionStart: [{ hooks: [{ type: "command", command: "exit 1" }] }],
     });
 
-    expect(() => auditHooks(cwd)).not.toThrow();
-    const report = auditHooks(cwd);
+    const run = scripted({ "exit 1": { stdout: "", error: "exit 1" } });
+    expect(() => auditHooks(cwd, run)).not.toThrow();
+    const report = auditHooks(cwd, run);
     expect(report.readings).toHaveLength(1);
     expect(report.readings[0].tokens).toBe(0);
   });
@@ -72,28 +81,26 @@ describe("auditHooks", () => {
       ],
     });
 
-    const report = auditHooks(cwd);
+    const report = auditHooks(cwd, scripted({}));
     expect(report.preToolUseHooks).toHaveLength(2);
     expect(report.preToolUseRewritesBash).toBe(true);
   });
 
   it("expands ${PAI_DIR} and $HOME in the command before running it", () => {
     const cwd = newDir();
-    const scriptDir = join(cwd, "scripts");
-    mkdirSync(scriptDir, { recursive: true });
-    writeFileSync(join(scriptDir, "hello.sh"), "#!/bin/sh\nprintf hi\n", { mode: 0o755 });
-
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(
       join(cwd, ".claude", "settings.json"),
       JSON.stringify({
-        env: { PAI_DIR: scriptDir },
-        hooks: { SessionStart: [{ hooks: [{ type: "command", command: "sh ${PAI_DIR}/hello.sh" }] }] },
+        env: { PAI_DIR: "/pai-dir" },
+        hooks: { SessionStart: [{ hooks: [{ type: "command", command: "sh ${PAI_DIR}/hello.sh $HOME/x" }] }] },
       }),
       "utf8"
     );
 
-    const report = auditHooks(cwd);
+    const seen: string[] = [];
+    const report = auditHooks(cwd, scripted({ [`sh /pai-dir/hello.sh ${homedir()}/x`]: { stdout: "hi" } }, seen));
+    expect(seen).toEqual([`sh /pai-dir/hello.sh ${homedir()}/x`]);
     expect(report.readings[0].tokens).toBe(countTokens("hi"));
   });
 });

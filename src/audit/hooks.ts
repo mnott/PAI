@@ -94,7 +94,10 @@ function runHook(command: string, cwd: string, eventName: string): { stdout: str
 
 const AUDITED_EVENTS = ["SessionStart", "UserPromptSubmit"];
 
-export function auditHooks(cwd: string): HooksReport {
+/** Seam for tests: a real shell under a 20s wall-clock kill is load-dependent. */
+export type HookRunner = typeof runHook;
+
+export function auditHooks(cwd: string, run: HookRunner = runHook): HooksReport {
   const settingsFiles = settingsPaths(cwd);
   const readings: HookReading[] = [];
   const totalsByEvent: Record<string, number> = {};
@@ -112,7 +115,7 @@ export function auditHooks(cwd: string): HooksReport {
         for (const entry of group.hooks ?? []) {
           if (!entry.command) continue;
           const command = expandCommand(entry.command, env);
-          const { stdout, error } = runHook(command, cwd, eventName);
+          const { stdout, error } = run(command, cwd, eventName);
           const tokens = countTokens(stdout);
           totalsByEvent[eventName] += tokens;
           readings.push({ event: eventName, matcher: group.matcher, command, tokens, error });
