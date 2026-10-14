@@ -50,6 +50,7 @@ import {
 } from "node:fs";
 import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
+  ANTHROPIC_NATIVE,
   assertProviderRunnable,
   classModelCapability,
   isModelCapability,
@@ -82,6 +83,7 @@ import {
 import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
+import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
 import {
   capabilityForRun,
   isQuotaFailure,
@@ -178,6 +180,15 @@ export interface RunOptions {
   browser?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
+  /** --urgent: wants a fast turnaround (policy auto/prefer-local route to the cloud). */
+  urgent?: boolean;
+  /** --local-ok: this run may go local under policy prefer-cloud. */
+  localOk?: boolean;
+  /** --cloud: this run goes to the cloud under policy prefer-local/auto. */
+  cloud?: boolean;
+  /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
+  _route?: RouteInfo;
+  _fallThroughOf?: string;
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
@@ -527,6 +538,17 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     ? resolveCapabilityRun(config, capability)
     : null;
 
+  // Worker routing policy (policy.ts): picks local or cloud unless the caller named a provider.
+  let route = opts._route;
+  let providerFlag = opts.providerFlag;
+  if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
+    const routed = await routeRun(config, logDir, opts);
+    if (routed) {
+      route = routed.route;
+      providerFlag = routed.providerFlag ?? undefined;
+    }
+  }
+
   const target = capabilityResolution
     ? {
         providerName: capabilityResolution.providerName,
@@ -536,7 +558,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         via: "class" as const,
       }
     : resolveTarget(config, logDir, {
-        flagProvider: opts.providerFlag,
+        flagProvider: providerFlag,
         className: opts.className,
       });
   assertProviderRunnable(target.providerName, target.provider);
@@ -633,6 +655,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         resumeOf: opts.resumeOf,
         className: opts.className,
         reroutes: opts._reroutes ?? 0,
+        route,
+        fallThroughOf: opts._fallThroughOf,
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
@@ -1097,6 +1121,8 @@ interface ExecuteArgs {
   resumeOf?: string;
   className?: string;
   reroutes: number;
+  route?: RouteInfo;
+  fallThroughOf?: string;
   printCmd?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
@@ -1282,6 +1308,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
     outputFormat: parsed.outputFormat,
+    ...(a.route ? { route: a.route } : {}),
+    ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(headless ? { reportFormat: a.reportFormat } : {}),
     ...(trailerApplied ? { promptTrailer: true } : {}),
     ...(preamble ? { preamble: { path: preamble.path, hash: preamble.hash } } : {}),
@@ -1628,6 +1656,33 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     worktree,
     timedOut: status.timedOut ? limit?.minutes : undefined,
     beforeHandoff: async (st, rep) => {
+      // Fall-through: a local run that failed its own report is repeated once on the cloud.
+      const why = headless ? fallThroughReason(a.route, st, rep) : null;
+      if (why && a.route) {
+        appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: why });
+        process.stderr.write(`pai worker: ${wid} on ${target.providerName} ended badly (${why}) — re-running on the cloud\n`);
+        return runWorker({
+          providerFlag: ANTHROPIC_NATIVE,
+          label: `${label} (fall-through)`,
+          noPane: a.noPane,
+          mcpFlag: a.mcpFlag,
+          cwd: a.cwd,
+          specPath: a.specPath,
+          parent: a.parent,
+          stage: a.stage,
+          claudeArgs: a.claudeArgs,
+          quiet: a.quiet,
+          worktreeFlag: a.worktreeFlag,
+          className: a.className,
+          _route: { policy: a.route.policy, reason: `fall-through (${why})`, local: false },
+          _fallThroughOf: wid,
+          onWorkerStart: (id2) => {
+            st.fallThroughTo = id2;
+            saveStatus(logDir, st);
+            a.onWorkerStart?.(id2);
+          },
+        });
+      }
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
       }
