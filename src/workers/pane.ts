@@ -84,10 +84,28 @@ const FIND_SESSION = `function findSession(app, id) {
     return null;
 }`;
 
+// Smallest height a follow pane may be split down to (the visible-pane gate
+// refuses anything under 8 rows).
+const MIN_ROWS = 8;
+
+// Equalise the follow panes' heights. iTerm exposes no pane position, so panes
+// are grouped by column count: panes stacked in one column share it, and a
+// group of equal width splits its summed rows evenly. ponytail: two columns of
+// equal width but unequal stack height are balanced as one group; upgrade to
+// real geometry if iTerm ever exposes it. Expects the `live` session list.
+const REBALANCE = `var groups = {};
+    live.forEach(function (o) { var c = o.columns(); (groups[c] = groups[c] || []).push([o, o.rows()]); });
+    Object.keys(groups).forEach(function (c) {
+        var g = groups[c];
+        var want = Math.floor(g.reduce(function (a, e) { return a + e[1]; }, 0) / g.length);
+        g.forEach(function (e) { try { e[0].rows = want; } catch (x) {} });
+    });`;
+
 // One pane per worker: split the launching session vertically, or the lowest
 // live candidate horizontally. Returns "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
 export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
+var MIN_ROWS = ${MIN_ROWS};
 function run(argv) {
     var targetID = argv[0], candList = argv[1], followCmd = argv[2], profileName = argv[3];
     var app = Application("iTerm2");
@@ -100,27 +118,36 @@ function run(argv) {
     var winBounds = f.w.bounds();
     var sessIDs = f.all.map(function (o) { return o.id(); });
     var lived = [];
-    var splitS = null;
+    var live = [];
     (candList === "" ? [] : candList.split(",")).forEach(function (cid) {
         var at = sessIDs.indexOf(cid);
         if (at < 0) return;
         lived.push(cid);
-        if (!splitS) splitS = f.all[at];
+        live.push(f.all[at]);
     });
+    // split the LARGEST worker pane (by area), never the newest: halving the
+    // newest pane caps a tab at ~4 workers. Stack (horizontal split) while
+    // both halves keep >= MIN_ROWS rows, else add a column (vertical split).
+    var splitS = null;
+    live.forEach(function (o) { if (!splitS || o.columns() * o.rows() > splitS.columns() * splitS.rows()) splitS = o; });
+    var stack = splitS && Math.floor(splitS.rows() / 2) >= MIN_ROWS + 1;
     // the follow command is part of the split itself: the pane is born already
     // running it, so no text is ever typed into any session — a typing step
     // raced the operator's keystrokes and could even land in the operator's
     // own session
     var newS;
-    if (!splitS) {
+    if (!splitS || !stack) {
+        var base = splitS || f.s;
         newS = profileName === ""
-            ? f.s.splitVerticallyWithDefaultProfile({ command: followCmd })
-            : f.s.splitVertically({ withProfile: profileName, command: followCmd });
+            ? base.splitVerticallyWithDefaultProfile({ command: followCmd })
+            : base.splitVertically({ withProfile: profileName, command: followCmd });
     } else {
         newS = profileName === ""
             ? splitS.splitHorizontallyWithDefaultProfile({ command: followCmd })
             : splitS.splitHorizontally({ withProfile: profileName, command: followCmd });
     }
+    live.push(newS);
+    ${REBALANCE}
     // a split makes the new session the tab's active one: re-select the
     // launching session so focus returns to where the operator was typing,
     // never the new pane
@@ -529,12 +556,30 @@ function run(argv) {
     return "closed";
 }`;
 
+// Re-balance the follow panes (argv[0]: comma-joined session ids) after a close.
+export const REBALANCE_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var ids = argv[0].split(",");
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = null;
+    for (var i = 0; i < ids.length && !f; i++) f = findSession(app, ids[i]);
+    if (!f) return "notfound";
+    var winBounds = f.w.bounds();
+    var live = f.all.filter(function (o) { return ids.indexOf(o.id()) >= 0; });
+    ${REBALANCE}
+    try { f.w.bounds = winBounds; } catch (e) {}
+    return "balanced";
+}`;
+
 /** The real iTerm / tmux calls, swappable so tests never touch either. */
 export interface PaneOps {
   listIterm(): Promise<Array<{ id: string; name: string }>>;
   closeIterm(id: string): Promise<boolean>;
   listTmux(): Array<{ id: string; command: string }>;
   closeTmux(id: string): boolean;
+  /** Equalise the heights of the given follow panes (optional: tests omit it). */
+  rebalanceIterm?(ids: string[]): Promise<void>;
 }
 
 export const realPaneOps: PaneOps = {
@@ -553,6 +598,9 @@ export const realPaneOps: PaneOps = {
   async closeIterm(id) {
     const p = await osascript(END_SESSION_SCRIPT, [id]);
     return p.stdout.trim() === "closed";
+  },
+  async rebalanceIterm(ids) {
+    if (ids.length) await osascript(REBALANCE_SCRIPT, [ids.join(",")]);
   },
   listTmux() {
     try {
@@ -654,6 +702,10 @@ export async function closeEndedPanes(
   for (const t of ops.listTmux()) {
     const m = FOLLOW_ID.exec(t.command);
     if (m) await handle("tmux", t.id, m[1]);
+  }
+  // closed panes leave uneven neighbours: re-balance what is left
+  if (!dryRun && res.closed.length) {
+    await ops.rebalanceIterm?.(loadRegistry(logDir).map((e) => e.session)).catch(() => undefined);
   }
   return res;
 }

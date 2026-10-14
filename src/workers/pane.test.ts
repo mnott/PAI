@@ -247,9 +247,11 @@ describe("iTerm scripts are JXA", () => {
 });
 
 describe("WORKER_SPLIT_SCRIPT window size", () => {
-  it("never sizes the new session (columns/rows grow the whole window)", () => {
+  it("never sets columns; rows are only set by the re-balance, after the split", () => {
     expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.columns\s*=/);
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.rows\s*=/);
+    const rows = WORKER_SPLIT_SCRIPT.indexOf(".rows = want");
+    expect(rows).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command: followCmd"));
+    expect(rows).toBeLessThan(WORKER_SPLIT_SCRIPT.indexOf("f.w.bounds = winBounds"));
   });
 
   it("captures the bounds as a plain value before the split and restores them verbatim after", () => {
@@ -262,6 +264,54 @@ describe("WORKER_SPLIT_SCRIPT window size", () => {
     expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command: followCmd"));
     // capture and restore live in the same script (one osascript invocation)
     expect(WORKER_SPLIT_SCRIPT.indexOf("function run(argv)")).toBeLessThan(pin);
+  });
+});
+
+/** Run the real JXA split script against mock sessions; returns what was split and the final rows. */
+function runSplit(host: [number, number], workers: Array<[number, number]>) {
+  const log: string[] = [];
+  type S = { id: () => string; columns: () => number; rows: number | (() => number); splitHorizontally: unknown; splitVertically: unknown; select: () => void };
+  const mk = (id: string, c: number, r: number): S => {
+    const o: S = {
+      id: () => id, columns: () => c, select: () => {}, rows: r as unknown as () => number,
+      splitHorizontally: () => (log.push(`H ${id}`), mkNew()),
+      splitVertically: () => (log.push(`V ${id}`), mkNew()),
+    };
+    // rows is read as a call and assigned as a property: model both
+    let cur = r;
+    Object.defineProperty(o, "rows", { get: () => () => cur, set: (v: number) => { cur = v; } });
+    return o;
+  };
+  const created: S[] = [];
+  const mkNew = () => { const n = mk("new", 228, 10); created.push(n); return n; };
+  const hostS = mk("host", host[0], host[1]);
+  const ws = workers.map((w, i) => mk(`w${i}`, w[0], w[1]));
+  const all = [hostS, ...ws];
+  const win = { bounds: () => ({}), tabs: () => [{ sessions: () => all }] } as unknown as Record<string, unknown>;
+  const app = { running: () => true, windows: () => [win] };
+  const run = new Function("Application", `${WORKER_SPLIT_SCRIPT}; return run;`)(() => app) as (a: string[]) => string;
+  run(["host", ws.map((w) => w.id()).join(","), "cmd", "prof"]);
+  return { log, rows: [...ws, ...created].map((o) => (o.rows as unknown as () => number)()) };
+}
+
+describe("WORKER_SPLIT_SCRIPT split choice and re-balance", () => {
+  it("first worker splits the host vertically", () => {
+    expect(runSplit([166, 47], []).log).toEqual(["V host"]);
+  });
+
+  it("splits the LARGEST worker pane, not the newest", () => {
+    // newest-first order would pick w2 (6 rows); the largest is w0
+    expect(runSplit([166, 47], [[228, 30], [228, 12], [228, 6]]).log).toEqual(["H w0"]);
+  });
+
+  it("adds a column once stacking would drop a pane under the minimum height", () => {
+    expect(runSplit([166, 47], [[228, 14], [228, 14], [228, 14], [228, 14]]).log).toEqual(["V w0"]);
+  });
+
+  it("re-balances stacked panes of one width to equal rows", () => {
+    const r = runSplit([166, 47], [[228, 40], [228, 10], [228, 9]]).rows;
+    expect(new Set(r).size).toBe(1);
+    expect(r[0]).toBeGreaterThanOrEqual(8);
   });
 });
 
