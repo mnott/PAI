@@ -115,6 +115,10 @@ import {
   parseWorkerReport,
   verifyReportChanges,
   verifyFailNote,
+  checkProof,
+  newUntracked,
+  untrackedPaths,
+  type BashRun,
   type WorkerReport,
 } from "./report.js";
 import { recordDenial } from "./denials.js";
@@ -1433,6 +1437,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     resultEvent: null,
     resultReport: null,
   };
+  // every Bash call + outcome, and the untracked files present at spawn: the
+  // end-of-run proof check (checkProof) and stray-file listing read these
+  const bashRuns: BashRun[] = [];
+  const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
   if (headless) {
     // the first user message carries the prompt (the -p value was stripped)
@@ -1501,6 +1509,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
             status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
             status.sleepSec = null;
             recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString());
+            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+            if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block) });
           }
           if (sawResult) saveStatus(logDir, status);
         }
@@ -1567,6 +1577,21 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         // the re-ask is best effort; the original invalid report stands
       }
     }
+  }
+  if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
+    const stray = newUntracked(worktree?.dir ?? cwd, untrackedAtStart);
+    const chk = checkProof(resultEvent.result, bashRuns, stray);
+    if (chk.rewritten || stray.length) {
+      resultEvent.result = chk.text;
+      ctx.resultReport = parseWorkerReport(chk.text);
+      if (ctx.resultReport) ctx.resultReport.untracked = stray.length ? stray : undefined;
+    }
+    if (chk.rewritten) {
+      status.reportValid = false;
+      status.last = shortText(`claimed proof not run or failed: ${chk.proof}`, 90);
+      appendLedger(ledger, "REPORT-PROOF-UNVERIFIED", { id: wid, proof: chk.proof });
+    }
+    if (stray.length) process.stderr.write(`pai worker: warning: ${stray.length} untracked file(s) left by the worker: ${stray.join(", ")}\n`);
   }
   if (ctx.resultReport && status.denials?.length) ctx.resultReport.denials = status.denials;
   if (headless && ctx.resultReport?.changed?.length) {

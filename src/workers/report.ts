@@ -8,6 +8,7 @@
  * wall of text.
  */
 
+import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { shortText } from "./args.js";
@@ -200,6 +201,8 @@ export interface WorkerReport {
   result?: "+" | "-" | "~" | "?" | "!";
   /** AG2 `y` (why): one line explaining a non-"+" result. */
   why?: string;
+  /** Runner-side: untracked files the worker left behind (AG2 `u`). */
+  untracked?: string[];
   /** Runner-side: hook/permission denials the run hit (never written by the worker). */
   denials?: Denial[];
   /** Which wire format the final message was parsed as. */
@@ -346,4 +349,66 @@ function relShort(p: string, cwd: string): string {
   if (!cwd) return p;
   const r = relative(cwd, p);
   return r && !r.startsWith("..") ? r : p;
+}
+
+/** One Bash call the worker made: the command and whether its result was a failure. */
+export interface BashRun {
+  command: string;
+  failed: boolean;
+}
+
+const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Mechanical check of an AG2 report's claimed proof (2026-10-14: a local model
+ * reported r=+ with `p=git diff HEAD`, a command that proves nothing, and the
+ * hidden test then failed). r=+ stands only if the p= command appears inside a
+ * Bash call the worker really made and that call's result was not a failure;
+ * otherwise the verdict becomes r=~ with a y= line. `u` lists stray untracked
+ * files and is appended either way. Non-AG2 text and non-"+" verdicts pass
+ * through (apart from u). `rewritten` is true when the verdict was downgraded.
+ */
+export function checkProof(
+  text: string,
+  runs: BashRun[],
+  untracked: string[] = []
+): { text: string; rewritten: boolean; proof?: string } {
+  // a stamp glued to the kind line ("[2026-10-14 20:14] R") is dropped, as unwrapAg2 does for a stamp line
+  text = text.replace(/^\s*\[\d{4}-\d{2}-\d{2}[^\]\n]*\][ \t]*(?=[TRSQAX]\s*(\n|$))/, "");
+  const parsed = parseAg2Report(text);
+  let out = text.trimEnd();
+  let rewritten = false;
+  let proof: string | undefined;
+  if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
+    const claimed = squeeze(parsed.fields.p);
+    const ran = runs.some((r) => !r.failed && squeeze(r.command).includes(claimed));
+    if (!ran) {
+      rewritten = true;
+      proof = parsed.fields.p;
+      out = out
+        .split("\n")
+        .filter((l) => !/^\s*y=/.test(l))
+        .map((l) => (/^\s*r=\+\s*$/.test(l) ? "r=~" : l))
+        .concat(`y=claimed proof not run or failed: ${parsed.fields.p}`)
+        .join("\n");
+    }
+  }
+  if (parsed && untracked.length) out += `\nu=${untracked.join("|")}`;
+  return { text: out, rewritten, proof };
+}
+
+/** Untracked (`??`) paths under cwd that were not in `before`; [] when cwd is not a git tree. */
+export function newUntracked(cwd: string, before: ReadonlySet<string>): string[] {
+  return untrackedPaths(cwd).filter((p) => !before.has(p));
+}
+
+export function untrackedPaths(cwd: string): string[] {
+  try {
+    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split("\n")
+      .filter((l) => l.startsWith("?? "))
+      .map((l) => l.slice(3));
+  } catch {
+    return [];
+  }
 }

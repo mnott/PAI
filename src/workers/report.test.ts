@@ -404,3 +404,23 @@ describe("headerLine — report markers", () => {
     expect(headerLine(c, { ...base, reportFormat: "json", reportValid: false })).toContain("R?");
   });
 });
+
+describe("checkProof", () => {
+  const R = "R\ni=x\nr=+\nG=+\nc=a b\nt=T+\np=npm test\nz=ok";
+  it("keeps r=+ when the proof command ran and passed", async () => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R, [{ command: "npm test 2>&1 | tail -3", failed: false }]);
+    expect(v.rewritten).toBe(false);
+    expect(v.text).toContain("r=+");
+  });
+  it("downgrades to r=~ when the proof was never run or failed", async () => {
+    const { checkProof } = await import("./report.js");
+    for (const runs of [[], [{ command: "git diff HEAD", failed: false }], [{ command: "npm test", failed: true }]]) {
+      const v = checkProof(R, runs, ["scratch.swift"]);
+      expect(v.rewritten).toBe(true);
+      expect(v.text).toContain("r=~");
+      expect(v.text).toContain("y=claimed proof not run or failed: npm test");
+      expect(v.text).toContain("u=scratch.swift");
+    }
+  });
+});
