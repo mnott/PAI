@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeColor } from "./render.js";
@@ -695,9 +695,36 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     done.finally(() => {
       settled = true;
     });
-    await sleep(1500); // several ticker ticks past the injected failure
+    // an idle pane writes nothing, so a new event hits the failing write
+    setTimeout(
+      () =>
+        appendFileSync(
+          join(dir, `${id}.jsonl`),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }) + "\n"
+        ),
+      500
+    );
+    await sleep(1500); // past the injected failure
     expect(threw).toBe(true); // the failure actually happened
     expect(settled).toBe(false); // … and follow is still running past it
+    input.write("/quit\n");
+    await done;
+  }, 8000);
+
+  it("an idle pane writes nothing to the terminal", async () => {
+    const { dir, id } = chatFixture("running");
+    const input = new PassThrough();
+    let writes = 0;
+    const io: FollowIO = {
+      stdin: input,
+      stdout: { write: () => ((writes += 1), true), rows: 24, columns: 80 },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    await sleep(700); // setup and backfill settle
+    const before = writes;
+    await sleep(1500);
+    expect(writes).toBe(before);
     input.write("/quit\n");
     await done;
   }, 8000);

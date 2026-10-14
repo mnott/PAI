@@ -26,7 +26,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
-import { isLive, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
 import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
@@ -499,6 +499,7 @@ export async function followWorkers(
   // literal is normalised to LF by the language, which is how the ticker
   // once scrolled a blank line per tick.
   const eraseLiveness = () => {
+    lastLiveness = "";
     if (chat) return;
     if (tty) safeWrite("\r\x1b[K");
   };
@@ -533,22 +534,32 @@ export async function followWorkers(
     const w = (paneStatus ?? meterStatus)?.waitingOn;
     return w ? waitingLine(w) : null;
   };
+  let lastLiveness = "";
+  /** write the ticker only when its text changed — an idle pane stays silent */
+  const safeWriteLiveness = (s: string) => {
+    if (s === lastLiveness) return;
+    lastLiveness = s;
+    safeWrite(s);
+  };
   const writeLiveness = () => {
     if (!tty) return;
-    const secs = Math.max(0, Math.floor((Date.now() - lastEventAt) / 1000));
+    // clock shown in 5 s steps: a ticking second would repaint the pane forever
+    const now5 = Math.floor(Date.now() / 5000) * 5000;
+    const secs = Math.max(0, Math.floor((now5 - lastEventAt) / 5000) * 5);
     if (chat) {
       // the pane's bottom line: goal · model · started · age, never the tool
       // call this second (see paneStatusRow) — before the first status file
       // exists there is nothing to show it from yet, so the plain ticker
       // covers that brief startup window only
       const text = paneStatus
-        ? paneStatusRow(paneStatus, new Date(), columns())
+        ? paneStatusRow(paneStatus, new Date(now5), columns())
         : tickerText(secs, ticker.intent, ticker.tool);
-      safeWrite(chatTickerRow(text, rows, promptCursorCol()));
+      safeWriteLiveness(chatTickerRow(text, rows, promptCursorCol()));
     } else {
       const meter = meterStatus ? contextMeter(c, meterStatus) : null;
-      safeWrite("\r\x1b[K");
-      safeWrite(tickerText(secs, ticker.intent, waitingNow() ?? ticker.tool, meter));
+      safeWriteLiveness(
+        "\r\x1b[K" + tickerText(secs, ticker.intent, waitingNow() ?? ticker.tool, meter)
+      );
     }
   };
 
@@ -962,8 +973,22 @@ export async function followWorkers(
    * that can throw (rendering, terminal writes) is still covered by that
    * path, so one bad event or write never takes the whole pane down with it.
    */
+  let scanCache: Map<string, WorkerStatus> | null = null;
+  let scanAt = 0;
   async function runOneTick(): Promise<TickOutcome> {
-    const statuses = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
+    // ponytail: a pinned pane reads its one status file; an all-workers pane
+    // rescans the (thousands of) status files at most every 2 s
+    let statuses: Map<string, WorkerStatus>;
+    if (target) {
+      const one = loadStatus(logDir, target);
+      statuses = new Map(one ? [[one.id, one]] : []);
+    } else {
+      if (Date.now() - scanAt >= 2000 || !scanCache) {
+        scanCache = new Map(loadStatuses(logDir).map((s) => [s.id, s]));
+        scanAt = Date.now();
+      }
+      statuses = scanCache;
+    }
     if (target) paneStatus = statuses.get(target) ?? paneStatus;
     const wanted = target ? [target] : runningIds();
     for (const wid of wanted) {
@@ -1074,7 +1099,7 @@ export async function followWorkers(
       if (rlIn === null) return { done: true, reason: "worker-ended" };
     }
     if (autoExit && !target) {
-      if (runningIds().length) {
+      if ([...(scanCache?.values() ?? [])].some((s) => isLive(s))) {
         idleSince = null;
       } else if (idleSince === null) {
         idleSince = Date.now();
