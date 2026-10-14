@@ -92,7 +92,7 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--spec <path>` | Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p |  |
 | `--cwd <dir>` | Directory the worker runs in (default: this process's cwd) |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
-| `--no-pane` | Do not open a follow pane for this worker |  |
+| `--no-pane` | Refused unless run by a worker or the operator override file exists: every worker runs behind a visible pane |  |
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
 | `--no-worktree` | Run in place, no worktree |  |
 | `--max-minutes <n>` | Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60, headless runs only: interactive launches have no limit) |  |
@@ -383,7 +383,7 @@ Continue a finished worker on the same provider: claude --resume <session>
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--print-id` | Print the new worker id on its own line (pane follow handoff) |  |
-| `--no-pane` | Do not open a follow pane for the resumed worker |  |
+| `--no-pane` | Refused unless run by a worker or the operator override file exists |  |
 | `--output-format <fmt>` | text (default), json or stream-json — same as `run` |  |
 | `--label <text>` | Short task label (default: "↩ <old label>") |  |
 

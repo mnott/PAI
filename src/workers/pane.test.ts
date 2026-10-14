@@ -22,6 +22,9 @@ import {
   checkPaneForWorker,
   dynamicProfilePath,
   followCommand,
+  headlessAllowed,
+  assertPaneNotDisabled,
+  verifyPane,
   followProfile,
   noPaneMessage,
   paneBackend,
@@ -119,8 +122,8 @@ describe("readItermPlist", () => {
 
 describe("followCommand", () => {
   it("is one exec-able line: absolute node on the CLI entry, unquoted wid", () => {
-    const cmd = followCommand("20260918-104952-27763", 60);
-    const suffix = " worker follow 20260918-104952-27763 --auto-exit 60";
+    const cmd = followCommand("20260918-104952-27763");
+    const suffix = " worker follow 20260918-104952-27763";
     expect(cmd.endsWith(suffix)).toBe(true);
     const bin = cmd.slice(0, cmd.length - suffix.length);
     expect(bin.startsWith(`${process.execPath} `)).toBe(true);
@@ -128,11 +131,12 @@ describe("followCommand", () => {
     expect(bin.slice(process.execPath.length + 1)).toMatch(/(^|\/)pai$/);
     expect(cmd).not.toMatch(/^\s/); // a leading space killed the pane at birth
     expect(cmd).not.toMatch(/\bexec\b/); // exec made iTerm fail to run it at all
+    expect(cmd).not.toContain("--auto-exit"); // a finished worker's pane must stay open
   });
 
   it("carries no shell syntax: iTerm execs the split command, not a shell", () => {
     // proven live: `export …; …` and redirects die instantly, plain execs survive
-    const cmd = followCommand("20260918-104952-27763", 60);
+    const cmd = followCommand("20260918-104952-27763");
     expect(cmd).not.toContain(";");
     expect(cmd).not.toContain("export");
     expect(cmd).not.toContain('"'); // quotes would reach execve as literal characters
@@ -314,5 +318,53 @@ describe("paneBackend", () => {
     expect(paneBackend({ ITERM_SESSION_ID: "w0t0p0:U" }, "linux")).toBe("none");
     expect(paneBackend({}, "darwin")).toBe("none");
     expect(noPaneMessage("w1")).toBe("no pane support here, use: pai worker follow w1");
+  });
+});
+
+describe("fail-closed visibility", () => {
+  const ok = (over: Record<string, unknown> = {}) => ({
+    stdout: JSON.stringify({ window: 7, bounds: [0, 30, 2560, 1410], tab: "1/1", selectedTab: true, frontWindow: true, miniaturized: false, rows: 47, cols: 150, tty: "/dev/ttys011", ...over }),
+    stderr: "",
+  });
+  const verify = (over: Record<string, unknown>, running = true) =>
+    verifyPane("H", "P", "w1", async () => ok(over), () => running, 2);
+
+  it("verifies a pane in the host's selected tab, front window, usable size, follow running", async () => {
+    await expect(verify({})).resolves.toContain("window 7");
+  });
+
+  it.each([
+    ["script reports the pane gone", { fail: "pane session P is gone (closed right after opening)" }, "is gone"],
+    ["tab not selected", { selectedTab: false }, "not the selected one"],
+    ["window behind", { frontWindow: false }, "not the front iTerm2 window"],
+    ["window minimised", { miniaturized: true }, "minimised"],
+    ["collapsed pane", { rows: 2 }, "too small"],
+    ["narrow pane", { cols: 10 }, "too small"],
+  ])("refuses: %s", async (_n, over, why) => {
+    await expect(verify(over)).rejects.toThrow(why);
+  });
+
+  it("refuses when the follow command is not running in the pane", async () => {
+    await expect(verify({}, false)).rejects.toThrow("is not running in the pane");
+  });
+
+  it("refuses when osascript prints no JSON", async () => {
+    await expect(verifyPane("H", "P", "w1", async () => ({ stdout: "", stderr: "boom" }), () => true, 1)).rejects.toThrow("boom");
+  });
+
+  it("headlessAllowed: only a worker or the operator's file", () => {
+    const none = join(tmpdir(), "pai-no-such-override");
+    expect(headlessAllowed({}, none)).toBeNull();
+    expect(headlessAllowed({ PAI_WORKER: "1" }, none)).toContain("PAI_WORKER=1");
+    expect(headlessAllowed({}, process.execPath)).toContain("operator override file");
+  });
+
+  it("--no-pane and PAI_WORKER_AUTOPANE=0 are refused for a Claude session, allowed for a worker", () => {
+    vi.stubEnv("PAI_HEADLESS_OK_FILE", join(tmpdir(), "pai-no-such-override"));
+    expect(() => assertPaneNotDisabled(true, {})).toThrow("--no-pane refused");
+    expect(() => assertPaneNotDisabled(false, { PAI_WORKER_AUTOPANE: "0" })).toThrow("PAI_WORKER_AUTOPANE=0 refused");
+    expect(() => assertPaneNotDisabled(false, {})).not.toThrow();
+    expect(() => assertPaneNotDisabled(true, { PAI_WORKER: "1" })).not.toThrow();
+    vi.unstubAllEnvs();
   });
 });

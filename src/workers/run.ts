@@ -92,7 +92,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
-import { openPaneForWorker, paneBackend, resolveHostSession } from "./pane.js";
+import { headlessAllowed, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -999,6 +999,34 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
 }
 
 /**
+ * The fail-closed pane gate: a headless run proceeds only behind a pane that
+ * was opened and verified visible (see openVerifiedPane). Runs BEFORE the
+ * worker has an id on disk, so a refusal leaves nothing in `pai worker ps`.
+ * Skipped (false) for in-process callers that pass noPane (daemon, keepalive)
+ * and for the two headlessAllowed() cases; the caller then falls back to the
+ * best-effort announcePane.
+ */
+export async function requireVisiblePane(
+  logDir: string,
+  config: ReturnType<typeof readWorkersSection>["workers"],
+  wid: string,
+  term: string,
+  noPane: boolean,
+  ledger: string
+): Promise<boolean> {
+  if (noPane || headlessAllowed()) return false;
+  try {
+    const where = await openVerifiedPane(logDir, config, wid, term);
+    process.stderr.write(`[pai worker] pane verified for ${wid}: ${where}\n`);
+    return true;
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: reason.slice(0, 300) });
+    throw new Error(`worker not started, no visible pane: ${reason}`);
+  }
+}
+
+/**
  * Follow pane, made observable on stderr (stdout stays pure JSON for
  * `--output-format json`): one line naming the outcome — opened, skipped
  * (with reason), or failed (with reason, alongside the existing PANE-FAIL
@@ -1092,6 +1120,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
+  const paneVerified = headless && (await requireVisiblePane(logDir, config, wid, term, noPane || a.printCmd === true, ledgerPath(logDir)));
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
@@ -1278,9 +1307,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
-  // Follow pane: headless only (interactive runs ARE the chat pane), best
-  // effort, never blocking the worker.
-  if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  // Follow pane: headless only (interactive runs ARE the chat pane). Verified
+  // above when the gate applies; best effort otherwise.
+  if (paneVerified) status.pane = { opened: true };
+  else if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
@@ -1681,6 +1711,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, ledgerPath(logDir));
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
@@ -1760,7 +1791,8 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  if (paneVerified) status.pane = { opened: true };
+  else void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {

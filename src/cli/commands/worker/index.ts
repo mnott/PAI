@@ -30,7 +30,7 @@ import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../../workers/w
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
-import { openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes, resolveHostSession } from "../../../workers/pane.js";
+import { assertPaneNotDisabled, openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes, resolveHostSession } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
@@ -103,7 +103,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .option("--spec <path>", "Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p")
     .option("--cwd <dir>", "Directory the worker runs in (default: this process's cwd)")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
-    .option("--no-pane", "Do not open a follow pane for this worker")
+    .option("--no-pane", "Refused unless run by a worker or the operator override file exists: every worker runs behind a visible pane")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
     .option("--max-minutes <n>", "Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60, headless runs only: interactive launches have no limit)", parseMinutesArg)
@@ -169,6 +169,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
             if (hint) process.stderr.write(hint + "\n");
           }
 
+          assertPaneNotDisabled(opts.pane === false);
           let label = opts.label;
           let agentClass: string | undefined;
           if (opts.agent) {
@@ -678,7 +679,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .command("resume <id> <text>")
     .description("Continue a finished worker on the same provider: claude --resume <session>")
     .option("--print-id", "Print the new worker id on its own line (pane follow handoff)")
-    .option("--no-pane", "Do not open a follow pane for the resumed worker")
+    .option("--no-pane", "Refused unless run by a worker or the operator override file exists")
     .option("--output-format <fmt>", "text (default), json or stream-json — same as `run`")
     .option("--label <text>", "Short task label (default: \"↩ <old label>\")")
     .action(
@@ -688,6 +689,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
         opts: { printId?: boolean; pane?: boolean; outputFormat?: string; label?: string }
       ) => {
         try {
+          assertPaneNotDisabled(opts.pane === false);
           const logDir = currentLogDir();
           const old = loadStatus(logDir, id);
           if (!old) {

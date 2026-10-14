@@ -45,7 +45,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WorkersConfig } from "./config.js";
-import { panesDir } from "./paths.js";
+import { panesDir, statusPath } from "./paths.js";
 import { itermUuid, scopeKey } from "./scope.js";
 
 export const PROFILE_NAME = "pai-worker";
@@ -592,17 +592,6 @@ export async function closePaneForWorker(logDir: string, wid: string, ops: PaneO
 }
 
 /**
- * The owner of "a finished worker has no pane": saveStatus calls this on every
- * write, so every path that ends a worker (normal end, kill, deadline, lost,
- * parent exit) closes its registered pane through here, and a running worker's
- * pane is kept. Idempotent: closing drops the registry entry.
- */
-export async function closePaneIfEnded(logDir: string, status: { id: string; state: string }, ops: PaneOps = realPaneOps): Promise<boolean> {
-  if (status.state === "running") return false;
-  return closePaneForWorker(logDir, status.id, ops).catch(() => false);
-}
-
-/**
  * The follow pane closing its own iTerm session on exit, so a pane closes even
  * when the runner died and even under a profile without Close Sessions On End.
  * No-op outside iTerm.
@@ -678,11 +667,13 @@ export async function closeEndedPanes(
  * iTerm's split command parameter execs without a shell (proven live: panes
  * survive `sleep 30` and a single-quoted `/bin/sh -c`, die instantly on
  * `export …; …` or a redirect), so the command must be one exec-able line.
+ * No --auto-exit: a finished worker's pane stays until the operator closes it
+ * (exit the follow) or the next pane opened in the same scope replaces it.
  * Absolute node on the CLI entry file also sidesteps the panes' bare launchd
  * PATH (no pai, no node) and the `#!/usr/bin/env node` shebang.
  */
-export function followCommand(wid: string, autoExitSecs: number): string {
-  return `${process.execPath} ${absoluteCliPath()} worker follow ${wid} --auto-exit ${autoExitSecs}`;
+export function followCommand(wid: string): string {
+  return `${process.execPath} ${absoluteCliPath()} worker follow ${wid}`;
 }
 
 /** Absolute path of the running pai CLI; falls back to PATH lookup at spawn. */
@@ -876,6 +867,25 @@ function tmuxSplit(cmd: string): void {
   }
 }
 
+/** Worker state straight from its status file (pane.ts cannot import status.ts: it imports us). */
+function workerEnded(logDir: string, wid: string): boolean {
+  try {
+    const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string };
+    return !!st.state && st.state !== "running";
+  } catch {
+    return false;
+  }
+}
+
+/** The replacement rule: a new pane in a scope closes that scope's panes of ended workers. */
+async function closeEndedInScope(logDir: string, scope: string, ops: PaneOps = realPaneOps): Promise<void> {
+  for (const e of loadRegistry(logDir, scope)) {
+    if (!workerEnded(logDir, e.worker)) continue;
+    await ops.closeIterm(e.session).catch(() => false);
+    dropEntry(logDir, e);
+  }
+}
+
 /** Outcome of opening a worker's follow pane: the report line plus, on a fresh open, the new iTerm session id. */
 export interface PaneOpenResult {
   message: string;
@@ -893,15 +903,16 @@ export async function openPaneForWorker(
   const backend = paneBackend(process.env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
-    tmuxSplit(followCommand(wid, config.pane.autoExitSecs));
+    tmuxSplit(followCommand(wid));
     return { message: `pane opened for ${wid}`, session: null };
   }
   const uid = itermUuid(term);
   if (!uid) throw new Error(NO_HOST);
   const scope = scopeKey(term);
+  await closeEndedInScope(logDir, scope);
   const reg = loadRegistry(logDir, scope);
   const profile = await followProfile(config.pane.fontSize);
-  const cmd = followCommand(wid, config.pane.autoExitSecs);
+  const cmd = followCommand(wid);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
   const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile]);
@@ -1019,4 +1030,154 @@ export async function openFollowPane(
   if (sout === "opened") return "follow pane opened";
   if (sout === "notfound") throw new Error("pai worker pane: resolved iTerm2 session vanished");
   throw new Error(`pai worker pane: osascript failed: ${(s.stderr || sout).slice(0, 200)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Fail-closed visibility: a headless worker runs only behind a verified pane
+// ---------------------------------------------------------------------------
+
+/**
+ * The operator-only switch that lets a run go headless: this file's existence.
+ * The PreToolUse Bash hook denies any command naming it, so a Claude session
+ * cannot create it through Bash; only the operator's own shell can.
+ */
+export function headlessOverridePath(): string {
+  return process.env.PAI_HEADLESS_OK_FILE ?? join(homedir(), ".claude", "pai", "headless-ok");
+}
+
+/**
+ * Why this process may run a worker without a verified pane, null when it may
+ * not. Two reasons only: it is itself a worker (PAI_WORKER=1: a child spawned
+ * inside its parent's pane may stay headless) or the operator created the
+ * override file.
+ */
+export function headlessAllowed(env: NodeJS.ProcessEnv = process.env, file: string = headlessOverridePath()): string | null {
+  if (env.PAI_WORKER === "1") return "PAI_WORKER=1 (child of a worker, runs inside its parent's pane)";
+  if (existsSync(file)) return `operator override file ${file}`;
+  return null;
+}
+
+// Brings the host's window and tab to the front, then reports where the pane
+// sits. JSON on stdout; `fail` set when the pane is not a visible, usable
+// neighbour of the host session.
+export const VERIFY_PANE_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return JSON.stringify({ fail: "iTerm2 is not running" });
+    var h = findSession(app, argv[0]);
+    if (!h) return JSON.stringify({ fail: "host session " + argv[0] + " is gone" });
+    var p = findSession(app, argv[1]);
+    if (!p) return JSON.stringify({ fail: "pane session " + argv[1] + " is gone (closed right after opening)" });
+    function ids(ss) { return ss.map(function (o) { return o.id(); }); }
+    if (h.w.id() !== p.w.id()) return JSON.stringify({ fail: "pane is in window " + p.w.id() + ", host in window " + h.w.id() });
+    if (ids(h.all).indexOf(argv[1]) < 0) return JSON.stringify({ fail: "pane is not in the host's tab" });
+    try { h.w.miniaturized = false; } catch (e) {}
+    try { h.t.select(); } catch (e) {}
+    try { h.w.select(); } catch (e) {}
+    try { h.s.select(); } catch (e) {}
+    var tabs = h.w.tabs();
+    var tabIdx = 0;
+    for (var i = 0; i < tabs.length; i++) if (ids(tabs[i].sessions()).indexOf(argv[0]) >= 0) tabIdx = i + 1;
+    var selected = ids(h.w.currentTab().sessions()).indexOf(argv[1]) >= 0;
+    var front = app.currentWindow().id() === h.w.id();
+    var b = h.w.bounds();
+    return JSON.stringify({
+        window: h.w.id(), bounds: [b.x, b.y, b.width, b.height], tab: tabIdx + "/" + tabs.length,
+        selectedTab: selected, frontWindow: front, miniaturized: h.w.miniaturized(),
+        rows: p.s.rows(), cols: p.s.columns(), tty: p.s.tty(), hostRows: h.s.rows(), hostCols: h.s.columns()
+    });
+}`;
+
+const MIN_PANE_ROWS = 8;
+const MIN_PANE_COLS = 40;
+
+/** True while a `worker follow <wid>` process runs on that tty. */
+function followRunsOn(tty: string, wid: string): boolean {
+  const short = tty.replace(/^\/dev\//, "");
+  return psOutput("tty=,command=")
+    .split("\n")
+    .some((ln) => ln.trim().startsWith(`${short} `) && new RegExp(`worker follow ${wid}\\b`).test(ln));
+}
+
+/**
+ * Check, and bring forward, the iTerm pane of a worker. Resolves with a line
+ * naming window, tab and size; rejects with the reason when the pane is not
+ * something the operator can see: gone, other window or tab, tab not selected,
+ * window behind or minimised, too small, or its follow command not running
+ * (polled for up to 5 s while the new session starts it).
+ */
+export async function verifyPane(
+  hostUid: string,
+  paneUid: string,
+  wid: string,
+  run: (script: string, args: string[]) => Promise<{ stdout: string; stderr: string }> = osascript,
+  running: (tty: string, wid: string) => boolean = followRunsOn,
+  tries = 25
+): Promise<string> {
+  let last = "";
+  for (let i = 0; i < tries; i++) {
+    const p = await run(VERIFY_PANE_SCRIPT, [hostUid, paneUid]);
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(p.stdout.trim()) as Record<string, unknown>;
+    } catch {
+      throw new Error(`pane verification failed: osascript said ${(p.stderr || p.stdout || "nothing").trim().slice(0, 200)}`);
+    }
+    if (typeof r.fail === "string") throw new Error(`pane verification failed: ${r.fail}`);
+    const rows = Number(r.rows);
+    const cols = Number(r.cols);
+    const where = `window ${r.window} [${(r.bounds as number[]).join(",")}] tab ${r.tab}, pane ${cols}x${rows}, ${r.tty}`;
+    if (r.miniaturized === true) throw new Error(`pane verification failed: window is minimised (${where})`);
+    if (r.selectedTab !== true) throw new Error(`pane verification failed: its tab is not the selected one (${where})`);
+    if (r.frontWindow !== true) throw new Error(`pane verification failed: its window is not the front iTerm2 window (${where})`);
+    if (rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS) {
+      throw new Error(`pane verification failed: pane too small, ${cols}x${rows} < ${MIN_PANE_COLS}x${MIN_PANE_ROWS} (${where})`);
+    }
+    if (running(String(r.tty), wid)) return where;
+    last = where;
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  throw new Error(`pane verification failed: \`worker follow ${wid}\` is not running in the pane (${last})`);
+}
+
+/**
+ * Open the worker's pane and prove the operator can see it, or throw the
+ * reason (the pane just opened is closed again). Needs a live iTerm2 host
+ * session that ITERM_SESSION_ID itself names, or tmux; a stale or invented
+ * id is refused, whatever the process-tree lookup would find.
+ */
+export async function openVerifiedPane(
+  logDir: string,
+  config: WorkersConfig,
+  wid: string,
+  term: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  if (env.TMUX) {
+    const r = await openPaneForWorker(logDir, config, wid, term);
+    if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
+    return "tmux pane";
+  }
+  const envUid = itermUuid(env.ITERM_SESSION_ID ?? "");
+  const hostUid = itermUuid(term);
+  if (!envUid) throw new Error("neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees");
+  if (envUid !== hostUid) {
+    throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
+  }
+  const r = await openPaneForWorker(logDir, config, wid, term);
+  if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
+  try {
+    return `${await verifyPane(hostUid, r.session, wid)} (iTerm session ${r.session})`;
+  } catch (e) {
+    await closePaneForWorker(logDir, wid).catch(() => false);
+    throw e;
+  }
+}
+
+/** CLI entry check: --no-pane and PAI_WORKER_AUTOPANE=0 are refused unless headlessAllowed(). */
+export function assertPaneNotDisabled(noPaneFlag: boolean, env: NodeJS.ProcessEnv = process.env): void {
+  const what = noPaneFlag ? "--no-pane" : env.PAI_WORKER_AUTOPANE === "0" ? "PAI_WORKER_AUTOPANE=0" : "";
+  if (what && !headlessAllowed(env)) {
+    throw new Error(`${what} refused: every worker runs behind a visible pane (only a worker's own children or the operator's ${headlessOverridePath()} may skip it)`);
+  }
 }

@@ -20,7 +20,6 @@ import {
 import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
-import { closePaneIfEnded } from "./pane.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
@@ -302,8 +301,6 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     }
     throw e;
   }
-  // an ended worker keeps no pane (see closePaneIfEnded)
-  void closePaneIfEnded(logDir, status);
 }
 
 /**

@@ -31,8 +31,9 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { closeEndedPanes, closeOwnPane, closePaneForWorker, closePaneIfEnded, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
+import { closeEndedPanes, closeOwnPane, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
+import { scopeKey } from "./scope.js";
 import type { WorkersConfig } from "./config.js";
 
 const config = { pane: { fontSize: 13, autoExitSecs: 10 } } as unknown as WorkersConfig;
@@ -138,35 +139,37 @@ describe("closing panes", () => {
   });
 });
 
-describe("ended workers keep no pane", () => {
+describe("ended workers keep their pane until the next pane replaces it", () => {
   const seed = (worker: string, session: string) => {
-    mkdirSync(join(dir, "panes", "SCOPE"), { recursive: true });
-    writeFileSync(join(dir, "panes", "SCOPE", `${worker}.json`), JSON.stringify({ session, worker, opened: "2026-10-10 10:00:00" }));
+    const scope = scopeKey(TERM);
+    mkdirSync(join(dir, "panes", scope), { recursive: true });
+    writeFileSync(join(dir, "panes", scope, `${worker}.json`), JSON.stringify({ session, worker, opened: "2026-10-10 10:00:00" }));
   };
+  const status = (id: string, state: string) =>
+    saveStatus(dir, { id, label: "x", cwd: dir, provider: "p", state } as unknown as WorkerStatus);
 
-  it("closePaneIfEnded closes done/failed/killed/lost, keeps running", async () => {
-    const ops = fakeOps();
-    for (const [i, state] of ["done", "failed", "killed", "lost"].entries()) {
-      seed(`2026101-${i}`, `S${i}`);
-      expect(await closePaneIfEnded(dir, { id: `2026101-${i}`, state }, ops)).toBe(true);
-    }
-    seed("run-1", "SR");
-    expect(await closePaneIfEnded(dir, { id: "run-1", state: "running" }, ops)).toBe(false);
-    expect(ops.closedIterm).toEqual(["S0", "S1", "S2", "S3"]);
-    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["run-1"]);
-  });
-
-  it("saveStatus of an ended worker (normal end, kill, discard) closes its pane", async () => {
+  it("saveStatus of an ended worker leaves its pane registered and open", async () => {
     const closed: string[] = [];
     const spy = vi.spyOn(realPaneOps, "closeIterm").mockImplementation(async (id) => (closed.push(id), true));
-    const base = { id: "20261010-100000-1", label: "x", cwd: dir, provider: "p" } as unknown as WorkerStatus;
-    seed(base.id, "SA");
-    saveStatus(dir, { ...base, state: "running" });
-    await new Promise((r) => setTimeout(r, 10));
+    seed("20261010-100000-1", "SA");
+    status("20261010-100000-1", "killed");
+    await new Promise((r) => setTimeout(r, 20));
     expect(closed).toEqual([]);
-    saveStatus(dir, { ...base, state: "killed" });
-    await vi.waitFor(() => expect(closed).toEqual(["SA"]));
-    expect(loadRegistry(dir)).toEqual([]);
+    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["20261010-100000-1"]);
+    spy.mockRestore();
+  });
+
+  it("opening the next pane closes the scope's ended panes and keeps running ones", async () => {
+    const closed: string[] = [];
+    const spy = vi.spyOn(realPaneOps, "closeIterm").mockImplementation(async (id) => (closed.push(id), true));
+    seed("20261010-100000-1", "S-DONE");
+    seed("20261010-100001-2", "S-RUN");
+    status("20261010-100000-1", "done");
+    status("20261010-100001-2", "running");
+    await openPaneForWorker(dir, config, "20261010-100002-3", TERM);
+    expect(closed).toEqual(["S-DONE"]);
+    // (the mocked split script reports no live sessions, so it forgets S-RUN itself; only S-DONE was closed)
+    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["20261010-100002-3"]);
     spy.mockRestore();
   });
 
