@@ -373,20 +373,21 @@ describe("paneBackend", () => {
 
 describe("fail-closed visibility", () => {
   const ok = (over: Record<string, unknown> = {}) => ({
-    stdout: JSON.stringify({ window: 7, bounds: [0, 30, 2560, 1410], tab: "1/1", selectedTab: true, frontWindow: true, miniaturized: false, rows: 47, cols: 150, tty: "/dev/ttys011", ...over }),
+    stdout: JSON.stringify({ window: 7, bounds: [0, 30, 2560, 1410], tab: "1/1", selectedTab: true, onScreen: true, hidden: false, miniaturized: false, rows: 47, cols: 150, tty: "/dev/ttys011", ...over }),
     stderr: "",
   });
   const verify = (over: Record<string, unknown>, running = true) =>
     verifyPane("H", "P", "w1", async () => ok(over), () => running, 2);
 
-  it("verifies a pane in the host's selected tab, front window, usable size, follow running", async () => {
+  it("verifies a pane in the host's selected tab, visible (not necessarily front) window, usable size, follow running", async () => {
     await expect(verify({})).resolves.toContain("window 7");
   });
 
   it.each([
     ["script reports the pane gone", { fail: "pane session P is gone (closed right after opening)" }, "is gone"],
     ["tab not selected", { selectedTab: false }, "not the selected one"],
-    ["window behind", { frontWindow: false }, "not the front iTerm2 window"],
+    ["window off screen", { onScreen: false }, "off screen"],
+    ["iTerm2 hidden", { hidden: true }, "hidden"],
     ["window minimised", { miniaturized: true }, "minimised"],
     ["collapsed pane", { rows: 2 }, "too small"],
     ["narrow pane", { cols: 10 }, "too small"],
