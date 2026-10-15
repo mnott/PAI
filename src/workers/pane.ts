@@ -1156,7 +1156,7 @@ function followRunsOn(tty: string, wid: string): boolean {
  * naming window, tab and size; rejects with the reason when the pane is not
  * something the operator can see: gone, other window or tab, tab not selected,
  * window behind or minimised, too small, or its follow command not running
- * (polled for up to 5 s while the new session starts it).
+ * (polled for up to ~7 s while the new session starts it).
  */
 export async function verifyPane(
   hostUid: string,
@@ -1164,7 +1164,8 @@ export async function verifyPane(
   wid: string,
   run: (script: string, args: string[]) => Promise<{ stdout: string; stderr: string }> = osascript,
   running: (tty: string, wid: string) => boolean = followRunsOn,
-  tries = 25
+  tries = 25,
+  pollMs = 300
 ): Promise<string> {
   let last = "";
   for (let i = 0; i < tries; i++) {
@@ -1187,7 +1188,7 @@ export async function verifyPane(
     }
     if (running(String(r.tty), wid)) return where;
     last = where;
-    await new Promise((res) => setTimeout(res, 200));
+    await new Promise((res) => setTimeout(res, pollMs));
   }
   throw new Error(`pane verification failed: \`worker follow ${wid}\` is not running in the pane (${last})`);
 }

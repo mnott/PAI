@@ -413,6 +413,23 @@ describe("checkProof", () => {
     expect(v.rewritten).toBe(false);
     expect(v.text).toContain("r=+");
   });
+  it.each([
+    ["PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30", "cd /w && PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30 2>&1 | tail -5"],
+    ["ls /tmp/x.md", "cd /tmp; ls /tmp/x.md; echo rc=$?"],
+    ["test -s /tmp/x.md", "X=1  test -s   /tmp/x.md 2>&1"],
+    ["cat /tmp/x.md", "cd /tmp && cat /tmp/x.md | head -20"],
+  ])("keeps r=+ for p=%s run as %s", async (p, cmd) => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]);
+    expect(v.rewritten).toBe(false);
+    expect(v.text).toContain("r=+");
+  });
+  it("still downgrades a different command and a failed matching call", async () => {
+    const { checkProof } = await import("./report.js");
+    const r = R.replace("p=npm test", "p=cat /tmp/x.md");
+    expect(checkProof(r, [{ command: "cat /tmp/y.md", failed: false }]).rewritten).toBe(true);
+    expect(checkProof(r, [{ command: "cd /tmp && cat /tmp/x.md | head", failed: true }]).rewritten).toBe(true);
+  });
   it("downgrades to r=~ when the proof was never run or failed", async () => {
     const { checkProof } = await import("./report.js");
     for (const runs of [[], [{ command: "git diff HEAD", failed: false }], [{ command: "npm test", failed: true }]]) {

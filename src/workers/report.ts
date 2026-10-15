@@ -360,6 +360,23 @@ export interface BashRun {
 const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /**
+ * Reduce a shell command to what it runs: drop leading `cd <dir> &&|;` and
+ * `VAR=value` assignments, trailing `| tail|head …`, `2>&1`, `; echo rc=$?`.
+ */
+function normaliseCommand(cmd: string): string {
+  let c = squeeze(cmd);
+  for (let prev = ""; prev !== c; ) {
+    prev = c;
+    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "");
+  }
+  for (let prev = ""; prev !== c; ) {
+    prev = c;
+    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(tail|head)\b[^|]*$/, "").replace(/\s*2>&1\s*$/, "");
+  }
+  return c.trim();
+}
+
+/**
  * Mechanical check of an AG2 report's claimed proof (2026-10-14: a local model
  * reported r=+ with `p=git diff HEAD`, a command that proves nothing, and the
  * hidden test then failed). r=+ stands only if the p= command appears inside a
@@ -380,8 +397,8 @@ export function checkProof(
   let rewritten = false;
   let proof: string | undefined;
   if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
-    const claimed = squeeze(parsed.fields.p);
-    const ran = runs.some((r) => !r.failed && squeeze(r.command).includes(claimed));
+    const claimed = normaliseCommand(parsed.fields.p);
+    const ran = runs.some((r) => !r.failed && (squeeze(r.command).includes(squeeze(parsed.fields.p!)) || normaliseCommand(r.command).includes(claimed)));
     if (!ran) {
       rewritten = true;
       proof = parsed.fields.p;

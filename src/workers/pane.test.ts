@@ -398,6 +398,12 @@ describe("fail-closed visibility", () => {
     await expect(verify({}, false)).rejects.toThrow("is not running in the pane");
   });
 
+  it("waits for a follow process that appears after 2 tries", async () => {
+    let calls = 0;
+    await expect(verifyPane("H", "P", "w1", async () => ok(), () => ++calls > 2, 5, 1)).resolves.toContain("window 7");
+    expect(calls).toBe(3);
+  });
+
   it("refuses when osascript prints no JSON", async () => {
     await expect(verifyPane("H", "P", "w1", async () => ({ stdout: "", stderr: "boom" }), () => true, 1)).rejects.toThrow("boom");
   });
