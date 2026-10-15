@@ -28,7 +28,7 @@ describe("whisper-rules for local-provider workers", () => {
   );
 
   function run(env: Record<string, string>): string {
-    const base = { ...process.env, PAI_HOME: home };
+    const base: NodeJS.ProcessEnv = { ...process.env, PAI_HOME: home };
     delete base.PAI_WORKER;
     delete base.PAI_WORKER_PROVIDER;
     return execFileSync("bun", [ENTRYPOINT], {
