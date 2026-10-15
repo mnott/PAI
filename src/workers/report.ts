@@ -364,7 +364,7 @@ const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
  * `VAR=value` assignments, trailing `| tail|head …`, `2>&1`, `; echo rc=$?`.
  */
 function normaliseCommand(cmd: string): string {
-  let c = squeeze(cmd);
+  let c = squeeze(cmd).replace(/\bgit -C (?:"[^"]*"|'[^']*'|\S+) /g, "git ");
   for (let prev = ""; prev !== c; ) {
     prev = c;
     c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "");

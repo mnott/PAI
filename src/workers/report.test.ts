@@ -419,6 +419,8 @@ describe("checkProof", () => {
     ["test -s /tmp/x.md", "X=1  test -s   /tmp/x.md 2>&1"],
     ["cat /tmp/x.md", "cd /tmp && cat /tmp/x.md | head -20"],
     ["npx tsc --noEmit -p . | grep -c 'error TS'", "cd /w && npx tsc --noEmit -p . 2>&1 | grep 'error TS' | wc -l"],
+    ["git worktree list | wc -l", "head -5 /tmp/tidy.out; git -C /w/repo worktree list | wc -l"],
+    ["git status", "git -C \"/w/my repo\" status"],
   ])("keeps r=+ for p=%s run as %s", async (p, cmd) => {
     const { checkProof } = await import("./report.js");
     const v = checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]);
