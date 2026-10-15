@@ -371,7 +371,7 @@ function normaliseCommand(cmd: string): string {
   }
   for (let prev = ""; prev !== c; ) {
     prev = c;
-    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(tail|head)\b[^|]*$/, "").replace(/\s*2>&1\s*$/, "");
+    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(grep|wc|tail|head|cut|sort|uniq|awk|sed\s+-n|tee)\b[^|]*$/, "").replace(/\s*2>&1(?=\s*(\||$))/g, "");
   }
   return c.trim();
 }
