@@ -102,6 +102,11 @@ export interface WorkerStatus {
    * on statuses written before the flag existed — read as a spawn.
    */
   origin?: "spawn" | "chat";
+  /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
+  route?: { policy: string; reason: string; local: boolean };
+  /** Fall-through link: the local run this cloud run repeats, and (on the local run) its repeat. */
+  fallThroughOf?: string;
+  fallThroughTo?: string;
   /** Which contract/parser this run used for its final report (see report.ts). */
   reportFormat?: "json" | "ag2";
   /** Whether the final AG2 report passed `aibroker agentish check`; unset for json reports or when no validator ran. */

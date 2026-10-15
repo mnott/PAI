@@ -486,6 +486,9 @@ export function renderTable(
       ...(t ? [`tree ${basename(t.dir)}`] : []),
       ...(s.resumedFrom ? [`resumed from ${s.resumedFrom}`] : []),
       ...(s.resumedBy ? [`resumed by ${s.resumedBy}`] : []),
+      ...(s.route ? [`route ${s.route.reason}`] : []),
+      ...(s.fallThroughOf ? [`fall-through of ${s.fallThroughOf}`] : []),
+      ...(s.fallThroughTo ? [`fell through to ${s.fallThroughTo}`] : []),
     ];
     return parts.length ? "  " + c("dim", parts.join("  ")) : "";
   };

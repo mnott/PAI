@@ -37,6 +37,7 @@ import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerCapabilityCommand } from "./capability.js";
+import { registerWorkerPolicyCommand } from "./policy.js";
 import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { callerDescription, requestKill } from "../../../workers/endreason.js";
@@ -99,6 +100,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
       "Override the model for this run. Headless (-p) workers default to the --class model; " +
         "an interactive launch (no -p) with no --model uses the harness default model from settings.json."
     )
+    .option("--urgent", "Wants a fast turnaround: under policy auto/prefer-local the run goes to the cloud (see `pai worker policy`)")
+    .option("--local-ok", "This run may go to a local provider under policy prefer-cloud")
+    .option("--cloud", "This run goes to the cloud under policy prefer-local/auto")
     .option("--label <text>", "Short task label shown in ps / follow / status line (default: first line of the prompt)")
     .option("--spec <path>", "Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p")
     .option("--cwd <dir>", "Directory the worker runs in (default: this process's cwd)")
@@ -141,6 +145,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           out?: string;
           size?: string;
           timeoutMs?: number;
+          urgent?: boolean;
+          localOk?: boolean;
+          cloud?: boolean;
         }
       ) => {
         try {
@@ -214,6 +221,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           }
           const rc = await runWorker({
             providerFlag: opts.provider,
+            urgent: opts.urgent,
+            localOk: opts.localOk,
+            cloud: opts.cloud,
             className: className ?? agentClass,
             modelFlag: opts.model,
             label,
@@ -874,6 +884,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerClassCommands(workerCmd);
   registerWorkerModelCommand(workerCmd);
   registerWorkerCapabilityCommand(workerCmd);
+  registerWorkerPolicyCommand(workerCmd);
   registerWorkerConfigCommands(workerCmd);
 }
 
