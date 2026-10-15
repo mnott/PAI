@@ -15,7 +15,8 @@
  * -t or a source that is a subdirectory of the tree.
  */
 
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type GateDecision } from "./sleep-poll-gate.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
@@ -344,6 +345,46 @@ function decideCommand(command: string, ctx: WorkerGuardContext, detached = fals
   return ALLOW;
 }
 
+/** Local-model workers only: the guards for scratch-in-root and destructive edits (measured 2026-10-15). */
+function isLocalWorker(env: Record<string, string | undefined>): boolean {
+  const p = env.PAI_WORKER_PROVIDER;
+  return !!p && p !== "anthropic";
+}
+
+function isTracked(file: string): boolean {
+  try {
+    execFileSync("git", ["-C", dirname(file), "ls-files", "--error-unmatch", "--", file], { stdio: "ignore", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const lineCount = (s: string): number => (s === "" ? 0 : s.split("\n").length - (s.endsWith("\n") ? 1 : 0));
+
+function localEditReason(tool: string, p: string, content: unknown, root: string | null): string | null {
+  if (!existsSync(p)) {
+    return root && dirname(p) === root ? `${p} would be a new file in the repo root; put scratch in $TMPDIR or a per-run mktemp dir` : null;
+  }
+  if (tool !== "Write" || typeof content !== "string" || !isTracked(p)) return null;
+  const old = lineCount(readFileSync(p, "utf8"));
+  const now = lineCount(content);
+  return old - now > 40 && now < old / 2 ? `rewrite would delete ${old - now} of ${old} lines; use Edit for the change` : null;
+}
+
+function localRmReason(segs: Segment[], cwd: string): string | null {
+  for (const { words } of segs) {
+    const i = words[0] === "rm" ? 1 : words[0] === "git" && words[1] === "rm" ? 2 : -1;
+    if (i < 0) continue;
+    for (const w of words.slice(i)) {
+      if (w.startsWith("-")) continue;
+      const f = resolve(cwd, w);
+      if (existsSync(f) && isTracked(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: delete nothing tracked; use Edit for the change`;
+    }
+  }
+  return null;
+}
+
 export function decideWorkerGuard(
   input: WorkerGuardInput,
   env: Record<string, string | undefined>,
@@ -358,6 +399,10 @@ export function decideWorkerGuard(
   }
   if (tool === "Bash") {
     const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
+    if (d.decision === "allow" && isLocalWorker(env) && typeof ti.command === "string") {
+      const why = localRmReason(parseCommand(ti.command), ctx().cwd);
+      if (why) return deny(why);
+    }
     // A too-long tool timeout alone is clamped, not refused: models re-issued the same call and burned turns on denials.
     if (d.decision === "allow" && typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {
       return { decision: "allow", updatedInput: { ...ti, timeout: MAX_FOREGROUND_SECS * 1000 }, context: CLAMP_NOTE };
@@ -370,7 +415,9 @@ export function decideWorkerGuard(
     const c = ctx();
     const p = abs(f, c.cwd, c.home);
     const why = p && protectedPathReason(p, c.home);
-    return why ? deny(`edit of ${f} blocked: ${why}`) : ALLOW;
+    if (why) return deny(`edit of ${f} blocked: ${why}`);
+    const local = p && isLocalWorker(env) && (tool === "Write" || tool === "Edit") ? localEditReason(tool, p, (ti as { content?: unknown }).content, c.worktreeRoot) : null;
+    return local ? deny(local) : ALLOW;
   }
   return ALLOW;
 }
