@@ -50,6 +50,7 @@ pai worker <subcommand> [options]
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
 | [`pai worker capability [name] [providers]`](#pai-worker-capability-name-providers) | Which provider(s) serve a capability (e.g. image), independent of any one |
 | [`pai worker policy [mode]`](#pai-worker-policy-mode) | Where workers run. No mode shows the policy; a mode sets it; `clear` removes it |
+| [`pai worker bench`](#pai-worker-bench) | A/B providers on a suite of real tasks: per task × provider × repeat run the suite's run.sh, then grade.sh; |
 | [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check, inline-keys |
 
 ### pai worker run [args...]
@@ -706,6 +707,28 @@ Per run: --urgent, --local-ok, --cloud; --provider beats the policy.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--for <duration>` | Expire the policy after 30m, 2h, 1d … |  |
+
+
+### pai worker bench
+
+A/B providers on a suite of real tasks: per task × provider × repeat run the suite's run.sh, then grade.sh;
+
+prints pass/total, median wall and turns per provider × prompt and writes <suite>/results.md.
+Providers are passed explicitly per arm (a measurement ignores `pai worker policy`).
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--suite <dir>` | Suite directory with run.sh, grade.sh and tasks/<name>/ |  |
+| `--providers <list>` | Comma-separated providers, e.g. anthropic,local30 |  |
+| `--tasks <list>` | Comma-separated task names (default: all) |  |
+| `--prompt <kind>` | Prompt file kind: task\|spec\|precise | `task` |
+| `--repeat <n>` | Runs per task × provider | `1` |
+| `--max-parallel <n>` | Arms running at once | `3` |
+| `--max-load <n>` | Start no arm while the 1-minute load average is above this | `60` |
+| `--dry-run` | Print the arm plan only |  |
+| `--report` | Aggregate the suite's existing rows.tsv into results.md; run nothing |  |
 
 
 ### pai worker config

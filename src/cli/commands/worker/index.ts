@@ -38,6 +38,7 @@ import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./p
 import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerCapabilityCommand } from "./capability.js";
 import { registerWorkerPolicyCommand } from "./policy.js";
+import { registerWorkerBenchCommand } from "./bench.js";
 import { registerWorkerConfigCommands } from "./config.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { callerDescription, requestKill } from "../../../workers/endreason.js";
@@ -885,6 +886,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerModelCommand(workerCmd);
   registerWorkerCapabilityCommand(workerCmd);
   registerWorkerPolicyCommand(workerCmd);
+  registerWorkerBenchCommand(workerCmd);
   registerWorkerConfigCommands(workerCmd);
 }
 
