@@ -397,8 +397,11 @@ export function checkProof(
   let rewritten = false;
   let proof: string | undefined;
   if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
-    const claimed = normaliseCommand(parsed.fields.p);
-    const ran = runs.some((r) => !r.failed && (squeeze(r.command).includes(squeeze(parsed.fields.p!)) || normaliseCommand(r.command).includes(claimed)));
+    const claimed = parsed.fields.p;
+    // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
+    const parts = claimed.split(/;|&&/).map(normaliseCommand).filter(Boolean);
+    const ok = runs.filter((r) => !r.failed).map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
+    const ran = ok.some((r) => r.raw.includes(squeeze(claimed))) || (parts.length > 0 && parts.every((c) => ok.some((r) => r.norm.includes(c) || r.raw.includes(c))));
     if (!ran) {
       rewritten = true;
       proof = parsed.fields.p;

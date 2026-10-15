@@ -424,6 +424,14 @@ describe("checkProof", () => {
     expect(v.rewritten).toBe(false);
     expect(v.text).toContain("r=+");
   });
+  it("keeps r=+ for a compound p= whose parts ran in one call with other commands between", async () => {
+    const { checkProof } = await import("./report.js");
+    const p = "sh tools/ab/backfill.sh; pai worker bench --suite tools/ab --providers a,b --report";
+    const cmd = "cd /w; sed -i s/a/b/ f; sh tools/ab/backfill.sh; cut -d, -f1 f; pai worker bench --suite tools/ab --providers a,b --report";
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]).rewritten).toBe(false);
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: true }]).rewritten).toBe(true);
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: "sh tools/ab/backfill.sh", failed: false }]).rewritten).toBe(true);
+  });
   it("still downgrades a different command and a failed matching call", async () => {
     const { checkProof } = await import("./report.js");
     const r = R.replace("p=npm test", "p=cat /tmp/x.md");
