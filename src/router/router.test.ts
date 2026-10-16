@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig } from "../workers/config.js";
-import { prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
+import http from "node:http";
+import { createRouter, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
 
 const dir = mkdtempSync(join(tmpdir(), "router-"));
 writeFileSync(join(dir, "glm"), "glm-secret\n");
@@ -69,6 +70,71 @@ describe("router", () => {
     if (!r.ok) {
       expect(r.status).toBe(400);
       expect(r.message).toContain("glm-5.3");
+    }
+  });
+
+  it("answers model list and detail for routed ids, 404 for unknown", () => {
+    const list = modelsReply("/v1/models", providers);
+    expect(list?.status).toBe(200);
+    expect((list?.body as { data: { id: string }[] }).data.map((d) => d.id)).toContain("glm-5.3");
+    const one = modelsReply("/v1/models/glm-5.3", providers);
+    expect(one?.body).toMatchObject({ id: "glm-5.3", type: "model", display_name: "glm-5.3" });
+    expect(modelsReply("/v1/models/k3%5B1m%5D", providers)?.body).toMatchObject({ id: "k3" });
+    expect(modelsReply("/v1/models/gpt-9", providers)?.status).toBe(404);
+    expect(modelsReply("/v1/models/claude-opus-4-7", providers)).toBeNull();
+    expect(modelsReply("/v1/other", providers)).toBeNull();
+  });
+
+  it("estimates tokens as chars/4", () => {
+    expect(estimateTokens(Buffer.from("x".repeat(40)))).toBe(10);
+  });
+});
+
+describe("router http", () => {
+  const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+  const get = (port: number, path: string, method = "GET") =>
+    new Promise<{ status: number; body: string }>((resolve) => {
+      http.request({ port, host: "127.0.0.1", path, method }, (r) => {
+        let b = "";
+        r.on("data", (c) => (b += c));
+        r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
+      }).end();
+    });
+
+  it("serves models locally, forwards claude detail, logs method+path on 404, estimates count_tokens", async () => {
+    const seen: string[] = [];
+    const up = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      res.writeHead(req.url?.includes("/provider/") ? 404 : 200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({
+      providers: { p: { baseUrl: `http://127.0.0.1:${upPort}/provider`, models: { default: "glm-5.3" } } },
+    }).providers;
+    const logs: string[] = [];
+    const r = createRouter(() => prov, `http://127.0.0.1:${upPort}/w/claude`, (l) => logs.push(l));
+    const port = await listen(r);
+    try {
+      expect((await get(port, "/v1/models/glm-5.3")).status).toBe(200);
+      expect(seen).toEqual([]);
+      expect((await get(port, "/v1/models/claude-opus-4-7")).status).toBe(200);
+      expect(seen).toEqual(["GET /w/claude/v1/models/claude-opus-4-7"]);
+      expect((await get(port, "/nope", "HEAD")).status).toBe(404);
+      expect(logs.some((l) => l.includes("HEAD /nope") && l.includes("404"))).toBe(true);
+      const ct = await new Promise<{ status: number; body: string }>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages/count_tokens", method: "POST" }, (x) => {
+          let b = "";
+          x.on("data", (c) => (b += c));
+          x.on("end", () => resolve({ status: x.statusCode ?? 0, body: b }));
+        });
+        q.end(JSON.stringify({ model: "glm-5.3", messages: [{ role: "user", content: "hello" }] }));
+      });
+      expect(ct.status).toBe(200);
+      expect(JSON.parse(ct.body).input_tokens).toBeGreaterThan(0);
+    } finally {
+      r.close();
+      up.close();
     }
   });
 });

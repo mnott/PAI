@@ -155,6 +155,37 @@ export function prepare(
   return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model };
 }
 
+const MODELS_PATH = /^\/v1\/models(?:\/([^/?]+))?(\?.*)?$/;
+
+/** Anthropic models-API entry for a routed id. */
+export function modelEntry(id: string): { id: string; type: "model"; display_name: string; created_at: string } {
+  return { id, type: "model", display_name: id, created_at: "2025-01-01T00:00:00Z" };
+}
+
+/** GET /v1/models[/id] for non-claude ids, from the routing table; null = not ours. */
+export function modelsReply(
+  path: string,
+  providers: Record<string, WorkerProvider>
+): { status: number; body: unknown } | null {
+  const m = MODELS_PATH.exec(path);
+  if (!m) return null;
+  if (!m[1]) {
+    const data = [...routingTable(providers).keys()].map(modelEntry);
+    return { status: 200, body: { data, has_more: false, first_id: data[0]?.id ?? null, last_id: data.at(-1)?.id ?? null } };
+  }
+  const res = resolveModel(decodeURIComponent(m[1]), providers);
+  if (res.kind === "provider") return { status: 200, body: modelEntry(res.model) };
+  if (res.kind === "unknown") {
+    return { status: 404, body: { type: "error", error: { type: "not_found_error", message: `model "${res.model}" not found` } } };
+  }
+  return null;
+}
+
+/** chars/4 over the request body, for providers without count_tokens. */
+export function estimateTokens(rawBody: Buffer): number {
+  return Math.ceil(rawBody.length / 4);
+}
+
 function isLocal(u: URL): boolean {
   return u.hostname === "127.0.0.1" || u.hostname === "localhost";
 }
@@ -183,14 +214,43 @@ export function createRouter(
         } else res.end();
         log(`${new Date().toISOString()} ${model} ${prov} ${status} ${Date.now() - started}ms`);
       };
-      if (req.method !== "POST" || !/^\/v1\/messages(\/count_tokens)?(\?.*)?$/.test(path)) {
-        return fail(404, "pai router handles POST /v1/messages and /v1/messages/count_tokens only");
+      const isModels = req.method === "GET" && MODELS_PATH.test(path);
+      const isMessages = req.method === "POST" && /^\/v1\/messages(\/count_tokens)?(\?.*)?$/.test(path);
+      if (!isModels && !isMessages) {
+        return fail(404, `pai router: no route for ${req.method} ${path.split("?")[0]}`, `${req.method} ${path.split("?")[0]}`);
       }
       let providers: Record<string, WorkerProvider>;
       try {
         providers = loadProviders();
       } catch (e) {
         return fail(500, `workers config: ${(e as Error).message}`);
+      }
+      if (isModels) {
+        const local = modelsReply(path, providers);
+        if (local) {
+          res.writeHead(local.status, { "content-type": "application/json" });
+          res.end(JSON.stringify(local.body));
+          log(`${new Date().toISOString()} GET ${path.split("?")[0]} local ${local.status} ${Date.now() - started}ms`);
+          return;
+        }
+        // claude ids (and the list) pass to the anthropic upstream unchanged
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(req.headers)) {
+          if (!HOP.has(k.toLowerCase()) && v !== undefined) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : v;
+        }
+        const url = joinUrl(claudeBase, path);
+        const ureq = (url.protocol === "https:" ? https : http).request(url, { method: "GET", headers }, (ures) => {
+          const rh = { ...ures.headers };
+          delete rh["transfer-encoding"];
+          delete rh.connection;
+          res.writeHead(ures.statusCode ?? 502, rh);
+          ures.pipe(res);
+          ures.on("end", () => log(`${new Date().toISOString()} GET ${path.split("?")[0]} anthropic ${ures.statusCode} ${Date.now() - started}ms`));
+        });
+        ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message}`, "GET models", "anthropic"));
+        res.on("close", () => ureq.destroy());
+        ureq.end();
+        return;
       }
       const prep = prepare(path, req.headers, Buffer.concat(chunks), providers, claudeBase);
       if (!prep.ok) return fail(prep.status, prep.message);
@@ -231,6 +291,15 @@ export function createRouter(
         up.url,
         { method: "POST", headers: up.headers },
         (ures) => {
+          if (isCount && target.kind === "provider" && (ures.statusCode ?? 0) >= 400) {
+            // provider has no count_tokens: estimate instead of failing the client
+            ures.resume();
+            const raw = Buffer.concat(chunks);
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ input_tokens: estimateTokens(raw) }));
+            log(`${new Date().toISOString()} ${target.model} ${prov} count_tokens-estimate ${Date.now() - started}ms`);
+            return;
+          }
           const rh = { ...ures.headers };
           delete rh["transfer-encoding"];
           delete rh.connection;
