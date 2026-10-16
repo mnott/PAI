@@ -402,7 +402,7 @@ export const DEFAULT_LOG_DIR = "~/.claude/logs/workers";
 export const DEFAULT_PANE: WorkersPaneConfig = {
   enabled: true,
   fontSize: 13,
-  autoExitSecs: 60,
+  autoExitSecs: 5,
 };
 
 export const DEFAULT_ROUTING: WorkersRoutingConfig = {

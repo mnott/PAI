@@ -11,7 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
 import { shortText } from "./args.js";
-import { denialMark } from "./denials.js";
+import { denialMark, parseDenialText } from "./denials.js";
 import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
 import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { ownedTree } from "./worktree.js";
@@ -374,7 +374,9 @@ export function renderEvent(
           out.push(`${prefix}${c("dim", `    … ${lines.length} lines`)}`);
         }
       } else if (isError) {
-        out.push(`${prefix}    ${c("red", "! " + shortText(text, 200))}`);
+        // guard/hook denials are expected friction (amber); other errors are real (red)
+        const denied = parseDenialText(text) !== null || / blocked:/.test(text);
+        out.push(`${prefix}    ${c(denied ? "yellow" : "red", "! " + shortText(text, 200))}`);
       } else if (text.trim()) {
         out.push(`${prefix}    ${c("dim", shortText(text, 120))}`);
       }

@@ -31,7 +31,7 @@ describe("parseWorkersConfig", () => {
     const c = parseWorkersConfig(undefined);
     expect(c.enabled).toBe(false);
     expect(c.providers).toEqual({});
-    expect(c.pane).toEqual({ enabled: true, fontSize: 13, autoExitSecs: 60 });
+    expect(c.pane).toEqual({ enabled: true, fontSize: 13, autoExitSecs: 5 });
     expect(c.logDir).toBe("~/.claude/logs/workers");
   });
 

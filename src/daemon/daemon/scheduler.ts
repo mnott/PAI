@@ -7,6 +7,8 @@
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
+import { closeEndedPanes } from "../../workers/pane.js";
+import { loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
@@ -452,6 +454,16 @@ const SUPERVISION_TICK_MS = 30_000;
 /** First supervision pass waits for the first statuses to exist at all. */
 const SUPERVISION_STARTUP_DELAY_MS = 15_000;
 
+/** A finished worker's pane is left alone this long (the pane's own auto-exit runs first). */
+const PANE_REAP_GRACE_MS = 60_000;
+
+/** True once a worker is terminal and has been for longer than the reap grace. */
+export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
+  if (!st || st.state === "running") return false;
+  const at = Date.parse(st.updated.replace(" ", "T"));
+  return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
+}
+
 /**
  * Start the worker supervisor: one tick every 30 s over the workers ledger
  * (src/workers/supervision.ts) that pushes finished/failed/stalled events to
@@ -490,6 +502,13 @@ export function startWorkerSupervisor(): void {
           `[pai-daemon] Supervision tick error: ${e instanceof Error ? e.message : String(e)}\n`
         );
       });
+    // reaper: follow panes of workers that ended > 60 s ago (any ending path)
+    const logDir = workersLogDir(readWorkersSection().workers);
+    closeEndedPanes(logDir, (wid) => paneReapable(loadStatus(logDir, wid)), false)
+      .then((r) => {
+        for (const l of r.closed) process.stderr.write(`[pai-daemon] Pane reaper: closed ${l}\n`);
+      })
+      .catch(() => {});
   };
 
   const first = setTimeout(tick, SUPERVISION_STARTUP_DELAY_MS);
