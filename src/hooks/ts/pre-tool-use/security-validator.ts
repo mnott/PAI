@@ -20,6 +20,7 @@
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
+import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
 import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
 import { readWorkersSection } from '../../../workers/config.js';
@@ -107,6 +108,16 @@ interface HookInput {
  * every tree-rewriting git command for a worker, since it cannot prove the
  * worker's cwd is a worktree.
  */
+function privateClone(cwd: string): boolean {
+  let logDir: string | null = null;
+  try {
+    logDir = workersLogDir(readWorkersSection().workers);
+  } catch {
+    // unresolvable: isSharedCheckout fails closed
+  }
+  return !isSharedCheckout({ cwd, selfId: process.env.PAI_WORKER_ID, logDir });
+}
+
 function resolveWorktreesRoot(): string | null {
   try {
     return resolve(worktreesDir(workersLogDir(readWorkersSection().workers)));
@@ -258,6 +269,7 @@ async function main(): Promise<void> {
   if (isWorker) {
     const cwd = input.cwd || process.cwd();
     const guard = decideWorkerGitGuard(command, isWorker, resolve(cwd), resolveWorktreesRoot());
+    if (guard.blocked && privateClone(resolve(cwd))) guard.blocked = false;
     if (guard.blocked) {
       logSecurityEvent({
         type: 'attack_blocked',

@@ -20,6 +20,9 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { renderDecision } from "../lib/sleep-poll-gate.js";
+import { isSharedCheckout } from "../lib/shared-checkout.js";
+import { readWorkersSection } from "../../../workers/config.js";
+import { workersLogDir } from "../../../workers/paths.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -41,6 +44,15 @@ function buildContext(cwd: string): WorkerGuardContext {
     worktreeRoot,
     inWorktree,
     mainCheckout: inWorktree && common ? dirname(common) : null,
+    sharedCheckout: () => {
+      let logDir: string | null = null;
+      try {
+        logDir = workersLogDir(readWorkersSection().workers);
+      } catch {
+        // unresolvable: isSharedCheckout fails closed
+      }
+      return isSharedCheckout({ cwd, selfId: process.env.PAI_WORKER_ID, logDir });
+    },
     testScript: () => {
       try {
         const pkg = JSON.parse(readFileSync(join(worktreeRoot ?? cwd, "package.json"), "utf8"));

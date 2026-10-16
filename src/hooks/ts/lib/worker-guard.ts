@@ -39,6 +39,8 @@ export interface WorkerGuardContext {
   inWorktree: boolean;
   /** The main checkout the worktree hangs off; null when not in a worktree. */
   mainCheckout: string | null;
+  /** Whether a non-worktree cwd is a checkout others share; absent = assume shared. */
+  sharedCheckout?: () => boolean;
   /** package.json `scripts.test` of the tree, null when unknown. */
   testScript: () => string | null;
 }
@@ -281,7 +283,7 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
       const listing = !g.rest.some((a) => !isFlag(a)) || g.rest.some((a) => /^(-l|--list|-n\d*|--contains|--points-at)$/.test(a));
       if (!listing) return deny("git tag blocked: releases are the orchestrator's");
     }
-    if (!ctx.inWorktree) {
+    if (!ctx.inWorktree && (ctx.sharedCheckout?.() ?? true)) {
       if (GIT_TREE_CMDS.has(g.sub)) {
         const r = decideWorkerGitGuard(words.join(" "), true, st.cwd, null);
         if (r.blocked) return deny(`${r.cmd} blocked: you run in a shared checkout, not a worktree; it can destroy other workers' edits, use --worktree`);
