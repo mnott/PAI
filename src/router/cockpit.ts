@@ -1,0 +1,269 @@
+/**
+ * cockpit.ts — aggregation behind the router's /cockpit page. Pure functions
+ * over usage rows; the HTTP handler at the bottom only serves them. The page
+ * gets numbers and display names, never keys, bodies or prompt content.
+ */
+
+import { statSync } from "node:fs";
+import type http from "node:http";
+import type { LimitsCache } from "./limits.js";
+import { COCKPIT_HTML } from "./cockpit-page.js";
+import { readUsage, USAGE_LOG_FILE, type UsageRow } from "./usage.js";
+import { loadSessionMap, type SessionInfo } from "./sessions.js";
+
+export type CockpitWindow = "1h" | "24h" | "7d";
+
+const WINDOWS: Record<CockpitWindow, { span: number; bucket: number }> = {
+  "1h": { span: 3_600_000, bucket: 300_000 },
+  "24h": { span: 86_400_000, bucket: 3_600_000 },
+  "7d": { span: 7 * 86_400_000, bucket: 86_400_000 },
+};
+
+const DAY = 86_400_000;
+const RETRY_WITHIN_MS = 120_000;
+
+export const PAUSE_BUCKETS = ["<1m", "1-5m", "5-60m", ">60m", "first"] as const;
+
+export function pauseBucket(gapS: number | undefined): (typeof PAUSE_BUCKETS)[number] {
+  if (gapS === undefined) return "first";
+  if (gapS < 60) return "<1m";
+  if (gapS < 300) return "1-5m";
+  if (gapS < 3600) return "5-60m";
+  return ">60m";
+}
+
+interface Tok {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
+
+const tok = (): Tok => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0 });
+const addTok = (t: Tok, r: UsageRow) => {
+  t.input += r.input_tokens ?? 0;
+  t.output += r.output_tokens ?? 0;
+  t.cacheWrite += r.cache_creation_input_tokens ?? 0;
+  t.cacheRead += r.cache_read_input_tokens ?? 0;
+};
+const hitRatio = (t: Tok) => {
+  const d = t.cacheRead + t.cacheWrite + t.input;
+  return d ? t.cacheRead / d : 0;
+};
+
+export function bucketStart(ts: number, bucket: number): number {
+  return Math.floor(ts / bucket) * bucket;
+}
+
+/** Row indexes (in the given list) that are retries: same session, within 2 min of a failed request. */
+export function retryRows(rows: UsageRow[]): Set<UsageRow> {
+  const out = new Set<UsageRow>();
+  const lastFail = new Map<string, number>();
+  const sorted = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
+  for (const r of sorted) {
+    const key = r.session_id ?? r.session;
+    if (!key) continue;
+    const t = Date.parse(r.ts);
+    const f = lastFail.get(key);
+    if (f !== undefined && t - f <= RETRY_WITHIN_MS) out.add(r);
+    if (r.status >= 400) lastFail.set(key, t);
+    else lastFail.delete(key);
+  }
+  return out;
+}
+
+export function buildCockpitData(
+  allRows: UsageRow[],
+  win: CockpitWindow,
+  now: number = Date.now(),
+  sessions: Map<string, SessionInfo> = new Map()
+) {
+  const { span, bucket } = WINDOWS[win];
+  const from = bucketStart(now - span, bucket);
+  const rows = allRows.filter((r) => Date.parse(r.ts) >= from);
+  const retries = retryRows(rows);
+
+  // series: one entry per bucket, per model token parts
+  const series: Array<{ t: number; models: Record<string, Tok & { requests: number }> }> = [];
+  for (let t = from; t <= now; t += bucket) series.push({ t, models: {} });
+  const total = tok();
+  let errors = 0;
+  const byModel = new Map<string, Tok & { model: string; provider: string; requests: number; errors: number }>();
+  const byProvider = new Map<string, Tok & { provider: string; requests: number; errors: number; retries: number; ms: number }>();
+  const bySession = new Map<string, Tok & { session: string; name: string | null; requests: number; errors: number; busts: number; lastTs: string; models: Set<string> }>();
+  const pause = new Map<string, Map<string, { n: number; hit: number; write: number; miss: number; readTok: number; writeTok: number }>>();
+  const bustParts: Record<string, number> = {};
+
+  for (const r of rows) {
+    const t = Date.parse(r.ts);
+    addTok(total, r);
+    const isErr = r.status >= 400;
+    if (isErr) errors++;
+
+    const b = series[Math.floor((bucketStart(t, bucket) - from) / bucket)];
+    if (b) {
+      const m = (b.models[r.model] ??= { ...tok(), requests: 0 });
+      addTok(m, r);
+      m.requests++;
+    }
+
+    const mk = `${r.provider}\u0000${r.model}`;
+    const m = byModel.get(mk) ?? { ...tok(), model: r.model, provider: r.provider, requests: 0, errors: 0 };
+    addTok(m, r);
+    m.requests++;
+    if (isErr) m.errors++;
+    byModel.set(mk, m);
+
+    const p = byProvider.get(r.provider) ?? { ...tok(), provider: r.provider, requests: 0, errors: 0, retries: 0, ms: 0 };
+    addTok(p, r);
+    p.requests++;
+    p.ms += r.ms ?? 0;
+    if (isErr) p.errors++;
+    if (retries.has(r)) p.retries++;
+    byProvider.set(r.provider, p);
+
+    const sid = r.session_id ?? r.session ?? "-";
+    const s = bySession.get(sid) ?? {
+      ...tok(), session: sid, name: r.session_id ? (sessions.get(r.session_id)?.name ?? null) : null,
+      requests: 0, errors: 0, busts: 0, lastTs: r.ts, models: new Set<string>(),
+    };
+    addTok(s, r);
+    s.requests++;
+    if (isErr) s.errors++;
+    if (r.bust?.length) {
+      s.busts++;
+      for (const part of r.bust) bustParts[part] = (bustParts[part] ?? 0) + 1;
+    }
+    if (r.ts > s.lastTs) s.lastTs = r.ts;
+    s.models.add(r.model);
+    bySession.set(sid, s);
+
+    if (r.status < 400) {
+      const pm = pause.get(r.model) ?? new Map();
+      const pb = pauseBucket(r.gap_s);
+      const c = pm.get(pb) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 };
+      c.n++;
+      c[r.cache]++;
+      c.readTok += r.cache_read_input_tokens ?? 0;
+      c.writeTok += r.cache_creation_input_tokens ?? 0;
+      pm.set(pb, c);
+      pause.set(r.model, pm);
+    }
+  }
+
+  const sessionRows = [...bySession.values()]
+    .map((s) => {
+      const info = sessions.get(s.session);
+      return {
+        ...s,
+        models: [...s.models],
+        hitRatio: hitRatio(s),
+        worker: info?.worker ?? null,
+        verdict: info?.verdict ?? null,
+        workerProvider: info?.provider ?? null,
+      };
+    })
+    .sort((a, b) => b.input + b.output + b.cacheWrite + b.cacheRead - (a.input + a.output + a.cacheWrite + a.cacheRead));
+
+  // tokens per day per model: always the last 14 days, whatever the window
+  const dayFrom = bucketStart(now, DAY) - 13 * DAY;
+  const days: number[] = [];
+  for (let t = dayFrom; t <= now; t += DAY) days.push(t);
+  const daily: Record<string, number[]> = {};
+  for (const r of allRows) {
+    const t = Date.parse(r.ts);
+    if (t < dayFrom) continue;
+    const arr = (daily[r.model] ??= days.map(() => 0));
+    arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
+  }
+
+  const withRatio = <T extends Tok>(x: T) => ({ ...x, hitRatio: hitRatio(x) });
+  return {
+    window: win,
+    bucketMs: bucket,
+    from,
+    now,
+    totals: { ...withRatio(total), requests: rows.length, errors },
+    series,
+    byModel: [...byModel.values()].map(withRatio).sort((a, b) => b.requests - a.requests),
+    byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0 })),
+    bySession: sessionRows,
+    cachePause: [...pause.entries()].map(([model, pm]) => ({
+      model,
+      buckets: PAUSE_BUCKETS.map((label) => ({ label, ...(pm.get(label) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 }) })),
+    })),
+    bustParts,
+    workers: sessionRows.filter((s) => s.worker),
+    daily: { days, models: daily },
+  };
+}
+
+/** Reread the usage log only when its size or mtime changed. */
+export function cachedRows(file: string = USAGE_LOG_FILE): () => UsageRow[] {
+  let key = "";
+  let rows: UsageRow[] = [];
+  return () => {
+    try {
+      const st = statSync(file);
+      const k = `${st.size}:${st.mtimeMs}`;
+      if (k !== key) {
+        rows = readUsage(file);
+        key = k;
+      }
+    } catch {
+      rows = [];
+    }
+    return rows;
+  };
+}
+
+/** Session map reloaded at most every 30 s (status files are many). */
+export function cachedSessionMap(ttlMs = 30_000): () => Map<string, SessionInfo> {
+  let at = 0;
+  let map = new Map<string, SessionInfo>();
+  return () => {
+    if (Date.now() - at > ttlMs) {
+      map = loadSessionMap();
+      at = Date.now();
+    }
+    return map;
+  };
+}
+
+export function parseWindow(q: string | null): CockpitWindow {
+  return q === "24h" || q === "7d" ? q : "1h";
+}
+
+/**
+ * Serve /cockpit, /cockpit/data and /cockpit/limits. Returns false when the
+ * path is not a cockpit path. GET only; the router binds 127.0.0.1.
+ */
+export function handleCockpit(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  limits: LimitsCache,
+  readRows: () => UsageRow[] = readUsage,
+  sessionMap: () => Map<string, SessionInfo> = loadSessionMap
+): boolean {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
+  const send = (status: number, type: string, body: string) => {
+    res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+    res.end(body);
+  };
+  if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
+  if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", COCKPIT_HTML);
+  else if (url.pathname === "/cockpit/data") {
+    try {
+      send(200, "application/json", JSON.stringify(buildCockpitData(readRows(), parseWindow(url.searchParams.get("window")), Date.now(), sessionMap())));
+    } catch (e) {
+      send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
+    }
+  } else if (url.pathname === "/cockpit/limits") {
+    limits.get().then(
+      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l })),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+  } else send(404, "text/plain", "not found");
+  return true;
+}

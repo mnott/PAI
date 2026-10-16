@@ -163,11 +163,14 @@ export function createRouter(
   loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
   claudeBase: string = CLAUDE_UPSTREAM,
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
-  onUsage?: (row: UsageRow) => void
+  onUsage?: (row: UsageRow) => void,
+  /** serves GET pages (the cockpit) before routing; true = handled */
+  extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean
 ): http.Server {
   const busts = new BustDetector();
   const gaps = new GapTracker();
   return http.createServer((req, res) => {
+    if (extra?.(req, res)) return;
     const started = Date.now();
     const path = req.url ?? "/";
     const chunks: Buffer[] = [];

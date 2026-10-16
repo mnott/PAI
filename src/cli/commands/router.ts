@@ -7,6 +7,11 @@ import type { Command } from "commander";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createRouter, ROUTER_PORT } from "../../router/router.js";
+import http from "node:http";
+import { cachedRows, cachedSessionMap, handleCockpit } from "../../router/cockpit.js";
+import { LimitsCache } from "../../router/limits.js";
+import { readWorkersSection } from "../../workers/config.js";
+import type { UsageRow } from "../../router/usage.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage } from "../../router/usage.js";
 import { loadSessionMap, sessionDisplayName } from "../../router/sessions.js";
 import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
@@ -65,10 +70,16 @@ export function registerRouterCommands(program: Command): void {
     .command("run")
     .description("Run the router in the foreground")
     .option("--port <port>", "listen port (a non-default port never touches the pid file)", String(ROUTER_PORT))
-    .action((opts: { port: string }) => {
+    .option("--usage-file <path>", "read the cockpit's accounting from this file and record nothing (second instances)")
+    .action((opts: { port: string; usageFile?: string }) => {
       const port = Number(opts.port);
       const managed = port === ROUTER_PORT;
-      const server = createRouter(undefined, undefined, undefined, (row) => appendUsage(row));
+      const rows = cachedRows(opts.usageFile);
+      const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
+      const cockpit = (req: http.IncomingMessage, res: http.ServerResponse) =>
+        handleCockpit(req, res, limits, rows, cachedSessionMap());
+      const append = opts.usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
+      const server = createRouter(undefined, undefined, undefined, append, cockpit);
       server.on("error", (e) => {
         console.error(err(`router: ${(e as Error).message}`));
         process.exit(1);
