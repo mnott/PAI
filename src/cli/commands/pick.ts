@@ -276,7 +276,17 @@ function buildFeedFrom(
 // colliding.
 // ---------------------------------------------------------------------------
 
-type PickAction = "new" | "cd" | "switch" | "worker" | "anthropic";
+type PickAction = "new" | "cd" | "switch" | "worker" | "anthropic" | "model";
+
+/**
+ * The m key: a row with a directory goes to the model step, then launches;
+ * a live row is fixed to its model, so it only explains that.
+ */
+export function routeModelKey(rec: Pick<PickRecord, "dir" | "live">): { action: PickAction } | { flash: string } | null {
+  if (rec.live) return { flash: "live session — model fixed" };
+  if (rec.dir) return { action: "model" };
+  return null;
+}
 
 interface SelectorResult {
   record: PickRecord;
@@ -453,6 +463,7 @@ async function runSelector(
         const parts: string[] = [];
         if (cur?.record.live) parts.push(chalk.cyan("g") + dim(" go to tab"));
         if (cur?.record.dir) parts.push(chalk.cyan("n") + dim(" new"));
+        if (cur?.record.dir && !cur.record.live) parts.push(chalk.cyan("m") + dim(" model"));
         if (cur?.record.dir) parts.push(chalk.cyan("c") + dim(" cd"));
         if (cur?.record.dir) parts.push(chalk.cyan("w") + dim(" worker"));
         if (cur?.record.dir) parts.push(chalk.cyan("a") + dim(" claude"));
@@ -526,6 +537,12 @@ async function runSelector(
       if (!cur) return;
       if (s === "g" && cur.record.live) return finish({ record: cur.record, action: "switch" });
       if (s === "n" && cur.record.dir) return finish({ record: cur.record, action: "new" });
+      if (s === "m") {
+        const r = routeModelKey(cur.record);
+        if (!r) return;
+        if ("flash" in r) { flash = r.flash; return render(); }
+        return finish({ record: cur.record, action: r.action });
+      }
       if (s === "c" && cur.record.dir) return finish({ record: cur.record, action: "cd" });
       // w/a force one engine for the launch, overriding the workers config.
       if (s === "w" && cur.record.dir) return finish({ record: cur.record, action: "worker" });
@@ -758,7 +775,7 @@ export async function cmdPick(opts: PickOpts = {}): Promise<void> {
   // Model step: only for a plain "new" (w/a already force an engine) and only
   // when no --provider was given. Enter = default = today's behaviour.
   let provider = opts.provider;
-  if (action === "new" && !provider) {
+  if ((action === "new" || action === "model") && !provider) {
     const picked = await pickModel(record.name, opts.dryRun);
     if (picked === "abort") return;
     provider = picked;
