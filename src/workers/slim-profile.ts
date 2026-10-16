@@ -46,12 +46,24 @@ export const WORKER_BRIEF = [
   "- End with the report format given in the system prompt.",
 ].join("\n");
 
+const PROVIDER_KEYS = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+
 type HookGroup = { matcher?: string; hooks?: Array<{ command?: string }> };
 
 /** The user settings reduced to env, permissions and the guard hooks. */
-export function slimSettings(user: Record<string, unknown>): Record<string, unknown> {
+export function slimSettings(
+  user: Record<string, unknown>,
+  procEnv: NodeJS.ProcessEnv = {},
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of ["env", "permissions", "model"]) if (user[k] !== undefined) out[k] = user[k];
+  // Settings env overrides the process env, so a provider's endpoint and token
+  // (set by the spawner) must not be shadowed by the user's own.
+  if (out.env && typeof out.env === "object") {
+    const e = { ...(out.env as Record<string, unknown>) };
+    for (const k of PROVIDER_KEYS) if (procEnv[k]) delete e[k];
+    out.env = e;
+  }
   const hooks: Record<string, HookGroup[]> = {};
   for (const [event, groups] of Object.entries((user.hooks ?? {}) as Record<string, HookGroup[]>)) {
     const kept = groups
@@ -85,6 +97,6 @@ export function slimProfileArgs(
   }
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${wid}.settings.json`);
-  writeFileSync(path, JSON.stringify(slimSettings(user), null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(slimSettings(user, env), null, 2) + "\n", "utf8");
   return ["--setting-sources", "project,local", "--settings", path];
 }

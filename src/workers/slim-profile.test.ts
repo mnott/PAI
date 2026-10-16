@@ -44,3 +44,12 @@ describe("slim worker profile", () => {
     expect(slimProfileArgs(dir, "w1", [], {}, join(dir, "missing.json"))).toEqual([]);
   });
 });
+
+describe("slimSettings provider env", () => {
+  it("drops the user's endpoint and token keys when the provider sets them", () => {
+    const user = { env: { A: "1", ANTHROPIC_BASE_URL: "u", ANTHROPIC_AUTH_TOKEN: "t" } };
+    const s = slimSettings(user, { ANTHROPIC_BASE_URL: "local", ANTHROPIC_AUTH_TOKEN: "x" }) as any;
+    expect(s.env).toEqual({ A: "1" });
+    expect((slimSettings(user, {}) as any).env.ANTHROPIC_BASE_URL).toBe("u");
+  });
+});
