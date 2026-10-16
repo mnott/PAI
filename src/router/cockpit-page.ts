@@ -29,6 +29,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:26px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
+.groups{display:flex;gap:28px;flex-wrap:wrap}.grp{flex:1;min-width:260px}.grp+.grp{border-left:1px solid var(--line);padding-left:24px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .rings{display:flex;flex-wrap:wrap;gap:10px}.ring{text-align:center;min-width:100px}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}
@@ -38,9 +39,9 @@ svg text{fill:var(--dim);font-size:10px}
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <span id="stamp">loading...</span></header>
 <main>
-<section class="card c12"><h2>Limits</h2><div class="gauges" id="limits"></div></section>
+<section class="card c12"><div class="groups"><div class="grp"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
-<section class="card c8"><h2>Tokens per bucket by model</h2><div id="series"></div><div class="legend" id="legend"></div></section>
+<section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div><p class="dim" id="wnote"></p></section>
 <section class="card c4"><h2>Cache hit ratio per model</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div></section>
 <section class="card c6"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
@@ -51,8 +52,8 @@ svg text{fill:var(--dim);font-size:10px}
 </main>
 <script>
 (function(){
-var win=localStorage.getItem("cockpitWin")||"1h",data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
-var colors={};function colorOf(k){if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
+var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
+var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}
@@ -72,14 +73,17 @@ function gauge(l,w){
   '<div class="s" data-reset="'+(w.resetAt||0)+'">'+(w.resetAt?'resets in '+dur(w.resetAt-Date.now()):'reset unknown')+'</div></div>';
 }
 function renderLimits(){
- if(!lim)return;var h="";
+ if(!lim)return;var c="",lo="";
  lim.limits.forEach(function(l){
+  var h="";
+  if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div>';lo+=h;return}
   l.windows.forEach(function(w){h+=gauge(l,w)});
-  if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div></div>'}
-  else if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
+  if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error).slice(0,60)+'</div></div>';
+  c+=h;
  });
- $("limits").innerHTML=h||'<span class="dim">no limit sources</span>';
+ $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
+ $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
@@ -109,8 +113,15 @@ function render(){
  if(!data)return;var d=data,t=d.totals;
  $("kpis").innerHTML=[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),.02,.1)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join("");
  var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});
- var series=d.series.map(function(b){var o={};models.forEach(function(m){var x=b.models[m];o[m]=x?tot(x):0});return o});
- stackedBars($("series"),d.series.map(function(b){return label(b.t,d.window)}),series,models,760,220);legend($("legend"),models);
+ var sel=$("msel");if(msel&&models.indexOf(msel)<0)msel="";
+ sel.innerHTML='<option value="">all models</option>'+models.map(function(m){return'<option'+(m===msel?' selected':'')+'>'+esc(m)+'</option>'}).join("");
+ sel.onchange=function(){msel=this.value;render()};
+ var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},wt=mode==="weighted";
+ var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
+ stackedBars($("series"),d.series.map(function(b){return label(b.t,d.window)}),series,KINDS.map(function(k){return k[0]}),760,220);
+ $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("");
+ $("wnote").textContent=wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.";
+ var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  var ms={};d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
  $("donut").innerHTML=Object.keys(ms).map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("")||'<span class="dim">no data</span>';
  $("donutnote").textContent="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);

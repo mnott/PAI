@@ -32,11 +32,23 @@ export function pauseBucket(gapS: number | undefined): (typeof PAUSE_BUCKETS)[nu
   return ">60m";
 }
 
-interface Tok {
+export interface Tok {
   input: number;
   output: number;
   cacheWrite: number;
   cacheRead: number;
+}
+
+/** Price ratios relative to fresh input (Anthropic); applied to every provider. */
+export const TOKEN_WEIGHTS = { input: 1, cacheWrite: 1.25, cacheRead: 0.1, output: 5 } as const;
+
+export function weightedTokens(t: Tok): number {
+  return t.input * TOKEN_WEIGHTS.input + t.cacheWrite * TOKEN_WEIGHTS.cacheWrite + t.cacheRead * TOKEN_WEIGHTS.cacheRead + t.output * TOKEN_WEIGHTS.output;
+}
+
+/** Status strip groups: local = provider served from this machine (kind "local"), everything else is cloud. */
+export function groupLimits<T extends { kind: string }>(limits: T[]): { cloud: T[]; local: T[] } {
+  return { cloud: limits.filter((l) => l.kind !== "local"), local: limits.filter((l) => l.kind === "local") };
 }
 
 const tok = (): Tok => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0 });
@@ -181,6 +193,7 @@ export function buildCockpitData(
   return {
     window: win,
     bucketMs: bucket,
+    weights: TOKEN_WEIGHTS,
     from,
     now,
     totals: { ...withRatio(total), requests: rows.length, errors },

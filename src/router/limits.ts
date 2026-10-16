@@ -35,6 +35,8 @@ export interface ProviderLimits {
   windows: LimitWindow[];
   up?: boolean;
   rssMb?: number;
+  /** model ids the local server lists */
+  served?: string[];
   /** average output tokens per second over the last hour */
   tokensPerSec?: number;
   error?: string;
@@ -216,7 +218,7 @@ async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], no
     const rss = pid ? Number(await sh("ps", ["-o", "rss=", "-p", pid])) : NaN;
     if (Number.isFinite(rss) && rss > 0) rssMb = Math.round(rss / 1024);
   }
-  return { provider: name, kind: "local", windows: [], up, ...(rssMb ? { rssMb } : {}), ...tokensPerSec(rows, name, now), fetchedAt: now };
+  return { provider: name, kind: "local", windows: [], up, ...(rssMb ? { rssMb } : {}), ...(served ? { served } : {}), ...tokensPerSec(rows, name, now), fetchedAt: now };
 }
 
 /** Model ids the server at this base URL lists on GET /v1/models; undefined when it cannot say. */

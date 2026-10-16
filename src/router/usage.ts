@@ -183,6 +183,19 @@ function stripCacheControl(v: unknown): unknown {
   return v;
 }
 
+/** Claude Code per-request telemetry block; changes every request, the cache survives it. */
+const BILLING_PREFIX = "x-anthropic-billing-header:";
+
+function isBillingBlock(b: unknown): boolean {
+  const text = typeof b === "string" ? b : b && typeof b === "object" ? (b as { text?: unknown }).text : undefined;
+  return typeof text === "string" && text.startsWith(BILLING_PREFIX);
+}
+
+/** Fingerprint view of the system prompt without the billing block (the forwarded body is never touched). */
+function systemForHash(system: unknown): unknown {
+  return Array.isArray(system) ? system.filter((b) => !isBillingBlock(b)) : isBillingBlock(system) ? undefined : system;
+}
+
 export interface PromptFingerprint {
   system: string;
   tools: string;
@@ -192,7 +205,7 @@ export interface PromptFingerprint {
 export function fingerprint(body: Record<string, unknown>): PromptFingerprint {
   const msgs = Array.isArray(body.messages) ? body.messages.slice(0, PREFIX_MESSAGES) : [];
   return {
-    system: sha(stripCacheControl(body.system)),
+    system: sha(stripCacheControl(systemForHash(body.system))),
     tools: sha(stripCacheControl(body.tools)),
     messages: sha(stripCacheControl(msgs)),
   };

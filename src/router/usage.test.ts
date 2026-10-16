@@ -113,6 +113,18 @@ describe("bust detection", () => {
     expect(d.check(undefined, fingerprint(body("zzz", "q")))).toEqual([]);
     expect(d.check("other", fingerprint(body("zzz", "q")))).toEqual([]);
   });
+
+  it("ignores the billing telemetry block, still sees other system changes", () => {
+    const sys = (bill: string, rest: string) => ({
+      system: [{ type: "text", text: "x-anthropic-billing-header: " + bill }, { type: "text", text: rest }],
+      messages: [{ role: "user", content: "q" }],
+    });
+    const d = new BustDetector();
+    expect(d.check("s", fingerprint(sys("cc_turn_index=1", "rules")))).toEqual([]);
+    expect(d.check("s", fingerprint(sys("cc_turn_index=2; cc_prev_req=x", "rules")))).toEqual([]);
+    expect(d.check("s", fingerprint(sys("cc_turn_index=3", "other rules")))).toEqual(["system"]);
+    expect(d.busts).toBe(1);
+  });
 });
 
 describe("router accounting end to end", () => {

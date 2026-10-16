@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { buildCockpitData, handleCockpit, pauseBucket, retryRows } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, groupLimits, handleCockpit, pauseBucket, retryRows, weightedTokens } from "./cockpit.js";
 import { LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
 import type { UsageRow } from "./usage.js";
 
@@ -122,5 +122,20 @@ describe("cockpit http", () => {
     expect((await get("/cockpit/data", "POST")).status).toBe(405);
     expect((await get("/other")).body).toBe("other");
     srv.close();
+  });
+});
+
+describe("cockpit weights and groups", () => {
+  it("weights tokens by Anthropic price ratios", () => {
+    expect(TOKEN_WEIGHTS).toEqual({ input: 1, cacheWrite: 1.25, cacheRead: 0.1, output: 5 });
+    expect(weightedTokens({ input: 100, cacheWrite: 100, cacheRead: 1000, output: 10 })).toBeCloseTo(100 + 125 + 100 + 50);
+  });
+  it("groups local providers apart from cloud", () => {
+    const g = groupLimits([{ kind: "plan", p: "a" }, { kind: "estimated", p: "b" }, { kind: "local", p: "c" }]);
+    expect(g.cloud.map((l) => l.p)).toEqual(["a", "b"]);
+    expect(g.local.map((l) => l.p)).toEqual(["c"]);
+  });
+  it("exposes the weights in the data", () => {
+    expect(buildCockpitData([], "1h").weights).toEqual(TOKEN_WEIGHTS);
   });
 });
