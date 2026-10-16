@@ -288,6 +288,13 @@ describe("renderRepair", () => {
     expect(out.permissionDecision).toBe("allow");
     expect(out.updatedInput).toEqual({ file_path: GOOD });
   });
+  it("Read/Glob/Grep/Bash: additionalContext names the exact path for later edits", () => {
+    for (const tool of ["Read", "Glob", "Grep", "Bash"]) {
+      const out = JSON.parse(renderRepair(r, tool)).hookSpecificOutput;
+      expect(out.additionalContext).toContain(`use exactly ${GOOD} in every later Edit, Write and Read`);
+      expect(out.additionalContext).toContain(`${TYPO} does not exist`);
+    }
+  });
   it("an Edit with the correct path yields no repair", () => {
     expect(repairPath({ tool_name: "Edit", cwd: CWD, tool_input: { file_path: GOOD } }, W, fs(GOOD))).toBeNull();
   });

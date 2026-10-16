@@ -154,19 +154,24 @@ function repairBash(input: PathRepairInput, cwd: string, exists: (p: string) => 
   };
 }
 
-/** Edit-class tools validate the original input before updatedInput applies, so a rewrite cannot help: deny with the exact path. */
+/**
+ * Edit-class tools validate the original input before updatedInput applies, so a rewrite cannot help: deny with the exact path.
+ * A failed Edit fires no hook at all (measured: no PreToolUse, PostToolUse or PostToolUseFailure),
+ * so the repaired Read/Glob/Grep/Bash carries the correct path as context for the edits that follow.
+ */
 const DENY_REPAIR_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
 export function renderRepair(r: PathRepair, tool?: string): string {
   if (tool && DENY_REPAIR_TOOLS.has(tool)) return renderDeny(`Wrong path. Use exactly: ${r.new}`);
   const msg = `path repaired: ${r.old} → ${r.new}`;
+  const context = `${msg}. ${r.old} does not exist; use exactly ${r.new} in every later Edit, Write and Read.`;
   return JSON.stringify({
     systemMessage: msg,
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
       updatedInput: r.updatedInput,
-      additionalContext: msg,
+      additionalContext: context,
     },
   });
 }
