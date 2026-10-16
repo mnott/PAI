@@ -29,7 +29,7 @@
  * them) for the entire session.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readTailLines, scanIncremental } from "./transcript-scan.js";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -584,12 +584,37 @@ function readCompactBoundarySamples(
 export function selectedCompactionSamples(
   cwd: string,
   projectsDir: string = CLAUDE_PROJECTS_DIR,
-  configPath?: string
+  configPath?: string,
+  cacheDir?: string
 ): CompactBoundarySample[] {
   if (!cwd) return [];
-  return readCompactBoundarySamples(cwd, projectsDir, nativeModelFamilies(configPath))
+  const cacheFile = cacheDir
+    ? join(cacheDir, `pai-compaction-samples-${encodeProjectPath(cwd).slice(-100)}.json`)
+    : null;
+  if (cacheFile) {
+    try {
+      if (Date.now() - statSync(cacheFile).mtimeMs < SAMPLE_CACHE_MAX_AGE_MS) {
+        const cached = JSON.parse(readFileSync(cacheFile, "utf-8"));
+        if (Array.isArray(cached)) return cached as CompactBoundarySample[];
+      }
+    } catch {
+      // missing or unreadable — recompute
+    }
+  }
+  const samples = readCompactBoundarySamples(cwd, projectsDir, nativeModelFamilies(configPath))
     .slice(0, MEASURED_TRIGGER_SAMPLE_SIZE);
+  if (cacheFile) {
+    try {
+      writeFileSync(cacheFile, JSON.stringify(samples), "utf-8");
+    } catch {
+      // best-effort — a missing cache only costs a recompute
+    }
+  }
+  return samples;
 }
+
+/** A cached sample set older than this is recomputed (lazily, by the next caller). */
+const SAMPLE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The measured compaction trigger for a project, or null when it has no
@@ -620,9 +645,10 @@ export function measureCompactionTrigger(
   cwd: string,
   projectsDir: string = CLAUDE_PROJECTS_DIR,
   configPath?: string,
-  configuredTriggerTokens?: number
+  configuredTriggerTokens?: number,
+  cacheDir?: string
 ): number | null {
-  const samples = selectedCompactionSamples(cwd, projectsDir, configPath);
+  const samples = selectedCompactionSamples(cwd, projectsDir, configPath, cacheDir);
   if (samples.length === 0) return null;
 
   let admissible = samples;
@@ -729,6 +755,10 @@ export interface ContextFillThresholdOpts {
    *  primarily for tests. `null` forces the configured fallback even when
    *  `cwd` is given; `undefined` (the default) does the real lookup. */
   measuredTrigger?: number | null;
+  /** Directory holding the daily compaction-sample cache. When set, the
+   *  project's transcripts are rescanned at most once per 24 h; omit to
+   *  always scan. */
+  sampleCacheDir?: string;
 }
 
 /**
@@ -771,7 +801,7 @@ export function contextFillThresholds(
   const measuredTriggerTokens = opts.measuredTrigger !== undefined
     ? opts.measuredTrigger
     : opts.cwd
-      ? measureCompactionTrigger(opts.cwd, CLAUDE_PROJECTS_DIR, undefined, configuredTriggerTokens)
+      ? measureCompactionTrigger(opts.cwd, CLAUDE_PROJECTS_DIR, undefined, configuredTriggerTokens, opts.sampleCacheDir)
       : null;
 
   let effectiveTriggerTokens: number;

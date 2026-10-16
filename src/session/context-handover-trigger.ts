@@ -284,7 +284,7 @@ export async function checkAndEnqueueContextHandover(
     if (cache && deps.now() - Date.parse(cache.generatedAt) < REARM_AGE_MS) return NOTHING;
     const reading = deps.getReading(input);
     if (reading.status !== "ok" || reading.usedTokens === null) return NOTHING;
-    const t = contextFillThresholds(reading, process.env, { cwd: input.cwd });
+    const t = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: tmpdir() });
     if (reading.usedTokens < t.refreshTokens) return NOTHING;
     state = { confirmed: [], pending: null };
     deps.saveState(input.sessionId, state);
@@ -340,7 +340,7 @@ export async function checkAndEnqueueContextHandover(
     return { attempted: [], confirmed: confirmedThisCheck };
   }
 
-  const thresholds = contextFillThresholds(reading, process.env, { cwd: input.cwd });
+  const thresholds = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: tmpdir() });
   if (!thresholds.windowConfirmed) {
     console.error(
       `[context-handover-trigger] session ${input.sessionId}: window size not confirmed — ` +

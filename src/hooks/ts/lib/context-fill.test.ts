@@ -1002,3 +1002,57 @@ describe("contextFillFromTranscript — window from the transcript's own model",
     expect(contextFillFromTranscript(bare).windowSize).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 });
+
+describe("daily compaction-sample cache", () => {
+  function setup() {
+    const projectsDir = mkdtempSync(join(tmpdir(), "pai-sample-cache-proj-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "pai-sample-cache-"));
+    const cwd = "/fake/project/cached";
+    const projectDir = join(projectsDir, encodeForFixture(cwd));
+    mkdirSync(projectDir, { recursive: true });
+    const file = join(projectDir, "a.jsonl");
+    writeFileSync(file, compactBoundaryLine(784_000, "2026-09-14T00:00:00.000Z", "u1") + "\n");
+    return { projectsDir, cacheDir, cwd, projectDir, file };
+  }
+
+  it("fresh cache: later transcript changes are not read", () => {
+    const { projectsDir, cacheDir, cwd, projectDir } = setup();
+    try {
+      expect(measureCompactionTrigger(cwd, projectsDir, undefined, undefined, cacheDir)).toBe(784_000);
+      writeFileSync(
+        join(projectDir, "b.jsonl"),
+        compactBoundaryLine(500_000, "2026-09-15T00:00:00.000Z", "u2") + "\n"
+      );
+      // cache hit: the new, lower sample is invisible and no transcript is opened
+      expect(measureCompactionTrigger(cwd, projectsDir, undefined, undefined, cacheDir)).toBe(784_000);
+      // without the cache the new sample is seen
+      expect(measureCompactionTrigger(cwd, projectsDir)).toBe(500_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stale cache (>24h): recomputed once, then served again", () => {
+    const { projectsDir, cacheDir, cwd, projectDir } = setup();
+    try {
+      expect(measureCompactionTrigger(cwd, projectsDir, undefined, undefined, cacheDir)).toBe(784_000);
+      const cacheFile = join(cacheDir, `pai-compaction-samples-${encodeForFixture(cwd)}.json`);
+      const old = new Date(Date.now() - 25 * 3600 * 1000);
+      utimesSync(cacheFile, old, old);
+      writeFileSync(
+        join(projectDir, "b.jsonl"),
+        compactBoundaryLine(500_000, "2026-09-15T00:00:00.000Z", "u2") + "\n"
+      );
+      expect(measureCompactionTrigger(cwd, projectsDir, undefined, undefined, cacheDir)).toBe(500_000);
+      writeFileSync(
+        join(projectDir, "c.jsonl"),
+        compactBoundaryLine(400_000, "2026-09-16T00:00:00.000Z", "u3") + "\n"
+      );
+      expect(measureCompactionTrigger(cwd, projectsDir, undefined, undefined, cacheDir)).toBe(500_000);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+});
