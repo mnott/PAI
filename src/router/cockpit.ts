@@ -261,7 +261,8 @@ function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "pr
 /**
  * Serve /cockpit, /cockpit/data, /cockpit/system and /cockpit/limits. Returns
  * false when the path is not a cockpit path. GET only; the router binds
- * 127.0.0.1.
+ * 127.0.0.1 unless router.bind opens a second listener (then the cockpit is
+ * token-gated, see src/router/cockpit-auth.ts).
  */
 export function handleCockpit(
   req: http.IncomingMessage,

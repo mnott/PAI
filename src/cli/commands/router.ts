@@ -6,8 +6,18 @@
 import type { Command } from "commander";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { createRouter, ROUTER_PORT } from "../../router/router.js";
+import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import http from "node:http";
+import {
+  cockpitTokenFile,
+  defaultV1Guard,
+  displayHost,
+  LOOPBACK,
+  readOrCreateCockpitToken,
+  resolveBindAddress,
+  withCockpitToken,
+  type CockpitHandler,
+} from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, handleCockpit } from "../../router/cockpit.js";
 import { LimitsCache } from "../../router/limits.js";
 import { SystemMonitor } from "../../router/system.js";
@@ -75,21 +85,53 @@ export function registerRouterCommands(program: Command): void {
     .action((opts: { port: string; usageFile?: string }) => {
       const port = Number(opts.port);
       const managed = port === ROUTER_PORT;
+      // router.bind: "loopback" (default) | "tailscale" | an explicit IPv4.
+      // Beyond loopback a second listener serves the cockpit from the
+      // tailnet/LAN address while /v1 stays loopback+tailnet and the cockpit
+      // needs its token; 0.0.0.0 is never accepted.
+      const bindName = loadConfig().router.bind ?? "loopback";
+      const addr = resolveBindAddress(bindName);
+      if (!addr) {
+        console.error(
+          err(`router: cannot resolve router.bind "${bindName}" — use "loopback", "tailscale", or an IPv4 (never 0.0.0.0)`)
+        );
+        process.exit(1);
+      }
+      const remote = addr !== LOOPBACK;
+      const token = remote ? readOrCreateCockpitToken() : undefined;
       const rows = cachedRows(opts.usageFile);
       const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
       const system = new SystemMonitor();
-      const cockpit = (req: http.IncomingMessage, res: http.ServerResponse) =>
+      const serve: CockpitHandler = (req: http.IncomingMessage, res: http.ServerResponse) =>
         handleCockpit(req, res, limits, rows, cachedSessionMap(), system);
+      const cockpit = token ? withCockpitToken(token, serve) : serve;
       const append = opts.usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-      const server = createRouter(undefined, undefined, undefined, append, cockpit);
+      const handler = routerHandler(
+        undefined,
+        undefined,
+        undefined,
+        append,
+        cockpit,
+        remote ? { remoteAllowed: defaultV1Guard } : undefined
+      );
+      const server = http.createServer(handler);
       server.on("error", (e) => {
         console.error(err(`router: ${(e as Error).message}`));
+        process.exit(1);
+      });
+      const tail = remote ? http.createServer(handler) : undefined;
+      tail?.on("error", (e) => {
+        console.error(err(`router ${addr}: ${(e as Error).message}`));
         process.exit(1);
       });
       server.listen(port, "127.0.0.1", () => {
         if (!managed) return;
         mkdirSync(dirname(PID_FILE), { recursive: true });
         writeFileSync(PID_FILE, String(process.pid));
+      });
+      tail?.listen(port, addr, async () => {
+        const host = await displayHost(addr);
+        console.log(ok(`cockpit beyond loopback: http://${host}:${port}/cockpit?token=${token} (token: ${cockpitTokenFile()})`));
       });
       const bye = () => {
         if (managed) {
