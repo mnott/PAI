@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { denyReason, renderDeny, repairPath } from "./path-repair.js";
+import { armGuardReason, denyReason, renderDeny, repairPath } from "./path-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const CWD = "/private/tmp/ab-arms/view-decimals-local30-spec-221429";
@@ -158,5 +158,29 @@ describe("denyReason", () => {
       expect(denyReason(i("Write", join(other, "b.txt"), link), H)).not.toBeNull();
       expect(denyReason(i("Read", join(real, "a.txt"), link), H)).toBeNull();
     });
+  });
+});
+
+describe("armGuardReason", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "arms-guardtest-")));
+  const arm = join(root, "arm-a");
+  mkdirSync(arm);
+  const env = { PAI_WORKER: "1", PAI_AB_ARMS_ROOT: root };
+  const bash = (command: string, cwd: string) => ({ tool_name: "Bash", cwd, tool_input: { command } });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it("denies rm -rf via $VAR from a cwd outside the arm", () => {
+    expect(armGuardReason(bash(`A=${arm}; rm -rf $A`, tmpdir()), env)).toMatch(/running A\/B arm/);
+  });
+  it("denies mv and redirect onto an arm", () => {
+    expect(armGuardReason(bash(`mv ${arm}/x /tmp/y`, tmpdir()), env)).not.toBeNull();
+    expect(armGuardReason(bash(`echo hi > ${arm}/f`, tmpdir()), env)).not.toBeNull();
+  });
+  it("allows rm from inside the arm on its own scratch", () => {
+    expect(armGuardReason(bash(`rm -rf ${arm}/scratch`, arm), env)).toBeNull();
+  });
+  it("leaves non-destructive commands and non-workers alone", () => {
+    expect(armGuardReason(bash(`cat ${arm}/f`, tmpdir()), env)).toBeNull();
+    expect(armGuardReason(bash(`rm -rf ${arm}`, tmpdir()), { PAI_AB_ARMS_ROOT: root })).toBeNull();
   });
 });

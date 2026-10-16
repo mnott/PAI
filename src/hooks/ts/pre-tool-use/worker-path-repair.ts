@@ -13,7 +13,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { denyReason, renderDeny, repairPath, renderRepair, type PathRepairInput } from "../lib/path-repair.js";
+import { armGuardReason, denyReason, renderDeny, repairPath, renderRepair, type PathRepairInput } from "../lib/path-repair.js";
 
 async function main(): Promise<void> {
   let text = "";
@@ -31,8 +31,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const repair = repairPath(input, process.env, existsSync);
-  const reason = repair ? null : denyReason(input, process.env);
+  const guard = armGuardReason(input, process.env);
+  const repair = guard ? null : repairPath(input, process.env, existsSync);
+  const reason = guard ?? (repair ? null : denyReason(input, process.env));
   if (!repair && !reason) return;
   try {
     const dir = join(homedir(), ".claude", "pai", "logs", "workers");

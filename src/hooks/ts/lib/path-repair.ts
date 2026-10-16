@@ -218,3 +218,43 @@ export function renderDeny(reason: string): string {
     hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
   });
 }
+
+/** Root holding running A/B arms; overridable so tests never touch the real one. */
+const armsRoot = (env: NodeJS.ProcessEnv): string => canon((env.PAI_AB_ARMS_ROOT || "/private/tmp/ab-arms").replace(/\/+$/, ""));
+
+/** Substitute $VAR / ${VAR} from simple NAME=value assignments earlier in the same command line. */
+function expandVars(command: string): string {
+  const vars = new Map<string, string>();
+  for (const m of command.matchAll(/(?:^|[\s;&|])(?:export\s+)?([A-Za-z_]\w*)=("[^"]*"|'[^']*'|[^\s;&|]*)/g)) {
+    vars.set(m[1], m[2].replace(/^(["'])(.*)\1$/, "$2"));
+  }
+  let out = command;
+  for (let i = 0; i < 3; i++) {
+    out = out.replace(/\$(?:\{(\w+)\}|(\w+))/g, (all, a, b) => vars.get(a ?? b) ?? all);
+  }
+  return out;
+}
+
+const DESTRUCTIVE = /(?:^|\s)(?:rm|mv|unlink|shred|truncate)\s|(?:^|\s)rsync\s[^;|&]*--delete|(?:^|\s)git\s(?:-C\s+\S+\s+)?clean\b/;
+
+/** Reason to deny a destructive Bash command aimed at a running A/B arm other than the worker's own; null = fine. */
+export function armGuardReason(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null {
+  if (env.PAI_WORKER !== "1" || input.tool_name !== "Bash") return null;
+  const command = input.tool_input?.command;
+  if (typeof command !== "string") return null;
+  const root = armsRoot(env);
+  const rootRe = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const armRe = new RegExp(`(?:/private)?${rootRe}/([^/\\s"';|&<>)]+)`, "g");
+  const cwd = input.cwd && isAbsolute(input.cwd) ? canon(realish(input.cwd)) : "";
+  const under = (p: string, r: string) => p === r || p.startsWith(`${r}/`);
+  for (const seg of expandVars(command).split(/[;|&\n]+/)) {
+    const redirect = [...seg.matchAll(/>>?\s*(\S+)/g)].map((m) => m[1]);
+    const targets = DESTRUCTIVE.test(` ${seg}`) ? seg : redirect.join(" ");
+    for (const m of targets.matchAll(armRe)) {
+      if (!under(cwd, canon(realish(`${root}/${m[1]}`)))) {
+        return "this path belongs to a running A/B arm; use your own scratch dir (mktemp -d)";
+      }
+    }
+  }
+  return null;
+}
