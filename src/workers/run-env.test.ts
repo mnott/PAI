@@ -74,6 +74,11 @@ describe("buildRunEnv session identity", () => {
     }
   });
 
+  it("starts a headless run without Claude Code auto-memory", () => {
+    expect(buildRunEnv(provider, true).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(buildRunEnv(nativeAnthropicProvider(), true).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+  });
+
   it("keeps the caller's own environment for an interactive run", () => {
     const saved = { ...process.env };
     process.env.CLAUDECODE = "1";
@@ -83,6 +88,7 @@ describe("buildRunEnv session identity", () => {
       expect(env.CLAUDECODE).toBe("1");
       expect(env.ENABLE_TOOL_SEARCH).toBe("true");
       expect(env.PAI_WORKER).toBeUndefined();
+      expect(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBeUndefined();
     } finally {
       if (saved.CLAUDECODE === undefined) delete process.env.CLAUDECODE;
       else process.env.CLAUDECODE = saved.CLAUDECODE;

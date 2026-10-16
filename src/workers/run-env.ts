@@ -63,6 +63,9 @@ export function buildRunEnv(
   if (headless) {
     for (const k of SESSION_IDENTITY_VARS) delete env[k];
     for (const k of HEADLESS_STRIP_VARS) delete env[k];
+    // workers have no memory to recall; the auto-memory prompt only sends
+    // them to read a MEMORY.md that does not exist
+    env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   }
 
   if (provider.native) {
