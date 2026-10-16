@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
@@ -52,14 +52,49 @@ export function probeRouter(port = ROUTER_PORT, timeoutMs = 2000): Promise<boole
   });
 }
 
+/**
+ * True when the running router predates the current build: the pid file is
+ * written when the router starts, so an entry file newer than it means the
+ * router still serves old code.
+ */
+export function routerIsStale(cliEntry: string): boolean {
+  try {
+    return statSync(cliEntry).mtimeMs > statSync(ROUTER_PID_FILE).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+/** SIGTERM the router and wait (up to ~3s) until it is gone so the port is free. */
+export async function stopRouter(): Promise<void> {
+  const pid = routerRunningPid();
+  if (!pid) return;
+  process.kill(pid, "SIGTERM");
+  for (let i = 0; i < 30 && routerRunningPid(); i++) await new Promise((r) => setTimeout(r, 100));
+  try {
+    unlinkSync(ROUTER_PID_FILE);
+  } catch {
+    /* already gone */
+  }
+}
+
 export interface RouterTickDeps {
   probe: () => Promise<boolean>;
   start: () => void;
+  /** Optional: true when the running router predates the current build. */
+  stale?: () => boolean;
+  /** Required with `stale`: stop the running router. */
+  stop?: () => Promise<void>;
 }
 
-/** One health check: starts the router when down. Returns what it did. */
-export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started"> {
-  if (await deps.probe()) return "up";
+/** One health check: starts the router when down, restarts it when the build changed. */
+export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started" | "restarted"> {
+  if (await deps.probe()) {
+    if (!deps.stale?.() || !deps.stop) return "up";
+    await deps.stop();
+    deps.start();
+    return "restarted";
+  }
   deps.start();
   return "started";
 }

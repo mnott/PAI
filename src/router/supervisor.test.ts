@@ -17,6 +17,28 @@ describe("runRouterTick", () => {
   });
 });
 
+describe("runRouterTick build change", () => {
+  it("leaves a router of the current build alone", async () => {
+    const start = vi.fn();
+    const stop = vi.fn(async () => {});
+    expect(await runRouterTick({ probe: async () => true, stale: () => false, stop, start })).toBe("up");
+    expect(stop).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("stops then starts a router of an older build", async () => {
+    const calls: string[] = [];
+    const r = await runRouterTick({
+      probe: async () => true,
+      stale: () => true,
+      stop: async () => void calls.push("stop"),
+      start: () => void calls.push("start"),
+    });
+    expect(r).toBe("restarted");
+    expect(calls).toEqual(["stop", "start"]);
+  });
+});
+
 describe("probeRouter", () => {
   it("reflects whether the port accepts connections", async () => {
     const srv = createServer();
