@@ -1149,7 +1149,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // project mcp` / `pai project tools`) > the strict empty set (headless) /
   // everything (interactive, today's default).
   let mcpArgs: string[] = [];
+  // headless without a grant or --tools of its own: load only the default core schemas
   let toolsFlag: string[] = headless ? headlessToolsFlag(parsed.allowedTools) : [];
+  if (headless && !parsed.allowedTools.length && !parsed.callerTools) {
+    toolsFlag = ["--tools", DEFAULT_WORKER_TOOLS];
+  }
   if (headless && !parsed.callerMcpConfig) {
     const wanted = [
       ...(mcpFlag ? [mcpFlag] : []),
