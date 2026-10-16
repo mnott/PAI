@@ -197,7 +197,7 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
 
   it("anthropic (built-in): --model only, no base URL/token, no ANTHROPIC_API_KEY leak", async () => {
     const plan = await withLeakedKey(() => buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test"));
-    expect(plan.argv).toEqual(["--model", NATIVE_ANTHROPIC_MODELS.default]);
+    expect(plan.argv.slice(2)).toEqual(["--model", NATIVE_ANTHROPIC_MODELS.default]);
     expect(plan.env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
@@ -207,7 +207,11 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
     const plan = await withLeakedKey(() =>
       buildLaunchPlan(fixture, "glm", "glm-5.3-flash", ["--resume", "abc"], "/tmp/pai-launch-test")
     );
-    expect(plan.argv).toEqual(["--model", "glm-5.3-flash", "--resume", "abc"]);
+    expect(plan.argv.slice(2)).toEqual(["--model", "glm-5.3-flash", "--resume", "abc"]);
+    // settings env outranks process env: route and token are pinned in --settings
+    const pinned = JSON.parse(plan.argv[1]).env;
+    expect(pinned.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(pinned.ANTHROPIC_AUTH_TOKEN).toBe("test-key-0000");
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("test-key-0000");
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();

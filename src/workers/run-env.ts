@@ -128,7 +128,26 @@ export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean): string[
     if (onPath("caveman", env)) return ["caveman", "claude"];
     process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
   }
-  return ["claude", "--settings", JSON.stringify({ env: { ANTHROPIC_BASE_URL: route || ANTHROPIC_FIRST_PARTY_URL } })];
+  return ["claude", ...pinnedSettingsArgs(env)];
+}
+
+const PINNED_KEYS = [
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+];
+
+/**
+ * `--settings` argv pinning the provider's route, token and tier models: the
+ * user settings' env outranks the process env, so a provider launch would
+ * otherwise authenticate its token against the user's proxy (401). Shared by
+ * workers and interactive `pai launch`.
+ */
+export function pinnedSettingsArgs(env: NodeJS.ProcessEnv): string[] {
+  const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || ANTHROPIC_FIRST_PARTY_URL };
+  if (env.ANTHROPIC_BASE_URL) for (const k of PINNED_KEYS) if (env[k]) pinned[k] = env[k] as string;
+  return ["--settings", JSON.stringify({ env: pinned })];
 }
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {

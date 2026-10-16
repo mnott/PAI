@@ -22,7 +22,7 @@ import {
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
-import { buildRunEnv } from "./run-env.js";
+import { buildRunEnv, pinnedSettingsArgs } from "./run-env.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 
 export class LaunchError extends WorkersConfigError {}
@@ -208,7 +208,7 @@ export async function buildLaunchPlan(
   // (scope.ts's parent-chain lookup). This IS a new session, not a worker.
   delete env.PAI_WORKER;
   delete env.PAI_WORKER_ID;
-  const argv = ["--model", model, ...extraArgs];
+  const argv = [...pinnedSettingsArgs(env), "--model", model, ...extraArgs];
   return { providerName, provider, model, argv, env };
 }
 
