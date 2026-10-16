@@ -31,6 +31,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | [`pai projects`](projects.md) | Manage registered projects (list, cd, add, info, ...) |
 | [`pai registry`](registry.md) | Registry maintenance: scan, migrate, stats, rebuild |
 | [`pai restore`](restore.md) | Restore from a backup directory (created by pai backup) |
+| [`pai router`](router.md) | Local model router on 127.0.0.1:8790: set ANTHROPIC_BASE_URL to it and /model picks the provider |
 | [`pai session`](session.md) | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
 | [`pai sessions`](sessions.md) | Alias for `pai` — show the unified deduped listing. |
 | [`pai setup`](setup.md) | Setup wizard — configure storage, embeddings, agent config, and indexing (--yes for unattended) |
@@ -201,6 +202,11 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai registry scan` | Walk ~/.claude/projects/ and configured scan_dirs, upsert all projects |
 | `pai registry stats` | Show summary statistics for the registry |
 | `pai restore` | Restore from a backup directory (created by pai backup) |
+| `pai router` | Local model router on 127.0.0.1:8790: set ANTHROPIC_BASE_URL to it and /model picks the provider |
+| `pai router run` | Run the router in the foreground |
+| `pai router start` | Start the router in the background |
+| `pai router status` | Show whether the router is running |
+| `pai router stop` | Stop the router |
 | `pai session` | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |
 | `pai session active` | Show currently active Claude Code sessions. |
 | `pai session auto-route` | Auto-detect which project this session belongs to. |
