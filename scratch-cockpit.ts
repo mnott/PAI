@@ -53,9 +53,12 @@ const sessions = () =>
     ["s2-a", { name: "night bench", worker: "20261015-231002", verdict: "failed", provider: "glm" }],
   ]);
 
+let polls = 0;
 const sys = {
   async snapshot(win: SystemWindow): Promise<SystemSnapshot> {
     const now = Date.now();
+    polls++;
+    const live = polls <= 2; // then the probe goes stale: the payload drops the slow fields, like system.ts past its stale window
     const bucket = 300_000;
     const n = Math.ceil(3_600_000 / bucket);
     const series = Array.from({ length: n }, (_, i) => ({
@@ -65,29 +68,42 @@ const sys = {
       gpu: Math.round(18 + 30 * Math.abs(Math.sin(i / 1.7))),
       cpu: Math.round(12 + 20 * Math.abs(Math.cos(i / 2.1))),
     }));
+    const direct = {
+      t: now,
+      cpu: 14,
+      memTotal: 34359738368,
+      memUsed: 21474836480,
+      swapTotal: 4294967296,
+      swapUsed: 536870912,
+      wired: 8589934592,
+      compressed: 2147483648,
+      pressureLevel: 62,
+    };
     return {
-      current: {
-        t: now,
-        cpu: 14,
-        gpu: 38,
-        gpuFreqMhz: 780,
-        socTemp: 41.5,
-        cpuW: 4.2,
-        gpuW: 9.8,
-        systemW: 6.1,
-        totalW: 29.3,
-        memTotal: 34359738368,
-        memUsed: 21474836480,
-        swapTotal: 4294967296,
-        swapUsed: 536870912,
-        wired: 8589934592,
-        compressed: 2147483648,
-        pressureLevel: 62,
-        source: "mactop",
-        notes: [],
-      },
+      now,
+      current: live
+        ? {
+            ...direct,
+            gpu: 38,
+            ane: 0,
+            gpuFreqMhz: 780,
+            socTemp: 41.5,
+            cpuW: 4.2,
+            gpuW: 9.8,
+            aneW: 0,
+            systemW: 6.1,
+            totalW: 29.3,
+            source: "mactop" as const,
+            notes: [],
+          }
+        : {
+            ...direct,
+            source: "direct" as const,
+            notes: ["power/temp/gpu stale: mactop probe last good 2 min ago, retrying"],
+          },
       unavailable: {},
       series: { window: win, bucketMs: bucket, series, wh: { "1h": 24.1, "24h": 512, "7d": 3900 } as never, coveredMin: { "1h": 58, "24h": 1310, "7d": 8100 } as never },
+      ...(live ? { slowAgeS: 12 } : {}),
     };
   },
 } as unknown as SystemMonitor;

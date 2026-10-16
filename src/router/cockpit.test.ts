@@ -120,12 +120,34 @@ describe("cockpit http", () => {
     expect(page.body).toContain("trimEmpty");
     expect(page.body).toContain("emptyChart");
     expect(page.body).toContain("no data in this window");
+    expect(page.body).toContain("staleCell"); // stale system readings keep their number
+    expect(page.body).toContain('["0","33","66","100"]'); // fixed percent axis tick labels
     const data = JSON.parse((await get("/cockpit/data?window=24h")).body);
     expect(data.window).toBe("24h");
     expect(data.totals.requests).toBe(1);
     expect((await get("/cockpit/data", "POST")).status).toBe(405);
     expect((await get("/other")).body).toBe("other");
     srv.close();
+  });
+});
+
+describe("cockpit page stale cell", () => {
+  const cell = new Function(
+    `return (${COCKPIT_HTML.match(/function staleCell[\s\S]*?\n\}/)![0]})`
+  )() as (m: { v: number; at: number }, now: number, fmt: (n: number) => string, tip?: string) => string;
+
+  it("keeps the last value visible, dimmed, with a ~age marker", () => {
+    const out = cell({ v: 14.4, at: NOW - 3 * 60_000 }, NOW, (n) => n.toFixed(1));
+    expect(out).toContain("14.4");
+    expect(out).toContain("~3m");
+    expect(out).toContain('class="dim"');
+    expect(out).toContain('class="warn"');
+  });
+
+  it("formats short ages in seconds and carries the source tooltip", () => {
+    const out = cell({ v: 38, at: NOW - 10_000 }, NOW, (n) => `${Math.round(n)}%`, "mactop probe stale");
+    expect(out).toContain("~10s");
+    expect(out).toContain('title="mactop probe stale"');
   });
 });
 
