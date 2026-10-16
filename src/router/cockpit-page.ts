@@ -46,6 +46,7 @@ svg text{fill:var(--dim);font-size:10px}
 <section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
 <section class="card c4"><h2>Cache hit ratio / providers</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div>
+<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local cache hit ratio per model</h2><div id="donutlocal" class="rings"></div><div id="donutlocalnote" class="dim"></div>
 <h2 style="margin-top:12px">Providers: errors, retries, speed</h2><div id="providers"></div></section>
 <section class="card c12"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
@@ -111,8 +112,10 @@ function renderSystem(){
   ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
  ];
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
- var srv=sys.servers||[];
- $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>']})):'<span class="dim">no local model servers configured</span>';
+ var allSrv=sys.servers||[];
+ var srv=allSrv.filter(function(s){return s.up!==false});
+ $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
+ renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){
  var a=0,b=rows.length-1;
@@ -157,37 +160,55 @@ function tick(){
  st.textContent=lastOk?(age<15?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"loading...";
  st.className=lastOk&&age>=15?"stale":"";
 }
-function stackedBars(el,labels,series,keys,w,h,tickFmt){
- var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});
- if(!tr){el.innerHTML=emptyChart(w,h);return}
- labels=tr.labels;series=tr.rows;
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,max=1;
- var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
- var bw=W/n,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
- series.forEach(function(s,i){var y=padT+H;keys.forEach(function(k){var v=s[k]||0;if(!v)return;var bh=H*v/max;y-=bh;svg+='<rect x="'+(padL+i*bw+1)+'" y="'+y.toFixed(1)+'" width="'+Math.max(1,bw-2).toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+colorOf(k)+'"><title>'+esc(labels[i])+' '+esc(k)+': '+fmt(v)+'</title></rect>'});
-  if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
- el.innerHTML=svg+'</svg>';
+/** Columns for the bar charts: runs of zero-total buckets collapse into one 0.4-width spacer. */
+function gapCols(totals){var cols=[],i=0;while(i<totals.length){if(totals[i]>0){cols.push({b:i,g:0});i++}else{var j=i;while(j<totals.length&&!totals[j])j++;cols.push({b:i,g:j-i});i=j}}return cols}
+function gapLayout(totals,w,padL){
+ var cols=gapCols(totals),units=0;cols.forEach(function(c){units+=c.g?0.4:1});
+ var rn=0;cols.forEach(function(c){if(!c.g)rn++});
+ return{cols:cols,bw:(w-padL-6)/units,step:rn>30?Math.ceil(rn/12):0,compressed:cols.some(function(c){return c.g>0})}
 }
-function twoToneModelBars(el,labels,buckets,models,w,h){
- var tr=trimEmpty(labels,buckets,function(arr){var t=0;arr.forEach(function(s){t+=s.total||0});return t});
- if(!tr){el.innerHTML=emptyChart(w,h);return}
- labels=tr.labels;buckets=tr.rows;
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,mc=models.length,max=1;
- models.forEach(function(m){colorOf(m)});
- buckets.forEach(function(arr){arr.forEach(function(s){if(s.total>max)max=s.total})});
- var bw=W/n,mwid=mc?Math.max(3,bw/mc):bw,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+function gapMark(x,top,bot){return'<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+top+'" y2="'+bot+'" stroke="var(--line)" stroke-dasharray="2 3"/>'}
+function stackedBars(el,labels,series,keys,w,h,tickFmt){
+ var padL=44,padB=18,padT=6,H=h-padB-padT,max=1;
+ var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
+ var L=gapLayout(sums,w,padL),svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
  for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
- buckets.forEach(function(arr,i){
-  arr.forEach(function(s){
-   var c=colorOf(s.model),fresh=s.total-s.cacheRead,x=(padL+i*bw+models.indexOf(s.model)*mwid+1).toFixed(1),bwid=Math.max(1,mwid-2).toFixed(1);
-   var tip=esc(s.model)+" · "+esc(labels[i])+": total "+fmt(s.total)+" · non-cached "+fmt(fresh)+" · cached "+fmt(s.cacheRead)+" — "+KINDS.map(function(k){return k[1]+" "+fmt(s[k[0]])}).join(", ")+" · "+s.requests+" req";
-   svg+='<rect x="'+x+'" y="'+(padT+H-H*s.total/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*s.total/max).toFixed(1)+'" fill="'+c+'" fill-opacity=".25"><title>'+tip+'</title></rect>';
-   if(fresh>0)svg+='<rect x="'+x+'" y="'+(padT+H-H*fresh/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*fresh/max).toFixed(1)+'" fill="'+c+'"><title>'+tip+'</title></rect>';
-  });
-  if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>';
+ var x=padL,ri=0;
+ L.cols.forEach(function(c){
+  var cw=L.bw*(c.g?0.4:1);
+  if(c.g)svg+=gapMark(x+cw/2,padT,padT,padT+H);
+  else{var s=series[c.b],y=padT+H;
+   keys.forEach(function(k){var v=s[k]||0;if(!v)return;var bh=H*v/max;y-=bh;svg+='<rect x="'+(x+1).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+Math.max(1,cw-2).toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+colorOf(k)+'"><title>'+esc(labels[c.b])+' '+esc(k)+': '+fmt(v)+'</title></rect>'});
+   if(!L.step||ri%L.step===0)svg+='<text x="'+(x+cw/2).toFixed(1)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[c.b])+'</text>';
+   ri++}
+  x+=cw;
  });
  el.innerHTML=svg+'</svg>';
+ return L.compressed;
+}
+function twoToneModelBars(el,labels,buckets,models,w,h){
+ var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,mc=models.length,max=1;
+ models.forEach(function(m){colorOf(m)});
+ var totals=buckets.map(function(arr){var t=0;arr.forEach(function(s){t+=s.total});return t});totals.forEach(function(v){if(v>max)max=v});
+ var L=gapLayout(totals,w,padL),mwid=mc?Math.max(3,L.bw/mc):L.bw,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
+ var x=padL,ri=0;
+ L.cols.forEach(function(c){
+  var cw=L.bw*(c.g?0.4:1);
+  if(c.g)svg+=gapMark(x+cw/2,padT,padT,padT+H);
+  else{var arr=buckets[c.b];
+   arr.forEach(function(s){
+    var c2=colorOf(s.model),fresh=s.total-s.cacheRead,bx=(x+models.indexOf(s.model)*mwid+1).toFixed(1),bwid=Math.max(1,mwid-2).toFixed(1);
+    var tip=esc(s.model)+" · "+esc(labels[c.b])+": total "+fmt(s.total)+" · non-cached "+fmt(fresh)+" · cached "+fmt(s.cacheRead)+" — "+KINDS.map(function(k){return k[1]+" "+fmt(s[k[0]])}).join(", ")+" · "+s.requests+" req";
+    svg+='<rect x="'+bx+'" y="'+(padT+H-H*s.total/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*s.total/max).toFixed(1)+'" fill="'+c2+'" fill-opacity=".25"><title>'+tip+'</title></rect>';
+    if(fresh>0)svg+='<rect x="'+bx+'" y="'+(padT+H-H*fresh/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*fresh/max).toFixed(1)+'" fill="'+c2+'"><title>'+tip+'</title></rect>';
+   });
+   if(!L.step||ri%L.step===0)svg+='<text x="'+(x+cw/2).toFixed(1)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[c.b])+'</text>';
+   ri++}
+  x+=cw;
+ });
+ el.innerHTML=svg+'</svg>';
+ return L.compressed;
 }
 function legend(el,keys){el.innerHTML=keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
@@ -196,6 +217,24 @@ function donut(ratio,sz){
  return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 140 140"><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="16"/><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="16" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 70 70)"/><text x="70" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+(sz>120?28:22)+'px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
 }
 function table(head,rows){return'<table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
+/** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
+function renderDonuts(){
+ if(!data)return;var d=data,t=d.totals,ms={};
+ d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
+ var mk=Object.keys(ms),dh="";
+ if(mk.length===1){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
+  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.model)+' · '+m.requests+' req</span></div></div>';
+ }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("");
+ $("donut").innerHTML=dh||'<span class="dim">no data</span>';
+ $("donutnote").textContent="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
+ var loc=[];(sys&&sys.servers||[]).forEach(function(s){(s.served||[]).forEach(function(m){if(loc.indexOf(m)<0)loc.push(m)})});
+ var lh="";
+ loc.forEach(function(m){var r=ms[m];if(!r)return;var dn=r.cacheRead+r.cacheWrite+r.input;
+  lh+='<div class="ring">'+donut(dn?r.cacheRead/dn:0)+'<div class="n">'+esc(m)+'</div><div class="s">'+r.requests+' req</div></div>'});
+ $("donutlocaltitle").style.display=loc.length?"":"none";
+ $("donutlocal").innerHTML=lh||'<span class="dim">'+(loc.length?"no local model traffic in this window":"no local model servers")+'</span>';
+ $("donutlocalnote").textContent=loc.length?"cache_read / (read + write + fresh input), per local model.":"";
+}
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){
  if(!data)return;var d=data,t=d.totals;
@@ -208,18 +247,11 @@ function render(){
  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
  var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
- if(msel)stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),760,220);
- else twoToneModelBars($("series"),labs,buckets,models,760,220);
- $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""));
+ var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),760,220):twoToneModelBars($("series"),labs,buckets,models,760,220);
+ $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim">idle buckets compressed — the x axis is not time-linear</span>':"");
  $("wnote").textContent=wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.";
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
- var ms={};d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
- var mk=Object.keys(ms),dh="";
- if(mk.length===1){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
-  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.model)+' · '+m.requests+' req</span></div></div>';
- }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("");
- $("donut").innerHTML=dh||'<span class="dim">no data</span>';
- $("donutnote").textContent="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
+ renderDonuts();
  var ph=d.cachePause.map(function(cm){
   var cells=cm.buckets.map(function(b){if(!b.n)return'<td class="dim">-</td>';var hr=b.hit/b.n;return'<td><span class="'+(hr<.5?"bad":hr<.8?"warn":"ok")+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span></td>'}).join("");
   return'<tr><td>'+esc(cm.model)+'</td>'+cells+'</tr>'}).join("");
@@ -230,12 +262,13 @@ function render(){
  $("sessions").innerHTML=table(["session","name","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,20).map(function(s){return[esc(s.session.slice(0,8)),esc(s.name||"-"),esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}));
  $("workers").innerHTML=d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,15).map(function(s){return[esc(s.worker),esc(s.name),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict)+'</span>']})):'<span class="dim">no worker sessions in this window</span>';
  var dm=Object.keys(d.daily.models),ds=d.daily.days.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][i]});return o});
- stackedBars($("daily"),d.daily.days.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,520,200);legend($("dlegend"),dm);
+ var dgap=stackedBars($("daily"),d.daily.days.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,520,200);
+ legend($("dlegend"),dm);if(dgap)$("dlegend").innerHTML+='<span class="dim">idle buckets compressed — the x axis is not time-linear</span>';
 }
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
 }
-function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower()}).catch(function(){})}
+function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower();renderDonuts()}).catch(function(){})}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 tabs();load();loadSystem();loadLimits();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(tick,1000);
