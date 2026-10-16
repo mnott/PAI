@@ -13,9 +13,11 @@
  *                      resume always stays the claude binary.
  *   resume-or-fresh  → if a resumable UUID is given, probe it; on success
  *                      `claude --resume` — through the provider the transcript
- *                      ran on, when its model matches one (providerResumePlan),
- *                      plain otherwise — else fall back to a fresh session in
- *                      the same dir. With no UUID, start fresh.
+ *                      ran on when its model matches one, else through the
+ *                      ACTIVE provider (providerResumePlan); plain claude
+ *                      only when no provider is active — else fall back to a
+ *                      fresh session in the same dir. With no UUID, start
+ *                      fresh.
  *
  * The `claude` child inherits the tty (stdio: "inherit"), so the session runs
  * in the terminal that launched `pai`. On exit we print the working directory.
@@ -36,7 +38,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { err } from "../utils.js";
-import { readWorkersSection, type WorkersConfig, type WorkerProvider } from "../../workers/config.js";
+import {
+  readWorkersSection,
+  ANTHROPIC_NATIVE,
+  type WorkersConfig,
+  type WorkerProvider,
+} from "../../workers/config.js";
 import { buildRunEnv, claudeCommand } from "../../workers/run-env.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
@@ -429,7 +436,8 @@ export interface TranscriptProviderMatch {
  * "glm-5.3" while the provider table says "glm-5.3[1m]" — same model, one
  * names its context window. Anthropic-login transcripts match nothing (the
  * built-in anthropic provider is synthetic and never in the table), which is
- * the point: they resume exactly as before.
+ * the point: they are the unmatched case, and resolveResumeRoute sends them
+ * to the ACTIVE provider rather than back to the login.
  *
  * ponytail: protocol "openai" providers are skipped — their resume needs the
  * local PAI proxy, an async daemon bring-up launchInDir cannot do; they fall
@@ -460,67 +468,154 @@ export interface ProviderResumePlan {
   env: NodeJS.ProcessEnv;
 }
 
+/** Everything a resume needs to know about where it would come up: what the
+ *  transcript ran on, whether that matches a configured provider, and the
+ *  plan for the provider the resume would actually use. The offer and the
+ *  spawn both read this one object, so what the operator is offered is
+ *  exactly what launchInDir would run. */
+export interface ResumeRoute {
+  /** Transcript's model vs the provider tables; null when nothing matches. */
+  match: TranscriptProviderMatch | null;
+  /** Model the transcript recorded, variant kept; null when unreadable. */
+  ranOn: string | null;
+  /** Where the resume comes up: the matched provider, else the active one.
+   *  Null = plain claude, exactly today's behaviour. */
+  plan: ProviderResumePlan | null;
+}
+
 /**
- * The spawn a resume needs when its transcript ran on a configured provider:
- * the SAME env the worker engine builds for an interactive run (run-env.ts,
- * imported — never copied; a duplicated provider-env builder is the known
- * bite-pattern here), plus the claude argv head that pins the route. Null
- * when no provider matches — the caller resumes exactly as before.
- *
- * No `--model`, deliberately: an interactive worker run passes none either
- * (modelFlagArgs, run.ts), so the settings.json model — e.g. the [1m]
- * variant — applies, and buildRunEnv's ANTHROPIC_DEFAULT_*_MODEL pins the
- * capability tiers to the provider's table.
+ * The provider a resume falls back to when its transcript's model matches no
+ * provider table: the ACTIVE one. The synthetic anthropic native is skipped —
+ * plain claude IS that provider, so pinning it would change nothing — and so
+ * is "auto", which names no single provider: resolving it is the router's job
+ * at spawn time, and an offer must not guess ahead of it. A name missing from
+ * the table, a disabled provider, or an openai-protocol one (interactive
+ * resume needs the proxy daemon) also degrades to plain claude, today's
+ * behaviour.
  */
-export function providerResumePlan(
+function activeResumeProvider(
+  w: Pick<WorkersConfig, "active" | "providers">
+): { name: string; provider: WorkerProvider } | null {
+  const name = w.active;
+  if (!name || name === "auto" || name === ANTHROPIC_NATIVE) return null;
+  const p = w.providers[name];
+  if (!p || !p.enabled || p.native || p.protocol !== "anthropic") return null;
+  return { name, provider: p };
+}
+
+/** The plan for one provider: the SAME env the worker engine builds for an
+ *  interactive run (run-env.ts, imported — never copied; a duplicated
+ *  provider-env builder is the known bite-pattern here), plus the claude
+ *  argv head that pins the route. No `--model`, deliberately: an interactive
+ *  worker run passes none either (modelFlagArgs, run.ts), so the
+ *  settings.json model — e.g. the [1m] variant — applies, and buildRunEnv's
+ *  ANTHROPIC_DEFAULT_*_MODEL pins the capability tiers to the table. */
+function providerPlan(
+  name: string,
+  provider: WorkerProvider,
+  model: string,
+  w: Pick<WorkersConfig, "caveman">
+): ProviderResumePlan {
+  const env = buildRunEnv(provider, false);
+  return { provider: name, model, cmd: claudeCommand(env, w.caveman), env };
+}
+
+function resolveResumeRoute(
+  ranOn: string | null,
+  w: Pick<WorkersConfig, "active" | "providers" | "caveman">
+): ResumeRoute {
+  const match = matchTranscriptProvider(ranOn, w.providers);
+  if (match) {
+    // A transcript that ran on a configured provider must resume on it:
+    // model as the session recorded it, variant and all.
+    return { match, ranOn, plan: providerPlan(match.provider, w.providers[match.provider], match.model, w) };
+  }
+  // No provider owns the transcript's model — an Anthropic-login session, or
+  // a model renamed since (observed 2026-10-16: claude-opus-5-5 while glm was
+  // the active worker provider). The old answer here was null: plain
+  // `claude --resume` with the inherited environment, which comes up on the
+  // Anthropic login even while a provider is active — the exact silent flip
+  // this provider-aware resume exists to prevent. So the fallback pins the
+  // ACTIVE provider, on its default model; only a workers config with nothing
+  // pinnable stays plain, and plain is then honest.
+  const active = activeResumeProvider(w);
+  if (!active) return { match: null, ranOn, plan: null };
+  return {
+    match: null,
+    ranOn,
+    plan: providerPlan(active.name, active.provider, active.provider.models.default, w),
+  };
+}
+
+/**
+ * Where a resume of `uuid` would come up (see ResumeRoute). The transcript's
+ * model is read first so a broken workers config still reports what the
+ * session ran on, then degrades to the plain resume.
+ */
+export function resumeRoute(
   uuid: string,
   cwd: string,
-  workers?: Pick<WorkersConfig, "providers" | "caveman">,
+  workers?: Pick<WorkersConfig, "active" | "providers" | "caveman">,
   home = homedir()
-): ProviderResumePlan | null {
+): ResumeRoute {
+  const ranOn = transcriptModelFor(uuid, encodedProjectDir(cwd), home);
   let w = workers;
   if (!w) {
     try {
       w = readWorkersSection().workers;
     } catch {
-      return null; // a broken workers config degrades to the plain resume
+      return { match: null, ranOn, plan: null }; // a broken workers config degrades to the plain resume
     }
   }
-  const match = matchTranscriptProvider(
-    transcriptModelFor(uuid, encodedProjectDir(cwd), home),
-    w.providers
-  );
-  if (!match) return null;
-  const env = buildRunEnv(w.providers[match.provider], false);
-  return { ...match, cmd: claudeCommand(env, w.caveman), env };
+  return resolveResumeRoute(ranOn, w);
 }
 
-/** Provider match for a session the scanner already located (uuid + its
- *  encoded projects dir), reading the workers config itself. Null on no
- *  match — or a broken config, which must never break the offer. */
-export function transcriptProviderFor(
+/**
+ * The spawn a resume needs: the plan half of resumeRoute. Null only when no
+ * provider is matched AND none is active — the caller then resumes exactly as
+ * before, and plain claude is the honest destination.
+ */
+export function providerResumePlan(
+  uuid: string,
+  cwd: string,
+  workers?: Pick<WorkersConfig, "active" | "providers" | "caveman">,
+  home = homedir()
+): ProviderResumePlan | null {
+  return resumeRoute(uuid, cwd, workers, home).plan;
+}
+
+/** Resume route for a session the scanner already located (uuid + its
+ *  encoded projects dir), reading the workers config itself. Degrades to the
+ *  plain route on a broken config, which must never break the offer. */
+export function resumeRouteFor(
   uuid: string,
   encodedDir: string,
   home = homedir()
-): TranscriptProviderMatch | null {
+): ResumeRoute {
+  const ranOn = transcriptModelFor(uuid, encodedDir, home);
   try {
-    return matchTranscriptProvider(
-      transcriptModelFor(uuid, encodedDir, home),
-      readWorkersSection().workers.providers
-    );
+    return resolveResumeRoute(ranOn, readWorkersSection().workers);
   } catch {
-    return null;
+    return { match: null, ranOn, plan: null };
   }
 }
 
 /**
  * The resume offer line, naming the destination when it is known, so the
  * operator can see the resume will come up on glm (glm-5.3[1m]) rather than
- * silently flipping to the Anthropic login. resumeOfferBlock composes this
+ * silently flipping to the Anthropic login. A matching transcript names its
+ * own provider; an unmatched one names BOTH models — what it ran on and what
+ * it comes up on now — because that resume changes provider under the
+ * operator's eyes and the offer is the one place to say so. Plain "Resume?"
+ * only when the resume really is plain claude. resumeOfferBlock composes this
  * into the full question.
  */
-export function resumeOfferText(match: TranscriptProviderMatch | null): string {
-  return match ? `Resume into ${match.model} (${match.provider})?` : "Resume?";
+export function resumeOfferText(route: ResumeRoute): string {
+  if (route.match) return `Resume into ${route.match.model} (${route.match.provider})?`;
+  if (route.plan) {
+    return `Resume (ran on ${route.ranOn ?? "an unknown model"}; comes up on ${route.plan.model} via ${route.plan.provider})?`;
+  }
+  return "Resume?";
 }
 
 /**
@@ -530,13 +625,13 @@ export function resumeOfferText(match: TranscriptProviderMatch | null): string {
  * says nothing) this is just the old one-line offer, unchanged.
  */
 export function resumeOfferBlock(
-  match: TranscriptProviderMatch | null,
+  route: ResumeRoute,
   transcriptPath: string | null | undefined
 ): string {
   const context = transcriptPath ? transcriptResumeContext(transcriptPath) : null;
   return context
-    ? `${resumeOfferText(match)} [y/N]\n  ${context} `
-    : `${resumeOfferText(match)} [y/N] `;
+    ? `${resumeOfferText(route)} [y/N]\n  ${context} `
+    : `${resumeOfferText(route)} [y/N] `;
 }
 
 /** Display form of the resume argv — shared by the dry-run paths so they
@@ -755,9 +850,11 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   if (wantResume) {
     const probe = probeResume(opts.resumableUuid!, cwd);
     if (probe.ok) {
-      // A transcript that ran on a configured provider must resume on it:
-      // plain `claude --resume` with the inherited environment comes up on
-      // the Anthropic login and the session silently flips provider.
+      // A transcript that ran on a configured provider must resume on it —
+      // and one whose model matches nothing must resume on the ACTIVE
+      // provider: plain `claude --resume` with the inherited environment
+      // comes up on the Anthropic login and the session silently flips
+      // provider either way.
       const plan = providerResumePlan(opts.resumableUuid!, cwd, workers);
       const result = plan
         ? spawnSync(

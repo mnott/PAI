@@ -22,7 +22,9 @@ import { fileURLToPath } from "node:url";
 import {
   probeResume,
   providerLaunchArgv,
+  providerResumePlan,
   resolveLaunchRoute,
+  resumeRoute,
   workerRunArgv,
   launchPrompt,
   lastTranscriptModel,
@@ -329,15 +331,98 @@ describe("matchTranscriptProvider — which configured provider owns a model", (
   });
 });
 
-describe("resumeOfferText — the offer names its destination", () => {
-  it("names provider and model when the transcript ran on one", () => {
-    expect(resumeOfferText({ provider: "glm", model: "glm-5.3[1m]" })).toBe(
-      "Resume into glm-5.3[1m] (glm)?"
+describe("providerResumePlan — an unmatched transcript still pins a provider", () => {
+  const glm: WorkerProvider = {
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: "https://glm.example/api",
+    // Inline key: buildRunEnv resolves it, and no test touches a real key file.
+    key: "test-token",
+    keyFile: "",
+    models: { default: "glm-5.3[1m]", fast: "glm-4.6-flash" },
+    env: {},
+  };
+  const workers = { active: "glm", providers: { glm }, caveman: false };
+
+  /**
+   * The observed incident (2026-10-16): an Oct-4 transcript that ran on
+   * claude-opus-5-5 — a model NO provider table names, so nothing matches —
+   * while glm was the active worker provider.
+   */
+  const OPUS = "66666666-6666-4666-8666-666666666666";
+  const GLM = "77777777-7777-4777-8777-777777777777";
+
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "pai-plan-"));
+    const dir = join(home, ".claude", "projects", ENCODED);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${OPUS}.jsonl`),
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) + "\n" +
+        assistantLine("claude-opus-5-5") + "\n"
+    );
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("UnmatchedModelPinsActiveProvider", () => {
+    const plan = providerResumePlan(OPUS, CWD, workers, home);
+    // Not null — that was the bug: null meant plain `claude --resume`, which
+    // inherits this environment and comes up on the Anthropic login while
+    // glm is the active provider.
+    expect(plan).not.toBeNull();
+    expect(plan!.provider).toBe("glm");
+    // The active provider's DEFAULT model, not the transcript's own.
+    expect(plan!.model).toBe("glm-5.3[1m]");
+    expect(plan!.cmd[0]).toBe("claude");
+    // The route is the active provider's, both in env and pinned settings.
+    expect(plan!.env.ANTHROPIC_BASE_URL).toBe("https://glm.example/api");
+    expect(plan!.env.ANTHROPIC_AUTH_TOKEN).toBe("test-token");
+    expect(plan!.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("glm-5.3[1m]");
+    expect(plan!.cmd.join(" ")).toContain("--settings");
+  });
+
+  it("NoActiveProviderStaysPlain", () => {
+    // Nothing active: plain claude is the honest destination, plan stays null.
+    expect(providerResumePlan(OPUS, CWD, { ...workers, active: null }, home)).toBeNull();
+    // The synthetic anthropic native IS plain claude — pinning it is a no-op.
+    expect(providerResumePlan(OPUS, CWD, { ...workers, active: "anthropic" }, home)).toBeNull();
+    // "auto" names no single provider; resolving it is the router's job.
+    expect(providerResumePlan(OPUS, CWD, { ...workers, active: "auto" }, home)).toBeNull();
+  });
+
+  it("OfferNamesBothModels", () => {
+    const route = resumeRoute(OPUS, CWD, workers, home);
+    expect(resumeOfferText(route)).toBe(
+      "Resume (ran on claude-opus-5-5; comes up on glm-5.3[1m] via glm)?"
     );
   });
 
-  it("stays plain when no provider matches", () => {
-    expect(resumeOfferText(null)).toBe("Resume?");
+  it("MatchedCaseUnchanged", () => {
+    writeFileSync(
+      join(home, ".claude", "projects", ENCODED, `${GLM}.jsonl`),
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) + "\n" +
+        assistantLine("glm-5.3") + "\n"
+    );
+    const route = resumeRoute(GLM, CWD, workers, home);
+    // A matching transcript still names its own provider, model as recorded.
+    expect(route.match).toEqual({ provider: "glm", model: "glm-5.3" });
+    expect(route.plan?.model).toBe("glm-5.3");
+    expect(resumeOfferText(route)).toBe("Resume into glm-5.3 (glm)?");
+  });
+});
+
+describe("resumeOfferText — the offer names its destination", () => {
+  it("names provider and model when the transcript ran on one", () => {
+    expect(
+      resumeOfferText({ match: { provider: "glm", model: "glm-5.3[1m]" }, ranOn: "glm-5.3[1m]", plan: null })
+    ).toBe("Resume into glm-5.3[1m] (glm)?");
+  });
+
+  it("stays plain when the resume really is plain claude", () => {
+    expect(resumeOfferText({ match: null, ranOn: null, plan: null })).toBe("Resume?");
   });
 });
 
@@ -530,7 +615,10 @@ describe("resumeOfferBlock — the [y/N] question carries its context", () => {
         p,
         JSON.stringify({ type: "user", message: { role: "user", content: "where was I" } }) + "\n"
       );
-      const out = resumeOfferBlock({ provider: "glm", model: "glm-5.3[1m]" }, p);
+      const out = resumeOfferBlock(
+        { match: { provider: "glm", model: "glm-5.3[1m]" }, ranOn: "glm-5.3[1m]", plan: null },
+        p
+      );
       expect(out).toMatch(/^Resume into glm-5\.3\[1m\] \(glm\)\? \[y\/N\]\n  last active /);
       expect(out).toMatch(/· last: "where was I" $/);
     } finally {
@@ -539,10 +627,10 @@ describe("resumeOfferBlock — the [y/N] question carries its context", () => {
   });
 
   it("is the old one-line offer when no transcript is known", () => {
-    expect(resumeOfferBlock(null, null)).toBe("Resume? [y/N] ");
-    expect(resumeOfferBlock({ provider: "glm", model: "glm-5.3[1m]" }, undefined)).toBe(
-      "Resume into glm-5.3[1m] (glm)? [y/N] "
-    );
+    expect(resumeOfferBlock({ match: null, ranOn: null, plan: null }, null)).toBe("Resume? [y/N] ");
+    expect(
+      resumeOfferBlock({ match: { provider: "glm", model: "glm-5.3[1m]" }, ranOn: "glm-5.3[1m]", plan: null }, undefined)
+    ).toBe("Resume into glm-5.3[1m] (glm)? [y/N] ");
   });
 
   it("falls back to the one-line offer when the transcript says nothing", () => {
@@ -550,7 +638,7 @@ describe("resumeOfferBlock — the [y/N] question carries its context", () => {
     try {
       const p = join(dir, "empty.jsonl");
       writeFileSync(p, "");
-      expect(resumeOfferBlock(null, p)).toBe("Resume? [y/N] ");
+      expect(resumeOfferBlock({ match: null, ranOn: null, plan: null }, p)).toBe("Resume? [y/N] ");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

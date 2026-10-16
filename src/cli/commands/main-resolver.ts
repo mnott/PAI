@@ -29,7 +29,7 @@ import {
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
 import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
 import { basename } from "node:path";
-import { launchInDir, resumeOfferBlock, transcriptProviderFor } from "../lib/launch.js";
+import { launchInDir, resumeOfferBlock, resumeRouteFor } from "../lib/launch.js";
 import {
   buildDeduped,
   normalizeName,
@@ -158,15 +158,16 @@ async function offerResume(
       `\n  Resumable transcript ${candidate.shortId} (${fmtAge(candidate.mtime)}): "${prompt}"`
     )
   );
-  // Name the destination when the transcript ran on a configured provider,
-  // so the operator can see the resume comes up on that provider instead of
-  // silently flipping to the Anthropic login — and say WHAT would resume
-  // (mtime + last user line) beneath the offer, so "y" is an informed choice.
-  const match = transcriptProviderFor(candidate.uuid, candidate.encodedDir);
+  // Name the destination — the provider the transcript ran on when one
+  // matches, else the ACTIVE worker provider it would come up on — so the
+  // operator can see a provider-changing resume instead of discovering a
+  // silent flip to the Anthropic login after the fact; and say WHAT would
+  // resume (mtime + last user line) beneath the offer, so "y" is informed.
+  const route = resumeRouteFor(candidate.uuid, candidate.encodedDir);
   const transcriptPath = candidate.topLevelPath || candidate.sessionJsonlPath || null;
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(chalk.dim(`  ${resumeOfferBlock(match, transcriptPath)}`), (answer) => {
+    rl.question(chalk.dim(`  ${resumeOfferBlock(route, transcriptPath)}`), (answer) => {
       rl.close();
       const a = answer.trim().toLowerCase();
       resolve(a === "y" || a === "yes");
