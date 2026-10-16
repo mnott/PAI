@@ -30,6 +30,7 @@ const GUARD_HOOKS = [
   "block-sleep-poll",
   "worker-guard",
   "worker-path-repair",
+  "worker-tool-name-repair",
   "ab-levers",
 ];
 

@@ -58,6 +58,9 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
       { hookType: "PreToolUse", matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*", command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
       { hookType: "PreToolUse", matcher: "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep", command: "${ADAPTER_DIR}/Hooks/worker-path-repair.mjs" },
+      // Dotted tool names (Glob.glob) die before any name-matched hook sees
+      // them, so this one must match every call and rewrite the name itself.
+      { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-tool-name-repair.mjs" },
       { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse" },
       { hookType: "PostToolUse", matcher: "TodoWrite", command: "${ADAPTER_DIR}/Hooks/sync-todo-to-md.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse" },
