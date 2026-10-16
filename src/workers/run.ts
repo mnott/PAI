@@ -651,6 +651,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         noReportRetry: opts.noReportRetry ?? false,
         limit,
         noBrowser,
+        opts,
       });
     }
     await returnControlsIfHeld(logDir, workerId);
@@ -1092,6 +1093,8 @@ interface ExecuteArgs {
   limit: RunLimit | null;
   /** Browser tools are stripped from this run (and denied by the worker guard). */
   noBrowser: boolean;
+  /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
+  opts: RunOptions;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
@@ -1626,22 +1629,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // Empty response: one automatic re-launch of the same spec in the same cwd.
     if (empty && !a.emptyRetried) {
       appendLedger(ledger, "WORKER-EMPTY-RETRY", { id: wid, provider: target.providerName });
-      return runWorker({
-        providerFlag: target.providerName,
-        label,
-        noPane: a.noPane,
-        mcpFlag: a.mcpFlag,
-        cwd: a.cwd,
-        specPath: a.specPath,
-        parent: a.parent,
-        stage: a.stage,
-        claudeArgs: a.claudeArgs,
-        onWorkerStart: a.onWorkerStart,
-        worktreeFlag: a.worktreeFlag,
-        className: a.className,
-        _reroutes: a.reroutes,
-        _emptyRetried: true,
-      });
+      return runWorker(
+        relaunchOptions(a.opts, {
+          providerFlag: target.providerName,
+          onWorkerStart: a.onWorkerStart,
+          _emptyRetried: true,
+        })
+      );
     }
 
     // Quota reroute: only auto-routed runs, dead before the first tool call.
@@ -1663,26 +1657,28 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           to: next,
           reason: "quota",
         });
-        return runWorker({
-          providerFlag: next,
-          label,
-          noPane: a.noPane,
-          mcpFlag: a.mcpFlag,
-          cwd: a.cwd,
-          specPath: a.specPath,
-          parent: a.parent,
-          stage: a.stage,
-          claudeArgs: a.claudeArgs,
-          onWorkerStart: a.onWorkerStart,
-          worktreeFlag: a.worktreeFlag,
-          resumeOf: a.resumeOf,
-          className: a.className,
-          _reroutes: a.reroutes + 1,
-        });
+        return runWorker(
+          relaunchOptions(a.opts, {
+            providerFlag: next,
+            modelFlag: undefined,
+            onWorkerStart: a.onWorkerStart,
+            _reroutes: a.reroutes + 1,
+          })
+        );
       }
     }
     },
   });
+}
+
+/**
+ * Options for a relaunch (empty-response retry, quota reroute): the original
+ * run's options, minus the preset id (the relaunch is a new worker), with the
+ * given changes applied. Nothing is copied field by field, so a new RunOptions
+ * field is carried over by default.
+ */
+export function relaunchOptions(orig: RunOptions, changes: Partial<RunOptions>): RunOptions {
+  return { ...orig, id: undefined, ...changes };
 }
 
 /** The worktree fields printResult adds to a json payload, when there is one. */
@@ -1744,7 +1740,7 @@ export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
 // codex engine (2d)
 // ---------------------------------------------------------------------------
 
-interface CodexArgs extends Omit<ExecuteArgs, "reroutes" | "mcpFlag"> {}
+interface CodexArgs extends Omit<ExecuteArgs, "reroutes" | "mcpFlag" | "opts"> {}
 
 async function executeCodexRun(a: CodexArgs): Promise<number> {
   const { config, logDir, target, model, label, parsed, noPane } = a;
