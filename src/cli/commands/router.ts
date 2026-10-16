@@ -10,6 +10,7 @@ import { createRouter, ROUTER_PORT } from "../../router/router.js";
 import http from "node:http";
 import { cachedRows, cachedSessionMap, handleCockpit } from "../../router/cockpit.js";
 import { LimitsCache } from "../../router/limits.js";
+import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import type { UsageRow } from "../../router/usage.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage } from "../../router/usage.js";
@@ -76,8 +77,9 @@ export function registerRouterCommands(program: Command): void {
       const managed = port === ROUTER_PORT;
       const rows = cachedRows(opts.usageFile);
       const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
+      const system = new SystemMonitor();
       const cockpit = (req: http.IncomingMessage, res: http.ServerResponse) =>
-        handleCockpit(req, res, limits, rows, cachedSessionMap());
+        handleCockpit(req, res, limits, rows, cachedSessionMap(), system);
       const append = opts.usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
       const server = createRouter(undefined, undefined, undefined, append, cockpit);
       server.on("error", (e) => {

@@ -6,14 +6,15 @@
 
 import { statSync } from "node:fs";
 import type http from "node:http";
-import type { LimitsCache } from "./limits.js";
+import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { readUsage, USAGE_LOG_FILE, type UsageRow } from "./usage.js";
 import { loadSessionMap, type SessionInfo } from "./sessions.js";
+import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
 
-const WINDOWS: Record<CockpitWindow, { span: number; bucket: number }> = {
+export const WINDOWS: Record<CockpitWindow, { span: number; bucket: number }> = {
   "1h": { span: 3_600_000, bucket: 300_000 },
   "24h": { span: 86_400_000, bucket: 3_600_000 },
   "7d": { span: 7 * 86_400_000, bucket: 86_400_000 },
@@ -247,16 +248,28 @@ export function parseWindow(q: string | null): CockpitWindow {
   return q === "24h" || q === "7d" ? q : "1h";
 }
 
+/** Anything with a cached provider poll; LimitsCache in production, stubs in tests. */
+export type LimitsSource = Pick<LimitsCache, "get">;
+
+/** Local model servers as the SYSTEM panel shows them (from the limits poll). */
+function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "served">> {
+  return limits
+    .filter((l) => l.kind === "local")
+    .map(({ provider, up, rssMb, tokensPerSec, served }) => ({ provider, up, rssMb, tokensPerSec, ...(served ? { served } : {}) }));
+}
+
 /**
- * Serve /cockpit, /cockpit/data and /cockpit/limits. Returns false when the
- * path is not a cockpit path. GET only; the router binds 127.0.0.1.
+ * Serve /cockpit, /cockpit/data, /cockpit/system and /cockpit/limits. Returns
+ * false when the path is not a cockpit path. GET only; the router binds
+ * 127.0.0.1.
  */
 export function handleCockpit(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  limits: LimitsCache,
+  limits: LimitsSource,
   readRows: () => UsageRow[] = readUsage,
-  sessionMap: () => Map<string, SessionInfo> = loadSessionMap
+  sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
+  system?: SystemMonitor
 ): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
@@ -272,6 +285,15 @@ export function handleCockpit(
     } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
+  } else if (url.pathname === "/cockpit/system") {
+    if (!system) return send(503, "application/json", '{"error":"system metrics not configured"}'), true;
+    Promise.all([
+      system.snapshot(parseWindow(url.searchParams.get("window"))),
+      limits.get().catch((): ProviderLimits[] => []),
+    ]).then(
+      ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls) })),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then(
       (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l })),

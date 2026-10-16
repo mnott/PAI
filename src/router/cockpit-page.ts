@@ -40,8 +40,10 @@ svg text{fill:var(--dim);font-size:10px}
 <span id="stamp">loading...</span></header>
 <main>
 <section class="card c12"><div class="groups"><div class="grp"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
+<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:10px"></div></section>
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
-<section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div><p class="dim" id="wnote"></p></section>
+<section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div>
+<h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
 <section class="card c4"><h2>Cache hit ratio per model</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div></section>
 <section class="card c6"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
@@ -84,6 +86,53 @@ function renderLimits(){
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
+}
+var sys=null;
+var PKEYS=[["totalW","power W","#d98a1c"],["gpu","GPU load","#3b6fe0"],["cpu","CPU load","#2e9e5b"]];
+function gb(b,d){return b==null?"n/a":(b/1073741824).toFixed(d==null?1:d)}
+function renderSystem(){
+ if(!sys)return;var c=sys.current||{};
+ var tip=(sys.unavailable&&sys.unavailable.all)?sys.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
+ function na(v){return v==null?'<span class="dim" title="'+esc(tip)+'">n/a</span>':v}
+ function pctna(v){return v==null?na(null):Math.round(v)+"%"}
+ function wna(v){return v==null?na(null):v.toFixed(1)}
+ var wh=(sys.series&&sys.series.wh&&sys.series.wh[win])||0,cov=(sys.series&&sys.series.coveredMin&&sys.series.coveredMin[win])||0;
+ var kpis=[
+  ["memory",c.memUsed!=null?gb(c.memUsed):na(null),"of "+na(c.memTotal!=null?gb(c.memTotal):null)+" · pressure "+(c.pressureLevel!=null?(100-c.pressureLevel)+"%":na(null))],
+  ["swap",c.swapUsed!=null?gb(c.swapUsed):na(null),"of "+na(c.swapTotal!=null?gb(c.swapTotal):null)],
+  ["wired",c.wired!=null?gb(c.wired):na(null),"vm_stat"],
+  ["compressed",c.compressed!=null?gb(c.compressed):na(null),"vm_stat"],
+  ["CPU load",pctna(c.cpu),"all clusters"],
+  ["GPU load",pctna(c.gpu),c.gpuFreqMhz?(c.gpuFreqMhz/1000).toFixed(1)+" GHz":""],
+  ["ANE load",pctna(c.ane),"neural engine"],
+  ["SoC temp",c.socTemp!=null?c.socTemp.toFixed(1)+" °C":na(null),"SMC"],
+  ["power",c.totalW!=null?wna(c.totalW)+" W":na(null),"CPU "+wna(c.cpuW)+" · GPU "+wna(c.gpuW)+" · ANE "+wna(c.aneW)+" · system "+wna(c.systemW)+" W"],
+  ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
+ ];
+ $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
+ var srv=sys.servers||[];
+ $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s","serves"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',esc((s.served||[]).slice(0,2).join(", "))]})):'<span class="dim">no local model servers configured</span>';
+}
+function lineChart(el,labels,series,keys,w,h){
+ var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,bw=W/n;
+ var max=1;series.forEach(function(s){if((s.totalW||0)>max)max=s.totalW});
+ var svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+(max*g/3).toFixed(1)+' W</text>'}
+ keys.forEach(function(k){
+  var km=1;series.forEach(function(s){if((s[k[0]]||0)>km)km=s[k[0]]});
+  var d="",pen=false;
+  series.forEach(function(s,i){var v=s[k[0]];if(v==null){pen=false;return}
+   var x=padL+i*bw+bw/2,y=padT+H-(v/km)*H;d+=(pen?"L":"M")+x.toFixed(1)+' '+y.toFixed(1);pen=true});
+  if(d)svg+='<path d="'+d+'" fill="none" stroke="'+k[2]+'" stroke-width="1.5"/>';
+ });
+ series.forEach(function(s,i){if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
+ el.innerHTML=svg+'</svg>';
+}
+function renderPower(){
+ if(!sys||!sys.series)return;
+ var ss=sys.series.series;
+ lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,760,150);
+ $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("")+'<span>(each line on its own scale, buckets as above)</span>';
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
@@ -140,9 +189,10 @@ function render(){
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
 }
+function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower()}).catch(function(){})}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits()}).catch(function(){})}
-function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load()}}}
-tabs();load();loadLimits();setInterval(load,5000);setInterval(loadLimits,30000);setInterval(tick,1000);
+function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
+tabs();load();loadSystem();loadLimits();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;
