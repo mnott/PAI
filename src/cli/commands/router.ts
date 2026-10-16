@@ -4,27 +4,16 @@
  */
 
 import type { Command } from "commander";
-import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createRouter, ROUTER_PORT } from "../../router/router.js";
+import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
+import { loadConfig } from "../../daemon/config.js";
 import { ok, err, dim } from "../utils.js";
 
-const PID_FILE = join(homedir(), ".claude", "pai", "router.pid");
-const LOG_FILE = join(homedir(), ".claude", "pai", "logs", "router.log");
-
-function runningPid(): number | null {
-  if (!existsSync(PID_FILE)) return null;
-  const pid = parseInt(readFileSync(PID_FILE, "utf8"), 10);
-  if (!pid) return null;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null;
-  }
-}
+const PID_FILE = ROUTER_PID_FILE;
+const LOG_FILE = ROUTER_LOG_FILE;
+const runningPid = routerRunningPid;
 
 export function registerRouterCommands(program: Command): void {
   const cmd = program
@@ -39,15 +28,8 @@ export function registerRouterCommands(program: Command): void {
     .action(() => {
       const pid = runningPid();
       if (pid) return console.log(ok(`router already running (pid ${pid})`));
-      mkdirSync(dirname(LOG_FILE), { recursive: true });
-      const fd = openSync(LOG_FILE, "a");
-      const child = spawn(process.execPath, [process.argv[1]!, "router", "run"], {
-        detached: true,
-        stdio: ["ignore", fd, fd],
-      });
-      closeSync(fd);
-      child.unref();
-      console.log(ok(`router starting on 127.0.0.1:${ROUTER_PORT} (pid ${child.pid}), log ${LOG_FILE}`));
+      const pid2 = spawnRouter(process.argv[1]!);
+      console.log(ok(`router starting on 127.0.0.1:${ROUTER_PORT} (pid ${pid2}), log ${LOG_FILE}`));
     });
 
   cmd
@@ -70,7 +52,11 @@ export function registerRouterCommands(program: Command): void {
     .description("Show whether the router is running")
     .action(() => {
       const pid = runningPid();
-      console.log(pid ? ok(`router running (pid ${pid}, port ${ROUTER_PORT})`) : dim("router not running"));
+      const managed = loadConfig().router.enabled;
+      const note = managed ? "daemon-managed: restarted if down" : "not daemon-managed (router.enabled is false)";
+      console.log(
+        pid ? ok(`router running (pid ${pid}, port ${ROUTER_PORT}); ${note}`) : dim(`router not running; ${note}`)
+      );
     });
 
   cmd

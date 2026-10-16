@@ -118,6 +118,11 @@ export interface DashboardConfig {
   bind: string;
 }
 
+export interface RouterConfig {
+  /** Keep `pai router` (127.0.0.1:8790) running under the daemon. Default: false. */
+  enabled: boolean;
+}
+
 export interface PaiDaemonConfig {
   /** Unix Domain Socket path for IPC */
   socketPath: string;
@@ -182,6 +187,9 @@ export interface PaiDaemonConfig {
 
   /** Read-only memory status dashboard (src/daemon/dashboard.ts). */
   dashboard: DashboardConfig;
+
+  /** Model router supervised by the daemon (src/router/supervisor.ts). */
+  router: RouterConfig;
 }
 
 /**
@@ -286,6 +294,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   identity: { selfEmails: [] },
   sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
   dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
+  router: { enabled: false },
   search: {
     mode: "keyword",
     rerank: true,

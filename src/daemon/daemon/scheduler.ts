@@ -10,6 +10,8 @@ import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes } from "../../workers/pane.js";
 import { loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
+import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
+import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
@@ -650,4 +652,39 @@ export function startSessionKeepalive(): void {
     `[pai-daemon] Session keepalive: every ${SESSION_KEEPALIVE_TICK_MS / 1000}s ` +
       `(idle >= ${config.idleMinutes}min, hours ${config.activeHours}, max ${config.maxBeats} beats/stretch)\n`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Model router supervision
+// ---------------------------------------------------------------------------
+
+const ROUTER_TICK_MS = 30_000;
+
+/**
+ * Keep `pai router` up: probe its port every 30s and start it when down, so
+ * a crash or reboot never leaves ANTHROPIC_BASE_URL pointing at nothing.
+ * Off unless `router.enabled` is true; config changes need a daemon restart.
+ */
+export function startRouterSupervisor(): void {
+  if (!daemonConfig.router.enabled) {
+    process.stderr.write("[pai-daemon] Router supervisor: disabled (router.enabled is false)\n");
+    return;
+  }
+  const tick = () => {
+    runRouterTick({
+      probe: () => probeRouter(),
+      start: () => {
+        const pid = spawnRouter(cliEntry());
+        process.stderr.write(`[pai-daemon] Router supervisor: router was down, started (pid ${pid})\n`);
+      },
+    }).catch((e) => {
+      process.stderr.write(
+        `[pai-daemon] Router supervisor tick error: ${e instanceof Error ? e.message : String(e)}\n`
+      );
+    });
+  };
+  tick();
+  const timer = setInterval(tick, ROUTER_TICK_MS);
+  if (timer.unref) timer.unref();
+  process.stderr.write(`[pai-daemon] Router supervisor: every ${ROUTER_TICK_MS / 1000}s\n`);
 }
