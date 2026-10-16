@@ -19,7 +19,10 @@ export interface SleepPollGateInput {
   tool_input?: { command?: string; run_in_background?: boolean };
 }
 
-export type GateDecision = { decision: "allow" } | { decision: "deny"; reason: string };
+/** An allow may rewrite the tool input and tell the model why (`updatedInput`, `additionalContext`). */
+export type GateDecision =
+  | { decision: "allow"; updatedInput?: Record<string, unknown>; context?: string }
+  | { decision: "deny"; reason: string };
 
 /**
  * A headless worker has no owner to deliver a background-exit notification
@@ -76,7 +79,12 @@ export function decideSleepPollGate(
 export function renderDecision(d: GateDecision): string {
   if (d.decision === "allow") {
     return JSON.stringify({
-      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        ...(d.updatedInput && { updatedInput: d.updatedInput }),
+        ...(d.context && { additionalContext: d.context }),
+      },
     });
   }
   return JSON.stringify({

@@ -20,7 +20,6 @@ import {
 import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
-import { closePaneIfEnded } from "./pane.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
@@ -103,6 +102,11 @@ export interface WorkerStatus {
    * on statuses written before the flag existed — read as a spawn.
    */
   origin?: "spawn" | "chat";
+  /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
+  route?: { policy: string; reason: string; local: boolean };
+  /** Fall-through link: the local run this cloud run repeats, and (on the local run) its repeat. */
+  fallThroughOf?: string;
+  fallThroughTo?: string;
   /** Which contract/parser this run used for its final report (see report.ts). */
   reportFormat?: "json" | "ag2";
   /** Whether the final AG2 report passed `aibroker agentish check`; unset for json reports or when no validator ran. */
@@ -113,6 +117,8 @@ export interface WorkerStatus {
   promptTrailer?: boolean;
   /** The project preamble (.pai/worker.md) appended to this run's prompt: path + short content hash. */
   preamble?: { path: string; hash: string };
+  /** The provider contract addendum appended to this run's prompt: path + sha256 prefix. */
+  contractAddendum?: { path: string; sha: string };
   /** Whether an invalid AG2 final message triggered the one bounded re-ask (see run.ts). */
   reportRetried?: boolean;
   /**
@@ -302,8 +308,6 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     }
     throw e;
   }
-  // an ended worker keeps no pane (see closePaneIfEnded)
-  void closePaneIfEnded(logDir, status);
 }
 
 /**

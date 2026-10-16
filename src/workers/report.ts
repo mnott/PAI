@@ -8,6 +8,7 @@
  * wall of text.
  */
 
+import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { shortText } from "./args.js";
@@ -120,7 +121,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "`;`/`|`, or inside a loop or subshell — and the sleeps of one command add up (`sleep 58; sleep 58` is",
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
     "run_in_background is denied. Foreground Bash calls stay under 2 min (longer ones block operator messages and supervision and are denied);",
-    `run a long job detached: ${WAIT_RECIPE}.`,
+    `Prefer the project's own blocking command for builds and tests (e.g. a build script's --wait, repeated while it says to call again); for a long job that has none, run it detached: ${WAIT_RECIPE}.`,
     "Kill only processes you started, by PID (`cmd & echo $! > /tmp/x.pid`, then `kill $(cat /tmp/x.pid)`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",
@@ -200,6 +201,8 @@ export interface WorkerReport {
   result?: "+" | "-" | "~" | "?" | "!";
   /** AG2 `y` (why): one line explaining a non-"+" result. */
   why?: string;
+  /** Runner-side: untracked files the worker left behind (AG2 `u`). */
+  untracked?: string[];
   /** Runner-side: hook/permission denials the run hit (never written by the worker). */
   denials?: Denial[];
   /** Which wire format the final message was parsed as. */
@@ -346,4 +349,86 @@ function relShort(p: string, cwd: string): string {
   if (!cwd) return p;
   const r = relative(cwd, p);
   return r && !r.startsWith("..") ? r : p;
+}
+
+/** One Bash call the worker made: the command and whether its result was a failure. */
+export interface BashRun {
+  command: string;
+  failed: boolean;
+}
+
+const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Reduce a shell command to what it runs: drop leading `cd <dir> &&|;` and
+ * `VAR=value` assignments, trailing `| tail|head …`, `2>&1`, `; echo rc=$?`.
+ */
+function normaliseCommand(cmd: string): string {
+  let c = squeeze(cmd).replace(/\bgit -C (?:"[^"]*"|'[^']*'|\S+) /g, "git ");
+  for (let prev = ""; prev !== c; ) {
+    prev = c;
+    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "");
+  }
+  for (let prev = ""; prev !== c; ) {
+    prev = c;
+    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(grep|wc|tail|head|cut|sort|uniq|awk|sed\s+-n|tee)\b[^|]*$/, "").replace(/\s*2>&1(?=\s*(\||$))/g, "");
+  }
+  return c.trim();
+}
+
+/**
+ * Mechanical check of an AG2 report's claimed proof (2026-10-14: a local model
+ * reported r=+ with `p=git diff HEAD`, a command that proves nothing, and the
+ * hidden test then failed). r=+ stands only if the p= command appears inside a
+ * Bash call the worker really made and that call's result was not a failure;
+ * otherwise the verdict becomes r=~ with a y= line. `u` lists stray untracked
+ * files and is appended either way. Non-AG2 text and non-"+" verdicts pass
+ * through (apart from u). `rewritten` is true when the verdict was downgraded.
+ */
+export function checkProof(
+  text: string,
+  runs: BashRun[],
+  untracked: string[] = []
+): { text: string; rewritten: boolean; proof?: string } {
+  // a stamp glued to the kind line ("[2026-10-14 20:14] R") is dropped, as unwrapAg2 does for a stamp line
+  text = text.replace(/^\s*\[\d{4}-\d{2}-\d{2}[^\]\n]*\][ \t]*(?=[TRSQAX]\s*(\n|$))/, "");
+  const parsed = parseAg2Report(text);
+  let out = text.trimEnd();
+  let rewritten = false;
+  let proof: string | undefined;
+  if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
+    const claimed = parsed.fields.p;
+    // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
+    const parts = claimed.split(/;|&&/).map(normaliseCommand).filter(Boolean);
+    const ok = runs.filter((r) => !r.failed).map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
+    const ran = ok.some((r) => r.raw.includes(squeeze(claimed))) || (parts.length > 0 && parts.every((c) => ok.some((r) => r.norm.includes(c) || r.raw.includes(c))));
+    if (!ran) {
+      rewritten = true;
+      proof = parsed.fields.p;
+      out = out
+        .split("\n")
+        .filter((l) => !/^\s*y=/.test(l))
+        .map((l) => (/^\s*r=\+\s*$/.test(l) ? "r=~" : l))
+        .concat(`y=claimed proof not run or failed: ${parsed.fields.p}`)
+        .join("\n");
+    }
+  }
+  if (parsed && untracked.length) out += `\nu=${untracked.join("|")}`;
+  return { text: out, rewritten, proof };
+}
+
+/** Untracked (`??`) paths under cwd that were not in `before`; [] when cwd is not a git tree. */
+export function newUntracked(cwd: string, before: ReadonlySet<string>): string[] {
+  return untrackedPaths(cwd).filter((p) => !before.has(p));
+}
+
+export function untrackedPaths(cwd: string): string[] {
+  try {
+    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split("\n")
+      .filter((l) => l.startsWith("?? "))
+      .map((l) => l.slice(3));
+  } catch {
+    return [];
+  }
 }

@@ -176,3 +176,44 @@ describe("claudeCommand", () => {
     expect(parsed.env.ANTHROPIC_AUTH_TOKEN).toBe("tok");
   });
 });
+
+describe("buildRunEnv PAI_WORKER_PROVIDER", () => {
+  it("names the provider for a headless worker, anthropic for the native one", () => {
+    expect(buildRunEnv(provider, true, undefined, "local30").PAI_WORKER_PROVIDER).toBe("local30");
+    expect(buildRunEnv(nativeAnthropicProvider(), true).PAI_WORKER_PROVIDER).toBe("anthropic");
+  });
+
+  it("is not set for an interactive run", () => {
+    const saved = process.env.PAI_WORKER_PROVIDER;
+    delete process.env.PAI_WORKER_PROVIDER;
+    try {
+      expect(buildRunEnv(provider, false, undefined, "local30").PAI_WORKER_PROVIDER).toBeUndefined();
+    } finally {
+      if (saved !== undefined) process.env.PAI_WORKER_PROVIDER = saved;
+    }
+  });
+});
+
+describe("local-provider worker prompt overhead", () => {
+  const strip = ["CLAUDE_CODE_DISABLE_CLAUDE_MDS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY"] as const;
+  const saved = strip.map((k) => process.env[k]);
+  beforeAll(() => strip.forEach((k) => delete process.env[k]));
+  afterAll(() => strip.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i]))));
+
+  it("headless non-anthropic worker: CLAUDE.md and memory off, output style default", () => {
+    const env = buildRunEnv(provider, true, undefined, "local30");
+    expect(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe("1");
+    expect(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(JSON.parse(claudeCommand(env, false)[2]).outputStyle).toBe("default");
+  });
+
+  it("anthropic worker and interactive runs are untouched", () => {
+    for (const env of [buildRunEnv(nativeAnthropicProvider(), true), buildRunEnv(nativeAnthropicProvider(), false), buildRunEnv(provider, false, undefined, "local30")]) {
+      expect(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBeUndefined();
+      expect(JSON.parse(claudeCommand(env, false)[2])).not.toHaveProperty("outputStyle");
+    }
+    // every headless worker has auto-memory off (main), interactive runs keep it
+    expect(buildRunEnv(nativeAnthropicProvider(), true).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(buildRunEnv(nativeAnthropicProvider(), false).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBeUndefined();
+  });
+});

@@ -660,3 +660,35 @@ describe("config safety — supervision never rewrites the config", () => {
     expect(existsSync(join(logDir, "supervision", "state.json"))).toBe(true);
   });
 });
+
+describe("exactly-once notice", () => {
+  it("overlapping ticks over one finished worker push once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-supervision-"));
+    try {
+      const run = (statuses: WorkerStatus[], sent: string[]) =>
+        runSupervisionTick(dir, {
+          now: NOW,
+          isAlive: () => true,
+          statuses,
+          push: async (_d, _t, ev) => {
+            sent.push(ev.id);
+            await new Promise((r) => setTimeout(r, 20));
+            return true;
+          },
+        });
+      await run([fake({ state: "running" })], []);
+      const sent: string[] = [];
+      const done = [fake({ state: "done", rc: 0 })];
+      await Promise.all([run(done, sent), run(done, sent), run(done, sent)]);
+      expect(sent).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a child of a listed worker never notifies the operator", () => {
+    const parent = fake({ id: "20260918-010000-1", state: "running" });
+    const child = fake({ id: "20260918-010000-2", state: "done", rc: 0, parent: parent.id });
+    expect(detect([parent, child])).toHaveLength(0);
+  });
+});

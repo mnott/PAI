@@ -9,10 +9,35 @@
  * said "do not run git stash" in prose. Prose did not stop it; this gate
  * does.
  *
- * Pure: no fs, no config read, no process.env read of its own. The hook
+ * The one fs read is `isPrivateClone`: a repo whose git dir holds the
+ * `pai-private-clone` marker was cloned by its creator for one worker only,
+ * so nothing shared can be harmed there. The hook
  * (pre-tool-use/security-validator.ts) resolves whether the session is a
  * worker and where its worktrees root is, and passes both in.
  */
+
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+export const PRIVATE_CLONE_MARKER = "pai-private-clone";
+
+/** True iff the git dir of the repo containing `cwd` holds the marker; any failure is false. */
+export function isPrivateClone(cwd: string): boolean {
+  try {
+    const gitDir = execFileSync("git", ["-C", cwd, "rev-parse", "--absolute-git-dir"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return existsSync(join(resolve(gitDir), PRIVATE_CLONE_MARKER));
+  } catch {
+    return false;
+  }
+}
+
+/** A command that names another directory must not borrow cwd's marker. */
+const NAMES_OTHER_DIR = /\bgit\s+-C\b|\bcd\s/;
 
 const TREE_REWRITE: { name: string; pattern: RegExp }[] = [
   { name: "git reset", pattern: /\bgit(?:\s+-C\s+\S+)?\s+reset(?![\w-])/ },
@@ -86,6 +111,7 @@ export function decideWorkerGitGuard(
 ): WorkerGitGuardResult {
   if (!isWorker) return { blocked: false };
   if (worktreesRoot && isInsideWorktree(cwd, worktreesRoot)) return { blocked: false };
+  if (!NAMES_OTHER_DIR.test(command) && isPrivateClone(cwd)) return { blocked: false };
 
   for (const { name, pattern } of TREE_REWRITE) {
     if (pattern.test(command)) return { blocked: true, cmd: name };

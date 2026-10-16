@@ -58,7 +58,8 @@ const NATIVE_STRIP_VARS = [
 export function buildRunEnv(
   provider: WorkerProvider,
   headless: boolean,
-  proxyUrl?: string
+  proxyUrl?: string,
+  providerName?: string
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -78,6 +79,7 @@ export function buildRunEnv(
     env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     if (headless) {
       env.PAI_WORKER = "1";
+      env.PAI_WORKER_PROVIDER = "anthropic";
     } else {
       env.ENABLE_TOOL_SEARCH = "true";
     }
@@ -103,6 +105,15 @@ export function buildRunEnv(
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   if (headless) {
     env.PAI_WORKER = "1";
+    // read by the whisper-rules hook: a non-anthropic worker gets no operator rules
+    if (providerName) env.PAI_WORKER_PROVIDER = providerName;
+    // A local model gets the task, not the operator's interactive-session
+    // overhead (user+project CLAUDE.md, memory index): it echoed that text
+    // instead of working (2026-10-15). The two switches cannot separate user
+    // from project CLAUDE.md, so both go. The output style is dropped in
+    // claudeCommand via --settings.
+    env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
+    env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   } else {
     env.ENABLE_TOOL_SEARCH = "true";
   }
@@ -130,7 +141,9 @@ export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean, routerEn
     if (onPath("caveman", env)) return ["caveman", "claude"];
     process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
   }
-  return ["claude", ...pinnedSettingsArgs(env, routerEnabled)];
+  // set by buildRunEnv for a headless non-anthropic worker: no operator output style
+  const extra = env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === "1" ? { outputStyle: "default" } : undefined;
+  return ["claude", ...pinnedSettingsArgs(env, routerEnabled, extra)];
 }
 
 const PINNED_KEYS = [
@@ -147,12 +160,18 @@ const PINNED_KEYS = [
  * workers and interactive `pai launch`. A native run (no provider route) is
  * pinned to the local model router when router.enabled, so `/model` can switch
  * provider and every request is accounted; else to api.anthropic.com.
+ * `extra` spreads over the settings object (claudeCommand uses it to drop the
+ * operator output style for a headless non-anthropic worker).
  */
-export function pinnedSettingsArgs(env: NodeJS.ProcessEnv, routerEnabled: boolean = loadConfig().router.enabled): string[] {
+export function pinnedSettingsArgs(
+  env: NodeJS.ProcessEnv,
+  routerEnabled: boolean = loadConfig().router.enabled,
+  extra?: Record<string, unknown>
+): string[] {
   const native = routerEnabled ? `http://127.0.0.1:${ROUTER_PORT}` : ANTHROPIC_FIRST_PARTY_URL;
   const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || native };
   if (env.ANTHROPIC_BASE_URL) for (const k of PINNED_KEYS) if (env[k]) pinned[k] = env[k] as string;
-  return ["--settings", JSON.stringify({ env: pinned })];
+  return ["--settings", JSON.stringify({ env: pinned, ...extra })];
 }
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {

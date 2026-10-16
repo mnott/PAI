@@ -404,3 +404,51 @@ describe("headerLine — report markers", () => {
     expect(headerLine(c, { ...base, reportFormat: "json", reportValid: false })).toContain("R?");
   });
 });
+
+describe("checkProof", () => {
+  const R = "R\ni=x\nr=+\nG=+\nc=a b\nt=T+\np=npm test\nz=ok";
+  it("keeps r=+ when the proof command ran and passed", async () => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R, [{ command: "npm test 2>&1 | tail -3", failed: false }]);
+    expect(v.rewritten).toBe(false);
+    expect(v.text).toContain("r=+");
+  });
+  it.each([
+    ["PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30", "cd /w && PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30 2>&1 | tail -5"],
+    ["ls /tmp/x.md", "cd /tmp; ls /tmp/x.md; echo rc=$?"],
+    ["test -s /tmp/x.md", "X=1  test -s   /tmp/x.md 2>&1"],
+    ["cat /tmp/x.md", "cd /tmp && cat /tmp/x.md | head -20"],
+    ["npx tsc --noEmit -p . | grep -c 'error TS'", "cd /w && npx tsc --noEmit -p . 2>&1 | grep 'error TS' | wc -l"],
+    ["git worktree list | wc -l", "head -5 /tmp/tidy.out; git -C /w/repo worktree list | wc -l"],
+    ["git status", "git -C \"/w/my repo\" status"],
+  ])("keeps r=+ for p=%s run as %s", async (p, cmd) => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]);
+    expect(v.rewritten).toBe(false);
+    expect(v.text).toContain("r=+");
+  });
+  it("keeps r=+ for a compound p= whose parts ran in one call with other commands between", async () => {
+    const { checkProof } = await import("./report.js");
+    const p = "sh tools/ab/backfill.sh; pai worker bench --suite tools/ab --providers a,b --report";
+    const cmd = "cd /w; sed -i s/a/b/ f; sh tools/ab/backfill.sh; cut -d, -f1 f; pai worker bench --suite tools/ab --providers a,b --report";
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]).rewritten).toBe(false);
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: true }]).rewritten).toBe(true);
+    expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: "sh tools/ab/backfill.sh", failed: false }]).rewritten).toBe(true);
+  });
+  it("still downgrades a different command and a failed matching call", async () => {
+    const { checkProof } = await import("./report.js");
+    const r = R.replace("p=npm test", "p=cat /tmp/x.md");
+    expect(checkProof(r, [{ command: "cat /tmp/y.md", failed: false }]).rewritten).toBe(true);
+    expect(checkProof(r, [{ command: "cd /tmp && cat /tmp/x.md | head", failed: true }]).rewritten).toBe(true);
+  });
+  it("downgrades to r=~ when the proof was never run or failed", async () => {
+    const { checkProof } = await import("./report.js");
+    for (const runs of [[], [{ command: "git diff HEAD", failed: false }], [{ command: "npm test", failed: true }]]) {
+      const v = checkProof(R, runs, ["scratch.swift"]);
+      expect(v.rewritten).toBe(true);
+      expect(v.text).toContain("r=~");
+      expect(v.text).toContain("y=claimed proof not run or failed: npm test");
+      expect(v.text).toContain("u=scratch.swift");
+    }
+  });
+});

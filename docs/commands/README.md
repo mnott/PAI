@@ -247,6 +247,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai topic check <context>` | Check whether context text has drifted to a different project. |
 | `pai update` | Update PAI from GitHub (git pull + rebuild + daemon restart). Preserves local customizations. |
 | `pai worker` | Run subagents on configured worker providers: run, ps, follow, replay, |
+| `pai worker bench` | A/B providers on a suite of real tasks: per task × provider × repeat run the suite's run.sh, then grade.sh; |
 | `pai worker capability [name] [providers]` | Which provider(s) serve a capability (e.g. image), independent of any one |
 | `pai worker classes` | Classes: which provider serves draft / implement / review / … |
 | `pai worker classes list` | List classes and their targets (default action) |
@@ -277,6 +278,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker on` | Route Agent-tool subagents to workers (default when a provider exists) |
 | `pai worker pane [id]` | Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on macOS, else prints the follow command) |
 | `pai worker pending` | Finished workers whose branch or worktree holds work not yet merged into this repo |
+| `pai worker policy [mode]` | Where workers run. No mode shows the policy; a mode sets it; `clear` removes it |
 | `pai worker providers` | Providers: list (default), add, remove, use, enable, disable, test |
 | `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds classes. |
 | `pai worker providers disable <name>` | Disable a provider (auto-routing skips it; --provider still works) |

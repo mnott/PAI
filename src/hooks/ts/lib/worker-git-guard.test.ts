@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { decideWorkerGitGuard, workerGitGuardMessage } from "./worker-git-guard.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decideWorkerGitGuard, workerGitGuardMessage, PRIVATE_CLONE_MARKER } from "./worker-git-guard.js";
 
 const CWD = "/repo";
 const WORKTREES_ROOT = "/repo/.workers/worktrees";
@@ -135,5 +139,34 @@ describe("workerGitGuardMessage", () => {
     expect(msg).toContain("git stash");
     expect(msg).toContain("rewrites the shared checkout and is blocked");
     expect(msg).toContain("--worktree");
+  });
+});
+
+describe("private clone marker", () => {
+  const mk = (marked: boolean) => {
+    const dir = mkdtempSync(join(tmpdir(), "pcg-"));
+    execFileSync("git", ["init", "-q", dir]);
+    if (marked) writeFileSync(join(dir, ".git", PRIVATE_CLONE_MARKER), "");
+    return dir;
+  };
+  const marked = mk(true);
+  const unmarked = mk(false);
+  const plain = mkdtempSync(join(tmpdir(), "pcg-plain-"));
+
+  it("allows tree-rewriting git in a marked clone", () => {
+    expect(decideWorkerGitGuard("git merge x", true, marked, WORKTREES_ROOT).blocked).toBe(false);
+    expect(decideWorkerGitGuard("git stash", true, marked, null).blocked).toBe(false);
+  });
+  it("blocks in an unmarked git dir and in a non-git dir", () => {
+    expect(decideWorkerGitGuard("git merge x", true, unmarked, WORKTREES_ROOT).blocked).toBe(true);
+    expect(decideWorkerGitGuard("git merge x", true, plain, WORKTREES_ROOT).blocked).toBe(true);
+  });
+  it("blocks with a null worktrees root unless marked", () => {
+    expect(decideWorkerGitGuard("git reset --hard", true, unmarked, null).blocked).toBe(true);
+    expect(decideWorkerGitGuard("git reset --hard", true, marked, null).blocked).toBe(false);
+  });
+  it("does not let git -C or cd borrow the marker of cwd", () => {
+    expect(decideWorkerGitGuard("git -C /some/shared/checkout merge x", true, marked, null).blocked).toBe(true);
+    expect(decideWorkerGitGuard("cd /some/shared/checkout && git merge x", true, marked, null).blocked).toBe(true);
   });
 });

@@ -51,6 +51,7 @@ import {
 } from "node:fs";
 import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
+  ANTHROPIC_NATIVE,
   assertProviderRunnable,
   classModelCapability,
   isModelCapability,
@@ -84,6 +85,7 @@ import {
 import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
+import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
 import {
   capabilityForRun,
   isQuotaFailure,
@@ -94,7 +96,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
-import { openPaneForWorker, paneBackend, resolveHostSession } from "./pane.js";
+import { headlessAllowed, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -117,10 +119,15 @@ import {
   parseWorkerReport,
   verifyReportChanges,
   verifyFailNote,
+  checkProof,
+  newUntracked,
+  untrackedPaths,
+  type BashRun,
   type WorkerReport,
 } from "./report.js";
 import { recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
+import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
@@ -175,6 +182,15 @@ export interface RunOptions {
   browser?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
+  /** --urgent: wants a fast turnaround (policy auto/prefer-local route to the cloud). */
+  urgent?: boolean;
+  /** --local-ok: this run may go local under policy prefer-cloud. */
+  localOk?: boolean;
+  /** --cloud: this run goes to the cloud under policy prefer-local/auto. */
+  cloud?: boolean;
+  /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
+  _route?: RouteInfo;
+  _fallThroughOf?: string;
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
   /** Internal: this run is the one automatic re-launch after an empty model response. */
@@ -537,6 +553,17 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     ? resolveCapabilityRun(config, capability)
     : null;
 
+  // Worker routing policy (policy.ts): picks local or cloud unless the caller named a provider.
+  let route = opts._route;
+  let providerFlag = opts.providerFlag;
+  if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
+    const routed = await routeRun(config, logDir, opts);
+    if (routed) {
+      route = routed.route;
+      providerFlag = routed.providerFlag ?? undefined;
+    }
+  }
+
   const target = capabilityResolution
     ? {
         providerName: capabilityResolution.providerName,
@@ -546,7 +573,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         via: "class" as const,
       }
     : resolveTarget(config, logDir, {
-        flagProvider: opts.providerFlag,
+        flagProvider: providerFlag,
         className: opts.className,
       });
   assertProviderRunnable(target.providerName, target.provider);
@@ -644,6 +671,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         className: opts.className,
         reroutes: opts._reroutes ?? 0,
         emptyRetried: opts._emptyRetried ?? false,
+        route,
+        fallThroughOf: opts._fallThroughOf,
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
@@ -1016,6 +1045,34 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
 }
 
 /**
+ * The fail-closed pane gate: a headless run proceeds only behind a pane that
+ * was opened and verified visible (see openVerifiedPane). Runs BEFORE the
+ * worker has an id on disk, so a refusal leaves nothing in `pai worker ps`.
+ * Skipped (false) for in-process callers that pass noPane (daemon, keepalive)
+ * and for the two headlessAllowed() cases; the caller then falls back to the
+ * best-effort announcePane.
+ */
+export async function requireVisiblePane(
+  logDir: string,
+  config: ReturnType<typeof readWorkersSection>["workers"],
+  wid: string,
+  term: string,
+  noPane: boolean,
+  ledger: string
+): Promise<boolean> {
+  if (noPane || headlessAllowed()) return false;
+  try {
+    const where = await openVerifiedPane(logDir, config, wid, term);
+    process.stderr.write(`[pai worker] pane verified for ${wid}: ${where}\n`);
+    return true;
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: reason.slice(0, 300) });
+    throw new Error(`worker not started, no visible pane: ${reason}`);
+  }
+}
+
+/**
  * Follow pane, made observable on stderr (stdout stays pure JSON for
  * `--output-format json`): one line naming the outcome — opened, skipped
  * (with reason), or failed (with reason, alongside the existing PANE-FAIL
@@ -1082,6 +1139,8 @@ interface ExecuteArgs {
   className?: string;
   reroutes: number;
   emptyRetried?: boolean;
+  route?: RouteInfo;
+  fallThroughOf?: string;
   printCmd?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
@@ -1105,13 +1164,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
     proxyUrl = `${base}/${target.providerName}`;
   }
-  const env = buildRunEnv(target.provider, headless, proxyUrl);
+  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName);
 
   const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
+  const paneVerified = headless && (await requireVisiblePane(logDir, config, wid, term, noPane || a.printCmd === true, ledgerPath(logDir)));
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
@@ -1148,6 +1208,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     preamble = loaded.preamble;
     if (!a.quiet) process.stderr.write(preambleLine(preamble) + "\n");
   }
+  // provider contract addendum (<PAI_HOME>/contracts/<provider>.md): headless, only with the generic contract
+  const addendum: ContractAddendum | null =
+    headless && !parsed.callerSystemPrompt ? loadContractAddendum(target.providerName, target.provider.contract) : null;
+  if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
   if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
@@ -1225,6 +1289,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   cmd.push(
     ...appendSystemPromptArgs([
       ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(addendum ? [addendum.text] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless
@@ -1269,9 +1334,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     // interactive runs ARE the chat pane, not a spawned subagent of it
     origin: headless ? "spawn" : "chat",
     outputFormat: parsed.outputFormat,
+    ...(a.route ? { route: a.route } : {}),
+    ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(headless ? { reportFormat: a.reportFormat } : {}),
     ...(trailerApplied ? { promptTrailer: true } : {}),
     ...(preamble ? { preamble: { path: preamble.path, hash: preamble.hash } } : {}),
+    ...(addendum ? { contractAddendum: { path: addendum.path, sha: addendum.sha } } : {}),
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
@@ -1304,9 +1372,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(a.specPath ? { spec: a.specPath } : {}),
   });
 
-  // Follow pane: headless only (interactive runs ARE the chat pane), best
-  // effort, never blocking the worker.
-  if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  // Follow pane: headless only (interactive runs ARE the chat pane). Verified
+  // above when the gate applies; best effort otherwise.
+  if (paneVerified) status.pane = { opened: true };
+  else if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
@@ -1425,6 +1494,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     resultEvent: null,
     resultReport: null,
   };
+  // every Bash call + outcome, and the untracked files present at spawn: the
+  // end-of-run proof check (checkProof) and stray-file listing read these
+  const bashRuns: BashRun[] = [];
+  const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
   if (headless) {
     // the first user message carries the prompt (the -p value was stripped)
@@ -1437,6 +1510,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     }
     eventsFd = openSync(eventsPath(logDir, wid), "a");
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
+    if (addendum) writeEvent({ type: "contract-addendum", text: `${addendum.path} sha ${addendum.sha}`, sha: addendum.sha });
     const rl = createInterface({ input: proc.stdout! });
     const toolUses = new Map<string, { name: string; input: unknown }>();
     rl.on("line", (line) => {
@@ -1502,6 +1576,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
                 input: toolUses.get(block.tool_use_id ?? "")?.input,
               });
             }
+            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+            if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block) });
           }
           if (sawResult) saveStatus(logDir, status);
         }
@@ -1581,6 +1657,21 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       }
     }
   }
+  if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
+    const stray = newUntracked(worktree?.dir ?? cwd, untrackedAtStart);
+    const chk = checkProof(resultEvent.result, bashRuns, stray);
+    if (chk.rewritten || stray.length) {
+      resultEvent.result = chk.text;
+      ctx.resultReport = parseWorkerReport(chk.text);
+      if (ctx.resultReport) ctx.resultReport.untracked = stray.length ? stray : undefined;
+    }
+    if (chk.rewritten) {
+      status.reportValid = false;
+      status.last = shortText(`claimed proof not run or failed: ${chk.proof}`, 90);
+      appendLedger(ledger, "REPORT-PROOF-UNVERIFIED", { id: wid, proof: chk.proof });
+    }
+    if (stray.length) process.stderr.write(`pai worker: warning: ${stray.length} untracked file(s) left by the worker: ${stray.join(", ")}\n`);
+  }
   if (ctx.resultReport && status.denials?.length) ctx.resultReport.denials = status.denials;
   if (headless && ctx.resultReport?.changed?.length) {
     const verify = verifyReportChanges(ctx.resultReport.changed, worktree?.dir ?? cwd, t0);
@@ -1616,6 +1707,33 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     worktree,
     timedOut: status.timedOut ? limit?.minutes : undefined,
     beforeHandoff: async (st, rep) => {
+      // Fall-through: a local run that failed its own report is repeated once on the cloud.
+      const why = headless ? fallThroughReason(a.route, st, rep) : null;
+      if (why && a.route) {
+        appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: why });
+        process.stderr.write(`pai worker: ${wid} on ${target.providerName} ended badly (${why}) — re-running on the cloud\n`);
+        return runWorker({
+          providerFlag: ANTHROPIC_NATIVE,
+          label: `${label} (fall-through)`,
+          noPane: a.noPane,
+          mcpFlag: a.mcpFlag,
+          cwd: a.cwd,
+          specPath: a.specPath,
+          parent: a.parent,
+          stage: a.stage,
+          claudeArgs: a.claudeArgs,
+          quiet: a.quiet,
+          worktreeFlag: a.worktreeFlag,
+          className: a.className,
+          _route: { policy: a.route.policy, reason: `fall-through (${why})`, local: false },
+          _fallThroughOf: wid,
+          onWorkerStart: (id2) => {
+            st.fallThroughTo = id2;
+            saveStatus(logDir, st);
+            a.onWorkerStart?.(id2);
+          },
+        });
+      }
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
       }
@@ -1748,6 +1866,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, ledgerPath(logDir));
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 
@@ -1827,7 +1946,8 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  if (paneVerified) status.pane = { opened: true };
+  else void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
   const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {
@@ -2049,7 +2169,7 @@ export async function testProvider(
     const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
     proxyUrl = `${base}/${providerName}`;
   }
-  const env = buildRunEnv(provider, true, proxyUrl);
+  const env = buildRunEnv(provider, true, proxyUrl, providerName);
   const [bin, ...head] = claudeCommand(env, caveman);
   const t0 = Date.now();
   const proc = spawn(

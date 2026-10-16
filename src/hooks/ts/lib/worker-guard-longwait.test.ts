@@ -18,7 +18,6 @@ const RECIPE = "nohup sh -c 'timeout 590 make; sleep 300; echo $? > /tmp/job.rc'
 
 describe("long foreground waits", () => {
   it.each([
-    ["tool timeout 300000", "npm test", 300000],
     ["the real w37274 command", "timeout 590 zsh rounds.sh | tail -40", undefined],
     ["timeout with signal flag", "timeout -s KILL 590 make", undefined],
     ["sleep 300", "sleep 300", undefined],
@@ -40,6 +39,18 @@ describe("long foreground waits", () => {
     ["sleep 30", "sleep 30", undefined],
   ])("allows: %s", (_n, cmd, to) => {
     expect(run(cmd, to).decision).toBe("allow");
+  });
+
+  it("clamps a long tool timeout to 120 s and says so", () => {
+    expect(run("npm test", 300000)).toEqual({
+      decision: "allow",
+      updatedInput: { command: "npm test", timeout: 120000 },
+      context: expect.stringContaining("clamped to 120 s"),
+    });
+  });
+
+  it("still denies a long tool timeout when the command itself is denied", () => {
+    expect(run("sleep 300", 300000).decision).toBe("deny");
   });
 
   it("allows long waits in an interactive session", () => {

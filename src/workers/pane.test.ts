@@ -22,6 +22,9 @@ import {
   checkPaneForWorker,
   dynamicProfilePath,
   followCommand,
+  headlessAllowed,
+  assertPaneNotDisabled,
+  verifyPane,
   followProfile,
   noPaneMessage,
   paneBackend,
@@ -119,8 +122,8 @@ describe("readItermPlist", () => {
 
 describe("followCommand", () => {
   it("is one exec-able line: absolute node on the CLI entry, unquoted wid", () => {
-    const cmd = followCommand("20260918-104952-27763", 60);
-    const suffix = " worker follow 20260918-104952-27763 --auto-exit 60";
+    const cmd = followCommand("20260918-104952-27763");
+    const suffix = " worker follow 20260918-104952-27763";
     expect(cmd.endsWith(suffix)).toBe(true);
     const bin = cmd.slice(0, cmd.length - suffix.length);
     expect(bin.startsWith(`${process.execPath} `)).toBe(true);
@@ -128,11 +131,12 @@ describe("followCommand", () => {
     expect(bin.slice(process.execPath.length + 1)).toMatch(/(^|\/)pai$/);
     expect(cmd).not.toMatch(/^\s/); // a leading space killed the pane at birth
     expect(cmd).not.toMatch(/\bexec\b/); // exec made iTerm fail to run it at all
+    expect(cmd).not.toContain("--auto-exit"); // a finished worker's pane must stay open
   });
 
   it("carries no shell syntax: iTerm execs the split command, not a shell", () => {
     // proven live: `export …; …` and redirects die instantly, plain execs survive
-    const cmd = followCommand("20260918-104952-27763", 60);
+    const cmd = followCommand("20260918-104952-27763");
     expect(cmd).not.toContain(";");
     expect(cmd).not.toContain("export");
     expect(cmd).not.toContain('"'); // quotes would reach execve as literal characters
@@ -243,9 +247,11 @@ describe("iTerm scripts are JXA", () => {
 });
 
 describe("WORKER_SPLIT_SCRIPT window size", () => {
-  it("never sizes the new session (columns/rows grow the whole window)", () => {
+  it("never sets columns; rows are only set by the re-balance, after the split", () => {
     expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.columns\s*=/);
-    expect(WORKER_SPLIT_SCRIPT).not.toMatch(/\.rows\s*=/);
+    const rows = WORKER_SPLIT_SCRIPT.indexOf(".rows = want");
+    expect(rows).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command: followCmd"));
+    expect(rows).toBeLessThan(WORKER_SPLIT_SCRIPT.indexOf("f.w.bounds = winBounds"));
   });
 
   it("captures the bounds as a plain value before the split and restores them verbatim after", () => {
@@ -258,6 +264,54 @@ describe("WORKER_SPLIT_SCRIPT window size", () => {
     expect(restore).toBeGreaterThan(WORKER_SPLIT_SCRIPT.lastIndexOf("command: followCmd"));
     // capture and restore live in the same script (one osascript invocation)
     expect(WORKER_SPLIT_SCRIPT.indexOf("function run(argv)")).toBeLessThan(pin);
+  });
+});
+
+/** Run the real JXA split script against mock sessions; returns what was split and the final rows. */
+function runSplit(host: [number, number], workers: Array<[number, number]>) {
+  const log: string[] = [];
+  type S = { id: () => string; columns: () => number; rows: number | (() => number); splitHorizontally: unknown; splitVertically: unknown; select: () => void };
+  const mk = (id: string, c: number, r: number): S => {
+    const o: S = {
+      id: () => id, columns: () => c, select: () => {}, rows: r as unknown as () => number,
+      splitHorizontally: () => (log.push(`H ${id}`), mkNew()),
+      splitVertically: () => (log.push(`V ${id}`), mkNew()),
+    };
+    // rows is read as a call and assigned as a property: model both
+    let cur = r;
+    Object.defineProperty(o, "rows", { get: () => () => cur, set: (v: number) => { cur = v; } });
+    return o;
+  };
+  const created: S[] = [];
+  const mkNew = () => { const n = mk("new", 228, 10); created.push(n); return n; };
+  const hostS = mk("host", host[0], host[1]);
+  const ws = workers.map((w, i) => mk(`w${i}`, w[0], w[1]));
+  const all = [hostS, ...ws];
+  const win = { bounds: () => ({}), tabs: () => [{ sessions: () => all }] } as unknown as Record<string, unknown>;
+  const app = { running: () => true, windows: () => [win] };
+  const run = new Function("Application", `${WORKER_SPLIT_SCRIPT}; return run;`)(() => app) as (a: string[]) => string;
+  run(["host", ws.map((w) => w.id()).join(","), "cmd", "prof"]);
+  return { log, rows: [...ws, ...created].map((o) => (o.rows as unknown as () => number)()) };
+}
+
+describe("WORKER_SPLIT_SCRIPT split choice and re-balance", () => {
+  it("first worker splits the host vertically", () => {
+    expect(runSplit([166, 47], []).log).toEqual(["V host"]);
+  });
+
+  it("splits the LARGEST worker pane, not the newest", () => {
+    // newest-first order would pick w2 (6 rows); the largest is w0
+    expect(runSplit([166, 47], [[228, 30], [228, 12], [228, 6]]).log).toEqual(["H w0"]);
+  });
+
+  it("adds a column once stacking would drop a pane under the minimum height", () => {
+    expect(runSplit([166, 47], [[228, 14], [228, 14], [228, 14], [228, 14]]).log).toEqual(["V w0"]);
+  });
+
+  it("re-balances stacked panes of one width to equal rows", () => {
+    const r = runSplit([166, 47], [[228, 40], [228, 10], [228, 9]]).rows;
+    expect(new Set(r).size).toBe(1);
+    expect(r[0]).toBeGreaterThanOrEqual(8);
   });
 });
 
@@ -314,5 +368,60 @@ describe("paneBackend", () => {
     expect(paneBackend({ ITERM_SESSION_ID: "w0t0p0:U" }, "linux")).toBe("none");
     expect(paneBackend({}, "darwin")).toBe("none");
     expect(noPaneMessage("w1")).toBe("no pane support here, use: pai worker follow w1");
+  });
+});
+
+describe("fail-closed visibility", () => {
+  const ok = (over: Record<string, unknown> = {}) => ({
+    stdout: JSON.stringify({ window: 7, bounds: [0, 30, 2560, 1410], tab: "1/1", selectedTab: true, onScreen: true, hidden: false, miniaturized: false, rows: 47, cols: 150, tty: "/dev/ttys011", ...over }),
+    stderr: "",
+  });
+  const verify = (over: Record<string, unknown>, running = true) =>
+    verifyPane("H", "P", "w1", async () => ok(over), () => running, 2);
+
+  it("verifies a pane in the host's selected tab, visible (not necessarily front) window, usable size, follow running", async () => {
+    await expect(verify({})).resolves.toContain("window 7");
+  });
+
+  it.each([
+    ["script reports the pane gone", { fail: "pane session P is gone (closed right after opening)" }, "is gone"],
+    ["tab not selected", { selectedTab: false }, "not the selected one"],
+    ["window off screen", { onScreen: false }, "off screen"],
+    ["iTerm2 hidden", { hidden: true }, "hidden"],
+    ["window minimised", { miniaturized: true }, "minimised"],
+    ["collapsed pane", { rows: 2 }, "too small"],
+    ["narrow pane", { cols: 10 }, "too small"],
+  ])("refuses: %s", async (_n, over, why) => {
+    await expect(verify(over)).rejects.toThrow(why);
+  });
+
+  it("refuses when the follow command is not running in the pane", async () => {
+    await expect(verify({}, false)).rejects.toThrow("is not running in the pane");
+  });
+
+  it("waits for a follow process that appears after 2 tries", async () => {
+    let calls = 0;
+    await expect(verifyPane("H", "P", "w1", async () => ok(), () => ++calls > 2, 5, 1)).resolves.toContain("window 7");
+    expect(calls).toBe(3);
+  });
+
+  it("refuses when osascript prints no JSON", async () => {
+    await expect(verifyPane("H", "P", "w1", async () => ({ stdout: "", stderr: "boom" }), () => true, 1)).rejects.toThrow("boom");
+  });
+
+  it("headlessAllowed: only a worker or the operator's file", () => {
+    const none = join(tmpdir(), "pai-no-such-override");
+    expect(headlessAllowed({}, none)).toBeNull();
+    expect(headlessAllowed({ PAI_WORKER: "1" }, none)).toContain("PAI_WORKER=1");
+    expect(headlessAllowed({}, process.execPath)).toContain("operator override file");
+  });
+
+  it("--no-pane and PAI_WORKER_AUTOPANE=0 are refused for a Claude session, allowed for a worker", () => {
+    vi.stubEnv("PAI_HEADLESS_OK_FILE", join(tmpdir(), "pai-no-such-override"));
+    expect(() => assertPaneNotDisabled(true, {})).toThrow("--no-pane refused");
+    expect(() => assertPaneNotDisabled(false, { PAI_WORKER_AUTOPANE: "0" })).toThrow("PAI_WORKER_AUTOPANE=0 refused");
+    expect(() => assertPaneNotDisabled(false, {})).not.toThrow();
+    expect(() => assertPaneNotDisabled(true, { PAI_WORKER: "1" })).not.toThrow();
+    vi.unstubAllEnvs();
   });
 });

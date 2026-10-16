@@ -214,12 +214,16 @@ export function detectSupervisionEvents(
   const isAlive = opts.isAlive ?? alive;
   const deadGraceMs = opts.deadGraceMs ?? 15_000;
   const out: SupervisionEvent[] = [];
+  const present = new Set(statuses.map((s) => s.id));
   for (const s of statuses) {
     const session = ownershipKey(s);
     if (!session) continue;
     // the operator's own pane: ending it is not a worker outcome, idling is
     // not a stall — nothing here is worth a push into anybody's terminal
     if (isChatPane(s)) continue;
+    // a child of another worker reports to that parent (handoff), never to
+    // the operator's session
+    if (s.parent && present.has(s.parent)) continue;
     let kind: SupervisionKind | null = null;
     let rc: number | null = null;
     let stalledMin: number | null = null;
@@ -431,6 +435,24 @@ export function shouldRelay(
   return outputFormat !== "json" && outputFormat !== "stream-json";
 }
 
+/**
+ * Atomic once-only claim of an event id: O_EXCL create of a marker file, so
+ * overlapping ticks (a slow push outlasting the 30 s interval) or several
+ * processes cannot both deliver the same event — the state.json load/save
+ * alone is a read-modify-write race.
+ */
+function claimEvent(logDir: string, ev: SupervisionEvent): boolean {
+  const dir = join(supervisionDirPath(logDir), "claimed");
+  mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSync(join(dir, ev.id.replace(/[^\w.@#-]/g, "_")), ev.ts, { flag: "wx" });
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw e;
+  }
+}
+
 function appendEventFile(logDir: string, ev: SupervisionEvent): void {
   const path = supervisionEventsPath(logDir, ev.session);
   const dir = supervisionDirPath(logDir);
@@ -512,6 +534,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
 
   const written: SupervisionEvent[] = [];
   for (const ev of pending) {
+    if (!claimEvent(logDir, ev)) continue; // another tick/process owns this event
     appendEventFile(logDir, ev);
     written.push(ev);
   }

@@ -24,7 +24,7 @@ pai worker run --label "short task label" --class research \\
   adds a review pass. \`--class spotcheck\` for verification runs.
 - Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads automatically).
 - The answer is in the \`result\` field of the JSON it prints. Review the diff yourself.
-- \`--no-pane\` suppresses the iTerm follow pane; panes open automatically otherwise.
+- Every worker opens a verified, visible iTerm follow pane before it starts (no verified pane, no worker); \`--no-pane\` is refused.
 - \`--agent <name>\` runs a definition from ~/.claude/agents/<name>.md (the agent
   library runs on workers: body becomes the system prompt, tools the allowlist,
   model the class).

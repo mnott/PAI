@@ -135,7 +135,7 @@ export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promis
       ...containmentArgs(logDir),
       "-p", "--no-session-persistence",
     ],
-    env: buildRunEnv(provider, true, proxyUrl),
+    env: buildRunEnv(provider, true, proxyUrl, providerName),
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: providerName,
   };

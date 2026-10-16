@@ -30,13 +30,15 @@ import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../../workers/w
 import { readSpecPrompt, resolveSpecPath } from "../../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../../workers/agents.js";
 import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../../workers/viewer.js";
-import { openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes, resolveHostSession } from "../../../workers/pane.js";
+import { assertPaneNotDisabled, openFollowPane, openPaneForWorker, checkPaneForWorker, closeEndedPanes, resolveHostSession } from "../../../workers/pane.js";
 import { installWorkers } from "../../../workers/install.js";
 import { setWorkersEnabled } from "../../../workers/providers.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../../../workers/fallback.js";
 import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./providers.js";
 import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerCapabilityCommand } from "./capability.js";
+import { registerWorkerPolicyCommand } from "./policy.js";
+import { registerWorkerBenchCommand } from "./bench.js";
 import { registerWorkerConfigCommands } from "./config.js";
 import { registerWorkerLocalCommand } from "./local.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
@@ -101,11 +103,14 @@ export function registerWorkerCommands(workerCmd: Command): void {
       "Override the model for this run. Headless (-p) workers default to the --class model; " +
         "an interactive launch (no -p) with no --model uses the harness default model from settings.json."
     )
+    .option("--urgent", "Wants a fast turnaround: under policy auto/prefer-local the run goes to the cloud (see `pai worker policy`)")
+    .option("--local-ok", "This run may go to a local provider under policy prefer-cloud")
+    .option("--cloud", "This run goes to the cloud under policy prefer-local/auto")
     .option("--label <text>", "Short task label shown in ps / follow / status line (default: first line of the prompt)")
     .option("--spec <path>", "Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p")
     .option("--cwd <dir>", "Directory the worker runs in (default: this process's cwd)")
     .option("--mcp <names>", "MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`)")
-    .option("--no-pane", "Do not open a follow pane for this worker")
+    .option("--no-pane", "Refused unless run by a worker or the operator override file exists: every worker runs behind a visible pane")
     .option("--worktree", "Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo)")
     .option("--no-worktree", "Run in place, no worktree")
     .option("--max-minutes <n>", "Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60, headless runs only: interactive launches have no limit)", parseMinutesArg)
@@ -143,6 +148,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           out?: string;
           size?: string;
           timeoutMs?: number;
+          urgent?: boolean;
+          localOk?: boolean;
+          cloud?: boolean;
         }
       ) => {
         try {
@@ -171,6 +179,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
             if (hint) process.stderr.write(hint + "\n");
           }
 
+          assertPaneNotDisabled(opts.pane === false);
           let label = opts.label;
           let agentClass: string | undefined;
           if (opts.agent) {
@@ -215,6 +224,9 @@ export function registerWorkerCommands(workerCmd: Command): void {
           }
           const rc = await runWorker({
             providerFlag: opts.provider,
+            urgent: opts.urgent,
+            localOk: opts.localOk,
+            cloud: opts.cloud,
             className: className ?? agentClass,
             modelFlag: opts.model,
             label,
@@ -694,7 +706,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
     .command("resume <id> <text>")
     .description("Continue a finished worker on the same provider: claude --resume <session>")
     .option("--print-id", "Print the new worker id on its own line (pane follow handoff)")
-    .option("--no-pane", "Do not open a follow pane for the resumed worker")
+    .option("--no-pane", "Refused unless run by a worker or the operator override file exists")
     .option("--output-format <fmt>", "text (default), json or stream-json — same as `run`")
     .option("--label <text>", "Short task label (default: \"↩ <old label>\")")
     .action(
@@ -704,6 +716,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
         opts: { printId?: boolean; pane?: boolean; outputFormat?: string; label?: string }
       ) => {
         try {
+          assertPaneNotDisabled(opts.pane === false);
           const logDir = currentLogDir();
           const old = loadStatus(logDir, id);
           if (!old) {
@@ -888,6 +901,8 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerClassCommands(workerCmd);
   registerWorkerModelCommand(workerCmd);
   registerWorkerCapabilityCommand(workerCmd);
+  registerWorkerPolicyCommand(workerCmd);
+  registerWorkerBenchCommand(workerCmd);
   registerWorkerConfigCommands(workerCmd);
   registerWorkerLocalCommand(workerCmd);
 }

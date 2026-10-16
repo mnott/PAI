@@ -1,0 +1,130 @@
+task	result	verdict	build_rc	test_rc	files(in-fix/fix+extra)	lines(arm/fix)	wall_min	turns	tokens	forbidden	graded
+diagnose-growth	fix	pass	-	facts 7/7	-	-	-	-	-	-	2026-10-14T19:19
+diagnose-growth	parent	fail	-	facts 0/7	-	-	-	-	-	-	2026-10-14T19:19
+view-decimals	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T19:20
+box-press	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T19:24
+box-press	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T19:28
+log-size	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T19:42
+view-decimals	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T19:43
+log-size	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T19:57
+save-model-ref	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T20:04
+diagnose-growth	diagnose-growth-anthropic-195624	fail	-	facts 5/7	0/3+0	0/65	2.4	?	806032	none	2026-10-14T20:12
+diagnose-growth	diagnose-growth-local-195625	fail	-	facts 0/7	0/3+0	0/65	15.0	?	?	no-replay	2026-10-14T20:12
+diagnose-growth	diagnose-growth-local30-195627	fail	-	facts 3/7	0/3+0	0/65	15.0	?	?	no-replay	2026-10-14T20:12
+merge-3d	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T20:13
+save-model-ref	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T20:19
+box-press	box-press-anthropic-195620	fail	0	1	1/1+0	5/5	0.6	?	105991	none	2026-10-14T20:21
+box-press	box-press-local30-195623	pass	0	0	1/1+0	3/5	7.6	?	1703	none	2026-10-14T20:27
+box-press	box-press-local-195621	pass	0	0	1/1+0	5/5	25.0	?	?	no-replay	2026-10-14T20:27
+merge-3d	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T20:36
+view-decimals	view-decimals-local30-201416	fail	0	1	1/1+0	10/9	6.7	?	4926	none	2026-10-14T20:38
+ink-baked	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T20:46
+ink-baked	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T20:47
+lost-3dd	fix	pass	0	0	-	-	-	-	-	-	2026-10-14T20:49
+log-size	log-size-anthropic-202850	pass	0	0	1/1+0	4/3	2.2	?	227973	none	2026-10-14T20:51
+lost-3dd	parent	fail	0	1	-	-	-	-	-	-	2026-10-14T20:51
+log-size	log-size-local30-202852	fail	0	1	1/1+0	6/3	8.5	?	6413	none	2026-10-14T20:53
+box-press	box-press-anthropic-195620	pass	0	0	1/1+0	5/5	0.6	?	105991	none	2026-10-14T21:03
+view-decimals	view-decimals-anthropic-201415	pass	0	0	1/1+0	9/9	12.1	?	428149	none	2026-10-14T21:23
+ink-baked	ink-baked-anthropic-205240	pass	0	0	1/1+0	22/20	3.5	?	493800	none	2026-10-14T21:32
+ink-baked	ink-baked-local30-205243	fail	apply	-	0/1+0	0/20	25.0	?	?	no-replay	2026-10-14T21:32
+view-decimals	view-decimals-local-201422	fail	0	1	1/1+0	13/9	13.3	?	8207	none	2026-10-14T21:41
+lost-3dd	lost-3dd-anthropic-205246	fail	0	1	3/3+2	97/125	35.4	?	3137868	none	2026-10-14T21:42
+lost-3dd	lost-3dd-local30-205249	fail	0	1	0/3+0	0/125	40.0	?	?	no-replay	2026-10-14T21:54
+box-press	box-press-anthropic-213046	pass	0	0	0/1+2	22/5	15.0	?	884146	none	2026-10-14T22:01
+box-press	box-press-gptoss-215603	fail	apply	-	0/1+0	0/5	0.6	?	138	none	2026-10-14T22:02
+box-press	box-press-local30-213254	fail	0	1	0/1+1	4/5	21.4	?	4407	none	2026-10-14T22:08
+box-press	box-press-local30-215538	fail	apply	-	0/1+0	0/5	8.0	?	541	none	2026-10-14T22:08
+diagnose-growth	diagnose-growth-anthropic-214659	pass	-	facts 6/7	0/3+0	0/65	2.1	?	400866	none	2026-10-14T22:08
+diagnose-growth	diagnose-growth-local30-214928	fail	-	facts 0/7	0/3+0	0/65	4.9	?	45	none	2026-10-14T22:09
+ink-baked	ink-baked-local30-215447	fail	apply	-	0/1+0	0/20	8.0	?	935	none	2026-10-14T22:09
+diagnose-growth	diagnose-growth-local30-220257	fail	-	facts 5/7	0/3+0	0/65	15.1	?	?	no-replay	2026-10-14T22:20
+log-size	log-size-local30-213630	fail	apply	-	0/1+0	0/3	15.1	?	?	no-replay	2026-10-14T22:21
+log-size	log-size-local30-215721	fail	apply	-	0/1+0	0/3	6.3	?	307	none	2026-10-14T22:21
+log-size	log-size-anthropic-213604	pass	0	0	1/1+0	3/3	10.6	?	334050	none	2026-10-14T22:23
+log-size	log-size-local30-220522	fail	0	1	1/1+0	2/3	15.0	?	?	no-replay	2026-10-14T22:39
+box-press	box-press-local30-220456	fail	0	1	0/1+1	4/5	25.1	?	?	no-replay	2026-10-14T22:43
+diagnose-growth	diagnose-growth-local30-223011	fail	-	facts 4/7	0/3+0	0/65	11.7	?	2111	none	2026-10-14T22:43
+ink-baked	ink-baked-local30-220406	fail	0	1	0/1+0	0/20	25.1	?	?	no-replay	2026-10-14T23:02
+box-press	box-press-local30-222033	fail	0	1	0/1+1	4/5	25.0	?	?	no-replay	2026-10-14T23:11
+box-press	box-press-local30-225057	fail	0	1	0/1+1	4/5	19.6	?	3016	none	2026-10-14T23:16
+box-press	box-press-local30-225032	fail	apply	-	0/1+0	0/5	25.0	?	?	no-replay	2026-10-14T23:16
+log-size	log-size-local30-225123	fail	apply	-	0/1+0	0/3	15.0	?	?	no-replay	2026-10-14T23:32
+lost-3dd	lost-3dd-local30-215513	fail	apply	-	0/3+0	0/125	8.5	?	663	none	2026-10-14T23:32
+ink-baked	ink-baked-local30-222925	fail	0	1	0/1+0	0/20	25.0	?	?	no-replay	2026-10-14T23:33
+lost-3dd	lost-3dd-local30-220431	fail	0	1	1/3+0	4/125	40.0	?	?	no-replay	2026-10-14T23:45
+box-press	box-press-qwen36-231811	fail	apply	-	0/1+0	0/5	25.0	?	?	no-replay	2026-10-14T23:45
+merge-3d	merge-3d-anthropic-225006	fail	0	0	0/13+0	0/440	0.4	?	40217	none	2026-10-15T00:17
+box-press	box-press-qwen36-234333	fail	apply	-	0/1+0	0/5	25.1	?	?	no-replay	2026-10-15T00:17
+diagnose-growth	diagnose-growth-qwen36-000300	fail	-	facts 0/7	0/3+0	0/65	6.7	?	1104	none	2026-10-15T00:17
+diagnose-growth	diagnose-growth-qwen36-234121	fail	-	facts 0/7	0/3+0	0/65	15.1	?	?	no-replay	2026-10-15T00:18
+ink-baked	ink-baked-qwen36-233741	fail	apply	-	0/1+0	0/20	25.0	?	?	no-replay	2026-10-15T00:18
+ink-baked	ink-baked-qwen36-235656	fail	apply	-	0/1+0	0/20	10.4	?	2118	none	2026-10-15T00:19
+log-size	log-size-qwen36-233205	fail	apply	-	0/1+0	0/3	15.1	?	?	no-replay	2026-10-15T00:19
+log-size	log-size-qwen36-234525	fail	apply	-	0/1+0	0/3	15.1	?	?	no-replay	2026-10-15T00:19
+lost-3dd	lost-3dd-qwen36-233807	fail	apply	-	0/3+0	0/125	8.4	?	1331	none	2026-10-15T00:20
+merge-3d	merge-3d-anthropic-230650	fail	0	0	13/13+0	436/440	28.1	?	578085	none	2026-10-15T00:28
+merge-3d	merge-3d-local30-231044	fail	1	-	13/13+0	440/440	26.8	?	3458	none	2026-10-15T00:29
+merge-3d	merge-3d-anthropic-230650	pass	0	0	13/13+0	436/440	28.1	?	578085	none	2026-10-15T00:51
+merge-3d	merge-3d-local30-231044	fail	1	-	13/13+0	440/440	26.8	?	3458	none	2026-10-15T00:54
+merge-3d	merge-3d-local30-231459	fail	0	0	0/13+0	0/440	22.3	?	4923	none	2026-10-15T00:59
+box-press	box-press-qwen36-002053	fail	apply	-	0/1+0	0/5	25.1	?	?	no-replay	2026-10-15T00:59
+diagnose-growth	diagnose-growth-qwen36-003702	fail	-	facts 0/7	0/3+0	0/65	14.5	?	1010	none	2026-10-15T01:00
+ink-baked	ink-baked-qwen36-002118	fail	apply	-	0/1+0	0/20	25.1	?	?	no-replay	2026-10-15T01:00
+log-size	log-size-local30-spec-005453	fail	apply	-	0/1+0	0/3	0.7			no-replay	2026-10-15T01:00
+log-size	log-size-qwen36-002144	fail	apply	-	0/1+0	0/3	15.1	?	?	no-replay	2026-10-15T01:01
+log-size	log-size-qwen36-spec-005450	fail	apply	-	0/1+0	0/3	0.8			no-replay	2026-10-15T01:01
+log-size	log-size-local30-004640	fail	apply	-	0/1+0	0/3	15.1	?	?	no-replay	2026-10-15T01:02
+lost-3dd	lost-3dd-qwen36-000051	fail	0	1	0/3+0	0/125	40.0	?	?	no-replay	2026-10-15T01:09
+box-press	box-press-local30-004230	pass	0	0	0/1+1	6/5	25.1	?	?	no-replay	2026-10-15T01:15
+merge-3d	merge-3d-local30-231459	fail	0	0	0/13+0	0/440	22.3	?	4923	none	2026-10-15T01:19
+ink-baked	ink-baked-local30-004612	fail	0	1	0/1+0	0/20	25.1	?	?	no-replay	2026-10-15T01:22
+box-press	box-press-local30-005158	fail	0	1	0/1+1	6/5	25.1	?	?	no-replay	2026-10-15T01:27
+log-size	log-size-qwen36-spec-005450	void	-	-	-	-	-	-	-	not-started	2026-10-15T01:48
+log-size	log-size-local30-spec-005453	void	-	-	-	-	-	-	-	not-started	2026-10-15T01:48
+view-decimals	view-decimals-local30-spec-005447	void	-	-	-	-	-	-	-	not-started	2026-10-15T01:48
+view-decimals	view-decimals-qwen36-spec-005444	void	-	-	-	-	-	-	-	not-started	2026-10-15T01:48
+box-press	box-press-local30-spec-005441	pass	0	0	0/1+1	8/5	25.2	?	3608	none	2026-10-15T01:48
+box-press	box-press-qwen36-spec-005438	pass	0	0	0/1+1	2/5	25.1	?	?	no-replay	2026-10-15T02:05
+box-press	box-press-anthropic-spec-014844	pass	0	0	0/1+3	39/5	15.3	?	1271031	none	2026-10-15T02:12
+box-press	box-press-local30-spec-005255	void	-	-	-	-	-	-	-	not-started	2026-10-15T02:12
+box-press	box-press-local30-spec-015323	fail	0	1	0/1+1	2/5	10.8	?	4656	none	2026-10-15T02:29
+box-press	box-press-qwen36-spec-014909	fail	0	1	0/1+2	12/5	25.0	?	?	no-replay	2026-10-15T02:33
+log-size	log-size-anthropic-spec-022052	pass	0	0	1/1+0	4/3	2.5	?	198012	none	2026-10-15T02:49
+log-size	log-size-local30-spec-022452	fail	0	1	1/1+0	1/3	9.6	?	11093	none	2026-10-15T02:51
+log-size	log-size-qwen36-spec-022345	fail	apply	-	0/1+0	0/3	15.0	?	?	no-replay	2026-10-15T02:51
+save-model-ref	save-model-ref-anthropic-spec-022518	pass	0	0	1/3+1	50/65	20.5	?	2151673	none	2026-10-15T03:17
+lost-3dd	lost-3dd-anthropic-spec-024608	pass	0	0	3/3+1	82/125	14.8	?	1512106	none	2026-10-15T03:29
+diagnose-growth	diagnose-growth-anthropic-spec-032812	pass	-	facts 7/7	0/3+0	0/65	1.1	?	246125	none	2026-10-15T03:30
+ink-baked	ink-baked-anthropic-spec-030421	pass	0	0	1/1+0	22/20	16.6	?	1046532	none	2026-10-15T03:46
+diagnose-growth	diagnose-growth-qwen36-spec-032942	fail	-	facts 0/7	0/3+0	0/65	15.0	?	?	no-replay	2026-10-15T03:47
+ink-baked	ink-baked-local30-spec-032231	fail	0	1	0/1+1	5/20	23.6	?	8053	none	2026-10-15T03:51
+diagnose-growth	diagnose-growth-local30-spec-034128	fail	-	facts 5/7	0/3+0	0/65	7.6	?	4626	none	2026-10-15T03:52
+ink-baked	ink-baked-qwen36-spec-032123	fail	apply	-	0/1+0	0/20	6.4	?	3168	none	2026-10-15T03:52
+lost-3dd	lost-3dd-local30-spec-030355	fail	0	1	1/3+0	6/125	18.1	?	11234	none	2026-10-15T04:01
+lost-3dd	lost-3dd-qwen36-spec-030103	fail	apply	-	0/3+0	0/125	40.0	?	?	no-replay	2026-10-15T04:01
+save-model-ref	save-model-ref-local30-spec-023902	fail	0	1	1/3+0	13/65	24.4	?	8889	none	2026-10-15T04:24
+log-size	log-size-local30-spec-035705	pass	0	0	1/1+0	3/3	9.2	?	5750	none	2026-10-15T04:40
+log-size	log-size-qwen36-spec-035037	fail	apply	-	0/1+0	0/3	15.0	?	?	no-replay	2026-10-15T04:40
+save-model-ref	save-model-ref-local30-spec-040625	fail	1	-	1/3+0	88/65	18.1	?	9357	none	2026-10-15T04:41
+save-model-ref	save-model-ref-qwen36-spec-023449	fail	apply	-	0/3+0	0/65	29.0	?	29467	none	2026-10-15T04:42
+view-decimals	view-decimals-anthropic-spec-020415	fail	0	1	0/1+3	8/9	16.5	?	1170489	none	2026-10-15T05:00
+lost-3dd	lost-3dd-qwen36-spec-041021	fail	apply	-	0/3+0	0/125	40.0	?	?	no-replay	2026-10-15T05:01
+save-model-ref	save-model-ref-qwen36-spec-040559	fail	apply	-	0/3+0	0/65	40.0	?	?	no-replay	2026-10-15T05:01
+view-decimals	view-decimals-local30-spec-021430	fail	0	1	0/1+1	17/9	10.4	?	3968	none	2026-10-15T05:11
+lost-3dd	lost-3dd-local30-spec-042557	fail	0	1	0/3+0	0/125	40.1	?	?	no-replay	2026-10-15T05:23
+diagnose-growth	diagnose-growth-local30-spec-051154	fail	-	facts 5/7	0/3+0	0/65	8.2	?	3877	none	2026-10-15T05:24
+diagnose-growth	diagnose-growth-qwen36-spec-050610	fail	-	facts 0/7	0/3+0	0/65	15.0	?	?	no-replay	2026-10-15T05:24
+ink-baked	ink-baked-local30-spec-045036	fail	0	1	0/1+1	31/20	25.0	?	?	no-replay	2026-10-15T05:35
+ink-baked	ink-baked-qwen36-spec-044640	fail	apply	-	0/1+0	0/20	25.0	?	?	no-replay	2026-10-15T05:35
+view-decimals	view-decimals-local30-spec-035010	fail	0	1	0/1+1	12/9	20.0	?	?	no-replay	2026-10-15T05:47
+box-press	box-press-local30-spec-051554	fail	0	1	0/1+1	2/5	20.0	?	6530	none	2026-10-15T05:52
+box-press	box-press-local30-spec-052121	fail	apply	-	0/1+0	0/5	21.4	?	10026	none	2026-10-15T05:52
+box-press	box-press-qwen36-spec-052034	fail	apply	-	0/1+0	0/5	25.0	?	?	no-replay	2026-10-15T05:52
+view-decimals	view-decimals-qwen36-spec-020440	fail	apply	-	0/1+0	0/9	20.0	?	?	no-replay	2026-10-15T05:53
+view-decimals	view-decimals-qwen36-spec-034507	fail	apply	-	0/1+0	0/9	11.7	?	5122	none	2026-10-15T05:53
+log-size	log-size-local30-spec-054312	pass	0	0	1/1+0	3/3	15.0	?	?	no-replay	2026-10-15T06:10
+box-press	box-press-qwen36-spec-053623	fail	apply	-	0/1+0	0/5	25.1	?	?	no-replay	2026-10-15T06:11
+log-size	log-size-qwen36-spec-055827	fail	apply	-	0/1+0	0/3	15.0	?	?	no-replay	2026-10-15T06:13
+ink-baked	ink-baked-local30-spec-060201	fail	0	1	0/1+1	1/20	19.5	?	8889	none	2026-10-15T06:26
+save-model-ref	save-model-ref-local30-spec-054544	fail	apply	-	0/3+0	0/65	40.0	?	?	no-replay	2026-10-15T06:26

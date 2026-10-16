@@ -81,7 +81,7 @@ async function main(): Promise<void> {
   }
 
   const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));
-  if (decision.decision === "deny") process.stdout.write(renderDecision(decision) + "\n");
+  if (decision.decision === "deny" || decision.updatedInput) process.stdout.write(renderDecision(decision) + "\n");
 }
 
 main().catch(() => process.exit(0));

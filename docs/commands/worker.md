@@ -50,6 +50,8 @@ pai worker <subcommand> [options]
 | [`pai worker classes`](#pai-worker-classes) | Classes: which provider serves draft / implement / review / … |
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
 | [`pai worker capability [name] [providers]`](#pai-worker-capability-name-providers) | Which provider(s) serve a capability (e.g. image), independent of any one |
+| [`pai worker policy [mode]`](#pai-worker-policy-mode) | Where workers run. No mode shows the policy; a mode sets it; `clear` removes it |
+| [`pai worker bench`](#pai-worker-bench) | A/B providers on a suite of real tasks: per task × provider × repeat run the suite's run.sh, then grade.sh; |
 | [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check, inline-keys |
 | [`pai worker local <target>`](#pai-worker-local-target) | Switch the one running local model server: <tier> (stop all, start that tier), |
 
@@ -90,11 +92,14 @@ Grant MCP tools by naming mcp__server__tool in --allowedTools (the server loads 
 | `--chain <stages>` | Comma-separated stage classes, e.g. draft,implement or draft,implement,review |  |
 | `--agent <name>` | Run the agent definition ~/.claude/agents/<name>.md on a worker |  |
 | `--model <model>` | Override the model for this run. Headless (-p) workers default to the --class model; an interactive launch (no -p) with no --model uses the harness default model from settings.json. |  |
+| `--urgent` | Wants a fast turnaround: under policy auto/prefer-local the run goes to the cloud (see `pai worker policy`) |  |
+| `--local-ok` | This run may go to a local provider under policy prefer-cloud |  |
+| `--cloud` | This run goes to the cloud under policy prefer-local/auto |  |
 | `--label <text>` | Short task label shown in ps / follow / status line (default: first line of the prompt) |  |
 | `--spec <path>` | Read the prompt from this file (or - for stdin) instead of -p; mutually exclusive with -p |  |
 | `--cwd <dir>` | Directory the worker runs in (default: this process's cwd) |  |
 | `--mcp <names>` | MCP servers/sets this worker may use (comma-separated; see `pai worker mcp`) |  |
-| `--no-pane` | Do not open a follow pane for this worker |  |
+| `--no-pane` | Refused unless run by a worker or the operator override file exists: every worker runs behind a visible pane |  |
 | `--worktree` | Run in a git worktree on branch worker/<id> (default for implement/complex/plan in a git repo) |  |
 | `--no-worktree` | Run in place, no worktree |  |
 | `--max-minutes <n>` | Stop the run after n minutes, salvaging its work (0 = no limit; default workers.defaultMaxMinutes, 60, headless runs only: interactive launches have no limit) |  |
@@ -396,7 +401,7 @@ Continue a finished worker on the same provider: claude --resume <session>
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--print-id` | Print the new worker id on its own line (pane follow handoff) |  |
-| `--no-pane` | Do not open a follow pane for the resumed worker |  |
+| `--no-pane` | Refused unless run by a worker or the operator override file exists |  |
 | `--output-format <fmt>` | text (default), json or stream-json — same as `run` |  |
 | `--label <text>` | Short task label (default: "↩ <old label>") |  |
 
@@ -692,6 +697,53 @@ removes it. An `engine: image` provider preferred for "image" runs
 | `--json` | Machine-readable output |  |
 
 
+### pai worker policy [mode]
+
+Where workers run. No mode shows the policy; a mode sets it; `clear` removes it
+
+(class/active routing as before).
+  cloud-only    never local (battery, on the road)
+  local-only    never cloud (conserve tokens); fails if no local server answers
+  prefer-local  local first; a local run with a bad report is repeated once on the cloud
+  prefer-cloud  cloud first (fast turnaround); local only when the cloud is unavailable
+  auto          prefer-local, but cloud on battery and for an --urgent run
+Per run: --urgent, --local-ok, --cloud; --provider beats the policy.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[mode]` | optional |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--for <duration>` | Expire the policy after 30m, 2h, 1d … |  |
+
+
+### pai worker bench
+
+A/B providers on a suite of real tasks: per task × provider × repeat run the suite's run.sh, then grade.sh;
+
+prints pass/total, median wall and turns per provider × prompt and writes <suite>/results.md.
+Providers are passed explicitly per arm (a measurement ignores `pai worker policy`).
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--suite <dir>` | Suite directory with run.sh, grade.sh and tasks/<name>/ |  |
+| `--providers <list>` | Comma-separated providers, e.g. anthropic,local30 |  |
+| `--tasks <list>` | Comma-separated task names (default: all) |  |
+| `--prompt <kind>` | Prompt file kind: task\|spec\|precise | `task` |
+| `--repeat <n>` | Runs per task × provider | `1` |
+| `--max-parallel <n>` | Arms running at once | `3` |
+| `--max-load <n>` | Start no arm while the 1-minute load average is above this | `60` |
+| `--dry-run` | Print the arm plan only |  |
+| `--report` | Aggregate the suite's existing rows.tsv into results.md; run nothing |  |
+
+
 ### pai worker config
 
 workers.yaml itself: path, init, migrate, check, inline-keys
@@ -766,6 +818,36 @@ Does not change worker routing.
 |--------|-------------|---------|
 | `--dry-run` | Print the exact commands without starting or stopping anything |  |
 
+## Examples
+
+```bash
+# Where do workers run? One persistent switch (stored in <logDir>/routing-policy.json)
+pai worker policy                 # show the policy and the route a plain run takes now
+pai worker policy prefer-local    # local first, cloud when local is down or its report fails
+pai worker policy cloud-only --for 2h   # on the road: never local, back to normal after 2 h
+pai worker policy clear           # no policy: class/active routing as before
+
+# Per run (--provider still beats the policy)
+pai worker run --urgent --class implement --spec task.txt    # fast turnaround -> cloud
+pai worker run --cloud ...        # this run to the cloud under prefer-local/auto
+pai worker run --local-ok ...     # this run may go local under prefer-cloud
+```
+
+**Routing policy.** `cloud-only` never uses a local provider; `local-only` never uses the cloud
+and fails when no local server answers; `prefer-local` tries the first enabled loopback provider
+(one `/v1/models` ping, 4 s: a busy server answers slowly) and uses the cloud when none answers or none is configured;
+`prefer-cloud` uses the cloud and goes local only when the cloud is in cooldown or over its quota
+(or on `--local-ok`); `auto` is `prefer-local`, but cloud on battery (`pmset -g batt`) and for an
+`--urgent` run. The chosen route and its reason (`policy prefer-local`, `battery`, `urgent`,
+`local down`, `no local provider`, `fall-through (…)`) are stored in the worker status and shown
+by `pai worker ps`.
+
+**Fall-through.** Under every policy but `local-only`, a local run whose report is invalid, was
+downgraded by the proof check (`claimed proof not run`), is `r=-` or `r=!`, ended without a
+report, or hit its max-minutes is repeated once on the cloud as a new worker labelled
+`… (fall-through)`. The two statuses link each other (`fell through to <id>`, `fall-through of
+<id>`). Local models are right when the spec names cause and owner; for diagnosis from symptoms
+use `--cloud` or `--provider`.
 
 ## See also
 
