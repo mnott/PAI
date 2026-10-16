@@ -102,6 +102,8 @@ ${stripFrontmatter(coreContent)}
         `Edit/Write on code files is denied in this session by policy (only .md/.txt and Notes/ are editable). ` +
         `For any code change: write a spec file, then ` +
         `\`pai worker run --class implement -p "$(cat <spec>)"\`.\n` +
+        `Worker tool-error alerts are classified: [harness] → stop runs it spoils, fix the cause in PAI/AIBroker, prove it, commit; ` +
+        `[model] → counts against the model, stop the run if it loops; [unknown] → inspect. Details: \`pai worker errors\`.\n` +
         `</system-reminder>`
     );
 

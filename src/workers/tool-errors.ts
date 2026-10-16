@@ -35,6 +35,57 @@ const RAW_MAX = 300;
 const INPUT_MAX = 200;
 const TAIL_BYTES = 400_000;
 
+export type ErrorClass = "harness" | "model" | "unknown";
+
+export interface Classification {
+  cls: ErrorClass;
+  /** One-line hint naming what the error is. */
+  hint: string;
+  /** Model-only: same-worker count that makes it an alert (Infinity = never). */
+  loopAt?: number;
+}
+
+const cwdOf = (raw: string): string | undefined => raw.match(/working directory (?:is )?(\/[^\s"'`),;]*)/i)?.[1]?.replace(/[.]+$/, "");
+const inputPath = (r: ToolErrorRecord): string | undefined => r.input?.split(" ")[0];
+
+/**
+ * Deterministic classification, first match wins. The one table to extend:
+ * model rules are recorded but alert only at loopAt (Infinity: never);
+ * harness rules alert at the usual thresholds; anything else is unknown.
+ */
+const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
+  { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
+  {
+    test: (r) => {
+      const cwd = cwdOf(r.raw), p = inputPath(r);
+      return r.tool === "Read" && /File does not exist/i.test(r.raw) && !!cwd && !!p && (p === cwd || p.startsWith(cwd + "/"));
+    },
+    c: { cls: "model", hint: "Read of a missing file inside the worker cwd", loopAt: Infinity },
+  },
+  { test: (r) => /exactly the same|String to replace not found/i.test(r.raw), c: { cls: "model", hint: "Edit with a wrong old_string", loopAt: 5 } },
+  { test: (r) => /no AI attribution/i.test(r.raw), c: { cls: "model", hint: "commit guard: AI attribution denied", loopAt: 3 } },
+  { test: (r) => /git checkout .*blocked|checkout .* blocked/i.test(r.raw), c: { cls: "model", hint: "guard: git checkout blocked", loopAt: 3 } },
+  { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
+  { test: (r) => /Bash timeout .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: Bash timeout blocked", loopAt: 3 } },
+  {
+    test: (r) => {
+      if (!/hook error/i.test(r.raw)) return false;
+      const cwd = cwdOf(r.raw);
+      const paths = r.raw.match(/(?:^|[\s(=:])(\/[^\s"'`),;]+)/g)?.map((x) => x.replace(/^[\s(=:]+/, "")) ?? [];
+      return paths.some((p) => (!cwd || !(p === cwd || p.startsWith(cwd + "/"))) && existsSync(p));
+    },
+    c: { cls: "harness", hint: "hook error on an existing path outside the worker cwd" },
+  },
+  { test: (r) => /Working directory .* was deleted/i.test(r.raw), c: { cls: "harness", hint: "worker cwd deleted" } },
+  { test: (r) => /Failed to authenticate|API Error|\b(401|500)\b/.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
+  { test: (r) => /No such tool available/i.test(r.raw), c: { cls: "harness", hint: "tool missing in the worker" } },
+  { test: (r) => /\b5\d\d\b/.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
+];
+
+export function classifyToolError(r: ToolErrorRecord): Classification {
+  return RULES.find((x) => x.test(r))?.c ?? { cls: "unknown", hint: "unclassified" };
+}
+
 export function toolErrorsPath(logDir: string): string {
   return join(logDir, TOOL_ERRORS_FILE);
 }
@@ -124,14 +175,21 @@ export interface ToolErrorGroup {
   sampleInput?: string;
   /** The worker with the newest record. */
   lastWorker: string;
+  cls: ErrorClass;
+  hint: string;
 }
+
+const pick = (r: ToolErrorRecord) => {
+  const { cls, hint } = classifyToolError(r);
+  return { cls, hint };
+};
 
 export function groupToolErrors(records: ToolErrorRecord[]): ToolErrorGroup[] {
   const m = new Map<string, ToolErrorGroup>();
   for (const r of records) {
     let g = m.get(r.signature);
     if (!g) {
-      g = { signature: r.signature, count: 0, workers: [], providers: [], first: r.ts, last: r.ts, sample: r.raw, sampleInput: r.input, lastWorker: r.worker };
+      g = { signature: r.signature, count: 0, workers: [], providers: [], first: r.ts, last: r.ts, sample: r.raw, sampleInput: r.input, lastWorker: r.worker, ...pick(r) };
       m.set(r.signature, g);
     }
     g.count += 1;
@@ -165,10 +223,19 @@ export function detectToolErrors(
   for (const [sig, all] of bySig) {
     if (now - (sent[sig] ?? 0) < RESEND_MS) continue;
     // records at or before the last alert were already reported
-    const recs = all.filter((r) => r.ts > (sent[sig] ?? 0));
+    const recs = all.filter((r) => r.ts > (sent[sig] ?? 0) && classifyToolError(r).loopAt !== Infinity);
     if (!recs.length) continue;
+    const loopAt = classifyToolError(recs[0]).loopAt;
     const perWorker = new Map<string, number>();
     for (const r of recs) if (now - r.ts <= SAME_WORKER_WINDOW_MS) perWorker.set(r.worker, (perWorker.get(r.worker) ?? 0) + 1);
+    if (loopAt !== undefined) {
+      // model-only: alert just when one worker loops on it
+      const n = Math.max(0, ...perWorker.values());
+      if (n < loopAt) continue;
+      sent[sig] = now;
+      out.push(groupToolErrors(recs)[0]);
+      continue;
+    }
     const a = [...perWorker.values()].some((n) => n >= SAME_WORKER_MIN);
     const recent = recs.filter((r) => now - r.ts <= CROSS_WORKER_WINDOW_MS);
     const b = new Set(recent.map((r) => r.worker)).size >= CROSS_WORKER_MIN;
@@ -182,7 +249,11 @@ export function detectToolErrors(
 }
 
 export function toolErrorText(g: ToolErrorGroup): string {
-  return `systematic error ${g.signature} ×${g.count} in ${g.workers.join(",")} — sample: ${g.sample}${g.sampleInput ? ` (input: ${g.sampleInput})` : ""}`;
+  const what = `${g.signature} ×${g.count} in ${g.workers.join(",")} — sample: ${g.sample}${g.sampleInput ? ` (input: ${g.sampleInput})` : ""}`;
+  const tail = "harness → stop runs it spoils, fix the cause in PAI/AIBroker, prove it, commit; model → counts against the model, stop the run if it loops; details: pai worker errors";
+  if (g.cls === "harness") return `[harness] ${g.hint}: ${what} — fix at the owner. ${tail}`;
+  if (g.cls === "model") return `[model ×${g.count}] ${g.hint}: ${what} — counts against the model; stop the run if it loops. ${tail}`;
+  return `[unknown] ${what} — ${tail}`;
 }
 
 /** "30m", "2h", "1d" → ms; null when unparsable. */

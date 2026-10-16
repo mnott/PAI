@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError } from "./tool-errors.js";
 import type { WorkerStatus } from "./status.js";
-import { summarizeToolInput, toolErrorText, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, type ToolErrorRecord } from "./tool-errors.js";
+import { classifyToolError, summarizeToolInput, toolErrorText, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, type ToolErrorRecord } from "./tool-errors.js";
 
 const rec = (worker: string, ts: number, raw: string, tool = "Read"): ToolErrorRecord => ({
   ts, worker, provider: "p", label: "l", tool, raw, signature: normalizeError(tool, raw),
@@ -91,7 +91,7 @@ describe("supervision tick", () => {
       const opts = { now, isAlive: () => true, statuses: [st], stallMs: 1e12, push };
       const r1 = await runSupervisionTick(dir, opts);
       expect(r1.events.filter((e) => e.kind === "toolerror")).toHaveLength(1);
-      expect(pushed[0]).toMatch(/^systematic error Read\|File does not exist.*<P> ×3 in 20261016-000000-1 — sample: /);
+      expect(pushed[0]).toMatch(/^\[unknown\] Read\|File does not exist.*<P> ×3 in 20261016-000000-1 — sample: /);
       expect(readFileSync(supervisionEventsPath(dir, "sess-1"), "utf8")).toContain("toolerror");
       const r2 = await runSupervisionTick(dir, opts);
       expect(r2.events.filter((e) => e.kind === "toolerror")).toHaveLength(0);
@@ -115,5 +115,54 @@ describe("tool input", () => {
     const [g] = detectToolErrors([old, a, b], NOW, {});
     expect(g.workers).toEqual(["w1", "w2"]);
     expect(toolErrorText(groupToolErrors([a])[0])).toContain("(input: /x/y.ts)");
+  });
+});
+
+describe("classification", () => {
+  const inp = (r: ToolErrorRecord, input: string): ToolErrorRecord => ({ ...r, input });
+  const three = (raw: string, tool = "Bash") => [rec("w1", NOW - 3, raw, tool), rec("w1", NOW - 2, raw, tool), rec("w1", NOW - 1, raw, tool)];
+
+  it("grep no matches is model-only and never alerts", () => {
+    const r = three("zsh: no matches found: foo", "Grep");
+    expect(classifyToolError(r[0]).cls).toBe("model");
+    expect(detectToolErrors([...r, rec("w2", NOW - 1, "zsh: no matches found: foo", "Grep")], NOW, {})).toHaveLength(0);
+  });
+  it("Read missing inside cwd is silent; outside cwd is unknown", () => {
+    const raw = "File does not exist. Note: your current working directory is /w/x";
+    const inside = inp(rec("w1", NOW - 1, raw), "/w/x/a.ts");
+    expect(classifyToolError(inside).cls).toBe("model");
+    expect(detectToolErrors([inside, { ...inside, worker: "w2" }], NOW, {})).toHaveLength(0);
+    expect(classifyToolError(inp(rec("w1", NOW - 1, raw), "/other/a.ts")).cls).toBe("unknown");
+  });
+  it("Edit mismatches alert only at 5 in one worker", () => {
+    const raw = "String to replace not found in file";
+    const r = [1, 2, 3, 4, 5].map((i) => rec("w1", NOW - i, raw, "Edit"));
+    expect(detectToolErrors(r.slice(0, 4), NOW, {})).toHaveLength(0);
+    const [g] = detectToolErrors(r, NOW, {});
+    expect(toolErrorText(g)).toMatch(/^\[model ×5\] .*counts against the model; stop the run if it loops/);
+  });
+  it("guard denials alert only at 3 in one worker", () => {
+    for (const raw of ["denied: no AI attribution in commits", "git checkout main blocked by hook", "sleep 90 blocked", "Bash timeout 500000 blocked"]) {
+      const r = three(raw);
+      expect(classifyToolError(r[0]).cls).toBe("model");
+      expect(detectToolErrors(r.slice(0, 2), NOW, {})).toHaveLength(0);
+      expect(detectToolErrors(r, NOW, {})).toHaveLength(1);
+    }
+  });
+  it("harness errors alert at the usual thresholds", () => {
+    for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
+      expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
+    }
+    const [g] = detectToolErrors(three("API Error: 500 oops"), NOW, {});
+    expect(toolErrorText(g)).toMatch(/^\[harness\] .*— fix at the owner\. harness → stop runs it spoils/);
+  });
+  it("hook error on an existing path outside cwd is harness", () => {
+    const raw = "PreToolUse:Read hook error: Your working directory is /w/x. Path /tmp is outside";
+    expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
+    expect(classifyToolError(rec("w1", NOW, "PreToolUse:Read hook error: Your working directory is /w/x. Path /nonexistent/zz is outside")).cls).toBe("unknown");
+  });
+  it("everything else is unknown", () => {
+    const [g] = detectToolErrors(three("weird failure"), NOW, {});
+    expect(toolErrorText(g)).toMatch(/^\[unknown\] /);
   });
 });
