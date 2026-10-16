@@ -30,6 +30,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readTailLines, scanIncremental } from "./transcript-scan.js";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -165,15 +166,7 @@ export function contextFillFromTranscript(
     return unknownReading(windowSize ?? DEFAULT_CONTEXT_WINDOW);
   }
 
-  let raw: string;
-  try {
-    raw = readFileSync(transcriptPath, "utf-8");
-  } catch {
-    return unknownReading(windowSize ?? DEFAULT_CONTEXT_WINDOW);
-  }
-
-  const lines = raw.trim().split("\n").filter((l) => l.trim());
-  const tail = lines.slice(-TRANSCRIPT_TAIL_LINES);
+  const tail = readTailLines(transcriptPath, TRANSCRIPT_TAIL_LINES).slice(-TRANSCRIPT_TAIL_LINES);
 
   // one pass from the end: the first usage entry is the fill reading, and the
   // last assistant model seen (before or at that point) declares the window
@@ -464,26 +457,27 @@ export function nativeModelFamilies(configPath?: string): Set<string> {
  * Pair with isForeignModelFamily to judge the key.
  */
 export function transcriptModelFamily(path: string): TranscriptModelFamily {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf-8");
-  } catch {
-    return "unknown";
-  }
-  const lines = raw.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (!line.includes('"model"')) continue;
-    try {
-      const entry = JSON.parse(line) as { type?: string; message?: { model?: unknown } };
-      if (entry.type !== "assistant") continue;
-      const model = entry.message?.model;
-      if (typeof model === "string" && model !== SYNTHETIC_MODEL) return modelFamily(model);
-    } catch {
-      continue;
+  let found: TranscriptModelFamily = "unknown";
+  // Read back from the end, widening the window only while no model is found.
+  readTailLines(path, 1, (lines) => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line.includes('"model"')) continue;
+      try {
+        const entry = JSON.parse(line) as { type?: string; message?: { model?: unknown } };
+        if (entry.type !== "assistant") continue;
+        const model = entry.message?.model;
+        if (typeof model === "string" && model !== SYNTHETIC_MODEL) {
+          found = modelFamily(model);
+          return false;
+        }
+      } catch {
+        continue;
+      }
     }
-  }
-  return "unknown";
+    return true;
+  });
+  return found;
 }
 
 /**
@@ -493,6 +487,11 @@ export function transcriptModelFamily(path: string): TranscriptModelFamily {
  * the event's uuid (falling back to a timestamp+preTokens key for the rare
  * line with no uuid) so an event mirrored into `sessions/` is counted once.
  */
+interface BoundaryScan {
+  lastModel: string | null;
+  boundaries: Array<CompactBoundarySample & { model: string | null }>;
+}
+
 function readCompactBoundarySamples(
   cwd: string,
   projectsDir: string,
@@ -501,12 +500,44 @@ function readCompactBoundarySamples(
   const byKey = new Map<string, CompactBoundarySample>();
 
   for (const path of listProjectTranscripts(cwd, projectsDir)) {
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf-8");
-    } catch {
-      continue;
-    }
+    // Incremental per file: the cache holds every compact_boundary seen so
+    // far with the model governing it, so only appended lines are parsed.
+    // The foreign-model judgement is applied here, per call, because the
+    // native-family set can change between calls.
+    const scan = scanIncremental<BoundaryScan>(
+      path,
+      "compact",
+      () => ({ lastModel: null, boundaries: [] }),
+      (st, line) => {
+        const isAssistant = line.includes('"assistant"');
+        if (!isAssistant && !line.includes("compact_boundary")) return st;
+        let entry: {
+          type?: string;
+          subtype?: string;
+          timestamp?: string;
+          uuid?: string;
+          compactMetadata?: { preTokens?: number };
+          message?: { model?: unknown };
+        };
+        try {
+          entry = JSON.parse(line);
+        } catch {
+          return st;
+        }
+        if (entry.type === "assistant") {
+          const model = entry.message?.model;
+          if (typeof model === "string" && model !== SYNTHETIC_MODEL) st.lastModel = model;
+          return st;
+        }
+        if (entry.type !== "system" || entry.subtype !== "compact_boundary") return st;
+        const preTokens = entry.compactMetadata?.preTokens;
+        if (typeof preTokens !== "number" || !Number.isFinite(preTokens)) return st;
+        const timestampMs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+        if (!Number.isFinite(timestampMs)) return st;
+        st.boundaries.push({ preTokens, timestampMs, timestamp: entry.timestamp!, uuid: entry.uuid, model: st.lastModel });
+        return st;
+      }
+    );
 
     // The model governing each sample: the most recent assistant
     // `message.model` seen in this file before the compact_boundary. A
@@ -518,42 +549,17 @@ function readCompactBoundarySamples(
     // configures, so a non-Anthropic PRIMARY model keeps its own history.
     // Samples with no model seen yet are kept: older transcripts may lack
     // the field.
-    let lastModel: string | null = null;
+    const lastModel = scan.lastModel;
     let foreignDiscards = 0;
 
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      let entry: {
-        type?: string;
-        subtype?: string;
-        timestamp?: string;
-        uuid?: string;
-        compactMetadata?: { preTokens?: number };
-        message?: { model?: unknown };
-      };
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (entry.type === "assistant") {
-        const model = entry.message?.model;
-        if (typeof model === "string" && model !== SYNTHETIC_MODEL) lastModel = model;
-        continue;
-      }
-      if (entry.type !== "system" || entry.subtype !== "compact_boundary") continue;
-      const preTokens = entry.compactMetadata?.preTokens;
-      if (typeof preTokens !== "number" || !Number.isFinite(preTokens)) continue;
-      const timestampMs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
-      if (!Number.isFinite(timestampMs)) continue;
-      if (isForeignModelFamily(modelFamily(lastModel), nativeFamilies)) {
+    for (const b of scan.boundaries) {
+      if (isForeignModelFamily(modelFamily(b.model), nativeFamilies)) {
         foreignDiscards++;
         continue;
       }
-
-      const key = entry.uuid ?? `${timestampMs}:${preTokens}`;
+      const key = b.uuid ?? `${b.timestampMs}:${b.preTokens}`;
       if (!byKey.has(key)) {
-        byKey.set(key, { preTokens, timestampMs, timestamp: entry.timestamp!, uuid: entry.uuid });
+        byKey.set(key, { preTokens: b.preTokens, timestampMs: b.timestampMs, timestamp: b.timestamp, uuid: b.uuid });
       }
     }
 

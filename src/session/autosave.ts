@@ -20,16 +20,25 @@
  * can never overwrite a model-authored checkpoint for the same session.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { encodeDir } from "../cli/utils.js";
+import { scanIncremental, type ScanOptions } from "../hooks/ts/lib/transcript-scan.js";
 
 /** How many recent user prompts to carry. */
 const MAX_PROMPTS = 6;
 /** Longest a single quoted prompt may be before it is elided. */
 const MAX_PROMPT_CHARS = 220;
+/** Newest prompts kept per transcript — headroom over MAX_PROMPTS for the duplicate collapse. */
+const KEEP_PROMPTS = 64;
+
+interface PromptScan {
+  entries: string[];
+  messages: string[];
+}
+
 /** Cap on listed working-tree entries, so a big refactor cannot flood TODO.md. */
 const MAX_FILES = 20;
 
@@ -193,8 +202,12 @@ export function findTranscripts(
  */
 export function recentPrompts(
   transcriptPaths: string[],
-  limit = MAX_PROMPTS
+  limit = MAX_PROMPTS,
+  scanOpts: ScanOptions = {}
 ): string[] {
+  // Per transcript, only the lines appended since the last call are parsed;
+  // the running state is just the newest prompts, which is all the digest
+  // needs (see scanIncremental).
   const fromEntries: string[] = [];
   const fromMessages: string[] = [];
 
@@ -206,35 +219,36 @@ export function recentPrompts(
         ? cleaned.slice(0, MAX_PROMPT_CHARS).trimEnd() + " …"
         : cleaned
     );
+    if (into.length > KEEP_PROMPTS * 2) into.splice(0, into.length - KEEP_PROMPTS);
   };
 
   for (const path of transcriptPaths) {
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf8");
-    } catch {
-      continue;
-    }
+    const state = scanIncremental<PromptScan>(
+      path,
+      "prompts",
+      () => ({ entries: [], messages: [] }),
+      (st, line) => {
+        // Cheap pre-filter: skip the JSON parse for lines that cannot matter.
+        if (!line.includes('"last-prompt"') && !line.includes('"user"')) return st;
+        let obj: Record<string, unknown>;
+        try {
+          obj = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return st;
+        }
 
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      let obj: Record<string, unknown>;
-      try {
-        obj = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      if (obj.type === "last-prompt") {
-        if (typeof obj.lastPrompt === "string") take(obj.lastPrompt, fromEntries);
-        continue;
-      }
-
-      if (obj.type === "user") {
-        const text = messageText(obj);
-        if (text) take(text, fromMessages);
-      }
-    }
+        if (obj.type === "last-prompt") {
+          if (typeof obj.lastPrompt === "string") take(obj.lastPrompt, st.entries);
+        } else if (obj.type === "user") {
+          const text = messageText(obj);
+          if (text) take(text, st.messages);
+        }
+        return st;
+      },
+      scanOpts
+    );
+    fromEntries.push(...state.entries.slice(-KEEP_PROMPTS));
+    fromMessages.push(...state.messages.slice(-KEEP_PROMPTS));
   }
 
   const source = fromEntries.length > 0 ? fromEntries : fromMessages;
