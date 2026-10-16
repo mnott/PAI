@@ -121,6 +121,15 @@ export interface DashboardConfig {
 export interface RouterConfig {
   /** Keep `pai router` (127.0.0.1:8790) running under the daemon. Default: false. */
   enabled: boolean;
+  /**
+   * Listen scope: "loopback" (default — 127.0.0.1 only, as always), or beyond
+   * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit
+   * IPv4 — never 0.0.0.0. A wider bind adds a second listener on that address
+   * for the cockpit, which then needs the token from
+   * ~/.claude/pai/router-cockpit.token (printed once as a full URL at
+   * startup); /v1 keeps answering only loopback and tailnet remotes.
+   */
+  bind: string;
 }
 
 export interface PaiDaemonConfig {
@@ -294,7 +303,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   identity: { selfEmails: [] },
   sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
   dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
-  router: { enabled: false },
+  router: { enabled: false, bind: "loopback" },
   search: {
     mode: "keyword",
     rerank: true,

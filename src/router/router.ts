@@ -97,6 +97,17 @@ export interface Upstream {
   body: Buffer;
 }
 
+export interface RouterOptions {
+  /**
+   * Remote-address gate for the /v1 routes, set whenever the router listens
+   * beyond loopback (router.bind): a request whose socket address fails it is
+   * answered 403 before any routing — the inbound auth pass-through must not
+   * leave the loopback+tailnet perimeter. Cockpit routes are handled before
+   * this (they carry their own token, see src/router/cockpit-auth.ts).
+   */
+  remoteAllowed?: (remoteAddress: string | undefined) => boolean;
+}
+
 // accept-encoding dropped: usage is parsed from the plain response as it streams
 const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "accept-encoding"]);
 const AUTH = new Set(["authorization", "x-api-key"]);
@@ -196,12 +207,43 @@ export function createRouter(
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,
   /** serves GET pages (the cockpit) before routing; true = handled */
-  extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean
+  extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean,
+  options?: RouterOptions
 ): http.Server {
+  return http.createServer(routerHandler(loadProviders, claudeBase, log, onUsage, extra, options));
+}
+
+/**
+ * The router's request handler, built separately from the server so a
+ * non-loopback bind can put a second http.Server on the same handler (Node
+ * refuses a second listen() on a listening server — ERR_SERVER_ALREADY_LISTEN)
+ * while every entry point shares one BustDetector/GapTracker.
+ */
+export function routerHandler(
+  loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
+  claudeBase: string = CLAUDE_UPSTREAM,
+  log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
+  onUsage?: (row: UsageRow) => void,
+  /** serves GET pages (the cockpit) before routing; true = handled */
+  extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean,
+  options?: RouterOptions
+): (req: http.IncomingMessage, res: http.ServerResponse) => void {
   const busts = new BustDetector();
   const gaps = new GapTracker();
-  return http.createServer((req, res) => {
+  return (req, res) => {
     if (extra?.(req, res)) return;
+    const guard = options?.remoteAllowed;
+    if (guard && !guard(req.socket.remoteAddress ?? undefined)) {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          type: "error",
+          error: { type: "permission_error", message: "pai router: /v1 is limited to loopback and the tailnet (100.64.0.0/10)" },
+        })
+      );
+      log(`${new Date().toISOString()} ${req.method ?? "-"} ${(req.url ?? "/").split("?")[0]} 403 remote-not-allowed`);
+      return;
+    }
     const started = Date.now();
     const path = req.url ?? "/";
     const chunks: Buffer[] = [];
@@ -329,5 +371,5 @@ export function createRouter(
       res.on("close", () => ureq.destroy());
       ureq.end(up.body);
     });
-  });
+  };
 }
