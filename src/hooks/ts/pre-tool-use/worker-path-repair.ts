@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   } catch {
     // logging must never block the decision
   }
-  process.stdout.write((repair ? renderRepair(repair) : renderDeny(reason!)) + "\n");
+  process.stdout.write((repair ? renderRepair(repair, input.tool_name) : renderDeny(reason!)) + "\n");
 }
 
 main().catch(() => process.exit(0));

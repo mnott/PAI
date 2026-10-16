@@ -154,7 +154,11 @@ function repairBash(input: PathRepairInput, cwd: string, exists: (p: string) => 
   };
 }
 
-export function renderRepair(r: PathRepair): string {
+/** Edit-class tools validate the original input before updatedInput applies, so a rewrite cannot help: deny with the exact path. */
+const DENY_REPAIR_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+export function renderRepair(r: PathRepair, tool?: string): string {
+  if (tool && DENY_REPAIR_TOOLS.has(tool)) return renderDeny(`Wrong path. Use exactly: ${r.new}`);
   const msg = `path repaired: ${r.old} → ${r.new}`;
   return JSON.stringify({
     systemMessage: msg,

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { armGuardReason, denyReason, renderDeny, repairPath } from "./path-repair.js";
+import { armGuardReason, denyReason, renderDeny, renderRepair, repairPath } from "./path-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const CWD = "/private/tmp/ab-arms/view-decimals-local30-spec-221429";
@@ -270,5 +270,25 @@ describe("misspelled cwd folder name", () => {
   });
   it("still repairs a truncated name", () => {
     expect(repairPath(edit("emptied-window-asks"), W, fs(F))?.new).toBe(F);
+  });
+});
+
+describe("renderRepair", () => {
+  const r = repairPath(read(TYPO), W, fs(GOOD))!;
+  it("Edit/Write/MultiEdit/NotebookEdit: deny naming the exact path", () => {
+    for (const tool of ["Edit", "MultiEdit", "Write", "NotebookEdit"]) {
+      const out = JSON.parse(renderRepair(r, tool)).hookSpecificOutput;
+      expect(out.permissionDecision).toBe("deny");
+      expect(out.permissionDecisionReason).toBe(`Wrong path. Use exactly: ${GOOD}`);
+      expect(out.updatedInput).toBeUndefined();
+    }
+  });
+  it("Read keeps the silent rewrite", () => {
+    const out = JSON.parse(renderRepair(r, "Read")).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("allow");
+    expect(out.updatedInput).toEqual({ file_path: GOOD });
+  });
+  it("an Edit with the correct path yields no repair", () => {
+    expect(repairPath({ tool_name: "Edit", cwd: CWD, tool_input: { file_path: GOOD } }, W, fs(GOOD))).toBeNull();
   });
 });
