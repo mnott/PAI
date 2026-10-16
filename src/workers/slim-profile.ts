@@ -72,6 +72,8 @@ export function slimSettings(
     if (kept.length) hooks[event] = kept;
   }
   out.hooks = hooks;
+  // Empty strings switch off Claude Code's Co-Authored-By / "Generated with" lines.
+  out.attribution = { commit: "", pr: "" };
   return out;
 }
 

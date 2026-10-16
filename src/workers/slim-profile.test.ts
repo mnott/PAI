@@ -53,3 +53,9 @@ describe("slimSettings provider env", () => {
     expect((slimSettings(user, {}) as any).env.ANTHROPIC_BASE_URL).toBe("u");
   });
 });
+
+describe("slimSettings attribution", () => {
+  it("switches commit and PR attribution off", () => {
+    expect((slimSettings({}) as any).attribution).toEqual({ commit: "", pr: "" });
+  });
+});
