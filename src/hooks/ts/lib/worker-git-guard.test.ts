@@ -69,6 +69,11 @@ describe("decideWorkerGitGuard", () => {
     });
   }
 
+  it("allows read-only git plumbing that shares a verb prefix", () => {
+    const cmd = 'git merge-base --is-ancestor 1e9d57ed HEAD && echo "IN HEAD" || echo no';
+    expect(decideWorkerGitGuard(cmd, true, "/repo", "/wt").blocked).toBe(false);
+    expect(decideWorkerGitGuard("git merge main", true, "/repo", "/wt").blocked).toBe(true);
+  });
   it("detects a denied command inside a compound line (&&)", () => {
     expect(decideWorkerGitGuard("npm test && git stash", true, CWD, WORKTREES_ROOT).blocked).toBe(
       true

@@ -110,8 +110,12 @@ const WORD = /[^\s;|&<>()`"'$=,:{}]+/g;
 const GLOB = /[*?[\]!~]/;
 const BASH_ALLOW = ["/dev", "/bin", "/sbin", "/usr", "/System", "/Library", "/opt", "/private/var/folders", "/var/folders", "/Applications"];
 
-/** Quoted program text of `python -c`, `node -e`, `perl -e`, `awk '…'`: code, not paths. */
-const INLINE_PROGRAM = /(\b(?:python[\d.]*|node|ruby|perl|php|bun|deno)\b[^\n;|&]*?\s-[a-zA-Z]*[ceE]\s+|\bawk\s+(?:-\S+\s+)*)("(?:[^"\\]|\\.)*"|'[^']*')/g;
+/**
+ * Program text of `python -c`, `node -e`, `perl -e`, `awk '…'` and the pattern operand of
+ * grep/egrep/fgrep/rg/ag (first non-option word, or the value of -e/--regexp; -f/--file name
+ * a file, not a pattern): code or a regex, not paths.
+ */
+const INLINE_PROGRAM = /(\b(?:python[\d.]*|node|ruby|perl|php|bun|deno)\b[^\n;|&]*?\s-[a-zA-Z]*[ceE]\s+|\bawk\s+(?:-\S+\s+)*|\b(?:e|f)?grep\s+(?:-(?!-?[a-zA-Z]*f)\S*\s+)*|\b(?:rg|ag)\s+(?:-(?!-?[a-zA-Z]*f)\S*\s+)*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'\-]\S*)/g;
 
 function absTokens(command: string): string[] {
   return (command.replace(INLINE_PROGRAM, "$1''").match(WORD) ?? []).filter((t) => t.startsWith("/") && !GLOB.test(t));

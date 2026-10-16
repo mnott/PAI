@@ -106,6 +106,22 @@ describe("denyReason", () => {
   it("denies an unrepairable outside path in an arm", () => {
     expect(denyReason(i("Read", "/Users/dev/git/Other/Here.swift"), H)).toContain(`working directory is ${C}`);
   });
+  describe("grep patterns are not paths", () => {
+    const b = (command: string) => ({ tool_name: "Bash", cwd: C, tool_input: { command } });
+    it("allows a regex with /AP\\b in a quoted pattern", () => {
+      expect(denyReason(b('grep -rn "StampMark\\|/AP\\b" Sources/ | head -50'), H)).toBeNull();
+    });
+    it("allows rg -e and unquoted patterns", () => {
+      expect(denyReason(b('rg -e "/x/y" src'), H)).toBeNull();
+      expect(denyReason(b("grep -rn /x/y src"), H)).toBeNull();
+    });
+    it("still denies an outside file operand", () => {
+      expect(denyReason(b("grep -rn foo /nope/passwd"), H)).toContain("/nope/passwd");
+    });
+    it("still denies the file named by -f", () => {
+      expect(denyReason(b("grep -f /nope/pats src"), H)).toContain("/nope/pats");
+    });
+  });
   it("denies an existing outside path too", () => {
     expect(denyReason(i("Read", "/Users/dev/real.txt"), H)).not.toBeNull();
   });

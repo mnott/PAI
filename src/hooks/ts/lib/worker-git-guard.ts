@@ -15,12 +15,12 @@
  */
 
 const TREE_REWRITE: { name: string; pattern: RegExp }[] = [
-  { name: "git reset", pattern: /\bgit(?:\s+-C\s+\S+)?\s+reset\b/ },
-  { name: "git clean", pattern: /\bgit(?:\s+-C\s+\S+)?\s+clean\b/ },
-  { name: "git restore", pattern: /\bgit(?:\s+-C\s+\S+)?\s+restore\b/ },
-  { name: "git switch", pattern: /\bgit(?:\s+-C\s+\S+)?\s+switch\b/ },
-  { name: "git rebase", pattern: /\bgit(?:\s+-C\s+\S+)?\s+rebase\b/ },
-  { name: "git merge", pattern: /\bgit(?:\s+-C\s+\S+)?\s+merge\b/ },
+  { name: "git reset", pattern: /\bgit(?:\s+-C\s+\S+)?\s+reset(?![\w-])/ },
+  { name: "git clean", pattern: /\bgit(?:\s+-C\s+\S+)?\s+clean(?![\w-])/ },
+  { name: "git restore", pattern: /\bgit(?:\s+-C\s+\S+)?\s+restore(?![\w-])/ },
+  { name: "git switch", pattern: /\bgit(?:\s+-C\s+\S+)?\s+switch(?![\w-])/ },
+  { name: "git rebase", pattern: /\bgit(?:\s+-C\s+\S+)?\s+rebase(?![\w-])/ },
+  { name: "git merge", pattern: /\bgit(?:\s+-C\s+\S+)?\s+merge(?![\w-])/ },
 ];
 
 /**
