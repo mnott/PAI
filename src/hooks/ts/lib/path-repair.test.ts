@@ -83,6 +83,12 @@ describe("repairPath", () => {
       expect(repairPath(read(invented, C), W, fs(invented, `${C}/${REL}`))).toBeNull();
     });
 
+    it("invented prefix with the arm name, target missing under cwd: untouched", () => {
+      const p = `/tmp/tmp_9074/ab-arms/save-model-ref-ornith-precise-041742/Tests/DocumentTests/MinimalPDF.swift`;
+      expect(repairPath(read(p, C), W, fs(`${C}/Tests/Support/MinimalPDF.swift`))).toBeNull();
+      expect(repairPath(read(p.replace("DocumentTests", "Support"), C), W, fs(`${C}/Tests/Support/MinimalPDF.swift`))?.new).toBe(`${C}/Tests/Support/MinimalPDF.swift`);
+    });
+
     it("leaves non-workers untouched", () => {
       expect(repairPath(read(invented, C), {} as NodeJS.ProcessEnv, fs(`${C}/${REL}`))).toBeNull();
     });
