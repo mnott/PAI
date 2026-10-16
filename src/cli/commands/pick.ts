@@ -95,24 +95,27 @@ function noteKeywords(root: string, maxTokens = 14): string {
   const tokens = new Set<string>();
   const walk = (dir: string, depth: number) => {
     if (depth > 2 || tokens.size >= maxTokens * 3) return;
-    let entries: string[];
+    let entries: import("node:fs").Dirent[];
     try {
-      entries = readdirSync(dir);
+      // Dirents carry the type, so no per-entry stat (that was 0.85 s over ~170 projects).
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
-    for (const name of entries) {
+    for (const ent of entries) {
+      const name = ent.name;
       if (name.startsWith(".") || KW_SKIP.has(name)) continue;
-      const full = join(dir, name);
-      let isDir = false;
-      try {
-        isDir = statSync(full).isDirectory();
-      } catch {
-        continue;
+      let isDir = ent.isDirectory();
+      if (ent.isSymbolicLink()) {
+        try {
+          isDir = statSync(join(dir, name)).isDirectory();
+        } catch {
+          continue;
+        }
       }
       if (isDir) {
         for (const tok of tokenize(name)) tokens.add(tok);
-        walk(full, depth + 1);
+        walk(join(dir, name), depth + 1);
       } else if (name.toLowerCase().endsWith(".md")) {
         for (const tok of tokenize(name)) tokens.add(tok);
       }
@@ -598,7 +601,15 @@ export interface PickOpts {
   model?: string;
 }
 
+/** PAI_PICK_TIMING=1 prints how long each stage before the picker took. */
+function stageTimer(): (stage: string) => void {
+  if (!process.env.PAI_PICK_TIMING) return () => {};
+  const t0 = performance.now();
+  return (stage) => process.stderr.write(`pick ${(performance.now() - t0).toFixed(0).padStart(6)} ms  ${stage}\n`);
+}
+
 export async function cmdPick(opts: PickOpts = {}): Promise<void> {
+  const lap = stageTimer();
   const interactive = !!process.stdout.isTTY && !!process.stdin.isTTY;
 
   // Fallback to the static listing when we're not on an interactive terminal
@@ -618,17 +629,18 @@ export async function cmdPick(opts: PickOpts = {}): Promise<void> {
   }
 
   // Build the feed (with live sessions merged in)
-  const allSessions = await scanSessions({ limit: 500, filter: "named" });
-  const projects = await getProjects(opts.all ?? false);
-  let live: Awaited<ReturnType<typeof fetchLiveSessions>> = [];
-  try {
-    live = await fetchLiveSessions();
-  } catch {
-    /* AIBroker not running — disk + registry still populate the picker */
-  }
-
-  const allProjects = await getProjects(true);
+  // The four sources are independent — scanSessions (disk), the registry and
+  // AIBroker's socket overlap instead of queueing.
+  const [allSessions, projects, allProjects, live] = await Promise.all([
+    scanSessions({ limit: 500, filter: "named" }),
+    getProjects(opts.all ?? false),
+    getProjects(true),
+    // AIBroker not running — disk + registry still populate the picker
+    fetchLiveSessions().catch((): Awaited<ReturnType<typeof fetchLiveSessions>> => []),
+  ]);
+  lap("scan + registry + live");
   const lines = buildFeedFrom(allSessions, projects, live, allProjects);
+  lap("buildFeedFrom");
   if (lines.length === 0) {
     process.stderr.write(dim("  No projects or sessions found.\n"));
     return;

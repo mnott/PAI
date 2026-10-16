@@ -131,6 +131,9 @@ export function decodeDir(encodedDir: string): string {
   return encodedDir.replace(/-/g, "/");
 }
 
+/** Directory listings (name + encoded form) reused across a batch of decodes. */
+export type DirListings = Map<string, { name: string; enc: string; encLower: string }[]>;
+
 /**
  * Decode a Claude encoded-dir by walking the actual filesystem.
  *
@@ -146,8 +149,12 @@ export function decodeDir(encodedDir: string): string {
  *   "-Users-foo-MDF-System-de"    →  "/Users/foo/MDF-System.de"
  *
  * Returns `null` if the path cannot be resolved against the filesystem.
+ *
+ * Decoding thousands of dirs re-reads `/`, the home dir and the dev root for
+ * each one (6.9 s for 2427 dirs, 2026-10-16); a batch caller passes one
+ * `listings` map so each directory is read once.
  */
-export function smartDecodeDir(encoded: string): string | null {
+export function smartDecodeDir(encoded: string, listings?: DirListings): string | null {
   if (!encoded || !encoded.startsWith("-")) return null;
 
   // Strip the leading `-` (encodes the leading `/`)
@@ -155,24 +162,28 @@ export function smartDecodeDir(encoded: string): string | null {
   let current = "/";
 
   while (remaining.length > 0) {
-    let entries: string[];
-    try {
-      entries = readdirSync(current);
-    } catch {
-      return null; // Can't read directory
+    let entries = listings?.get(current);
+    if (!entries) {
+      try {
+        entries = readdirSync(current).map((name) => {
+          // Encode this entry the same way Claude Code does (without the leading /)
+          const enc = name.replace(/[\s.\-]/g, "-");
+          return { name, enc, encLower: enc.toLowerCase() };
+        });
+      } catch {
+        return null; // Can't read directory
+      }
+      listings?.set(current, entries);
     }
 
-    // Encode each candidate entry and find matches against remaining string.
+    // Find entries matching the remaining string.
     // Sort by encoded length descending so we prefer the longest (most specific) match.
     // Use case-insensitive comparison because macOS (HFS+/APFS) is case-insensitive
     // by default, and Claude Code may have encoded the dir with different casing
     // than what currently exists on disk (e.g. directory was renamed TEKmidian → TEKMidian).
     const candidates: { name: string; enc: string }[] = [];
     const remainingLower = remaining.toLowerCase();
-    for (const name of entries) {
-      // Encode this entry the same way Claude Code does (without the leading /)
-      const enc = name.replace(/[\s.\-]/g, "-");
-      const encLower = enc.toLowerCase();
+    for (const { name, enc, encLower } of entries) {
       // Must match at start of remaining, followed by `-` separator or end of string
       if (remainingLower === encLower || remainingLower.startsWith(encLower + "-")) {
         candidates.push({ name, enc });

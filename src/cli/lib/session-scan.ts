@@ -47,7 +47,7 @@ import {
 } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { smartDecodeDir } from "../utils.js";
+import { smartDecodeDir, type DirListings } from "../utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -471,6 +471,7 @@ export async function scanSessions(
 
   if (!existsSync(CLAUDE_PROJECTS_DIR)) return [];
 
+  const dirListings: DirListings = new Map();
   const clcInfoMap = buildClcInfoMap();
   const rootPathMap = await buildRegistryRootPathMap();
   const results: ScannedSession[] = [];
@@ -507,7 +508,7 @@ export async function scanSessions(
     }
 
     const decodedPath =
-      smartDecodeDir(encodedDir) ?? encodedDir.replace(/-/g, "/");
+      smartDecodeDir(encodedDir, dirListings) ?? encodedDir.replace(/-/g, "/");
     const registryRootPath = rootPathMap.get(encodedDir);
     const projectBasename = basename(decodedPath);
 
@@ -766,7 +767,7 @@ export async function scanSessions(
 
       const decodedPath =
         clcInfo.directory ??
-        (smartDecodeDir(foundEncodedDir) ?? foundEncodedDir.replace(/-/g, "/"));
+        (smartDecodeDir(foundEncodedDir, dirListings) ?? foundEncodedDir.replace(/-/g, "/"));
       const registryRootPath = rootPathMap.get(foundEncodedDir);
       const topLevelPath = join(
         CLAUDE_PROJECTS_DIR,
