@@ -189,6 +189,8 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
   const under = (p: string, root: string) => p === root || p.startsWith(`${root.replace(/\/+$/, "")}/`);
   const v = realish(value);
   if (under(v, realCwd)) return null;
+  // The arm's own /tmp scratch (commit messages etc.); other arms stay fenced.
+  if (under(v, realish("/tmp")) && !under(v, realish(env.PAI_AB_ARMS_ROOT || "/private/tmp/ab-arms"))) return null;
   if (READ_TOOLS.has(input.tool_name!)) {
     const home = env.HOME ? [`${env.HOME}/.claude`, `${env.HOME}/.cache`] : [];
     if ([...READ_ALLOW, ...home].some((r) => under(v, realish(r)))) return null;

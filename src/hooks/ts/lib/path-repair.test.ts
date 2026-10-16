@@ -120,6 +120,11 @@ describe("denyReason", () => {
     expect(denyReason(i("Read", `${C}/a.ts`), H)).toBeNull();
     expect(denyReason(i("Read", "/tmp/ab-arms/deny-cwd/a.ts"), H)).toBeNull();
   });
+  it("allows /tmp scratch, still fences other arms", () => {
+    expect(denyReason(i("Write", "/tmp/x"), H)).toBeNull();
+    expect(denyReason(i("Read", "/tmp/x"), H)).toBeNull();
+    expect(denyReason(i("Write", "/private/tmp/ab-arms/other-arm/x"), H)).not.toBeNull();
+  });
   it("leaves non-workers untouched", () => {
     expect(denyReason(i("Read", "/Users/dev/x"), {} as NodeJS.ProcessEnv)).toBeNull();
   });
