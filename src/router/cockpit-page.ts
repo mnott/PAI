@@ -31,6 +31,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .kpis{display:flex;gap:26px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.rings{display:flex;flex-wrap:wrap;gap:10px}.ring{text-align:center;min-width:100px}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}
 svg text{fill:var(--dim);font-size:10px}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
@@ -40,7 +41,7 @@ svg text{fill:var(--dim);font-size:10px}
 <section class="card c12"><h2>Limits</h2><div class="gauges" id="limits"></div></section>
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by model</h2><div id="series"></div><div class="legend" id="legend"></div></section>
-<section class="card c4"><h2>Cache hit ratio</h2><div id="donut"></div><div id="donutnote" class="dim"></div></section>
+<section class="card c4"><h2>Cache hit ratio per model</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div></section>
 <section class="card c6"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
 <section class="card c6"><h2>Providers: errors, retries, speed</h2><div id="providers"></div></section>
@@ -100,7 +101,7 @@ function legend(el,keys){el.innerHTML=keys.map(function(k){return'<span><i style
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 function donut(ratio){
  var r=48,c=2*Math.PI*r,d=c*ratio;
- return'<svg width="140" height="140" viewBox="0 0 140 140"><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="16"/><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="16" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 70 70)"/><text x="70" y="76" text-anchor="middle" style="font-size:22px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
+ return'<svg width="100" height="100" viewBox="0 0 140 140"><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="16"/><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="16" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 70 70)"/><text x="70" y="76" text-anchor="middle" style="font-size:22px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
 }
 function table(head,rows){return'<table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
@@ -110,7 +111,9 @@ function render(){
  var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});
  var series=d.series.map(function(b){var o={};models.forEach(function(m){var x=b.models[m];o[m]=x?tot(x):0});return o});
  stackedBars($("series"),d.series.map(function(b){return label(b.t,d.window)}),series,models,760,220);legend($("legend"),models);
- $("donut").innerHTML=donut(t.hitRatio);$("donutnote").textContent="cache_read / (read + write + fresh input)";
+ var ms={};d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
+ $("donut").innerHTML=Object.keys(ms).map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("")||'<span class="dim">no data</span>';
+ $("donutnote").textContent="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
  var ph=d.cachePause.map(function(cm){
   var cells=cm.buckets.map(function(b){if(!b.n)return'<td class="dim">-</td>';var hr=b.hit/b.n;return'<td><span class="'+(hr<.5?"bad":hr<.8?"warn":"ok")+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span></td>'}).join("");
   return'<tr><td>'+esc(cm.model)+'</td>'+cells+'</tr>'}).join("");

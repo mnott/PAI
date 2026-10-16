@@ -207,7 +207,9 @@ function probeTcp(port: number, host: string): Promise<boolean> {
 async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], now: number): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
-  const up = await probeTcp(port, u.hostname);
+  const listening = await probeTcp(port, u.hostname);
+  const served = listening ? await servedModels(u) : undefined;
+  const up = listening && modelServed(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
   let rssMb: number | undefined;
   if (up) {
     const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
@@ -215,6 +217,23 @@ async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], no
     if (Number.isFinite(rss) && rss > 0) rssMb = Math.round(rss / 1024);
   }
   return { provider: name, kind: "local", windows: [], up, ...(rssMb ? { rssMb } : {}), ...tokensPerSec(rows, name, now), fetchedAt: now };
+}
+
+/** Model ids the server at this base URL lists on GET /v1/models; undefined when it cannot say. */
+async function servedModels(base: URL): Promise<string[] | undefined> {
+  try {
+    const body = JSON.parse(await getJson(new URL("/v1/models", base), {})) as { data?: Array<{ id?: unknown }> };
+    const ids = (body.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
+    return ids.length ? ids : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Several providers can share one port: the provider is up only if its model is the one served. Unknown list = port decides. */
+export function modelServed(served: string[] | undefined, wanted: string[]): boolean {
+  if (!served) return true;
+  return wanted.some((w) => served.includes(w));
 }
 
 /** output tokens / generation seconds over the last hour (slow-path requests only). */

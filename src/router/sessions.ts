@@ -22,6 +22,8 @@ export interface SessionInfo {
 export interface SessionSources {
   workerDirs: string[];
   agentSessionsFile: string;
+  /** Claude Code transcript root: <dir>/<encoded cwd>/<session id>.jsonl */
+  projectsDir?: string;
 }
 
 export function defaultSources(): SessionSources {
@@ -29,6 +31,7 @@ export function defaultSources(): SessionSources {
   return {
     workerDirs: [join(home, ".claude", "pai", "logs", "workers"), join(home, ".claude", "logs", "workers")],
     agentSessionsFile: join(home, ".claude", "pai", "agent-sessions.json"),
+    projectsDir: join(home, ".claude", "projects"),
   };
 }
 
@@ -65,6 +68,23 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
         verdict: workerVerdict(s),
         provider: typeof s.provider === "string" ? s.provider : undefined,
       });
+    }
+  }
+  // Last resort for interactive sessions the registry does not list: the project directory of the transcript.
+  if (src.projectsDir && existsSync(src.projectsDir)) {
+    for (const d of readdirSync(src.projectsDir)) {
+      const name = d.split("-").filter(Boolean).pop();
+      if (!name) continue;
+      let files: string[] = [];
+      try {
+        files = readdirSync(join(src.projectsDir, d));
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        const id = f.endsWith(".jsonl") ? f.slice(0, -6) : "";
+        if (id && !map.has(id)) map.set(id, { name });
+      }
     }
   }
   return map;
