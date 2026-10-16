@@ -323,33 +323,51 @@ export async function switchToSession(target: string): Promise<{ ok: boolean; er
  * Unlike the `switch` IPC (which only flips an internal index and never touches
  * iTerm), this actually reveals the tab.
  */
-export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
-  if (process.platform !== "darwin") return { ok: false, error: "iTerm2 is macOS only" };
-  // Strip any "iterm:" style prefix, matching AIBroker's stripItermPrefix.
-  const id = itermSessionId.replace(/^iterm:/i, "").trim();
-  const script = `tell application "iTerm2"
-  activate
-  repeat with w in windows
-    repeat with t in tabs of w
-      repeat with s in sessions of t
-        if id of s is "${id}" then
-          select w
-          select t
-          select s
-          return "ok"
-        end if
+/** Reduce "iterm:w0t1p0:UUID" / "w0t1p0:UUID" / "UUID" to the bare iTerm unique id. */
+export function itermUniqueId(raw: string): string {
+  const noPrefix = raw.replace(/^iterm:/i, "").trim();
+  const i = noPrefix.lastIndexOf(":");
+  return (i >= 0 ? noPrefix.slice(i + 1) : noPrefix).replace(/[^A-Za-z0-9-]/g, "");
+}
+
+/**
+ * AppleScript that selects the iTerm2 session whose unique id matches. Looks
+ * sessions up by id, never by window/tab index (panes are auto-closed, so
+ * indices go stale mid-iteration); each window is guarded individually.
+ */
+export function buildRevealScript(uniqueId: string): string {
+  return `tell application "iTerm2"
+  repeat with w in (get windows)
+    try
+      repeat with t in (get tabs of w)
+        repeat with s in (get sessions of t)
+          if (unique id of s) is "${uniqueId}" then
+            select w
+            select t
+            select s
+            activate
+            return "ok"
+          end if
+        end repeat
       end repeat
-    end repeat
+    end try
   end repeat
   return "not-found"
 end tell`;
+}
+
+export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
+  if (process.platform !== "darwin") return { ok: false, error: "iTerm2 is macOS only" };
+  const id = itermUniqueId(itermSessionId);
+  if (!id) return { ok: false, error: "no iTerm session id on record" };
+  const script = buildRevealScript(id);
   try {
     const r = spawnSync("osascript", ["-e", script], { encoding: "utf8" });
     if (r.status !== 0) {
       return { ok: false, error: (r.stderr || "osascript failed").trim() };
     }
     if ((r.stdout ?? "").trim() === "ok") return { ok: true };
-    return { ok: false, error: "session not found in any iTerm2 window" };
+    return { ok: false, error: "That session is no longer open in iTerm." };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
