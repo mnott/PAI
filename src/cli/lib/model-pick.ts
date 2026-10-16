@@ -8,10 +8,12 @@
  * before this step existed.
  */
 
+import { readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
 import { launchableProviderNames } from "../../workers/launch.js";
 import type { WorkersConfig } from "../../workers/config.js";
+import { fmtRss, resolveModelPath } from "../../workers/local-tiers.js";
 import type { LocalConfig, LocalTier, RunningServer } from "../../workers/local-tiers.js";
 import { dim } from "../utils.js";
 
@@ -20,72 +22,214 @@ export interface ModelChoice {
   provider?: string;
   /** Local tier name, when this choice is a local model server. */
   tier?: string;
-  /** Tier only: its server is running now. */
+  /** Local model server (tier, or provider on 127.0.0.1/localhost). */
+  local?: boolean;
+  /** Local only: its server is running now. */
   up?: boolean;
+  /** Local provider that is down and is not a tier: cannot be started here. */
+  down?: boolean;
+  /** Local only: RSS when up, else size on disk. */
+  mem?: string;
   label: string;
 }
 
+/** What the screen needs to know about running servers (all optional). */
+export interface ModelProbe {
+  /** Ports that answer (health check), for providers that are not tiers. */
+  upPorts?: number[];
+  /** Size on disk in bytes of a tier's model, null when unknown. */
+  diskBytes?: (t: LocalTier) => number | null;
+}
+
+/** True when the provider's base URL points at this machine. */
+export function isLocalUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const h = new URL(url).hostname;
+    return h === "127.0.0.1" || h === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+function portOf(url: string | undefined): number | null {
+  try {
+    const p = new URL(url ?? "").port;
+    return p ? Number(p) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function fmtDisk(bytes: number): string {
+  return `~${Math.max(0.1, Math.round((bytes / 1073741824) * 10) / 10)} GB`;
+}
+
+/** Total size in bytes of a file or directory tree; null when unreadable. */
+export function diskBytesOf(path: string): number | null {
+  try {
+    const st = statSync(path);
+    if (!st.isDirectory()) return st.size;
+    let n = 0;
+    for (const e of readdirSync(path)) n += diskBytesOf(`${path}/${e}`) ?? 0;
+    return n;
+  } catch {
+    return null;
+  }
+}
+
+/** diskBytes probe backed by the filesystem. */
+export const diskBytesOfTier = (t: LocalTier): number | null => diskBytesOf(resolveModelPath(t.model));
+
 /**
- * Build the choice list. Index 0 is the default (no override). Local tiers'
- * providers are listed once, as tiers, not again as plain providers.
+ * Build the choice list. Index 0 is the default (no override), then cloud
+ * providers, then local ones (providers on localhost, then tiers). Tier
+ * providers are listed once, as tiers.
  */
 export function buildModelChoices(
   workers: Pick<WorkersConfig, "providers" | "active">,
   local: Pick<LocalConfig, "tiers"> | null,
-  running: Pick<RunningServer, "port">[],
+  running: Pick<RunningServer, "port" | "rssKb">[],
+  probe: ModelProbe = {},
 ): ModelChoice[] {
   const tiers: LocalTier[] = local ? Object.values(local.tiers) : [];
   const tierProviders = new Set(tiers.map((t) => t.provider));
   const active = workers.active && workers.active !== "auto" ? workers.active : "anthropic";
 
   const choices: ModelChoice[] = [{ label: `default  (today's behaviour: ${active})` }];
+  const localProviders: ModelChoice[] = [];
   for (const name of launchableProviderNames(workers)) {
     if (tierProviders.has(name)) continue;
-    choices.push({ provider: name, label: name });
+    const url = (workers.providers as Record<string, { baseUrl?: string }>)[name]?.baseUrl;
+    if (!isLocalUrl(url)) {
+      choices.push({ provider: name, label: name });
+      continue;
+    }
+    const port = portOf(url);
+    const r = running.find((x) => x.port === port);
+    const up = !!r || (port !== null && (probe.upPorts ?? []).includes(port));
+    localProviders.push({
+      provider: name, local: true, up, down: !up,
+      mem: r ? fmtRss(r.rssKb) : undefined,
+      label: name,
+    });
   }
+  choices.push(...localProviders);
   for (const t of tiers) {
-    const up = running.some((r) => r.port === t.port);
+    const r = running.find((x) => x.port === t.port);
+    const bytes = r ? null : (probe.diskBytes?.(t) ?? null);
     choices.push({
       provider: t.provider,
       tier: t.tier,
-      up,
-      label: `local ${t.tier}  ${t.served}  :${t.port}  ${up ? "up" : "down — will be started"}`,
+      local: true,
+      up: !!r,
+      mem: r ? fmtRss(r.rssKb) : bytes !== null ? fmtDisk(bytes) : undefined,
+      label: `local ${t.tier}  ${t.served}  :${t.port}`,
     });
   }
   return choices;
 }
 
-/** The screen text for the model step. */
-export function modelScreen(choices: ModelChoice[], name: string): string[] {
+function status(c: ModelChoice): string {
+  if (c.down) return chalk.dim("down — not a tier, cannot be started from here");
+  const mem = c.mem ? `${c.up ? "" : "disk "}${c.mem}` : "";
+  return c.up
+    ? `${chalk.green("up")}${mem ? `  ${mem} RSS` : ""}`
+    : `down — will be started${mem ? `  ${mem}` : ""}`;
+}
+
+/** The screen text for the model step. `cursor` is the highlighted index. */
+export function modelScreen(choices: ModelChoice[], name: string, cursor = 0, typed = ""): string[] {
   const lines = ["", `  ${chalk.bold("Model for")} ${chalk.white(name)}`, ""];
+  let section = "";
   choices.forEach((c, i) => {
-    const mark = c.tier ? (c.up ? chalk.green("●") : chalk.dim("○")) : " ";
-    lines.push(`  ${chalk.cyan(String(i + 1).padStart(2))}  ${mark} ${c.label}`);
+    const sec = i === 0 ? "" : c.local ? "LOCAL" : "CLOUD";
+    if (sec && sec !== section) {
+      lines.push("", `  ${chalk.bold(sec)}`);
+    }
+    section = sec || section;
+    const mark = c.local ? (c.up ? chalk.green("●") : chalk.dim("○")) : " ";
+    const body = c.down ? chalk.dim(`${c.label}  ${status(c)}`) : c.local ? `${c.label}  ${status(c)}` : c.label;
+    const row = `${chalk.cyan(String(i + 1).padStart(2))}  ${mark} ${body}`;
+    lines.push(i === cursor ? `${chalk.cyan("›")} ${chalk.bold(row)}` : `  ${row}`);
   });
-  lines.push("");
+  lines.push("", dim(`  ↑/↓ + Enter, or type a number or name${typed ? "  > " : ""}`) + (typed ? typed : ""), "");
   return lines;
 }
 
-/** Answer text → choice. Empty (Enter) = default; unknown = null. */
+/** Answer text → choice. Empty (Enter) = default; unknown or down = null. */
 export function parseModelAnswer(answer: string, choices: ModelChoice[]): ModelChoice | null {
   const t = answer.trim().toLowerCase();
-  if (!t) return choices[0];
-  if (/^\d+$/.test(t)) return choices[Number(t) - 1] ?? null;
-  return (
-    choices.find((c) => c.provider === t && !c.tier) ??
-    choices.find((c) => c.tier === t || c.tier === t.replace(/^local[ -]?/, "")) ??
-    null
-  );
+  let c: ModelChoice | null | undefined;
+  if (!t) c = choices[0];
+  else if (/^\d+$/.test(t)) c = choices[Number(t) - 1];
+  else
+    c =
+      choices.find((x) => x.provider === t && !x.tier) ??
+      choices.find((x) => x.tier === t || x.tier === t.replace(/^local[ -]?/, ""));
+  return c && !c.down ? c : null;
 }
 
-/** Ask on the terminal; Enter keeps the default. Null = invalid answer. */
+/** Next cursor after an arrow key, skipping choices that cannot be chosen. */
+export function moveCursor(choices: ModelChoice[], cursor: number, dir: 1 | -1): number {
+  for (let i = cursor + dir; i >= 0 && i < choices.length; i += dir) {
+    if (!choices[i].down) return i;
+  }
+  return cursor;
+}
+
+/**
+ * Result of Enter: typed text wins (number/name), else the highlighted row.
+ * Arrow selection and the equivalent number give the same choice.
+ */
+export function resolveEnter(choices: ModelChoice[], cursor: number, typed: string): ModelChoice | null {
+  return typed.trim() ? parseModelAnswer(typed, choices) : (choices[cursor] ?? null);
+}
+
+/** Ask on the terminal: arrows + Enter, or a typed number/name. Null = invalid. */
 export function askModel(choices: ModelChoice[], name: string): Promise<ModelChoice | null> {
-  for (const l of modelScreen(choices, name)) console.log(l);
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) =>
-    rl.question(dim("  Pick a number or name [Enter = default]: "), (a) => {
-      rl.close();
-      resolve(parseModelAnswer(a, choices));
-    }),
-  );
+  const stdin = process.stdin;
+  if (!stdin.isTTY) {
+    for (const l of modelScreen(choices, name, -1)) console.log(l);
+    const rl = createInterface({ input: stdin, output: process.stdout });
+    return new Promise((resolve) =>
+      rl.question(dim("  Pick a number or name [Enter = default]: "), (a) => {
+        rl.close();
+        resolve(parseModelAnswer(a, choices));
+      }),
+    );
+  }
+  const out = process.stdout;
+  return new Promise((resolve) => {
+    let cursor = 0;
+    let typed = "";
+    let drawn = 0;
+    const render = () => {
+      const lines = modelScreen(choices, name, cursor, typed);
+      if (drawn) out.write(`\x1b[${drawn}A\x1b[J`);
+      out.write(lines.join("\n") + "\n");
+      drawn = lines.length;
+    };
+    const wasRaw = stdin.isRaw ?? false;
+    stdin.setRawMode(true);
+    stdin.resume();
+    const finish = (c: ModelChoice | null) => {
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+      resolve(c);
+    };
+    const onData = (buf: Buffer) => {
+      const k = buf.toString();
+      if (k === "\x03" || k === "\x1b") return finish(null);
+      if (k === "\r" || k === "\n") return finish(resolveEnter(choices, cursor, typed));
+      if (k === "\x1b[A") { typed = ""; cursor = moveCursor(choices, cursor, -1); }
+      else if (k === "\x1b[B") { typed = ""; cursor = moveCursor(choices, cursor, 1); }
+      else if (k === "\x7f") typed = typed.slice(0, -1);
+      else if (/^[\x20-\x7e]+$/.test(k)) typed += k;
+      render();
+    };
+    stdin.on("data", onData);
+    render();
+  });
 }

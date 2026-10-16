@@ -44,7 +44,7 @@ import { fetchLiveSessions, revealItermSession } from "../lib/aibroker-client.js
 import { renderDedupedSessions } from "../lib/dedup-sessions.js";
 import { launchInDir } from "../lib/launch.js";
 import { printExitDir } from "../lib/exit-dir.js";
-import { askModel, buildModelChoices } from "../lib/model-pick.js";
+import { askModel, buildModelChoices, diskBytesOfTier } from "../lib/model-pick.js";
 
 // ---------------------------------------------------------------------------
 // Dispatch record — one per selectable row.
@@ -634,7 +634,7 @@ async function pickModel(name: string, dryRun?: boolean): Promise<string | undef
   }
   const { readLocalConfig, planStart } = await import("../../workers/local-tiers.js");
   const { workersYamlPath } = await import("../../workers/workers-config.js");
-  const { listServers, startTier } = await import("./worker/local.js");
+  const { listServers, startTier, isUp } = await import("./worker/local.js");
   let local: ReturnType<typeof readLocalConfig> | null = null;
   let running: ReturnType<typeof listServers> = [];
   try {
@@ -643,7 +643,12 @@ async function pickModel(name: string, dryRun?: boolean): Promise<string | undef
   } catch {
     /* no usable local tiers — the plain providers still list */
   }
-  const choices = buildModelChoices(workers, local, running);
+  const upPorts: number[] = [];
+  for (const p of Object.values(workers.providers)) {
+    const port = Number(/^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/.exec(p.baseUrl ?? "")?.[1]);
+    if (port && !running.some((r) => r.port === port) && (await isUp(port))) upPorts.push(port);
+  }
+  const choices = buildModelChoices(workers, local, running, { upPorts, diskBytes: diskBytesOfTier });
   if (choices.length === 1) return undefined;
 
   const choice = await askModel(choices, name);
