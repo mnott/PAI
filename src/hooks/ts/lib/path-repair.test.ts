@@ -273,6 +273,48 @@ describe("misspelled cwd folder name", () => {
   });
 });
 
+describe("dropped middle segment of the cwd", () => {
+  const C = "/Users/dev/.claude/pai/logs/workers/worktrees/20261016-164239-57598";
+  const F = `${C}/src/hooks/ts/lib/path-repair.ts`;
+
+  it("DroppedMiddleSegmentRepairs: …/logs/worktrees/<id> for cwd …/logs/workers/worktrees/<id>", () => {
+    expect(repairPath(read(F.replace("/logs/workers/", "/logs/"), C), W, fs(F))?.new).toBe(F);
+    // the worktree root itself, and the second worker id from the same alert
+    expect(repairPath(read(C.replace("/logs/workers/", "/logs/"), C), W, fs(C, F))?.new).toBe(C);
+    const C2 = "/Users/dev/.claude/pai/logs/workers/worktrees/20261016-170145-8549";
+    const F2 = `${C2}/src/hooks/ts/pre-tool-use/worker-path-repair.ts`;
+    expect(repairPath(read(F2.replace("/logs/workers/", "/logs/"), C2), W, fs(C2, F2))?.new).toBe(F2);
+  });
+
+  it("TwoDroppedSegmentsRepair: …/pai/worktrees/<id> for cwd …/pai/logs/workers/worktrees/<id>", () => {
+    expect(repairPath(read(F.replace("/logs/workers/", "/"), C), W, fs(F))?.new).toBe(F);
+    expect(repairPath(read(C.replace("/logs/workers/", "/"), C), W, fs(C, F))?.new).toBe(C);
+  });
+
+  it("UnrelatedPathNotRepaired: foreign branches stay untouched", () => {
+    expect(repairPath(read("/Users/dev/.claude/pai/logs/other/x.ts", C), W, fs(C, F))).toBeNull();
+    expect(repairPath(read("/Users/dev/git/Other/Here.swift", C), W, fs(C, F))).toBeNull();
+    expect(repairPath(read("/etc/hosts", C), W, fs(C, F))).toBeNull();
+  });
+
+  it("ExistingRulesStillPass: near-miss, truncated name and suffix rule as before", () => {
+    expect(repairPath(read(TYPO), W, fs(GOOD))?.new).toBe(GOOD);
+    const T = "/private/tmp/ab-arms/turn-picture-mark";
+    const TC = "/private/tmp/ab-arms/turn-picture-mark-ornith-spec-134500";
+    const TF = `${TC}/Sources/Marks/MarkCarry.swift`;
+    expect(repairPath(read(`${T}/Sources/Marks/MarkCarry.swift`, TC), W, fs(TF))?.new).toBe(TF);
+    expect(repairPath(read("/Users/dev/git/3DPDF/Sources/Documents/Pages/ThreeDAppearance.swift", "/private/tmp/ab-arms/save-model-ref-ornith-precise-041742"), W, fs("/private/tmp/ab-arms/save-model-ref-ornith-precise-041742/Sources/Documents/Pages/ThreeDAppearance.swift"))?.new).toBe("/private/tmp/ab-arms/save-model-ref-ornith-precise-041742/Sources/Documents/Pages/ThreeDAppearance.swift");
+  });
+
+  it("Edit with a dropped segment denies naming the exact repaired path", () => {
+    const r = repairPath({ tool_name: "Edit", cwd: C, tool_input: { file_path: C.replace("/logs/workers/", "/logs/") } }, W, fs(C, F))!;
+    expect(r.new).toBe(C);
+    const out = JSON.parse(renderRepair(r, "Edit")).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("deny");
+    expect(out.permissionDecisionReason).toBe(`Wrong path. Use exactly: ${C}`);
+  });
+});
+
 describe("renderRepair", () => {
   const r = repairPath(read(TYPO), W, fs(GOOD))!;
   it("Edit/Write/MultiEdit/NotebookEdit: deny naming the exact path", () => {

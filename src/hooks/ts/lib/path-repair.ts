@@ -16,6 +16,9 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 
 export const MAX_DISTANCE = 3;
 
+/** A repair may reinstate at most this many dropped middle segments of the cwd. */
+export const MAX_DROPPED = 2;
+
 /** Tools whose path argument is repaired, and the input key holding it. */
 const PATH_KEYS: Record<string, { key: string; mustExist: boolean }> = {
   Read: { key: "file_path", mustExist: true },
@@ -91,6 +94,24 @@ function repairValue(
       const fixed = rest.length ? `${root}/${rest.join("/")}` : root;
       if (exists(probe(fixed))) return fixed;
     }
+  }
+
+  // Rule 1c: whole middle segments of the cwd dropped
+  // (`…/logs/worktrees/<id>` for cwd `…/logs/workers/worktrees/<id>`).
+  // Past the shared prefix, the path resumes on the cwd's tail after the dropped
+  // segments; the remainder is appended to the cwd. Shortest candidate first.
+  let common = 0;
+  while (common < k && common < valParts.length && cwdParts[common] === valParts[common]) common++;
+  const cRest = cwdParts.slice(common);
+  const pRest = valParts.slice(common);
+  const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+  for (let dropped = 1; dropped <= MAX_DROPPED && dropped < cRest.length; dropped++) {
+    const resume = cRest.length - dropped;
+    if (resume > pRest.length) continue;
+    if (!eq(pRest.slice(0, resume), cRest.slice(dropped))) continue;
+    const rest = pRest.slice(resume);
+    const fixed = rest.length ? `${root}/${rest.join("/")}` : root;
+    if (exists(probe(fixed))) return fixed;
   }
 
   // Rule 2: invented prefix; the first suffix (≥ 2 components) that exists under the cwd.
