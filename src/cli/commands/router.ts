@@ -7,7 +7,8 @@ import type { Command } from "commander";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createRouter, ROUTER_PORT } from "../../router/router.js";
-import { aggregate, appendUsage, formatStats, parseSince, readUsage } from "../../router/usage.js";
+import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage } from "../../router/usage.js";
+import { loadSessionMap, sessionDisplayName } from "../../router/sessions.js";
 import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
 import { loadConfig } from "../../daemon/config.js";
 import { ok, err, dim } from "../utils.js";
@@ -95,7 +96,8 @@ export function registerRouterCommands(program: Command): void {
     .command("stats")
     .description("Token and cache totals per provider/model from the router usage log")
     .option("--since <span>", "only the last span, e.g. 30m, 1h, 2d")
-    .action((opts: { since?: string }) => {
+    .option("--by <key>", "group by provider (default) or session", "provider")
+    .action((opts: { since?: string; by: string }) => {
       let since: number | undefined;
       try {
         since = opts.since ? parseSince(opts.since) : undefined;
@@ -103,6 +105,9 @@ export function registerRouterCommands(program: Command): void {
         console.error(err((e as Error).message));
         process.exit(1);
       }
-      console.log(formatStats(aggregate(readUsage(), since)));
+      if (opts.by === "session") {
+        const map = loadSessionMap();
+        console.log(formatSessionStats(aggregateBySession(readUsage(), since, Date.now(), (id) => sessionDisplayName(id, map))));
+      } else console.log(formatStats(aggregate(readUsage(), since)));
     });
 }

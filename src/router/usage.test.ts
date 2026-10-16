@@ -5,7 +5,9 @@ import { createRouter } from "./router.js";
 import {
   aggregate,
   BustDetector,
+  aggregateBySession,
   fingerprint,
+  GapTracker,
   formatStats,
   parseSince,
   UsageSniffer,
@@ -157,10 +159,37 @@ describe("router accounting end to end", () => {
       output_tokens: 55,
       cache_read_input_tokens: 4000,
       cache_creation_input_tokens: 300,
+      session_id: "sess-1",
+      requested_model: "claude-haiku-4-5-20251001",
+      routed_model: "claude-haiku-4-5-20251001",
     });
     expect(rows[0]!.bytes).toBeGreaterThan(0);
     expect(JSON.stringify(rows[0])).not.toContain("hi\"");
     router.close();
     up.close();
+  });
+});
+
+describe("gap + session grouping", () => {
+  it("gap is seconds since previous request of the same session", () => {
+    const g = new GapTracker();
+    expect(g.gap("a", 1000)).toBeUndefined();
+    expect(g.gap("b", 2000)).toBeUndefined();
+    expect(g.gap("a", 31_000)).toBe(30);
+    expect(g.gap(undefined, 5000)).toBeUndefined();
+  });
+
+  it("groups rows by session and names known ones", () => {
+    const row = (session_id: string, ts: string, bust?: string[]): UsageRow => ({
+      ts, model: "m", provider: "p", status: 200, ms: 1, bytes: 1, cache: "hit",
+      input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 90,
+      session_id, ...(bust ? { bust } : {}),
+    });
+    const out = aggregateBySession(
+      [row("s1", "2026-01-01T00:00:00Z"), row("s1", "2026-01-01T00:01:00Z", ["system"]), row("s2", "2026-01-01T00:02:00Z")],
+      undefined, Date.now(), (id) => (id === "s1" ? "worker one" : null)
+    );
+    expect(out.map((g) => [g.session, g.name, g.requests, g.busts])).toEqual([["s2", null, 1, 0], ["s1", "worker one", 2, 1]]);
+    expect(out[1]!.hitRatio).toBeCloseTo(0.9);
   });
 });

@@ -32,6 +32,17 @@ export interface UsageRow extends Usage {
   cache: CacheVerdict;
   /** short hash of x-claude-code-session-id, when sent */
   session?: string;
+  /** x-claude-code-session-id as sent (an identifier, not a credential) */
+  session_id?: string;
+  /** model as the client asked for it, before routing */
+  requested_model?: string;
+  /** model the request was routed to (same value as `model`) */
+  routed_model?: string;
+  /** seconds since the previous request of the same session */
+  gap_s?: number;
+  /** non-sensitive client identification headers */
+  user_agent?: string;
+  x_app?: string;
   /** which prompt part changed inside a session: system, tools, messages */
   bust?: string[];
 }
@@ -207,6 +218,27 @@ export class BustDetector {
   }
 }
 
+/** Seconds since the previous request of the same session (start to start). */
+export class GapTracker {
+  private last = new Map<string, number>();
+
+  constructor(private readonly maxSessions = 2000) {}
+
+  gap(session: string | undefined, nowMs: number): number | undefined {
+    if (!session) return undefined;
+    const prev = this.last.get(session);
+    this.last.delete(session);
+    this.last.set(session, nowMs);
+    if (this.last.size > this.maxSessions) this.last.delete(this.last.keys().next().value as string);
+    return prev === undefined ? undefined : Math.round((nowMs - prev) / 100) / 10;
+  }
+}
+
+export function headerValue(h: string | string[] | undefined, max = 120): string | undefined {
+  const v = Array.isArray(h) ? h[0] : h;
+  return v ? v.slice(0, max) : undefined;
+}
+
 export function sessionTag(header: string | string[] | undefined): string | undefined {
   const v = Array.isArray(header) ? header[0] : header;
   return v ? createHash("sha256").update(v).digest("hex").slice(0, 8) : undefined;
@@ -277,6 +309,66 @@ export function aggregate(rows: UsageRow[], sinceMs?: number, now: number = Date
     g.hitRatio = denom ? g.cache_read_input_tokens / denom : 0;
   }
   return [...groups.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
+}
+
+export interface SessionStats extends Usage {
+  session: string;
+  /** display name, null when PAI does not know the session */
+  name: string | null;
+  requests: number;
+  busts: number;
+  firstTs: string;
+  lastTs: string;
+  hitRatio: number;
+}
+
+/** Totals per session (raw session_id, else the hash tag, else "-"). */
+export function aggregateBySession(
+  rows: UsageRow[],
+  sinceMs?: number,
+  now: number = Date.now(),
+  nameOf: (id: string) => string | null = () => null
+): SessionStats[] {
+  const groups = new Map<string, SessionStats>();
+  for (const r of rows) {
+    if (sinceMs !== undefined && Date.parse(r.ts) < now - sinceMs) continue;
+    const key = r.session_id ?? r.session ?? "-";
+    let g = groups.get(key);
+    if (!g) {
+      g = { ...emptyUsage(), session: key, name: r.session_id ? nameOf(r.session_id) : null, requests: 0, busts: 0, firstTs: r.ts, lastTs: r.ts, hitRatio: 0 };
+      groups.set(key, g);
+    }
+    g.requests++;
+    if (r.bust?.length) g.busts++;
+    if (r.ts < g.firstTs) g.firstTs = r.ts;
+    if (r.ts > g.lastTs) g.lastTs = r.ts;
+    for (const k of KEYS) g[k] += r[k] ?? 0;
+  }
+  for (const g of groups.values()) {
+    const denom = g.cache_read_input_tokens + g.cache_creation_input_tokens + g.input_tokens;
+    g.hitRatio = denom ? g.cache_read_input_tokens / denom : 0;
+  }
+  return [...groups.values()].sort((a, b) => b.lastTs.localeCompare(a.lastTs));
+}
+
+export function formatSessionStats(groups: SessionStats[]): string {
+  if (!groups.length) return "no router requests recorded";
+  const head = ["session", "name", "req", "in", "out", "cache_w", "cache_r", "hit%", "busts", "last"];
+  const lines = groups.map((g) => [
+    g.session.slice(0, 8),
+    g.name ?? "-",
+    String(g.requests),
+    String(g.input_tokens),
+    String(g.output_tokens),
+    String(g.cache_creation_input_tokens),
+    String(g.cache_read_input_tokens),
+    (g.hitRatio * 100).toFixed(1),
+    String(g.busts),
+    g.lastTs,
+  ]);
+  const widths = head.map((h, i) => Math.max(h.length, ...lines.map((l) => l[i]!.length)));
+  const fmt = (cols: string[]) => cols.map((c, i) => c.padEnd(widths[i]!)).join("  ").trimEnd();
+  return [fmt(head), ...lines.map(fmt)].join("\n");
 }
 
 export function formatStats(groups: StatsGroup[]): string {

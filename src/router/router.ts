@@ -16,6 +16,8 @@ import {
   BustDetector,
   emptyUsage,
   fingerprint,
+  GapTracker,
+  headerValue,
   sessionTag,
   UsageSniffer,
   verdict,
@@ -110,7 +112,7 @@ export function prepare(
   rawBody: Buffer,
   providers: Record<string, WorkerProvider>,
   claudeBase: string = CLAUDE_UPSTREAM
-): { ok: true; up: Upstream; target: Target } | { ok: false; status: number; message: string } {
+): { ok: true; up: Upstream; target: Target; requested: string } | { ok: false; status: number; message: string } {
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody.toString("utf8"));
@@ -150,7 +152,7 @@ export function prepare(
   }
   const buf = Buffer.from(JSON.stringify(out));
   headers["content-length"] = String(buf.length);
-  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res };
+  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model };
 }
 
 function isLocal(u: URL): boolean {
@@ -164,6 +166,7 @@ export function createRouter(
   onUsage?: (row: UsageRow) => void
 ): http.Server {
   const busts = new BustDetector();
+  const gaps = new GapTracker();
   return http.createServer((req, res) => {
     const started = Date.now();
     const path = req.url ?? "/";
@@ -188,10 +191,12 @@ export function createRouter(
       }
       const prep = prepare(path, req.headers, Buffer.concat(chunks), providers, claudeBase);
       if (!prep.ok) return fail(prep.status, prep.message);
-      const { up, target } = prep;
+      const { up, target, requested } = prep;
       const prov = target.kind === "claude" ? "anthropic" : target.name;
       const isCount = path.includes("/count_tokens");
       const session = sessionTag(req.headers["x-claude-code-session-id"]);
+      const sessionId = headerValue(req.headers["x-claude-code-session-id"], 64);
+      const gap = onUsage && !isCount ? gaps.gap(sessionId, started) : undefined;
       const changed =
         onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
       const record = (status: number, usage: Usage) => {
@@ -207,6 +212,14 @@ export function createRouter(
           cache: verdict(usage),
         };
         if (session) row.session = session;
+        if (sessionId) row.session_id = sessionId;
+        row.requested_model = requested;
+        row.routed_model = target.model;
+        if (gap !== undefined) row.gap_s = gap;
+        const ua = headerValue(req.headers["user-agent"]);
+        const app = headerValue(req.headers["x-app"], 40);
+        if (ua) row.user_agent = ua;
+        if (app) row.x_app = app;
         if (changed.length) row.bust = changed;
         onUsage(row);
       };
