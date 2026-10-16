@@ -98,7 +98,7 @@ export function registerRouterCommands(program: Command): void {
         process.exit(1);
       }
       const remote = addr !== LOOPBACK;
-      const token = remote ? readOrCreateCockpitToken() : undefined;
+      const token = undefined as string | undefined; // operator 22:53: no auth ceremony on the tailnet; revisit when cockpit content settles
       const rows = cachedRows(opts.usageFile);
       const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
       const system = new SystemMonitor();
@@ -131,7 +131,7 @@ export function registerRouterCommands(program: Command): void {
       });
       tail?.listen(port, addr, async () => {
         const host = await displayHost(addr);
-        console.log(ok(`cockpit beyond loopback: http://${host}:${port}/cockpit?token=${token} (token: ${cockpitTokenFile()})`));
+        console.log(ok(`cockpit beyond loopback: http://${host}:${port}/cockpit`));
       });
       const bye = () => {
         if (managed) {
