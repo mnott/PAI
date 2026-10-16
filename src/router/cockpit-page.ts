@@ -112,7 +112,7 @@ function renderSystem(){
  ];
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
  var srv=sys.servers||[];
- $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s","serves"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',esc((s.served||[]).slice(0,2).join(", "))]})):'<span class="dim">no local model servers configured</span>';
+ $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>']})):'<span class="dim">no local model servers configured</span>';
 }
 function lineChart(el,labels,series,keys,w,h){
  var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,bw=W/n;
