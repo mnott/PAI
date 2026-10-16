@@ -60,13 +60,37 @@ if [ ! -t 0 ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Detached run
+# ---------------------------------------------------------------------------
+# The autosave is best-effort bookkeeping (Node start-up, note lookup, TODO.md
+# write in a synced folder). Run synchronously it blocks the user's prompt and
+# blows the 30 s hook budget on a loaded machine, so it runs detached and the
+# hook returns at once. A lock dir (pid inside) keeps a slow machine from
+# piling up concurrent autosaves; a dead pid marks the lock stale.
+
+LOCK="${SENTINEL}.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  LOCK_PID=$(cat "$LOCK/pid" 2>/dev/null || true)
+  # no pid yet = the launcher is between mkdir and the pid write: still running
+  if [ -z "$LOCK_PID" ] || kill -0 "$LOCK_PID" 2>/dev/null; then
+    exit 0
+  fi
+  rm -rf "$LOCK" 2>/dev/null
+  mkdir "$LOCK" 2>/dev/null || exit 0
+fi
+
 touch "$SENTINEL" 2>/dev/null || true
 
-if [ -n "$CLAUDE_SESSION_UUID" ]; then
-  "$PAI_OS" session autosave --session-id "$CLAUDE_SESSION_UUID" \
-    --min-gap "$MIN_GAP_SECONDS" &>/dev/null || true
-else
-  "$PAI_OS" session autosave --min-gap "$MIN_GAP_SECONDS" &>/dev/null || true
-fi
+ARGS=(--min-gap "$MIN_GAP_SECONDS")
+[ -n "$CLAUDE_SESSION_UUID" ] && ARGS=(--session-id "$CLAUDE_SESSION_UUID" "${ARGS[@]}")
+
+# macOS has no setsid; nohup + a subshell with all fds redirected detaches
+# the work from the hook's stdio so Claude Code does not wait on it.
+(
+  trap 'rm -rf "$LOCK"' EXIT
+  nohup "$PAI_OS" session autosave "${ARGS[@]}"
+) </dev/null >/dev/null 2>&1 &
+echo $! > "$LOCK/pid" 2>/dev/null || true
 
 exit 0
