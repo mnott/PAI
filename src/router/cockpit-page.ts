@@ -151,16 +151,19 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
   if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
  el.innerHTML=svg+'</svg>';
 }
-function twoToneBars(el,labels,series,w,h){
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,max=1;
- series.forEach(function(s){if(tot(s)>max)max=tot(s)});
- var bw=W/n,c=colorOf("input"),svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+function twoToneModelBars(el,labels,buckets,models,w,h){
+ var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,mc=models.length,max=1;
+ models.forEach(function(m){colorOf(m)});
+ buckets.forEach(function(arr){arr.forEach(function(s){if(s.total>max)max=s.total})});
+ var bw=W/n,mwid=mc?Math.max(3,bw/mc):bw,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
  for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
- series.forEach(function(s,i){
-  var total=tot(s),fresh=total-s.cacheRead,x=(padL+i*bw+1).toFixed(1),bwid=Math.max(1,bw-2).toFixed(1);
-  var tip=esc(labels[i])+": total "+fmt(total)+" · non-cached "+fmt(fresh)+" · cached "+fmt(s.cacheRead)+" — "+KINDS.map(function(k){return k[1]+" "+fmt(s[k[0]])}).join(", ");
-  if(total>0)svg+='<rect x="'+x+'" y="'+(padT+H-H*total/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*total/max).toFixed(1)+'" fill="'+c+'" fill-opacity=".25"><title>'+tip+'</title></rect>';
-  if(fresh>0)svg+='<rect x="'+x+'" y="'+(padT+H-H*fresh/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*fresh/max).toFixed(1)+'" fill="'+c+'"><title>'+tip+'</title></rect>';
+ buckets.forEach(function(arr,i){
+  arr.forEach(function(s){
+   var c=colorOf(s.model),fresh=s.total-s.cacheRead,x=(padL+i*bw+models.indexOf(s.model)*mwid+1).toFixed(1),bwid=Math.max(1,mwid-2).toFixed(1);
+   var tip=esc(s.model)+" · "+esc(labels[i])+": total "+fmt(s.total)+" · non-cached "+fmt(fresh)+" · cached "+fmt(s.cacheRead)+" — "+KINDS.map(function(k){return k[1]+" "+fmt(s[k[0]])}).join(", ")+" · "+s.requests+" req";
+   svg+='<rect x="'+x+'" y="'+(padT+H-H*s.total/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*s.total/max).toFixed(1)+'" fill="'+c+'" fill-opacity=".25"><title>'+tip+'</title></rect>';
+   if(fresh>0)svg+='<rect x="'+x+'" y="'+(padT+H-H*fresh/max).toFixed(1)+'" width="'+bwid+'" height="'+(H*fresh/max).toFixed(1)+'" fill="'+c+'"><title>'+tip+'</title></rect>';
+  });
   if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>';
  });
  el.innerHTML=svg+'</svg>';
@@ -182,10 +185,11 @@ function render(){
  sel.onchange=function(){msel=this.value;render()};
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},wt=mode==="weighted";
  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
+ var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
  if(msel)stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),760,220);
- else twoToneBars($("series"),labs,series,760,220);
- $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>');
+ else twoToneModelBars($("series"),labs,buckets,models,760,220);
+ $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""));
  $("wnote").textContent=wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.";
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  var ms={};d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
