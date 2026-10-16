@@ -632,7 +632,7 @@ async function pickModel(name: string, dryRun?: boolean): Promise<string | undef
   } catch {
     return undefined; // broken workers config degrades to the default
   }
-  const { readLocalConfig, planStart } = await import("../../workers/local-tiers.js");
+  const { readLocalConfig, planStart, findModelPath } = await import("../../workers/local-tiers.js");
   const { workersYamlPath } = await import("../../workers/workers-config.js");
   const { listServers, startTier, isUp } = await import("./worker/local.js");
   let local: ReturnType<typeof readLocalConfig> | null = null;
@@ -648,7 +648,7 @@ async function pickModel(name: string, dryRun?: boolean): Promise<string | undef
     const port = Number(/^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/.exec(p.baseUrl ?? "")?.[1]);
     if (port && !running.some((r) => r.port === port) && (await isUp(port))) upPorts.push(port);
   }
-  const choices = buildModelChoices(workers, local, running, { upPorts, diskBytes: diskBytesOfTier });
+  const choices = buildModelChoices(workers, local, running, { upPorts, diskBytes: diskBytesOfTier, findModel: (s) => findModelPath(s) });
   if (choices.length === 1) return undefined;
 
   const choice = await askModel(choices, name);
@@ -656,14 +656,14 @@ async function pickModel(name: string, dryRun?: boolean): Promise<string | undef
     process.stderr.write(chalk.yellow("  Not a choice — nothing started.\n"));
     return "abort";
   }
-  if (choice.tier && local && !choice.up) {
-    const tier = local.tiers[choice.tier];
+  const tier = choice.tier && local ? local.tiers[choice.tier] : choice.launch;
+  if (tier && local && !choice.up) {
     const plan = planStart(local, tier);
     if (dryRun) {
-      console.log(dim(`  would start local ${choice.tier}: ${plan.line}`));
+      console.log(dim(`  would start local ${tier.tier}: ${plan.line}`));
     } else {
       try {
-        await startTier(local, choice.tier, tier, plan);
+        await startTier(local, tier.tier, tier, plan);
       } catch (e) {
         process.stderr.write(chalk.red(`  ${e instanceof Error ? e.message : String(e)}\n`));
         return "abort";

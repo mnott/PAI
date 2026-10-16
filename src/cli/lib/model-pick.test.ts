@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defaultLauncher, planStart } from "../../workers/local-tiers.js";
 import { buildModelChoices, modelScreen, moveCursor, parseModelAnswer, resolveEnter } from "./model-pick.js";
 
 const workers = {
@@ -8,7 +9,7 @@ const workers = {
     off: { enabled: false },
     ornith: { enabled: true, baseUrl: "http://127.0.0.1:8013" },
     local: { enabled: true, baseUrl: "http://127.0.0.1:8014" },
-    ollama: { enabled: true, baseUrl: "http://localhost:11434" },
+    ollama: { enabled: true, baseUrl: "http://localhost:11434", models: { default: "ollama-m" } },
   },
 } as never;
 
@@ -82,14 +83,28 @@ describe("local grouping and memory", () => {
     expect(t.indexOf("glm")).toBeLessThan(t.indexOf("LOCAL"));
     expect(t.indexOf("LOCAL")).toBeLessThan(t.indexOf("local small"));
   });
-  it("down non-tier local provider is not choosable", () => {
-    const c = buildModelChoices(workers, local, [], probe);
+  it("down non-tier local provider with its model on disk starts on demand", () => {
+    const c = buildModelChoices(workers, local, [], { ...probe, findModel: () => "/m/ollama" });
     const o = c.find((x) => x.provider === "ollama")!;
-    expect(o.down).toBe(true);
+    expect(o.missing).toBeUndefined();
+    expect(o.launch).toMatchObject({ provider: "ollama", model: "/m/ollama", port: 11434, served: "ollama-m" });
+    expect(o.mem).toBe("~18.4 GB");
+    expect(parseModelAnswer("ollama", c)).toBe(o);
+    const cfg = { launcher: defaultLauncher(), tiers: {} };
+    const plan = planStart(cfg, o.launch!);
+    expect(plan.argv.slice(2, 4)).toEqual(["serve", "/m/ollama"]);
+    expect(plan.argv[plan.argv.indexOf("--port") + 1]).toBe("11434");
+    expect(strip(modelScreen(c, "p"))).toContain("down — will be started");
+  });
+  it("model not on disk is dim not installed and cannot be chosen", () => {
+    const c = buildModelChoices(workers, local, [], { ...probe, findModel: () => null });
+    const o = c.find((x) => x.provider === "ollama")!;
+    expect(o.missing).toBe(true);
     expect(parseModelAnswer("ollama", c)).toBeNull();
     expect(parseModelAnswer(String(c.indexOf(o) + 1), c)).toBeNull();
     expect(c[moveCursor(c, 2, 1)].provider).toBe("ornith");
-    expect(buildModelChoices(workers, local, [], { upPorts: [11434] }).find((x) => x.provider === "ollama")?.down).toBe(false);
+    expect(strip(modelScreen(c, "p"))).toContain("not installed");
+    expect(buildModelChoices(workers, local, [], { upPorts: [11434] }).find((x) => x.provider === "ollama")?.missing).toBeUndefined();
   });
   it("up tier shows RSS, down tier shows disk size and stays choosable", () => {
     const c = buildModelChoices(workers, local, [{ port: 8013, rssKb: 20 * 1048576 }], probe);

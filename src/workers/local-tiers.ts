@@ -242,3 +242,39 @@ export function parseServers(psOut: string, cfg: LocalConfig, selfPid = process.
 export function fmtRss(kb: number): string {
   return kb >= 1048576 ? `${(kb / 1048576).toFixed(1)} GB` : `${Math.round(kb / 1024)} MB`;
 }
+
+const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Model directories on disk: HF snapshots and LM Studio models, nothing else. */
+export function installedModelDirs(home = homedir()): { name: string; path: string }[] {
+  const out: { name: string; path: string }[] = [];
+  const ls = (d: string): string[] => {
+    try {
+      return readdirSync(d).sort();
+    } catch {
+      return [];
+    }
+  };
+  const hub = join(home, ".cache/huggingface/hub");
+  for (const e of ls(hub)) {
+    if (!e.startsWith("models--")) continue;
+    const snap = ls(join(hub, e, "snapshots"))[0];
+    if (snap) out.push({ name: e.split("--").slice(2).join("--"), path: join(hub, e, "snapshots", snap) });
+  }
+  const lms = join(home, ".lmstudio/models");
+  for (const org of ls(lms)) {
+    for (const m of ls(join(lms, org))) out.push({ name: m, path: join(lms, org, m) });
+  }
+  return out;
+}
+
+/**
+ * Model path for a provider's default model name (e.g. "qwen3-coder-30b"):
+ * the first installed directory whose name contains it, ignoring case and
+ * punctuation. Null when nothing matches.
+ */
+export function findModelPath(served: string, dirs: { name: string; path: string }[] = installedModelDirs()): string | null {
+  const want = norm(served);
+  if (!want) return null;
+  return dirs.find((d) => norm(d.name).includes(want))?.path ?? null;
+}

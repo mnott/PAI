@@ -26,8 +26,10 @@ export interface ModelChoice {
   local?: boolean;
   /** Local only: its server is running now. */
   up?: boolean;
-  /** Local provider that is down and is not a tier: cannot be started here. */
-  down?: boolean;
+  /** Local provider whose model is not on disk: cannot be chosen. */
+  missing?: boolean;
+  /** Local provider that is not a tier and is down: start recipe for it. */
+  launch?: LocalTier;
   /** Local only: RSS when up, else size on disk. */
   mem?: string;
   label: string;
@@ -39,6 +41,8 @@ export interface ModelProbe {
   upPorts?: number[];
   /** Size on disk in bytes of a tier's model, null when unknown. */
   diskBytes?: (t: LocalTier) => number | null;
+  /** Model path on disk for a provider's default model name, null when absent. */
+  findModel?: (served: string) => string | null;
 }
 
 /** True when the provider's base URL points at this machine. */
@@ -100,7 +104,8 @@ export function buildModelChoices(
   const localProviders: ModelChoice[] = [];
   for (const name of launchableProviderNames(workers)) {
     if (tierProviders.has(name)) continue;
-    const url = (workers.providers as Record<string, { baseUrl?: string }>)[name]?.baseUrl;
+    const prov = (workers.providers as Record<string, { baseUrl?: string; models?: { default?: string } }>)[name];
+    const url = prov?.baseUrl;
     if (!isLocalUrl(url)) {
       choices.push({ provider: name, label: name });
       continue;
@@ -108,9 +113,21 @@ export function buildModelChoices(
     const port = portOf(url);
     const r = running.find((x) => x.port === port);
     const up = !!r || (port !== null && (probe.upPorts ?? []).includes(port));
+    if (up) {
+      localProviders.push({ provider: name, local: true, up, mem: r ? fmtRss(r.rssKb) : undefined, label: name });
+      continue;
+    }
+    const served = prov?.models?.default;
+    const model = served && port !== null ? (probe.findModel?.(served) ?? null) : null;
+    if (!served || port === null || !model) {
+      localProviders.push({ provider: name, local: true, up: false, missing: true, label: name });
+      continue;
+    }
+    const launch: LocalTier = { tier: name, provider: name, model, served, port, flags: [] };
+    const bytes = probe.diskBytes?.(launch) ?? null;
     localProviders.push({
-      provider: name, local: true, up, down: !up,
-      mem: r ? fmtRss(r.rssKb) : undefined,
+      provider: name, local: true, up: false, launch,
+      mem: bytes !== null ? fmtDisk(bytes) : undefined,
       label: name,
     });
   }
@@ -131,7 +148,7 @@ export function buildModelChoices(
 }
 
 function status(c: ModelChoice): string {
-  if (c.down) return chalk.dim("down — not a tier, cannot be started from here");
+  if (c.missing) return chalk.dim("not installed");
   const mem = c.mem ? `${c.up ? "" : "disk "}${c.mem}` : "";
   return c.up
     ? `${chalk.green("up")}${mem ? `  ${mem} RSS` : ""}`
@@ -149,7 +166,7 @@ export function modelScreen(choices: ModelChoice[], name: string, cursor = 0, ty
     }
     section = sec || section;
     const mark = c.local ? (c.up ? chalk.green("●") : chalk.dim("○")) : " ";
-    const body = c.down ? chalk.dim(`${c.label}  ${status(c)}`) : c.local ? `${c.label}  ${status(c)}` : c.label;
+    const body = c.missing ? chalk.dim(`${c.label}  ${status(c)}`) : c.local ? `${c.label}  ${status(c)}` : c.label;
     const row = `${chalk.cyan(String(i + 1).padStart(2))}  ${mark} ${body}`;
     lines.push(i === cursor ? `${chalk.cyan("›")} ${chalk.bold(row)}` : `  ${row}`);
   });
@@ -167,13 +184,13 @@ export function parseModelAnswer(answer: string, choices: ModelChoice[]): ModelC
     c =
       choices.find((x) => x.provider === t && !x.tier) ??
       choices.find((x) => x.tier === t || x.tier === t.replace(/^local[ -]?/, ""));
-  return c && !c.down ? c : null;
+  return c && !c.missing ? c : null;
 }
 
 /** Next cursor after an arrow key, skipping choices that cannot be chosen. */
 export function moveCursor(choices: ModelChoice[], cursor: number, dir: 1 | -1): number {
   for (let i = cursor + dir; i >= 0 && i < choices.length; i += dir) {
-    if (!choices[i].down) return i;
+    if (!choices[i].missing) return i;
   }
   return cursor;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { homedir } from "node:os";
 import { parse } from "yaml";
-import { parseLocalConfig, parseServers, planStart, stopLine, LocalTierError } from "./local-tiers.js";
+import { findModelPath, parseLocalConfig, parseServers, planStart, stopLine, LocalTierError } from "./local-tiers.js";
 
 const YAML = `
 local_tiers:
@@ -62,4 +62,16 @@ describe("local tiers", () => {
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ pid: 101, tier: "small", provider: "ornith", rssKb: 4194304 });
   });
+});
+
+describe("findModelPath", () => {
+  const dirs = [
+    { name: "Qwen3-Coder-30B-A3B-Instruct-MLX-4bit", path: "/a" },
+    { name: "Qwen3.6-35B-A3B-4bit", path: "/b" },
+  ];
+  it("matches the served name ignoring case and punctuation", () => {
+    expect(findModelPath("qwen3-coder-30b", dirs)).toBe("/a");
+    expect(findModelPath("qwen3.6-35b", dirs)).toBe("/b");
+  });
+  it("null when not installed", () => expect(findModelPath("devstral-small-2", dirs)).toBeNull());
 });
