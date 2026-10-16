@@ -58,7 +58,14 @@ describe("detectToolErrors", () => {
     const sent: Record<string, number> = {};
     expect(detectToolErrors(r, NOW, sent)).toHaveLength(1);
     expect(detectToolErrors(r, NOW + 1000, sent)).toHaveLength(0);
-    expect(detectToolErrors(r, NOW + RESEND_MS + 1, sent)).toHaveLength(1);
+    const fresh = [rec("w1", NOW + RESEND_MS, t), rec("w1", NOW + RESEND_MS + 1, t), rec("w1", NOW + RESEND_MS + 2, t)];
+    expect(detectToolErrors([...r, ...fresh], NOW + RESEND_MS + 3, sent)).toHaveLength(1);
+  });
+  it("never re-alerts old records after the dedupe expires", () => {
+    const r = [rec("w1", NOW - 3, t), rec("w1", NOW - 2, t), rec("w1", NOW - 1, t)];
+    const sent: Record<string, number> = {};
+    expect(detectToolErrors(r, NOW, sent)).toHaveLength(1);
+    expect(detectToolErrors(r, NOW + RESEND_MS + 1, sent)).toHaveLength(0);
   });
   it("groups", () => {
     const g = groupToolErrors([rec("w1", 1, t), rec("w2", 5, t)]);

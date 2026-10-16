@@ -152,7 +152,7 @@ export function groupToolErrors(records: ToolErrorRecord[]): ToolErrorGroup[] {
  * Signatures to report now. Rules: (a) ≥3 in one worker within 2h, (b) ≥2
  * workers within 30 min, (c) a hook-generated error twice in one worker (a guard that blocks once and teaches the fix is not systematic; two workers is rule b).
  * `sent` (signature → last send epoch ms) holds each signature to one message
- * per RESEND_MS; it is updated for the returned groups.
+ * per RESEND_MS and hides records up to that send; it is updated for the returned groups.
  */
 export function detectToolErrors(
   records: ToolErrorRecord[],
@@ -162,8 +162,11 @@ export function detectToolErrors(
   const out: ToolErrorGroup[] = [];
   const bySig = new Map<string, ToolErrorRecord[]>();
   for (const r of records) bySig.set(r.signature, [...(bySig.get(r.signature) ?? []), r]);
-  for (const [sig, recs] of bySig) {
+  for (const [sig, all] of bySig) {
     if (now - (sent[sig] ?? 0) < RESEND_MS) continue;
+    // records at or before the last alert were already reported
+    const recs = all.filter((r) => r.ts > (sent[sig] ?? 0));
+    if (!recs.length) continue;
     const perWorker = new Map<string, number>();
     for (const r of recs) if (now - r.ts <= SAME_WORKER_WINDOW_MS) perWorker.set(r.worker, (perWorker.get(r.worker) ?? 0) + 1);
     const a = [...perWorker.values()].some((n) => n >= SAME_WORKER_MIN);
