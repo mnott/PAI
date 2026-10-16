@@ -843,8 +843,37 @@ export function registerWorkerCommands(workerCmd: Command): void {
     });
 
   workerCmd
-    .command("fallback [action] [provider]")
+    .command("pool [action]")
     .description(
+      "Worker session pool: long-lived headless claude slots that successive small\n" +
+        "runs talk to instead of each spawning a fresh claude, so the provider\n" +
+        "prompt cache carries over (src/workers/pool.ts).\n" +
+        "on starts the detached host and enables routing, off stops both, status\n" +
+        "shows slots, tasks served and the cache-carry total. Default off."
+    )
+    .action(async (action: string | undefined) => {
+      try {
+        const { poolOn, poolOff, poolStatusText } = await import("../../../workers/pool-cli.js");
+        if (action === undefined || action === "status") {
+          console.log(await poolStatusText(currentLogDir()));
+          return;
+        }
+        if (action === "on") {
+          for (const l of await poolOn(currentLogDir())) console.log(l);
+          return;
+        }
+        if (action === "off") {
+          for (const l of await poolOff(currentLogDir())) console.log(l);
+          return;
+        }
+        fail(new Error(`unknown pool action "${action}" (expected: on, off, status)`));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("fallback [action] [provider]")    .description(
       "Machine-wide fallback: every NEW Claude Code process runs on a worker\n" +
         "provider (settings.json env + model pin) until switched back.\n" +
         "on [provider] switches (default: active), off restores settings.json\n" +

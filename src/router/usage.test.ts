@@ -12,6 +12,7 @@ import {
   parseSince,
   UsageSniffer,
   usageFromJson,
+  splitBySessionKind,
   verdict,
   type UsageRow,
 } from "./usage.js";
@@ -91,6 +92,37 @@ describe("stats", () => {
     expect(recent.requests).toBe(2);
     expect(formatStats(all)).toContain("glm-5.3");
     expect(() => parseSince("soon")).toThrow();
+  });
+});
+
+describe("session-kind split", () => {
+  it("classifies sessions by request count: one-shot vs continuous, hit ratio per group", () => {
+    const now = Date.now();
+    const at = (minAgo: number, sid: string, o: Partial<UsageRow> = {}): UsageRow =>
+      row({ ts: new Date(now - minAgo * 60_000).toISOString(), session_id: sid, ...o });
+    const rows = [
+      // continuous session s1: two requests, cached second
+      at(5, "s1", { cache_read_input_tokens: 700, input_tokens: 10 }),
+      at(4, "s1", { cache_read_input_tokens: 700, input_tokens: 10 }),
+      // one-shot session s2: a single cold request
+      at(3, "s2", { cache_read_input_tokens: 0, input_tokens: 100, cache_creation_input_tokens: 0 }),
+    ];
+    const split = splitBySessionKind(rows, undefined, now);
+    expect(split.continuous).toMatchObject({ sessions: 1, requests: 2 });
+    expect(split.continuous.hitRatio).toBeCloseTo(1400 / 1420, 5); // all but the fresh input cached
+    expect(split.oneShot).toMatchObject({ sessions: 1, requests: 1 });
+    expect(split.oneShot.hitRatio).toBe(0);
+    expect(splitBySessionKind([], undefined, now).continuous.sessions).toBe(0);
+  });
+
+  it("honours the since window and falls back to the session field", () => {
+    const now = Date.now();
+    const old = row({ ts: new Date(now - 2 * 3_600_000).toISOString(), session_id: "gone" });
+    const recent1 = row({ ts: new Date(now - 60_000).toISOString(), session: "keep" });
+    const recent2 = row({ ts: new Date(now - 30_000).toISOString(), session: "keep" });
+    const split = splitBySessionKind([old, recent1, recent2], 3_600_000, now);
+    expect(split.continuous.requests).toBe(2);
+    expect(split.oneShot.sessions).toBe(0);
   });
 });
 

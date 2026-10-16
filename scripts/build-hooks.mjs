@@ -130,6 +130,9 @@ const STANDALONE_ENTRIES = [
   // detached proxy for openai-protocol providers; spawned from dist, not
   // symlinked into ~/.claude, so it is NOT in the --sync list below
   ["src/workers/standalone/proxy.ts", "worker-proxy.mjs"],
+  // detached worker session pool host (src/workers/pool-host.ts); spawned
+  // from dist like the proxy, NOT symlinked into ~/.claude
+  ["src/workers/standalone/pool-host.ts", "worker-pool-host.mjs"],
 ];
 
 mkdirSync(STAGING, { recursive: true });
@@ -144,6 +147,11 @@ for (const [entry, name] of STANDALONE_ENTRIES) {
     outfile: staged,
     sourcemap: true,
     banner: REQUIRE_SHIM,
+    // the pool host pulls the storage factory (via run.ts → project-config),
+    // whose embeddings backend needs the native onnx binding — native .node
+    // files can never be bundled; resolve it at runtime like the rest of
+    // node_modules (the host runs from dist/, inside the repo)
+    external: ["onnxruntime-node"],
   });
   chmodSync(staged, 0o755);
   const stagedMap = `${staged}.map`;
@@ -228,8 +236,11 @@ if (skipReason) {
   }
 
   // 1. TypeScript hooks: dist/hooks/*.mjs → ~/.claude/Hooks/*.mjs
-  // (worker-proxy.mjs is spawned from dist, not a hook — skip it)
-  const mjsFiles = readdirSync(HOOKS_OUT).filter((f) => f.endsWith(".mjs") && f !== "worker-proxy.mjs");
+  // (worker-proxy.mjs and worker-pool-host.mjs are spawned from dist, not
+  // hooks — skip them)
+  const mjsFiles = readdirSync(HOOKS_OUT).filter(
+    (f) => f.endsWith(".mjs") && f !== "worker-proxy.mjs" && f !== "worker-pool-host.mjs"
+  );
   for (const filename of mjsFiles) {
     syncFile(join(HOOKS_OUT, filename), join(hooksTarget, filename));
   }

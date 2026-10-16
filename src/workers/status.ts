@@ -165,6 +165,13 @@ export interface WorkerStatus {
   claimReleaseErrors?: string[];
   /** Ever granted clickr desktop controls (see controls.ts) — the runner returns them best-effort on exit. */
   controlsHeld?: boolean;
+  /**
+   * Set when the task ran through the worker session pool (pool.ts) instead
+   * of a fresh claude spawn: task index within its slot, the slot's claude
+   * session id (shared across tasks), and the host pid. `pid` names the slot
+   * process — killing it kills the whole slot, not just this task.
+   */
+  pool?: { task: number; slotSession: string | null; hostPid: number };
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */

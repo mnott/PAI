@@ -63,6 +63,23 @@ describe("cockpit aggregation", () => {
     expect(d.workers.map((w) => [w.worker, w.name, w.verdict, w.busts])).toEqual([["w9", "fix it", "ok", 1]]);
     expect(retryRows(rows).size).toBe(1);
   });
+
+  it("splits usage by session kind in the payload; pool carry rides along only when non-empty", () => {
+    const rows = [row(2), row(3), row(4, { session_id: "s2", cache_read_input_tokens: 0, input_tokens: 100 })];
+    const d = buildCockpitData(rows, "1h", NOW);
+    expect(d.sessionSplit.continuous).toMatchObject({ sessions: 1, requests: 2 });
+    expect(d.sessionSplit.oneShot).toMatchObject({ sessions: 1, requests: 1 });
+    expect(d.pool).toBeNull();
+    const pooled = buildCockpitData(rows, "1h", NOW, undefined, { tasks: 7, tokensCarried: 123_000, hitRatio: 0.81 });
+    expect(pooled.pool).toEqual({ tasks: 7, tokensCarried: 123_000, hitRatio: 0.81 });
+    expect(buildCockpitData(rows, "1h", NOW, undefined, { tasks: 0, tokensCarried: 0, hitRatio: 0 }).pool).toBeNull();
+  });
+
+  it("the donut note renders the split and the pool carry", () => {
+    expect(COCKPIT_HTML).toContain("sessionSplit");
+    expect(COCKPIT_HTML).toContain("one-shot");
+    expect(COCKPIT_HTML).toContain("tokens carried");
+  });
 });
 
 describe("limits parsing", () => {

@@ -279,6 +279,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker pane [id]` | Open the follow pane for a worker (tmux split when $TMUX is set, else iTerm2 on macOS, else prints the follow command) |
 | `pai worker pending` | Finished workers whose branch or worktree holds work not yet merged into this repo |
 | `pai worker policy [mode]` | Where workers run. No mode shows the policy; a mode sets it; `clear` removes it |
+| `pai worker pool [action]` | Worker session pool: long-lived headless claude slots that successive small |
 | `pai worker providers` | Providers: list (default), add, remove, use, enable, disable, test |
 | `pai worker providers add <name>` | Add a provider; the first one also turns workers on and seeds classes. |
 | `pai worker providers disable <name>` | Disable a provider (auto-routing skips it; --provider still works) |

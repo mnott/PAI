@@ -226,7 +226,11 @@ function renderDonuts(){
   dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.model)+' · '+m.requests+' req</span></div></div>';
  }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("");
  $("donut").innerHTML=dh||'<span class="dim">no data</span>';
- $("donutnote").textContent="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
+ var note="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
+ var sk=d.sessionSplit;
+ if(sk)note+=". continuous "+pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess, "+sk.continuous.requests+" req) · one-shot "+pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess, "+sk.oneShot.requests+" req)";
+ if(d.pool&&d.pool.tasks)note+=". pool: "+d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried";
+ $("donutnote").textContent=note;
  var loc=[];(sys&&sys.servers||[]).forEach(function(s){(s.served||[]).forEach(function(m){if(loc.indexOf(m)<0)loc.push(m)})});
  var lh="";
  loc.forEach(function(m){var r=ms[m];if(!r)return;var dn=r.cacheRead+r.cacheWrite+r.input;
