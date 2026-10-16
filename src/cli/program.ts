@@ -42,6 +42,7 @@ import { registerDbCommands } from "./commands/db.js";
 import { registerHelpCommand } from "./commands/help.js";
 import { registerSessionCommands } from "./commands/session/index.js";
 import { registerWorkerCommands } from "./commands/worker/index.js";
+import { registerRouterCommands } from "./commands/router.js";
 import { registerLaunchCommand } from "./commands/launch.js";
 import { registerSessionCleanupCommand } from "./commands/session-cleanup/index.js";
 import { err, warn, ok, dim, shortenPath, encodeDir, now } from "./utils.js";
@@ -168,6 +169,7 @@ Examples:
     );
 
   registerWorkerCommands(workerCmd);
+  registerRouterCommands(program);
 
   // -------------------------------------------------------------------------
   // pai launch — start the harness itself (not a subagent) on any provider
