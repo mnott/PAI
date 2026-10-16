@@ -1012,7 +1012,7 @@ describe("isEmptyResponse", () => {
     expect(isEmptyResponse("", 0)).toBe(true);
     expect(isEmptyResponse("  \n", 0)).toBe(true);
     expect(isEmptyResponse(undefined, 0)).toBe(true);
-    expect(classifyToolError({ ts: 0, worker: "w", provider: "p", label: "l", tool: "model", raw: "empty-response: model answered with zero usage and no tool call", signature: "model|empty-response" }).cls).toBe("harness");
+    expect(classifyToolError({ ts: 0, worker: "w", provider: "p", label: "l", tool: "model", raw: "empty-response: model answered with zero usage and no tool call", signature: "model|empty-response" }).cls).toBe("model");
   });
   it("non-empty result, no tools (local server, usage 0/0): not empty", () => {
     expect(isEmptyResponse("done", 0)).toBe(false);

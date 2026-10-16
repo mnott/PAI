@@ -76,7 +76,7 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
     },
     c: { cls: "harness", hint: "hook error on an existing path outside the worker cwd" },
   },
-  { test: (r) => /^empty-response/i.test(r.raw), c: { cls: "harness", hint: "empty model response (zero usage, no tool call)" } },
+  { test: (r) => /^empty-response/i.test(r.raw), c: { cls: "model", hint: "empty first reply — model stopped at once (seen with short spec prompts); one automatic relaunch already ran" } },
   { test: (r) => /Working directory .* was deleted/i.test(r.raw), c: { cls: "harness", hint: "worker cwd deleted" } },
   { test: (r) => /Failed to authenticate|API Error|\b(401|500)\b/.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
   { test: (r) => /No such tool available/i.test(r.raw), c: { cls: "harness", hint: "tool missing in the worker" } },
