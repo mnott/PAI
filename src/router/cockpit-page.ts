@@ -114,7 +114,22 @@ function renderSystem(){
  var srv=sys.servers||[];
  $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>']})):'<span class="dim">no local model servers configured</span>';
 }
+function trimEmpty(labels,rows,totalOf){
+ var a=0,b=rows.length-1;
+ while(a<=b&&!totalOf(rows[a]))a++;
+ while(b>=a&&!totalOf(rows[b]))b--;
+ return a>b?null:{labels:labels.slice(a,b+1),rows:rows.slice(a,b+1)}
+}
+function emptyChart(w,h){
+ var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/>'}
+ svg+='<text x="'+(padL+W/2)+'" y="'+(padT+H/2+3)+'" text-anchor="middle">no data in this window</text>';
+ return svg+'</svg>';
+}
 function lineChart(el,labels,series,keys,w,h){
+ var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k[0]]||0});return t});
+ if(!tr){el.innerHTML=emptyChart(w,h);return}
+ labels=tr.labels;series=tr.rows;
  var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,bw=W/n;
  var max=1;series.forEach(function(s){if((s.totalW||0)>max)max=s.totalW});
  var svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
@@ -143,6 +158,9 @@ function tick(){
  st.className=lastOk&&age>=15?"stale":"";
 }
 function stackedBars(el,labels,series,keys,w,h,tickFmt){
+ var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});
+ if(!tr){el.innerHTML=emptyChart(w,h);return}
+ labels=tr.labels;series=tr.rows;
  var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,max=1;
  var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
  var bw=W/n,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
@@ -152,6 +170,9 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
  el.innerHTML=svg+'</svg>';
 }
 function twoToneModelBars(el,labels,buckets,models,w,h){
+ var tr=trimEmpty(labels,buckets,function(arr){var t=0;arr.forEach(function(s){t+=s.total||0});return t});
+ if(!tr){el.innerHTML=emptyChart(w,h);return}
+ labels=tr.labels;buckets=tr.rows;
  var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,mc=models.length,max=1;
  models.forEach(function(m){colorOf(m)});
  buckets.forEach(function(arr){arr.forEach(function(s){if(s.total>max)max=s.total})});

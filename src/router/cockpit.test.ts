@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_WEIGHTS, buildCockpitData, groupLimits, handleCockpit, pauseBucket, retryRows, weightedTokens } from "./cockpit.js";
+import { COCKPIT_HTML } from "./cockpit-page.js";
 import { LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
 import type { UsageRow } from "./usage.js";
 
@@ -116,12 +117,31 @@ describe("cockpit http", () => {
     const page = await get("/cockpit");
     expect(page.status).toBe(200);
     expect(page.body).toContain("<svg");
+    expect(page.body).toContain("trimEmpty");
+    expect(page.body).toContain("emptyChart");
+    expect(page.body).toContain("no data in this window");
     const data = JSON.parse((await get("/cockpit/data?window=24h")).body);
     expect(data.window).toBe("24h");
     expect(data.totals.requests).toBe(1);
     expect((await get("/cockpit/data", "POST")).status).toBe(405);
     expect((await get("/other")).body).toBe("other");
     srv.close();
+  });
+});
+
+describe("cockpit page empty-bucket trim", () => {
+  const trim = new Function(
+    `return (${COCKPIT_HTML.match(/function trimEmpty[\s\S]*?\n\}/)![0]})`
+  )() as (labels: string[], rows: { v: number }[], totalOf: (r: { v: number }) => number) => { labels: string[]; rows: { v: number }[] } | null;
+  const totalOf = (r: { v: number }) => r.v;
+
+  it("drops leading and trailing zero buckets, keeps interior gaps", () => {
+    const out = trim(["a", "b", "c", "d", "e"], [{ v: 0 }, { v: 5 }, { v: 0 }, { v: 7 }, { v: 0 }], totalOf);
+    expect(out!.labels).toEqual(["b", "c", "d"]);
+    expect(out!.rows.map((r) => r.v)).toEqual([5, 0, 7]);
+  });
+  it("returns null when every bucket is empty", () => {
+    expect(trim(["a", "b"], [{ v: 0 }, { v: 0 }], totalOf)).toBeNull();
   });
 });
 
