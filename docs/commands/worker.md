@@ -44,6 +44,7 @@ pai worker <subcommand> [options]
 | [`pai worker status-line [term] [cwd] [session]`](#pai-worker-status-line-term-cwd-session) | One-line worker summary for a status bar (empty when none in scope). |
 | [`pai worker on`](#pai-worker-on) | Route Agent-tool subagents to workers (default when a provider exists) |
 | [`pai worker off`](#pai-worker-off) | Stop routing: Agent tool runs on Anthropic again |
+| [`pai worker pool [action]`](#pai-worker-pool-action) | Worker session pool: long-lived headless claude slots that successive small |
 | [`pai worker fallback [action] [provider]`](#pai-worker-fallback-action-provider) | Machine-wide fallback: every NEW Claude Code process runs on a worker |
 | [`pai worker install`](#pai-worker-install) | Migrate: Agent hook in settings.json, ~/.local/bin glm* shims, old script cleanup |
 | [`pai worker providers`](#pai-worker-providers) | Providers: list (default), add, remove, use, enable, disable, test |
@@ -460,6 +461,22 @@ Route Agent-tool subagents to workers (default when a provider exists)
 ### pai worker off
 
 Stop routing: Agent tool runs on Anthropic again
+
+
+### pai worker pool [action]
+
+Worker session pool: long-lived headless claude slots that successive small
+
+runs talk to instead of each spawning a fresh claude, so the provider
+prompt cache carries over (src/workers/pool.ts).
+on starts the detached host and enables routing, off stops both, status
+shows slots, tasks served and the cache-carry total. Default off.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `[action]` | optional |
 
 
 ### pai worker fallback [action] [provider]

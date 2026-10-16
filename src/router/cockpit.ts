@@ -5,12 +5,15 @@
  */
 
 import { statSync } from "node:fs";
+import { join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { readUsage, USAGE_LOG_FILE, type UsageRow } from "./usage.js";
+import { readUsage, splitBySessionKind, USAGE_LOG_FILE, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
-import type { SystemMonitor } from "./system.js";
+import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
+import { readWorkersSection } from "../workers/config.js";
+import { workersLogDir } from "../workers/paths.js";import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
 
@@ -89,7 +92,8 @@ export function buildCockpitData(
   allRows: UsageRow[],
   win: CockpitWindow,
   now: number = Date.now(),
-  sessions: Map<string, SessionInfo> = new Map()
+  sessions: Map<string, SessionInfo> = new Map(),
+  pool: PoolCarry | null = null
 ) {
   const { span, bucket } = WINDOWS[win];
   const from = bucketStart(now - span, bucket);
@@ -191,6 +195,7 @@ export function buildCockpitData(
   }
 
   const withRatio = <T extends Tok>(x: T) => ({ ...x, hitRatio: hitRatio(x) });
+  const sessionSplit: SessionKindSplit = splitBySessionKind(rows);
   return {
     window: win,
     bucketMs: bucket,
@@ -209,6 +214,13 @@ export function buildCockpitData(
     bustParts,
     workers: sessionRows.filter((s) => s.worker),
     daily: { days, models: daily },
+    // continuous vs one-shot sessions: the overall ratio alone averages a
+    // cache-carrying population and a cold-spawn population into one number
+    // that predicts neither
+    sessionSplit,
+    // the worker session pool's carry-over: tasks served pooled and the
+    // cache_read tokens their first requests were spared (null = no pool)
+    pool: pool && pool.tasks > 0 ? pool : null,
   };
 }
 
@@ -282,6 +294,29 @@ function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "pr
 }
 
 /**
+ * Pool carry-over as /cockpit/data shows it, refreshed at most every 30 s:
+ * reads the pool metrics file from the configured workers logDir; a pool
+ * that never ran leaves the payload field null.
+ */
+export function cachedPoolCarry(): () => PoolCarry | null {
+  let at = 0;
+  let carry: PoolCarry | null = null;
+  return () => {
+    if (Date.now() - at > 30_000) {
+      at = Date.now();
+      carry = null;
+      try {
+        const { workers } = readWorkersSection();
+        carry = poolCarry(readPoolMetrics(poolMetricsPath(join(workersLogDir(workers)))));
+      } catch {
+        carry = null;
+      }
+    }
+    return carry;
+  };
+}
+
+/**
  * Serve /cockpit, /cockpit/data, /cockpit/system and /cockpit/limits. Returns
  * false when the path is not a cockpit path. GET only; the router binds
  * 127.0.0.1 unless router.bind opens a second listener (then the cockpit is
@@ -294,8 +329,8 @@ export function handleCockpit(
   readRows: () => UsageRow[] = readUsage,
   sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
   system?: SystemMonitor,
-  workerWindows: () => WorkerWindow[] = loadWorkerWindows
-): boolean {
+  workerWindows: () => WorkerWindow[] = loadWorkerWindows,
+  readPool: () => PoolCarry | null = cachedPoolCarry()): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
@@ -307,8 +342,7 @@ export function handleCockpit(
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();
-      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows))));
-    } catch (e) {
+      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool())));    } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
   } else if (url.pathname === "/cockpit/system") {

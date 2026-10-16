@@ -364,6 +364,75 @@ export function aggregateBySession(
   return [...groups.values()].sort((a, b) => b.lastTs.localeCompare(a.lastTs));
 }
 
+// ---- session-kind split: continuous vs one-shot --------------------------
+
+/** Token totals + hit ratio of one group of sessions. */
+export interface SessionKindStats extends Usage {
+  /** Sessions in the group. */
+  sessions: number;
+  requests: number;
+  hitRatio: number;
+}
+
+/** Continuous (multi-request) vs one-shot (exactly one request) sessions. */
+export interface SessionKindSplit {
+  /** A provider-side prompt cache can serve these across requests. */
+  continuous: SessionKindStats;
+  /** One request, then the session is gone — every request is a cold cache. */
+  oneShot: SessionKindStats;
+}
+
+const emptyKindStats = (): SessionKindStats => ({
+  ...emptyUsage(),
+  sessions: 0,
+  requests: 0,
+  hitRatio: 0,
+});
+
+/**
+ * Split usage rows by how many requests each session made: a continuous
+ * session carries the provider prompt cache from request to request, a
+ * one-shot session (the shape of today's `pai worker run` traffic — 158 of
+ * 161 glm sessions carry exactly one request) is a fresh spawn each time and
+ * shows what the cache is worth. The overall hitRatio alone averages these
+ * two populations into one number that predicts neither.
+ */
+export function splitBySessionKind(
+  rows: UsageRow[],
+  sinceMs?: number,
+  now: number = Date.now()
+): SessionKindSplit {
+  interface PerSession extends Usage {
+    requests: number;
+  }
+  const bySession = new Map<string, PerSession>();
+  for (const r of rows) {
+    if (sinceMs !== undefined && Date.parse(r.ts) < now - sinceMs) continue;
+    const key = r.session_id ?? r.session ?? "-";
+    let g = bySession.get(key);
+    if (!g) {
+      g = { ...emptyUsage(), requests: 0 };
+      bySession.set(key, g);
+    }
+    g.requests++;
+    for (const k of KEYS) g[k] += r[k] ?? 0;
+  }
+  const out: SessionKindSplit = { continuous: emptyKindStats(), oneShot: emptyKindStats() };
+  const ratio = (g: SessionKindStats): void => {
+    const denom = g.cache_read_input_tokens + g.cache_creation_input_tokens + g.input_tokens;
+    g.hitRatio = denom ? g.cache_read_input_tokens / denom : 0;
+  };
+  for (const g of bySession.values()) {
+    const bucket = g.requests > 1 ? out.continuous : out.oneShot;
+    bucket.sessions++;
+    bucket.requests += g.requests;
+    for (const k of KEYS) bucket[k] += g[k];
+  }
+  ratio(out.continuous);
+  ratio(out.oneShot);
+  return out;
+}
+
 export function formatSessionStats(groups: SessionStats[]): string {
   if (!groups.length) return "no router requests recorded";
   const head = ["session", "name", "req", "in", "out", "cache_w", "cache_r", "hit%", "busts", "last"];

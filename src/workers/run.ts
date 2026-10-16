@@ -144,6 +144,13 @@ import {
   foldCodexLine,
   parseCodexLine,
 } from "./codex.js";
+import {
+  poolIneligibleReason,
+  poolSettings,
+  poolSlotCwd,
+  postTaskToPool,
+  type PoolTaskResponse,
+} from "./pool.js";
 
 export interface RunOptions {
   providerFlag?: string;
@@ -648,7 +655,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         noBrowser,
       });
     } else {
-      rc = await executeRun({
+      const execArgs: ExecuteArgs = {
         config,
         logDir,
         target,
@@ -679,7 +686,15 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         limit,
         noBrowser,
         opts,
-      });
+      };
+      // the session pool (workers.pool) gets first crack: an eligible task
+      // runs as one more turn of a warm claude instead of a fresh spawn
+      const pooledRc = await tryPoolRun(execArgs);
+      if (pooledRc !== null) {
+        await returnControlsIfHeld(logDir, workerId);
+        return pooledRc;
+      }
+      rc = await executeRun(execArgs);
     }
     await returnControlsIfHeld(logDir, workerId);
     return rc;
@@ -703,7 +718,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
  * touch a file or shell (2026-09-18). A caller's own --allowedTools is a
  * deliberate restriction and passes through untouched.
  */
-const DEFAULT_WORKER_TOOLS = "Read,Edit,Write,Bash,Grep,Glob";
+export const DEFAULT_WORKER_TOOLS = "Read,Edit,Write,Bash,Grep,Glob";
 
 /** The --allowedTools args a headless run needs; [] when the caller granted. */
 export function headlessToolGrants(allowedTools: string[]): string[] {
@@ -1117,7 +1132,7 @@ export async function announcePane(
   }
 }
 
-interface ExecuteArgs {
+export interface ExecuteArgs {
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
   target: ReturnType<typeof resolveTarget>;
@@ -1152,6 +1167,82 @@ interface ExecuteArgs {
   noBrowser: boolean;
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
+}
+
+/**
+ * The worker session pool attempt (src/workers/pool.ts), behind
+ * workers.pool.enabled: an eligible headless task is shipped to the pool
+ * host and runs as the next user turn of a warm claude slot, so the
+ * provider prompt cache carries over. Returns the exit code when the task
+ * ran pooled; null sends the caller down the normal fresh-spawn path (host
+ * unreachable, or the task needs a setup a slot cannot provide — worktree,
+ * own system prompt, MCP, another cwd, native Anthropic).
+ */
+export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
+  const settings = poolSettings(a.config);
+  if (!settings.enabled) return null;
+  const reason = poolIneligibleReason({
+    headless: a.parsed.headless,
+    prompt: a.parsed.prompt,
+    providerName: a.target.providerName,
+    provider: a.target.provider,
+    worktreeFlag: a.worktreeFlag,
+    resumeOf: a.resumeOf,
+    printCmd: a.printCmd,
+    parsed: a.parsed,
+    mcpFlag: a.mcpFlag,
+    noBrowser: a.noBrowser,
+    outputFormat: a.parsed.outputFormat,
+    cwd: a.cwd,
+    slotCwd: poolSlotCwd(a.config),
+  });
+  if (reason) {
+    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
+    return null;
+  }
+  const wid = a.id ?? newWorkerId();
+  const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
+  // the socket bounds connect+send only; the answer takes as long as the task
+  const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
+  let resp: PoolTaskResponse | null;
+  try {
+    resp = await postTaskToPool(
+      settings.port,
+      {
+        id: wid,
+        label: a.label,
+        prompt: a.parsed.prompt ?? "",
+        provider: a.target.providerName,
+        model: a.model,
+        className: a.className,
+        capability: a.capability,
+        specPath: a.specPath,
+        parent: a.parent,
+        stage: a.stage,
+        reportFormat: a.reportFormat,
+        outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
+        maxMinutes: limitMinutes,
+        trailer: promptTrailer(a.reportFormat),
+      },
+      timeoutMs
+    );
+  } catch {
+    resp = null;
+  }
+  if (resp === null) {
+    process.stderr.write(`[pai worker] pool: host unreachable on port ${settings.port} — spawning fresh\n`);
+    return null;
+  }
+  if (!resp.pooled) {
+    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${resp.reason ?? "refused"}) — spawning fresh\n`);
+    return null;
+  }
+  a.onWorkerStart?.(wid);
+  const rc = resp.rc ?? 1;
+  if (!a.quiet) {
+    printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, resp.report);
+  }
+  return rc;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {

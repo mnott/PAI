@@ -222,6 +222,24 @@ export interface WorkersTreeConfig {
   maxChildren: number;
 }
 
+/**
+ * The worker session pool (workers.pool): long-lived headless claude slots
+ * that successive small runs talk to instead of each spawning a fresh
+ * claude, so the provider prompt cache carries over between tasks
+ * (src/workers/pool.ts). Default OFF — the operator turns it on with
+ * `pai worker pool on`.
+ */
+export interface WorkersPoolConfig {
+  /** Pool routing on: eligible runs go through the pool host. */
+  enabled: boolean;
+  /** Maximum slot processes the host keeps, across all (provider, model) keys. */
+  maxSlots: number;
+  /** Idle seconds before a slot is killed (0 = never). */
+  idleSecs: number;
+  /** Loopback port the pool host listens on. */
+  port: number;
+}
+
 /** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
 export type CostTier = 1 | 2 | 3 | 4 | 5;
 
@@ -369,6 +387,8 @@ export interface WorkersConfig {
   routing: WorkersRoutingConfig;
   /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
+  /** Worker session pool (workers.pool); default off. */
+  pool: WorkersPoolConfig;
   /**
    * Daemon cache-keepalive cadence in seconds: how often a trivial
    * single-turn heartbeat worker re-arms the provider prompt cache
@@ -419,6 +439,19 @@ export const DEFAULT_TREE: WorkersTreeConfig = {
 };
 
 /**
+ * Session-pool defaults when the config names none. OFF: the pool changes
+ * where a task's turns run (a shared, warm claude session), which deserves
+ * an explicit operator call. idleSecs 900 = 15 min — the provider prompt
+ * cache the pool exists to carry is gone by then anyway.
+ */
+export const DEFAULT_POOL: WorkersPoolConfig = {
+  enabled: false,
+  maxSlots: 3,
+  idleSecs: 900,
+  port: 8798,
+};
+
+/**
  * Cache-keepalive cadence when the config names none. Measured 2026-09-18
  * (pair probes through the real worker spawn path, numbers in
  * docs/cache-keepalive.md): the implicit provider cache only serves a fresh
@@ -454,6 +487,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
+    pool: { ...DEFAULT_POOL },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
     noBrowserByDefault: false,
@@ -886,6 +920,36 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
+  let pool = { ...DEFAULT_POOL };
+  if (w.pool !== undefined) {
+    if (typeof w.pool !== "object" || w.pool === null || Array.isArray(w.pool)) {
+      bad(".pool", "must be an object");
+    }
+    const pc = w.pool as Record<string, unknown>;
+    if (pc.enabled !== undefined && typeof pc.enabled !== "boolean") bad(".pool.enabled", "must be boolean");
+    if (pc.maxSlots !== undefined) {
+      if (typeof pc.maxSlots !== "number" || !Number.isInteger(pc.maxSlots) || pc.maxSlots < 1 || pc.maxSlots > 8) {
+        bad(".pool.maxSlots", "must be an integer 1 … 8");
+      }
+    }
+    if (pc.idleSecs !== undefined) {
+      if (typeof pc.idleSecs !== "number" || !Number.isInteger(pc.idleSecs) || pc.idleSecs < 0) {
+        bad(".pool.idleSecs", "must be a non-negative integer (seconds, 0 = never)");
+      }
+    }
+    if (pc.port !== undefined) {
+      if (typeof pc.port !== "number" || !Number.isInteger(pc.port) || pc.port <= 0 || pc.port > 65535) {
+        bad(".pool.port", "must be a TCP port (1 … 65535)");
+      }
+    }
+    pool = {
+      enabled: pc.enabled === undefined ? DEFAULT_POOL.enabled : pc.enabled === true,
+      maxSlots: pc.maxSlots === undefined ? DEFAULT_POOL.maxSlots : pc.maxSlots,
+      idleSecs: pc.idleSecs === undefined ? DEFAULT_POOL.idleSecs : pc.idleSecs,
+      port: pc.port === undefined ? DEFAULT_POOL.port : pc.port,
+    };
+  }
+
   let cacheKeepaliveSecs = DEFAULT_CACHE_KEEPALIVE_SECS;
   if (w.cacheKeepaliveSecs !== undefined) {
     if (
@@ -966,6 +1030,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     logDir: str(w.logDir) || d.logDir,
     routing,
     tree,
+    pool,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     noBrowserByDefault,
@@ -1047,6 +1112,7 @@ export function writeWorkersSection(
         logDir: workers.logDir,
         routing: workers.routing,
         tree: workers.tree,
+        pool: workers.pool,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         noBrowserByDefault: workers.noBrowserByDefault,
