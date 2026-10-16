@@ -44,6 +44,7 @@ import { fetchLiveSessions, revealItermSession } from "../lib/aibroker-client.js
 import { renderDedupedSessions } from "../lib/dedup-sessions.js";
 import { launchInDir } from "../lib/launch.js";
 import { printExitDir } from "../lib/exit-dir.js";
+import { askModel, buildModelChoices } from "../lib/model-pick.js";
 
 // ---------------------------------------------------------------------------
 // Dispatch record — one per selectable row.
@@ -601,6 +602,55 @@ export interface PickOpts {
   model?: string;
 }
 
+/**
+ * The model step. Returns the provider to launch on, undefined for the
+ * default, or "abort" when the choice could not be honoured. A local tier that
+ * is not up is started first (`pai worker local` code); under --dry-run the
+ * start is only printed.
+ */
+async function pickModel(name: string, dryRun?: boolean): Promise<string | undefined | "abort"> {
+  let workers;
+  try {
+    workers = (await import("../../workers/config.js")).readWorkersSection().workers;
+  } catch {
+    return undefined; // broken workers config degrades to the default
+  }
+  const { readLocalConfig, planStart } = await import("../../workers/local-tiers.js");
+  const { workersYamlPath } = await import("../../workers/workers-config.js");
+  const { listServers, startTier } = await import("./worker/local.js");
+  let local: ReturnType<typeof readLocalConfig> | null = null;
+  let running: ReturnType<typeof listServers> = [];
+  try {
+    local = readLocalConfig(workersYamlPath());
+    running = listServers(local);
+  } catch {
+    /* no usable local tiers — the plain providers still list */
+  }
+  const choices = buildModelChoices(workers, local, running);
+  if (choices.length === 1) return undefined;
+
+  const choice = await askModel(choices, name);
+  if (!choice) {
+    process.stderr.write(chalk.yellow("  Not a choice — nothing started.\n"));
+    return "abort";
+  }
+  if (choice.tier && local && !choice.up) {
+    const tier = local.tiers[choice.tier];
+    const plan = planStart(local, tier);
+    if (dryRun) {
+      console.log(dim(`  would start local ${choice.tier}: ${plan.line}`));
+    } else {
+      try {
+        await startTier(local, choice.tier, tier, plan);
+      } catch (e) {
+        process.stderr.write(chalk.red(`  ${e instanceof Error ? e.message : String(e)}\n`));
+        return "abort";
+      }
+    }
+  }
+  return choice.provider;
+}
+
 /** PAI_PICK_TIMING=1 prints how long each stage before the picker took. */
 function stageTimer(): (stage: string) => void {
   if (!process.env.PAI_PICK_TIMING) return () => {};
@@ -705,6 +755,15 @@ export async function cmdPick(opts: PickOpts = {}): Promise<void> {
     return;
   }
 
+  // Model step: only for a plain "new" (w/a already force an engine) and only
+  // when no --provider was given. Enter = default = today's behaviour.
+  let provider = opts.provider;
+  if (action === "new" && !provider) {
+    const picked = await pickModel(record.name, opts.dryRun);
+    if (picked === "abort") return;
+    provider = picked;
+  }
+
   // new → start a fresh session here, in the current terminal. The engine
   // follows the workers config; w/a above forced one explicitly.
   const engine = action === "worker" ? "worker" : action === "anthropic" ? "claude" : undefined;
@@ -712,7 +771,7 @@ export async function cmdPick(opts: PickOpts = {}): Promise<void> {
     forceFresh: true,
     engine,
     dryRun: opts.dryRun,
-    provider: opts.provider,
+    provider,
     model: opts.model,
   });
 }
