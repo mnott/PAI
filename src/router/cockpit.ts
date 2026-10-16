@@ -9,7 +9,7 @@ import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { readUsage, USAGE_LOG_FILE, type UsageRow } from "./usage.js";
-import { loadSessionMap, type SessionInfo } from "./sessions.js";
+import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -244,6 +244,29 @@ export function cachedSessionMap(ttlMs = 30_000): () => Map<string, SessionInfo>
   };
 }
 
+/** Worker run windows reloaded at most every 60 s (same status files, one pass). */
+export function cachedWorkerWindows(ttlMs = 60_000): () => WorkerWindow[] {
+  let at = 0;
+  let windows: WorkerWindow[] = [];
+  return () => {
+    if (Date.now() - at > ttlMs) {
+      windows = loadWorkerWindows();
+      at = Date.now();
+    }
+    return windows;
+  };
+}
+
+/**
+ * Session names for the cockpit: the exact map plus one-shot ids attributed
+ * to their worker run window. The exact map is cached; attribution itself is
+ * cheap (unknown ids in the window only) and runs per request against the
+ * rows being rendered.
+ */
+function namedSessionMap(rows: UsageRow[], sessionMap: () => Map<string, SessionInfo>, workerWindows: () => WorkerWindow[]): Map<string, SessionInfo> {
+  return withWorkerAttribution(sessionMap(), rows, workerWindows());
+}
+
 export function parseWindow(q: string | null): CockpitWindow {
   return q === "24h" || q === "7d" ? q : "1h";
 }
@@ -270,7 +293,8 @@ export function handleCockpit(
   limits: LimitsSource,
   readRows: () => UsageRow[] = readUsage,
   sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
-  system?: SystemMonitor
+  system?: SystemMonitor,
+  workerWindows: () => WorkerWindow[] = loadWorkerWindows
 ): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
@@ -282,7 +306,8 @@ export function handleCockpit(
   if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", COCKPIT_HTML);
   else if (url.pathname === "/cockpit/data") {
     try {
-      send(200, "application/json", JSON.stringify(buildCockpitData(readRows(), parseWindow(url.searchParams.get("window")), Date.now(), sessionMap())));
+      const rows = readRows();
+      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows))));
     } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }

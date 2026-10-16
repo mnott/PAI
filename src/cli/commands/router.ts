@@ -18,13 +18,11 @@ import {
   withCockpitToken,
   type CockpitHandler,
 } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, handleCockpit } from "../../router/cockpit.js";
-import { LimitsCache } from "../../router/limits.js";
+import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit } from "../../router/cockpit.js";import { LimitsCache } from "../../router/limits.js";
 import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
-import type { UsageRow } from "../../router/usage.js";
-import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage } from "../../router/usage.js";
-import { loadSessionMap, sessionDisplayName } from "../../router/sessions.js";
+import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
+import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
 import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
 import { loadConfig } from "../../daemon/config.js";
 import { ok, err, dim } from "../utils.js";
@@ -103,9 +101,8 @@ export function registerRouterCommands(program: Command): void {
       const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
       const system = new SystemMonitor();
       const serve: CockpitHandler = (req: http.IncomingMessage, res: http.ServerResponse) =>
-        handleCockpit(req, res, limits, rows, cachedSessionMap(), system);
-      const cockpit = token ? withCockpitToken(token, serve) : serve;
-      const append = opts.usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
+        handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
+      const cockpit = token ? withCockpitToken(token, serve) : serve;      const append = opts.usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
       const handler = routerHandler(
         undefined,
         undefined,
@@ -161,8 +158,9 @@ export function registerRouterCommands(program: Command): void {
         process.exit(1);
       }
       if (opts.by === "session") {
-        const map = loadSessionMap();
-        console.log(formatSessionStats(aggregateBySession(readUsage(), since, Date.now(), (id) => sessionDisplayName(id, map))));
+        const rows = readUsage();
+        const map = withWorkerAttribution(loadSessionMap(), rows, loadWorkerWindows());
+        console.log(formatSessionStats(aggregateBySession(rows, since, Date.now(), (id) => sessionDisplayName(id, map))));
       } else console.log(formatStats(aggregate(readUsage(), since)));
     });
 }
