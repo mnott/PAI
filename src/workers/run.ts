@@ -457,8 +457,8 @@ export function shouldRetryReport(
 /** Context window announced by the init event, when the endpoint sends one. */
 /**
  * An empty model response: the model "answered" without producing anything —
- * no tool ran and the result text is empty. A local endpoint under load does
- * this; it is a harness failure, not a finished run (rc 0 and a result record
+ * no tool ran and the result text is empty. A local model can stop at once with an empty reply;
+ * it is a harness failure, not a finished run (rc 0 and a result record
  * notwithstanding). Usage plays no part: local servers report 0/0 on every
  * message, normal ones too.
  */
