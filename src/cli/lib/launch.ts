@@ -554,6 +554,29 @@ export interface LaunchOpts {
   dryRun?: boolean;
   /** "auto" follows the workers config; "worker"/"claude" force one engine. */
   engine?: "auto" | "worker" | "claude";
+  /** Start on this workers.yaml provider (+ optional model) instead of the
+   *  default engine — delegates to `pai launch --provider`, the one place
+   *  that builds a provider's env and base URL. */
+  provider?: string;
+  model?: string;
+}
+
+/** argv for `pai launch` carrying this launch's claude arguments. */
+export function providerLaunchArgv(
+  provider: string,
+  model: string | undefined,
+  claudeArgs: string[],
+  dryRun = false
+): string[] {
+  return [
+    "launch",
+    "--provider",
+    provider,
+    ...(model ? ["--model", model] : []),
+    ...(dryRun ? ["--dry-run"] : []),
+    "--",
+    ...claudeArgs,
+  ];
 }
 
 /** Which engine a launch runs on, and whether it resumes. */
@@ -643,6 +666,24 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     workers = readWorkersSection().workers;
   } catch {
     /* routing stays off for this launch */
+  }
+  if (opts.provider) {
+    const wantsResume = !opts.forceFresh && !!opts.resumableUuid;
+    const argv = providerLaunchArgv(
+      opts.provider,
+      opts.model,
+      [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, promptArg],
+      opts.dryRun
+    );
+    const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: process.env });
+    if (result.error) {
+      console.error(err(`Failed to launch pai launch: ${result.error.message}`));
+      process.exitCode = 1;
+      return;
+    }
+    if (!opts.dryRun) printExitDir(cwd);
+    process.exitCode = result.status ?? 0;
+    return;
   }
   const route = resolveLaunchRoute(workers, opts);
   const wantResume = route.resume;

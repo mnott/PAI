@@ -21,6 +21,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   probeResume,
+  providerLaunchArgv,
   resolveLaunchRoute,
   workerRunArgv,
   launchPrompt,
@@ -553,5 +554,18 @@ describe("resumeOfferBlock — the [y/N] question carries its context", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("providerLaunchArgv", () => {
+  it("routes through pai launch --provider with the claude args after --", () => {
+    expect(providerLaunchArgv("glm", undefined, ["--name", "x", "/Name x"])).toEqual([
+      "launch", "--provider", "glm", "--", "--name", "x", "/Name x",
+    ]);
+  });
+  it("carries model, dry-run and resume args", () => {
+    expect(providerLaunchArgv("glm", "m1", ["--resume", "u"], true)).toEqual([
+      "launch", "--provider", "glm", "--model", "m1", "--dry-run", "--", "--resume", "u",
+    ]);
   });
 });

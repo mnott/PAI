@@ -593,6 +593,9 @@ function recentMarkdown(root: string, limit: number): NoteRef[] {
 export interface PickOpts {
   all?: boolean;
   dryRun?: boolean;
+  /** Launch the chosen project on this provider (and optional model). */
+  provider?: string;
+  model?: string;
 }
 
 export async function cmdPick(opts: PickOpts = {}): Promise<void> {
@@ -693,5 +696,11 @@ export async function cmdPick(opts: PickOpts = {}): Promise<void> {
   // new → start a fresh session here, in the current terminal. The engine
   // follows the workers config; w/a above forced one explicitly.
   const engine = action === "worker" ? "worker" : action === "anthropic" ? "claude" : undefined;
-  launchInDir(record.dir, record.name, { forceFresh: true, engine, dryRun: opts.dryRun });
+  launchInDir(record.dir, record.name, {
+    forceFresh: true,
+    engine,
+    dryRun: opts.dryRun,
+    provider: opts.provider,
+    model: opts.model,
+  });
 }

@@ -625,13 +625,13 @@ pai() {
       echo "Project not found: $3" >&2
       return 1
     fi
-  elif [[ $# -eq 0 ]]; then
+  elif [[ $# -eq 0 || "$1" == --provider || "$1" == --provider=* || "$1" == --model || "$1" == --model=* ]]; then
     # Bare \`pai\` → interactive picker. fzf draws on /dev/tty; the picker writes
     # a chosen directory to PAI_PICK_OUT when you press Ctrl-G (cd only), which we
     # then cd into here (a child process can't change this shell's cwd itself).
     local __pai_f
     __pai_f=$(mktemp -t pai-pick 2>/dev/null) || { command pai; return $?; }
-    PAI_PICK_OUT="$__pai_f" command pai
+    PAI_PICK_OUT="$__pai_f" command pai "$@"
     local __pai_rc=$?
     local __pai_dir=""
     [[ -s "$__pai_f" ]] && __pai_dir=$(cat "$__pai_f")
@@ -687,12 +687,14 @@ claude() {
     .option("--all", "Show all entries including cold / zero-session / archived projects")
     .option("--list", "Skip the interactive picker; print the static session listing")
     .option("--resume", "Reopen the name's newest transcript instead of starting fresh")
-    .action(async (query: string | undefined, pick: string | undefined, opts: { auto?: boolean; dryRun?: boolean; n?: string; all?: boolean; list?: boolean; resume?: boolean }) => {
+    .option("--provider <name>", "Picker: launch the chosen project on this provider (like pai launch --provider)")
+    .option("--model <model>", "Picker: model id for --provider")
+    .action(async (query: string | undefined, pick: string | undefined, opts: { provider?: string; model?: string; auto?: boolean; dryRun?: boolean; n?: string; all?: boolean; list?: boolean; resume?: boolean }) => {
       // No query → interactive fzf picker (projects + sessions, go where you pick).
       // `--list` (or a non-TTY pipe, handled inside cmdPick) falls back to the
       // static listing. Any query still goes through the name/UUID/topic resolver.
       if (query === undefined && !opts.list) {
-        await cmdPick({ all: opts.all, dryRun: opts.dryRun });
+        await cmdPick({ all: opts.all, dryRun: opts.dryRun, provider: opts.provider, model: opts.model });
         return;
       }
       const pickN = pick !== undefined ? parseInt(pick, 10) : undefined;
