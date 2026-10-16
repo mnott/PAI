@@ -83,6 +83,7 @@ describe("buildRunEnv session identity", () => {
     const saved = { ...process.env };
     process.env.CLAUDECODE = "1";
     delete process.env.PAI_WORKER; // this test may itself run inside a worker
+    delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY; // workers inherit it
     try {
       const env = buildRunEnv(provider, false);
       expect(env.CLAUDECODE).toBe("1");
@@ -93,6 +94,9 @@ describe("buildRunEnv session identity", () => {
       if (saved.CLAUDECODE === undefined) delete process.env.CLAUDECODE;
       else process.env.CLAUDECODE = saved.CLAUDECODE;
       if (saved.PAI_WORKER !== undefined) process.env.PAI_WORKER = saved.PAI_WORKER;
+      if (saved.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== undefined) {
+        process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = saved.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+      }
     }
   });
 });
