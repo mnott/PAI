@@ -80,6 +80,19 @@ function repairValue(
     }
   }
 
+  // Rule 1b: the cwd folder name cut short (`P/arm-abc` for `P/arm-abc-spec-1`).
+  const realParent = dirname(realish(cwd));
+  const parent = canon(realParent);
+  const name = basename(cwd.replace(/\/+$/, ""));
+  const cv = canon(value);
+  if (parent !== "/" && cv.startsWith(`${parent}/`)) {
+    const [x, ...rest] = cv.slice(parent.length + 1).split("/");
+    if (x && x !== name && name.startsWith(`${x}-`) && !exists(`${realParent}/${x}`) && !exists(`${parent}/${x}`)) {
+      const fixed = rest.length ? `${root}/${rest.join("/")}` : root;
+      if (exists(probe(fixed))) return fixed;
+    }
+  }
+
   // Rule 2: invented prefix; the first suffix (≥ 2 components) that exists under the cwd.
   if (canon(value).startsWith(`/${real}/`)) return null;
   for (let i = 1; i <= valParts.length - 2; i++) {

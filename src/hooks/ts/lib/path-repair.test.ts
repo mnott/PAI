@@ -223,3 +223,29 @@ describe("armGuardReason", () => {
     expect(armGuardReason(bash(`rm -rf ${arm}`, tmpdir()), { PAI_AB_ARMS_ROOT: root })).toBeNull();
   });
 });
+
+describe("truncated cwd folder name", () => {
+  const C = "/private/tmp/ab-arms/turn-picture-mark-ornith-spec-134500";
+  const T = "/private/tmp/ab-arms/turn-picture-mark";
+  const F = `${C}/Sources/Marks/MarkCarry.swift`;
+  const bash = (command: string) => ({ tool_name: "Bash", cwd: C, tool_input: { command } });
+
+  it("maps the truncated name onto the cwd", () => {
+    expect(repairPath(read(`${T}/Sources/Marks/MarkCarry.swift`, C), W, fs(F))?.new).toBe(F);
+    expect(repairPath(read(`${T.replace("/private", "")}/Sources/Marks/MarkCarry.swift`, C), W, fs(F))?.new).toBe(F);
+  });
+  it("leaves the path alone when P/<X> exists", () => {
+    expect(repairPath(read(`${T}/x.swift`, C), W, fs(`${C}/x.swift`, T))).toBeNull();
+  });
+  it("leaves the path alone when the rest is missing", () => {
+    expect(repairPath(read(`${T}/Sources/Nope.swift`, C), W, fs(F))).toBeNull();
+  });
+  it("Write needs only the parent", () => {
+    const w = { tool_name: "Write", cwd: C, tool_input: { file_path: `${T}/Sources/Marks/New.swift` } };
+    expect(repairPath(w, W, fs(`${C}/Sources/Marks`))?.new).toBe(`${C}/Sources/Marks/New.swift`);
+  });
+  it("rewrites the Bash token", () => {
+    const r = repairPath(bash(`cd ${T} && ls`), W, fs(C));
+    expect(r?.updatedInput).toEqual({ command: `cd ${C} && ls` });
+  });
+});
