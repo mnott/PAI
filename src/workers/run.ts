@@ -71,6 +71,7 @@ import {
   noMcpConfigPath,
   workersLogDir,
 } from "./paths.js";
+import { slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
 import {
   type WorkerStatus,
   newWorkerId,
@@ -1193,7 +1194,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const claudeCmd = claudeCommand(env, config.caveman);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
-  cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...restArgs);
+  const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env) : [];
+  cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...slimArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
   }
@@ -1201,6 +1203,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   cmd.push(
     ...appendSystemPromptArgs([
       ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless
         ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
@@ -1525,6 +1528,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           mcpArgs,
           toolArgs,
           toolsFlag,
+          slimArgs,
           sessionId: status.claudeSession!,
           claudeCmd,
         });
@@ -1635,6 +1639,8 @@ export interface Ag2ReaskArgs {
   mcpArgs: string[];
   toolArgs: string[];
   toolsFlag: string[];
+  /** Slim-profile args of the original launch, so the resumed turn loads the same setup. */
+  slimArgs?: string[];
   sessionId: string;
   timeoutMs?: number;
   /** Argv head of the original launch (claudeCommand); defaults to plain claude. */
@@ -1651,7 +1657,7 @@ export interface Ag2ReaskArgs {
 export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
   let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
   cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
-  cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag);
+  cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag, ...(a.slimArgs ?? []));
   cmd.push("--resume", a.sessionId, "-p", AG2_REASK_TEXT, "--output-format", "json");
   cmd = ensureToolSearch(cmd);
   const proc = spawn(cmd[0], cmd.slice(1), { env: a.env, cwd: a.cwd, stdio: ["ignore", "pipe", "inherit"] });
