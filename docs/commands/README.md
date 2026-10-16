@@ -205,6 +205,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai router` | Local model router on 127.0.0.1:8790: set ANTHROPIC_BASE_URL to it and /model picks the provider |
 | `pai router run` | Run the router in the foreground |
 | `pai router start` | Start the router in the background |
+| `pai router stats` | Token and cache totals per provider/model from the router usage log |
 | `pai router status` | Show whether the router is running |
 | `pai router stop` | Stop the router |
 | `pai session` | Session management: list, info, checkpoint, handover, cleanup, slug, tag, route. |

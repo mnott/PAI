@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createRouter, ROUTER_PORT } from "../../router/router.js";
+import { aggregate, appendUsage, formatStats, parseSince, readUsage } from "../../router/usage.js";
 import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
 import { loadConfig } from "../../daemon/config.js";
 import { ok, err, dim } from "../utils.js";
@@ -62,25 +63,46 @@ export function registerRouterCommands(program: Command): void {
   cmd
     .command("run")
     .description("Run the router in the foreground")
-    .action(() => {
-      const server = createRouter();
+    .option("--port <port>", "listen port (a non-default port never touches the pid file)", String(ROUTER_PORT))
+    .action((opts: { port: string }) => {
+      const port = Number(opts.port);
+      const managed = port === ROUTER_PORT;
+      const server = createRouter(undefined, undefined, undefined, (row) => appendUsage(row));
       server.on("error", (e) => {
         console.error(err(`router: ${(e as Error).message}`));
         process.exit(1);
       });
-      server.listen(ROUTER_PORT, "127.0.0.1", () => {
+      server.listen(port, "127.0.0.1", () => {
+        if (!managed) return;
         mkdirSync(dirname(PID_FILE), { recursive: true });
         writeFileSync(PID_FILE, String(process.pid));
       });
       const bye = () => {
-        try {
-          unlinkSync(PID_FILE);
-        } catch {
-          /* ignore */
+        if (managed) {
+          try {
+            unlinkSync(PID_FILE);
+          } catch {
+            /* ignore */
+          }
         }
         process.exit(0);
       };
       process.on("SIGTERM", bye);
       process.on("SIGINT", bye);
+    });
+
+  cmd
+    .command("stats")
+    .description("Token and cache totals per provider/model from the router usage log")
+    .option("--since <span>", "only the last span, e.g. 30m, 1h, 2d")
+    .action((opts: { since?: string }) => {
+      let since: number | undefined;
+      try {
+        since = opts.since ? parseSince(opts.since) : undefined;
+      } catch (e) {
+        console.error(err((e as Error).message));
+        process.exit(1);
+      }
+      console.log(formatStats(aggregate(readUsage(), since)));
     });
 }

@@ -18,6 +18,7 @@ pai router <subcommand> [options]
 | [`pai router stop`](#pai-router-stop) | Stop the router |
 | [`pai router status`](#pai-router-status) | Show whether the router is running |
 | [`pai router run`](#pai-router-run) | Run the router in the foreground |
+| [`pai router stats`](#pai-router-stats) | Token and cache totals per provider/model from the router usage log |
 
 ### pai router start
 
@@ -37,6 +38,23 @@ Show whether the router is running
 ### pai router run
 
 Run the router in the foreground
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--port <port>` | listen port (a non-default port never touches the pid file) | `8790` |
+
+
+### pai router stats
+
+Token and cache totals per provider/model from the router usage log
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--since <span>` | only the last span, e.g. 30m, 1h, 2d |  |
 
 
 ## See also

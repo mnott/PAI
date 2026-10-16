@@ -12,6 +12,16 @@
 
 import http from "node:http";
 import https from "node:https";
+import {
+  BustDetector,
+  emptyUsage,
+  fingerprint,
+  sessionTag,
+  UsageSniffer,
+  verdict,
+  type Usage,
+  type UsageRow,
+} from "./usage.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
 export const ROUTER_PORT = 8790;
@@ -85,7 +95,8 @@ export interface Upstream {
   body: Buffer;
 }
 
-const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive"]);
+// accept-encoding dropped: usage is parsed from the plain response as it streams
+const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "accept-encoding"]);
 const AUTH = new Set(["authorization", "x-api-key"]);
 
 function joinUrl(base: string, path: string): URL {
@@ -149,8 +160,10 @@ function isLocal(u: URL): boolean {
 export function createRouter(
   loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
   claudeBase: string = CLAUDE_UPSTREAM,
-  log: (line: string) => void = (l) => process.stderr.write(l + "\n")
+  log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
+  onUsage?: (row: UsageRow) => void
 ): http.Server {
+  const busts = new BustDetector();
   return http.createServer((req, res) => {
     const started = Date.now();
     const path = req.url ?? "/";
@@ -177,6 +190,26 @@ export function createRouter(
       if (!prep.ok) return fail(prep.status, prep.message);
       const { up, target } = prep;
       const prov = target.kind === "claude" ? "anthropic" : target.name;
+      const isCount = path.includes("/count_tokens");
+      const session = sessionTag(req.headers["x-claude-code-session-id"]);
+      const changed =
+        onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
+      const record = (status: number, usage: Usage) => {
+        if (!onUsage || isCount) return;
+        const row: UsageRow = {
+          ts: new Date().toISOString(),
+          model: target.model,
+          provider: prov,
+          status,
+          ms: Date.now() - started,
+          ...usage,
+          bytes: up.body.length,
+          cache: verdict(usage),
+        };
+        if (session) row.session = session;
+        if (changed.length) row.bust = changed;
+        onUsage(row);
+      };
       const mod = up.url.protocol === "https:" ? https : http;
       const ureq = mod.request(
         up.url,
@@ -187,13 +220,17 @@ export function createRouter(
           delete rh.connection;
           delete rh["keep-alive"];
           res.writeHead(ures.statusCode ?? 502, rh);
+          const sniff = onUsage && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
+          if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
           ures.pipe(res);
-          ures.on("end", () =>
-            log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`)
-          );
+          ures.on("end", () => {
+            log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
+            record(ures.statusCode ?? 502, sniff ? sniff.finish() : emptyUsage());
+          });
         }
       );
       ureq.on("error", (e: NodeJS.ErrnoException) => {
+        record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
             503,
