@@ -456,13 +456,6 @@ export function shouldRetryReport(
 
 /** Context window announced by the init event, when the endpoint sends one. */
 /**
- * Did the run end well? A headless run must have produced a stream-json
- * result event that is not an error; an interactive launch IS the chat pane
- * and never emits one, so its clean exit (rc 0) is the whole verdict —
- * without this every interactive session that ends normally was recorded
- * as `failed rc=0` and supervision pinged the spawner about a non-failure.
- */
-/**
  * An empty model response: the model "answered" without producing anything —
  * every assistant message carried zero usage (input+output 0) and no tool_use,
  * and no tool ran. A local endpoint under load does this; it is a harness
@@ -475,6 +468,13 @@ export function isEmptyResponse(
   return seen.assistants > 0 && !seen.usage && tools === 0;
 }
 
+/**
+ * Did the run end well? A headless run must have produced a stream-json
+ * result event that is not an error; an interactive launch IS the chat pane
+ * and never emits one, so its clean exit (rc 0) is the whole verdict —
+ * without this every interactive session that ends normally was recorded
+ * as `failed rc=0` and supervision pinged the spawner about a non-failure.
+ */
 export function runSucceeded(
   headless: boolean,
   rc: number,
@@ -1536,6 +1536,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const resultEvent = ctx.resultEvent;
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(ctx.seen, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
+  if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
+  if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
   if (empty) {
     status.last = "harness: empty-response (model returned nothing)";
     recordToolError(logDir, {
@@ -1546,8 +1548,6 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       text: "empty-response: model answered with zero usage and no tool call",
     });
   }
-  if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
-  if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
     const v = validateAg2(resultEvent.result);
     status.reportValid = v.ok;
