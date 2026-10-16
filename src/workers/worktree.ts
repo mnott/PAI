@@ -894,6 +894,36 @@ export interface GcEntry {
 const GC_STAMP = "gc-last";
 
 /**
+ * Pid of a live process whose cwd is `dir` or below (shell drivers parked in a
+ * worker tree), else 0. One `lsof -d cwd` listing, no tree walk. If lsof is
+ * missing or fails, nothing is reported busy.
+ */
+export function busyPid(dir: string): number {
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    return 0;
+  }
+  let raw = "";
+  try {
+    raw = execFileSync("lsof", ["-d", "cwd", "-Fpn"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
+  } catch (e) {
+    // lsof exits 1 when some entries are unreadable but still prints the rest
+    raw = String((e as { stdout?: string }).stdout ?? "");
+  }
+  let pid = 0;
+  for (const line of raw.split("\n")) {
+    if (line[0] === "p") pid = Number(line.slice(1));
+    else if (line[0] === "n" && pid !== process.pid) {
+      const name = line.slice(1);
+      if (name === real || name.startsWith(real + sep)) return pid;
+    }
+  }
+  return 0;
+}
+
+/**
  * Archive worktrees of finished workers older than `olderThanHours` and
  * status-less orphan directories: uncommitted state is salvaged onto the
  * branch, the branch is x, the worktree is
@@ -913,6 +943,11 @@ export function gcWorktrees(
   const owned = new Set(statuses.map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
   const archive = (id: string, dir: string, branch: string, st: WorkerStatus | null): void => {
     const target = `refs/pai-archive/${id}`;
+    const pid = busyPid(dir);
+    if (pid) {
+      if (!dryRun) appendLedger(ledgerPath(logDir), "WORKER-GC-SKIP", { id, reason: "busy", pid: String(pid) });
+      return void out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
+    }
     if (dryRun) return void out.push({ id, archive: target });
     try {
       // The shared object store and refs live in the main repo; the recorded cwd

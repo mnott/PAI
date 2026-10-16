@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, utimesSync, symlinkSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import {
   addWorktree,
@@ -613,6 +614,42 @@ describe("gcWorktrees", () => {
     expect(existsSync(live) && existsSync(young)).toBe(true);
     expect(refs()).toContain("refs/heads/worker/gc-live");
     expect(refs()).toContain("refs/heads/worker/gc-young");
+  });
+
+  it("skips a worktree a live process has its cwd in, archives it once released", async () => {
+    const busy = mk("gc-busy", {}, 3 * DAY);
+    const p = spawn("sleep", ["30"], { cwd: busy, stdio: "ignore" });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const res = gcWorktrees(gcLog, 24);
+      expect(res).toEqual([{ id: "gc-busy", skipped: `busy: pid ${p.pid} has its cwd inside` }]);
+      expect(existsSync(busy)).toBe(true);
+      expect(refs()).toContain("refs/heads/worker/gc-busy");
+    } finally {
+      p.kill();
+    }
+    await new Promise((r) => p.once("exit", r));
+    expect(gcWorktrees(gcLog, 24)).toEqual([{ id: "gc-busy", archive: "refs/pai-archive/gc-busy" }]);
+    expect(existsSync(busy)).toBe(false);
+  });
+
+  it("skips a worktree when a process has its cwd in a subdirectory of the worktree", async () => {
+    const busy = mk("gc-busy-subdir", {}, 3 * DAY);
+    const subdir = join(busy, "subdir");
+    mkdirSync(subdir, { recursive: true });
+    const p = spawn("sleep", ["30"], { cwd: subdir, stdio: "ignore" });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      const res = gcWorktrees(gcLog, 24);
+      expect(res).toEqual([{ id: "gc-busy-subdir", skipped: `busy: pid ${p.pid} has its cwd inside` }]);
+      expect(existsSync(busy)).toBe(true);
+      expect(refs()).toContain("refs/heads/worker/gc-busy-subdir");
+    } finally {
+      p.kill();
+    }
+    await new Promise((r) => p.once("exit", r));
+    expect(gcWorktrees(gcLog, 24)).toEqual([{ id: "gc-busy-subdir", archive: "refs/pai-archive/gc-busy-subdir" }]);
+    expect(existsSync(busy)).toBe(false);
   });
 
   it("archives a status-less orphan directory", () => {
