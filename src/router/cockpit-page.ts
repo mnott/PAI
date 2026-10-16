@@ -98,6 +98,8 @@ function renderSystem(){
  function na(v){return v==null?'<span class="dim" title="'+esc(tip)+'">n/a</span>':v}
  function pctna(v){return v==null?na(null):Math.round(v)+"%"}
  function wna(v){return v==null?na(null):v.toFixed(1)}
+ var slowAge=sys.slowAgeS; // mactop probe (gpu/temp/power) rides the 1-min ring; say how old it is
+ function tag(){return slowAge==null?"":" · "+(slowAge<90?"probe "+slowAge+"s":"cached "+(slowAge<3600?Math.round(slowAge/60)+" min":Math.round(slowAge/3600)+" h"))}
  var wh=(sys.series&&sys.series.wh&&sys.series.wh[win])||0,cov=(sys.series&&sys.series.coveredMin&&sys.series.coveredMin[win])||0;
  var kpis=[
   ["memory",c.memUsed!=null?gb(c.memUsed):na(null),"of "+na(c.memTotal!=null?gb(c.memTotal):null)+" · pressure "+(c.pressureLevel!=null?(100-c.pressureLevel)+"%":na(null))],
@@ -105,10 +107,10 @@ function renderSystem(){
   ["wired",c.wired!=null?gb(c.wired):na(null),"vm_stat"],
   ["compressed",c.compressed!=null?gb(c.compressed):na(null),"vm_stat"],
   ["CPU load",pctna(c.cpu),"all clusters"],
-  ["GPU load",pctna(c.gpu),c.gpuFreqMhz?(c.gpuFreqMhz/1000).toFixed(1)+" GHz":""],
-  ["ANE load",pctna(c.ane),"neural engine"],
-  ["SoC temp",c.socTemp!=null?c.socTemp.toFixed(1)+" °C":na(null),"SMC"],
-  ["power",c.totalW!=null?wna(c.totalW)+" W":na(null),"CPU "+wna(c.cpuW)+" · GPU "+wna(c.gpuW)+" · ANE "+wna(c.aneW)+" · system "+wna(c.systemW)+" W"],
+  ["GPU load",pctna(c.gpu),(c.gpuFreqMhz?(c.gpuFreqMhz/1000).toFixed(1)+" GHz":"IOReport")+tag()],
+  ["ANE load",pctna(c.ane),"neural engine"+tag()],
+  ["SoC temp",c.socTemp!=null?c.socTemp.toFixed(1)+" °C":na(null),"IOReport"+tag()],
+  ["power",c.totalW!=null?wna(c.totalW)+" W":na(null),"CPU "+wna(c.cpuW)+" · GPU "+wna(c.gpuW)+" · ANE "+wna(c.aneW)+" · system "+wna(c.systemW)+" W"+tag()],
   ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
  ];
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
