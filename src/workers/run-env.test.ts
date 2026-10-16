@@ -156,10 +156,23 @@ describe("claudeCommand", () => {
 
   it("pins to api.anthropic.com when there is no route and caveman is off", () => {
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "" };
-    const cmd = claudeCommand(env, false);
+    const cmd = claudeCommand(env, false, false);
     expect(cmd[0]).toBe("claude");
     expect(cmd[1]).toBe("--settings");
     const parsed = JSON.parse(cmd[2]);
     expect(parsed.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+  });
+
+  it("pins a native run to the router when it is enabled", () => {
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? "" };
+    const parsed = JSON.parse(claudeCommand(env, false, true)[2]);
+    expect(parsed.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8790");
+  });
+
+  it("keeps a provider route and token when the router is enabled", () => {
+    const env: NodeJS.ProcessEnv = { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN: "tok" };
+    const parsed = JSON.parse(claudeCommand(env, false, true)[2]);
+    expect(parsed.env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(parsed.env.ANTHROPIC_AUTH_TOKEN).toBe("tok");
   });
 });

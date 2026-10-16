@@ -208,10 +208,9 @@ export async function buildLaunchPlan(
   // (scope.ts's parent-chain lookup). This IS a new session, not a worker.
   delete env.PAI_WORKER;
   delete env.PAI_WORKER_ID;
-  // A native (Anthropic) launch pins nothing: the settings.json route (the
-  // local model router) must survive so `/model glm-5.3` works inside it.
-  // Only a provider with its own base URL pins route and token.
-  const pin = env.ANTHROPIC_BASE_URL ? pinnedSettingsArgs(env) : [];
+  // One rule for every spawn: pinnedSettingsArgs decides the route (provider
+  // URL + token, else the router when enabled, else api.anthropic.com).
+  const pin = pinnedSettingsArgs(env);
   const argv = [...pin, "--model", model, ...extraArgs];
   return { providerName, provider, model, argv, env };
 }

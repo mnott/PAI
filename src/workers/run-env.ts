@@ -9,6 +9,8 @@
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
+import { loadConfig } from "../daemon/config.js";
+import { ROUTER_PORT } from "../router/router.js";
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /**
@@ -122,13 +124,13 @@ export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
  * PATH; off, it is pinned to api.anthropic.com so a global route cannot
  * pull it in either.
  */
-export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean): string[] {
+export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean, routerEnabled?: boolean): string[] {
   const route = env.ANTHROPIC_BASE_URL;
   if (!route && caveman) {
     if (onPath("caveman", env)) return ["caveman", "claude"];
     process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
   }
-  return ["claude", ...pinnedSettingsArgs(env)];
+  return ["claude", ...pinnedSettingsArgs(env, routerEnabled)];
 }
 
 const PINNED_KEYS = [
@@ -142,10 +144,13 @@ const PINNED_KEYS = [
  * `--settings` argv pinning the provider's route, token and tier models: the
  * user settings' env outranks the process env, so a provider launch would
  * otherwise authenticate its token against the user's proxy (401). Shared by
- * workers and interactive `pai launch`.
+ * workers and interactive `pai launch`. A native run (no provider route) is
+ * pinned to the local model router when router.enabled, so `/model` can switch
+ * provider and every request is accounted; else to api.anthropic.com.
  */
-export function pinnedSettingsArgs(env: NodeJS.ProcessEnv): string[] {
-  const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || ANTHROPIC_FIRST_PARTY_URL };
+export function pinnedSettingsArgs(env: NodeJS.ProcessEnv, routerEnabled: boolean = loadConfig().router.enabled): string[] {
+  const native = routerEnabled ? `http://127.0.0.1:${ROUTER_PORT}` : ANTHROPIC_FIRST_PARTY_URL;
+  const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || native };
   if (env.ANTHROPIC_BASE_URL) for (const k of PINNED_KEYS) if (env[k]) pinned[k] = env[k] as string;
   return ["--settings", JSON.stringify({ env: pinned })];
 }

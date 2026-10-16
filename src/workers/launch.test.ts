@@ -197,9 +197,10 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
 
   it("anthropic (built-in): --model only, no base URL/token, no ANTHROPIC_API_KEY leak", async () => {
     const plan = await withLeakedKey(() => buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test"));
-    // no --settings pin: settings.json (router) base URL is inherited
-    expect(plan.argv).toEqual(["--model", NATIVE_ANTHROPIC_MODELS.default]);
-    expect(plan.argv).not.toContain("--settings");
+    // pinned by pinnedSettingsArgs: router when enabled, else api.anthropic.com
+    expect(plan.argv.slice(2)).toEqual(["--model", NATIVE_ANTHROPIC_MODELS.default]);
+    expect(plan.argv[0]).toBe("--settings");
+    expect(JSON.parse(plan.argv[1]).env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(plan.env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
