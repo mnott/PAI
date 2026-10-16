@@ -125,6 +125,11 @@ describe("denyReason", () => {
     expect(denyReason(i("Read", "/tmp/x"), H)).toBeNull();
     expect(denyReason(i("Write", "/private/tmp/ab-arms/other-arm/x"), H)).not.toBeNull();
   });
+  it("Bash: allows /tmp scratch, still fences other arms", () => {
+    const b = (command: string) => ({ tool_name: "Bash", cwd: C, tool_input: { command } });
+    expect(denyReason(b("cat > /tmp/recon.py"), H)).toBeNull();
+    expect(denyReason(b("cat /private/tmp/ab-arms/other-arm/x"), H)).not.toBeNull();
+  });
   it("leaves non-workers untouched", () => {
     expect(denyReason(i("Read", "/Users/dev/x"), {} as NodeJS.ProcessEnv)).toBeNull();
   });

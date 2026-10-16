@@ -175,10 +175,16 @@ function isIsolatedArm(realCwd: string): boolean {
   }
 }
 
+/** The arm's own /tmp scratch (commit messages etc.), shared by file tools and Bash; other arms stay fenced. */
+function isTmpScratch(v: string, env: NodeJS.ProcessEnv): boolean {
+  const under = (p: string, root: string) => p === root || p.startsWith(`${root.replace(/\/+$/, "")}/`);
+  return under(v, realish("/tmp")) && !under(v, realish(env.PAI_AB_ARMS_ROOT || "/private/tmp/ab-arms"));
+}
+
 /** Reason to deny an absolute path outside the cwd; null = let it through. Only isolated A/B arms are fenced. */
 export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null {
   if (env.PAI_WORKER !== "1") return null;
-  if (input.tool_name === "Bash") return denyBash(input);
+  if (input.tool_name === "Bash") return denyBash(input, env);
   const spec = PATH_KEYS[input.tool_name ?? ""];
   const cwd = input.cwd;
   const value = input.tool_input?.[spec?.key ?? ""];
@@ -190,7 +196,7 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
   const v = realish(value);
   if (under(v, realCwd)) return null;
   // The arm's own /tmp scratch (commit messages etc.); other arms stay fenced.
-  if (under(v, realish("/tmp")) && !under(v, realish(env.PAI_AB_ARMS_ROOT || "/private/tmp/ab-arms"))) return null;
+  if (isTmpScratch(v, env)) return null;
   if (READ_TOOLS.has(input.tool_name!)) {
     const home = env.HOME ? [`${env.HOME}/.claude`, `${env.HOME}/.cache`] : [];
     if ([...READ_ALLOW, ...home].some((r) => under(v, realish(r)))) return null;
@@ -199,7 +205,7 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
 }
 
 /** Bash: deny a missing absolute-path token outside the arm cwd (existing paths are the model's business). */
-function denyBash(input: PathRepairInput): string | null {
+function denyBash(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null {
   const cwd = input.cwd;
   const command = input.tool_input?.command;
   if (!cwd || !isAbsolute(cwd) || typeof command !== "string") return null;
@@ -209,7 +215,7 @@ function denyBash(input: PathRepairInput): string | null {
   for (const t of absTokens(command)) {
     if (existsSync(t)) continue;
     const v = realish(t);
-    if (under(v, realCwd) || BASH_ALLOW.some((r) => under(v, realish(r)))) continue;
+    if (under(v, realCwd) || isTmpScratch(v, env) || BASH_ALLOW.some((r) => under(v, realish(r)))) continue;
     return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}.`;
   }
   return null;
