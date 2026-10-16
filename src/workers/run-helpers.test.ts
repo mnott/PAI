@@ -41,7 +41,9 @@ import {
   printResult,
   worktreeExtras,
   type StreamEvent,
+  isEmptyResponse,
 } from "./run.js";
+import { classifyToolError } from "./tool-errors.js";
 import { projectLaunchConfig } from "./project-config.js";
 import { AG2_REASK_TEXT, OPERATOR_MARK, promptTrailer } from "./report.js";
 import { nativeAnthropicProvider, parseWorkersConfig } from "./config.js";
@@ -1002,5 +1004,19 @@ describe("single --append-system-prompt", () => {
     expect(p.callerSystemPrompt).toBe(true);
     expect(p.rest.join(" ")).not.toContain("append-system-prompt");
     expect(appendSystemPromptArgs(p.callerSystemPrompts).filter((a) => a.startsWith("--append"))).toHaveLength(1);
+  });
+});
+
+describe("isEmptyResponse", () => {
+  // shape of a local-provider run that answered "No response requested." with usage 0/0
+  const zero = { assistants: 1, usage: false };
+  it("zero-usage assistant, no tools: empty", () => {
+    expect(isEmptyResponse(zero, 0)).toBe(true);
+    expect(classifyToolError({ ts: 0, worker: "w", provider: "p", label: "l", tool: "model", raw: "empty-response: model answered with zero usage and no tool call", signature: "model|empty-response" }).cls).toBe("harness");
+  });
+  it("normal finished run unchanged", () => {
+    expect(isEmptyResponse({ assistants: 3, usage: true }, 2)).toBe(false);
+    expect(isEmptyResponse({ assistants: 1, usage: false }, 1)).toBe(false);
+    expect(isEmptyResponse({ assistants: 0, usage: false }, 0)).toBe(false);
   });
 });

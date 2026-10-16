@@ -177,6 +177,8 @@ export interface RunOptions {
   printCmd?: boolean;
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
+  /** Internal: this run is the one automatic re-launch after an empty model response. */
+  _emptyRetried?: boolean;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
   _planner?: boolean;
   /** --report json|ag2: which contract/parser the run uses (default: ag2, or PAI_WORKER_REPORT). */
@@ -460,6 +462,19 @@ export function shouldRetryReport(
  * without this every interactive session that ends normally was recorded
  * as `failed rc=0` and supervision pinged the spawner about a non-failure.
  */
+/**
+ * An empty model response: the model "answered" without producing anything —
+ * every assistant message carried zero usage (input+output 0) and no tool_use,
+ * and no tool ran. A local endpoint under load does this; it is a harness
+ * failure, not a finished run (rc 0 and a result record notwithstanding).
+ */
+export function isEmptyResponse(
+  seen: { assistants: number; usage: boolean },
+  tools: number,
+): boolean {
+  return seen.assistants > 0 && !seen.usage && tools === 0;
+}
+
 export function runSucceeded(
   headless: boolean,
   rc: number,
@@ -630,6 +645,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         resumeOf: opts.resumeOf,
         className: opts.className,
         reroutes: opts._reroutes ?? 0,
+        emptyRetried: opts._emptyRetried ?? false,
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
@@ -1066,6 +1082,7 @@ interface ExecuteArgs {
   resumeOf?: string;
   className?: string;
   reroutes: number;
+  emptyRetried?: boolean;
   printCmd?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
@@ -1400,9 +1417,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Holder for the last result event + its parsed report: assigned inside the
   // readline callback below, read after the await.
-  const ctx: { resultEvent: StreamEvent | null; resultReport: WorkerReport | null } = {
+  const ctx: {
+    resultEvent: StreamEvent | null;
+    resultReport: WorkerReport | null;
+    seen: { assistants: number; usage: boolean };
+  } = {
     resultEvent: null,
     resultReport: null,
+    seen: { assistants: 0, usage: false },
   };
 
   if (headless) {
@@ -1442,6 +1464,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
+        ctx.seen.assistants += 1;
+        if (usageContextTokens(e.message?.usage) !== null) ctx.seen.usage = true;
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         for (const block of e.message?.content ?? []) {
@@ -1510,7 +1534,18 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = ctx.resultEvent;
-  const ok = runSucceeded(headless, rc, resultEvent);
+  const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(ctx.seen, status.tools);
+  const ok = !empty && runSucceeded(headless, rc, resultEvent);
+  if (empty) {
+    status.last = "harness: empty-response (model returned nothing)";
+    recordToolError(logDir, {
+      worker: wid,
+      provider: target.providerName,
+      label,
+      tool: "model",
+      text: "empty-response: model answered with zero usage and no tool call",
+    });
+  }
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
   if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
@@ -1587,6 +1622,27 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
       }
+
+    // Empty response: one automatic re-launch of the same spec in the same cwd.
+    if (empty && !a.emptyRetried) {
+      appendLedger(ledger, "WORKER-EMPTY-RETRY", { id: wid, provider: target.providerName });
+      return runWorker({
+        providerFlag: target.providerName,
+        label,
+        noPane: a.noPane,
+        mcpFlag: a.mcpFlag,
+        cwd: a.cwd,
+        specPath: a.specPath,
+        parent: a.parent,
+        stage: a.stage,
+        claudeArgs: a.claudeArgs,
+        onWorkerStart: a.onWorkerStart,
+        worktreeFlag: a.worktreeFlag,
+        className: a.className,
+        _reroutes: a.reroutes,
+        _emptyRetried: true,
+      });
+    }
 
     // Quota reroute: only auto-routed runs, dead before the first tool call.
     const resultText = resultEvent?.result ?? "";
