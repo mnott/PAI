@@ -118,11 +118,35 @@ export function parseCommand(command: string): Segment[] {
 
 const WRAPPERS = new Set(["sudo", "command", "env", "time", "nohup", "exec", "builtin"]);
 
-/** Drop env assignments and wrapper commands from the front. */
+const CONTROL_WORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "xargs"]);
+
+/** `$(git`, `(git`, `{git`, backtick-git and `/usr/bin/git` all name the command `git`. */
+function bareCommand(w: string): string {
+  const t = w.replace(/^(\$\(|[({`])+/, "");
+  return t.includes("/") && !t.startsWith("-") ? t.slice(t.lastIndexOf("/") + 1) : t;
+}
+
+/** Drop env assignments, wrapper commands, control keywords and xargs flags from the front. */
 function stripPrefix(words: string[]): string[] {
-  let i = 0;
-  while (i < words.length && (/^[A-Za-z_]\w*=/.test(words[i]) || WRAPPERS.has(words[i]))) i++;
-  return words.slice(i);
+  const out = [...words];
+  while (out.length) {
+    const w = bareCommand(out[0]);
+    if (/^[A-Za-z_]\w*=/.test(w) || WRAPPERS.has(w) || CONTROL_WORDS.has(w) || w === "") {
+      const wasXargs = w === "xargs";
+      out.shift();
+      if (wasXargs) {
+        while (out.length && isFlag(out[0])) {
+          const f = out.shift()!;
+          if (/^-[IiLnPsEd]$/.test(f)) out.shift(); // flag with a separate value
+        }
+      }
+      continue;
+    }
+    out[0] = w;
+    break;
+  }
+  if (out.length) out[out.length - 1] = out[out.length - 1].replace(/[)`]+$/, "") || out[out.length - 1];
+  return out;
 }
 
 const isFlag = (w: string): boolean => w.startsWith("-") && w.length > 1;
@@ -220,9 +244,11 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
     return decideCommand(args[1], { ...ctx, cwd: st.cwd }, detached);
   }
 
+  if (cmd === "eval" && args.length) return decideCommand(args.join(" "), { ...ctx, cwd: st.cwd }, detached);
+
   const pos = args.filter((a) => !isFlag(a));
 
-  if (PATTERN_KILL.has(cmd) || (cmd === "xargs" && args.includes("kill")) || (cmd === "kill" && /pgrep|pidof/.test(args.join(" ")))) {
+  if (PATTERN_KILL.has(cmd) || (seg.words.includes("xargs") && cmd === "kill") || (cmd === "kill" && /pgrep|pidof/.test(args.join(" ")))) {
     return deny(PATTERN_KILL_REASON);
   }
 
