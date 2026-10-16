@@ -110,8 +110,11 @@ const WORD = /[^\s;|&<>()`"'$=,:{}]+/g;
 const GLOB = /[*?[\]!~]/;
 const BASH_ALLOW = ["/dev", "/bin", "/sbin", "/usr", "/System", "/Library", "/opt", "/private/var/folders", "/var/folders", "/Applications"];
 
+/** Quoted program text of `python -c`, `node -e`, `perl -e`, `awk '…'`: code, not paths. */
+const INLINE_PROGRAM = /(\b(?:python[\d.]*|node|ruby|perl|php|bun|deno)\b[^\n;|&]*?\s-[a-zA-Z]*[ceE]\s+|\bawk\s+(?:-\S+\s+)*)("(?:[^"\\]|\\.)*"|'[^']*')/g;
+
 function absTokens(command: string): string[] {
-  return (command.match(WORD) ?? []).filter((t) => t.startsWith("/") && !GLOB.test(t));
+  return (command.replace(INLINE_PROGRAM, "$1''").match(WORD) ?? []).filter((t) => t.startsWith("/") && !GLOB.test(t));
 }
 
 /** Bash inside an isolated arm: repair every missing absolute-path token; null if none, or if one cannot be fixed. */
@@ -201,7 +204,7 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
     const home = env.HOME ? [`${env.HOME}/.claude`, `${env.HOME}/.cache`] : [];
     if ([...READ_ALLOW, ...home].some((r) => under(v, realish(r)))) return null;
   }
-  return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}.`;
+  return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}. Outside it: ${value}`;
 }
 
 /** Bash: deny a missing absolute-path token outside the arm cwd (existing paths are the model's business). */
@@ -216,7 +219,7 @@ function denyBash(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null
     if (existsSync(t)) continue;
     const v = realish(t);
     if (under(v, realCwd) || isTmpScratch(v, env) || BASH_ALLOW.some((r) => under(v, realish(r)))) continue;
-    return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}.`;
+    return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}. Outside it: ${t}`;
   }
   return null;
 }

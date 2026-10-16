@@ -130,6 +130,13 @@ describe("denyReason", () => {
     expect(denyReason(b("cat > /tmp/recon.py"), H)).toBeNull();
     expect(denyReason(b("cat /private/tmp/ab-arms/other-arm/x"), H)).not.toBeNull();
   });
+  it("Bash: deny reason names the token; inline program text is not scanned", () => {
+    const b = (command: string) => ({ tool_name: "Bash", cwd: C, tool_input: { command } });
+    expect(denyReason(b("cat /etc/x"), H)).toContain("Outside it: /etc/x");
+    expect(denyReason(b("cd /tmp/lintest && python3 -c \"import re; re.findall(rb'(?<![0-9])(\\d+) 0 obj', open('/zz/q','rb').read())\""), H)).toBeNull();
+    expect(denyReason(b("node -e 'console.log(\"/nope/x\")'"), H)).toBeNull();
+    expect(denyReason(b("awk '{print \"/nope/x\"}' f"), H)).toBeNull();
+  });
   it("leaves non-workers untouched", () => {
     expect(denyReason(i("Read", "/Users/dev/x"), {} as NodeJS.ProcessEnv)).toBeNull();
   });

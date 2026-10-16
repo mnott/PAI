@@ -32,7 +32,7 @@ export const SAME_WORKER_WINDOW_MS = 2 * 60 * 60_000;
 export const RESEND_MS = 30 * 60_000;
 const SIGNATURE_MAX = 160;
 const RAW_MAX = 300;
-const INPUT_MAX = 200;
+const INPUT_MAX = 1000;
 const TAIL_BYTES = 400_000;
 
 export type ErrorClass = "harness" | "model" | "unknown";

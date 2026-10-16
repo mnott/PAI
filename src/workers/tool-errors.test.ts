@@ -105,7 +105,7 @@ describe("tool input", () => {
   it("summarizes path, pattern, command", () => {
     expect(summarizeToolInput({ file_path: "/a/b.ts" })).toBe("/a/b.ts");
     expect(summarizeToolInput({ path: "/src", pattern: "foo" })).toBe("/src foo");
-    expect(summarizeToolInput({ command: "x".repeat(300) })).toHaveLength(200);
+    expect(summarizeToolInput({ command: "x".repeat(1500) })).toHaveLength(1000);
     expect(summarizeToolInput(null)).toBeUndefined();
   });
   it("alert shows input and rule b counts only recent workers", () => {
