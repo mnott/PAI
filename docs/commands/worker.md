@@ -20,6 +20,7 @@ pai worker <subcommand> [options]
 |---------|-------------|
 | [`pai worker run [args...]`](#pai-worker-run-args) | Run one claude-code worker through the configured provider. |
 | [`pai worker ps`](#pai-worker-ps) | List workers of this session (RUNNING + FINISHED); --all for every worker |
+| [`pai worker errors`](#pai-worker-errors) | Worker tool errors grouped by normalised signature |
 | [`pai worker pending`](#pai-worker-pending) | Finished workers whose branch or worktree holds work not yet merged into this repo |
 | [`pai worker follow [id]`](#pai-worker-follow-id) | Live transcript of one worker, or of this session's running workers |
 | [`pai worker replay <id>`](#pai-worker-replay-id) | Print the transcript of one finished or running worker |
@@ -113,6 +114,17 @@ List workers of this session (RUNNING + FINISHED); --all for every worker
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--all` | Show workers of all sessions, not just this terminal's |  |
+
+
+### pai worker errors
+
+Worker tool errors grouped by normalised signature
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--since <age>` | Only errors newer than this, e.g. 30m, 2h, 1d | `24h` |
 
 
 ### pai worker pending

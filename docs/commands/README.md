@@ -253,6 +253,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker config path` | Print the resolved workers.yaml path |
 | `pai worker controls <id> <who>` | Hand the desktop controls (clickr) to a worker or take them back. |
 | `pai worker discard <id>` | Drop a worker's worktree and branch, keeping nothing |
+| `pai worker errors` | Worker tool errors grouped by normalised signature |
 | `pai worker fallback [action] [provider]` | Machine-wide fallback: every NEW Claude Code process runs on a worker |
 | `pai worker follow [id]` | Live transcript of one worker, or of this session's running workers |
 | `pai worker gc` | Archive leftover worker worktrees (state kept under refs/pai-archive/<id>; gitignored files are not kept) |

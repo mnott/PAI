@@ -58,16 +58,17 @@ import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./
 import { itermForClaudeSession } from "./scope.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
+import { detectToolErrors, readToolErrors, SAME_WORKER_WINDOW_MS, toolErrorText } from "./tool-errors.js";
 import { sendToSession } from "../cli/lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
-export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping";
+export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping" | "toolerror";
 
 /** The kinds that fire mid-run and re-arm on turn progress (see eventId). */
-const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping"];
+const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping", "toolerror"];
 
 export interface SupervisionEvent {
   /** Deterministic dedup key — see eventId(). */
@@ -283,6 +284,8 @@ export function detectSupervisionEvents(
 export interface SupervisionState {
   /** worker id → event ids already written to that owner's event file. */
   delivered: Record<string, string[]>;
+  /** tool-error signature → epoch ms of its last message (one per signature per 30 min). */
+  toolErrorSent?: Record<string, number>;
 }
 
 /** Cap on remembered workers: terminal and delivered is history, not state. */
@@ -349,7 +352,7 @@ export function pruneState(
   const absent = entries.filter(([id]) => !present.has(id)).sort(byId);
   // not slice(-maxAbsent): with maxAbsent 0 that returns the whole array
   const keptAbsent = absent.slice(Math.max(0, absent.length - maxAbsent));
-  return { delivered: Object.fromEntries([...keptAbsent, ...keptPresent]) };
+  return { ...state, delivered: Object.fromEntries([...keptAbsent, ...keptPresent]) };
 }
 
 /**
@@ -486,6 +489,26 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     }),
     state
   );
+
+  // systematic tool errors: the same signature repeating is reported once per 30 min
+  const sent = (state.toolErrorSent ??= {});
+  for (const [sig, t] of Object.entries(sent)) if (now.getTime() - t > 86_400_000) delete sent[sig];
+  const byId = new Map(statuses.map((s) => [s.id, s]));
+  for (const g of detectToolErrors(readToolErrors(logDir, now.getTime() - SAME_WORKER_WINDOW_MS), now.getTime(), sent)) {
+    const owner = [...g.workers].reverse().map((w) => byId.get(w)).find((s) => s && ownershipKey(s));
+    if (!owner) continue;
+    pending.push({
+      id: `${owner.id}#toolerror@${now.getTime()}`,
+      ts: nowStamp(now),
+      kind: "toolerror",
+      worker: owner.id,
+      label: owner.label,
+      session: ownershipKey(owner)!,
+      rc: null,
+      stalledMin: null,
+      text: toolErrorText(g),
+    });
+  }
 
   const written: SupervisionEvent[] = [];
   for (const ev of pending) {

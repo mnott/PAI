@@ -48,6 +48,7 @@ import { waitWorkers } from "../../../workers/wait.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../../workers/controls.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../../workers/proxy/server.js";
+import { errorsTable, groupToolErrors, parseSince, readToolErrors } from "../../../workers/tool-errors.js";
 import { err, dim } from "../../utils.js";
 
 function currentLogDir(): string {
@@ -250,6 +251,20 @@ export function registerWorkerCommands(workerCmd: Command): void {
         const pending = pendingResults(logDir, process.cwd()).length;
         if (pending) console.log(`${pending} unmerged result(s) — pai worker pending`);
         console.log(psOutput(logDir, opts.all === true));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("errors")
+    .description("Worker tool errors grouped by normalised signature")
+    .option("--since <age>", "Only errors newer than this, e.g. 30m, 2h, 1d", "24h")
+    .action((opts: { since: string }) => {
+      try {
+        const ms = parseSince(opts.since);
+        if (ms === null) throw new Error(`bad --since "${opts.since}" (use 30m, 2h, 1d)`);
+        console.log(errorsTable(groupToolErrors(readToolErrors(currentLogDir(), Date.now() - ms))));
       } catch (e) {
         fail(e);
       }

@@ -37,6 +37,7 @@
  * restarted on the next provider in routing order (WORKER-REROUTE ledger line).
  */
 
+import { recordToolError } from "./tool-errors.js";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -1463,6 +1464,16 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
             status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
             status.sleepSec = null;
             recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString());
+            if (block.is_error === true) {
+              recordToolError(logDir, {
+                worker: wid,
+                provider: target.providerName,
+                label,
+                tool: toolUses.get(block.tool_use_id ?? "")?.name ?? "?",
+                text: toolResultText(block.content),
+                input: toolUses.get(block.tool_use_id ?? "")?.input,
+              });
+            }
           }
           if (sawResult) saveStatus(logDir, status);
         }
