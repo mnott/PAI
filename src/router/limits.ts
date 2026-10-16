@@ -4,19 +4,21 @@
  * page or the JSON it is served.
  *
  *   anthropic  Max plan 5h/7d via the OAuth usage endpoint (token from the
- *              keychain, as the statusline does); advisor-mode.json as fallback
+ *              keychain, as the statusline does); on a failed poll (http 429)
+ *              the last good reading is served with its age and the poll backs
+ *              off, advisor-mode.json only when no last good reading exists
  *   others     the provider's workers.yaml `usage` block (jq expressions)
  *   local      up/down (TCP), RSS of the listener, tokens/s from accounting
  *   rest       counted requests vs a configured limit, labelled "estimated"
  */
 
 import { execFile, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
 
@@ -45,6 +47,86 @@ export interface ProviderLimits {
 
 export const ESTIMATE_FILE = join(homedir(), ".claude", "pai", "router-limits.json");
 export const ADVISOR_FILE = join(homedir(), ".claude", "pai", "advisor-mode.json");
+/** Last good plan reading per provider, so a rate-limited poll shows an age, not "reset unknown". */
+export const LASTGOOD_FILE = join(homedir(), ".claude", "pai", "logs", "router-limits-last.json");
+/** A last good reading older than this is too stale to serve when the endpoint fails. */
+export const PLAN_LASTGOOD_MAX_AGE = 2 * 3_600_000;
+/** Upper bound for the poll delay after repeated 429s. */
+export const BACKOFF_MAX = 30 * 60_000;
+
+/** The windows of one provider's last successful poll. */
+export interface LastGoodEntry {
+  windows: LimitWindow[];
+  fetchedAt: number;
+}
+
+export function readLastGood(file: string = LASTGOOD_FILE): Record<string, LastGoodEntry> {
+  try {
+    const j = JSON.parse(readFileSync(file, "utf8")) as Record<string, Partial<LastGoodEntry>>;
+    const out: Record<string, LastGoodEntry> = {};
+    for (const [k, v] of Object.entries(j)) {
+      if (v && Array.isArray(v.windows) && typeof v.fetchedAt === "number") out[k] = { windows: v.windows, fetchedAt: v.fetchedAt };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeLastGood(file: string, entries: Record<string, LastGoodEntry>): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(entries, null, 1));
+  } catch {
+    /* best-effort cache */
+  }
+}
+
+/**
+ * The reading to show when a poll failed: the last good one, with its age in
+ * the error field, while it is fresh enough to trust; undefined otherwise.
+ */
+export function staleReading(
+  provider: string,
+  entry: LastGoodEntry | undefined,
+  cause: string,
+  now: number,
+  maxAge: number = PLAN_LASTGOOD_MAX_AGE
+): ProviderLimits | undefined {
+  if (!entry || !entry.windows.length || now - entry.fetchedAt >= maxAge) return undefined;
+  const min = Math.round((now - entry.fetchedAt) / 60_000);
+  return { provider, kind: "plan", windows: entry.windows, fetchedAt: entry.fetchedAt, error: `stale ${min}min (${cause})` };
+}
+
+/** Per-provider poll backoff after a http 429: the interval doubles per strike, resets on success. */
+export class Backoff {
+  private mult = new Map<string, number>();
+  private until = new Map<string, number>();
+
+  constructor(
+    private readonly baseMs: number,
+    private readonly maxMs: number = BACKOFF_MAX
+  ) {}
+
+  /** Record a 429 seen for `provider` at `now`; returns the delay before its next poll. */
+  penalize(provider: string, now: number): number {
+    const m = Math.min((this.mult.get(provider) ?? 1) * 2, this.maxMs / this.baseMs);
+    this.mult.set(provider, m);
+    this.until.set(provider, now + m * this.baseMs);
+    return m * this.baseMs;
+  }
+
+  /** ms until `provider` is due again; 0 when it may be polled now. */
+  remaining(provider: string, now: number): number {
+    return Math.max(0, (this.until.get(provider) ?? 0) - now);
+  }
+
+  /** A poll succeeded: forget the strikes. */
+  reset(provider: string): void {
+    this.mult.delete(provider);
+    this.until.delete(provider);
+  }
+}
 
 function toMs(v: unknown, unit: "ms" | "s" | "iso" | undefined): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
@@ -156,7 +238,7 @@ async function anthropicToken(): Promise<string | undefined> {
   return undefined;
 }
 
-async function anthropicLimits(now: number, advisorFile: string): Promise<ProviderLimits> {
+async function anthropicLimits(now: number, advisorFile: string, lastGood: LastGoodEntry | undefined): Promise<ProviderLimits> {
   const base = { provider: "anthropic", kind: "plan" as const, fetchedAt: now };
   try {
     const token = await anthropicToken();
@@ -169,6 +251,8 @@ async function anthropicLimits(now: number, advisorFile: string): Promise<Provid
     if (windows.length) return { ...base, windows };
     throw new Error("no usage windows in response");
   } catch (e) {
+    const stale = staleReading("anthropic", lastGood, (e as Error).message, now);
+    if (stale) return stale;
     try {
       const a = JSON.parse(readFileSync(advisorFile, "utf8")) as { weeklyBudgetPercent?: number; asOf?: number };
       if (typeof a.weeklyBudgetPercent === "number" && a.asOf && now / 1000 - a.asOf < 6 * 3600) {
@@ -181,7 +265,7 @@ async function anthropicLimits(now: number, advisorFile: string): Promise<Provid
   }
 }
 
-async function providerPlanLimits(name: string, p: WorkerProvider, now: number): Promise<ProviderLimits> {
+async function providerPlanLimits(name: string, p: WorkerProvider, now: number, lastGood: LastGoodEntry | undefined): Promise<ProviderLimits> {
   const base = { provider: name, kind: "plan" as const, fetchedAt: now };
   const u = p.usage!;
   try {
@@ -193,7 +277,8 @@ async function providerPlanLimits(name: string, p: WorkerProvider, now: number):
     const windows = windowsFromJson(body, u);
     return windows.length ? { ...base, windows } : { ...base, windows, error: "no windows parsed" };
   } catch (e) {
-    return { ...base, windows: [], error: (e as Error).message.replace(/Bearer\s+\S+/g, "Bearer ***") };
+    const msg = (e as Error).message.replace(/Bearer\s+\S+/g, "Bearer ***");
+    return staleReading(name, lastGood, msg, now) ?? { ...base, windows: [], error: msg };
   }
 }
 
@@ -264,15 +349,25 @@ export interface LimitsDeps {
   rows: () => UsageRow[];
   advisorFile?: string;
   estimateFile?: string;
+  /** Last-good store override (tests); defaults to LASTGOOD_FILE. */
+  lastGoodFile?: string;
 }
 
-/** Polls all providers at most once per `ttlMs`; concurrent callers share one poll. */
+/**
+ * Polls all providers at most once per `ttlMs`; concurrent callers share one
+ * poll. A provider whose poll answered http 429 is not fetched again until its
+ * backoff (the interval doubled per strike, capped) has run out — its last
+ * good reading is served with the current age instead.
+ */
 export class LimitsCache {
   private value: ProviderLimits[] = [];
   private at = 0;
   private inflight: Promise<ProviderLimits[]> | undefined;
+  private backoff: Backoff;
 
-  constructor(private readonly deps: LimitsDeps, private readonly ttlMs = 60_000) {}
+  constructor(private readonly deps: LimitsDeps, private readonly ttlMs = 60_000) {
+    this.backoff = new Backoff(ttlMs);
+  }
 
   get(now: number = Date.now()): Promise<ProviderLimits[]> {
     if (this.value.length && now - this.at < this.ttlMs) return Promise.resolve(this.value);
@@ -294,15 +389,53 @@ export class LimitsCache {
       /* config unreadable: still report anthropic */
     }
     const caps = readEstimateCaps(this.deps.estimateFile);
-    const jobs: Array<Promise<ProviderLimits>> = [anthropicLimits(now, this.deps.advisorFile ?? ADVISOR_FILE)];
+    const lastGoodFile = this.deps.lastGoodFile ?? LASTGOOD_FILE;
+    const lastGood = readLastGood(lastGoodFile);
+    const previous = new Map(this.value.map((v) => [v.provider, v]));
+    const jobs: Array<Promise<ProviderLimits>> = [];
+    const skipped: string[] = [];
+    /** Queue a plan poll unless the provider is backing off from a 429. */
+    const plan = (name: string, fn: (lg: LastGoodEntry | undefined) => Promise<ProviderLimits>): void => {
+      if (this.backoff.remaining(name, now) > 0) {
+        skipped.push(name);
+        return;
+      }
+      jobs.push(fn(lastGood[name]));
+    };
+    plan("anthropic", (lg) => anthropicLimits(now, this.deps.advisorFile ?? ADVISOR_FILE, lg));
     for (const [name, p] of Object.entries(providers)) {
       if (p.native || name === "anthropic" || p.enabled === false || !p.baseUrl) continue;
       if (isLocalUrl(p.baseUrl)) jobs.push(localLimits(name, p, rows, now));
-      else if (p.usage) jobs.push(providerPlanLimits(name, p, now));
+      else if (p.usage) plan(name, (lg) => providerPlanLimits(name, p, now, lg));
       else if (caps[name]) {
         jobs.push(Promise.resolve({ provider: name, kind: "estimated", windows: estimateWindows(rows, name, caps[name]!, now), fetchedAt: now }));
       }
     }
-    return Promise.all(jobs);
+    const results = await Promise.all(jobs);
+    const store = { ...lastGood };
+    let dirty = false;
+    for (const r of results) {
+      if (r.error) {
+        if (r.error.includes("http 429")) this.backoff.penalize(r.provider, now);
+      } else {
+        this.backoff.reset(r.provider);
+        if (r.windows.length) {
+          store[r.provider] = { windows: r.windows, fetchedAt: r.fetchedAt };
+          dirty = true;
+        }
+      }
+    }
+    if (dirty) writeLastGood(lastGoodFile, store);
+    // Backed-off providers stay on the page: the previous reading, with a current age.
+    for (const name of skipped) {
+      const prev = previous.get(name);
+      const cause = prev?.error?.includes("http 429") ? "http 429" : (prev?.error ?? "http 429");
+      results.push(
+        prev
+          ? { ...prev, error: `stale ${Math.max(0, Math.round((now - prev.fetchedAt) / 60_000))}min (${cause})` }
+          : { provider: name, kind: "plan", windows: [], error: cause, fetchedAt: now }
+      );
+    }
+    return results;
   }
 }
