@@ -44,6 +44,7 @@ Run the router in the foreground
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--port <port>` | listen port (a non-default port never touches the pid file) | `8790` |
+| `--usage-file <path>` | read the cockpit's accounting from this file and record nothing (second instances) |  |
 
 
 ### pai router stats
@@ -55,6 +56,7 @@ Token and cache totals per provider/model from the router usage log
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--since <span>` | only the last span, e.g. 30m, 1h, 2d |  |
+| `--by <key>` | group by provider (default) or session | `provider` |
 
 
 ## See also
