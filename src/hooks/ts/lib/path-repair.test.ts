@@ -249,3 +249,26 @@ describe("truncated cwd folder name", () => {
     expect(r?.updatedInput).toEqual({ command: `cd ${C} && ls` });
   });
 });
+
+describe("misspelled cwd folder name", () => {
+  const C = "/private/tmp/ab-arms/emptied-window-asks-qwen36-precise-145040";
+  const F = `${C}/Sources/Mac/Window/Splitting.swift`;
+  const edit = (name: string, file = F) => ({ tool_name: "Edit", cwd: C, tool_input: { file_path: file.replace("emptied-window-asks-qwen36-precise-145040", name) } });
+
+  it("repairs a two-edit typo", () => {
+    expect(repairPath(edit("emptened-window-asks-qwen36-precise-145040"), W, fs(F))?.new).toBe(F);
+  });
+  it("repairs a transposition", () => {
+    expect(repairPath(edit("emtpied-window-asks-qwen36-precise-145040"), W, fs(F))?.new).toBe(F);
+  });
+  it("leaves a distance-4 name alone when the suffix rule cannot help", () => {
+    expect(repairPath(edit("xxxxied-window-asks-qwen36-precise-145040"), W, fs(`${C}/other`))).toBeNull();
+  });
+  it("leaves the path alone when a similarly named sibling exists", () => {
+    const sib = "/private/tmp/ab-arms/emptened-window-asks-qwen36-precise-145040/Sources/Mac/Window/Splitting.swift";
+    expect(repairPath(edit("emptened-window-asks-qwen36-precise-145040"), W, fs(F, sib))).toBeNull();
+  });
+  it("still repairs a truncated name", () => {
+    expect(repairPath(edit("emptied-window-asks"), W, fs(F))?.new).toBe(F);
+  });
+});
