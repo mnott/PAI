@@ -51,6 +51,7 @@ pai worker <subcommand> [options]
 | [`pai worker model [what] [model]`](#pai-worker-model-what-model) | Model ids per provider: no args lists them, |
 | [`pai worker capability [name] [providers]`](#pai-worker-capability-name-providers) | Which provider(s) serve a capability (e.g. image), independent of any one |
 | [`pai worker config`](#pai-worker-config) | workers.yaml itself: path, init, migrate, check, inline-keys |
+| [`pai worker local <target>`](#pai-worker-local-target) | Switch the one running local model server: <tier> (stop all, start that tier), |
 
 ### pai worker run [args...]
 
@@ -744,6 +745,26 @@ Move each provider's key_file contents inline as `key:` (quoted); key files are 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--dry-run` | Print the plan (provider names and key file paths, never key values); write nothing |  |
+
+
+### pai worker local <target>
+
+Switch the one running local model server: <tier> (stop all, start that tier),
+
+off (stop all), status (what is up). Tiers come from local_tiers: in workers.yaml.
+Does not change worker routing.
+
+**Arguments**
+
+| Argument | Kind |
+|----------|------|
+| `<target>` | required |
+
+**Options**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dry-run` | Print the exact commands without starting or stopping anything |  |
 
 
 ## See also

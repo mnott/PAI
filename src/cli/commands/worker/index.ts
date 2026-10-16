@@ -38,6 +38,7 @@ import { registerWorkerProviderCommands, registerWorkerClassCommands } from "./p
 import { registerWorkerModelCommand } from "./model.js";
 import { registerWorkerCapabilityCommand } from "./capability.js";
 import { registerWorkerConfigCommands } from "./config.js";
+import { registerWorkerLocalCommand } from "./local.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../../workers/status.js";
 import { callerDescription, requestKill } from "../../../workers/endreason.js";
 import { sayToWorker } from "../../../workers/operator.js";
@@ -888,6 +889,7 @@ export function registerWorkerCommands(workerCmd: Command): void {
   registerWorkerModelCommand(workerCmd);
   registerWorkerCapabilityCommand(workerCmd);
   registerWorkerConfigCommands(workerCmd);
+  registerWorkerLocalCommand(workerCmd);
 }
 
 function parseIntArg(v: string): number {
