@@ -12,7 +12,8 @@ import { readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import chalk from "chalk";
 import { launchableProviderNames } from "../../workers/launch.js";
-import type { WorkersConfig } from "../../workers/config.js";
+import { ANTHROPIC_NATIVE, hasProviderKey } from "../../workers/config.js";
+import type { WorkerProvider, WorkersConfig } from "../../workers/config.js";
 import { fmtRss, resolveModelPath } from "../../workers/local-tiers.js";
 import type { LocalConfig, LocalTier, RunningServer } from "../../workers/local-tiers.js";
 import { dim } from "../utils.js";
@@ -28,6 +29,8 @@ export interface ModelChoice {
   up?: boolean;
   /** Local provider whose model is not on disk: cannot be chosen. */
   missing?: boolean;
+  /** Cloud provider whose credential does not resolve: cannot be chosen. */
+  noKey?: boolean;
   /** Local provider that is not a tier and is down: start recipe for it. */
   launch?: LocalTier;
   /** Local only: RSS when up, else size on disk. */
@@ -104,10 +107,11 @@ export function buildModelChoices(
   const localProviders: ModelChoice[] = [];
   for (const name of launchableProviderNames(workers)) {
     if (tierProviders.has(name)) continue;
-    const prov = (workers.providers as Record<string, { baseUrl?: string; models?: { default?: string } }>)[name];
+    const prov = (workers.providers as Record<string, { baseUrl?: string; key?: string; keyFile?: string | null; models?: { default?: string } }>)[name];
     const url = prov?.baseUrl;
     if (!isLocalUrl(url)) {
-      choices.push({ provider: name, label: name });
+      const noKey = name !== ANTHROPIC_NATIVE && !!prov && !hasProviderKey(prov as unknown as WorkerProvider);
+      choices.push({ provider: name, label: name, ...(noKey ? { noKey, missing: true } : {}) });
       continue;
     }
     const port = portOf(url);
@@ -148,6 +152,7 @@ export function buildModelChoices(
 }
 
 function status(c: ModelChoice): string {
+  if (c.noKey) return chalk.dim("no key");
   if (c.missing) return chalk.dim("not installed");
   const mem = c.mem ? `${c.up ? "" : "disk "}${c.mem}` : "";
   return c.up

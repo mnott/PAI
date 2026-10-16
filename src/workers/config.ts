@@ -1105,6 +1105,16 @@ export function resolveProviderKey(p: WorkerProvider): string | null {
   return token;
 }
 
+/** True when the provider's token resolves (inline key or readable, non-empty
+ *  key file). Presence only: the value is never returned. */
+export function hasProviderKey(p: WorkerProvider): boolean {
+  try {
+    return !!resolveProviderKey(p);
+  } catch {
+    return false;
+  }
+}
+
 /** `key: ****` + last 4 chars — never the full value. Used everywhere a
  *  provider's key would otherwise be echoed (`providers`, `config check`). */
 export function maskKey(key: string): string {

@@ -5,7 +5,8 @@ import { buildModelChoices, modelScreen, moveCursor, parseModelAnswer, resolveEn
 const workers = {
   active: null,
   providers: {
-    glm: { enabled: true, baseUrl: "https://api.example.com" },
+    glm: { enabled: true, baseUrl: "https://api.example.com", key: "k" },
+    kimi: { enabled: true, baseUrl: "https://kimi.example.com", keyFile: "/nonexistent/kimi.key" },
     off: { enabled: false },
     ornith: { enabled: true, baseUrl: "http://127.0.0.1:8013" },
     local: { enabled: true, baseUrl: "http://127.0.0.1:8014" },
@@ -21,6 +22,16 @@ const local = {
 } as never;
 
 describe("buildModelChoices", () => {
+  it("cloud provider without a resolvable key is dim and not choosable; anthropic and local unaffected", () => {
+    const c = buildModelChoices(workers, local, []);
+    expect(c.find((x) => x.provider === "kimi")?.noKey).toBe(true);
+    expect(parseModelAnswer("kimi", c)).toBeNull();
+    expect(parseModelAnswer("glm", c)?.provider).toBe("glm");
+    expect(parseModelAnswer("anthropic", c)?.provider).toBe("anthropic");
+    expect(c.find((x) => x.provider === "ollama")?.noKey).toBeUndefined();
+    expect(modelScreen(c, "p").join("\n")).toContain("no key");
+  });
+
   it("default is first and carries no provider", () => {
     const c = buildModelChoices(workers, local, []);
     expect(c[0].provider).toBeUndefined();
@@ -30,7 +41,7 @@ describe("buildModelChoices", () => {
   it("lists anthropic and enabled providers, tier providers only as tiers", () => {
     const c = buildModelChoices(workers, local, []);
     expect(c.map((x) => x.label.split(" ")[0] + (x.tier ? "*" : ""))).toEqual([
-      "default", "anthropic", "glm", "ollama", "local*", "local*",
+      "default", "anthropic", "glm", "kimi", "ollama", "local*", "local*",
     ]);
     expect(c.filter((x) => x.tier).map((x) => x.provider)).toEqual(["ornith", "local"]);
   });
