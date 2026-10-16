@@ -45,8 +45,8 @@ describe("repairPath", () => {
     expect(repairPath(read(TYPO), W, fs())).toBeNull();
   });
 
-  it("never touches Bash", () => {
-    const i = { tool_name: "Bash", cwd: CWD, tool_input: { command: `cat ${TYPO}` } };
+  it("never touches Bash outside an arm", () => {
+    const i = { tool_name: "Bash", cwd: "/Users/x/proj", tool_input: { command: `cat ${TYPO}` } };
     expect(repairPath(i, W, fs(GOOD))).toBeNull();
   });
 

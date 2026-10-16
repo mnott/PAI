@@ -54,19 +54,15 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-export function repairPath(
-  input: PathRepairInput,
-  env: NodeJS.ProcessEnv,
+/** The repaired form of one missing absolute path, or null when it exists or cannot be repaired. */
+function repairValue(
+  value: string,
+  cwd: string,
+  mustExist: boolean,
   exists: (p: string) => boolean,
-): PathRepair | null {
-  if (env.PAI_WORKER !== "1") return null;
-  const spec = PATH_KEYS[input.tool_name ?? ""];
-  const cwd = input.cwd;
-  const value = input.tool_input?.[spec?.key ?? ""];
-  if (!spec || !cwd || !isAbsolute(cwd) || typeof value !== "string" || !isAbsolute(value)) return null;
-
+): string | null {
   // Write creates the file, so only a missing parent marks a typo.
-  const probe = (p: string) => (spec.mustExist ? p : dirname(p));
+  const probe = (p: string) => (mustExist ? p : dirname(p));
   if (exists(probe(value))) return null;
 
   const cwdParts = canon(cwd).split("/").filter(Boolean);
@@ -74,18 +70,13 @@ export function repairPath(
   const k = cwdParts.length;
   const real = cwdParts.join("/");
   const root = cwd.replace(/\/+$/, "");
-  const done = (fixed: string): PathRepair => ({
-    old: value,
-    new: fixed,
-    updatedInput: { ...input.tool_input, [spec.key]: fixed },
-  });
 
   // Rule 1: leading components are a near-miss of the cwd.
   if (valParts.length > k) {
     const prefix = valParts.slice(0, k).join("/");
     if (prefix !== real && levenshtein(prefix, real) <= MAX_DISTANCE) {
       const fixed = `${root}/${valParts.slice(k).join("/")}`;
-      if (exists(probe(fixed))) return done(fixed);
+      if (exists(probe(fixed))) return fixed;
     }
   }
 
@@ -93,9 +84,54 @@ export function repairPath(
   if (canon(value).startsWith(`/${real}/`)) return null;
   for (let i = 1; i <= valParts.length - 2; i++) {
     const fixed = `${root}/${valParts.slice(i).join("/")}`;
-    if (exists(probe(fixed))) return done(fixed);
+    if (exists(probe(fixed))) return fixed;
   }
   return null;
+}
+
+export function repairPath(
+  input: PathRepairInput,
+  env: NodeJS.ProcessEnv,
+  exists: (p: string) => boolean,
+): PathRepair | null {
+  if (env.PAI_WORKER !== "1") return null;
+  const cwd = input.cwd;
+  if (!cwd || !isAbsolute(cwd)) return null;
+  if (input.tool_name === "Bash") return repairBash(input, cwd, exists);
+  const spec = PATH_KEYS[input.tool_name ?? ""];
+  const value = input.tool_input?.[spec?.key ?? ""];
+  if (!spec || typeof value !== "string" || !isAbsolute(value)) return null;
+  const fixed = repairValue(value, cwd, spec.mustExist, exists);
+  return fixed ? { old: value, new: fixed, updatedInput: { ...input.tool_input, [spec.key]: fixed } } : null;
+}
+
+/** Shell word characters split a command into candidate tokens. */
+const WORD = /[^\s;|&<>()`"'$=,:{}]+/g;
+const GLOB = /[*?[\]!~]/;
+const BASH_ALLOW = ["/dev", "/bin", "/sbin", "/usr", "/System", "/Library", "/opt", "/private/var/folders", "/var/folders", "/Applications"];
+
+function absTokens(command: string): string[] {
+  return (command.match(WORD) ?? []).filter((t) => t.startsWith("/") && !GLOB.test(t));
+}
+
+/** Bash inside an isolated arm: repair every missing absolute-path token; null if none, or if one cannot be fixed. */
+function repairBash(input: PathRepairInput, cwd: string, exists: (p: string) => boolean): PathRepair | null {
+  const command = input.tool_input?.command;
+  if (typeof command !== "string" || !isIsolatedArm(realish(cwd))) return null;
+  const fixes = new Map<string, string>();
+  for (const t of absTokens(command)) {
+    if (exists(t) || fixes.has(t)) continue;
+    const fixed = repairValue(t, cwd, true, exists);
+    if (!fixed) return null;
+    fixes.set(t, fixed);
+  }
+  if (!fixes.size) return null;
+  const next = command.replace(WORD, (t) => fixes.get(t) ?? t);
+  return {
+    old: [...fixes.keys()].join(" "),
+    new: [...fixes.values()].join(" "),
+    updatedInput: { ...input.tool_input, command: next },
+  };
 }
 
 export function renderRepair(r: PathRepair): string {
@@ -142,6 +178,7 @@ function isIsolatedArm(realCwd: string): boolean {
 /** Reason to deny an absolute path outside the cwd; null = let it through. Only isolated A/B arms are fenced. */
 export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null {
   if (env.PAI_WORKER !== "1") return null;
+  if (input.tool_name === "Bash") return denyBash(input);
   const spec = PATH_KEYS[input.tool_name ?? ""];
   const cwd = input.cwd;
   const value = input.tool_input?.[spec?.key ?? ""];
@@ -157,6 +194,23 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
     if ([...READ_ALLOW, ...home].some((r) => under(v, realish(r)))) return null;
   }
   return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}.`;
+}
+
+/** Bash: deny a missing absolute-path token outside the arm cwd (existing paths are the model's business). */
+function denyBash(input: PathRepairInput): string | null {
+  const cwd = input.cwd;
+  const command = input.tool_input?.command;
+  if (!cwd || !isAbsolute(cwd) || typeof command !== "string") return null;
+  const realCwd = realish(cwd);
+  if (!isIsolatedArm(realCwd)) return null;
+  const under = (p: string, root: string) => p === root || p.startsWith(`${root.replace(/\/+$/, "")}/`);
+  for (const t of absTokens(command)) {
+    if (existsSync(t)) continue;
+    const v = realish(t);
+    if (under(v, realCwd) || BASH_ALLOW.some((r) => under(v, realish(r)))) continue;
+    return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}.`;
+  }
+  return null;
 }
 
 export function renderDeny(reason: string): string {

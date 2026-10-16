@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * worker-path-repair.ts — PreToolUse (Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep)
+ * worker-path-repair.ts — PreToolUse (Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep)
  *
  * Worker-only (PAI_WORKER=1): rewrites a mistyped absolute path whose leading
- * components are a near-miss of the cwd. Only I/O here; the rule lives in
+ * components are a near-miss of the cwd; in isolated A/B arms also the
+ * absolute-path tokens of Bash commands. Only I/O here; the rule lives in
  * lib/path-repair.ts. Each repair is logged one line to
  * ~/.claude/pai/logs/workers/path-repair.log. A no-op in interactive sessions.
  */
