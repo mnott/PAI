@@ -1,12 +1,19 @@
 /**
- * system.ts — machine metrics for the cockpit SYSTEM panel, the mactop set:
- * memory pressure (swap, wired, compressed), CPU/GPU/ANE load, SoC
- * temperature and power rails. Sources, no sudo anywhere:
+ * system.ts — machine metrics for the cockpit SYSTEM panel. Sources, no sudo
+ * anywhere:
  *
- *   mactop  one-shot `mactop --headless --count 1 --format json` (IOReport,
- *           SMC); the router polls it, never a second running instance
- *   vm_stat wired/compressed pages and `sysctl kern.memorystatus_level`,
- *           which mactop lacks, and the memory-only fallback without mactop
+ *   direct   cheap no-sudo commands, polled per request (ttl 5 s): CPU load
+ *            from `/usr/bin/top -l 2` (the second sample; refreshed at most
+ *            every 10 s), swap from `sysctl vm.swapusage`, memory total and
+ *            pressure from `sysctl`, wired/compressed/used from `vm_stat`
+ *   mactop   the IOReport/SMC set — GPU/ANE load, SoC temperature, power
+ *            rails — has no no-sudo alternative (powermetrics needs sudo), so
+ *            it stays as an optional extra: one-shot
+ *            `mactop --headless --count 2 --format json` (count 1 can return
+ *            an empty frame) measures over an interval and takes ~10 s, so it
+ *            runs as a background probe at the 1-min ring cadence, never
+ *            blocking a request; its values are served from the last good
+ *            probe for up to 5 min
  *
  * Every 1-min sample is appended to a small JSONL ring (7 days) so day and
  * week windows chart power and memory history and report watt-hours. Metrics
@@ -23,9 +30,19 @@ import { bucketStart, WINDOWS, type CockpitWindow } from "./cockpit.js";
 export const SYSTEM_RING_FILE = join(homedir(), ".claude", "pai", "logs", "router-system.jsonl");
 const MIN = 60_000;
 const DAY = 86_400_000;
-/** mactop one-shot needs ~3 s (it measures over an interval); never wait longer. */
+/** direct commands are sub-second; never wait longer */
 const CMD_TIMEOUT = 8_000;
+/** mactop measures over an interval; the old 8 s budget killed every probe */
+const MACTOP_TIMEOUT = 15_000;
+/** count 1 often emits an empty frame before the first IOReport interval closes */
+const MACTOP_COUNT = 2;
+/** last-known mactop values are served this long while the probe retries */
+const SLOW_TTL = 5 * MIN;
+/** CPU load refresh cadence; a `top -l 2` pass costs ~2 s */
+const TOP_TTL = 10_000;
 const MACTOP_CANDIDATES = ["mactop", "/opt/homebrew/bin/mactop", "/opt/local/bin/mactop"];
+/** absolute: `top` is aliased to htop in some shells and PATH order is luck */
+const TOP_CMD = "/usr/bin/top";
 
 /** One reading; undefined = this source did not report the metric. */
 export interface SystemSample {
@@ -52,14 +69,14 @@ export interface SystemSample {
   compressed?: number;
   /** kern.memorystatus_level, 1-100; higher = less pressure */
   pressureLevel?: number;
-  source: "mactop" | "vmstat";
-  /** why metrics are missing, shown as tooltip */
+  source: "direct" | "mactop" | "vmstat";
+  /** why metrics are missing or stale, shown as tooltip */
   notes?: string[];
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
-/** Parse `mactop --headless --count 1 --format json` (array of frames, last wins). */
+/** Parse `mactop --headless --count N --format json` (array of frames, last wins). */
 export function parseMactopSample(stdout: string, t: number = Date.now()): SystemSample {
   const j = JSON.parse(stdout) as Record<string, unknown> | Array<Record<string, unknown>>;
   const s = (Array.isArray(j) ? j[j.length - 1] : j) ?? {};
@@ -118,17 +135,24 @@ export function parseVmStat(out: string, memTotal: number | undefined): VmStat |
   return { pageSize, wired: wired * pageSize, compressed: compressed * pageSize, used: used ?? 0, free: free * pageSize };
 }
 
-/** Memory-only sample when mactop is absent; every other metric stays n/a with a note. */
-export function fallbackSample(out: VmStat | undefined, level: number | undefined, reason: string, t: number): SystemSample {
-  const notes = [`mactop unavailable: ${reason}`];
-  if (!out && level === undefined) return { t, source: "vmstat", notes };
-  return {
-    t,
-    ...(out ? { wired: out.wired, compressed: out.compressed, ...(out.used ? { memUsed: out.used } : {}) } : {}),
-    ...(level !== undefined ? { pressureLevel: level } : {}),
-    source: "vmstat",
-    notes,
+/** `sysctl vm.swapusage` → bytes: "total = 2048.00M  used = 1240.75M  free = ...". */
+export function parseSwapUsage(out: string): { total: number; used: number } | undefined {
+  const unit: Record<string, number> = { B: 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
+  const grab = (label: string): number | undefined => {
+    const m = new RegExp(`${label} = ([\\d.]+)\\s*([BKMGTP])`).exec(out);
+    return m ? Number(m[1]) * unit[m[2]!] : undefined;
   };
+  const total = grab("total");
+  const used = grab("used");
+  return total !== undefined && used !== undefined ? { total, used } : undefined;
+}
+
+/** `/usr/bin/top -l 2` → load in % of the whole SoC; the second sample is the
+ *  real interval, the first covers the boot-to-now delta. */
+export function parseTopCpu(out: string): number | undefined {
+  const line = out.match(/CPU usage:.*/g)?.at(-1);
+  const idle = line && /([\d.]+)% idle/.exec(line);
+  return idle ? Math.max(0, Math.min(100, 100 - Number(idle[1]))) : undefined;
 }
 
 export type SystemWindow = CockpitWindow;
@@ -224,89 +248,177 @@ export interface SystemSnapshot {
   /** metric → reason, when no source produced a reading at all */
   unavailable: Record<string, string>;
   series: SystemSeries;
+  /** age in seconds of the mactop-sourced values (gpu/temp/power), when fresh */
+  slowAgeS?: number;
 }
 
 export interface SystemDeps {
   file?: string;
-  /** minimum distance between mactop polls (the page asks every 5 s) */
+  /** minimum distance between direct-source polls (the page asks every 5 s) */
   ttlMs?: number;
-  /** ring cadence */
+  /** ring cadence; the mactop probe rides it */
   ringMs?: number;
   /** ring retention */
   keepMs?: number;
+  /** how old a served mactop value may be while the probe retries */
+  staleMs?: number;
+  /** CPU load refresh cadence */
+  topTtlMs?: number;
   /** injectable command runner (tests) */
   run?: (cmd: string, args: string[]) => Promise<string>;
   now?: () => number;
 }
 
-function sh(cmd: string, args: string[]): Promise<string> {
+function sh(cmd: string, args: string[], timeoutMs = CMD_TIMEOUT): Promise<string> {
   return new Promise((resolve, reject) =>
-    execFile(cmd, args, { timeout: CMD_TIMEOUT, maxBuffer: 4 * 1024 * 1024 }, (e, out) =>
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (e, out) =>
       e ? reject(e) : resolve(String(out))
     )
   );
 }
 
-/** Collects at most once per ttlMs; keeps the 1-min JSONL ring. */
+/**
+ * Polls the direct sources at most once per ttlMs; the mactop probe runs in
+ * the background at the ring cadence and its last good reading is merged in.
+ * Keeps the 1-min JSONL ring.
+ */
 export class SystemMonitor {
   private readonly file: string;
   private readonly ttlMs: number;
   private readonly ringMs: number;
   private readonly keepMs: number;
+  private readonly staleMs: number;
+  private readonly topTtlMs: number;
   private readonly run: (cmd: string, args: string[]) => Promise<string>;
   private readonly now: () => number;
   private cached: SystemSample | null = null;
   private cachedAt = 0;
   private lastRingT = 0;
   private ring: SystemSample[] | null = null;
+  /** last good mactop probe and when it landed */
+  private slow: SystemSample | null = null;
+  private slowAt = 0;
+  private slowErr = "";
+  private slowP: Promise<void> | null = null;
+  /** CPU load and when top last reported it */
+  private topCpu: number | undefined;
+  private topAt = 0;
 
   constructor(deps: SystemDeps = {}) {
     this.file = deps.file ?? SYSTEM_RING_FILE;
     this.ttlMs = deps.ttlMs ?? 5_000;
     this.ringMs = deps.ringMs ?? MIN;
     this.keepMs = deps.keepMs ?? 7 * DAY;
+    this.staleMs = deps.staleMs ?? SLOW_TTL;
+    this.topTtlMs = deps.topTtlMs ?? TOP_TTL;
     this.run = deps.run ?? sh;
     this.now = deps.now ?? Date.now;
+    void this.probe(); // warm power/temp/gpu so the first page does not wait ~10 s
   }
 
-  /** Latest reading; sample is null only when every source failed (reason in `why`). */
+  /**
+   * Latest reading, direct sources first; sample is null only when every
+   * source failed (reason in the sample notes).
+   */
   async current(): Promise<{ sample: SystemSample | null; why: string }> {
     const now = this.now();
     if (this.cached && now - this.cachedAt < this.ttlMs) return { sample: this.cached, why: "" };
-    const [mt, vmOut, lvlOut, memOut] = await Promise.all([
-      this.mactop().catch((e: Error) => e),
+    void this.probe(); // power/temp/gpu arrive later; the direct sources answer now
+    const [vmOut, lvlOut, memOut, swOut, topOut] = await Promise.all([
       this.run("vm_stat", []).catch(() => undefined),
       this.run("sysctl", ["-n", "kern.memorystatus_level"]).catch(() => undefined),
       this.run("sysctl", ["-n", "hw.memsize"]).catch(() => undefined),
+      this.run("sysctl", ["vm.swapusage"]).catch(() => undefined),
+      now - this.topAt >= this.topTtlMs
+        ? this.run(TOP_CMD, ["-l", "2", "-n", "0", "-s", "1"]).catch(() => undefined)
+        : Promise.resolve(undefined),
     ]);
-    let sample: SystemSample;
-    let why = "";
-    const memTotal = mt instanceof Error ? num(Number(memOut?.trim())) : mt.memTotal;
+    if (topOut !== undefined) {
+      const cpu = parseTopCpu(topOut);
+      if (cpu !== undefined) {
+        this.topCpu = cpu;
+        this.topAt = now;
+      }
+    }
+    const memTotal = num(Number(memOut?.trim()));
     const vm = vmOut === undefined ? undefined : parseVmStat(vmOut, memTotal);
     const level = lvlOut === undefined ? undefined : num(Number(lvlOut.trim()));
-    if (mt instanceof Error) {
-      why = /ENOENT/.test(mt.message) ? "mactop binary not found" : mt.message.split("\n")[0]!;
-      sample = fallbackSample(vm, level, why, now);
-    } else {
-      sample = mt;
-      // vm_stat carries what mactop does not, whatever the primary source
-      if (vm) sample = { ...sample, wired: vm.wired, compressed: vm.compressed };
-      if (level !== undefined) sample = { ...sample, pressureLevel: level };
+    const swap = swOut === undefined ? undefined : parseSwapUsage(swOut);
+    const slowAge = this.slow ? now - this.slowAt : undefined;
+    const slow = this.slow && slowAge !== undefined && slowAge <= this.staleMs ? this.slow : undefined;
+    const notes: string[] = [];
+    if (slow && slowAge! >= MIN) notes.push(`power/temp/gpu cached from the mactop probe ${Math.round(slowAge! / MIN)} min ago`);
+    if (!slow) {
+      notes.push(
+        this.slow
+          ? `power/temp/gpu stale: mactop probe last good ${Math.round((slowAge ?? 0) / MIN)} min ago, retrying`
+          : `power/temp/gpu unavailable: ${this.slowErr || "mactop probe running"} (powermetrics would need sudo)`
+      );
     }
+    const cpuFresh = this.topCpu !== undefined && now - this.topAt <= this.staleMs;
+    const sample: SystemSample = {
+      t: now,
+      ...(cpuFresh ? { cpu: this.topCpu } : {}),
+      ...(memTotal ? { memTotal } : {}),
+      ...(vm?.used ? { memUsed: vm.used } : {}),
+      ...(vm ? { wired: vm.wired, compressed: vm.compressed } : {}),
+      ...(swap ? { swapTotal: swap.total, swapUsed: swap.used } : {}),
+      ...(level !== undefined ? { pressureLevel: level } : {}),
+      // probe-exclusive fields only: memory and CPU load stay with the live sources
+      ...(slow
+        ? {
+            gpu: slow.gpu,
+            ane: slow.ane,
+            gpuFreqMhz: slow.gpuFreqMhz,
+            socTemp: slow.socTemp,
+            cpuW: slow.cpuW,
+            gpuW: slow.gpuW,
+            aneW: slow.aneW,
+            systemW: slow.systemW,
+            totalW: slow.totalW,
+          }
+        : {}),
+      source: "direct",
+      ...(notes.length ? { notes } : {}),
+    };
     this.cached = sample;
     this.cachedAt = now;
     if (now - this.lastRingT >= this.ringMs) {
       this.lastRingT = now;
       this.appendRing(sample);
     }
-    return { sample, why };
+    return { sample, why: "" };
+  }
+
+  /** Runs the mactop probe if none is in flight and the ring cadence allows it. */
+  probe(): Promise<void> {
+    if (this.slowP) return this.slowP;
+    const now = this.now();
+    if (this.slow && now - this.slowAt < this.ringMs) return Promise.resolve();
+    const p = this.mactop()
+      .then((s) => {
+        this.slow = s;
+        this.slowAt = now;
+        this.slowErr = "";
+      })
+      .catch((e: Error) => {
+        this.slowErr = e.message.split("\n")[0] ?? "mactop probe failed";
+      })
+      .finally(() => {
+        this.slowP = null;
+      });
+    this.slowP = p;
+    return p;
   }
 
   private async mactop(): Promise<SystemSample> {
     let last: Error | undefined;
     for (const bin of MACTOP_CANDIDATES) {
       try {
-        return parseMactopSample(await this.run(bin, ["--headless", "--count", "1", "--format", "json"]), this.now());
+        return parseMactopSample(
+          await this.run(bin, ["--headless", "--count", String(MACTOP_COUNT), "--format", "json"]),
+          this.now()
+        );
       } catch (e) {
         last = e as Error;
       }
@@ -363,6 +475,7 @@ export class SystemMonitor {
     const unavailable: Record<string, string> = {};
     const hasMetric = sample && Object.entries(sample).some(([k, v]) => k !== "t" && typeof v === "number");
     if (!hasMetric) unavailable.all = why || sample?.notes?.join("; ") || "no system source available";
+    const slowAge = this.slow ? now - this.slowAt : undefined;
     return {
       now,
       window: win,
@@ -370,6 +483,7 @@ export class SystemMonitor {
       current: hasMetric ? sample : null,
       unavailable,
       series: buildSystemSeries(this.samples(), win, now),
+      ...(slowAge !== undefined && slowAge <= this.staleMs ? { slowAgeS: Math.round(slowAge / 1000) } : {}),
     };
   }
 }
