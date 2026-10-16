@@ -46,13 +46,20 @@ const INSTRUCTION_OVERRIDE_PATTERNS: RegExp[] = [
 
 // Example: Catastrophic Deletion Patterns (BLOCK - filesystem destruction)
 const CATASTROPHIC_DELETION_PATTERNS: RegExp[] = [
+  // The destructive verb must sit in command position (line start, after
+  // ; & | ( ` $( or sudo), so `~`, `/` and `-` inside awk programs or python
+  // strings never match on their own.
+  // Recursive rm of /, ~, $HOME or a system directory
+  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-\S+\s+)*(?:-\w*[rR]\w*|--recursive)\s+(?:-\S+\s+)*(?:\S+\s+)*(?:\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\/?\*?)(?=\s|;|&|\||$)/m,
+  // find / -delete
+  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?find\s+(?:\/|~|\$\{?HOME\}?)\/?\s+(?:\S+\s+)*?-delete\b/m,
+
   // Trailing tilde bypass
-  /\s+~\/?(\s*$|\s+)/,                              // Space then ~/ at end
-  /\brm\s+(-[rfivd]+\s+)*\S+\s+~\/?/,               // rm something ~/
+  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\S+\s+~\/?(?:\s|$)/m, // rm something ~/
 
   // Relative path recursive deletion
-  /\brm\s+(-[rfivd]+\s+)*\.\/\s*$/,                 // rm -rf ./
-  /\brm\s+(-[rfivd]+\s+)*\.\.\/\s*$/,               // rm -rf ../
+  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*$/m,     // rm -rf ./
+  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\.\/\s*$/m,   // rm -rf ../
 
   // Add your own dangerous deletion patterns here
 ];

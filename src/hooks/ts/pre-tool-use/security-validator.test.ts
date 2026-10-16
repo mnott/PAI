@@ -83,6 +83,32 @@ describe("security-validator", () => {
     expect(status).toBe(2);
   });
 
+  it.each([
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "sudo rm -rf /usr",
+    "find / -delete",
+    "cd /tmp && rm -rf ~/",
+    "rm -rf ./",
+  ])("denies catastrophic deletion %s", (command) => {
+    const { status, stderr } = runHook(command);
+    expect(status).toBe(2);
+    expect(stderr).toContain("catastrophic_deletion");
+  });
+
+  it.each([
+    "awk -F'\\t' '$2 ~ /-anthropic-precise-00/ {print $1,$3,$8,$9}' file",
+    "awk -F'\\t' 'NR>1{print $1,$2,$3,$8,$9}' file",
+    "awk -F'\\t' '$2 ~ /local30-(spec|precise)-(2[0-3]|0)/ {print $1}' rows.tsv",
+    'python3 -c " import math\ndef distance(p, a, b): return abs((b[0]-a[0])*(a[1]-p[1]) - (a[0]-p[0])*(b[1]-a[1])) / max(math.hypot(a[0]-b[0], a[1]-b[1]), 1e-9) ~ 1 "',
+    "rm -rf /tmp/build",
+    "rm -rf ~/tmp/build",
+  ])("allows harmless command %s", (command) => {
+    const { status } = runHook(command);
+    expect(status).toBe(0);
+  });
+
   it("allows an ordinary command", () => {
     const { status, stderr } = runHook("ls -la");
     expect(status).toBe(0);
