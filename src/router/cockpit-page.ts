@@ -91,27 +91,47 @@ function renderLimits(){
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var sys=null;
-var PKEYS=[["totalW","power W","#d98a1c"],["gpu","GPU load","#3b6fe0"],["cpu","CPU load","#2e9e5b"]];
+/** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
+var PKEYS=[["totalW","power W","#d98a1c",0],["gpu","GPU load","#3b6fe0",1],["cpu","CPU load","#2e9e5b",1]];
 function gb(b,d){return b==null?"n/a":(b/1073741824).toFixed(d==null?1:d)}
+/** Last good readings per metric: a stale source keeps its number on the card instead of n/a. */
+var LAST={};
+/** A reading the payload no longer carries: the last value stays, dimmed, with a ~age suffix. tip is pre-escaped. */
+function staleCell(m,now,fmt,tip){
+ var s=Math.max(0,(now-m.at)/1000),a=s<90?Math.round(s)+"s":s<3600?Math.round(s/60)+"m":Math.round(s/3600)+"h";
+ return'<span class="dim"'+(tip?' title="'+tip+'"':'')+'>'+fmt(m.v)+' <span class="warn">~'+a+'</span></span>'
+}
 function renderSystem(){
  if(!sys)return;var c=sys.current||{};
  var tip=(sys.unavailable&&sys.unavailable.all)?sys.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
  function na(v){return v==null?'<span class="dim" title="'+esc(tip)+'">n/a</span>':v}
- function pctna(v){return v==null?na(null):Math.round(v)+"%"}
- function wna(v){return v==null?na(null):v.toFixed(1)}
+ /** Fresh number, or the last good one when the payload dropped it — the card never hides the value. */
+ function val(key,fmt){
+  var v=c[key];
+  if(v!=null){LAST[key]={v:v,at:Date.now()};return fmt(v)}
+  var m=LAST[key];return m?staleCell(m,Date.now(),fmt,esc(tip)):na(null)
+ }
+ function pctf(v){return Math.round(v)+"%"}
+ function w1(v){return v.toFixed(1)}
  var slowAge=sys.slowAgeS; // mactop probe (gpu/temp/power) rides the 1-min ring; say how old it is
  function tag(){return slowAge==null?"":" · "+(slowAge<90?"probe "+slowAge+"s":"cached "+(slowAge<3600?Math.round(slowAge/60)+" min":Math.round(slowAge/3600)+" h"))}
+ var freq=c.gpuFreqMhz; // GPU clock for the load sublabel, remembered like the other probe values
+ if(freq==null&&LAST.gpuFreqMhz)freq=LAST.gpuFreqMhz.v;else if(freq!=null)LAST.gpuFreqMhz={v:freq,at:Date.now()};
  var wh=(sys.series&&sys.series.wh&&sys.series.wh[win])||0,cov=(sys.series&&sys.series.coveredMin&&sys.series.coveredMin[win])||0;
  var kpis=[
   ["memory",c.memUsed!=null?gb(c.memUsed):na(null),"of "+na(c.memTotal!=null?gb(c.memTotal):null)+" · pressure "+(c.pressureLevel!=null?(100-c.pressureLevel)+"%":na(null))],
   ["swap",c.swapUsed!=null?gb(c.swapUsed):na(null),"of "+na(c.swapTotal!=null?gb(c.swapTotal):null)],
   ["wired",c.wired!=null?gb(c.wired):na(null),"vm_stat"],
   ["compressed",c.compressed!=null?gb(c.compressed):na(null),"vm_stat"],
-  ["CPU load",pctna(c.cpu),"all clusters"],
-  ["GPU load",pctna(c.gpu),(c.gpuFreqMhz?(c.gpuFreqMhz/1000).toFixed(1)+" GHz":"IOReport")+tag()],
-  ["ANE load",pctna(c.ane),"neural engine"+tag()],
-  ["SoC temp",c.socTemp!=null?c.socTemp.toFixed(1)+" °C":na(null),"IOReport"+tag()],
-  ["power",c.totalW!=null?wna(c.totalW)+" W":na(null),"CPU "+wna(c.cpuW)+" · GPU "+wna(c.gpuW)+" · ANE "+wna(c.aneW)+" · system "+wna(c.systemW)+" W"+tag()],
+  ["CPU load",val("cpu",pctf),"all clusters"],
+  ["GPU load",val("gpu",pctf),(freq?(freq/1000).toFixed(1)+" GHz":"IOReport")+tag()],
+  ["ANE load",val("ane",pctf),"neural engine"+tag()],
+  ["SoC temp",val("socTemp",function(v){return v.toFixed(1)+" °C"}),"IOReport"+tag()],
+  ["CPU W",val("cpuW",w1),"CPU rail"+tag()],
+  ["GPU W",val("gpuW",w1),"GPU rail"+tag()],
+  ["ANE W",val("aneW",w1),"neural engine"+tag()],
+  ["system W",val("systemW",w1),"system rail"+tag()],
+  ["power",val("totalW",function(v){return w1(v)+" W"}),"SoC total"+tag()],
   ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
  ];
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
@@ -136,15 +156,16 @@ function lineChart(el,labels,series,keys,w,h){
  var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k[0]]||0});return t});
  if(!tr){el.innerHTML=emptyChart(w,h);return}
  labels=tr.labels;series=tr.rows;
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,n=labels.length,bw=W/n;
- var max=1;series.forEach(function(s){if((s.totalW||0)>max)max=s.totalW});
- var svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+(max*g/3).toFixed(1)+' W</text>'}
+ var padL=44,padR=34,padB=18,padT=6,W=w-padL-padR,H=h-padB-padT,n=labels.length,bw=W/n;
+ var leftMax=1,hasR=false; // key[3]: 1 = percent, fixed 0-100 right axis; others share the auto left axis
+ keys.forEach(function(k){if(k[3])hasR=true;else series.forEach(function(s){if((s[k[0]]||0)>leftMax)leftMax=s[k[0]]})});
+ var PCT=["0","33","66","100"],svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+(leftMax*g/3).toFixed(1)+' W</text>'+
+  (hasR?'<text x="'+(w-2)+'" y="'+(yy+3)+'" text-anchor="end">'+PCT[g]+'%</text>':'')}
  keys.forEach(function(k){
-  var km=1;series.forEach(function(s){if((s[k[0]]||0)>km)km=s[k[0]]});
-  var d="",pen=false;
+  var scale=k[3]?100:leftMax,d="",pen=false;
   series.forEach(function(s,i){var v=s[k[0]];if(v==null){pen=false;return}
-   var x=padL+i*bw+bw/2,y=padT+H-(v/km)*H;d+=(pen?"L":"M")+x.toFixed(1)+' '+y.toFixed(1);pen=true});
+   var x=padL+i*bw+bw/2,y=padT+H-(v/scale)*H;d+=(pen?"L":"M")+x.toFixed(1)+' '+y.toFixed(1);pen=true});
   if(d)svg+='<path d="'+d+'" fill="none" stroke="'+k[2]+'" stroke-width="1.5"/>';
  });
  series.forEach(function(s,i){if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
@@ -154,7 +175,7 @@ function renderPower(){
  if(!sys||!sys.series)return;
  var ss=sys.series.series;
  lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,760,150);
- $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("")+'<span>(each line on its own scale, buckets as above)</span>';
+ $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("")+'<span>(W on the left axis, load % on the fixed 0-100 right axis, buckets as above)</span>';
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
