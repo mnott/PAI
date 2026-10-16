@@ -457,15 +457,13 @@ export function shouldRetryReport(
 /** Context window announced by the init event, when the endpoint sends one. */
 /**
  * An empty model response: the model "answered" without producing anything —
- * every assistant message carried zero usage (input+output 0) and no tool_use,
- * and no tool ran. A local endpoint under load does this; it is a harness
- * failure, not a finished run (rc 0 and a result record notwithstanding).
+ * no tool ran and the result text is empty. A local endpoint under load does
+ * this; it is a harness failure, not a finished run (rc 0 and a result record
+ * notwithstanding). Usage plays no part: local servers report 0/0 on every
+ * message, normal ones too.
  */
-export function isEmptyResponse(
-  seen: { assistants: number; usage: boolean },
-  tools: number,
-): boolean {
-  return seen.assistants > 0 && !seen.usage && tools === 0;
+export function isEmptyResponse(resultText: string | undefined, tools: number): boolean {
+  return tools === 0 && (resultText ?? "").trim() === "";
 }
 
 /**
@@ -1423,11 +1421,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const ctx: {
     resultEvent: StreamEvent | null;
     resultReport: WorkerReport | null;
-    seen: { assistants: number; usage: boolean };
   } = {
     resultEvent: null,
     resultReport: null,
-    seen: { assistants: 0, usage: false },
   };
 
   if (headless) {
@@ -1467,8 +1463,6 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
-        ctx.seen.assistants += 1;
-        if (usageContextTokens(e.message?.usage) !== null) ctx.seen.usage = true;
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         for (const block of e.message?.content ?? []) {
@@ -1537,7 +1531,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = ctx.resultEvent;
-  const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(ctx.seen, status.tools);
+  const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
   if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
