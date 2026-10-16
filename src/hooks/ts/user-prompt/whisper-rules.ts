@@ -23,6 +23,11 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js";
+import {
+  CONFIRM_RULE_PREFIX,
+  confirmAlreadyInjected,
+  markConfirmInjected,
+} from "../lib/whisper-confirm.js";
 import { whisperRulesPath, advisorModePath } from "../../../config/pai-files.js";
 import { loadConfig } from "../../../daemon/config.js";
 
@@ -57,8 +62,15 @@ function isSectionHeader(line: string): boolean {
  * run-env.ts. `workerOnly` (a worker on a non-anthropic provider) keeps only
  * the "# @worker" sections: untagged operator rules read as instructions to a
  * local model, which echoes them instead of working.
+ *
+ * The confirm-once rule ("After every new session or compact, confirm …")
+ * is different: it asks for ONE confirmation per session life, so injecting
+ * it per prompt made every session echo "Whispr rules read" on every
+ * response. `dropConfirmLine` (set when this session's marker file already
+ * exists — see lib/whisper-confirm.ts) removes just that line; every other
+ * rule keeps injecting per prompt.
  */
-function getWhisperRules(isWorker: boolean, workerOnly = false): string {
+function getWhisperRules(isWorker: boolean, workerOnly = false, dropConfirmLine = false): string {
   if (!existsSync(WHISPER_FILE)) return "";
   try {
     const lines = readFileSync(WHISPER_FILE, "utf-8").split("\n");
@@ -76,6 +88,7 @@ function getWhisperRules(isWorker: boolean, workerOnly = false): string {
       if (workerOnly && tag !== "worker") continue;
       if (tag === "orchestrator" && isWorker) continue;
       if (tag === "worker" && !isWorker) continue;
+      if (dropConfirmLine && line.startsWith(CONFIRM_RULE_PREFIX)) continue;
       out.push(line.startsWith("\\#") ? line.slice(1) : line);
     }
     return out.join("\n").trim();
@@ -254,8 +267,15 @@ function main() {
     parts.push(`CURRENT LOCAL TIME: ${currentLocalTime()} — use this verbatim for any [YYYY-MM-DD HH:MM] stamp; never estimate or increment it.`);
   }
 
-  const rules = getWhisperRules(isWorker, localWorker);
+  const dropConfirm = confirmAlreadyInjected(sessionId);
+  const rules = getWhisperRules(isWorker, localWorker, dropConfirm);
   if (rules) parts.push(rules);
+
+  // The confirm-once line went out for this session — from here on it is
+  // dropped (marker file), until SessionStart(compact) clears the marker.
+  const confirmInjected =
+    !dropConfirm && rules.split("\n").some((l) => l.startsWith(CONFIRM_RULE_PREFIX));
+  if (confirmInjected) markConfirmInjected(sessionId);
 
   const advisor = localWorker ? "" : getAdvisorGuidance();
   if (advisor) parts.push(advisor);

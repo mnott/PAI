@@ -1,8 +1,10 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { whisperConfirmMarkerPath } from "../lib/whisper-confirm.js";
 
 // whisper-rules.ts calls main() unconditionally at module scope (it's a hook
 // entrypoint, always run as a subprocess) — including a blocking read of fd 0.
@@ -124,6 +126,90 @@ describe("user-prompt/whisper-rules entrypoint", () => {
         env,
       });
       expect(stdout).toContain("CURRENT LOCAL TIME");
+    });
+  });
+
+  // The confirm-once rule asks for ONE confirmation per session life; before
+  // the marker file it was injected per prompt and every session echoed
+  // "Whispr rules read" on every response. First prompt of a session: line
+  // in, marker written. Every later prompt: line dropped, other rules intact.
+  describe("confirm-once rule injects once per session", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-whisper-confirm-home-"));
+    const usedSessions: string[] = [];
+
+    const rules = [
+      "# 1. ALWAYS",
+      "After every new session or compact, confirm you read the Whispr rules.",
+      "Begin EVERY response with a timestamp.",
+      "# 2. WORKER",
+      "# @worker",
+      "Call a tool before answering.",
+      "",
+    ].join("\n");
+    writeFileSync(join(home, "whisper-rules.md"), rules, "utf8");
+
+    function run(sessionId: string, env: Record<string, string> = {}): string {
+      usedSessions.push(sessionId);
+      const base: NodeJS.ProcessEnv = { ...process.env, PAI_HOME: home };
+      delete base.PAI_WORKER;
+      delete base.PAI_WORKER_PROVIDER;
+      return execFileSync("bun", [ENTRYPOINT], {
+        input: JSON.stringify({ session_id: sessionId, prompt: "do the task" }),
+        encoding: "utf8",
+        timeout: 15_000,
+        env: { ...base, ...env },
+      });
+    }
+
+    const newSession = () => `confirm-test-${randomUUID()}`;
+
+    afterEach(() => {
+      for (const id of new Set(usedSessions).values()) {
+        rmSync(whisperConfirmMarkerPath(id), { force: true });
+      }
+      usedSessions.length = 0;
+    });
+    afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+    it("FirstPromptInjectsConfirm", () => {
+      const out = run(newSession());
+      expect(out).toContain("After every new session or compact, confirm");
+    });
+
+    it("SecondPromptDropsConfirm", () => {
+      const id = newSession();
+      const first = run(id);
+      const second = run(id);
+      expect(first).toContain("After every new session or compact, confirm");
+      expect(second).not.toContain("After every new session or compact, confirm");
+    });
+
+    it("OtherRulesStillInjected", () => {
+      const id = newSession();
+      run(id);
+      const second = run(id);
+      expect(second).toContain("CURRENT LOCAL TIME");
+      expect(second).toContain("Begin EVERY response with a timestamp.");
+      expect(second).toContain("<system-reminder>");
+    });
+
+    it("WorkerPathUntouched", () => {
+      // anthropic worker: same once-per-session drop, untagged + @worker
+      // sections still both reach it
+      const anth = newSession();
+      expect(run(anth, { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "anthropic" })).toContain(
+        "After every new session or compact, confirm"
+      );
+      const anthSecond = run(anth, { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "anthropic" });
+      expect(anthSecond).not.toContain("After every new session or compact, confirm");
+      expect(anthSecond).toContain("Call a tool before answering.");
+
+      // local worker: @worker-only filtering unchanged, marker or not
+      const loc = newSession();
+      const locFirst = run(loc, { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "local30" });
+      const locSecond = run(loc, { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "local30" });
+      expect(locFirst).toBe("<system-reminder>\nCall a tool before answering.\n</system-reminder>\n");
+      expect(locSecond).toBe(locFirst);
     });
   });
 });

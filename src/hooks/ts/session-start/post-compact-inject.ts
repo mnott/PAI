@@ -21,6 +21,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { resetHandoverTriggerState } from '../../../session/context-handover-trigger.js';
+import { clearWhisperConfirmMarker } from '../lib/whisper-confirm.js';
 
 interface HookInput {
   session_id: string;
@@ -65,6 +66,13 @@ async function main() {
   // file — that is what gets injected below and must survive this call.
   // See resetHandoverTriggerState() for the full rationale.
   resetHandoverTriggerState(hookInput.session_id);
+
+  // A compact also invalidates the whisper-rules confirm-once marker: the
+  // compacted context no longer carries the earlier confirmation, so the
+  // next UserPromptSubmit must re-inject the confirm line exactly once
+  // (the rule's own words: "after every new session or compact"). A new
+  // session needs no clearing — it gets a fresh session_id and marker path.
+  clearWhisperConfirmMarker(hookInput.session_id);
 
   // Look for the state file saved by context-compression-hook during PreCompact
   const stateFile = join(tmpdir(), `pai-compact-state-${hookInput.session_id}.txt`);
