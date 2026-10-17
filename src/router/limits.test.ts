@@ -352,7 +352,9 @@ describe("local server up/down and prefix cache", () => {
     const dir = mkdtempSync(join(tmpdir(), "pc-"));
     const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
     const t0 = Date.now();
-    const good = (await cache.get(t0)).find((x) => x.provider === "l")!;
+    const first = await cache.get(t0);
+    await cache.prefixSettled();
+    const good = first.find((x) => x.provider === "l")!;
     expect(good.prefixCache?.hits).toBe(5);
     expect(good.prefixCacheAgeSec).toBeUndefined();
     failStats = true;
@@ -364,6 +366,47 @@ describe("local server up/down and prefix cache", () => {
     expect(stale.up).toBe(true);
     expect(stale.prefixCache).toBeUndefined();
   });
+
+  it("restart: a new LimitsCache serves the persisted reading with its age; older than 10 min it is dropped", async () => {
+    const srv = http.createServer((q, res) => {
+      if (q.url === "/v1/cache/stats") return void res.destroy();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+    });
+    const port = await listen(srv);
+    const file = join(mkdtempSync(join(tmpdir(), "pc-")), "lg.json");
+    const pc = { hits: 7, misses: 1, hitRate: 7 / 8, tokensSaved: 9 };
+    const t0 = Date.now() - 120_000;
+    writeFileSync(file, JSON.stringify({ l: { windows: [], fetchedAt: t0, prefixCache: pc } }));
+    const mk = () => new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const c1 = mk();
+    const r = (await c1.get(t0 + 120_000)).find((x) => x.provider === "l")!;
+    await c1.prefixSettled();
+    const old = (await mk().get(t0 + 700_000)).find((x) => x.provider === "l")!;
+    await close(srv);
+    expect(r.prefixCache).toEqual(pc);
+    expect(r.prefixCacheAgeSec).toBe(120);
+    expect(old.prefixCache).toBeUndefined();
+  });
+
+  it("slow stats (8 s) does not delay up/down, still lands within the 15 s timeout, and is persisted", async () => {
+    const srv = http.createServer((q, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (q.url === "/v1/cache/stats") return void setTimeout(() => res.end(JSON.stringify({ engine_cache: { hits: 3, misses: 1, tokens_saved: 5 } })), 8000);
+      res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+    });
+    const port = await listen(srv);
+    const file = join(mkdtempSync(join(tmpdir(), "pc-")), "lg.json");
+    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const t0 = Date.now();
+    const got = (await cache.get(t0)).find((x) => x.provider === "l")!;
+    expect(got.up).toBe(true);
+    expect(got.prefixCache).toBeUndefined();
+    await cache.prefixSettled();
+    await close(srv);
+    expect(got.prefixCache?.hits).toBe(3);
+    expect(readLastGood(file).l?.prefixCache?.hits).toBe(3);
+  }, 20_000);
 
   it("parsePrefixCacheStats: counters in, nothing out when the server carries none", () => {
     expect(parsePrefixCacheStats('{"engine_cache":{"hits":0,"misses":0,"tokens_saved":0}}')).toEqual({ hits: 0, misses: 0, hitRate: 0, tokensSaved: 0 });

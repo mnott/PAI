@@ -83,6 +83,8 @@ export const GATE_FILE = join(homedir(), ".claude", "pai", "logs", "router-poll-
 export interface LastGoodEntry {
   windows: LimitWindow[];
   fetchedAt: number;
+  /** local providers: the last good prefix-cache reading, taken at `fetchedAt` */
+  prefixCache?: PrefixCacheStats;
 }
 
 export function readLastGood(file: string = LASTGOOD_FILE): Record<string, LastGoodEntry> {
@@ -90,7 +92,7 @@ export function readLastGood(file: string = LASTGOOD_FILE): Record<string, LastG
     const j = JSON.parse(readFileSync(file, "utf8")) as Record<string, Partial<LastGoodEntry>>;
     const out: Record<string, LastGoodEntry> = {};
     for (const [k, v] of Object.entries(j)) {
-      if (v && Array.isArray(v.windows) && typeof v.fetchedAt === "number") out[k] = { windows: v.windows, fetchedAt: v.fetchedAt };
+      if (v && Array.isArray(v.windows) && typeof v.fetchedAt === "number") out[k] = { windows: v.windows, fetchedAt: v.fetchedAt, ...(v.prefixCache ? { prefixCache: v.prefixCache } : {}) };
     }
     return out;
   } catch {
@@ -312,10 +314,10 @@ export function readEstimateCaps(file: string = ESTIMATE_FILE): Record<string, R
 /** The OAuth usage endpoint the anthropic plan readings come from. */
 export const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-export function getJson(url: URL, headers: Record<string, string>): Promise<string> {
+export function getJson(url: URL, headers: Record<string, string>, timeoutMs = 5000): Promise<string> {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === "https:" ? https : http;
-    const rq = mod.get(url, { headers, timeout: 5000 }, (res) => {
+    const rq = mod.get(url, { headers, timeout: timeoutMs }, (res) => {
       let t = "";
       res.on("data", (c) => (t += c));
       res.on("end", () =>
@@ -452,7 +454,20 @@ function probeTcp(port: number, host: string): Promise<boolean> {
   });
 }
 
-export async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], now: number): Promise<ProviderLimits> {
+/** A server busy prefilling answers /v1/cache/stats slowly (7.6 s seen). */
+export const PREFIX_STATS_TIMEOUT_MS = 15_000;
+
+/**
+ * With `background` the cache-stats request runs in the background and is handed over as a promise, so the
+ * up/down result and gauges do not wait for a slow server; without it the reading is awaited.
+ */
+export async function localLimits(
+  name: string,
+  p: WorkerProvider,
+  rows: UsageRow[],
+  now: number,
+  background?: (stats: Promise<PrefixCacheStats | undefined>) => void
+): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
   const listening = await probeTcp(port, u.hostname);
@@ -467,7 +482,8 @@ export async function localLimits(name: string, p: WorkerProvider, rows: UsageRo
     const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
     const rss = pid ? Number(await sh("ps", ["-o", "rss=", "-p", pid])) : NaN;
     if (Number.isFinite(rss) && rss > 0) rssMb = Math.round(rss / 1024);
-    prefixCache = await prefixCacheStats(u, p);
+    if (background) background(prefixCacheStats(u, p));
+    else prefixCache = await prefixCacheStats(u, p);
   }
   return {
     provider: name,
@@ -527,7 +543,7 @@ async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCac
     /* no key: the endpoint may not need one */
   }
   try {
-    return parsePrefixCacheStats(await getJson(new URL("/v1/cache/stats", base), headers));
+    return parsePrefixCacheStats(await getJson(new URL("/v1/cache/stats", base), headers, PREFIX_STATS_TIMEOUT_MS));
   } catch {
     return undefined;
   }
@@ -590,8 +606,36 @@ export class LimitsCache {
   /** last good prefix-cache reading per local provider: a server busy prefilling answers /v1/cache/stats too late */
   private prefixLastGood = new Map<string, { stats: PrefixCacheStats; at: number }>();
 
+  /** background cache-stats requests still running */
+  private pendingPrefix = new Set<Promise<void>>();
+
   constructor(private readonly deps: LimitsDeps, private readonly ttlMs = 60_000) {
     this.backoff = new Backoff(ttlMs);
+    // a restart must not lose the last good reading: it is served with its age until the staleness limit
+    for (const [k, v] of Object.entries(readLastGood(this.deps.lastGoodFile ?? LASTGOOD_FILE))) {
+      if (v.prefixCache) this.prefixLastGood.set(k, { stats: v.prefixCache, at: v.fetchedAt });
+    }
+  }
+
+  /** Resolves when the background cache-stats requests of the last poll have finished (tests). */
+  prefixSettled = async (): Promise<void> => {
+    while (this.pendingPrefix.size) await Promise.all([...this.pendingPrefix]);
+  };
+
+  /** A background stats answer: remember it (memory + file) and patch the reading already being served. */
+  private prefixArrived(provider: string, stats: PrefixCacheStats | undefined): void {
+    if (!stats) return;
+    const at = Date.now();
+    this.prefixLastGood.set(provider, { stats, at });
+    const cur = this.value.find((l) => l.provider === provider && l.kind === "local");
+    if (cur?.up) {
+      cur.prefixCache = stats;
+      delete cur.prefixCacheAgeSec;
+    }
+    const file = this.deps.lastGoodFile ?? LASTGOOD_FILE;
+    const store = readLastGood(file);
+    store[provider] = { windows: [], fetchedAt: at, prefixCache: stats };
+    writeLastGood(file, store);
   }
 
   get(now: number = Date.now()): Promise<ProviderLimits[]> {
@@ -657,7 +701,15 @@ export class LimitsCache {
     );
     for (const [name, p] of Object.entries(providers)) {
       if (p.native || name === "anthropic" || p.enabled === false || !p.baseUrl) continue;
-      if (isLocalUrl(p.baseUrl)) jobs.push(localLimits(name, p, rows, now));
+      if (isLocalUrl(p.baseUrl)) {
+        jobs.push(
+          localLimits(name, p, rows, now, (pending) => {
+            const done = pending.then((stats) => this.prefixArrived(name, stats));
+            this.pendingPrefix.add(done);
+            void done.finally(() => this.pendingPrefix.delete(done));
+          })
+        );
+      }
       else if (p.usage) plan(name, (lg) => providerPlanLimits(name, p, now, lg));
       else if (caps[name]) {
         jobs.push(Promise.resolve({ provider: name, kind: "estimated", windows: estimateWindows(rows, name, caps[name]!, now), fetchedAt: now }));
