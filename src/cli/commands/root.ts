@@ -275,6 +275,15 @@ function unknownSetup(q: string, setups: Setup[]): CliError {
 // Command
 // ---------------------------------------------------------------------------
 
+export function finishCd(cdDir: string, term: Pick<Term, "output">, env: NodeJS.ProcessEnv = process.env): number {
+  if (env.PAI_PICK_OUT) {
+    writeFileSync(env.PAI_PICK_OUT, cdDir);
+  } else {
+    term.output.write(cdDir + "\n");
+  }
+  return 0;
+}
+
 export async function runRoot(
   args: { name?: string; with?: string; dryRun: boolean },
   term: Term = systemTerm()
@@ -306,7 +315,7 @@ export async function runRoot(
       return 0;
     }
     picked = (await runPicker({ ...pickerOpts(rows, st), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
-    if (!picked) return CANCELLED;
+    if (!picked) return cdDir !== undefined ? finishCd(cdDir, term) : CANCELLED;
   } else {
     const matches = matchRows(rows, args.name);
     if (matches.length === 0) {
@@ -324,18 +333,7 @@ export async function runRoot(
       throw new CliError(`${matches.length} sessions match "${args.name}"`, `pai "<a longer part of the name>"`);
     } else {
       picked = (await runPicker({ ...pickerOpts(matches, st, undefined), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
-      if (!picked) return CANCELLED;
-    }
-  }
-
-  // Handle Ctrl-G cd action
-  if (cdDir !== undefined) {
-    if (process.env.PAI_PICK_OUT) {
-      writeFileSync(process.env.PAI_PICK_OUT, cdDir);
-      return 0;
-    } else {
-      term.output.write(cdDir + "\n");
-      return 0;
+      if (!picked) return cdDir !== undefined ? finishCd(cdDir, term) : CANCELLED;
     }
   }
 
