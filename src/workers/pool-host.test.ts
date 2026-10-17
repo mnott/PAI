@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -23,6 +23,7 @@ import { defaultWorkersConfig, type WorkerProvider, type WorkersConfig } from ".
 import { eventsPath, ledgerPath, statusPath } from "./paths.js";
 import { parseLedger } from "./ledger.js";
 import { ROUTER_PORT } from "../router/router.js";
+import { git } from "./worktree.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -125,6 +126,7 @@ interface Harness {
   slots: FakeSlot[];
   argvs: string[][];
   envs: NodeJS.ProcessEnv[];
+  cwds: string[];
   script: (groups: Array<Array<Record<string, unknown>>>) => void;
 }
 
@@ -137,11 +139,13 @@ function makeHost(
   const slots: FakeSlot[] = [];
   const argvs: string[][] = [];
   const envs: NodeJS.ProcessEnv[] = [];
+  const cwds: string[] = [];
   const nextGroups: Array<Array<Record<string, unknown>>> = [];
   const fallback = (): Array<Record<string, unknown>> => [assistantUsage(usage1), resultEvt(R_PLAIN_1)];
-  const spawner = (argv: string[], _cwd: string, env: NodeJS.ProcessEnv): SlotProcess => {
+  const spawner = (argv: string[], cwd: string, env: NodeJS.ProcessEnv): SlotProcess => {
     argvs.push(argv);
     envs.push(env);
+    cwds.push(cwd);
     const slot = new FakeSlot(nextGroups.splice(0), fallback);
     slots.push(slot);
     return slot;
@@ -163,6 +167,7 @@ function makeHost(
     slots,
     argvs,
     envs,
+    cwds,
     script: (groups) => nextGroups.push(...groups),
   };
 }
@@ -358,6 +363,31 @@ describe("pooled task lifecycle", () => {
     const unknown = await h.host.runTask(task({ id: "wu", provider: "nope" }));
     expect(unknown).toEqual({ pooled: false, reason: "engine" });
     expect(h.slots.length).toBe(1);
+  });
+
+  it("a worktree task on a loopback provider ends its slot process: fresh conversation, same slot dir", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    const repo = mkdtempSync(join(tmpdir(), "pai-pool-wt-repo-"));
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "test@example.invalid"]);
+    git(repo, ["config", "user.name", "worker test"]);
+    writeFileSync(join(repo, "base.txt"), "base\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "init"]);
+    h.script([
+      [assistantUsage(usage1), resultEvt(R_PLAIN_1)],
+      [assistantUsage(usage2), resultEvt(R_PLAIN_2)],
+    ]);
+    const r1 = await h.host.runTask(task({ id: "wt1", provider: "loopprov", cwd: repo, worktree: true }));
+    const r2 = await h.host.runTask(task({ id: "wt2", provider: "loopprov", cwd: repo, worktree: true, prompt: "TASK TWO SPEC" }));
+    expect(r1.pooled).toBe(true);
+    expect(r2.pooled).toBe(true);
+    expect(h.slots.length).toBe(2); // one process per task: no shared conversation
+    expect(h.cwds[0]).toBe(h.cwds[1]); // the same slot worktree dir
+    expect(h.cwds[0]).not.toBe(repo);
+    expect(h.slots[0]!.fedTexts.length).toBe(1);
+    expect(h.slots[1]!.fedTexts.length).toBe(1);
   });
 });
 
