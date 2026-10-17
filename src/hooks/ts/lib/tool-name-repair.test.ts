@@ -88,8 +88,8 @@ describe("renderToolDenial", () => {
     const denial = "write your R report as plain text in your final answer, not as a tool call";
     const output = renderToolDenial(denial);
     const parsed = JSON.parse(output);
-    expect(parsed.decision).toBe("deny");
-    expect(parsed.reason).toBe(denial);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe(denial);
   });
 });
 

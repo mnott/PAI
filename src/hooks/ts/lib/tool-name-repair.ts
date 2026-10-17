@@ -72,8 +72,11 @@ export function repairToolName(input: ToolNameRepairInput, env: NodeJS.ProcessEn
 
 export function renderToolDenial(reason: string): string {
   return JSON.stringify({
-    decision: "deny",
-    reason,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
   });
 }
 
