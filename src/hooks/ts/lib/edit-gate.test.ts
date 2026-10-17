@@ -73,6 +73,11 @@ describe("decideOrchestratorBash", () => {
     ["cat > .pai-scratch/dump.ts", "allow"],
     ["echo hi > .pai-scratch/a.ts", "allow"],
     ["echo hi > src/a.ts", "block"],
+    ["python3 -c \"open('src/a.ts','w').write('x')\"", "block"],
+    ["node -e \"require('fs').writeFileSync('src/a.ts','x')\"", "block"],
+    ["python3 -c \"open('/tmp/x.txt','w').write('x')\"", "allow"],
+    ["python3 -c \"print(1)\"", "allow"],
+    ["node scripts/build-hooks.mjs", "allow"],
   ])("command %s should be %s", (command, expected) => {
     const result = decideOrchestratorBash(command);
     expect(result.decision).toBe(expected);

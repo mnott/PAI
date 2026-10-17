@@ -8,6 +8,7 @@
  */
 
 import { basename, extname } from "node:path";
+import { scriptWritesRepoCode } from "./orchestrator-script-writes.js";
 
 export const SCRATCH_DIR = ".pai-scratch";
 
@@ -71,7 +72,8 @@ const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p) || is
 export function decideOrchestratorBash(command: string): EditGateDecision {
   const writesCode =
     IN_PLACE.test(command) ||
-    [...command.matchAll(REDIRECT), ...command.matchAll(TEE)].some((m) => !isScratch(m[1]));
+    [...command.matchAll(REDIRECT), ...command.matchAll(TEE)].some((m) => !isScratch(m[1])) ||
+    scriptWritesRepoCode(command);
   if (!writesCode) return { decision: "allow" };
   return {
     decision: "block",
