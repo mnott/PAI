@@ -4,6 +4,8 @@
  * template literals so this module can hold it in one template string.
  */
 
+import { POOL_PANEL_HTML, POOL_PANEL_JS } from "./pool-panel.js";
+
 export const COCKPIT_HTML = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -43,6 +45,7 @@ svg text{fill:var(--dim);font-size:10px}
 <main>
 <section class="card c12"><div class="groups"><div class="grp"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:10px"></div></section>
+${POOL_PANEL_HTML}
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
@@ -297,9 +300,10 @@ function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
 }
 function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower();renderDonuts()}).catch(function(){})}
+${POOL_PANEL_JS}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
-tabs();load();loadSystem();loadLimits();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(tick,1000);
+tabs();load();loadSystem();loadLimits();loadPool();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;

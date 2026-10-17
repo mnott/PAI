@@ -151,7 +151,6 @@ import {
 import {
   poolIneligibleReason,
   poolSettings,
-  poolSlotCwd,
   postTaskToPool,
   type PoolTaskResponse,
 } from "./pool.js";
@@ -1292,22 +1291,28 @@ export interface ExecuteArgs {
 export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const settings = poolSettings(a.config);
   if (!settings.enabled) return null;
+  const cwd = a.cwd ?? process.cwd();
   const reason = poolIneligibleReason({
     headless: a.parsed.headless,
     prompt: a.parsed.prompt,
     providerName: a.target.providerName,
     provider: a.target.provider,
-    worktreeFlag: a.worktreeFlag,
+    worktreeWanted:
+      a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
     resumeOf: a.resumeOf,
     printCmd: a.printCmd,
     parsed: a.parsed,
     mcpFlag: a.mcpFlag,
     noBrowser: a.noBrowser,
     outputFormat: a.parsed.outputFormat,
-    cwd: a.cwd,
-    slotCwd: poolSlotCwd(a.config),
+    cwd,
   });
   if (reason) {
+    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
+      id: a.id ?? "-",
+      provider: a.target.providerName,
+      reason,
+    });
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
     return null;
   }
@@ -1325,6 +1330,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         prompt: a.parsed.prompt ?? "",
         provider: a.target.providerName,
         model: a.model,
+        cwd,
         className: a.className,
         capability: a.capability,
         specPath: a.specPath,
@@ -1345,6 +1351,11 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     return null;
   }
   if (!resp.pooled) {
+    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
+      id: a.id ?? "-",
+      provider: a.target.providerName,
+      reason: resp.reason ?? "refused",
+    });
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${resp.reason ?? "refused"}) — spawning fresh\n`);
     return null;
   }

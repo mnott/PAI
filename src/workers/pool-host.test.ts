@@ -168,6 +168,7 @@ const task = (over: Partial<PoolTaskRequest> = {}): PoolTaskRequest => ({
   prompt: "TASK ONE SPEC",
   provider: "fakeprov",
   model: "m1",
+  cwd: tmpdir(),
   reportFormat: "ag2",
   outputFormat: "text",
   maxMinutes: null,
@@ -263,6 +264,26 @@ describe("pooled task lifecycle", () => {
     expect(end?.fields.rc).toBe("0");
     expect(end?.fields.poolTask).toBe("2");
     expect(lines.some((l) => l.event === "WORKER-POOL-SLOT")).toBe(true);
+  });
+
+  it("slots are keyed by cwd: a second cwd gets its own slot in that directory, the first stays warm", async () => {
+    const h = makeHost({ maxSlots: 2 });
+    liveHosts.push(h.host);
+    const dirA = mkdtempSync(join(tmpdir(), "pai-pool-cwd-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "pai-pool-cwd-b-"));
+    h.script([
+      [assistantUsage(usage1), resultEvt(R_PLAIN_1)],
+      [assistantUsage(usage2), resultEvt(R_PLAIN_2)],
+      [assistantUsage(usage2), resultEvt(R_PLAIN_2)],
+    ]);
+    await h.host.runTask(task({ id: "a1", cwd: dirA }));
+    await h.host.runTask(task({ id: "b1", cwd: dirB }));
+    await h.host.runTask(task({ id: "a2", cwd: dirA }));
+    expect(h.slots.length).toBe(2);
+    const st = h.host.state();
+    expect(st.slots.map((s) => s.cwd).sort()).toEqual([dirA, dirB].sort());
+    expect(st.slots.find((s) => s.cwd === dirA)!.tasks).toBe(2);
+    expect(h.slots[0]!.fedTexts[0]).toContain(`Your working directory is ${dirA}`);
   });
 
   it("a claimed proof without a bash run in THIS task's turn is rewritten", async () => {

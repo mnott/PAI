@@ -13,7 +13,8 @@ import { readUsage, splitBySessionKind, USAGE_LOG_FILE, type SessionKindSplit, t
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
-import { workersLogDir } from "../workers/paths.js";import type { SystemMonitor } from "./system.js";
+import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
+import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
 
@@ -330,7 +331,8 @@ export function handleCockpit(
   sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
   system?: SystemMonitor,
   workerWindows: () => WorkerWindow[] = loadWorkerWindows,
-  readPool: () => PoolCarry | null = cachedPoolCarry()): boolean {
+  readPool: () => PoolCarry | null = cachedPoolCarry(),
+  readPoolPanel: typeof sharedPoolPanel = sharedPoolPanel): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
@@ -354,6 +356,8 @@ export function handleCockpit(
       ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls) })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
+  } else if (url.pathname === "/cockpit/pool") {
+    readPoolPanel().then((p) => send(200, "application/json", JSON.stringify(p)));
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then(
       (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l })),

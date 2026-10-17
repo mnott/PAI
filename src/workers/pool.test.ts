@@ -17,6 +17,7 @@ import {
   poolDir,
   poolHostAlive,
   poolIneligibleReason,
+  toolGrantMatchesSlot,
   poolMetricsPath,
   poolSettings,
   poolStatePath,
@@ -65,20 +66,36 @@ describe("eligibility gate", () => {
     prompt: "do a thing",
     providerName: "glm",
     provider: provider(),
-    worktreeFlag: false as const,
+    worktreeWanted: false,
     resumeOf: undefined,
     printCmd: false,
     parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [] },
     mcpFlag: undefined,
     noBrowser: true,
     outputFormat: "text" as const,
-    cwd: undefined,
-    slotCwd: "/neutral/dir",
+    cwd: tmpdir(),
   });
 
-  it("eligible: headless, no worktree, plain spec, matching cwd", () => {
+  it("eligible: headless, no worktree, plain spec, any existing cwd", () => {
     expect(poolIneligibleReason(base())).toBeNull();
-    expect(poolIneligibleReason({ ...base(), cwd: "/neutral/dir" })).toBeNull();
+    expect(poolIneligibleReason({ ...base(), cwd: process.cwd() })).toBeNull();
+  });
+
+  it("a local (vllm-mlx) provider pools like any other non-native claude provider", () => {
+    expect(poolIneligibleReason({ ...base(), providerName: "local30x8" })).toBeNull();
+  });
+
+  it("tools: only no grant or exactly the slot's default set matches a slot", () => {
+    const tools = (allowedTools: string[]) => ({
+      ...base(),
+      parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools },
+    });
+    expect(poolIneligibleReason(tools(["Read,Edit,Write,Bash,Grep,Glob"]))).toBeNull();
+    expect(poolIneligibleReason(tools(["Glob", "Grep", "Bash", "Write", "Edit", "Read"]))).toBeNull();
+    expect(poolIneligibleReason(tools(["Read,Grep"]))).toBe("tools");
+    expect(poolIneligibleReason(tools(["Read,Edit,Write,Bash,Grep,Glob,WebFetch"]))).toBe("tools");
+    expect(poolIneligibleReason(tools(["Bash(git *)"]))).toBe("tools");
+    expect(toolGrantMatchesSlot([])).toBe(true);
   });
 
   it("interactive runs are never pooled", () => {
@@ -96,8 +113,7 @@ describe("eligibility gate", () => {
   });
 
   it("worktree, resume and print-cmd runs get their own process", () => {
-    expect(poolIneligibleReason({ ...base(), worktreeFlag: undefined })).toBe("worktree");
-    expect(poolIneligibleReason({ ...base(), worktreeFlag: true })).toBe("worktree");
+    expect(poolIneligibleReason({ ...base(), worktreeWanted: true })).toBe("worktree");
     expect(poolIneligibleReason({ ...base(), resumeOf: "w1" })).toBe("resume");
     expect(poolIneligibleReason({ ...base(), printCmd: true })).toBe("print-cmd");
   });
@@ -136,7 +152,7 @@ describe("eligibility gate", () => {
     ).toBeNull();
   });
 
-  it("stream-json consumers and foreign cwds fall back", () => {
+  it("stream-json consumers and missing cwds fall back", () => {
     expect(poolIneligibleReason({ ...base(), outputFormat: "stream-json" })).toBe("stream-json");
     expect(poolIneligibleReason({ ...base(), cwd: "/some/repo" })).toBe("cwd");
   });
@@ -335,6 +351,7 @@ describe("client transport", () => {
       prompt: "say hi",
       provider: "glm",
       model: "m1",
+      cwd: tmpdir(),
       reportFormat: "ag2",
       outputFormat: "text",
       maxMinutes: null,
