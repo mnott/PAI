@@ -32,6 +32,7 @@ import { buildRunEnv, claudeCommand } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { nowStamp, saveStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
+import { loadContractAddendum } from "./contract-addendum.js";
 import { slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
 import {
   adoptInitModel,
@@ -362,13 +363,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const spawnSlot = async (
     providerName: string,
     provider: WorkerProvider,
-    model: string
+    model: string,
+    cwd: string
   ): Promise<PoolSlotSession | null> => {
     const env = envFor(providerName, provider);
     // no PAI_WORKER_ID on a slot: it serves many tasks; children it spawns
     // stand on their own rather than attribute to a stale worker id
     delete env.PAI_WORKER_ID;
     let cmd: string[] = [...cmdHead(env, config.caveman)];
+    const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
     cmd.push("--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir));
     cmd.push(...headlessToolGrants([]));
@@ -386,7 +389,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         "You are a pooled worker session: each user turn is a NEW, unrelated task introduced by a " +
           "system-reminder boundary line. Never carry context between tasks; answer each task only " +
           "from its own spec.",
-        `Working directory: ${logDir} (fixed for the whole session). Task specs use absolute paths.`,
+        `Working directory: ${cwd} (fixed for the whole session).`,
+        // the provider's contract addendum is part of the stable prefix: for local
+        // models it is what keeps their output in contract, and as slot system
+        // prompt it is cached with the rest of the prefix instead of per task
+        ...(addendum ? [addendum.text] : []),
         ...(slim.length ? [WORKER_BRIEF] : []),
       ])
     );
@@ -395,7 +402,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const record: PoolSlotRecord = {
       provider: providerName,
       model,
-      cwd: logDir,
+      cwd,
       pid: -1,
       claudeSession: null,
       spawnedAt: nowStamp(now()),
@@ -403,7 +410,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       tasks: 0,
       busyWith: null,
     };
-    const proc = spawner(cmd, logDir, env);
+    const proc = spawner(cmd, cwd, env);
     record.pid = proc.pid;
     const session = new PoolSlotSession(record, proc);
 
@@ -434,19 +441,19 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
             model,
             pid: session.pid,
             session: record.claudeSession,
-            cwd: logDir,
+            cwd,
             note: "init arrived with the first task",
           });
         }
       });
     }
-    slots.set(slotKey(providerName, model, logDir), session);
+    slots.set(slotKey(providerName, model, cwd), session);
     appendLedger(ledger, "WORKER-POOL-SLOT", {
       provider: providerName,
       model,
       pid: session.pid,
       session: record.claudeSession,
-      cwd: logDir,
+      cwd,
     });
     persist();
     return session;
@@ -455,9 +462,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const acquire = async (
     providerName: string,
     provider: WorkerProvider,
-    model: string
+    model: string,
+    cwd: string
   ): Promise<PoolSlotSession | null> => {
-    const key = slotKey(providerName, model, logDir);
+    const key = slotKey(providerName, model, cwd);
     reapSlots();
     const pick = pickSlot(
       [...slots.values()].map((s) => s.record),
@@ -473,7 +481,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (pick.evict) {
       dropSlot(slotKey(pick.evict.provider, pick.evict.model, pick.evict.cwd), "evicted for new slot");
     }
-    if (pick.canSpawn) return spawnSlot(providerName, provider, model);
+    if (pick.canSpawn) return spawnSlot(providerName, provider, model, cwd);
     return null; // pool at capacity: the client falls back to a fresh spawn
   };
 
@@ -496,19 +504,18 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       prompt: task.prompt,
       providerName: task.provider,
       provider,
-      worktreeFlag: false,
+      worktreeWanted: false,
       resumeOf: undefined,
       printCmd: false,
       parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [] },
       mcpFlag: undefined,
       noBrowser: true,
       outputFormat: task.outputFormat,
-      cwd: logDir,
-      slotCwd: logDir,
+      cwd: task.cwd,
     });
     if (inelig) return { pooled: false, reason: inelig };
 
-    const session = await acquire(task.provider, provider, task.model);
+    const session = await acquire(task.provider, provider, task.model, task.cwd);
     if (!session) return { pooled: false, reason: "busy" };
 
     const wid = task.id;
@@ -522,7 +529,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       id: wid,
       pid: session.pid,
       label: task.label,
-      cwd: logDir,
+      cwd: task.cwd,
       term: "",
       provider: task.provider,
       model: task.model,
@@ -545,7 +552,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       provider: task.provider,
       mode: "pooled",
       model: task.model,
-      cwd: logDir,
+      cwd: task.cwd,
       label: task.label,
       poolTask: taskNo,
       ...(task.capability ? { capability: task.capability } : {}),
@@ -560,7 +567,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         /* a full disk must not take the pool host down */
       }
     };
-    writeEvent({ type: "pooled-task", task: taskNo, slot: session.record.claudeSession, cwd: logDir });
+    writeEvent({ type: "pooled-task", task: taskNo, slot: session.record.claudeSession, cwd: task.cwd });
 
     let deadlineFired = false;
     const deadTimer =
@@ -581,7 +588,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const scratch: { firstUsage: UsageBlock | null } = { firstUsage: null };
     const toolUses = new Map<string, { name: string; input: unknown }>();
     const bashRuns: BashRun[] = [];
-    const untrackedAtStart = new Set(untrackedPaths(logDir));
+    const untrackedAtStart = new Set(untrackedPaths(task.cwd));
 
     const onEvent = (e: StreamEvent): void => {
       writeEvent(e as Record<string, unknown>);
@@ -637,7 +644,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       saveStatus(logDir, status);
     };
 
-    const text = pooledTaskText(taskNo, logDir, task.prompt, task.trailer);
+    const text = pooledTaskText(taskNo, task.cwd, task.prompt, task.trailer);
     let resultEvent = await session.feed(text, onEvent);
     if (deadTimer) clearTimeout(deadTimer);
 
@@ -684,7 +691,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
     // proof check against THIS task's bash runs and the untracked files it added
     if (resultEvent?.result && task.reportFormat === "ag2") {
-      const stray = newUntracked(logDir, untrackedAtStart);
+      const stray = newUntracked(task.cwd, untrackedAtStart);
       const chk = checkProof(resultEvent.result, bashRuns, stray);
       if (chk.rewritten || stray.length) {
         resultEvent = { ...resultEvent, result: chk.text };
@@ -742,7 +749,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
     state.tasksServed += 1;
     release(session);
-    if (session.dead) dropSlot(slotKey(task.provider, task.model, logDir), "slot exited after task");
+    if (session.dead) dropSlot(slotKey(task.provider, task.model, task.cwd), "slot exited after task");
 
     return { pooled: true, rc, resultEvent, report, status };
   };

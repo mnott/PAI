@@ -27,10 +27,11 @@
  * task and forbidding references to prior turns — and the worker contract
  * already forbids restating; the boundary is the measured-in risk dial.
  *
- * Cwd: a slot process has ONE cwd (fixed at spawn, the host's neutral
- * directory, workers.logDir). Tasks are pooled only when their own cwd is
- * that same directory — i.e. specs written against absolute paths; anything
- * else falls through to a fresh spawn rather than run in the wrong tree.
+ * Cwd: a slot process has ONE cwd, fixed at spawn, and the slot key is
+ * (provider, model, cwd): a run in /repo pools into a slot living in /repo,
+ * exactly where a fresh spawn would have run. Runs that need their own
+ * worktree (writable tools in a git cwd, the default) cannot pool: the
+ * worktree is a new directory per run.
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -220,7 +221,12 @@ export interface PoolEligibilityInput {
   /** Resolved provider name ("anthropic" for the built-in). */
   providerName: string;
   provider: Pick<WorkerProvider, "native" | "engine" | "protocol">;
-  worktreeFlag: boolean | undefined;
+  /**
+   * The run will get its own git worktree (worktreeWanted: flag first, then
+   * writable tools in a git cwd). A worktree is a fresh directory per run, so
+   * a long-lived slot cannot serve it.
+   */
+  worktreeWanted: boolean;
   resumeOf: string | undefined;
   printCmd: boolean | undefined;
   parsed: Pick<ParsedRunnerArgs, "callerSystemPrompt" | "callerMcpConfig" | "mcp" | "allowedTools">;
@@ -228,10 +234,8 @@ export interface PoolEligibilityInput {
   mcpFlag: string | undefined;
   noBrowser: boolean;
   outputFormat: ParsedRunnerArgs["outputFormat"];
-  /** Resolved cwd of the run (undefined = caller's own process cwd). */
+  /** Resolved cwd of the run; slots are keyed by it, so any existing directory pools. */
   cwd: string | undefined;
-  /** The cwd pooled slots run in. */
-  slotCwd: string;
 }
 
 export type PoolIneligibleReason =
@@ -246,7 +250,23 @@ export type PoolIneligibleReason =
   | "mcp"
   | "browser"
   | "stream-json"
+  | "tools"
   | "cwd";
+
+/** The tool grant every slot is born with (== DEFAULT_WORKER_TOOLS in run.ts). */
+const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
+
+/**
+ * A caller's --allowedTools is a deliberate restriction; a slot has the
+ * default grant fixed at spawn. Only "no grant" or exactly the default set
+ * gives the run what it asked for (MCP grants are screened by the mcp rule).
+ */
+export function toolGrantMatchesSlot(allowedTools: string[]): boolean {
+  const names = allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim()).filter((x) => x && !x.startsWith("mcp__"));
+  if (!names.length) return true;
+  const set = new Set(names);
+  return set.size === SLOT_TOOLS.length && SLOT_TOOLS.every((t) => set.has(t));
+}
 
 /**
  * Why this run may not use the pool, or null when it may. Every reason is a
@@ -258,7 +278,7 @@ export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibl
   if (!input.headless || input.prompt === null) return "interactive";
   if (input.providerName === ANTHROPIC_NATIVE || input.provider.native) return "native-provider";
   if ((input.provider.engine ?? "claude") !== "claude") return "engine";
-  if (input.worktreeFlag !== false) return "worktree";
+  if (input.worktreeWanted) return "worktree";
   if (input.resumeOf !== undefined) return "resume";
   if (input.printCmd === true) return "print-cmd";
   if (input.parsed.callerSystemPrompt) return "system-prompt";
@@ -266,7 +286,8 @@ export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibl
   if (mcpServersFromToolGrants(input.parsed.allowedTools).length) return "mcp";
   if (!input.noBrowser && grantsChrome(input.parsed.allowedTools)) return "browser";
   if (input.outputFormat === "stream-json") return "stream-json";
-  if (input.cwd !== undefined && input.cwd !== input.slotCwd) return "cwd";
+  if (!toolGrantMatchesSlot(input.parsed.allowedTools)) return "tools";
+  if (input.cwd === undefined || !existsSync(input.cwd)) return "cwd";
   return null;
 }
 
@@ -295,7 +316,7 @@ export function poolTaskBoundary(taskNo: number, cwd: string): string {
     `<system-reminder>NEW TASK ${taskNo} — this session is a worker pool slot; the ` +
     `preceding turns were other, unrelated tasks by other workers. Ignore them ` +
     `completely: never reference, reuse or continue anything from them. Your working ` +
-    `directory is ${cwd}; the task spec uses absolute paths. Work only on the task ` +
+    `directory is ${cwd}; relative paths in the spec resolve there. Work only on the task ` +
     `below.</system-reminder>`
   );
 }
@@ -321,6 +342,8 @@ export interface PoolTaskRequest {
   prompt: string;
   provider: string;
   model: string;
+  /** The run's working directory; the slot is keyed by and runs in it. */
+  cwd: string;
   className?: string;
   capability?: string;
   specPath?: string;
