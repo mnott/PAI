@@ -1,10 +1,27 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Backoff, LimitsCache, modelServed, readLastGood, staleReading, type LastGoodEntry, type LimitWindow } from "./limits.js";
+import net from "node:net";
+import { vi } from "vitest";
+import {
+  ANTHROPIC_POLL_MS,
+  Backoff,
+  HttpError,
+  LimitsCache,
+  anthropicShared,
+  humanMinutes,
+  localLimits,
+  modelServed,
+  parsePrefixCacheStats,
+  parseRetryAfter,
+  readLastGood,
+  staleReading,
+  type LastGoodEntry,
+  type LimitWindow,
+} from "./limits.js";
 import type { WorkerProvider } from "../workers/config.js";
 
 describe("modelServed", () => {
@@ -69,7 +86,7 @@ describe("last good readings and 429 backoff", () => {
     const p = stale.find((l) => l.provider === "p")!;
     expect(p.windows).toEqual(WINDOWS);
     expect(p.fetchedAt).toBe(NOW);
-    expect(p.error).toBe("stale 1min (http 429)");
+    expect(p.error).toBe("usage reading 1 min old, provider asked us to slow down");
   });
 
   it("BackoffDoublesAndResets: skipped while backing off, back to the base interval after a success", async () => {
@@ -92,11 +109,11 @@ describe("last good readings and 429 backoff", () => {
     status = 429;
     await cache.get(NOW + 243_000); // strikes were reset: held back again by only 2 * ttl, not 4 *
     const n1 = hits;
-    expect(await cache.get(NOW + 320_000).then((r) => r.find((l) => l.provider === "p")!.error)).toMatch(/stale /);
+    expect(await cache.get(NOW + 320_000).then((r) => r.find((l) => l.provider === "p")!.error)).toMatch(/^usage reading /);
     expect(hits).toBe(n1);
     const again = await cache.get(NOW + 380_000); // due again: backoff expired at 243+120s (a reset-less strike would hold out until 483s)
     expect(hits).toBe(n1 + 1);
-    expect(again.find((l) => l.provider === "p")!.error).toBe("stale 3min (http 429)");
+    expect(again.find((l) => l.provider === "p")!.error).toMatch(/^usage reading 3 min old, provider asked us to slow down/);
   });
 
   it("BackoffDoublesAndResets: doubles per strike, caps at 30 min, resets on success", () => {
@@ -122,13 +139,13 @@ describe("last good readings and 429 backoff", () => {
     const res = await cache.get(NOW);
     const p = res.find((l) => l.provider === "p")!;
     expect(p.windows).toEqual([]);
-    expect(p.error).toBe("http 429");
+    expect(p.error).toBe("provider asked us to slow down");
   });
 
   it("ResetAtKeptFromLastGood: the stale reading keeps the old resetAt, so the gauge never says reset unknown", () => {
     const r = staleReading("anthropic", { windows: WINDOWS, fetchedAt: NOW - 600_000 }, "http 429", NOW);
     expect(r!.windows).toEqual(WINDOWS);
-    expect(r!.error).toBe("stale 10min (http 429)");
+    expect(r!.error).toBe("usage reading 10 min old, provider asked us to slow down");
   });
 
   it("NoLastGoodFallsBack: without a fresh last good reading the old fallbacks apply", () => {
@@ -143,5 +160,189 @@ describe("last good readings and 429 backoff", () => {
     writeFileSync(file, "{oops");
     expect(readLastGood(file)).toEqual({});
     expect(readLastGood(join(dir, "missing.json"))).toEqual({});
+  });
+});
+
+describe("anthropic usage poll: one door, 429 backoff", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pai-anthropic-poll-"));
+  const BODY = JSON.stringify({ five_hour: { utilization: 42, resets_at: "2030-01-01T00:00:00Z" } });
+  const files = (n: string) => ({ lastGoodFile: join(dir, `${n}-last.json`), gateFile: join(dir, `${n}-gate.json`) });
+
+  const setup = (n: string) => {
+    const f = files(n);
+    const fetchUsage = vi.fn<() => Promise<string>>();
+    const poll = () => anthropicShared(Date.now(), { gate: new Backoff(ANTHROPIC_POLL_MS, undefined, f.gateFile), lastGoodFile: f.lastGoodFile, fetchUsage });
+    return { f, fetchUsage, poll };
+  };
+
+  afterEach(() => vi.useRealTimers());
+
+  it("PollIntervalShared: a reading younger than the poll interval is read, not fetched", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { fetchUsage, poll } = setup("interval");
+    fetchUsage.mockResolvedValue(BODY);
+    expect((await poll()).windows[0]!.percent).toBe(42);
+    vi.advanceTimersByTime(ANTHROPIC_POLL_MS - 1000);
+    const again = await poll();
+    expect(again.windows[0]!.percent).toBe(42);
+    expect(again.error).toBeUndefined();
+    expect(fetchUsage).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(2000);
+    await poll();
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it("RetryAfterHonoured: a 429 with Retry-After holds every reader off for that long and says so in plain words", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { fetchUsage, poll } = setup("retry-after");
+    fetchUsage.mockResolvedValueOnce(BODY);
+    await poll();
+    vi.advanceTimersByTime(ANTHROPIC_POLL_MS + 1000);
+    fetchUsage.mockRejectedValueOnce(new HttpError(429, 15 * 60_000));
+    const limited = await poll();
+    expect(limited.rateLimited).toBe(true);
+    expect(limited.windows[0]!.percent).toBe(42);
+    expect(limited.error).toBe("usage reading 5 min old, provider asked us to slow down, next try in 15 min");
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(14 * 60_000); // still inside Retry-After: no request, age keeps counting
+    const held = await poll();
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+    expect(held.error).toBe("usage reading 19 min old, provider asked us to slow down, next try in 1 min");
+
+    vi.advanceTimersByTime(2 * 60_000);
+    fetchUsage.mockResolvedValueOnce(BODY);
+    const ok = await poll();
+    expect(fetchUsage).toHaveBeenCalledTimes(3);
+    expect(ok.error).toBeUndefined();
+  });
+
+  it("ExponentialWithoutRetryAfter: 10, 20, 30 min and no more, reset by a success", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { fetchUsage, poll } = setup("exp");
+    fetchUsage.mockResolvedValueOnce(BODY);
+    await poll();
+    const delays: Array<number | undefined> = [];
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(31 * 60_000);
+      fetchUsage.mockRejectedValueOnce(new HttpError(429));
+      delays.push((await poll()).retryAfterMs);
+    }
+    expect(delays).toEqual([10 * 60_000, 20 * 60_000, 30 * 60_000, 30 * 60_000]);
+    vi.advanceTimersByTime(31 * 60_000);
+    fetchUsage.mockResolvedValueOnce(BODY);
+    await poll();
+    vi.advanceTimersByTime(ANTHROPIC_POLL_MS + 1000);
+    fetchUsage.mockRejectedValueOnce(new HttpError(429));
+    expect((await poll()).retryAfterMs).toBe(10 * 60_000);
+  });
+
+  it("BackoffSharedAcrossProcesses: a second reader (own gate object, same files) does not fetch during a backoff", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { f, fetchUsage, poll } = setup("shared");
+    fetchUsage.mockResolvedValueOnce(BODY);
+    await poll();
+    vi.advanceTimersByTime(ANTHROPIC_POLL_MS + 1000);
+    fetchUsage.mockRejectedValueOnce(new HttpError(429, 600_000));
+    await poll();
+    const other = vi.fn<() => Promise<string>>().mockResolvedValue(BODY);
+    const r = await anthropicShared(Date.now(), { gate: new Backoff(ANTHROPIC_POLL_MS, undefined, f.gateFile), lastGoodFile: f.lastGoodFile, fetchUsage: other });
+    expect(other).not.toHaveBeenCalled();
+    expect(r.rateLimited).toBe(true);
+  });
+
+  it("NoReadingYet: a 429 before any good reading says what is happening, not 'http 429'", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { fetchUsage, poll } = setup("cold");
+    fetchUsage.mockRejectedValueOnce(new HttpError(429, 120_000));
+    const r = await poll();
+    expect(r.windows).toEqual([]);
+    expect(r.error).toBe("provider asked us to slow down, next try in 2 min");
+  });
+
+  it("parseRetryAfter reads seconds and HTTP dates; humanMinutes reads plainly", () => {
+    expect(parseRetryAfter("120")).toBe(120_000);
+    expect(parseRetryAfter("Wed, 21 Oct 2026 07:30:00 GMT", Date.parse("Wed, 21 Oct 2026 07:28:00 GMT"))).toBe(120_000);
+    expect(parseRetryAfter(undefined)).toBeUndefined();
+    expect(parseRetryAfter("soon")).toBeUndefined();
+    expect(humanMinutes(4 * 60_000)).toBe("4 min");
+    expect(humanMinutes(65 * 60_000)).toBe("1 h 5 min");
+  });
+
+  it("RetryAfterOverHttp: the real getJson path carries Retry-After from a 429 into the backoff", async () => {
+    const srv = http.createServer((_q, res) => {
+      res.writeHead(429, { "retry-after": "90" });
+      res.end();
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const { getJson } = await import("./limits.js");
+    const err = await getJson(new URL(`http://127.0.0.1:${(srv.address() as AddressInfo).port}/`), {}).catch((e: unknown) => e);
+    await new Promise<void>((r) => srv.close(() => r()));
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).retryAfterMs).toBe(90_000);
+  });
+});
+
+describe("local server up/down and prefix cache", () => {
+  const local = (port: number): WorkerProvider => ({
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: `http://127.0.0.1:${port}`,
+    keyFile: null,
+    key: "local",
+    models: { default: "m-served", fast: "m-served" },
+    env: {},
+  });
+  const listen = async (srv: http.Server | net.Server): Promise<number> => {
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    return (srv.address() as AddressInfo).port;
+  };
+  const close = (srv: http.Server | net.Server) => new Promise<void>((r) => srv.close(() => r()));
+
+  it("ClosedPortIsDown: nothing listening", async () => {
+    const s = net.createServer();
+    const port = await listen(s);
+    await close(s);
+    expect((await localLimits("gone", local(port), [], Date.now())).up).toBe(false);
+  });
+
+  it("AcceptingButNotServingIsDown: a socket holder (launchd-style) that accepts and drops the connection is not a running server", async () => {
+    const holder = net.createServer((sock) => sock.destroy());
+    const port = await listen(holder);
+    const r = await localLimits("gpt20b", local(port), [], Date.now());
+    await close(holder);
+    expect(r.up).toBe(false);
+    expect(r.prefixCache).toBeUndefined();
+  });
+
+  it("ServingIsUp, and its prefix-cache counters are reported", async () => {
+    const stats = { engine_cache: { hits: 66, misses: 2, hit_rate: 0.97, tokens_saved: 259867, entry_count: 2, current_memory_mb: 5273.06 } };
+    const srv = http.createServer((q, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(q.url === "/v1/models" ? { data: [{ id: "m-served" }] } : stats));
+    });
+    const port = await listen(srv);
+    const r = await localLimits("l", local(port), [], Date.now());
+    await close(srv);
+    expect(r.up).toBe(true);
+    expect(r.prefixCache).toEqual({ hits: 66, misses: 2, hitRate: 66 / 68, tokensSaved: 259867, entries: 2, memoryMb: 5273.06 });
+  });
+
+  it("ServerWithoutStatsEndpoint: up, prefixCache left undefined (cockpit says 'not reported')", async () => {
+    const srv = http.createServer((q, res) => {
+      res.writeHead(q.url === "/v1/models" ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+    });
+    const port = await listen(srv);
+    const r = await localLimits("l", local(port), [], Date.now());
+    await close(srv);
+    expect(r.up).toBe(true);
+    expect(r.prefixCache).toBeUndefined();
+  });
+
+  it("parsePrefixCacheStats: counters in, nothing out when the server carries none", () => {
+    expect(parsePrefixCacheStats('{"engine_cache":{"hits":0,"misses":0,"tokens_saved":0}}')).toEqual({ hits: 0, misses: 0, hitRate: 0, tokensSaved: 0 });
+    expect(parsePrefixCacheStats('{"engine_cache":null,"error":"x"}')).toBeUndefined();
+    expect(parsePrefixCacheStats("not json")).toBeUndefined();
   });
 });

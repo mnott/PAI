@@ -50,7 +50,7 @@ ${POOL_PANEL_HTML}
 <section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
 <section class="card c4"><h2>Cache hit ratio / providers</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div>
-<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local cache hit ratio per model</h2><div id="donutlocal" class="rings"></div><div id="donutlocalnote" class="dim"></div>
+<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local prefix cache (server counters)</h2><div id="donutlocal" class="rings"></div><div id="donutlocalnote" class="dim"></div>
 <h2 style="margin-top:12px">Providers: errors, retries, speed</h2><div id="providers"></div></section>
 <section class="card c12"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
@@ -83,11 +83,11 @@ function gauge(l,w,age){
 function renderLimits(){
  if(!lim)return;var c="",lo="";
  lim.limits.forEach(function(l){
-  var h="",age=l.error&&/stale /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
+  var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div>';lo+=h;return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
-  else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error).slice(0,60)+'</div></div>';
+  else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   c+=h;
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
@@ -140,7 +140,7 @@ function renderSystem(){
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
- $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
+ $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":'<span class="dim">not reported</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
  renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){
@@ -258,13 +258,14 @@ function renderDonuts(){
  if(sk)note+=". continuous "+pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess, "+sk.continuous.requests+" req) · one-shot "+pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess, "+sk.oneShot.requests+" req)";
  if(d.pool&&d.pool.tasks)note+=". pool: "+d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried";
  $("donutnote").textContent=note;
- var loc=[];(sys&&sys.servers||[]).forEach(function(s){(s.served||[]).forEach(function(m){if(loc.indexOf(m)<0)loc.push(m)})});
+ var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
- loc.forEach(function(m){var r=ms[m];if(!r)return;var dn=r.cacheRead+r.cacheWrite+r.input;
-  lh+='<div class="ring">'+donut(dn?r.cacheRead/dn:0)+'<div class="n">'+esc(m)+'</div><div class="s">'+r.requests+' req</div></div>'});
+ loc.forEach(function(s){var pc=s.prefixCache,r=ms[(s.served||[])[0]];
+  if(pc)lh+='<div class="ring">'+donut(pc.hitRate)+'<div class="n">'+esc(s.provider)+'</div><div class="s">'+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved</div></div>';
+  else lh+='<div class="ring"><div class="n">'+esc(s.provider)+'</div><div class="s dim">prefix cache: not reported by this server'+(r&&r.requests?' · '+r.requests+' req':'')+'</div></div>'});
  $("donutlocaltitle").style.display=loc.length?"":"none";
- $("donutlocal").innerHTML=lh||'<span class="dim">'+(loc.length?"no local model traffic in this window":"no local model servers")+'</span>';
- $("donutlocalnote").textContent=loc.length?"cache_read / (read + write + fresh input), per local model.":"";
+ $("donutlocal").innerHTML=lh||'<span class="dim">no local model servers running</span>';
+ $("donutlocalnote").textContent=loc.length?"Local prefix cache, as each server counts it since it started: hits / (hits + misses). Free to use; a hit skips re-computing the cached part of the prompt (latency), it does not save money.":"";
 }
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){

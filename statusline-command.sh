@@ -565,6 +565,19 @@ printf "${LINE2_PRIMARY}${EMOJI_PLUG} MCPs${RESET}${LINE2_PRIMARY}${SEPARATOR_CO
 usage_cache="${pai_cache_dir}/statusline-usage-cache.json"
 usage_cache_ttl=60       # refetch the fallback after this many seconds
 usage_cache_max_age=300  # refuse to render from the fallback past this age
+usage_backoff_default=300  # seconds to leave the endpoint alone after a failed fetch
+# The router polls the same endpoint and records its 429 backoff here (epoch ms);
+# honour it, and our own, so the pollers do not add up.
+usage_gate="${pai_state_dir:-$HOME/.claude/pai/logs}/router-poll-gate.json"
+_usage_backing_off() {
+    local now until
+    now=$(date +%s)
+    until=$(cat "$usage_cache.backoff" 2>/dev/null)
+    case "$until" in ''|*[!0-9]*) ;; *) [ "$until" -gt "$now" ] && return 0 ;; esac
+    until=$(jq -r '.anthropic.until // 0 | . / 1000 | floor' "$usage_gate" 2>/dev/null)
+    case "$until" in ''|*[!0-9]*) ;; *) [ "$until" -gt "$now" ] && return 0 ;; esac
+    return 1
+}
 usage_suffix=""
 
 # Color based on utilization: green < 50%, orange 50-75%, red > 75%.
@@ -598,8 +611,8 @@ _fetch_usage() {
         return
     fi
     # Per-process temp file: several renders may fetch at once.
-    local tmp="$usage_cache.tmp.$$" http
-    http=$(curl -s --max-time 3 -o "$tmp" -w '%{http_code}' \
+    local tmp="$usage_cache.tmp.$$" hdr="$usage_cache.hdr.$$" http
+    http=$(curl -s --max-time 3 -o "$tmp" -D "$hdr" -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
         -H "anthropic-beta: oauth-2025-04-20" \
         "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
@@ -609,7 +622,14 @@ _fetch_usage() {
     else
         echo "usage fetch failed: http ${http:-timeout}" > "$usage_cache.error"
         rm -f "$tmp"
+        # A failed poll must not be retried on the next render: back off for
+        # Retry-After when the endpoint sent one (429), else usage_backoff_default.
+        local _ra _wait="$usage_backoff_default"
+        _ra=$(tr -d '\r' < "$hdr" 2>/dev/null | awk 'tolower($1)=="retry-after:" {print $2; exit}')
+        case "$_ra" in ''|*[!0-9]*) ;; *) _wait="$_ra" ;; esac
+        echo $(( $(date +%s) + _wait )) > "$usage_cache.backoff"
     fi
+    rm -f "$hdr"
 }
 
 # Resolve the anthropic windows — skipped on non-anthropic sessions so
@@ -648,7 +668,9 @@ fi
 # already answer — a keychain lookup plus an HTTPS round trip on every render
 # buys nothing when the live numbers arrived on stdin.
 if [ "$session_provider" = "anthropic" ] && [ -z "$usage_source" ]; then
-    if [ -f "$usage_cache" ]; then
+    if _usage_backing_off; then
+        :
+    elif [ -f "$usage_cache" ]; then
         cache_age=$(( $(date +%s) - $(file_mtime "$usage_cache" 0) ))
         [ "$cache_age" -gt "$usage_cache_ttl" ] && _fetch_usage &
     else

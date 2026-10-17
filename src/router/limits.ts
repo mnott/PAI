@@ -4,9 +4,10 @@
  * page or the JSON it is served.
  *
  *   anthropic  Max plan 5h/7d via the OAuth usage endpoint (token from the
- *              keychain, as the statusline does); on a failed poll (http 429)
- *              the last good reading is served with its age and the poll backs
- *              off, advisor-mode.json only when no last good reading exists
+ *              keychain), polled at most every ANTHROPIC_POLL_MS by all readers
+ *              together (anthropicShared); on http 429 the poll backs off for
+ *              Retry-After (else doubling, capped) and the last good reading is
+ *              served with its age; advisor-mode.json only without a reading
  *   others     the provider's workers.yaml `usage` block (jq expressions)
  *   local      up/down (TCP), RSS of the listener, tokens/s from accounting
  *   rest       counted requests vs a configured limit, labelled "estimated"
@@ -41,8 +42,26 @@ export interface ProviderLimits {
   served?: string[];
   /** average output tokens per second over the last hour */
   tokensPerSec?: number;
+  /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
+  prefixCache?: PrefixCacheStats;
   error?: string;
+  /** the last poll was answered http 429: the reading shown is the last good one */
+  rateLimited?: boolean;
+  /** ms until the provider may be polled again, when rate limited */
+  retryAfterMs?: number;
   fetchedAt: number;
+}
+
+/** A local server's own prefix-cache counters (vllm-mlx GET /v1/cache/stats), since the server started. */
+export interface PrefixCacheStats {
+  hits: number;
+  misses: number;
+  /** hits / (hits + misses), 0..1 */
+  hitRate: number;
+  /** prompt tokens the server did not have to recompute */
+  tokensSaved: number;
+  entries?: number;
+  memoryMb?: number;
 }
 
 export const ESTIMATE_FILE = join(homedir(), ".claude", "pai", "router-limits.json");
@@ -53,6 +72,10 @@ export const LASTGOOD_FILE = join(homedir(), ".claude", "pai", "logs", "router-l
 export const PLAN_LASTGOOD_MAX_AGE = 2 * 3_600_000;
 /** Upper bound for the poll delay after repeated 429s. */
 export const BACKOFF_MAX = 30 * 60_000;
+/** Anthropic's usage endpoint is polled at most this often, by all processes together. */
+export const ANTHROPIC_POLL_MS = 5 * 60_000;
+/** Shared poll state (backoff per provider), read by the router, the budget probe and the statusline. */
+export const GATE_FILE = join(homedir(), ".claude", "pai", "logs", "router-poll-gate.json");
 
 /** The windows of one provider's last successful poll. */
 export interface LastGoodEntry {
@@ -82,6 +105,20 @@ function writeLastGood(file: string, entries: Record<string, LastGoodEntry>): vo
   }
 }
 
+/** "4 min" / "1 h 5 min" for an age or delay. */
+export function humanMinutes(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60_000));
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ""}`;
+}
+
+/** The plain-words error for a reading that is not fresh. */
+export function staleText(ageMs: number, cause: string, retryInMs?: number): string {
+  const retry = retryInMs && retryInMs > 0 ? `, next try in ${humanMinutes(retryInMs)}` : "";
+  return cause === "http 429"
+    ? `usage reading ${humanMinutes(ageMs)} old, provider asked us to slow down${retry}`
+    : `usage reading ${humanMinutes(ageMs)} old (${cause})${retry}`;
+}
+
 /**
  * The reading to show when a poll failed: the last good one, with its age in
  * the error field, while it is fresh enough to trust; undefined otherwise.
@@ -91,40 +128,102 @@ export function staleReading(
   entry: LastGoodEntry | undefined,
   cause: string,
   now: number,
-  maxAge: number = PLAN_LASTGOOD_MAX_AGE
+  maxAge: number = PLAN_LASTGOOD_MAX_AGE,
+  retryInMs?: number
 ): ProviderLimits | undefined {
   if (!entry || !entry.windows.length || now - entry.fetchedAt >= maxAge) return undefined;
-  const min = Math.round((now - entry.fetchedAt) / 60_000);
-  return { provider, kind: "plan", windows: entry.windows, fetchedAt: entry.fetchedAt, error: `stale ${min}min (${cause})` };
+  return {
+    provider,
+    kind: "plan",
+    windows: entry.windows,
+    fetchedAt: entry.fetchedAt,
+    error: staleText(now - entry.fetchedAt, cause, retryInMs),
+    ...(cause === "http 429" ? { rateLimited: true } : {}),
+    ...(retryInMs ? { retryAfterMs: retryInMs } : {}),
+  };
 }
 
-/** Per-provider poll backoff after a http 429: the interval doubles per strike, resets on success. */
+/** A failed fetch; `retryAfterMs` is the server's Retry-After on a http 429. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs?: number
+  ) {
+    super(`http ${status}`);
+  }
+}
+
+/** Retry-After as ms: delta-seconds or an HTTP date; undefined when absent or unusable. */
+export function parseRetryAfter(v: string | string[] | undefined, now: number = Date.now()): number | undefined {
+  const raw = Array.isArray(v) ? v[0] : v;
+  if (!raw) return undefined;
+  if (/^\d+(\.\d+)?$/.test(raw.trim())) return Math.round(Number(raw) * 1000);
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? Math.max(0, t - now) : undefined;
+}
+
+interface GateEntry {
+  mult: number;
+  until: number;
+}
+
+/**
+ * Per-provider poll backoff after a http 429. The delay is the server's
+ * Retry-After when it sent one, else the base interval doubled per strike up
+ * to the ceiling; a success clears the strikes. With a `file` the state is
+ * shared between processes (router, budget probe, statusline) and survives a
+ * restart.
+ */
 export class Backoff {
-  private mult = new Map<string, number>();
-  private until = new Map<string, number>();
+  private state: Record<string, GateEntry> = {};
 
   constructor(
     private readonly baseMs: number,
-    private readonly maxMs: number = BACKOFF_MAX
+    private readonly maxMs: number = BACKOFF_MAX,
+    private readonly file?: string
   ) {}
 
+  private load(): void {
+    if (!this.file) return;
+    try {
+      this.state = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, GateEntry>;
+    } catch {
+      this.state = {};
+    }
+  }
+
+  private save(): void {
+    if (!this.file) return;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file, JSON.stringify(this.state));
+    } catch {
+      /* best-effort shared state */
+    }
+  }
+
   /** Record a 429 seen for `provider` at `now`; returns the delay before its next poll. */
-  penalize(provider: string, now: number): number {
-    const m = Math.min((this.mult.get(provider) ?? 1) * 2, this.maxMs / this.baseMs);
-    this.mult.set(provider, m);
-    this.until.set(provider, now + m * this.baseMs);
-    return m * this.baseMs;
+  penalize(provider: string, now: number, retryAfterMs?: number): number {
+    this.load();
+    const m = Math.min((this.state[provider]?.mult ?? 1) * 2, Math.max(1, this.maxMs / this.baseMs));
+    const delay = retryAfterMs !== undefined ? Math.min(Math.max(retryAfterMs, 1000), PLAN_LASTGOOD_MAX_AGE) : m * this.baseMs;
+    this.state[provider] = { mult: m, until: now + delay };
+    this.save();
+    return delay;
   }
 
   /** ms until `provider` is due again; 0 when it may be polled now. */
   remaining(provider: string, now: number): number {
-    return Math.max(0, (this.until.get(provider) ?? 0) - now);
+    this.load();
+    return Math.max(0, (this.state[provider]?.until ?? 0) - now);
   }
 
   /** A poll succeeded: forget the strikes. */
   reset(provider: string): void {
-    this.mult.delete(provider);
-    this.until.delete(provider);
+    this.load();
+    if (!(provider in this.state)) return;
+    delete this.state[provider];
+    this.save();
   }
 }
 
@@ -217,7 +316,11 @@ export function getJson(url: URL, headers: Record<string, string>): Promise<stri
     const rq = mod.get(url, { headers, timeout: 5000 }, (res) => {
       let t = "";
       res.on("data", (c) => (t += c));
-      res.on("end", () => (res.statusCode === 200 ? resolve(t) : reject(new Error(`http ${res.statusCode}`))));
+      res.on("end", () =>
+        res.statusCode === 200
+          ? resolve(t)
+          : reject(new HttpError(res.statusCode ?? 0, res.statusCode === 429 ? parseRetryAfter(res.headers["retry-after"]) : undefined))
+      );
     });
     rq.on("timeout", () => rq.destroy(new Error("timeout")));
     rq.on("error", reject);
@@ -241,30 +344,74 @@ export async function anthropicToken(): Promise<string | undefined> {
   return undefined;
 }
 
-async function anthropicLimits(now: number, advisorFile: string, lastGood: LastGoodEntry | undefined): Promise<ProviderLimits> {
+/** What a shared anthropic poll needs; defaults are the live files, tests pass temp ones. */
+export interface AnthropicPollOpts {
+  gate?: Backoff;
+  lastGoodFile?: string;
+  /** advisor-mode.json fallback when there is no earlier reading; omitted = none */
+  advisorFile?: string;
+  /** replaces the keychain + https fetch (tests) */
+  fetchUsage?: () => Promise<string>;
+}
+
+let liveGate: Backoff | undefined;
+export function sharedGate(): Backoff {
+  return (liveGate ??= new Backoff(ANTHROPIC_POLL_MS, BACKOFF_MAX, GATE_FILE));
+}
+
+async function fetchAnthropicUsage(): Promise<string> {
+  const token = await anthropicToken();
+  if (!token) throw new Error("no OAuth token in keychain");
+  return getJson(new URL(ANTHROPIC_USAGE_URL), { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" });
+}
+
+/**
+ * The one door to the anthropic usage endpoint, for every reader in every
+ * process: a reading younger than ANTHROPIC_POLL_MS is read from the shared
+ * last-good file, nothing is fetched while a 429 backoff (Retry-After, else
+ * doubling to a ceiling; kept in the shared gate file) is running, and only
+ * then does one caller poll. A rate-limited poll serves the last good reading
+ * with its honest age.
+ */
+export async function anthropicShared(now: number, o: AnthropicPollOpts = {}): Promise<ProviderLimits> {
+  const gate = o.gate ?? sharedGate();
+  const file = o.lastGoodFile ?? LASTGOOD_FILE;
+  const lg = readLastGood(file)["anthropic"];
   const base = { provider: "anthropic", kind: "plan" as const, fetchedAt: now };
+  const wait = gate.remaining("anthropic", now);
+  if (wait > 0) {
+    return staleReading("anthropic", lg, "http 429", now, undefined, wait) ?? {
+      ...base,
+      windows: [],
+      error: `provider asked us to slow down, next try in ${humanMinutes(wait)}`,
+      rateLimited: true,
+      retryAfterMs: wait,
+    };
+  }
+  if (lg && lg.windows.length && now - lg.fetchedAt < ANTHROPIC_POLL_MS) return { ...base, windows: lg.windows, fetchedAt: lg.fetchedAt };
   try {
-    const token = await anthropicToken();
-    if (!token) throw new Error("no OAuth token in keychain");
-    const body = await getJson(new URL(ANTHROPIC_USAGE_URL), {
-      authorization: `Bearer ${token}`,
-      "anthropic-beta": "oauth-2025-04-20",
-    });
-    const windows = parseAnthropicUsage(body);
-    if (windows.length) return { ...base, windows };
-    throw new Error("no usage windows in response");
+    const windows = parseAnthropicUsage(await (o.fetchUsage ?? fetchAnthropicUsage)());
+    if (!windows.length) throw new Error("no usage windows in response");
+    gate.reset("anthropic");
+    writeLastGood(file, { ...readLastGood(file), anthropic: { windows, fetchedAt: now } });
+    return { ...base, windows };
   } catch (e) {
-    const stale = staleReading("anthropic", lastGood, (e as Error).message, now);
+    const err = e as Error;
+    const limited = err instanceof HttpError && err.status === 429;
+    const retry = limited ? gate.penalize("anthropic", now, (err as HttpError).retryAfterMs) : undefined;
+    const stale = staleReading("anthropic", lg, err.message, now, undefined, retry);
     if (stale) return stale;
-    try {
-      const a = JSON.parse(readFileSync(advisorFile, "utf8")) as { weeklyBudgetPercent?: number; asOf?: number };
-      if (typeof a.weeklyBudgetPercent === "number" && a.asOf && now / 1000 - a.asOf < 6 * 3600) {
-        return { ...base, windows: [{ name: "7d", percent: a.weeklyBudgetPercent }], error: `${(e as Error).message}; advisor-mode fallback` };
+    if (o.advisorFile) {
+      try {
+        const a = JSON.parse(readFileSync(o.advisorFile, "utf8")) as { weeklyBudgetPercent?: number; asOf?: number };
+        if (typeof a.weeklyBudgetPercent === "number" && a.asOf && now / 1000 - a.asOf < 6 * 3600) {
+          return { ...base, windows: [{ name: "7d", percent: a.weeklyBudgetPercent }], error: `${err.message}; advisor-mode fallback`, ...(limited ? { rateLimited: true } : {}) };
+        }
+      } catch {
+        /* no fallback */
       }
-    } catch {
-      /* no fallback */
     }
-    return { ...base, windows: [], error: (e as Error).message };
+    return { ...base, windows: [], error: limited ? `provider asked us to slow down, next try in ${humanMinutes(retry!)}` : err.message, ...(limited ? { rateLimited: true, retryAfterMs: retry } : {}) };
   }
 }
 
@@ -281,7 +428,16 @@ async function providerPlanLimits(name: string, p: WorkerProvider, now: number, 
     return windows.length ? { ...base, windows } : { ...base, windows, error: "no windows parsed" };
   } catch (e) {
     const msg = (e as Error).message.replace(/Bearer\s+\S+/g, "Bearer ***");
-    return staleReading(name, lastGood, msg, now) ?? { ...base, windows: [], error: msg };
+    const limited = e instanceof HttpError && e.status === 429;
+    const retry = limited ? e.retryAfterMs : undefined;
+    return (
+      staleReading(name, lastGood, msg, now, undefined, retry) ?? {
+        ...base,
+        windows: [],
+        error: limited ? `provider asked us to slow down${retry ? `, retry after ${humanMinutes(retry)}` : ""}` : msg,
+        ...(limited ? { rateLimited: true, ...(retry ? { retryAfterMs: retry } : {}) } : {}),
+      }
+    );
   }
 }
 
@@ -294,27 +450,82 @@ function probeTcp(port: number, host: string): Promise<boolean> {
   });
 }
 
-async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], now: number): Promise<ProviderLimits> {
+export async function localLimits(name: string, p: WorkerProvider, rows: UsageRow[], now: number): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
   const listening = await probeTcp(port, u.hostname);
-  const served = listening ? await servedModels(u) : undefined;
-  const up = listening && modelServed(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
+  // An accepted TCP connection proves nothing: launchd (or any socket holder) accepts for a server
+  // that is not running. Up means the server answers HTTP, and serves this provider's model.
+  const probe = listening ? await servedModels(u) : { alive: false };
+  const served = probe.ids;
+  const up = probe.alive && modelServed(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
   let rssMb: number | undefined;
+  let prefixCache: PrefixCacheStats | undefined;
   if (up) {
     const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
     const rss = pid ? Number(await sh("ps", ["-o", "rss=", "-p", pid])) : NaN;
     if (Number.isFinite(rss) && rss > 0) rssMb = Math.round(rss / 1024);
+    prefixCache = await prefixCacheStats(u, p);
   }
-  return { provider: name, kind: "local", windows: [], up, ...(rssMb ? { rssMb } : {}), ...(served ? { served } : {}), ...tokensPerSec(rows, name, now), fetchedAt: now };
+  return {
+    provider: name,
+    kind: "local",
+    windows: [],
+    up,
+    ...(rssMb ? { rssMb } : {}),
+    ...(served ? { served } : {}),
+    ...(prefixCache ? { prefixCache } : {}),
+    ...tokensPerSec(rows, name, now),
+    fetchedAt: now,
+  };
 }
 
-/** Model ids the server at this base URL lists on GET /v1/models; undefined when it cannot say. */
-async function servedModels(base: URL): Promise<string[] | undefined> {
+/** GET /v1/models: `alive` = the server answered HTTP at all (any status); `ids` = the models it lists, when it can say. */
+async function servedModels(base: URL): Promise<{ alive: boolean; ids?: string[] }> {
   try {
     const body = JSON.parse(await getJson(new URL("/v1/models", base), {})) as { data?: Array<{ id?: unknown }> };
     const ids = (body.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
-    return ids.length ? ids : undefined;
+    return ids.length ? { alive: true, ids } : { alive: true };
+  } catch (e) {
+    // a busy server may be slow to answer (timeout); one that resets or closes the connection is not serving
+    return { alive: e instanceof HttpError || (e as Error).message === "timeout" };
+  }
+}
+
+/** Number or undefined. */
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+/** The prefix-cache counters in a vllm-mlx GET /v1/cache/stats body; undefined when it carries none. */
+export function parsePrefixCacheStats(body: string): PrefixCacheStats | undefined {
+  try {
+    const c = (JSON.parse(body) as { engine_cache?: Record<string, unknown> | null }).engine_cache;
+    const hits = num(c?.hits);
+    const misses = num(c?.misses);
+    if (!c || hits === undefined || misses === undefined) return undefined;
+    const entries = num(c.entry_count);
+    const memoryMb = num(c.current_memory_mb);
+    return {
+      hits,
+      misses,
+      hitRate: hits + misses ? hits / (hits + misses) : 0,
+      tokensSaved: num(c.tokens_saved) ?? 0,
+      ...(entries !== undefined ? { entries } : {}),
+      ...(memoryMb !== undefined ? { memoryMb } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCacheStats | undefined> {
+  let headers: Record<string, string> = {};
+  try {
+    headers = { authorization: `Bearer ${resolveProviderKey(p)}` };
+  } catch {
+    /* no key: the endpoint may not need one */
+  }
+  try {
+    return parsePrefixCacheStats(await getJson(new URL("/v1/cache/stats", base), headers));
   } catch {
     return undefined;
   }
@@ -354,6 +565,10 @@ export interface LimitsDeps {
   estimateFile?: string;
   /** Last-good store override (tests); defaults to LASTGOOD_FILE. */
   lastGoodFile?: string;
+  /** Shared poll gate override (tests); defaults to GATE_FILE. */
+  gate?: Backoff;
+  /** Replaces the anthropic keychain + https fetch (tests). */
+  fetchAnthropic?: () => Promise<string>;
 }
 
 /**
@@ -394,7 +609,6 @@ export class LimitsCache {
     const caps = readEstimateCaps(this.deps.estimateFile);
     const lastGoodFile = this.deps.lastGoodFile ?? LASTGOOD_FILE;
     const lastGood = readLastGood(lastGoodFile);
-    const previous = new Map(this.value.map((v) => [v.provider, v]));
     const jobs: Array<Promise<ProviderLimits>> = [];
     const skipped: string[] = [];
     /** Queue a plan poll unless the provider is backing off from a 429. */
@@ -405,7 +619,14 @@ export class LimitsCache {
       }
       jobs.push(fn(lastGood[name]));
     };
-    plan("anthropic", (lg) => anthropicLimits(now, this.deps.advisorFile ?? ADVISOR_FILE, lg));
+    jobs.push(
+      anthropicShared(now, {
+        gate: this.deps.gate ?? sharedGate(),
+        lastGoodFile,
+        advisorFile: this.deps.advisorFile ?? ADVISOR_FILE,
+        ...(this.deps.fetchAnthropic ? { fetchUsage: this.deps.fetchAnthropic } : {}),
+      })
+    );
     for (const [name, p] of Object.entries(providers)) {
       if (p.native || name === "anthropic" || p.enabled === false || !p.baseUrl) continue;
       if (isLocalUrl(p.baseUrl)) jobs.push(localLimits(name, p, rows, now));
@@ -415,11 +636,13 @@ export class LimitsCache {
       }
     }
     const results = await Promise.all(jobs);
-    const store = { ...lastGood };
+    // anthropic keeps its own shared last-good entry and gate (anthropicShared)
+    const store = readLastGood(lastGoodFile);
     let dirty = false;
     for (const r of results) {
+      if (r.provider === "anthropic") continue;
       if (r.error) {
-        if (r.error.includes("http 429")) this.backoff.penalize(r.provider, now);
+        if (r.rateLimited) this.backoff.penalize(r.provider, now, r.retryAfterMs);
       } else {
         this.backoff.reset(r.provider);
         if (r.windows.length) {
@@ -429,14 +652,19 @@ export class LimitsCache {
       }
     }
     if (dirty) writeLastGood(lastGoodFile, store);
-    // Backed-off providers stay on the page: the previous reading, with a current age.
+    // Backed-off providers stay on the page: the last good reading, with its current age.
     for (const name of skipped) {
-      const prev = previous.get(name);
-      const cause = prev?.error?.includes("http 429") ? "http 429" : (prev?.error ?? "http 429");
+      const wait = this.backoff.remaining(name, now);
       results.push(
-        prev
-          ? { ...prev, error: `stale ${Math.max(0, Math.round((now - prev.fetchedAt) / 60_000))}min (${cause})` }
-          : { provider: name, kind: "plan", windows: [], error: cause, fetchedAt: now }
+        staleReading(name, store[name], "http 429", now, undefined, wait) ?? {
+          provider: name,
+          kind: "plan",
+          windows: [],
+          error: `provider asked us to slow down, next try in ${humanMinutes(wait)}`,
+          rateLimited: true,
+          retryAfterMs: wait,
+          fetchedAt: now,
+        }
       );
     }
     return results;

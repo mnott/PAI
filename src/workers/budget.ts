@@ -14,10 +14,8 @@
  */
 
 import {
-  ANTHROPIC_USAGE_URL,
-  anthropicToken,
+  anthropicShared,
   getJson,
-  parseAnthropicUsage,
   windowsFromJson,
   type LimitWindow,
 } from "../router/limits.js";
@@ -68,13 +66,10 @@ export async function fetchBudgetReading(name: string, p: WorkerProvider): Promi
   const now = Date.now();
   try {
     if (p.native || name === "anthropic") {
-      const token = await anthropicToken();
-      if (!token) throw new Error("no OAuth token in keychain");
-      const body = await getJson(new URL(ANTHROPIC_USAGE_URL), {
-        authorization: `Bearer ${token}`,
-        "anthropic-beta": "oauth-2025-04-20",
-      });
-      return pickBudgetWindow(parseAnthropicUsage(body), now);
+      // the shared door: a reading the router or another probe took within the
+      // poll interval is reused, and a 429 backoff is honoured, not retried
+      const r = await anthropicShared(now);
+      return pickBudgetWindow(r.windows, r.fetchedAt);
     }
     if (!p.usage) return { percent: null, resetAt: null, fetchedAt: now };
     const key = resolveProviderKey(p);
