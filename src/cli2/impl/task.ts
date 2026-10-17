@@ -12,7 +12,7 @@ import chalk from "chalk";
 import { chmodSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
-import { readConfigRaw, writeConfigRaw } from "../../cli/commands/setup/utils.js";
+import { readConfigRaw, writeConfigRaw } from "../commands/setup/utils.js";
 import { getRegistryBackend } from "../../storage/factory.js";
 import { loadAliasMap } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";

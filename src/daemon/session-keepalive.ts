@@ -26,7 +26,7 @@ import {
   fetchLiveSessions as fetchLiveSessionsDefault,
   sendToSession as sendToSessionDefault,
   type AiBrokerSessionMeta,
-} from "../cli/lib/aibroker-client.js";
+} from "../cli2/lib/aibroker-client.js";
 import { writeJsonAtomic } from "../config/json-store.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { appendLedger } from "../workers/ledger.js";

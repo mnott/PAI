@@ -20,16 +20,16 @@ import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import chalk from "chalk";
-import { err, dim, warn, ok, header, renderTable } from "../utils.js";
+import { err, dim, warn, ok, header, renderTable } from "./utils.js";
 import {
   scanSessions,
   fmtAge,
   type ScannedSession,
-} from "../lib/session-scan.js";
-import { searchHistory, HISTORY_FILE, type SessionMatch } from "../lib/history-search.js";
-import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "../lib/aibroker-client.js";
+} from "./session-scan.js";
+import { searchHistory, HISTORY_FILE, type SessionMatch } from "./history-search.js";
+import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "./aibroker-client.js";
 import { basename } from "node:path";
-import { launchInDir, resumeOfferBlock, resumeRouteFor } from "../lib/launch.js";
+import { launchInDir, resumeOfferBlock, resumeRouteFor } from "./launch.js";
 import {
   buildDeduped,
   normalizeName,
@@ -38,7 +38,7 @@ import {
   renderDedupedSessions,
   type UnifiedSession,
   type RegisteredProject,
-} from "../lib/dedup-sessions.js";
+} from "./dedup-sessions.js";
 
 // ---------------------------------------------------------------------------
 // Launch session (disk-based)

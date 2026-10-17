@@ -54,7 +54,7 @@ import { cmdClearNames } from "./commands/session/clear-names.js";
 import { cmdList as cmdNotesList } from "./commands/session/commands.js";
 import { resolveIdentifier } from "../cli2/impl/project/helpers.js";
 import { cmdFind } from "./commands/find.js";
-import { cmdMain } from "./commands/main-resolver.js";
+import { cmdMain } from "../cli2/lib/main-resolver.js";
 import { cmdPick } from "./commands/pick.js";
 import { SHELL_INIT } from "../cli2/lib/shell-init.js";
 import { runCd } from "../cli2/commands/lifecycle/cd.js";

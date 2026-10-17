@@ -3,7 +3,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { mergeSettings } from "../../../../cli/commands/settings-manager.js";
+import { mergeSettings } from "../../../lib/settings-manager.js";
 import { c, line, section, type Rl, prompt, promptYesNo } from "../utils.js";
 
 export async function stepDaName(rl: Rl): Promise<string> {

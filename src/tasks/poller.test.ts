@@ -728,7 +728,7 @@ describe("parking a task that cannot be dispatched", () => {
     notify.mockClear();
     pailot.mockClear();
     vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
-    vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
+    vi.doMock("../cli2/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
   });
 
   function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
@@ -899,7 +899,7 @@ describe("a parked task alerts PAILot on the transition", () => {
     notify.mockClear();
     pailot.mockClear();
     vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
-    vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
+    vi.doMock("../cli2/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
   });
 
   const MISSING_ROOT = "project_root_missing: /Users/x/old-name which does not exist";

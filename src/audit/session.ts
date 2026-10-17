@@ -9,7 +9,7 @@ import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseSessionUsage, totalUsageTokens, type SessionUsageReport } from "./session-usage.js";
-import { encodeDir } from "../cli/utils.js";
+import { encodeDir } from "../cli2/lib/utils.js";
 import { firstTurnBreakdown, type FirstTurnBreakdown } from "./first-turn.js";
 import { loadConfig } from "../daemon/config.js";
 import { deriveSessionTrigger, type WindowSource, type SessionTriggerSource } from "./context-trigger.js";

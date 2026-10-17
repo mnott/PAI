@@ -48,9 +48,9 @@ import {
 import { STATE_FILE as schedulerStatePath, migrateSchedulerState } from "../../tasks/poller.js";
 import { migrateIdentityFile } from "../../memory/wakeup.js";
 import { migrateScanConfig } from "./registry/scan.js";
-import { oldBackupsDir, backupsDirPath } from "../../cli/commands/backup.js";
+import { oldBackupsDir, backupsDirPath } from "../commands/lifecycle/backup.js";
 import { defaultVaultPath, oldDefaultVaultPath, migrateObsidianVaultDir } from "../../obsidian/sync/generate.js";
-import { getConfigObsidianVaultPathRaw, saveVaultPath as saveObsidianVaultPath } from "../../cli/commands/obsidian.js";
+import { getConfigObsidianVaultPathRaw, saveVaultPath as saveObsidianVaultPath } from "../lib/obsidian.js";
 import { migrateAgentsDir, migrateCommandsDir, type MigrateContentDirResult } from "../../config/adapter-content.js";
 import {
   whisperRulesPath,
