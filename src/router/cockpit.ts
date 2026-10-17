@@ -365,14 +365,15 @@ export function parseWindow(q: string | null): CockpitWindow {
 export type LimitsSource = Pick<LimitsCache, "get">;
 
 /** Local model servers as the SYSTEM panel shows them (from the limits poll). */
-export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "served" | "prefixCache" | "prefixCacheAgeSec">> {
+export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "decodeTokPerSec" | "served" | "prefixCache" | "prefixCacheAgeSec">> {
   return limits
     .filter((l) => l.kind === "local")
-    .map(({ provider, up, rssMb, tokensPerSec, served, prefixCache, prefixCacheAgeSec }) => ({
+    .map(({ provider, up, rssMb, tokensPerSec, decodeTokPerSec, served, prefixCache, prefixCacheAgeSec }) => ({
       provider,
       up,
       rssMb,
       tokensPerSec,
+      decodeTokPerSec,
       ...(served ? { served } : {}),
       ...(prefixCache ? { prefixCache } : {}),
       ...(prefixCache && prefixCacheAgeSec ? { prefixCacheAgeSec } : {}),
