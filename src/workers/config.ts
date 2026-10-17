@@ -103,6 +103,11 @@ export interface WorkerProvider {
   /** Extra environment variables for runs through this provider (string values). */
   env: Record<string, string>;
   note?: string;
+  /**
+   * `false` keeps a loopback provider on its direct URL; unset routes it
+   * through the local router (shared prefix-cache fixes, usage accounting).
+   */
+  router?: boolean;
   /** Contract addendum file for this provider; default <PAI_HOME>/contracts/<name>.md. */
   contract?: string;
   /**
@@ -742,6 +747,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(modelTiers ? { modelTiers } : {}),
     env,
     ...(str(p.note) ? { note: str(p.note) } : {}),
+    ...(p.router === false ? { router: false } : {}),
     ...(str(p.contract) ? { contract: str(p.contract) } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),

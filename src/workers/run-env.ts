@@ -208,3 +208,28 @@ export function pinnedSettingsArgs(
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
   return (env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, bin)));
 }
+
+export function isLoopbackProvider(p: WorkerProvider): boolean {
+  return isLoopbackUrl(p.baseUrl);
+}
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname;
+    return h === "127.0.0.1" || h === "localhost" || h === "[::1]" || h === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a run through `provider` takes the router: loopback (local model
+ * server) providers do, so the router's prefix-cache fixes (billing-header
+ * strip, folded trailing system messages) apply; `router: false` or a down
+ * router keeps the direct URL. Native and remote providers are untouched.
+ */
+export function routeLoopbackViaRouter(provider: WorkerProvider, routerUp: boolean): boolean {
+  if (provider.native || provider.protocol === "openai") return false;
+  if (provider.router === false || !isLoopbackUrl(provider.baseUrl)) return false;
+  return routerUp;
+}

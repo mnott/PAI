@@ -60,7 +60,8 @@ import {
   resolveModelCapability,
   type WorkerProvider,
 } from "./config.js";
-import { buildRunEnv, claudeCommand } from "./run-env.js";
+import { buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
+import { probeRouter } from "../router/supervisor.js";
 import { detectCurrentModel } from "./launch.js";
 
 export { buildRunEnv } from "./run-env.js";
@@ -1382,7 +1383,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
     proxyUrl = `${base}/${target.providerName}`;
   }
-  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName);
+  let viaRouter: boolean | undefined;
+  if (!proxyUrl && !target.provider.native && isLoopbackProvider(target.provider) && target.provider.router !== false) {
+    viaRouter = routeLoopbackViaRouter(target.provider, await probeRouter());
+    if (!viaRouter) process.stderr.write(`pai: router down, ${target.providerName} runs direct (no router prefix fix)\n`);
+  }
+  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter);
 
   const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo
