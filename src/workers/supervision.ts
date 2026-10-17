@@ -55,7 +55,8 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./status.js";
-import { itermForClaudeSession } from "./scope.js";
+import { readWorkersSection } from "./config.js";
+import { itermForClaudeSession, itermUuid } from "./scope.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
 import {
@@ -434,10 +435,11 @@ export type PushFn = (logDir: string, target: PushTarget, ev: SupervisionEvent) 
  * reported as not-delivered so only the event file carries the event.
  */
 export const aibrokerPush: PushFn = async (logDir, target, ev) => {
-  const iterm =
+  const raw =
     target.iterm ?? (target.claudeSession ? itermForClaudeSession(logDir, target.claudeSession) : null);
+  const iterm = raw ? bareItermUuid(raw) : null;
   if (!iterm) {
-    logSkip(logDir, ev.session, ev, "no pane resolved for the owning session");
+    logSkip(logDir, ev.session, ev, raw ? `target  is not an iTerm2 session UUID` : "no pane resolved for the owning session");
     return false;
   }
   try {
@@ -688,6 +690,18 @@ export function paneForSession(logDir: string, session: string, owner?: WorkerSt
   return itermForClaudeSession(logDir, session);
 }
 
+const ITERM_UUID_RE = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
+/**
+ * The bare iTerm2 session UUID of a pane id ("w5t0p0:UUID" loses its prefix), or
+ * null when what remains is not a UUID. AIBroker send_to_session also takes an
+ * index or a name substring, which can match several sessions — never hand it one.
+ */
+export function bareItermUuid(term: string): string | null {
+  const id = itermUuid(term);
+  return ITERM_UUID_RE.test(id) ? id : null;
+}
+
 /** Record that an alert was not delivered because its target could not be resolved. */
 function logSkip(logDir: string, session: string, ev: SupervisionEvent, why: string): void {
   try {
@@ -713,12 +727,42 @@ function pointerText(n: number): string {
  * is never re-typed. Paused/finished supervisors and occupied input lines
  * type nothing and retry on the next check.
  */
+let pointerRunning = false;
+
+/** workers.supervision.pointer; any config trouble counts as off. */
+function pointerEnabled(): boolean {
+  try {
+    return readWorkersSection().workers.supervision.pointer === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function pointUndrained(
   logDir: string,
   state: SupervisionState,
   statuses: WorkerStatus[],
   now: Date,
-  deps: { type?: TypeFn; inputFree?: InputFreeFn } = {}
+  deps: { type?: TypeFn; inputFree?: InputFreeFn; enabled?: boolean } = {}
+): Promise<string[]> {
+  if (!(deps.enabled ?? pointerEnabled())) return [];
+  // ticks can overlap (a slow type/inputFree outlives the interval); a second pass would
+  // read the same undrained events before the first wrote its receipts and announce twice
+  if (pointerRunning) return [];
+  pointerRunning = true;
+  try {
+    return await pointPass(logDir, state, statuses, now, deps);
+  } finally {
+    pointerRunning = false;
+  }
+}
+
+async function pointPass(
+  logDir: string,
+  state: SupervisionState,
+  statuses: WorkerStatus[],
+  now: Date,
+  deps: { type?: TypeFn; inputFree?: InputFreeFn }
 ): Promise<string[]> {
   const type = deps.type ?? aibrokerType;
   const inputFree = deps.inputFree ?? aibrokerInputFree;
@@ -729,6 +773,7 @@ export async function pointUndrained(
     .filter((f) => f.endsWith(".events"))
     .map((f) => f.slice(0, -".events".length));
   const typed: string[] = [];
+  const typedPanes = new Set<string>(); // one notice per pane per pass, however many sessions map to it
   for (const session of sessions) {
     let lines: string[];
     try {
@@ -768,11 +813,17 @@ export async function pointUndrained(
     else due = [...stale, ...due];
     if (due.length === 0 && !summary) continue;
     const first = summary ? stale[0] : due[0];
-    const iterm = paneForSession(logDir, session, statuses.find((s) => s.id === first.worker));
-    if (!iterm) {
+    const pane = paneForSession(logDir, session, statuses.find((s) => s.id === first.worker));
+    if (!pane) {
       logSkip(logDir, session, first, "no pane resolved for the owning session");
       continue;
     }
+    const iterm = bareItermUuid(pane);
+    if (!iterm) {
+      logSkip(logDir, session, first, `target  is not an iTerm2 session UUID`);
+      continue;
+    }
+    if (typedPanes.has(iterm)) continue;
     try {
       if (!(await inputFree(iterm))) continue;
       const line = summary
@@ -789,6 +840,7 @@ export async function pointUndrained(
       pointered[ev.id] = now.getTime();
       appendPushReceipt(logDir, ev);
     }
+    typedPanes.add(iterm);
     typed.push(session);
   }
   for (const [id, t] of Object.entries(pointered)) if (now.getTime() - t > 86_400_000) delete pointered[id];

@@ -17,7 +17,7 @@ function worker(state: WorkerStatus["state"], rc: number | null = null): WorkerS
     rc,
     pid: 1,
     spawnerSession: "sess-1",
-    session: { id: "ITERM-UUID" },
+    session: { id: "AAAAAAAA-0000-4000-8000-000000000001" },
     updated: "2026-10-17 10:00:00",
     turns: 1,
   } as unknown as WorkerStatus;
@@ -46,6 +46,7 @@ describe("undrained alert pointer", () => {
       pointer: {
         type,
         inputFree: async () => o.free ?? true,
+        enabled: true,
       },
     }).then(() => type);
   };
@@ -53,7 +54,7 @@ describe("undrained alert pointer", () => {
   it("types the pointer once when undrained past 60 s", async () => {
     const type = await check(LATER);
     expect(type).toHaveBeenCalledTimes(1);
-    expect(type.mock.calls[0][0]).toBe("ITERM-UUID");
+    expect(type.mock.calls[0][0]).toBe("AAAAAAAA-0000-4000-8000-000000000001");
     expect(String(type.mock.calls[0][1])).toContain("1 worker alert pending");
     await check(new Date(LATER.getTime() + 30_000), { type });
     expect(type).toHaveBeenCalledTimes(1);

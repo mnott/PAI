@@ -488,7 +488,10 @@ export function startWorkerSupervisor(): void {
     return;
   }
 
+  let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {
+    if (!ticking) {
+      ticking = true;
     runSupervisionTick(workersLogDir(readWorkersSection().workers), {
       stallMs: stallMinutesFromEnv() * 60_000,
       thrashFails: thrashFailsFromEnv(),
@@ -503,7 +506,11 @@ export function startWorkerSupervisor(): void {
         process.stderr.write(
           `[pai-daemon] Supervision tick error: ${e instanceof Error ? e.message : String(e)}\n`
         );
+      })
+      .finally(() => {
+        ticking = false;
       });
+    };
     // reaper: follow panes of workers that ended > 60 s ago (any ending path)
     const logDir = workersLogDir(readWorkersSection().workers);
     closeEndedPanes(logDir, (wid) => paneReapable(loadStatus(logDir, wid)), false)
