@@ -6,6 +6,12 @@
  */
 import { parseCommand } from "./worker-guard.js";
 
+/** Guard reason texts; tool-errors.ts builds its guard-redirect rule from these. */
+export const NODE_ON_TS_PREFIX = "node cannot load TypeScript source";
+export const NODE_ON_TS_REASON = NODE_ON_TS_PREFIX + ". Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
+export const IGNORED_PATH_PREFIX = "Notes/ and other ignored paths stay untracked";
+export const IGNORED_PATH_REASON = IGNORED_PATH_PREFIX + "; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+
 /** Returns exactly "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`." when any segment (after prefix strip) is:
  * - `node` (not `tsx`, not `npx tsx`) whose positional (non-flag) first argument ends in `.ts` or `.tsx` or `.mts`;
  * - `node --test` (flag --test present) with any argument ending in `.ts`;
@@ -38,7 +44,7 @@ export function nodeOnTypeScriptReason(command: string): string | null {
         const args = words.slice(i + 2);
         for (const arg of args) {
           if (arg.endsWith(".ts") && !arg.endsWith(".mjs")) {
-            return "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
+            return NODE_ON_TS_REASON;
           }
         }
         continue;
@@ -48,7 +54,7 @@ export function nodeOnTypeScriptReason(command: string): string | null {
       if (words[i + 1] === "-e" || words[i + 1] === "--eval" || words[i + 1] === "-p") {
         const code = words[i + 2];
         if (code && (/(?:require|import)\s*\(\s*['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code) || /from\s+['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code))) {
-          return "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
+          return NODE_ON_TS_REASON;
         }
         continue;
       }
@@ -59,7 +65,7 @@ export function nodeOnTypeScriptReason(command: string): string | null {
         if (arg.endsWith(".ts") || arg.endsWith(".tsx") || arg.endsWith(".mts")) {
           // Skip cases that are allowed
           if (arg.endsWith(".mjs") || arg.endsWith(".js")) continue;
-          return "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
+          return NODE_ON_TS_REASON;
         }
       }
     }
@@ -161,11 +167,11 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
       for (const arg of args) {
         // Check for -f, --force flags
         if (arg === "-f" || arg === "--force") {
-          return "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+          return IGNORED_PATH_REASON;
         }
         // Check for combined flags like -fA, -Af
         if (arg.length > 1 && arg.startsWith("-") && arg.includes("f") && !arg.includes("A") && !arg.includes("u") && !arg.includes("p")) {
-          return "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+          return IGNORED_PATH_REASON;
         }
       }
 
@@ -179,7 +185,7 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
 
         // Check if path is ignored
         if (ignoredPath(arg, isIgnored)) {
-          return "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+          return IGNORED_PATH_REASON;
         }
       }
     }

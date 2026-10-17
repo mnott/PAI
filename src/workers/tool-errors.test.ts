@@ -161,6 +161,12 @@ describe("classification", () => {
       expect(classifyToolError(r).hint).toMatch(/guard redirect/);
     }
   });
+  it("Notes/ force-add denial is a guard redirect, not a harness error", () => {
+    const raw = "PreToolUse:Bash hook error: Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+    const r = inp(rec("w1", NOW, raw, "Bash"), "git add -f Notes/three-tier-log.md && git commit -qm x");
+    expect(classifyToolError(r).cls).toBe("benign");
+    expect(classifyToolError(r).hint).toMatch(/guard redirect/);
+  });
   it("harness errors alert at the usual thresholds", () => {
     for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
       expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
