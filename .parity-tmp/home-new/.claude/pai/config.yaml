@@ -1,5 +1,0 @@
-# Who "me" is — addresses that count as the user's own. Empty by default and never guessed: nothing is self-addressed until this is set.
-identity:
-  selfEmails: []
-  deliverTo: me@example.com
-search: {}

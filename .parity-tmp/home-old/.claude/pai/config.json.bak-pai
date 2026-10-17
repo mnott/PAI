@@ -1,8 +1,0 @@
-{
-  "identity": {
-    "selfEmails": [
-      "me@example.com"
-    ],
-    "deliverTo": "me@example.com"
-  }
-}
