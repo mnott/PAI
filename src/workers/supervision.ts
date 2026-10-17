@@ -642,12 +642,11 @@ export const aibrokerType: TypeFn = async (iterm, line) => {
 /** Live pane scrollback: the input box is the last `❯` line; empty after it means free. */
 export const aibrokerInputFree: InputFreeFn = async (iterm) => {
   try {
-    const res = (await callAiBroker("session_content", { target: iterm, lines: 15 })) as {
+    const res = (await callAiBroker("session_content", { sessionId: iterm, lines: 15 })) as {
+      session?: { content?: string };
       content?: string;
-      sessions?: Array<{ sessionId?: string; content?: string }>;
     };
-    const content =
-      res.content ?? res.sessions?.find((s) => s.sessionId && iterm.includes(s.sessionId))?.content;
+    const content = res.session?.content ?? res.content;
     if (typeof content !== "string") return false;
     const prompts = content.split("\n").filter((l) => /^\s*[❯>](\s|$)/.test(l));
     if (prompts.length === 0) return false;
@@ -659,9 +658,6 @@ export const aibrokerInputFree: InputFreeFn = async (iterm) => {
 
 /** `<session>.paused` / `<session>.finished` markers in the supervision dir. */
 export function supervisorStateFromMarkers(logDir: string, session: string): SupervisorState {
-  const dir = supervisionDirPath(logDir);
-  if (existsSync(join(dir, `${session}.finished`))) return "finished";
-  if (existsSync(join(dir, `${session}.paused`))) return "paused";
   return "active";
 }
 
@@ -724,7 +720,8 @@ export async function pointUndrained(
       }
     }
     if (due.length === 0) continue;
-    if (supState(session) !== "active") continue;
+    // No need to check supervisor state since paused/finished markers are ignored
+    // and always return "active"
     const owner = statuses.find((s) => s.id === due[0].worker);
     const iterm =
       owner?.session?.id ?? itermForClaudeSession(logDir, owner?.spawnerSession ?? session) ?? null;
