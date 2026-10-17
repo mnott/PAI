@@ -355,3 +355,40 @@ describe("worktree cwd", () => {
     expect(r?.new).toBe(fixed);
   });
 });
+describe("Read of a not-yet-existing file and wrong cd prefix", () => {
+  const R = mkdtempSync(join(tmpdir(), "cd-"));
+  const C = `${R}/logs/workers/worktrees/id1`;
+  const WRONG = `${R}/logs/worktrees/id1`;
+  mkdirSync(`${C}/src`, { recursive: true });
+  const dirs = fs(C, `${C}/src`, `${C}/src/workers`);
+
+  it("ReadMissingFileDenied: dropped segment, file absent, folder present", () => {
+    const r = repairPath(read(`${WRONG}/src/workers/repeat-loop.ts`, C), W, dirs)!;
+    expect(r.new).toBe(`${C}/src/workers/repeat-loop.ts`);
+    const out = JSON.parse(renderRepair(r, "Read")).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("deny");
+    expect(out.permissionDecisionReason).toContain(`Use exactly: ${C}/src/workers/repeat-loop.ts`);
+  });
+
+  it("ReadExistingFileStillRewritten: allow with updatedInput", () => {
+    const F = `${C}/src/workers/repeat-loop.ts`;
+    const r = repairPath(read(`${WRONG}/src/workers/repeat-loop.ts`, C), W, fs(C, F))!;
+    expect(r.missing).toBeUndefined();
+    expect(JSON.parse(renderRepair(r, "Read")).hookSpecificOutput.permissionDecision).toBe("allow");
+  });
+
+  it("ReadForeignMissingUntouched", () => {
+    expect(repairPath(read("/etc/nothing/here.ts", C), W, dirs)).toBeNull();
+  });
+
+  it("BashCdWrongPrefixDenied in a normal worktree, with the corrected command", () => {
+    const input = { tool_name: "Bash", cwd: C, tool_input: { command: `cd ${WRONG} && touch src/a.ts` } };
+    const reason = denyReason(input, W)!;
+    expect(reason).toContain("already in your worktree");
+    expect(reason).toContain(`cd ${C} && touch src/a.ts`);
+  });
+
+  it("BashCdToExistingDirAllowed", () => {
+    expect(denyReason({ tool_name: "Bash", cwd: C, tool_input: { command: "cd /tmp && ls" } }, W)).toBeNull();
+  });
+});
