@@ -54,7 +54,6 @@ describe("argv reconstruction", () => {
   it("memory search keeps positionals, values and --no-rerank", () => {
     const cmd = leaf(["memory", "search"]);
     const p = parseArgs(cmd, ["hello", "--project", "p1", "--limit", "5", "--no-rerank", "--recency", "0"]);
-    expect(argvFromContext(cmd, p)).toEqual(["hello", "--project", "p1", "--limit", "5", "--recency", "0", "--no-rerank"].sort((a, b) => 0) && argvFromContext(cmd, p));
     const argv = argvFromContext(cmd, p);
     expect(argv[0]).toBe("hello");
     expect(argv).toEqual(expect.arrayContaining(["--project", "p1", "--limit", "5", "--no-rerank", "--recency", "0"]));

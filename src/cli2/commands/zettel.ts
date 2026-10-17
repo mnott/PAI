@@ -56,7 +56,7 @@ export const zettelCommand: CommandDef = {
         { name: "depth", type: "number", value: "N", default: 2, summary: "How far to expand around matching notes" },
         limit(15, "notes to include"),
       ],
-      examples: ['pai zettel converse "what did we decide about caching?" --vault-project-id 3'],
+      examples: ['pai zettel converse "what did we decide about caching?" --vault-project-id 3', 'pai zettel converse "why did the build break" --vault-project-id 3 --depth 1'],
       seeAlso: ["pai memory search"],
     }),
     z(["themes"], {
