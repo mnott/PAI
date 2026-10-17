@@ -76,7 +76,7 @@ export function decideOrchestratorBash(command: string): EditGateDecision {
   return {
     decision: "block",
     reason:
-      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under ${SCRATCH_DIR}/ (allowed).",
+      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under .pai-scratch/ (allowed).",
   };
 }
 
