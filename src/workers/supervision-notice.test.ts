@@ -21,7 +21,7 @@ function ev(i: number, ts: Date, session = "sess-1"): SupervisionEvent {
 
 const owner = {
   id: "w-ptr", label: "ptr", state: "failed", rc: 1, pid: 1, spawnerSession: "sess-1",
-  session: { id: "ITERM" }, updated: "2026-10-17 10:00:00", turns: 1,
+  session: { id: "AAAAAAAA-0000-4000-8000-000000000001" }, updated: "2026-10-17 10:00:00", turns: 1,
 } as unknown as WorkerStatus;
 
 describe("pointer notices are delivery", () => {
@@ -37,7 +37,7 @@ describe("pointer notices are delivery", () => {
   const tick = (at: Date, type: ReturnType<typeof vi.fn<TypeFn>>) =>
     runSupervisionTick(dir, {
       now: at, isAlive: () => true, push: async () => false, statuses: [owner],
-      pointer: { type, inputFree: async () => true },
+      pointer: { type, inputFree: async () => true, enabled: true },
     });
   const later = (ms: number) => new Date(NOW.getTime() + ms);
 

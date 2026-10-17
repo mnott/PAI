@@ -242,6 +242,11 @@ export interface WorkersRoutingConfig {
   budgetWalls: Record<string, number>;
 }
 
+/** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
+export interface WorkersSupervisionConfig {
+  pointer: boolean;
+}
+
 /** Sub-worker caps: how deep the worker tree may grow, how wide per parent. */
 export interface WorkersTreeConfig {
   /** Maximum nesting depth of sub-workers (top-level = 0). */
@@ -417,6 +422,8 @@ export interface WorkersConfig {
   routing: WorkersRoutingConfig;
   /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
+  /** Worker supervision options (workers.supervision). */
+  supervision: WorkersSupervisionConfig;
   /** Worker session pool (workers.pool); default off. */
   pool: WorkersPoolConfig;
   /**
@@ -547,6 +554,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
+    supervision: { pointer: false },
     pool: { ...DEFAULT_POOL },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
@@ -990,6 +998,16 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
+  let supervision: WorkersSupervisionConfig = { pointer: false };
+  if (w.supervision !== undefined) {
+    if (typeof w.supervision !== "object" || w.supervision === null || Array.isArray(w.supervision)) {
+      bad(".supervision", "must be an object");
+    }
+    const sv = w.supervision as Record<string, unknown>;
+    if (sv.pointer !== undefined && typeof sv.pointer !== "boolean") bad(".supervision.pointer", "must be a boolean");
+    supervision = { pointer: sv.pointer === true };
+  }
+
   let tree = { ...DEFAULT_TREE };
   if (w.tree !== undefined) {
     if (typeof w.tree !== "object" || w.tree === null || Array.isArray(w.tree)) {
@@ -1153,6 +1171,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     logDir: str(w.logDir) || d.logDir,
     routing,
     tree,
+    supervision,
     pool,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
@@ -1237,6 +1256,7 @@ export function writeWorkersSection(
         logDir: workers.logDir,
         routing: workers.routing,
         tree: workers.tree,
+        supervision: workers.supervision,
         pool: workers.pool,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
