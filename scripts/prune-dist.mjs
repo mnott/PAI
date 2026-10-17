@@ -45,7 +45,6 @@ const DIST = resolve(process.argv[2] ?? "dist");
 const ENTRIES = [
   "index.mjs",
   "cli/index.mjs",
-  "cli/program.mjs",
   "daemon/index.mjs",
   "daemon-mcp/index.mjs",
 ].map((p) => join(DIST, p));

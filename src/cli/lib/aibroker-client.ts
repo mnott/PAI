@@ -1,1 +1,374 @@
-export * from "../../cli2/lib/aibroker-client.js";
+/**
+ * aibroker-client.ts — Lightweight IPC client for AIBroker daemon.
+ *
+ * Connects to the AIBroker Unix Domain Socket, sends a JSON-RPC request,
+ * and reads a single newline-terminated JSON response. No class needed —
+ * just a thin async function matching the WatcherClient protocol.
+ *
+ * Socket path: /tmp/aibroker.sock (default; override via AIBROKER_SOCKET env).
+ */
+
+import { connect } from "node:net";
+import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { aibrokerSocketPath } from "../../runtime-paths.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight session metadata returned by the AIBroker `sessions` IPC method.
+ * Does NOT include scrollback content — use `session_content` for that.
+ */
+export interface AiBrokerSessionMeta {
+  index: number;
+  sessionId: string;
+  /** iTerm2 tab title or profile name */
+  name: string;
+  /** PAI session name set via /Name; null for bare shells */
+  paiName: string | null;
+  atPrompt: boolean;
+  /** "claude" for Claude Code panes, "shell" for bare terminals */
+  kind: "claude" | "shell";
+  /** Whether this is the currently focused pane */
+  active: boolean;
+  /** Last user prompt seen in scrollback (only populated by fetchLiveSessionsWithPrompts) */
+  lastPrompt?: string;
+}
+
+interface AiBrokerSessionsResult {
+  sessions: AiBrokerSessionMeta[];
+}
+
+// ---------------------------------------------------------------------------
+// Core call
+// ---------------------------------------------------------------------------
+
+// AIBROKER_SOCKET stays first: it is AIBroker's own variable and a user who has
+// set it means it. The fallback goes through runtime-paths so the test guard
+// can redirect it — writing to a live socket from a test is the same hazard as
+// writing to live user state, and this one is not even ours.
+const DEFAULT_SOCKET = process.env.AIBROKER_SOCKET ?? aibrokerSocketPath();
+
+/**
+ * How long to wait for `send_to_session`, which must exceed the server's own
+ * ack window or the caller gives up while the callee is still working.
+ *
+ * AIBroker waits up to SEND_ACK_TIMEOUT_MS (15s) for the submit confirmation —
+ * the text leaving the input line — before answering. The generic client
+ * timeout is 8s. So every send needing 8-15s to confirm reported
+ * "AIBroker IPC call timed out" while succeeding, and the handler's eventual
+ * `delivered: true` was written into a socket nobody was reading any more.
+ *
+ * Measured on `pai pause all` across 15 sessions: 9 reported failed, 8 of them
+ * verifiably paused. A caller's deadline shorter than the callee's is not a
+ * tuning question, it is a guaranteed false negative on every slow success.
+ */
+const SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * Call an AIBroker IPC method and return the result.
+ *
+ * Resolves with the `result` field of a successful response.
+ * Rejects if the socket is not available, the call times out, or the
+ * daemon returns an error.
+ *
+ * @param method   IPC method name (e.g. "session_content", "send_to_session")
+ * @param params   Method parameters object
+ * @param timeoutMs  Connection + response timeout in milliseconds (default: 8 000)
+ */
+export function callAiBroker(
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs = 8_000
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const socketPath = DEFAULT_SOCKET;
+    let done = false;
+    let buffer = "";
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function finish(err: Error | null, value?: Record<string, unknown>): void {
+      if (done) return;
+      done = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      try {
+        socket.destroy();
+      } catch {
+        /* ignore */
+      }
+      if (err) reject(err);
+      else resolve(value!);
+    }
+
+    const socket = connect(socketPath, () => {
+      const request = {
+        id: randomUUID(),
+        sessionId: process.env.TERM_SESSION_ID ?? "pai-cli",
+        method,
+        params,
+      };
+      const itermId = process.env.ITERM_SESSION_ID;
+      if (itermId) Object.assign(request, { itermSessionId: itermId });
+      socket.write(JSON.stringify(request) + "\n");
+    });
+
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const nl = buffer.indexOf("\n");
+      if (nl === -1) return;
+      const line = buffer.slice(0, nl);
+
+      let response: { ok: boolean; result?: Record<string, unknown>; error?: string };
+      try {
+        response = JSON.parse(line);
+      } catch {
+        finish(new Error(`AIBroker IPC parse error: ${line.slice(0, 120)}`));
+        return;
+      }
+
+      if (!response.ok) {
+        finish(new Error(response.error ?? "AIBroker IPC call failed"));
+      } else {
+        finish(null, response.result ?? {});
+      }
+    });
+
+    socket.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "ENOENT" || e.code === "ECONNREFUSED") {
+        finish(new Error("AIBroker not running (socket not found)."));
+      } else {
+        finish(e);
+      }
+    });
+
+    socket.on("end", () => {
+      if (!done) finish(new Error("AIBroker IPC connection closed before response."));
+    });
+
+    timer = setTimeout(
+      () => finish(new Error("AIBroker IPC call timed out.")),
+      timeoutMs
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Typed helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch all live iTerm2 session metadata from AIBroker via the `sessions` method.
+ * Returns an empty array if AIBroker is not running.
+ *
+ * This is metadata-only (no scrollback). It is faster than `session_content`
+ * and the correct source for listing/routing purposes.
+ */
+export async function fetchLiveSessions(): Promise<AiBrokerSessionMeta[]> {
+  try {
+    const result = await callAiBroker("sessions", {});
+    const sessions = (result as unknown as AiBrokerSessionsResult).sessions;
+    if (!Array.isArray(sessions)) return [];
+    return sessions;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch live sessions WITH the last user prompt extracted from terminal scrollback.
+ *
+ * Heavier than `fetchLiveSessions` (one IPC call returning full content for
+ * every session), but yields a `lastPrompt` field useful for the unified
+ * listing.
+ */
+export async function fetchLiveSessionsWithPrompts(): Promise<
+  (AiBrokerSessionMeta & { lastPrompt?: string })[]
+> {
+  // Get the basic metadata first (always works, fast).
+  const metas = await fetchLiveSessions();
+  if (metas.length === 0) return [];
+
+  // Then enrich with last prompts via session_content (single call, all sessions).
+  try {
+    const contentResult = (await callAiBroker("session_content", { lines: 60 })) as {
+      sessions?: Array<{ sessionId: string; content?: string }>;
+    };
+    const contentMap = new Map<string, string>();
+    for (const s of contentResult.sessions ?? []) {
+      if (s.sessionId && typeof s.content === "string") {
+        contentMap.set(s.sessionId, s.content);
+      }
+    }
+    return metas.map((m) => {
+      const content = contentMap.get(m.sessionId);
+      const lastPrompt = content ? extractLastUserPrompt(content) : undefined;
+      return { ...m, lastPrompt };
+    });
+  } catch {
+    return metas.map((m) => ({ ...m }));
+  }
+}
+
+/**
+ * Extract the most-recent user prompt from a terminal scrollback string.
+ *
+ * Claude Code's TUI shows user input lines prefixed with `❯ `. We scan from
+ * the bottom up, skipping the active input box (between the two horizontal
+ * rule lines) and the statusline footer.
+ */
+function extractLastUserPrompt(content: string): string | undefined {
+  const lines = content.split("\n");
+  // Walk bottom-up looking for the most recent user-typed line.
+  // Claude Code marks user prompts with one of these prefixes:
+  //   ❯ <text>      (current/recent prompt in the input box or scrollback)
+  //   > <text>      (older variant)
+  // The line MUST have non-empty content after the prompt symbol.
+  // Skip the active input box (often empty `❯`) and statusline (👋 PAI CC...).
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    // Match ❯ or > (followed by space) then content
+    const m = line.match(/^[❯>]\s+(.+?)\s*$/);
+    if (!m) continue;
+    let text = m[1].trim();
+    if (!text) continue;
+    // Skip lines that are just box-drawing or known UI noise
+    if (/^[─━═]+/.test(text)) continue;
+    if (text.startsWith("👋")) continue;
+    // Strip ANSI escape sequences that may leak in
+    text = text.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "").trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+/**
+ * Send text to a specific AIBroker session by its iTerm2 sessionId.
+ *
+ * The wire keys are `target` and `message`, and neither is negotiable — the
+ * handler rejects anything else with "target is required" before it looks at
+ * the rest. This was written as `{ target: sessionId, message: text }`, which is the shape of
+ * THIS function's own parameters rather than the shape of the IPC, so every
+ * call failed identically. `pai pause all` was the only caller, so the live
+ * path had never once executed: its --dry-run branch returns before sending,
+ * and that was the only branch anyone had exercised.
+ *
+ * The caller must NOT terminate `text` with a newline. The transport sends with
+ * `enter: true` and appends the Enter itself, so a trailing \n submits twice —
+ * once for the text and once for an empty prompt.
+ */
+export async function sendToSession(
+  sessionId: string,
+  text: string,
+  timeoutMs = SEND_TIMEOUT_MS,
+  opts?: { noReply?: boolean }
+): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
+  try {
+    const params: Record<string, unknown> = { target: sessionId, message: text };
+    if (opts?.noReply) params.noReply = true;
+    await callAiBroker("send_to_session", params, timeoutMs);
+    return { ok: true };
+  } catch (e) {
+    const error = String(e);
+    const timedOut = /timed out/i.test(error);
+    // A timeout is NOT a delivery failure, and conflating the two is expensive.
+    // The handler deposits into the target's mailbox BEFORE it waits for the
+    // submit ack, so a send that times out has still been delivered — only the
+    // confirmation is missing. Reported as a plain failure, the natural response
+    // is to send again, which is how `pai pause all` produced nested
+    // "carried forward" blocks in checkpoints that had already been written.
+    // With noReply there is no mailbox deposit at all, so a timeout there really
+    // is an unknown/failed delivery, not just a missing confirmation.
+    if (opts?.noReply && timedOut) return { ok: false, timedOut: true, error };
+    return { ok: false, error, timedOut };
+  }
+}
+
+/**
+ * Switch iTerm2 focus to the session identified by `target`.
+ *
+ * `target` can be a sessionId, paiName, or tab index number (as string).
+ * After switching, activates the iTerm2 application itself so the window
+ * comes to the foreground.
+ *
+ * Returns { ok: true } if AIBroker confirmed the switch, or
+ * { ok: false, error } if AIBroker is not running or the session was not found.
+ */
+export async function switchToSession(target: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await callAiBroker("switch", { target });
+    // Bring iTerm2 itself to the foreground (the IPC only selects the tab)
+    if (process.platform === "darwin") {
+      const { spawnSync } = await import("node:child_process");
+      spawnSync("osascript", ["-e", 'tell application "iTerm" to activate'], {
+        stdio: "ignore",
+      });
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/**
+ * Bring the iTerm2 tab containing a specific session to the front.
+ *
+ * This is the mechanism AIBroker's screenshot path uses: match the session by
+ * its iTerm2 session id (the `sessionId` returned by `fetchLiveSessions`, which
+ * is iTerm's own `id of session`), then `select` its window, tab, and session.
+ * Unlike the `switch` IPC (which only flips an internal index and never touches
+ * iTerm), this actually reveals the tab.
+ */
+/** Reduce "iterm:w0t1p0:UUID" / "w0t1p0:UUID" / "UUID" to the bare iTerm unique id. */
+export function itermUniqueId(raw: string): string {
+  const noPrefix = raw.replace(/^iterm:/i, "").trim();
+  const i = noPrefix.lastIndexOf(":");
+  return (i >= 0 ? noPrefix.slice(i + 1) : noPrefix).replace(/[^A-Za-z0-9-]/g, "");
+}
+
+/**
+ * AppleScript that selects the iTerm2 session whose unique id matches. Looks
+ * sessions up by id, never by window/tab index (panes are auto-closed, so
+ * indices go stale mid-iteration); each window is guarded individually.
+ */
+export function buildRevealScript(uniqueId: string): string {
+  return `tell application "iTerm2"
+  repeat with w in (get windows)
+    try
+      repeat with t in (get tabs of w)
+        repeat with s in (get sessions of t)
+          if (unique id of s) is "${uniqueId}" then
+            select w
+            select t
+            select s
+            activate
+            return "ok"
+          end if
+        end repeat
+      end repeat
+    end try
+  end repeat
+  return "not-found"
+end tell`;
+}
+
+export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
+  if (process.platform !== "darwin") return { ok: false, error: "iTerm2 is macOS only" };
+  const id = itermUniqueId(itermSessionId);
+  if (!id) return { ok: false, error: "no iTerm session id on record" };
+  const script = buildRevealScript(id);
+  try {
+    const r = spawnSync("osascript", ["-e", script], { encoding: "utf8" });
+    if (r.status !== 0) {
+      return { ok: false, error: (r.stderr || "osascript failed").trim() };
+    }
+    if ((r.stdout ?? "").trim() === "ok") return { ok: true };
+    return { ok: false, error: "That session is no longer open in iTerm." };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}

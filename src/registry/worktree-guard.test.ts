@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
-import { upsertProject } from "../cli2/impl/registry/utils.js";
+import { upsertProject } from "../cli/impl/registry/utils.js";
 import { ensurePaiMarker } from "./pai-marker.js";
 import { isLinkedWorktree, mainRepoOf, worktreeReason, pruneWorktreeProjects, unregistrableReason } from "./registrable.js";
 
