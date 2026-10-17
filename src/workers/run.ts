@@ -1302,7 +1302,7 @@ export interface ExecuteArgs {
  * host and runs as the next user turn of a warm claude slot, so the
  * provider prompt cache carries over. Returns the exit code when the task
  * ran pooled; null sends the caller down the normal fresh-spawn path (host
- * unreachable, or the task needs a setup a slot cannot provide — worktree,
+ * unreachable, or the task needs a setup a slot cannot provide — worktree on a non-loopback provider,
  * own system prompt, MCP, another cwd, native Anthropic).
  */
 export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {

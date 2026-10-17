@@ -30,8 +30,11 @@
  * Cwd: a slot process has ONE cwd, fixed at spawn, and the slot key is
  * (provider, model, cwd): a run in /repo pools into a slot living in /repo,
  * exactly where a fresh spawn would have run. Runs that need their own
- * worktree (writable tools in a git cwd, the default) cannot pool: the
- * worktree is a new directory per run.
+ * worktree (writable tools in a git cwd, the default) pool only on loopback
+ * providers, through slot worktrees (slots.ts): each slot owns ONE persistent
+ * worktree that is the process cwd for its whole life, every task gets a new
+ * branch in it and a fresh conversation, so the system prompt (which names the
+ * cwd) is byte-identical across tasks and stays in the server's prefix cache.
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";

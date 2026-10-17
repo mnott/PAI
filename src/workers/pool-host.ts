@@ -503,6 +503,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
    * worktree serves the task's repo and is not busy. Each slot number owns one
    * worktree dir (slots.ts), which is the claude process's cwd for its whole
    * life — the system prompt stays byte-identical from task to task.
+   * The process ends after each task (fresh conversation); the dir and its cached system prompt persist.
    */
   const acquireSlotWorktree = async (
     providerName: string,
@@ -855,6 +856,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     state.tasksServed += 1;
     release(session);
     if (session.dead) dropSlot(slotKey(task.provider, task.model, workDir), "slot exited after task");
+    // a worktree task gets a fresh conversation: the process ends, the next task spawns a new one in the same slot dir
+    else if (prep) dropSlot(slotKey(task.provider, task.model, workDir), "fresh conversation per worktree task");
 
     return { pooled: true, rc, resultEvent, report, status };
   };
