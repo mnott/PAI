@@ -24,6 +24,22 @@ describe("session mapper", () => {
   });
 });
 
+describe("session mapper: stagger warm-up wait", () => {
+  it("shows a gated run as waiting (warm-up), a plain running one as running", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sess-"));
+    const base = { label: "x", state: "running", started: "2026-10-17 10:00:00", provider: "local30x8" };
+    const warmup = { for: "w0", provider: "local30x8", elapsedSec: 7, limitSec: 12 };
+    writeFileSync(join(dir, "w1.status"), JSON.stringify({ ...base, id: "w1", claudeSession: "c-1", warmup }));
+    writeFileSync(join(dir, "w2.status"), JSON.stringify({ ...base, id: "w2", claudeSession: "c-2" }));
+    const src = { workerDirs: [dir], agentSessionsFile: join(dir, "agents.json") };
+    const map = loadSessionMap(src);
+    expect(map.get("c-1")?.verdict).toBe("waiting (warm-up) 7s/12s");
+    expect(map.get("c-2")?.verdict).toBe("running");
+    const wins = loadWorkerWindows(src);
+    expect(wins.find((w) => w.worker === "w1")?.verdict).toBe("waiting (warm-up) 7s/12s");
+  });
+});
+
 describe("session mapper: transcript fallback", () => {
   it("names a session from its project directory when no registry lists it", () => {
     const dir = mkdtempSync(join(tmpdir(), "sess-"));

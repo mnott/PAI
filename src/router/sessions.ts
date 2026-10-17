@@ -45,6 +45,11 @@ function readJson(file: string): Record<string, unknown> | undefined {
 }
 
 function workerVerdict(s: Record<string, unknown>): string {
+  // a run held in the stagger gate is running, but waiting on a cache warm-up
+  const w = s.warmup as { elapsedSec?: unknown; limitSec?: unknown } | undefined;
+  if (s.state === "running" && w && typeof w.elapsedSec === "number" && typeof w.limitSec === "number") {
+    return `waiting (warm-up) ${Math.max(0, Math.floor(w.elapsedSec))}s/${Math.floor(w.limitSec)}s`;
+  }
   if (s.state !== "done" && s.state !== "failed" && s.state !== "error") return String(s.state ?? "?");
   if (s.state !== "done" || (typeof s.rc === "number" && s.rc !== 0) || s.reportValid === false) return "failed";
   return "ok";
