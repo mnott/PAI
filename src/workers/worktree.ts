@@ -273,6 +273,7 @@ export function recordWorktree(
     s.worktreeSnapshot = info.snapshot;
   } else {
     // a failed run with no commits leaves nothing to merge; the branch dies with the worktree
+    for (const l of salvageNotes(s.cwd, info.dir, s.id)) console.log(l);
     removeWorktree(s.cwd, info.dir, true);
     try {
       git(s.cwd, ["branch", "-D", info.branch]);
@@ -323,6 +324,51 @@ export function salvageOnExit(
     }
     return [];
   }
+}
+
+/** Untracked, gitignored files under the worktree's Notes/ (repo-relative). */
+function untrackedNotes(wtDir: string): string[] {
+  try {
+    return git(wtDir, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "Notes"])
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Copy the worktree's untracked Notes/ files into the original checkout before
+ * the worktree is removed (Notes/ is gitignored, so nothing else carries them).
+ * Never overwrites: a name that exists with different content gets
+ * `<name>.<id>.md`; identical content is skipped. Returns one line per file.
+ */
+function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
+  const lines: string[] = [];
+  if (!existsSync(wtDir)) return lines;
+  for (const rel of untrackedNotes(wtDir)) {
+    try {
+      const src = join(wtDir, rel);
+      if (!lstatSync(src).isFile()) continue;
+      const data = readFileSync(src);
+      let dest = join(cwd, rel);
+      let outRel = rel;
+      if (existsSync(dest)) {
+        if (readFileSync(dest).equals(data)) continue;
+        outRel = `${rel}.${id}.md`;
+        dest = join(cwd, outRel);
+        if (existsSync(dest) && readFileSync(dest).equals(data)) continue;
+        lines.push(`salvaged ${outRel} from worker ${id} (${rel} already exists with different content)`);
+      } else {
+        lines.push(`salvaged ${rel} from worker ${id}`);
+      }
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, data);
+    } catch {
+      // best effort: never block a removal on a note copy
+    }
+  }
+  return lines;
 }
 
 /** Remove a worktree directory from git's books and the filesystem. */
@@ -620,6 +666,7 @@ function mergeSnapshotWorker(
     }
   }
   if (noCommit) return noCommitNextSteps(id, branch, worktreeDir, changedPaths);
+  for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
   removeWorktree(st.cwd, worktreeDir, true);
   try {
     git(st.cwd, ["branch", "-D", branch]); // never merged by git — nothing for -d to see
@@ -790,6 +837,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   if (existsSync(st.worktreeDir!)) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
+  for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
   removeWorktree(st.cwd, st.worktreeDir!, true);
   let branchGone = true;
   try {
@@ -814,6 +862,8 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */
 export function discardWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
+  const lost = untrackedNotes(st.worktreeDir!);
+  for (const f of lost) console.log(`will be lost: ${f} (worker ${id})`);
   removeWorktree(st.cwd, st.worktreeDir!, true);
   let branchGone = false;
   try {
@@ -979,6 +1029,7 @@ export function gcWorktrees(
       // never drop a branch whose tip the archive ref would not keep reachable
       if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${src}`, tip]);
       git(repo, ["update-ref", target, tip]);
+      for (const l of salvageNotes(repo, dir, id)) console.log(l);
       git(repo, ["worktree", "remove", "--force", dir]);
       if (hasBranch) git(repo, ["branch", "-D", src]);
       if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
