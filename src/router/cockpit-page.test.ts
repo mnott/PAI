@@ -83,3 +83,38 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).not.toContain('(low?" low":"")');
   });
 });
+
+describe("cockpit system tiles: unused metrics", () => {
+  const body = COCKPIT_HTML.match(/function renderSystem\(\)\{[\s\S]*?\n\}\n/)![0];
+  function render(series: Array<Record<string, number>>, current: Record<string, number>) {
+    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
+    const sys = { current, series: { series, wh: { "1h": 0 }, coveredMin: { "1h": 0 } }, servers: [] };
+    const fn = new Function(
+      "sys", "$", "esc", "gb", "LAST", "win", "data", "lim", "table", "renderDonuts",
+      `${body}\nrenderSystem();`
+    );
+    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b), {}, "1h", {}, null, () => "", () => {});
+    return els.sys!.innerHTML;
+  }
+
+  it("hides ANE tiles when ANE is 0 for the whole window and says so", () => {
+    const html = render([{ t: 1, n: 1, ane: 0, aneW: 0, gpu: 5 }, { t: 2, n: 1, ane: 0, aneW: 0, gpu: 7 }], { ane: 0, aneW: 0, gpu: 6 });
+    expect(html).not.toContain("<span>ANE load</span>");
+    expect(html).not.toContain("<span>ANE W</span>");
+    expect(html).toContain("<span>GPU load</span>");
+    expect(html).toContain("hidden: ANE load, ANE W (0 in this window)");
+  });
+
+  it("shows ANE tiles once any bucket has ANE use", () => {
+    const html = render([{ t: 1, n: 1, ane: 0, aneW: 0 }, { t: 2, n: 1, ane: 12, aneW: 0.4 }], { ane: 12, aneW: 0.4 });
+    expect(html).toContain("<span>ANE load</span>");
+    expect(html).toContain("<span>ANE W</span>");
+    expect(html).not.toContain("hidden:");
+  });
+
+  it("keeps tiles when the window has no samples for them", () => {
+    const html = render([{ t: 1, n: 1 }], {});
+    expect(html).toContain("<span>ANE load</span>");
+    expect(html).not.toContain("hidden:");
+  });
+});

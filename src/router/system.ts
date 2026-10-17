@@ -167,6 +167,8 @@ export interface SystemBucket {
   totalW?: number;
   systemW?: number;
   gpuW?: number;
+  cpuW?: number;
+  aneW?: number;
   memPct?: number;
 }
 
@@ -180,7 +182,7 @@ export interface SystemSeries {
   coveredMin: Record<SystemWindow, number>;
 }
 
-const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "totalW", "systemW", "gpuW"] as const;
+const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "totalW", "systemW", "gpuW", "cpuW", "aneW"] as const;
 
 /**
  * Bucket 1-min samples into the cockpit windows' buckets — the same from/bucket
