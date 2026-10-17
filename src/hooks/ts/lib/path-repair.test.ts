@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { armGuardReason, denyReason, renderDeny, renderRepair, repairPath } from "./path-repair.js";
+import { armGuardReason, denyReason, renderDeny, renderRepair, repairPath, tsSibling } from "./path-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const CWD = "/private/tmp/ab-arms/view-decimals-local30-spec-221429";
@@ -315,6 +315,42 @@ describe("dropped middle segment of the cwd", () => {
   });
 });
 
+describe("tsSibling", () => {
+  const fs = (paths: string[]) => (p: string) => paths.includes(p);
+
+  it("repairs .js to .ts when .ts exists", () => {
+    expect(tsSibling("/path/to/file.js", fs(["/path/to/file.ts"]))).toBe("/path/to/file.ts");
+  });
+
+  it("repairs .mjs to .mts when .mts exists", () => {
+    expect(tsSibling("/path/to/file.mjs", fs(["/path/to/file.mts"]))).toBe("/path/to/file.mts");
+  });
+
+  it("repairs .jsx to .tsx when .tsx exists", () => {
+    expect(tsSibling("/path/to/file.jsx", fs(["/path/to/file.tsx"]))).toBe("/path/to/file.tsx");
+  });
+
+  it("returns null when the original path exists", () => {
+    expect(tsSibling("/path/to/file.js", fs(["/path/to/file.js"]))).toBeNull();
+  });
+
+  it("repairs .js to .ts when .ts exists", () => {
+    expect(tsSibling("/path/to/file.js", fs(["/path/to/file.ts"]))).toBe("/path/to/file.ts");
+  });
+
+  it("returns null when no sibling exists (the original path is actually the sibling)", () => {
+    expect(tsSibling("/path/to/file.js", fs(["/path/to/file.js"]))).toBeNull();
+  });
+
+  it("returns null for unsupported extensions", () => {
+    expect(tsSibling("/path/to/file.py", fs(["/path/to/file.ts"]))).toBeNull();
+  });
+
+  it("works with relative paths", () => {
+    expect(tsSibling("src/router/usage.js", fs(["src/router/usage.ts"]))).toBe("src/router/usage.ts");
+  });
+});
+
 describe("renderRepair", () => {
   const r = repairPath(read(TYPO), W, fs(GOOD))!;
   it("Edit/Write/MultiEdit/NotebookEdit: deny naming the exact path", () => {
@@ -339,6 +375,91 @@ describe("renderRepair", () => {
   });
   it("an Edit with the correct path yields no repair", () => {
     expect(repairPath({ tool_name: "Edit", cwd: CWD, tool_input: { file_path: GOOD } }, W, fs(GOOD))).toBeNull();
+  });
+});
+
+describe("repairPath with tsSibling", () => {
+  const fs = (paths: string[]) => (p: string) => paths.includes(p);
+  const CWD = "/private/tmp/ab-arms/view-decimals-local30-spec-221429";
+
+  it("repairs Read of missing /w/src/router/usage.js with /w/src/router/usage.ts existing", () => {
+    const r = repairPath({
+      tool_name: "Read",
+      cwd: CWD,
+      tool_input: { file_path: "/w/src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.ts"]));
+
+    expect(r).not.toBeNull();
+    expect(r?.new).toBe("/w/src/router/usage.ts");
+    expect(r?.updatedInput).toEqual({ file_path: "/w/src/router/usage.ts" });
+  });
+
+  it("repairs Grep path with .js to .ts", () => {
+    const r = repairPath({
+      tool_name: "Grep",
+      cwd: CWD,
+      tool_input: { pattern: "test", path: "/w/src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.ts"]));
+
+    expect(r).not.toBeNull();
+    expect(r?.new).toBe("/w/src/router/usage.ts");
+    expect(r?.updatedInput).toEqual({ pattern: "test", path: "/w/src/router/usage.ts" });
+  });
+
+  it("repairs relative path with .js to .ts", () => {
+    const r = repairPath({
+      tool_name: "Read",
+      cwd: CWD,
+      tool_input: { file_path: "src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs([`${CWD}/src/router/usage.ts`]));
+
+    expect(r).not.toBeNull();
+    expect(r?.new).toBe(`${CWD}/src/router/usage.ts`);
+    expect(r?.updatedInput).toEqual({ file_path: `${CWD}/src/router/usage.ts` });
+  });
+
+  it("Edit with missing .js denies with correct path when .ts exists", () => {
+    const r = repairPath({
+      tool_name: "Edit",
+      cwd: CWD,
+      tool_input: { file_path: "/w/src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.ts"]));
+
+    expect(r).not.toBeNull();
+    expect(r?.new).toBe("/w/src/router/usage.ts");
+    expect(r?.missing).toBe(true);
+    expect(r?.updatedInput).toEqual({ file_path: "/w/src/router/usage.ts" });
+  });
+
+  it("does not repair when .js file exists", () => {
+    const r = repairPath({
+      tool_name: "Read",
+      cwd: CWD,
+      tool_input: { file_path: "/w/src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.js"]));
+
+    expect(r).toBeNull();
+  });
+
+  it("does not repair when no .ts sibling exists", () => {
+    const r = repairPath({
+      tool_name: "Read",
+      cwd: CWD,
+      tool_input: { file_path: "/w/src/router/usage.js" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.js"]));
+
+    expect(r).toBeNull();
+  });
+
+  it("repairs .mjs to .mts", () => {
+    const r = repairPath({
+      tool_name: "Read",
+      cwd: CWD,
+      tool_input: { file_path: "/w/src/router/usage.mjs" }
+    }, { PAI_WORKER: "1" }, fs(["/w/src/router/usage.mts"]));
+
+    expect(r).not.toBeNull();
+    expect(r?.new).toBe("/w/src/router/usage.mts");
   });
 });
 
