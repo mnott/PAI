@@ -13,6 +13,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
+import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -70,7 +71,7 @@ const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
 
 /** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
 function lastCommand(command: string): { name: string; segment: string } | null {
-  const bare = command.replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
+  const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
   const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
   const segment = segs[segs.length - 1];
   if (!segment) return null;
@@ -103,6 +104,7 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   if (SEARCH_CMDS.has(last.name)) return emptyOut;
   if (last.name === "test" || last.name === "[") return emptyOut;
   if (last.name === "diff" || last.name === "cmp") return !/No such file|Permission denied|usage:|invalid option/i.test(out);
+  if (last.name === "ls" && /\bsleep\b/.test(cmd)) return /No such file or directory/i.test(out);
   if (/\bvitest\b/.test(cmd) && /\b(run|--run)\b|^npx vitest/.test(cmd)) {
     return /(FAIL\b|Test Files|Tests\s+\d|AssertionError|expected .* to)/.test(out) && !/error TS\d+|Cannot find|SyntaxError|ERR_MODULE/i.test(out);
   }
@@ -112,6 +114,7 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
+  { test: (r) => /node cannot load TypeScript source|orchestrator mode: Bash may not write code files|pattern-based process kill blocked/i.test(r.raw), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
   { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
   {
     test: (r) => {

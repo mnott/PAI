@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError } from "./tool-errors.js";
 import type { WorkerStatus } from "./status.js";
-import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord } from "./tool-errors.js";
+import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord, isBenignBash } from "./tool-errors.js";
 
 const rec = (worker: string, ts: number, raw: string, tool = "Read"): ToolErrorRecord => ({
   ts, worker, provider: "p", label: "l", tool, raw, signature: normalizeError(tool, raw),
@@ -149,6 +149,18 @@ describe("classification", () => {
       expect(detectToolErrors(r, NOW, {})).toHaveLength(1);
     }
   });
+  it("PAI guard redirects are benign", () => {
+    const raws = [
+      "PreToolUse:Bash hook error: node cannot load TypeScript source",
+      "PreToolUse:Bash hook error: orchestrator mode: Bash may not write code files",
+      "PreToolUse:Bash hook error: pattern-based process kill blocked"
+    ];
+    for (const raw of raws) {
+      const r = rec("w1", NOW, raw);
+      expect(classifyToolError(r).cls).toBe("benign");
+      expect(classifyToolError(r).hint).toMatch(/guard redirect/);
+    }
+  });
   it("harness errors alert at the usual thresholds", () => {
     for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
       expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
@@ -160,6 +172,24 @@ describe("classification", () => {
     const raw = "PreToolUse:Read hook error: Your working directory is /w/x. Path /tmp is outside";
     expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
     expect(classifyToolError(rec("w1", NOW, "PreToolUse:Read hook error: Your working directory is /w/x. Path /nonexistent/zz is outside")).cls).toBe("unknown");
+  });
+  it("ls sleep poll is benign", () => {
+    const r = inp(rec("w1", NOW, "Exit code 1 ls: /tmp/x.rc: No such file or directory", "Bash"), "sleep 20; ls /tmp/x.rc");
+    expect(isBenignBash(r)).toBe(true);
+    const r2 = inp(rec("w1", NOW, "Exit code 1 ls: /tmp/x.rc: No such file or directory", "Bash"), "ls /tmp/x.rc");
+    expect(isBenignBash(r2)).toBe(false);
+  });
+  it("heredoc bodies do not affect last command", () => {
+    const input = ["cat > /tmp/x.txt <<'EOF'", "it's; a b", "other line; it's", "EOF", "pai worker wait-file /tmp/x.rc --max 90"].join("\n");
+    const r = inp(rec("w1", NOW, "Exit code 3 missing: /tmp/x.rc not yet: 1 of 1 missing after 90s; call wait-file again", "Bash"), input);
+    expect(isBenignBash(r)).toBe(true);
+  });
+  it("groupToolErrors still counts guard redirects", () => {
+    const raw = "PreToolUse:Bash hook error: node cannot load TypeScript source";
+    const r = rec("w1", NOW, raw);
+    const groups = groupToolErrors([r]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].count).toBe(1);
   });
   it("everything else is unknown", () => {
     const [g] = detectToolErrors(three("weird failure"), NOW, {});

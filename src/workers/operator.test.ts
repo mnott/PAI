@@ -169,4 +169,34 @@ describe("say reports ok only on real delivery", () => {
     server = fake;
     await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/cannot talk to worker/);
   });
+
+  it("rejects when the socket file is missing and the worker is a pooled task", async () => {
+    const id = "20260917-100000-893";
+    const status: WorkerStatus = {
+      id,
+      pid: process.pid,
+      label: "pooled task",
+      cwd: dir,
+      term: "",
+      provider: "testprov",
+      model: "test-1",
+      state: "running",
+      started: REAL_STARTED,
+      updated: "2026-09-17 10:00:00",
+      turns: 0,
+      tools: 0,
+      last: "",
+      rc: null,
+      secs: null,
+      pool: { task: 1, slotSession: null, hostPid: 123, slot: "s1" }
+    };
+    saveStatus(dir, status);
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/pooled task/);
+  });
+
+  it("rejects when the socket file is missing and the worker is a regular task", async () => {
+    const id = "20260917-100000-894";
+    runningWorker(id);
+    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/no operator socket/);
+  });
 });
