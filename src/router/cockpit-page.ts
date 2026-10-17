@@ -142,7 +142,8 @@ function renderSystem(){
  $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
- $("sysservers").innerHTML=srv.length?table(["local server","status","RSS","tokens/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":'<span class="dim">not reported</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
+ function dec(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];if(!r)return'<span class="dim">-</span>';return fmt(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps)}
+$("sysservers").innerHTML=srv.length?table(["local server","status","RSS","end-to-end tok/s","decode tok/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',dec(s.provider),s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":'<span class="dim">not reported</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
  renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){
