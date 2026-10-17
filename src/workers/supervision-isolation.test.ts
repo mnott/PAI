@@ -44,8 +44,8 @@ describe("alert isolation between sessions", () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   async function run(statuses: WorkerStatus[], at: Date, o: { push?: PushFn; type?: TypeFn } = {}) {
-    const push = o.push ?? vi.fn<PushFn>(async () => true);
-    const type = o.type ?? vi.fn<TypeFn>(async () => true);
+    const push = vi.fn<PushFn>(o.push ?? (async () => true));
+    const type = vi.fn<TypeFn>(o.type ?? (async () => true));
     await runSupervisionTick(dir, {
       now: at,
       isAlive: () => true,
