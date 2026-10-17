@@ -238,7 +238,7 @@ export function renderMore(groups: GroupDef[], st: Style): string {
 // Markdown reference (pai doc)
 // ---------------------------------------------------------------------------
 
-function mdCommand(path: string[], cmd: CommandDef, level: number): string[] {
+export function mdCommand(path: string[], cmd: CommandDef, level: number): string[] {
   const h = "#".repeat(level);
   const out = [`${h} pai ${path.join(" ")}`, "", cmd.summary, "", "```", usageLine(path, cmd), "```", "", cmd.description.trim(), ""];
   if (cmd.aliasOf) out.push(`Shortcut for \`pai ${cmd.aliasOf}\`.`, "");

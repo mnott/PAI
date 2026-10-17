@@ -140,6 +140,6 @@ describe("scope", () => {
   it("the sink switch lives only in the Continue writer; claims reuse the client elsewhere", () => {
     const hits = execFileSync("grep", ["-rl", "forge-sink", "src", "--include=*.ts"], { encoding: "utf8" })
       .split("\n").filter(Boolean).filter(f => !f.endsWith(".test.ts") && !f.endsWith("forge-sink.ts"));
-    expect(hits.sort()).toEqual(["src/cli/commands/issue.ts", "src/daemon/stale-pass.ts", "src/session/checkpoint-block.ts", "src/session/issue-claims.ts", "src/session/project-setup.ts", "src/workers/status.ts"]);
+    expect(hits.sort()).toEqual(["src/cli2/impl/issue.ts", "src/daemon/stale-pass.ts", "src/session/checkpoint-block.ts", "src/session/issue-claims.ts", "src/session/project-setup.ts", "src/workers/status.ts"]);
   });
 });

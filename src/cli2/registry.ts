@@ -2,7 +2,8 @@
 
 import type { CommandDef, GroupDef } from "./define.js";
 import { docCommand, helpCommand } from "./commands/meta.js";
-import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER, WORKER_LATER } from "./commands/later.js";
+import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands/later.js";
+import { workerCommand } from "./commands/worker.js";
 import { providersCommand } from "./commands/providers.js";
 import { PROVIDER_EDIT_COMMANDS, WORKER_CONFIG_COMMANDS } from "./commands/worker-config.js";
 import { routerCommand } from "./commands/router.js";
@@ -12,6 +13,14 @@ import { backupTop, cdTop, clearNamesCmd, endTop, findTop, launchTop, listTop, n
 import { hooksDbCommand } from "./commands/hooks-db.js";
 import { installAlias, setupCommand } from "./commands/setup.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
+import { BATCH_C } from "./commands/batch-c.js";
+import { memoryCommand } from "./commands/memory.js";
+import { kgCommand } from "./commands/kg.js";
+import { zettelCommand } from "./commands/zettel.js";
+import { observationCommand } from "./commands/observation.js";
+import { obsidianCommand } from "./commands/obsidian.js";
+import { skillCommand } from "./commands/skill.js";
+import { auditCommand } from "./commands/audit.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -19,11 +28,11 @@ const sessionGroup: CommandDef = {
 };
 
 const workerGroup: CommandDef = {
-  name: "worker",
-  summary: "Run subagents on other providers: providers, classes, config, policy, ...",
-  description: "Subagents that run on other providers. Setup lives here: providers, classes, config, policy, local, fallback, pool, proxy, mcp, on, off, install.",
-  examples: ["pai worker providers", "pai worker policy"],
-  subcommands: [...WORKER_CONFIG_COMMANDS, ...WORKER_LATER],
+  ...workerCommand,
+  summary: "Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ...",
+  description: workerCommand.description + "\nSetup lives here too: providers, classes, config, policy, local, fallback, pool, proxy, mcp, on, off, install.",
+  examples: [...(workerCommand.examples ?? []), "pai worker providers", "pai worker policy"],
+  subcommands: [...(workerCommand.subcommands ?? []), ...WORKER_CONFIG_COMMANDS],
 };
 
 // `pai providers add|remove|...` are the same command objects as `pai worker providers ...`.
@@ -51,6 +60,10 @@ export const GROUPS: GroupDef[] = [
     id: g.id,
     title: titles[g.id as keyof typeof titles],
     daily: false,
-    commands: [...(g.id === "workers" ? [workerGroup, routerCommand] : []), ...g.commands, ...(BATCH_B_EXTRA[g.id] ?? [])],
+    commands: [...(g.id === "workers" ? [workerGroup, routerCommand] : []), ...g.commands, ...(BATCH_B_EXTRA[g.id] ?? []), ...(BATCH_C[g.id] ?? [])],
   })),
 ];
+
+// Memory, knowledge and audit commands (one file per group in ./commands).
+GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand);
+GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand);

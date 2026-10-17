@@ -24,6 +24,8 @@ export interface OptDef {
   summary: string;
   /** May be given several times; every value is in RunContext.multi (opts holds the last). */
   repeatable?: boolean;
+  /** String flag whose value may be left out (`--auto-exit` or `--auto-exit 30`); absent value reads as true. */
+  optionalValue?: boolean;
 }
 
 export interface RunContext {
@@ -66,6 +68,8 @@ export interface CommandDef {
   hidden?: boolean;
   /** Accept `-- args` and pass them on. */
   passthrough?: boolean;
+  /** Options and words this command does not know are kept, in order, in `rest` (for commands that wrap another program). */
+  allowUnknown?: boolean;
   run?: (ctx: RunContext) => Promise<number | void> | number | void;
 }
 
