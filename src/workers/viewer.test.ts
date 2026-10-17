@@ -725,13 +725,18 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
       spawnResume: () => ({ on: () => undefined }),
     };
     const done = followWorkers(dir, id, false, 0, { FORCE_TTY: "1" }, false, io);
+    // the liveness clock steps in 5 s wall ticks (writeLiveness → now5), so a
+    // truly silent window has to sit inside one tick: wait for a tick with
+    // room for settle + probe instead of sampling a random phase (~30% of
+    // runs used to straddle a boundary and count one liveness repaint)
+    while (5000 - (Date.now() % 5000) < 2600) await sleep(50);
     await sleep(700); // setup and backfill settle
     const before = writes;
     await sleep(1500);
     expect(writes).toBe(before);
     input.write("/quit\n");
     await done;
-  }, 8000);
+  }, 12000);
 
   it("records a PANE-CLOSED ledger line, with reason, whenever a pane's follow exits", async () => {
     const { dir, id } = chatFixture("done");
