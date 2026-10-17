@@ -24,6 +24,7 @@ import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
+import { dropHeredocBodies } from "./heredoc.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
@@ -59,7 +60,8 @@ const deny = (reason: string): GateDecision => ({ decision: "deny", reason });
 const ALLOW: GateDecision = { decision: "allow" };
 
 /** Split into segments; quotes group words, operators outside quotes split. */
-export function parseCommand(command: string): Segment[] {
+export function parseCommand(raw: string): Segment[] {
+  const command = dropHeredocBodies(raw);
   const segs: Segment[] = [];
   let seg: Segment = { words: [], redirects: [] };
   let tok = "";
