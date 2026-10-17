@@ -51,6 +51,10 @@ The daemon runs in the background via launchd (macOS) or a systemd user unit (Li
 ```bash
 pai daemon status    # should show "running"
 pai memory search "test"   # should return results after indexing
+pai                  # the session picker opens (Esc quits)
+pai more             # every other command, grouped
 ```
 
 That's it. Claude Code now has persistent memory across all sessions.
+
+Daily use after install: `pai` (picker), `pai NAME`, `pai ls`, `pai setups`, `pai more`, `pai help <command>`. See [the command reference](command-reference.md).

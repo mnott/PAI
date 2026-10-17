@@ -1,1 +1,79 @@
-export * from "../../cli2/lib/audit.js";
+/** `pai audit ...`: where tokens (and money) go. */
+
+import type { Command } from "commander";
+import { OPT, type ArgDef, type CommandDef, type OptDef } from "../define.js";
+import { bridged } from "../lib/bridge.js";
+import { registerAuditCommands } from "../lib/audit.js";
+
+const json: OptDef = { ...OPT.json, summary: "Print JSON instead of a table" };
+const a = (path: string[], def: Omit<CommandDef, "run">) =>
+  // `--json` is read from the `tokens` node by the implementation; it is added to every report command here.
+  bridged(registerAuditCommands, "audit", path, { ...def, options: [...(def.options ?? []), json] });
+
+const t = (name: string, summary: string, description: string, extra: Partial<CommandDef> = {}) =>
+  a(["tokens", name], { name, summary, description, examples: [`pai audit tokens ${name}`, `pai audit tokens ${name} --json`], seeAlso: ["pai audit tokens"], ...extra });
+
+export const auditCommand: CommandDef = {
+  name: "audit",
+  summary: "Find out where tokens are being spent",
+  description: "Read-only reports on what your setup costs in tokens: memory files, hooks, sessions, helper sessions, background service, skills, MCP servers.",
+  examples: ["pai audit tokens", "pai audit tokens session", "pai audit tokens mcp"],
+  seeAlso: ["pai skill telemetry"],
+  subcommands: [
+    {
+      ...a(["tokens"], {
+        name: "tokens",
+        summary: "Token-waste report (all checks, or pick one below)",
+        description:
+          "Runs every check and prints one combined report with findings ranked by severity. Run one check on its own with a sub-command: " +
+          "files, hooks, session, spawn, daemon, env, schedule, skills, subagents, mcp, ladder.",
+        options: [{ name: "record", type: "string", value: "DIR", summary: "Also write a dated, numbered Markdown and JSON snapshot into DIR" }],
+        examples: ["pai audit tokens", "pai audit tokens --json", "pai audit tokens --record ./audits"],
+        seeAlso: ["pai audit tokens mcp"],
+      }),
+      subcommands: [
+        t("files", "Token count per memory file", "Counts tokens of the CLAUDE.md chain, core skill, rule files and auto-memory, or of the files you name.", {
+          args: [{ name: "PATHS", variadic: true, summary: "Files to count (default: the standard memory set)" } as ArgDef],
+          examples: ["pai audit tokens files", "pai audit tokens files ./CLAUDE.md --json"],
+        }),
+        t("hooks", "Token cost of every start-up and prompt hook", "Measures what each SessionStart and UserPromptSubmit hook adds to the context."),
+        t("session", "Token split for one session transcript", "Shows cache, input and output tokens of a session (default: the newest).", {
+          args: [{ name: "PATH", summary: "Session transcript file (default: newest under ~/.claude/projects)" }],
+          options: [
+            { name: "ctx-threshold", type: "number", value: "N", summary: "Override the compaction trigger (default: derived from the session itself)" },
+            { name: "history", type: "string", value: "N", summary: "List the first-turn context of the newest N sessions of this project (try 20)" },
+            { name: "turn", type: "number", value: "N", summary: "Explain where API call N's context growth came from" },
+          ],
+          examples: ["pai audit tokens session", "pai audit tokens session --history 20", "pai audit tokens session --turn 12"],
+        }),
+        t("spawn", "Helper-session overhead: subagents vs workers", "Compares the start-up cost of in-session subagents with pai workers.", {
+          options: [
+            { name: "n", short: "n", type: "number", value: "COUNT", summary: "How many of the newest logs per group to read (default 10)" },
+            { name: "detail", type: "boolean", summary: "One row per log" },
+          ],
+          examples: ["pai audit tokens spawn", "pai audit tokens spawn -n 20 --detail"],
+        }),
+        t("daemon", "What the background service spent", "Counts model calls, extraction parse failures and queue sizes from the daemon log."),
+        t("env", "Model and endpoint overrides on running sessions", "Lists ANTHROPIC_BASE_URL and model overrides of every live claude process."),
+        t("schedule", "Scheduled jobs that beat the cache lifetime", "Finds launchd and cron entries that run more often than the prompt cache lives."),
+        t("skills", "Token cost of the skill and command catalogue", "Sizes every SKILL.md, command and plugin, lists the top entries and duplicate names.", {
+          options: [{ name: "top", type: "number", value: "N", summary: "How many top entries to show (default 15)" }],
+          examples: ["pai audit tokens skills", "pai audit tokens skills --top 5"],
+        }),
+        t("subagents", "Token cost of subagent definitions", "Sizes each Claude Code subagent definition and shows how its model is pinned."),
+        t("mcp", "MCP servers: configured, pinned, loaded, used", "Compares what is configured, what is pinned, what a live session loaded and what was used in the last 30 days.", {
+          options: [{ name: "connect", type: "boolean", summary: "Actually connect to every stdio server to count its tools (has side effects)" }],
+          examples: ["pai audit tokens mcp", "pai audit tokens mcp --connect"],
+        }),
+        t("ladder", "LIVE: first-turn context per configuration step", "Starts real headless claude calls at growing configurations and measures the first-turn context. Refuses without --live because it costs money.", {
+          options: [
+            { name: "live", type: "boolean", summary: "Really start claude -p (billed); required" },
+            { ...OPT.model, summary: "Model to probe with (default haiku)" },
+            { name: "mcp-config", type: "string", value: "PATH", summary: "MCP config for the third step (default: newest *.mcp.json in the workers log folder)" },
+          ],
+          examples: ["pai audit tokens ladder", "pai audit tokens ladder --live --model haiku"],
+        }),
+      ],
+    },
+  ],
+};

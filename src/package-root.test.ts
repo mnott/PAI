@@ -21,7 +21,7 @@ describe("packageRoot", () => {
   it("finds the root from nested dist/cli/commands/setup and from src/", () => {
     const root = layout("dist/cli/commands/setup", "src/cli");
     expect(packageRoot(pathToFileURL(join(root, "dist/cli/commands/setup/utils.mjs")).href)).toBe(root);
-    expect(packageRoot(pathToFileURL(join(root, "src/cli/program.ts")).href)).toBe(root);
+    expect(packageRoot(pathToFileURL(join(root, "src/cli/index.ts")).href)).toBe(root);
   });
 
   it("finds the root in an npm install layout (node_modules/@scope/pkg)", () => {

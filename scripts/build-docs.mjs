@@ -3,7 +3,7 @@
  * Generate the per-area command reference ("man pages") from the live command
  * definitions.
  *
- * Source of truth: src/cli2 (the definitions `pai help` reads). The built CLI
+ * Source of truth: src/cli (the definitions `pai help` reads). The built CLI
  * writes the pages itself:
  *
  *   docs/commands/<area>.md   — one page per top-level command
@@ -22,7 +22,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CLI = join(ROOT, "dist", "cli2", "index.mjs");
+const CLI = join(ROOT, "dist", "cli", "index.mjs");
 const OUT_DIR = process.env.PAI_DOCS_OUT ?? join(ROOT, "docs", "commands");
 
 if (!existsSync(CLI)) {
