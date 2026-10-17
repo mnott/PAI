@@ -106,10 +106,6 @@ const runCommand: CommandDef = {
     return new Promise<number>(() => {
       const server = http.createServer(handler);
       const tail = remote ? http.createServer(handler) : undefined;
-      tail?.on("error", (e) => {
-        process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
-        process.exit(1);
-      });
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
       listenRetry(server, port, "127.0.0.1", { waitMs: waitBindMs }).then(() => {
         if (!managed) return;
@@ -119,9 +115,14 @@ const runCommand: CommandDef = {
         process.stderr.write(`pai: router: ${(e as Error).message}\n`);
         process.exit(1);
       });
-      tail?.listen(port, addr, async () => {
-        out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
-      });
+      if (tail) {
+        listenRetry(tail, port, addr, { waitMs: waitBindMs }).then(async () => {
+          out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
+        }, (e: unknown) => {
+          process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
+          process.exit(1);
+        });
+      }
       const bye = () => {
         void drainServers(tail ? [server, tail] : [server], { timeoutMs: 120000 }).then(() => {
           if (managed) {
