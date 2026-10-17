@@ -12,7 +12,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
 
 export const MAX_DISTANCE = 3;
@@ -91,7 +91,6 @@ function levenshtein(a: string, b: string): number {
   }
   return prev[b.length];
 }
-
 
 /** The repaired form of one missing absolute path, or null when it exists or cannot be repaired. */
 function repairValue(
