@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
-import { fmtDate } from "../../cli2/lib/utils.js";
+import { fmtDate } from "../../cli/lib/utils.js";
 import { findNotesDir, findClaudeNotesDir } from "./symlinks.js";
 import { paiHomePath, resolvePaiFile, migratePaiDir, type MigrateDirResult } from "../../config/pai-home.js";
 

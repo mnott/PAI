@@ -24,7 +24,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { encodeDir } from "../cli2/lib/utils.js";
+import { encodeDir } from "../cli/lib/utils.js";
 import { scanIncremental, type ScanOptions } from "../hooks/ts/lib/transcript-scan.js";
 
 /** How many recent user prompts to carry. */

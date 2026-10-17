@@ -45,7 +45,7 @@ import {
 } from "./topic-detect-worker.js";
 
 // Registry scan — called from handleRegistryScan()
-import { performScan } from "../cli2/impl/registry/scan.js";
+import { performScan } from "../cli/impl/registry/scan.js";
 import { registryBackend } from "./daemon/state.js";
 
 // Hooks lib imports — resolving through the compiled JS path.

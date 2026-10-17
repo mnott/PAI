@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { countTokens, TOKEN_ENCODING } from "./tokens.js";
 import { whisperRulesPath } from "../config/pai-files.js";
-import { encodeDir } from "../cli2/lib/utils.js";
+import { encodeDir } from "../cli/lib/utils.js";
 
 export interface FileTokenReading {
   path: string;

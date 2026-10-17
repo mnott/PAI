@@ -20,7 +20,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readSettingsJson, writeSettingsJson } from "../cli2/lib/settings-manager.js";
+import { readSettingsJson, writeSettingsJson } from "../cli/lib/settings-manager.js";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
 const HOOKS_DIR = join(CLAUDE_DIR, "Hooks");

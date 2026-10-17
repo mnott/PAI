@@ -66,7 +66,7 @@ import {
   toolErrorSigTag,
   toolErrorText,
 } from "./tool-errors.js";
-import { callAiBroker, sendToSession } from "../cli2/lib/aibroker-client.js";
+import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
 // Events

@@ -22,7 +22,7 @@ import {
   type SessionKeepaliveState,
 } from "./session-keepalive.js";
 import type { SessionsCacheKeepaliveConfig } from "./config.js";
-import type { AiBrokerSessionMeta } from "../cli2/lib/aibroker-client.js";
+import type { AiBrokerSessionMeta } from "../cli/lib/aibroker-client.js";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { worktreesDir } from "../workers/worktree.js";
@@ -370,7 +370,7 @@ describe("runSessionKeepaliveTick", () => {
     // real sendBeat, which must reach the (mocked) AIBroker client module.
     vi.resetModules();
     const sendToSession = vi.fn(async () => ({ ok: true }));
-    vi.doMock("../cli2/lib/aibroker-client.js", () => ({
+    vi.doMock("../cli/lib/aibroker-client.js", () => ({
       fetchLiveSessions: vi.fn(async () => []),
       sendToSession,
     }));
@@ -380,7 +380,7 @@ describe("runSessionKeepaliveTick", () => {
     const results = await freshRunTick(config(), noSendBeat);
     expect(results).toEqual([{ sessionId: "sess-1", result: "sent" }]);
     expect(sendToSession).toHaveBeenCalledWith("sess-1", "keepalive", undefined, { noReply: true });
-    vi.doUnmock("../cli2/lib/aibroker-client.js");
+    vi.doUnmock("../cli/lib/aibroker-client.js");
     vi.resetModules();
   });
 });

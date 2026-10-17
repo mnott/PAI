@@ -19,7 +19,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RegistryBackend } from "../storage/registry-interface.js";
-import { smartDecodeDir } from "../cli2/lib/utils.js";
+import { smartDecodeDir } from "../cli/lib/utils.js";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -29,7 +29,7 @@ import {
   resolvePath,
   scaffoldProjectDirs,
   now,
-} from "../cli2/lib/utils.js";
+} from "../cli/lib/utils.js";
 import { unregistrableReason } from "../registry/registrable.js";
 
 // ---------------------------------------------------------------------------

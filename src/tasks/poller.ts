@@ -289,7 +289,7 @@ async function alertParked(task: Task, reason: string): Promise<void> {
     `To release it: fix the cause, then move the due date — due_string, natural ` +
     `language only (e.g. "tomorrow 9am").`;
   try {
-    const { callAiBroker } = await import("../cli2/lib/aibroker-client.js");
+    const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
     await callAiBroker("pailot_send", { text }, 8_000);
   } catch (e) {
     console.error(

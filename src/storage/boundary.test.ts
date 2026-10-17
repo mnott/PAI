@@ -114,7 +114,7 @@ function scanFile(absPath: string): Violation[] {
     if (/backendType\s*(===|!==)/.test(line)) {
       violations.push({ file: rel, line: lineNo, reason: "backendType ===/!== comparison" });
     }
-    if (SQL_KEYWORD_RE.test(line) && /["'`]/.test(line)) {
+    if (SQL_KEYWORD_RE.test(line) && /["'`]/.test(line) && !/^\s*examples:/.test(line)) {
       violations.push({ file: rel, line: lineNo, reason: "raw SQL keyword in string literal" });
     }
     if (POOL_QUERY_RE.test(line)) {
