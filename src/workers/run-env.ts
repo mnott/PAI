@@ -125,6 +125,10 @@ export function buildRunEnv(
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+  // The billing header Claude Code puts first in the system prompt changes on
+  // every request (cch=<body hash>); a prefix cache then reuses only the tool
+  // definitions in front of it (measured 2026-10-17). Only Anthropic uses it.
+  env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
   if (headless) {
     env.PAI_WORKER = "1";
     // read by the whisper-rules hook: a non-anthropic worker gets no operator rules

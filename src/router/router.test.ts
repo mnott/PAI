@@ -52,6 +52,56 @@ describe("router", () => {
     expect(c.ok && JSON.parse(c.up.body.toString()).messages[0].content).toHaveLength(3);
   });
 
+  it("drops the per-request billing header for providers so consecutive requests share their prefix", () => {
+    const req = (cch: string, n: number) => ({
+      model: "qwen3-coder-30b",
+      tools: [{ name: "Read" }],
+      system: [
+        { type: "text", text: `x-anthropic-billing-header: cc_version=2.1; cch=${cch}; cc_turn_index=1;` },
+        { type: "text", text: "You are Claude Code" },
+      ],
+      messages: Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `m${i}` })),
+    });
+    const out = (b: object) => {
+      const r = prepare("/v1/messages", hdr, body(b as never), providers);
+      return r.ok ? r.up.body.toString() : "";
+    };
+    const a = out(req("3d35b", 1));
+    const b = out(req("2b05b", 3));
+    expect(a).not.toContain("billing-header");
+    const stem = a.slice(0, a.indexOf('"messages"'));
+    expect(b.startsWith(stem)).toBe(true);
+    const c = prepare("/v1/messages", hdr, body({ ...req("1", 1), model: "claude-haiku-4-5-20251001" } as never), providers);
+    expect(c.ok && c.up.body.toString()).toContain("billing-header");
+  });
+
+  it("folds the harness's trailing role:system messages so a local server sees an append-only history", () => {
+    // shape captured from Claude Code 2.1.284: after each user turn a system
+    // message (block array + cache_control while newest, plain string once old)
+    const env = "# Environment\nplatform: darwin";
+    const tok = (n: number) => `<total_tokens>${n} tokens left</total_tokens>`;
+    const user = (t: string) => ({ role: "user", content: [{ type: "text", text: t }] });
+    const asst = { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] };
+    const result = { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "x" }] };
+    const sysArr = (t: string) => ({ role: "system", content: [{ type: "text", text: t, cache_control: { type: "ephemeral" } }] });
+    const r1 = [user("task"), sysArr(env + "\n" + tok(100))];
+    const r2 = [user("task"), { role: "system", content: env + "\n" + tok(100) }, asst, result, sysArr(tok(90))];
+    const out = (messages: object[]) => {
+      const r = prepare("/v1/messages", hdr, body({ model: "qwen3-coder-30b", messages }), providers);
+      return r.ok ? (JSON.parse(r.up.body.toString()).messages as Array<{ role: string; content: Array<{ text?: string }> }>) : [];
+    };
+    const a = out(r1);
+    const b = out(r2);
+    expect(a.map((m) => m.role)).toEqual(["user"]);
+    expect(b.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    // request 2's first message is request 1's, byte for byte, apart from cache_control
+    expect(JSON.stringify(b[0].content.map((c) => c.text))).toBe(JSON.stringify(a[0].content.map((c) => c.text)));
+    expect(b[2].content.map((c) => c.text)).toEqual([undefined, tok(90)]);
+    // a non-loopback provider keeps the messages untouched
+    const g = prepare("/v1/messages", hdr, body({ model: "glm-5.3", messages: r2 }), providers);
+    expect(g.ok && JSON.parse(g.up.body.toString()).messages).toHaveLength(5);
+  });
+
   it("passes inbound auth to claude, injects the key for providers", () => {
     const c = prepare("/v1/messages", hdr, body({ model: "claude-haiku-4-5-20251001" }), providers);
     expect(c.ok && c.up.headers.authorization).toBe("Bearer inbound");

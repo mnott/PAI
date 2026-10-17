@@ -231,6 +231,8 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8797/together");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("local");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    // the per-request billing header would defeat the provider's prefix cache
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe("0");
   });
 
   it("rejects an unknown provider before building any env", async () => {
