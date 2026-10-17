@@ -9,6 +9,8 @@
 
 import { basename, extname } from "node:path";
 
+export const SCRATCH_DIR = ".pai-scratch";
+
 export interface EditGateContext {
   /** Absolute, already-resolved target path. */
   filePath: string;
@@ -35,6 +37,10 @@ export function isProseEdit(filePath: string): boolean {
   return filePath.split(/[\\/]/).some((segment) => segment === "Notes" || segment === "notes");
 }
 
+export function isOrchestratorScratch(filePath: string): boolean {
+  return filePath.split(/[\\/]/).some((segment) => segment === SCRATCH_DIR);
+}
+
 export function decideOrchestratorEdit(filePath: string): EditGateDecision {
   if (isProseEdit(filePath)) return { decision: "allow" };
   if (
@@ -45,9 +51,12 @@ export function decideOrchestratorEdit(filePath: string): EditGateDecision {
   ) {
     return { decision: "allow" };
   }
+  if (isOrchestratorScratch(filePath)) {
+    return { decision: "allow" };
+  }
   return {
     decision: "block",
-    reason: `orchestrator mode: this worker plans and reviews and does not edit code — retrying Edit/Write on ${filePath} or any other code file will be denied the same way. Next step: write a unit spec to a file under /tmp, then run pai worker run --provider local30x8 --class implement -p "$(cat <spec>)" and review its diff when it finishes (target: ${filePath})`,
+    reason: `orchestrator mode: this worker plans and reviews and does not edit code — retrying Edit/Write on ${filePath} or any other code file will be denied the same way. Next step: write a unit spec to a file under /tmp, then run pai worker run --provider local30x8 --class implement -p "$(cat <spec>)" and review its diff when it finishes (target: ${filePath}). Throwaway verification files (test scripts, dumps) may be written under ${SCRATCH_DIR}/ in your worktree (gitignored, never committed); run them with npx vitest run --dir ${SCRATCH_DIR}.`,
   };
 }
 
@@ -56,7 +65,7 @@ const IN_PLACE = /\bsed\s+(?:-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z0-9]*i/;
 const REDIRECT = new RegExp(`(?<![>&\\d])>>?\\s*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
 const TEE = new RegExp(`\\btee\\s+(?:-[a-z]+\\s+)*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
 
-const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p);
+const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p) || isOrchestratorScratch(p);
 
 /** Bash for an orchestrator worker: blocks in-place code writes, allows git mv/rm/merge and running tests. */
 export function decideOrchestratorBash(command: string): EditGateDecision {
@@ -67,7 +76,7 @@ export function decideOrchestratorBash(command: string): EditGateDecision {
   return {
     decision: "block",
     reason:
-      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed.",
+      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under ${SCRATCH_DIR}/ (allowed).",
   };
 }
 

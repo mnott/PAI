@@ -4,6 +4,7 @@ import {
   decideEditGate,
   decideOrchestratorEdit,
   decideOrchestratorBash,
+  isOrchestratorScratch,
   type EditGateContext,
 } from "./edit-gate.js";
 
@@ -22,12 +23,24 @@ describe("isProseEdit", () => {
   });
 });
 
+describe("isOrchestratorScratch", () => {
+  it.each([
+    [".pai-scratch/a.ts", true],
+    ["/w/t/.pai-scratch/zz-chk.test.ts", true],
+    ["src/.pai-scratch-x/a.ts", false],
+    ["src/a.ts", false],
+  ])("%s -> %s", (filePath, expected) => {
+    expect(isOrchestratorScratch(filePath)).toBe(expected);
+  });
+});
+
 describe("decideOrchestratorEdit", () => {
   it.each([
     ["/repo/Notes/three-tier-log.md", "allow"],
     ["/repo/README.md", "allow"],
     ["/tmp/spec-1.txt", "allow"],
     ["/private/tmp/x/spec.json", "allow"],
+    ["/w/t/.pai-scratch/zz-chk.test.ts", "allow"],
     ["/repo/src/workers/run.ts", "block"],
     ["/repo/package.json", "block"],
   ])("filePath %s should be %s", (filePath, expected) => {
@@ -36,6 +49,7 @@ describe("decideOrchestratorEdit", () => {
     if (result.decision === "block") {
       expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
       expect(result.reason).toContain(filePath);
+      expect(result.reason).toContain(".pai-scratch");
     }
   });
 });
@@ -56,12 +70,17 @@ describe("decideOrchestratorBash", () => {
     ["echo hi > /tmp/spec.ts", "allow"],
     ["echo hi > Notes/log.md", "allow"],
     ["ls 2>&1", "allow"],
+    ["cat > .pai-scratch/dump.ts", "allow"],
+    ["echo hi > .pai-scratch/a.ts", "allow"],
+    ["echo hi > src/a.ts", "block"],
   ])("command %s should be %s", (command, expected) => {
     const result = decideOrchestratorBash(command);
     expect(result.decision).toBe(expected);
     if (result.decision === "block") {
       expect(result.reason).toContain("Bash may not write code files in place");
       expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+    } else {
+      expect(result.reason).toContain("Scratch files go under .pai-scratch/ (allowed)");
     }
   });
 });
