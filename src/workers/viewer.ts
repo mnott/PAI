@@ -337,7 +337,7 @@ export function replayOutput(
   const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : null;
   const out: string[] = [headerLine(c, st), ...denialLines(st)];
   const raw = readFileSync(path, "utf8");
-  const lines = tailLines !== undefined ? raw.split("\n").slice(-tailLines) : raw.split("\n");
+  const lines = tailLines !== undefined ? raw.trimEnd().split("\n").slice(-tailLines) : raw.split("\n");
   // the worker's inbox handoffs join the transcript where they happened (_ts)
   const handoffs: StreamEventLike[] = readInbox(logDir, wid).map((h) => ({
     type: "handoff",
@@ -370,6 +370,30 @@ export function replayOutput(
     state = step.state;
   }
   return out.join("\n");
+}
+
+/** Entries `follow <id>` prints when there is no terminal to stream to. */
+export const FOLLOW_TAIL_ENTRIES = 20;
+
+/**
+ * `follow <id>` without a terminal (stdout not a TTY, or PAI_WORKER=1) would
+ * never exit; unless --auto-exit or --live asks for streaming it prints the
+ * transcript tail instead. Returns that text, or null when follow should run.
+ */
+export function followTailOutput(
+  logDir: string,
+  target: string | null,
+  opts: { live: boolean; autoExit: boolean; tail?: number },
+  env: NodeJS.ProcessEnv = process.env,
+  isTTY = process.stdout.isTTY === true,
+  err: (s: string) => void = (s) => process.stderr.write(s)
+): string | null {
+  if (!target || opts.live || opts.autoExit) return null;
+  if (isTTY && env.PAI_WORKER !== "1") return null;
+  const n = opts.tail !== undefined && opts.tail > 0 ? opts.tail : FOLLOW_TAIL_ENTRIES;
+  const text = replayOutput(logDir, target, false, n);
+  err(`follow: no terminal, printed the last ${n} entries (use --live to stream)\n`);
+  return text;
 }
 
 // ---------------------------------------------------------------------------
