@@ -1,7 +1,7 @@
 /** Memory status and settings commands for the PAI memory index. */
 
 import type { Command } from "commander";
-import { dim, bold, ok, err } from "../../utils.js";
+import { dim, bold, ok, err } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 

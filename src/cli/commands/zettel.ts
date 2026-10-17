@@ -1,5 +1,1 @@
-/**
- * cli/commands/zettel.ts — shim for backward compatibility.
- * All implementations have moved to cli/commands/zettel/ sub-modules.
- */
-export { registerZettelCommands } from "./zettel/index.js";
+export { registerZettelCommands } from "../../cli2/commands/zettel/index.js";

@@ -7,6 +7,7 @@ import { GROUPS } from "../registry.js";
 import { rootCommand } from "./root.js";
 import { cliVersion, resolve } from "../run.js";
 import { UsageError } from "../parse.js";
+import { renderPages, writePages } from "../docgen.js";
 
 export const helpCommand: CommandDef = {
   name: "help",
@@ -36,11 +37,24 @@ export const docCommand: CommandDef = {
     "Regenerates the reference from the same definitions `pai help` reads, so the docs cannot drift from the commands. Prints to stdout unless --out is given.",
   options: [
     { name: "out", type: "string", value: "FILE", summary: "Write to this file instead of stdout" },
+    { name: "dir", type: "string", value: "DIR", summary: "Write one page per command plus README.md into this folder (used by the docs build)" },
+    { name: "examples", type: "string", value: "DIR", summary: "With --dir: splice hand-written <command>.md examples from this folder" },
     { ...OPT.dryRun, summary: "Show where it would write, write nothing" },
   ],
-  examples: ["pai doc", "pai doc --out docs/cli.md"],
+  examples: ["pai doc", "pai doc --out docs/cli.md", "pai doc --dir docs/commands --examples docs/commands/_examples"],
   seeAlso: ["pai help"],
   run(ctx) {
+    const dir = ctx.opts.dir as string | undefined;
+    if (dir) {
+      const pages = renderPages(GROUPS, ctx.opts.examples as string | undefined);
+      if (ctx.dryRun) return void process.stdout.write(`would write ${pages.length} pages to ${dir}\n`);
+      try {
+        writePages(dir, pages);
+      } catch (e) {
+        throw new CliError(`cannot write ${dir}: ${(e as Error).message}`, "pai doc --dir <writable folder>");
+      }
+      return void process.stdout.write(`Wrote ${pages.length} pages to ${dir}\n`);
+    }
     const md = renderMarkdown(GROUPS, cliVersion());
     const file = ctx.opts.out as string | undefined;
     if (!file) return void process.stdout.write(md + "\n");

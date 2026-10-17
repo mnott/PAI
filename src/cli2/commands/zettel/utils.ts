@@ -2,7 +2,7 @@
 
 import type { StorageBackend } from "../../../storage/interface.js";
 import { getStorageBackend } from "../../../storage/factory.js";
-import { err } from "../../utils.js";
+import { err } from "../../lib/utils.js";
 
 /** Shorten a vault path to just the last 2-3 components for display. */
 export function shortPath(p: string, parts = 3): string {

@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { applyRecencyBoost, type SearchResult } from "../../../memory/search.js";
-import { dim, bold, ok, warn, err } from "../../utils.js";
+import { dim, bold, ok, warn, err } from "../../lib/utils.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 

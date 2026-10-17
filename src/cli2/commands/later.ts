@@ -31,18 +31,11 @@ export const LATER_GROUPS: Pick<GroupDef, "id" | "commands">[] = [
   {
     id: "memory",
     commands: [
-      later("memory", "Memory engine: index, search, status"), // later: memory
-      later("kg", "Temporal knowledge graph"), // later: kg
-      later("zettel", "Zettelkasten intelligence"), // later: zettel
-      later("observation", "Observation capture: list, search, stats"), // later: observation
-      later("obsidian", "Obsidian vault sync"), // later: obsidian
-      later("skill", "Skill telemetry"), // later: skill
     ],
   },
   {
     id: "daemon",
     commands: [
-      later("audit", "Token-waste and other audits"), // later: audit
     ],
   },
 ];

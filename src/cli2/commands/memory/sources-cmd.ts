@@ -1,7 +1,7 @@
 /** Registers `pai memory sources` — what the indexer has taken in. */
 
 import type { Command } from "commander";
-import { err, dim } from "../../utils.js";
+import { err, dim } from "../../lib/utils.js";
 
 export function registerSourcesCommand(memoryCmd: Command): void {
   memoryCmd

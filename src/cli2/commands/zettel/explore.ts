@@ -2,7 +2,7 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { ok, warn, err, dim, bold, header } from "../../utils.js";
+import { ok, warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
 
 async function cmdExplore(

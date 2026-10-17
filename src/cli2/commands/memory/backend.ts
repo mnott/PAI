@@ -2,7 +2,7 @@
 
 import type { Command } from "commander";
 import { getStorageBackend } from "../../../storage/factory.js";
-import { dim, bold, ok, err } from "../../utils.js";
+import { dim, bold, ok, err } from "../../lib/utils.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { setConfigValueOp } from "../../../config/main-config-ops.js";
 import { BACKEND_IDS, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL, createBackend, detectBackends } from "../../../memory/backends/index.js";

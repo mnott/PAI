@@ -5,7 +5,7 @@ import type { StorageBackend } from "../../../storage/interface.js";
 import type { IndexResult } from "../../../memory/indexer-backend.js";
 import { indexProjectWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
-import { dim, bold, ok, err } from "../../utils.js";
+import { dim, bold, ok, err } from "../../lib/utils.js";
 import { PaiClient } from "../../../daemon/ipc-client.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { runEmbed } from "./embed.js";

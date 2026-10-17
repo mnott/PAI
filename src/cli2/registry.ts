@@ -14,6 +14,13 @@ import { hooksDbCommand } from "./commands/hooks-db.js";
 import { installAlias, setupCommand } from "./commands/setup.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
 import { BATCH_C } from "./commands/batch-c.js";
+import { memoryCommand } from "./commands/memory.js";
+import { kgCommand } from "./commands/kg.js";
+import { zettelCommand } from "./commands/zettel.js";
+import { observationCommand } from "./commands/observation.js";
+import { obsidianCommand } from "./commands/obsidian.js";
+import { skillCommand } from "./commands/skill.js";
+import { auditCommand } from "./commands/audit.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -56,3 +63,7 @@ export const GROUPS: GroupDef[] = [
     commands: [...(g.id === "workers" ? [workerGroup, routerCommand] : []), ...g.commands, ...(BATCH_B_EXTRA[g.id] ?? []), ...(BATCH_C[g.id] ?? [])],
   })),
 ];
+
+// Memory, knowledge and audit commands (one file per group in ./commands).
+GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand);
+GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand);
