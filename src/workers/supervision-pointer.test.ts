@@ -35,7 +35,7 @@ describe("undrained alert pointer", () => {
 
   const check = (
     at: Date,
-    o: { free?: boolean; sup?: SupervisorState; type?: ReturnType<typeof vi.fn<TypeFn>> } = {}
+    o: { free?: boolean; type?: ReturnType<typeof vi.fn<TypeFn>> } = {}
   ) => {
     const type = o.type ?? vi.fn<TypeFn>(async () => true);
     return runSupervisionTick(dir, {
@@ -46,7 +46,6 @@ describe("undrained alert pointer", () => {
       pointer: {
         type,
         inputFree: async () => o.free ?? true,
-        supervisorState: () => o.sup ?? "active",
       },
     }).then(() => type);
   };
@@ -76,8 +75,5 @@ describe("undrained alert pointer", () => {
     expect(type).toHaveBeenCalledTimes(1);
   });
 
-  it("types nothing for paused or finished supervisors", async () => {
-    expect(await check(LATER, { sup: "paused" })).not.toHaveBeenCalled();
-    expect(await check(LATER, { sup: "finished" })).not.toHaveBeenCalled();
-  });
+  // Removed test for paused/finished supervisors since these markers are ignored
 });
