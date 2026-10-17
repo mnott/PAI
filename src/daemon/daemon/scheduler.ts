@@ -10,7 +10,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes } from "../../workers/pane.js";
 import { loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
-import { probeRouter, routerIsStale, runRouterTick, spawnRouter, stopRouter } from "../../router/supervisor.js";
+import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
@@ -680,11 +680,9 @@ export function startRouterSupervisor(): void {
   const tick = () => {
     runRouterTick({
       probe: () => probeRouter(),
-      stale: () => routerIsStale(cliEntry()),
-      stop: stopRouter,
       start: () => {
-        const pid = spawnRouter(cliEntry());
-        process.stderr.write(`[pai-daemon] Router supervisor: router (re)started (pid ${pid})\n`);
+        const pid = spawnRouter(cliEntry(), ["--wait-bind", "10"]);
+        process.stderr.write(`[pai-daemon] Router supervisor: router started (pid ${pid}, --wait-bind 10)\n`);
       },
     }).catch((e) => {
       process.stderr.write(

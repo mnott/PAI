@@ -81,19 +81,12 @@ export async function stopRouter(): Promise<void> {
 export interface RouterTickDeps {
   probe: () => Promise<boolean>;
   start: () => void;
-  /** Optional: true when the running router predates the current build. */
-  stale?: () => boolean;
-  /** Required with `stale`: stop the running router. */
-  stop?: () => Promise<void>;
 }
 
-/** One health check: starts the router when down, restarts it when the build changed. */
-export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started" | "restarted"> {
+/** One health check: starts the router when down, never replaces a live router. */
+export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started"> {
   if (await deps.probe()) {
-    if (!deps.stale?.() || !deps.stop) return "up";
-    await deps.stop();
-    deps.start();
-    return "restarted";
+    return "up";
   }
   deps.start();
   return "started";
