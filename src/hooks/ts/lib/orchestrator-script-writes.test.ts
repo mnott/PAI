@@ -21,8 +21,8 @@ test("deny cases", () => {
   const readFileWithWrite = makeReadFile({ "/tmp/edit.py": "open('src/x.ts','w')" });
   expect(scriptWritesRepoCode("python3 /tmp/edit.py", readFileWithWrite)).toBe(true);
 
-  // cd x && python3 /tmp/e.py
-  expect(scriptWritesRepoCode("cd x && python3 /tmp/e.py", readFileWithWrite)).toBe(true);
+  // cd x && python3 /tmp/edit.py
+  expect(scriptWritesRepoCode("cd x && python3 /tmp/edit.py", readFileWithWrite)).toBe(true);
 });
 
 test("allow cases", () => {
