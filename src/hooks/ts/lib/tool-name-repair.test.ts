@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bareToolName, renderRepair, repairToolName, reportToolDenial, renderToolDenial, repairParams, inventedToolDirective } from "./tool-name-repair.js";
+import { bareToolName, renderRepair, repairToolName, reportToolDenial, renderToolDenial, repairParams, inventedToolDirective, renderParamRepair } from "./tool-name-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const call = (tool_name: string, tool_input: Record<string, unknown> = {}) => ({ tool_name, tool_input });
@@ -140,6 +140,15 @@ describe("repairParams", () => {
   });
 });
 
+describe("renderParamRepair", () => {
+  it("renders the param repair correctly", () => {
+    const r = repairParams({ tool_name: "Read", tool_input: { path: "/x" } }, W)!;
+    const output = renderParamRepair(r);
+    const parsed = JSON.parse(output);
+    expect(parsed.hookSpecificOutput.updatedInput).toEqual({ file_path: "/x" });
+  });
+});
+
 describe("inventedToolDirective", () => {
   it("Git gives a string containing \"Bash\"", () => {
     const r = inventedToolDirective({ tool_name: "Git" }, W)!;
@@ -210,5 +219,39 @@ describe("pre-tool-use/worker-tool-name-repair entrypoint", () => {
       expect(runHook(input, env)).toBe("");
       expect(existsSync(join(home, ".claude"))).toBe(false);
     }
+  });
+
+  it("maps Read path to file_path end-to-end and logs a [model] line", () => {
+    const stdout = runHook(
+      { tool_name: "Read", cwd: "/tmp/w", tool_input: { path: "/x" } },
+      { PAI_WORKER: "1", PAI_WORKER_ID: "w1" },
+    );
+    const out = JSON.parse(stdout).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("allow");
+    expect(out.updatedInput).toEqual({ file_path: "/x" });
+
+    const log = join(home, ".claude", "pai", "logs", "workers", "tool-repair.log");
+    expect(existsSync(log)).toBe(true);
+    const line = readFileSync(log, "utf8").trimEnd().split("\n").pop()!;
+    expect(line).toContain("[model]");
+    expect(line).toContain("param alias");
+  });
+
+  it("answers an invented Git tool with a Bash directive", () => {
+    const stdout = runHook(
+      { tool_name: "Git", tool_input: {} },
+      { PAI_WORKER: "1" },
+    );
+    const out = JSON.parse(stdout).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("deny");
+    expect(out.permissionDecisionReason).toContain("Bash");
+  });
+
+  it("stays silent for correct parameters", () => {
+    const stdout = runHook(
+      { tool_name: "Read", tool_input: { file_path: "/x" } },
+      { PAI_WORKER: "1" },
+    );
+    expect(stdout).toBe("");
   });
 });

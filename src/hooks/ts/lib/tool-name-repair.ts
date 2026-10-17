@@ -133,6 +133,19 @@ export function renderToolDenial(reason: string): string {
   });
 }
 
+export function renderParamRepair(r: ToolNameRepair): string {
+  const msg = `tool parameters repaired: ${r.old} → ${r.new}`;
+  return JSON.stringify({
+    systemMessage: msg,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput: r.updatedInput,
+      additionalContext: `${msg}. Use the declared parameter names (Read/Edit/Write: file_path, Bash: command, Grep: pattern).`,
+    },
+  });
+}
+
 export function renderRepair(r: ToolNameRepair): string {
   const msg = `tool name repaired: ${r.old} → ${r.new}`;
   const context = `${msg}. Call tools by their bare names: ${r.new}, never ${r.old} — dotted names do not exist.`;

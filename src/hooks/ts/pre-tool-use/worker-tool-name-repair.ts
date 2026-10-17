@@ -8,13 +8,26 @@
  * else passes untouched. Only I/O here; the rule lives in
  * lib/tool-name-repair.ts. Each repair is logged one line to
  * ~/.claude/pai/logs/workers/tool-repair.log. A no-op in interactive sessions.
- * Denies the "R" tool call in workers.
+ * Denies the "R" tool call in workers. Also maps parameter aliases (path → file_path, cmd → command, regex → pattern) and answers invented tool names (Git) with a directive.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial } from "../lib/tool-name-repair.js";
+import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial, inventedToolDirective, repairParams, renderParamRepair } from "../lib/tool-name-repair.js";
+
+function logRepair(tail: string): void {
+  try {
+    const dir = join(homedir(), ".claude", "pai", "logs", "workers");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(
+      join(dir, "tool-repair.log"),
+      `${new Date().toISOString()}\tworker=${process.env.PAI_WORKER_ID ?? "-"}\t${tail}\n`,
+    );
+  } catch {
+    // logging must never block the decision
+  }
+}
 
 async function main(): Promise<void> {
   let text = "";
@@ -38,19 +51,28 @@ async function main(): Promise<void> {
     return;
   }
 
-  const repair = repairToolName(input, process.env);
-  if (!repair) return;
-  try {
-    const dir = join(homedir(), ".claude", "pai", "logs", "workers");
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(
-      join(dir, "tool-repair.log"),
-      `${new Date().toISOString()}\tworker=${process.env.PAI_WORKER_ID ?? "-"}\t${repair.old}\t${repair.new}\n`,
-    );
-  } catch {
-    // logging must never block the decision
+  const directive = inventedToolDirective(input, process.env);
+  if (directive) {
+    logRepair(`[model]\tinvented tool\t${input.tool_name}`);
+    process.stdout.write(renderToolDenial(directive) + "\n");
+    return;
   }
-  process.stdout.write(renderRepair(repair) + "\n");
+
+  const repair = repairToolName(input, process.env);
+  const next = { ...input, tool_name: repair?.new ?? input.tool_name, tool_input: repair?.updatedInput ?? input.tool_input };
+  const params = repairParams(next, process.env);
+
+  if (!repair && !params) return;
+
+  if (repair) {
+    logRepair(`${repair.old}\t${repair.new}`);
+  }
+  if (params) {
+    logRepair(`[model]\tparam alias\t${params.old}\t${params.new}`);
+    process.stdout.write(renderParamRepair({ old: repair ? `${repair.old} ${params.old}` : params.old, new: repair ? `${repair.new} ${params.new}` : params.new, updatedInput: params.updatedInput }) + "\n");
+  } else {
+    process.stdout.write(renderRepair(repair!) + "\n");
+  }
 }
 
 main().catch(() => process.exit(0));
