@@ -424,7 +424,10 @@ export type PushFn = (logDir: string, target: PushTarget, ev: SupervisionEvent) 
 export const aibrokerPush: PushFn = async (logDir, target, ev) => {
   const iterm =
     target.iterm ?? (target.claudeSession ? itermForClaudeSession(logDir, target.claudeSession) : null);
-  if (!iterm) return false;
+  if (!iterm) {
+    logSkip(logDir, ev.session, ev, "no pane resolved for the owning session");
+    return false;
+  }
   try {
     const r = await sendToSession(iterm, ev.text);
     return r.ok || r.timedOut === true;
@@ -599,7 +602,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     const owner = statuses.find((s) => s.id === ev.worker);
     if (!shouldRelay(ev.kind, owner?.outputFormat)) continue; // caller reads its own JSON result
     const target: PushTarget = {
-      claudeSession: owner?.spawnerSession ?? null,
+      claudeSession: ev.session || owner?.spawnerSession || null,
       iterm: owner?.session?.id ?? null,
     };
     let ok = false;
@@ -641,11 +644,18 @@ export const aibrokerType: TypeFn = async (iterm, line) => {
 /** Live pane scrollback: the input box is the last `❯` line; empty after it means free. */
 export const aibrokerInputFree: InputFreeFn = async (iterm) => {
   try {
-    const res = (await callAiBroker("session_content", { sessionId: iterm, lines: 15 })) as {
-      session?: { content?: string };
+    // an unscoped reply (all sessions, or a different one) is never read as this pane's
+    const res = (await callAiBroker("session_content", { sessionId: iterm, target: iterm, lines: 15 })) as {
+      session?: { sessionId?: string; content?: string };
+      sessions?: Array<{ sessionId?: string; content?: string }>;
+      sessionId?: string;
       content?: string;
     };
-    const content = res.session?.content ?? res.content;
+    const mine =
+      res.sessions?.find((x) => x.sessionId === iterm) ??
+      (res.session?.sessionId === iterm ? res.session : undefined) ??
+      (res.sessionId === iterm ? res : undefined);
+    const content = mine?.content;
     if (typeof content !== "string") return false;
     const prompts = content.split("\n").filter((l) => /^\s*[❯>](\s|$)/.test(l));
     if (prompts.length === 0) return false;
@@ -654,6 +664,30 @@ export const aibrokerInputFree: InputFreeFn = async (iterm) => {
     return false;
   }
 };
+
+/**
+ * The one pane an alert of `session` may reach: the worker's own recorded pane
+ * when the worker belongs to that session, else the pane the session map ties
+ * to that very session. Never a pane of any other session; null when unknown.
+ */
+export function paneForSession(logDir: string, session: string, owner?: WorkerStatus): string | null {
+  if (owner && ownershipKey(owner) === session && owner.session?.id) return owner.session.id;
+  if (owner?.spawnerSession && owner.spawnerSession !== session) return null; // event file and status disagree
+  return itermForClaudeSession(logDir, session);
+}
+
+/** Record that an alert was not delivered because its target could not be resolved. */
+function logSkip(logDir: string, session: string, ev: SupervisionEvent, why: string): void {
+  try {
+    appendFileSync(
+      join(supervisionDirPath(logDir), "skipped.log"),
+      `${new Date().toISOString()} session=${session} event=${ev.id} ${why}\n`,
+      "utf8"
+    );
+  } catch {
+    // the log is a courtesy
+  }
+}
 
 function pointerText(n: number): string {
   return `${n} worker alert${n === 1 ? "" : "s"} pending — see WORKER EVENTS (supervision)`;
@@ -713,10 +747,11 @@ export async function pointUndrained(
       }
     }
     if (due.length === 0) continue;
-    const owner = statuses.find((s) => s.id === due[0].worker);
-    const iterm =
-      owner?.session?.id ?? itermForClaudeSession(logDir, owner?.spawnerSession ?? session) ?? null;
-    if (!iterm) continue;
+    const iterm = paneForSession(logDir, session, statuses.find((s) => s.id === due[0].worker));
+    if (!iterm) {
+      logSkip(logDir, session, due[0], "no pane resolved for the owning session");
+      continue;
+    }
     try {
       if (!(await inputFree(iterm))) continue;
       if (!(await type(iterm, pointerText(due.length)))) continue;

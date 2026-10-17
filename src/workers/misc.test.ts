@@ -67,8 +67,9 @@ describe("spawner session map", () => {
     recordSessionMapEntry(dir, "/gone", "sess-3", undefined, t0);
     recordSessionMapEntry(dir, cwd, "sess-4", undefined, t0 + 2 * 60 * 60_000);
     const map = JSON.parse(readFileSync(sessionMapPath(dir), "utf8")) as Record<string, { session: string }>;
-    expect(map[cwd].session).toBe("sess-4");
-    expect(map["/gone"]).toBeUndefined();
+    expect(map[`${cwd}\u0000sess-4`].session).toBe("sess-4");
+    expect(Object.keys(map).some((k) => k.startsWith("/gone"))).toBe(false);
+    expect(resolveSpawnerSession(dir, cwd, {}, t0 + 2 * 60 * 60_000 + 1000)).toBe("sess-4");
   });
   it("inherits the spawner of the worker this runs inside", () => {
     const logDir = mkdtempSync(join(tmpdir(), "pai-spawner-"));
