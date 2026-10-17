@@ -16,10 +16,11 @@ import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
-import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
+import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
+import { restartRouter } from "../../router/restart.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
 
@@ -139,6 +140,23 @@ const runCommand: CommandDef = {
   },
 };
 
+const restartCommand: CommandDef = {
+  name: "restart",
+  summary: "Restart the router without refusing connections",
+  description: "Starts a new router that waits for the port, then stops the old one, which finishes its in-flight streams first. Prints the longest refused interval.",
+  examples: ["pai router restart"],
+  seeAlso: ["pai router start", "pai router stop"],
+  async run() {
+    const result = await restartRouter({
+      oldPid: routerRunningPid() ?? undefined,
+      spawnNew: () => spawnRouter(process.argv[1]!, ["--wait-bind", "10"]),
+      signalOld: (pid) => process.kill(pid, "SIGTERM"),
+      isUp: () => probeRouter(ROUTER_PORT, 500)
+    });
+    out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`));
+  },
+};
+
 const statsCommand: CommandDef = {
   name: "stats",
   summary: "Token and cache totals per provider and model",
@@ -166,9 +184,9 @@ const statsCommand: CommandDef = {
 
 export const routerCommand: CommandDef = {
   name: "router",
-  summary: "Local model router: start, stop, status, run, stats",
+  summary: "Local model router: start, stop, restart, status, run, stats",
   description: `A local router on 127.0.0.1:${ROUTER_PORT}: set ANTHROPIC_BASE_URL to it and /model picks the provider.`,
   examples: ["pai router status", "pai router stats --since 1d"],
   seeAlso: ["pai worker policy", "pai providers"],
-  subcommands: [startCommand, stopCommand, statusCommand, runCommand, statsCommand],
+  subcommands: [startCommand, stopCommand, restartCommand, statusCommand, runCommand, statsCommand],
 };
