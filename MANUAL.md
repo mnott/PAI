@@ -130,6 +130,19 @@ The registry is PAI's index of projects — their paths, slugs, aliases, tags, a
 
 For users who prefer the terminal, every action above has a CLI equivalent. PAI's CLI is called `pai`.
 
+Start with the daily commands:
+
+```bash
+pai                 # picker: newest sessions first, type to filter, Enter opens
+pai NAME            # open a session by name
+pai ls              # sessions as a plain table
+pai setups          # orchestrator + worker combinations
+pai more            # every other command, grouped
+pai help <command>  # full help for one command
+```
+
+The commands below all still work; `pai more` lists them by group.
+
 ```bash
 # Projects
 pai project list                                     # List all projects
