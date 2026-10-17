@@ -14,6 +14,15 @@ import { ROUTER_PORT } from "../router/router.js";
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /**
+ * Headless workers run their Bash tool under bash: the operator's zsh aborts a whole command on an
+ * unmatched glob ("no matches found: --include=*.ts"). CLAUDE_CODE_SHELL is honoured by Claude Code
+ * for its Bash tool; an explicit value already in the env wins.
+ */
+function workerShell(env: NodeJS.ProcessEnv): void {
+  if (!env.CLAUDE_CODE_SHELL) env.CLAUDE_CODE_SHELL = "/bin/bash";
+}
+
+/**
  * Session-identity variables the SPAWNING session leaves in the environment.
  * Inherited, they make a headless child attach to the spawner's messaging
  * socket instead of standing on its own — and a worktree-mode child then
@@ -96,6 +105,7 @@ export function buildRunEnv(
     env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     if (headless) {
       env.PAI_WORKER = "1";
+      workerShell(env);
       env.PAI_WORKER_PROVIDER = "anthropic";
     } else {
       env.ENABLE_TOOL_SEARCH = "true";
@@ -146,6 +156,8 @@ export function buildRunEnv(
     // claudeCommand via --settings.
     env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
     env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+    env.PAI_WORKER = "1";
+    workerShell(env);
   } else {
     env.ENABLE_TOOL_SEARCH = "true";
   }
