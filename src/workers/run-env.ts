@@ -156,7 +156,6 @@ export function buildRunEnv(
     // claudeCommand via --settings.
     env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
     env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
-    env.PAI_WORKER = "1";
     workerShell(env);
   } else {
     env.ENABLE_TOOL_SEARCH = "true";
