@@ -102,6 +102,12 @@ export interface WorkerStatus {
    * on statuses written before the flag existed — read as a spawn.
    */
   origin?: "spawn" | "chat";
+  /**
+   * Set while the start gate holds this run for the previous run on its
+   * provider to warm the prompt cache (stagger.ts); state stays "running" so
+   * wait/kill/pane logic still sees a live run, `last` carries the line.
+   */
+  warmup?: { for: string; provider: string; elapsedSec: number; limitSec: number };
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
   /**

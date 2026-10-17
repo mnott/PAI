@@ -17,6 +17,7 @@
  * Code.
  */
 
+import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -416,6 +417,8 @@ export interface WorkersConfig {
   cacheKeepaliveSecs: number;
   /** Default time limit of every run in minutes (workers.defaultMaxMinutes); 0 = none. */
   defaultMaxMinutes: number;
+  /** Start gate for same-provider runs (workers.stagger); see stagger.ts. */
+  stagger: StaggerConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /**
@@ -534,6 +537,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     pool: { ...DEFAULT_POOL },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
+    stagger: { ...DEFAULT_STAGGER },
     noBrowserByDefault: false,
     caveman: false,
     fallback: null,
@@ -1035,6 +1039,24 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
     defaultMaxMinutes = w.defaultMaxMinutes;
   }
+  const stagger = { ...DEFAULT_STAGGER };
+  if (w.stagger !== undefined) {
+    if (typeof w.stagger !== "object" || w.stagger === null || Array.isArray(w.stagger)) {
+      bad(".stagger", "must be an object");
+    }
+    const t = w.stagger as Record<string, unknown>;
+    if (t.enabled !== undefined) {
+      if (typeof t.enabled !== "boolean") bad(".stagger.enabled", "must be true or false");
+      stagger.enabled = t.enabled as boolean;
+    }
+    for (const k of ["localDefaultSec", "remoteDefaultSec", "minSec", "maxSec"] as const) {
+      if (t[k] === undefined) continue;
+      if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) < 0) {
+        bad(`.stagger.${k}`, "must be a non-negative number of seconds");
+      }
+      stagger[k] = t[k] as number;
+    }
+  }
   if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
     bad(".noBrowserByDefault", "must be true or false");
   }
@@ -1099,6 +1121,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     pool,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
+    stagger,
     noBrowserByDefault,
     caveman,
     fallback,
@@ -1181,6 +1204,7 @@ export function writeWorkersSection(
         pool: workers.pool,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
+        stagger: workers.stagger,
         noBrowserByDefault: workers.noBrowserByDefault,
         caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),

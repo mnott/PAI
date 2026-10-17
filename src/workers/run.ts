@@ -86,7 +86,8 @@ import {
 import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
-import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
+import { fallThroughReason, isLocalProvider, routeRun, type RouteInfo } from "./policy.js";
+import { recordWarmup, staggerGate } from "./stagger.js";
 import {
   autoOrder,
   capabilityForRun,
@@ -162,6 +163,8 @@ export interface RunOptions {
   modelFlag?: string;
   label?: string;
   noPane?: boolean;
+  /** --no-stagger: skip the same-provider start gate. */
+  noStagger?: boolean;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
   /** --mcp value: server/set names, comma-separated. */
@@ -758,6 +761,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         noPane: opts.noPane ?? false,
+        noStagger: opts.noStagger,
         mcpFlag: opts.mcpFlag,
         cwd: opts.cwd,
         specPath: opts.specPath,
@@ -1251,6 +1255,7 @@ export interface ExecuteArgs {
   parsed: ReturnType<typeof parseRunnerArgs>;
   claudeArgs: string[];
   noPane: boolean;
+  noStagger?: boolean;
   mcpFlag?: string;
   cwd?: string;
   specPath?: string;
@@ -1592,6 +1597,30 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true };
   else if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
+  if (headless) {
+    const saved = status.last;
+    await staggerGate({
+      logDir,
+      self: { id: wid, provider: target.providerName },
+      local: isLocalProvider(target.provider.baseUrl),
+      config: config.stagger,
+      disabled: a.noStagger,
+      log: (line) => {
+        if (!a.quiet) process.stderr.write(`${line}\n`);
+      },
+      onWait: (w) => {
+        if (w) {
+          status.warmup = { for: w.predecessor, provider: w.provider, elapsedSec: w.elapsedSec, limitSec: w.limitSec };
+          status.last = w.line;
+        } else {
+          delete status.warmup;
+          status.last = saved;
+        }
+        saveStatus(logDir, status);
+      },
+    });
+  }
+
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
     env,
@@ -1752,6 +1781,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
+        if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         for (const block of e.message?.content ?? []) {
