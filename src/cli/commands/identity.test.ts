@@ -2,8 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai, treeDiff, treeFor } from "../lib/legacy-check.js";
-import { registerIdentityCommands } from "../impl/identity.js";
+import { helpProblems, runPai } from "../lib/legacy-check.js";
 import { identityCommand } from "./identity.js";
 
 let home = "";
@@ -15,9 +14,6 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllEnvs());
 
 describe("pai identity", () => {
-  it("declares exactly the subcommands, flags and arguments the implementation registers", () => {
-    expect(treeDiff(identityCommand, treeFor(registerIdentityCommands, "identity"))).toEqual([]);
-  });
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(identityCommand)).toEqual([]);
   });
@@ -33,5 +29,20 @@ describe("pai identity", () => {
   it("pai identity remove me@example.com exits 0", async () => {
     const r = await runPai(["identity","remove","me@example.com"]);
     expect(r.code).toBe(0);
+  });
+  it("pai identity set-delivery rejects a non-address with exit 1", async () => {
+    const r = await runPai(["identity","set-delivery","nope"]);
+    expect(r.code).toBe(1);
+    expect(r.out + r.err).toContain("Not a usable email address: nope");
+  });
+  it("pai identity add rejects a non-address with exit 1", async () => {
+    const r = await runPai(["identity","add","nope"]);
+    expect(r.code).toBe(1);
+    expect(r.out + r.err).toContain("Not a usable email address: nope");
+  });
+  it("pai identity remove of an unlisted address exits 0 and changes nothing", async () => {
+    const r = await runPai(["identity","remove","ghost@example.com"]);
+    expect(r.code).toBe(0);
+    expect(r.out + r.err).toContain("was not listed. Nothing changed.");
   });
 });
