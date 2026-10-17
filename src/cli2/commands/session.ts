@@ -29,6 +29,9 @@ import {
   scanSessions,
   type ScannedSession,
 } from "../lib/session-scan.js";
+import { legacy } from "../lib/legacy.js";
+import { cmdRename } from "./session/commands.js";
+import { workerSessionFilter } from "../lib/worker-sessions.js";
 import { getProviderOrNative } from "../../workers/config.js";
 
 // ---------------------------------------------------------------------------
@@ -90,12 +93,12 @@ function originOf(s: ScannedSession, workers: WorkersConfig | null): SessionOrig
   return inferOrigin(model, workers?.providers ?? {});
 }
 
-export async function collectRows(opts: { project?: string; all?: boolean }): Promise<SessionRow[]> {
+export async function collectRows(opts: { project?: string; all?: boolean; workers?: boolean }): Promise<SessionRow[]> {
   const { rows } = await collectView(opts);
   return rows;
 }
 
-export async function collectView(opts: { project?: string; all?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
+export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
   let workers: WorkersConfig | null = null;
   try {
     workers = readWorkersSection().workers;
@@ -103,15 +106,18 @@ export async function collectView(opts: { project?: string; all?: boolean }): Pr
     /* provider column falls back to what the model name says */
   }
   const [scanned, live] = await Promise.all([
-    scanSessions({ limit: opts.all ? 1000 : 25, filter: opts.all ? "all" : "named" }),
+    scanSessions({ limit: opts.all ? 1000 : opts.workers ? 25 : 150, filter: opts.all ? "all" : "named" }),
     fetchLiveSessions().catch(() => []),
   ]);
   const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
   const needle = opts.project?.toLowerCase();
   const budget = workers ? await readBudget(workers) : {};
+  const workerFilter = opts.workers ? null : workerSessionFilter();
   const rows = scanned
+    .filter((s) => !workerFilter?.isWorker(s))
     .filter((s) => !needle || projectOf(s).toLowerCase().includes(needle) || s.decodedPath.toLowerCase().includes(needle))
     .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, opts.all ? 1000 : 25)
     .map((s) => {
       const origin = originOf(s, workers);
       return {
@@ -174,12 +180,13 @@ const listCommand: CommandDef = {
   options: [
     { ...OPT.project },
     { name: "all", type: "boolean", default: false, summary: "Include unnamed sessions and show more than the newest 25" },
+    { name: "workers", type: "boolean", default: false, summary: "Also show sessions started by background workers (hidden by default)" },
     { ...OPT.json },
   ],
-  examples: ["pai ls", "pai ls --project api", "pai ls --all --json"],
+  examples: ["pai ls", "pai ls --project api", "pai ls --all --json", "pai ls --workers"],
   seeAlso: ["pai open", "pai rename", "pai providers"],
   async run(ctx) {
-    const rows = await collectRows({ project: ctx.opts.project as string | undefined, all: ctx.opts.all === true });
+    const rows = await collectRows({ project: ctx.opts.project as string | undefined, all: ctx.opts.all === true, workers: ctx.opts.workers === true });
     if (ctx.opts.json) return void out(JSON.stringify(rows, null, 2));
     const st = style();
     if (rows.length === 0) {
@@ -363,11 +370,15 @@ const renameCommand: CommandDef = {
   args: [
     { name: "ID", required: true, summary: "Session id from `pai ls` (a prefix is enough) or its current name" },
     { name: "NAME", required: true, summary: "The new name" },
+    { name: "NEW_SLUG", summary: "Only for the old note form `session rename PROJECT NUMBER NEW_SLUG`: renames a session note instead" },
   ],
   options: [],
-  examples: ["pai rename 3a9f1c2e api-spike", 'pai rename old-name "new name"'],
+  examples: ["pai rename 3a9f1c2e api-spike", 'pai rename old-name "new name"', "pai session rename my-project 12 fix-login-bug"],
   seeAlso: ["pai ls", "pai open"],
   async run(ctx) {
+    if (ctx.args.NEW_SLUG !== undefined) {
+      return legacy(() => cmdRename(ctx.args.ID as string, ctx.args.NAME as string, ctx.args.NEW_SLUG as string));
+    }
     const sessions = await scanSessions({ limit: 500, filter: "all" });
     let session: ScannedSession;
     try {
