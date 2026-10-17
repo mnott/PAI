@@ -34,9 +34,12 @@ pai worker run --label "short task label" --class research \\
 - NEVER busy-wait for a worker. No sleep loops, no \`sleep N; pai worker ps\`
   polling, no manual retry loops. Two sanctioned waits: run workers as
   background Bash tasks (the harness fires a completion notification), or
-  call \`pai worker wait <id...>\` which blocks until they finish and prints
-  each result as one JSON line. If you catch yourself sleeping to re-check a
-  worker, stop — you already get notified.
+  call \`pai worker wait <id...> [--max 100]\`, which returns within 110 s as
+  soon as ANY worker finishes, one JSON status line per id (exit 0 all done,
+  3 still running: call again with the unfinished ids). In a headless worker
+  waiting on something else: \`wait-url <url>\` for a server, \`wait-file
+  <path...>\` for files, \`wait-on <pid>\` for a detached job (never for
+  workers). If you catch yourself sleeping to re-check, stop.
 - Supervision events arrive automatically — no polling, no sleeps: the PAI
   daemon watches your workers and tells you when one finishes, fails or
   stalls (details: docs/worker.md, "Supervision").

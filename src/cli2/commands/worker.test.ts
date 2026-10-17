@@ -14,7 +14,7 @@ const plan = (argv: string[]) => buildRunPlan(parse("run", argv));
 
 const PORTED = [
   "run", "resume", "ps", "follow", "replay", "watch", "pane", "log", "say", "goal", "handoff", "merge", "verify",
-  "wait-on", "wait", "pending", "errors", "discard", "gc", "kill", "status-line", "model", "capability",
+  "wait-on", "wait-url", "wait-file", "wait", "pending", "errors", "discard", "gc", "kill", "status-line", "model", "capability",
 ];
 
 describe("worker: declared surface", () => {

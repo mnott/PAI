@@ -27,8 +27,8 @@ export interface WaitOnOpts {
 }
 
 export interface WaitOnDeps {
-  /** "alive" | "gone" | "foreign" (exists, not ours). */
-  probe: (pid: number) => "alive" | "gone" | "foreign";
+  /** "alive" | "gone" | "foreign" (exists, not ours) | "zombie" (exited, not yet reaped by its parent: finished). */
+  probe: (pid: number) => "alive" | "gone" | "foreign" | "zombie";
   /** Process start time in ms epoch, null when unknown. */
   startTime: (pid: number) => number | null;
   now: () => number;
@@ -50,11 +50,20 @@ export function statusMarker(logDir: string, id: string): (w: WaitingOn | null) 
   };
 }
 
+function isZombie(pid: number): boolean {
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
 export const realDeps: WaitOnDeps = {
   probe(pid) {
     try {
       process.kill(pid, 0);
-      return "alive";
+      // kill(0) succeeds on a zombie (exited, parent has not reaped it); that job is finished
+      return isZombie(pid) ? "zombie" : "alive";
     } catch (e) {
       return (e as NodeJS.ErrnoException).code === "EPERM" ? "foreign" : "gone";
     }
@@ -110,6 +119,7 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     d.out(`wait-on: pid ${o.pid} is not owned by this user`);
     return 2;
   }
+  if (first === "zombie") return finish();
   if (first === "gone") {
     // A job that finished between two wait-on calls leaves an rc or a log; neither means the pid never existed.
     if (rcOf(o.pid, o.log) !== null || (o.log && existsSync(o.log))) return finish();
@@ -143,3 +153,9 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
 export const WAIT_RECIPE =
   "`nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid`, then repeat " +
   "`pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` (each call returns within 2 min; do other work between calls) until it exits 0";
+
+/** One line naming the bounded wait for each thing a worker can wait on; quoted by the contract and the tier-2 advice. */
+export const WAIT_VERBS =
+  "Waiting never needs sleep; use the verb for what you wait on (each returns within 110 s, exit 0 = ready, 3 = not yet, call again): " +
+  "child workers `pai worker wait <id...> [--max 100]` (returns when ANY finishes, one status line per id; drop finished ids on the next call); " +
+  "a detached job `pai worker wait-on <pid> [--log f]`; a server `pai worker wait-url <url>`; files `pai worker wait-file <path...>`.";
