@@ -42,7 +42,11 @@ const testConfig = (over: { maxSlots?: number; idleSecs?: number } = {}): Worker
   ...defaultWorkersConfig(),
   caveman: false,
   pool: { enabled: true, maxSlots: over.maxSlots ?? 1, idleSecs: over.idleSecs ?? 0, port: 0 },
-  providers: { fakeprov: provider(), anthropic: provider({ native: true }) },
+  providers: {
+    fakeprov: provider(),
+    anthropic: provider({ native: true }),
+    loopprov: provider({ baseUrl: "http://127.0.0.1:8080/v1" }),
+  },
 });
 
 const line = (parts: string[]): string => parts.join("\n") + "\n";
@@ -127,7 +131,7 @@ interface Harness {
 function makeHost(
   cfgOver: { maxSlots?: number; idleSecs?: number } = {},
   now?: () => Date,
-  opts: { routerEnabled?: boolean; prodBuilders?: boolean } = {}
+  opts: { routerEnabled?: boolean; prodBuilders?: boolean; probeRouter?: () => Promise<boolean> } = {}
 ): Harness {
   const logDir = mkdtempSync(join(tmpdir(), "pai-pool-host-"));
   const slots: FakeSlot[] = [];
@@ -150,6 +154,7 @@ function makeHost(
     ...(opts.prodBuilders ? {} : { envFor: () => ({}) }),
     ...(opts.prodBuilders ? {} : { cmdHead: () => ["fake-claude"] }),
     ...(opts.routerEnabled !== undefined ? { routerEnabled: opts.routerEnabled } : {}),
+    ...(opts.probeRouter ? { probeRouter: opts.probeRouter } : {}),
     ...(now ? { now } : {}),
     noReaper: true,
   });
@@ -382,6 +387,21 @@ describe("pool slot route", () => {
     const pin = pinned(h.argvs[0]!);
     expect(pin.env.ANTHROPIC_BASE_URL).toBe("https://example.invalid");
     expect(JSON.stringify(pin)).not.toContain(String(ROUTER_PORT));
+  });
+
+  it("LoopbackSlotUsesRouterWhenUp — a loopback provider's slot goes through the router even with the global flag off", async () => {
+    const h = makeHost({}, undefined, { routerEnabled: false, prodBuilders: true, probeRouter: async () => true });
+    liveHosts.push(h.host);
+    await h.host.runTask(task({ provider: "loopprov" }));
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    expect(h.envs[0]!.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: loopprov");
+  });
+
+  it("LoopbackSlotDirectWhenRouterDown — falls back to the provider URL", async () => {
+    const h = makeHost({}, undefined, { routerEnabled: false, prodBuilders: true, probeRouter: async () => false });
+    liveHosts.push(h.host);
+    await h.host.runTask(task({ provider: "loopprov" }));
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8080/v1");
   });
 
   it("PooledUsageReachableInRouterLog — the launch keys router rows to the pool's model and session", async () => {
