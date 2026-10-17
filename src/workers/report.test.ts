@@ -467,3 +467,10 @@ describe("checkProof", () => {
     }
   });
 });
+
+describe("workerContractPrompt - .pai-scratch test", () => {
+  it("contains .pai-scratch/ in the orchestrator contract", () => {
+    const prompt = workerContractPrompt("implement", "ag2", true);
+    expect(prompt).toContain(".pai-scratch/");
+  });
+});
