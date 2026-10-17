@@ -14,7 +14,7 @@ import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionI
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
-import { buildSpeed } from "./speed.js";
+import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -165,6 +165,7 @@ export function buildCockpitData(
   let errors = 0;
   const byModel = new Map<string, Tok & { model: string; provider: string; requests: number; errors: number }>();
   const byProvider = new Map<string, Tok & { provider: string; requests: number; errors: number; retries: number; ms: number }>();
+  const ttftByProvider = new Map<string, number[]>();
   const bySession = new Map<string, Tok & { session: string; name: string | null; requests: number; errors: number; busts: number; lastTs: string; models: Set<string> }>();
   const pause = new Map<string, Map<string, { n: number; hit: number; write: number; miss: number; readTok: number; writeTok: number }>>();
   const bustParts: Record<string, number> = {};
@@ -197,6 +198,11 @@ export function buildCockpitData(
     if (isErr) p.errors++;
     if (retries.has(r)) p.retries++;
     byProvider.set(r.provider, p);
+    if (!isErr && r.ttftMs !== undefined) {
+      const ts = ttftByProvider.get(r.provider) ?? [];
+      ts.push(r.ttftMs);
+      ttftByProvider.set(r.provider, ts);
+    }
 
     const sid = r.session_id ?? r.session ?? "-";
     const s = bySession.get(sid) ?? {
@@ -256,7 +262,10 @@ export function buildCockpitData(
   // prompt tokens per provider over the whole log: denominator for the local
   // servers' tokensSaved counter, which the stats endpoint gives no total for
   const promptByProvider: Record<string, number> = {};
+  // first row per provider: the log (router restart) is younger than a server's own counters
+  const promptSince: Record<string, string> = {};
   for (const r of allRows) {
+    if (!promptSince[r.provider] || r.ts < promptSince[r.provider]!) promptSince[r.provider] = r.ts;
     promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
   }
 
@@ -271,7 +280,7 @@ export function buildCockpitData(
     totals: { ...withRatio(total), requests: rows.length, errors },
     series,
     byModel: [...byModel.values()].map(withRatio).sort((a, b) => b.requests - a.requests),
-    byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0 })),
+    byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0, ttftP50: percentile(ttftByProvider.get(p.provider) ?? [], 0.5) })),
     bySession: sessionRows,
     cachePause: [...pause.entries()].map(([model, pm]) => ({
       model,
@@ -280,6 +289,7 @@ export function buildCockpitData(
     bustParts,
     speed: buildSpeed(allRows, now, canonicalModel),
     promptByProvider,
+    promptSince,
     workers: sessionRows.filter((s) => s.worker),
     daily: { days, models: daily },
     // continuous vs one-shot sessions: the overall ratio alone averages a

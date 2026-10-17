@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
@@ -270,5 +270,80 @@ describe("one key per model", () => {
     expect(Object.keys(d.series.find((b) => Object.keys(b.models).length)!.models)).toEqual(["claude-opus-5-5"]);
     expect(Object.keys(d.daily.models)).toEqual(["claude-opus-5-5"]);
     expect(d.bySession[0]!.models).toEqual(["claude-opus-5-5"]);
+  });
+});
+
+describe("cockpit cache rings and providers table", () => {
+  const body = ["emptyRing", "ringTiles", "provHit", "reuseLine"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const lowReq = COCKPIT_HTML.match(/var LOW_REQ=\d+;/)![0];
+  const fns = new Function(
+    "donut", "pct", "esc", "fmt",
+    `${lowReq}\n${body}\nreturn {ringTiles, provHit, reuseLine};`
+  )(
+    (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
+    (r: number) => `${(r * 100).toFixed(1)}%`,
+    (s: string) => s,
+    (n: number) => String(n)
+  ) as {
+    ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
+    provHit: (p: unknown, servers: unknown[]) => string;
+    reuseLine: (pc: unknown, tot: number | undefined, since?: string) => string;
+  };
+  const m = (provider: string, model: string, requests: number, cacheRead = 0, input = 0) => ({ provider, model, requests, cacheRead, cacheWrite: 0, input });
+  const pc = { hits: 1205, misses: 9, hitRate: 0.993, tokensSaved: 22_660_000 };
+
+  it("no-cache loopback tile shows the server prefix-cache ring, labelled", () => {
+    const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, [{ provider: "local30x8", prefixCache: pc }]);
+    expect(html).toContain("99.3");
+    expect(html).toContain("server prefix cache");
+    expect(html).toContain("local30x8");
+    expect(html).toContain("qwen · 164 req");
+    expect(html).not.toContain("bignum");
+  });
+  it("without server stats the tile is an empty grey ring with a small caption", () => {
+    const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, []);
+    expect(html).toContain("not reported");
+    expect(html).toContain('<div class="s">not reported</div>');
+    expect(html).not.toContain("donut");
+    expect(html).toContain("qwen · 164 req");
+  });
+  it("models under 5 requests are dimmed and sorted last, no 0% ring", () => {
+    const html = fns.ringTiles({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) }, []);
+    expect(html.indexOf("sonnet")).toBeLessThan(html.indexOf("haiku"));
+    expect(html).toContain('class="ring low"');
+    expect(html).not.toContain(">0.0<");
+    expect(html.match(/class="ring"/g)).toHaveLength(1);
+  });
+  it("providers table: loopback hit% is the marked server figure, never 0.0%", () => {
+    const p = { provider: "local30x8", cacheRead: 0, cacheWrite: 0, hitRatio: 0 };
+    expect(fns.provHit(p, [{ provider: "local30x8", prefixCache: pc }])).toContain("99.3%*");
+    expect(fns.provHit(p, [{ provider: "local30x8" }])).toContain("n/a");
+    expect(fns.provHit({ provider: "anthropic", cacheRead: 9, cacheWrite: 0, hitRatio: 0.995 }, [])).toBe("99.5%");
+  });
+  it("prompt total comes from loopback rows; ratio only when the windows are comparable", () => {
+    const rows = [row(2, { provider: "local30x8", input_tokens: 4000, cache_read_input_tokens: undefined })];
+    const d = buildCockpitData(rows, "1h", NOW);
+    expect(d.promptByProvider["local30x8"]).toBe(4000);
+    expect(d.promptSince["local30x8"]).toBeDefined();
+    expect(fns.reuseLine({ tokensSaved: 1000 }, 4000, "2026-10-17T20:00:00Z")).toContain("25.0%");
+    const diff = fns.reuseLine(pc, 3_340_000, "2026-10-17T20:00:00Z");
+    expect(diff).toContain("windows differ");
+    expect(diff).toContain("since server start");
+  });
+  it("providers carry a ttft p50 from their timed rows", () => {
+    const rows = [row(2, { ttftMs: 100 }), row(3, { ttftMs: 300 }), row(4, { ttftMs: 200 })];
+    expect(buildCockpitData(rows, "1h", NOW).byProvider[0]!.ttftP50).toBe(200);
+  });
+  it("the grid no longer renders a 'not reported' heading", () => {
+    expect(COCKPIT_HTML).not.toContain('bignum dim">not reported');
+  });
+});
+
+describe("built cockpit page", () => {
+  const built = join(process.cwd(), "dist", "cli", "index.mjs");
+  it.skipIf(!existsSync(built))("has no 'not reported' heading in the tile grid", () => {
+    const js = readFileSync(built, "utf8");
+    expect(js).toContain("function ringTiles");
+    expect(js).not.toContain('bignum dim">not reported');
   });
 });
