@@ -137,16 +137,20 @@ function renderSystem(){
   ["compressed",c.compressed!=null?gb(c.compressed):na(null),"vm_stat"],
   ["CPU load",val("cpu",pctf),"all clusters"],
   ["GPU load",val("gpu",pctf),(freq?(freq/1000).toFixed(1)+" GHz":"IOReport")+tag()],
-  ["ANE load",val("ane",pctf),"neural engine"+tag()],
+  ["ANE load",val("ane",pctf),"neural engine"+tag(),"ane"],
   ["SoC temp",val("socTemp",function(v){return v.toFixed(1)+" °C"}),"IOReport"+tag()],
-  ["CPU W",val("cpuW",w1),"CPU rail"+tag()],
-  ["GPU W",val("gpuW",w1),"GPU rail"+tag()],
-  ["ANE W",val("aneW",w1),"neural engine"+tag()],
+  ["CPU W",val("cpuW",w1),"CPU rail"+tag(),"cpuW"],
+  ["GPU W",val("gpuW",w1),"GPU rail"+tag(),"gpuW"],
+  ["ANE W",val("aneW",w1),"neural engine"+tag(),"aneW"],
   ["system W",val("systemW",w1),"system rail"+tag()],
   ["power",val("totalW",function(v){return w1(v)+" W"}),"SoC total"+tag()],
   ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
  ];
- $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("");
+ var hid=[],ss=(sys.series&&sys.series.series)||[];
+ /** Unused metric: the window has samples for it and every one is 0 (no samples = unknown, stays visible). */
+ function unused(key){var n=0;for(var i=0;i<ss.length;i++){var v=ss[i][key];if(v==null)continue;if(v!==0)return false;n++}return n>0&&!(c[key]>0)}
+ kpis=kpis.filter(function(k){if(k[3]&&unused(k[3])){hid.push(k[0]);return false}return true});
+ $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("")+(hid.length?'<div class="dim" style="flex-basis:100%;font-size:11px" title="Every sample in the selected window reads 0 for these; they reappear as soon as a non-zero reading arrives.">hidden: '+esc(hid.join(", "))+' (0 in this window)</div>':"");
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
  function dec(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];if(!r)return'<span class="dim">-</span>';return fmt(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps)}
