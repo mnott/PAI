@@ -177,6 +177,22 @@ describe("claudeCommand", () => {
   });
 });
 
+describe("buildRunEnv router route", () => {
+  it("routes a provider run through the router when asked, keeps the direct route otherwise", () => {
+    expect(buildRunEnv(provider, true, undefined, "local30", true).ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8790");
+    expect(buildRunEnv(provider, true, undefined, "local30", false).ANTHROPIC_BASE_URL).toBe(provider.baseUrl);
+    // the openai-protocol proxy route wins over the router
+    expect(buildRunEnv(provider, true, "http://127.0.0.1:9911/local30", "local30", true).ANTHROPIC_BASE_URL).toBe(
+      "http://127.0.0.1:9911/local30"
+    );
+  });
+
+  it("leaves the key to the router: no provider token pinned on the router route", () => {
+    expect(buildRunEnv(provider, true, undefined, "local30", true).ANTHROPIC_AUTH_TOKEN).toBe("local");
+    expect(buildRunEnv(provider, true, undefined, "local30", false).ANTHROPIC_AUTH_TOKEN).toBe("test-token");
+  });
+});
+
 describe("buildRunEnv PAI_WORKER_PROVIDER", () => {
   it("names the provider for a headless worker, anthropic for the native one", () => {
     expect(buildRunEnv(provider, true, undefined, "local30").PAI_WORKER_PROVIDER).toBe("local30");

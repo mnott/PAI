@@ -22,6 +22,7 @@ import {
 import { defaultWorkersConfig, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { eventsPath, ledgerPath, statusPath } from "./paths.js";
 import { parseLedger } from "./ledger.js";
+import { ROUTER_PORT } from "../router/router.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -119,20 +120,24 @@ interface Harness {
   host: PoolHost;
   slots: FakeSlot[];
   argvs: string[][];
+  envs: NodeJS.ProcessEnv[];
   script: (groups: Array<Array<Record<string, unknown>>>) => void;
 }
 
 function makeHost(
   cfgOver: { maxSlots?: number; idleSecs?: number } = {},
-  now?: () => Date
+  now?: () => Date,
+  opts: { routerEnabled?: boolean; prodBuilders?: boolean } = {}
 ): Harness {
   const logDir = mkdtempSync(join(tmpdir(), "pai-pool-host-"));
   const slots: FakeSlot[] = [];
   const argvs: string[][] = [];
+  const envs: NodeJS.ProcessEnv[] = [];
   const nextGroups: Array<Array<Record<string, unknown>>> = [];
   const fallback = (): Array<Record<string, unknown>> => [assistantUsage(usage1), resultEvt(R_PLAIN_1)];
-  const spawner = (argv: string[]): SlotProcess => {
+  const spawner = (argv: string[], _cwd: string, env: NodeJS.ProcessEnv): SlotProcess => {
     argvs.push(argv);
+    envs.push(env);
     const slot = new FakeSlot(nextGroups.splice(0), fallback);
     slots.push(slot);
     return slot;
@@ -140,9 +145,11 @@ function makeHost(
   const host = createPoolHost({
     config: testConfig(cfgOver),
     logDir,
-    spawner: (argv) => spawner(argv),
-    envFor: () => ({}),
-    cmdHead: () => ["fake-claude"],
+    spawner: (argv, cwd, env) => spawner(argv, cwd, env),
+    // the production env/argv builders, for the route tests below
+    ...(opts.prodBuilders ? {} : { envFor: () => ({}) }),
+    ...(opts.prodBuilders ? {} : { cmdHead: () => ["fake-claude"] }),
+    ...(opts.routerEnabled !== undefined ? { routerEnabled: opts.routerEnabled } : {}),
     ...(now ? { now } : {}),
     noReaper: true,
   });
@@ -150,6 +157,7 @@ function makeHost(
     host,
     slots,
     argvs,
+    envs,
     script: (groups) => nextGroups.push(...groups),
   };
 }
@@ -324,6 +332,54 @@ describe("pooled task lifecycle", () => {
     const unknown = await h.host.runTask(task({ id: "wu", provider: "nope" }));
     expect(unknown).toEqual({ pooled: false, reason: "engine" });
     expect(h.slots.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slot route: pooled traffic must reach the router's usage log
+// ---------------------------------------------------------------------------
+
+describe("pool slot route", () => {
+  const pinned = (argv: string[]): { env: Record<string, string> } => JSON.parse(argv[2]!);
+
+  it("SlotEnvUsesRouterWhenEnabled — slot env and --settings pin carry the router, never the provider", async () => {
+    const h = makeHost({}, undefined, { routerEnabled: true, prodBuilders: true });
+    liveHosts.push(h.host);
+    await h.host.runTask(task());
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    expect(pinned(h.argvs[0]!).env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    // no provider-direct route anywhere in the slot launch: the settings pin
+    // outranks the process env, so a direct URL there would win
+    expect(h.argvs[0]!.join(" ")).not.toContain("example.invalid");
+  });
+
+  it("SlotEnvDirectWhenRouterOff — the provider route is pinned as before", async () => {
+    const h = makeHost({}, undefined, { routerEnabled: false, prodBuilders: true });
+    liveHosts.push(h.host);
+    await h.host.runTask(task());
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe("https://example.invalid");
+    const pin = pinned(h.argvs[0]!);
+    expect(pin.env.ANTHROPIC_BASE_URL).toBe("https://example.invalid");
+    expect(JSON.stringify(pin)).not.toContain(String(ROUTER_PORT));
+  });
+
+  it("PooledUsageReachableInRouterLog — the launch keys router rows to the pool's model and session", async () => {
+    const h = makeHost({}, undefined, { routerEnabled: true, prodBuilders: true });
+    liveHosts.push(h.host);
+    h.script([[assistantUsage(usage1), resultEvt(R_PLAIN_1)]]);
+    const r = await h.host.runTask(task({ model: "glm-5.3-flash" }));
+    expect(r.pooled).toBe(true);
+    // route: only the router — its usage log is where the rows must land
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    // model: on the argv, so the router resolves it to the provider and each
+    // usage row's model joins the pool metric's model column
+    const argv = h.argvs[0]!;
+    expect(argv[argv.indexOf("--model") + 1]).toBe("glm-5.3-flash");
+    // auth: the placeholder token is pinned so claude sends an auth header at
+    // all; the router drops it and injects the provider key
+    expect(pinned(argv).env.ANTHROPIC_AUTH_TOKEN).toBe("local");
+    // session: the slot's init event ids the session the router rows will carry
+    expect(h.host.state().slots[0]!.claudeSession).toBe("sess-fake-1");
   });
 });
 
