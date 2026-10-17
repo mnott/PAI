@@ -274,17 +274,19 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["emptyRing", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const body = ["emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
   const lowReq = COCKPIT_HTML.match(/var LOW_REQ=\d+;/)![0];
   const fns = new Function(
-    "donut", "pct", "esc", "fmt",
-    `${lowReq}\n${body}\nreturn {ringTiles, provHit, reuseLine, localDetail};`
+    "donut", "pct", "esc", "fmt", "lim",
+    `${lowReq}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
   )(
     (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
     (r: number) => `${(r * 100).toFixed(1)}%`,
     (s: string) => s,
-    (n: number) => String(n)
+    (n: number) => String(n),
+    {}
   ) as {
+    lowChips: (ms: Record<string, unknown>) => string;
     ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
     provHit: (p: unknown, servers: unknown[]) => string;
     reuseLine: (pc: unknown, tot: number | undefined, since?: string) => string;
@@ -316,12 +318,17 @@ describe("cockpit cache rings and providers table", () => {
     expect(html).not.toContain("donut");
     expect(html).toContain("qwen · 164 req");
   });
-  it("models under 5 requests are dimmed and sorted last, no 0% ring", () => {
+  it("models under 5 requests are not tiles, sorted order unchanged for the rest", () => {
     const html = fns.ringTiles({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) }, []);
-    expect(html.indexOf("sonnet")).toBeLessThan(html.indexOf("haiku"));
-    expect(html).toContain('class="ring low"');
-    expect(html).not.toContain(">0.0<");
+    expect(html).toContain("sonnet");
+    expect(html).not.toContain("haiku");
     expect(html.match(/class="ring"/g)).toHaveLength(1);
+  });
+  it("low-request models become one chip with hover details", () => {
+    const chip = fns.lowChips({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) });
+    expect(chip).toContain("+1 model with &lt;5 requests");
+    expect(chip).toContain("anthropic · haiku: 1 req");
+    expect(chip).not.toContain("sonnet");
   });
   it("providers table: loopback hit% is the marked server figure, never 0.0%", () => {
     const p = { provider: "local30x8", cacheRead: 0, cacheWrite: 0, hitRatio: 0 };
