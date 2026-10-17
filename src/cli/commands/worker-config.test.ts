@@ -89,7 +89,7 @@ describe("registry shape", () => {
     expect(names(workerProvidersCommand)).toEqual(expect.arrayContaining(["add", "update", "remove", "use", "enable", "disable", "test", "list"]));
     expect(names(workerClassesCommand)).toEqual(["list", "set", "unset"]);
     expect(names(WORKER_CONFIG_COMMANDS.find((c) => c.name === "config")!)).toEqual(["path", "init", "migrate", "check", "inline-keys"]);
-    expect(names(routerCommand)).toEqual(["start", "stop", "status", "run", "stats"]);
+    expect(names(routerCommand)).toEqual(["start", "stop", "restart", "status", "run", "stats"]);
     expect(WORKER_CONFIG_COMMANDS.map((c) => c.name)).toEqual(
       expect.arrayContaining(["providers", "classes", "roles", "config", "local", "bench", "policy", "fallback", "pool", "proxy", "mcp", "on", "off", "install", "controls"])
     );

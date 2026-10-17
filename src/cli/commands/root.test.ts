@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { providerHealth } from "../lib/health.js";
 import { allSetups, builtinSetups, findSetup, loadSaved, saveSetup, shortModel } from "../lib/setups.js";
-import { ago, launchScreen, lastSetup, matchRows, plainTable, setupsTable, truncate } from "./root.js";
+import { ago, finishCd, launchScreen, lastSetup, matchRows, plainTable, setupsTable, truncate } from "./root.js";
 import { oneLine, type SessionRow } from "./session.js";
 
 const st = makeStyle(false);
@@ -121,5 +121,23 @@ describe("providerHealth", () => {
     expect(providerHealth("off", cfg, {}, now).state).toBe("off");
     expect(providerHealth("glm", cfg, { glm: { percent: 40, resetAt: null, fetchedAt: 0 } }, now).state).toBe("ok");
     expect(providerHealth("anthropic", cfg, {}, now).state).toBe("ok");
+  });
+});
+
+describe("finishCd", () => {
+  it("writes to PAI_PICK_OUT file when set", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pick-"));
+    const path = join(tmp, "out");
+    const env = { PAI_PICK_OUT: path };
+    const term = { output: { write() {} } as any };
+    const result = finishCd("/some/dir", term, env);
+    expect(result).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe("/some/dir");
+  });
+
+  it("writes to output when PAI_PICK_OUT is not set", () => {
+    const term = { output: { write(s: string) { expect(s).toBe("/some/dir\n"); } } as any };
+    const result = finishCd("/some/dir", term);
+    expect(result).toBe(0);
   });
 });

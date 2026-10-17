@@ -26,10 +26,10 @@ export function routerRunningPid(): number | null {
 }
 
 /** Spawn `<cli> router run` detached, logging to the router log. Returns the child pid. */
-export function spawnRouter(cliEntry: string): number | undefined {
+export function spawnRouter(cliEntry: string, extraArgs: string[] = []): number | undefined {
   mkdirSync(dirname(ROUTER_LOG_FILE), { recursive: true });
   const fd = openSync(ROUTER_LOG_FILE, "a");
-  const child = spawn(process.execPath, [cliEntry, "router", "run"], {
+  const child = spawn(process.execPath, [cliEntry, "router", "run", ...extraArgs], {
     detached: true,
     stdio: ["ignore", fd, fd],
   });
