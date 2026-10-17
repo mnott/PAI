@@ -27,6 +27,7 @@ import {
   type SupervisionState,
 } from "./supervision.js";
 import { parseSleepSecs, type WorkerStatus } from "./status.js";
+import { recordToolError } from "./tool-errors.js";
 
 const NOW = new Date("2026-09-18T01:00:00");
 
@@ -690,5 +691,75 @@ describe("exactly-once notice", () => {
     const parent = fake({ id: "20260918-010000-1", state: "running" });
     const child = fake({ id: "20260918-010000-2", state: "done", rc: 0, parent: parent.id });
     expect(detect([parent, child])).toHaveLength(0);
+  });
+});
+
+describe("running-worker tool-error pushes", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-sup-run-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** recordToolError with a fixed clock: one record inside the tick's window. */
+  const record = (text: string, worker = "w-run", ts = NOW.getTime() - 1000) =>
+    recordToolError(
+      dir,
+      { worker, provider: "glm", label: "doomed", tool: "Read", text, input: { file_path: "/w/x/a.ts" } },
+      ts
+    );
+
+  const tickWith = async (statuses: WorkerStatus[], push: () => Promise<boolean> = async () => true) =>
+    runSupervisionTick(dir, { now: NOW, isAlive: () => true, statuses, push });
+
+  const MISSING = "File does not exist. Note: your current working directory is /w/x";
+
+  it("first occurrence of a [model]-class signature reaches the spawner while running", async () => {
+    record(MISSING); // model class, loopAt Infinity — the old filter hid it entirely
+    const r = await tickWith([fake({ id: "w-run", state: "running" })]);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].kind).toBe("toolerror");
+    expect(r.events[0].session).toBe("claude-sess-1");
+    expect(r.events[0].text).toMatch(/^\[model ×1\]/);
+    expect(r.pushed).toHaveLength(1);
+    const line = JSON.parse(
+      readFileSync(supervisionEventsPath(dir, "claude-sess-1"), "utf8").trim()
+    ) as SupervisionEvent;
+    expect(line.text).toMatch(/^\[model ×1\]/);
+  });
+
+  it("same signature again in the same run: counted, not re-pushed", async () => {
+    record(MISSING);
+    await tickWith([fake({ id: "w-run", state: "running" })]);
+    record(MISSING, "w-run", NOW.getTime() - 500);
+    const again = await tickWith([fake({ id: "w-run", state: "running" })]);
+    expect(again.events).toHaveLength(0);
+  });
+
+  it("a different signature still pushes (one per signature per run)", async () => {
+    record(MISSING);
+    await tickWith([fake({ id: "w-run", state: "running" })]);
+    record("API Error: 401 Failed to authenticate", "w-run", NOW.getTime() - 500);
+    const r = await tickWith([fake({ id: "w-run", state: "running" })]);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].text).toMatch(/^\[harness\]/);
+    // distinct claim ids: both signatures can land in one tick
+    expect(r.events[0].id).not.toContain("undefined");
+  });
+
+  it("nothing is pushed after the run ends — the result report carries the counts", async () => {
+    record(MISSING);
+    const r = await tickWith([fake({ id: "w-run", state: "done", rc: 0 })]);
+    expect(r.events).toHaveLength(0);
+  });
+
+  it("a worker whose spawner cannot be resolved keeps today's actionable-only behavior", async () => {
+    // 3 same-signature harness errors: past every legacy threshold, but the
+    // owner lookup finds no session, so — as today — nothing is delivered
+    for (let i = 0; i < 3; i++) record("API Error: 500 oops", "w-orph", NOW.getTime() - 1000 - i);
+    const r = await tickWith([fake({ id: "w-orph", state: "running", spawnerSession: null })]);
+    expect(r.events).toHaveLength(0);
   });
 });
