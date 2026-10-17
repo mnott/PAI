@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError } from "./tool-errors.js";
 import type { WorkerStatus } from "./status.js";
-import { classifyToolError, summarizeToolInput, toolErrorText, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, type ToolErrorRecord } from "./tool-errors.js";
+import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord } from "./tool-errors.js";
 
 const rec = (worker: string, ts: number, raw: string, tool = "Read"): ToolErrorRecord => ({
   ts, worker, provider: "p", label: "l", tool, raw, signature: normalizeError(tool, raw),
@@ -164,5 +164,73 @@ describe("classification", () => {
   it("everything else is unknown", () => {
     const [g] = detectToolErrors(three("weird failure"), NOW, {});
     expect(toolErrorText(g)).toMatch(/^\[unknown\] /);
+  });
+});
+
+describe("detectRunningWorkerErrors", () => {
+  const running = [{ id: "w1", session: "sess-1" }, { id: "w2", session: "sess-2" }];
+  const inp = (r: ToolErrorRecord, input: string): ToolErrorRecord => ({ ...r, input });
+  it("first occurrence of each signature per run, all classes", () => {
+    const doomed = [
+      // [model]-class, loopAt Infinity — exactly what the old filter hid
+      inp(rec("w1", NOW - 3, "File does not exist. Note: your current working directory is /w/x"), "/w/x/a.ts"),
+      // [harness]
+      rec("w1", NOW - 2, "API Error: 401 Failed to authenticate"),
+      // [unknown]
+      rec("w1", NOW - 1, "weird failure"),
+      // same [model] signature again: counted, not a second push
+      inp(rec("w1", NOW - 1, "File does not exist. Note: your current working directory is /w/x"), "/w/x/a.ts"),
+    ];
+    const sent: Record<string, Record<string, number>> = {};
+    const pushes = detectRunningWorkerErrors(running, doomed, sent, NOW);
+    expect(pushes).toHaveLength(3);
+    const classes = pushes.map((p) => p.group.cls).sort().join(",");
+    expect(classes).toBe("harness,model,unknown");
+    expect(pushes.every((p) => p.worker === "w1" && p.session === "sess-1")).toBe(true);
+    const model = pushes.find((p) => p.group.cls === "model")!;
+    expect(model.group.count).toBe(2); // both occurrences counted in the group
+    expect(toolErrorText(model.group)).toMatch(/^\[model ×2\]/);
+    // state remembers all three signatures
+    expect(Object.keys(sent.w1)).toHaveLength(3);
+  });
+
+  it("a pushed signature is never re-pushed in the same run", () => {
+    const sent: Record<string, Record<string, number>> = { w1: {} };
+    const sig = rec("w1", NOW - 1, "weird failure").signature;
+    sent.w1[sig] = NOW - 30_000;
+    const pushes = detectRunningWorkerErrors(
+      running,
+      [rec("w1", NOW - 1, "weird failure")],
+      sent,
+      NOW
+    );
+    expect(pushes).toHaveLength(0);
+  });
+
+  it("ignores workers that are not running (and unowned records stay legacy)", () => {
+    const pushes = detectRunningWorkerErrors(
+      [{ id: "w2", session: "sess-2" }],
+      [rec("w1", NOW - 1, "weird failure")],
+      {},
+      NOW
+    );
+    expect(pushes).toHaveLength(0);
+  });
+
+  it("per-worker isolation: w2's push carries only w2's records", () => {
+    const same = "weird failure";
+    const pushes = detectRunningWorkerErrors(
+      running,
+      [rec("w1", NOW - 2, same), rec("w2", NOW - 1, same)],
+      {},
+      NOW
+    );
+    expect(pushes).toHaveLength(2);
+    expect(pushes.map((p) => p.group.count).sort().join(",")).toBe("1,1");
+  });
+
+  it("toolErrorSigTag is stable and input-sensitive", () => {
+    expect(toolErrorSigTag("Read|abc")).toBe(toolErrorSigTag("Read|abc"));
+    expect(toolErrorSigTag("Read|abc")).not.toBe(toolErrorSigTag("Bash|abc"));
   });
 });

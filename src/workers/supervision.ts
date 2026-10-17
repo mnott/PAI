@@ -58,7 +58,14 @@ import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./
 import { itermForClaudeSession } from "./scope.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
-import { detectToolErrors, readToolErrors, SAME_WORKER_WINDOW_MS, toolErrorText } from "./tool-errors.js";
+import {
+  detectRunningWorkerErrors,
+  detectToolErrors,
+  readToolErrors,
+  SAME_WORKER_WINDOW_MS,
+  toolErrorSigTag,
+  toolErrorText,
+} from "./tool-errors.js";
 import { sendToSession } from "../cli/lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
@@ -290,6 +297,12 @@ export interface SupervisionState {
   delivered: Record<string, string[]>;
   /** tool-error signature → epoch ms of its last message (one per signature per 30 min). */
   toolErrorSent?: Record<string, number>;
+  /**
+   * Running-worker tool-error pushes (first occurrence of each signature per
+   * run, all classes): worker id → signature → push time. A pushed signature
+   * is never re-pushed in that run; the map is pruned with the worker.
+   */
+  runningErrorSent?: Record<string, Record<string, number>>;
 }
 
 /** Cap on remembered workers: terminal and delivered is history, not state. */
@@ -512,11 +525,46 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     state
   );
 
-  // systematic tool errors: the same signature repeating is reported once per 30 min
+  // Systematic tool errors, two routes. While a worker is RUNNING and its
+  // spawner is resolvable, every signature's first occurrence goes to that
+  // session, all classes — actionability is not the daemon's to guess
+  // (2026-10-17: a run doomed from its first tool call pushed nothing because
+  // every error was [model]-class, and the spawner only found out by polling
+  // `pai worker errors`). Everything else keeps the legacy actionable-only
+  // route: the same signature repeating past the thresholds, once per 30 min.
+  // A worker with a resolvable spawner never takes the legacy route — not
+  // while running (the per-signature push already covered it), and not after
+  // the run ends (the result report carries the counts).
   const sent = (state.toolErrorSent ??= {});
   for (const [sig, t] of Object.entries(sent)) if (now.getTime() - t > 86_400_000) delete sent[sig];
+  const runningSent = (state.runningErrorSent ??= {});
+  for (const w of Object.keys(runningSent)) if (!statuses.some((s) => s.id === w)) delete runningSent[w];
   const byId = new Map(statuses.map((s) => [s.id, s]));
-  for (const g of detectToolErrors(readToolErrors(logDir, now.getTime() - SAME_WORKER_WINDOW_MS), now.getTime(), sent)) {
+  const records = readToolErrors(logDir, now.getTime() - SAME_WORKER_WINDOW_MS);
+  const ownedIds = new Set(statuses.filter((s) => ownershipKey(s)).map((s) => s.id));
+  for (const p of detectRunningWorkerErrors(
+    statuses
+      .filter((s) => s.state === "running" && ownershipKey(s))
+      .map((s) => ({ id: s.id, session: ownershipKey(s)! })),
+    records,
+    runningSent,
+    now.getTime()
+  )) {
+    const owner = byId.get(p.worker);
+    if (!owner) continue;
+    pending.push({
+      id: `${owner.id}#toolerror@${toolErrorSigTag(p.signature)}`,
+      ts: nowStamp(now),
+      kind: "toolerror",
+      worker: owner.id,
+      label: owner.label,
+      session: p.session,
+      rc: null,
+      stalledMin: null,
+      text: toolErrorText(p.group),
+    });
+  }
+  for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker)), now.getTime(), sent)) {
     const owner = [...g.workers].reverse().map((w) => byId.get(w)).find((s) => s && ownershipKey(s));
     if (!owner) continue;
     pending.push({
