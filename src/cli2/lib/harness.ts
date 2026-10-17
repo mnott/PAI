@@ -50,7 +50,7 @@ export function dryRunText(h: Harness): string {
   const masked = maskLaunchEnv(h.env);
   const env = Object.keys(masked)
     .sort()
-    .filter((k) => /^(ANTHROPIC_|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC|ENABLE_TOOL_SEARCH)/.test(k))
+    .filter((k) => /^(ANTHROPIC_|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC|ENABLE_TOOL_SEARCH|PAI_WORKER)/.test(k))
     .map((k) => `  ${k}=${masked[k]}`);
   return [execLine(h), ...(env.length ? ["env:", ...env] : [])].join("\n");
 }

@@ -92,12 +92,14 @@ describe("suggest (did you mean)", () => {
 });
 
 describe("overview and reference", () => {
-  it("lists daily groups, hides unported commands, and points to help", () => {
-    const text = renderOverview(groups, open, "1.2.3", plain);
-    expect(text).toContain("Sessions");
-    expect(text).toContain("pai help <command>");
-    expect(text).not.toContain("worker");
-    expect(text).toContain("pai help more");
+  it("shows only daily commands and points to pai more", () => {
+    const daily: CommandDef = { ...rename, name: "ls", summary: "List sessions", daily: true };
+    const text = renderOverview([{ ...groups[0], commands: [open, daily] }, groups[1]], open, "1.2.3", plain);
+    expect(text).toContain("pai ls");
+    expect(text).toContain("pai NAME");
+    expect(text).not.toContain("pai rename");
+    expect(text).not.toContain("pai worker");
+    expect(text).toContain("more commands: pai more");
   });
   it("help more lists the rest", () => {
     expect(renderMore(groups, plain)).toContain("worker");

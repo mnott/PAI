@@ -91,6 +91,9 @@ export interface TtyIn {
   setRawMode?(on: boolean): unknown;
   on(ev: "keypress", fn: (str: string | undefined, key: Key) => void): unknown;
   off(ev: "keypress", fn: (str: string | undefined, key: Key) => void): unknown;
+  /** Input closed (EOF, hang-up): a prompt must settle, not wait forever. */
+  once(ev: "end" | "close", fn: () => void): unknown;
+  off(ev: "end" | "close", fn: () => void): unknown;
   resume(): unknown;
   pause(): unknown;
 }
@@ -113,6 +116,8 @@ export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, outpu
     };
     const finish = (value: T | null) => {
       input.off("keypress", onKey);
+      input.off("end", onEnd);
+      input.off("close", onEnd);
       input.setRawMode?.(false);
       input.pause();
       output.write(SHOW);
@@ -126,22 +131,34 @@ export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, outpu
       if (r.action === "select") return finish(shown[state.cursor] ?? null);
       draw();
     };
+    const onEnd = () => finish(null);
     emitKeypressEvents(input as unknown as NodeJS.ReadableStream);
     input.setRawMode?.(true);
     input.resume();
     output.write(HIDE);
     draw();
     input.on("keypress", onKey);
+    input.once("end", onEnd);
+    input.once("close", onEnd);
   });
 }
 
 /** One keypress (for the launch screen). Resolves null on Ctrl-C / Esc. */
 export function readOneKey(input: TtyIn): Promise<{ str?: string; key: Key } | null> {
   return new Promise((resolve) => {
-    const onKey = (str: string | undefined, key: Key) => {
+    const done = () => {
       input.off("keypress", onKey);
+      input.off("end", onEnd);
+      input.off("close", onEnd);
       input.setRawMode?.(false);
       input.pause();
+    };
+    const onEnd = () => {
+      done();
+      resolve(null);
+    };
+    const onKey = (str: string | undefined, key: Key) => {
+      done();
       const k = key ?? {};
       resolve((k.ctrl && k.name === "c") || k.name === "escape" ? null : { str, key: k });
     };
@@ -149,5 +166,7 @@ export function readOneKey(input: TtyIn): Promise<{ str?: string; key: Key } | n
     input.setRawMode?.(true);
     input.resume();
     input.on("keypress", onKey);
+    input.once("end", onEnd);
+    input.once("close", onEnd);
   });
 }
