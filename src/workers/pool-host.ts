@@ -292,7 +292,7 @@ export interface PoolHost {
   logDir: string;
   state(): PoolState;
   /** Run one task through the pool; the /task route body. */
-  runTask(task: PoolTaskRequest): Promise<PoolTaskResponse>;
+  runTask(task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse>;
   /** Kill every slot, write final state, close the server. */
   shutdown(): Promise<void>;
   reapSlots(): number;
@@ -562,7 +562,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   /** One pooled task, end to end. */
-  const runTask = async (task: PoolTaskRequest): Promise<PoolTaskResponse> => {
+  const runTask = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
     const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
@@ -675,6 +675,17 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           }, task.maxMinutes * 60_000)
         : null;
 
+    // the client hung up before the answer was written: nobody wants this
+    // result, so cancel through the same kill the deadline uses
+    let clientGoneFired = false;
+    const onClientGone = (): void => {
+      clientGoneFired = true;
+      appendLedger(ledger, "WORKER-CLIENT-GONE", { id: wid });
+      session.kill("SIGTERM");
+    };
+    if (clientGone?.aborted) onClientGone();
+    else clientGone?.addEventListener("abort", onClientGone, { once: true });
+
     // per-task scratch: the first request's usage (the carry metric), the
     // tool table for Bash-proof accounting, and the untracked baseline
     // (holder object: a plain `let` would be flow-narrowed to null at the
@@ -742,6 +753,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const text = pooledTaskText(taskNo, workDir, wtNote + task.prompt, task.trailer);
     let resultEvent = await session.feed(text, onEvent);
     if (deadTimer) clearTimeout(deadTimer);
+    clientGone?.removeEventListener("abort", onClientGone);
 
     let rc: number;
     let report = resultEvent ? parseWorkerReport(resultEvent.result ?? "") : null;
@@ -822,9 +834,14 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       }
     }
 
+    if (clientGoneFired) {
+      rc = rc || 143;
+      status.last = "client gone: task cancelled";
+      status.endReason = "client-gone";
+    }
     const secs = Math.floor((now().getTime() - t0) / 1000);
     const empty = resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
-    const ok = !status.timedOut && rc === 0 && !empty;
+    const ok = !status.timedOut && !clientGoneFired && rc === 0 && !empty;
     status.state = ok ? "done" : "failed";
     status.rc = rc;
     status.secs = secs;
@@ -904,6 +921,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       return;
     }
     if (req.method === "POST" && url.pathname === "/task") {
+      const gone = new AbortController();
+      res.on("close", () => {
+        if (!res.writableFinished) gone.abort();
+      });
       void readBody(req).then(async (body) => {
         if (!body) return sendJson(res, 400, { pooled: false, reason: "host-error" });
         let task: PoolTaskRequest;
@@ -913,7 +934,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           return sendJson(res, 400, { pooled: false, reason: "host-error" });
         }
         try {
-          sendJson(res, 200, await runTask(task));
+          sendJson(res, 200, await runTask(task, gone.signal));
         } catch (e) {
           sendJson(res, 500, { pooled: false, reason: "host-error", error: (e as Error).message });
         }
