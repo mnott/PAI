@@ -113,8 +113,12 @@ class FakeSlot implements SlotProcess {
   onLine(cb: (l: string) => void): void {
     this.lineCb = cb;
   }
-  onExit(_cb: (code: number | null) => void): void {
-    /* the fake never exits on its own */
+  private exitCb: ((code: number | null) => void) | null = null;
+  onExit(cb: (code: number | null) => void): void {
+    this.exitCb = cb; // the fake never exits on its own; exitNow() ends it
+  }
+  exitNow(code: number | null = 143): void {
+    this.exitCb?.(code);
   }
   emitNow(obj: Record<string, unknown>): void {
     this.emit(obj);
@@ -503,6 +507,40 @@ describe("pool host HTTP", () => {
     // (a keep-alive socket from the earlier POST would still serve /healthz,
     // so assert on the listener itself, not on one more request)
     expect(h.host.server.listening).toBe(false);
+  });
+
+  it("a client that hangs up mid-task cancels it: slot gets SIGTERM, status says client gone", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    h.script([[assistantUsage(usage1)]]); // no result: the task keeps running
+    await new Promise<void>((resolve) => h.host.server.listen(0, "127.0.0.1", resolve));
+    const port = (h.host.server.address() as { port: number }).port;
+    const data = JSON.stringify(task({ id: "w-gone" }));
+    const req = httpRequest({
+      host: "127.0.0.1",
+      port,
+      path: "/task",
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(data) },
+    });
+    req.on("error", () => {});
+    req.end(data);
+    for (let i = 0; i < 100 && !h.slots[0]?.fedTexts.length; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(h.slots[0]!.fedTexts.length).toBe(1);
+    req.destroy();
+    for (let i = 0; i < 100 && !h.slots[0]!.killed; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(h.slots[0]!.killed).toBe(true);
+    h.slots[0]!.exitNow();
+    let st: { state: string; last: string; rc: number | null } = { state: "running", last: "", rc: null };
+    for (let i = 0; i < 100 && st.state === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      st = JSON.parse(readFileSync(statusPath(h.host.logDir, "w-gone"), "utf8"));
+    }
+    expect(st.state).toBe("failed");
+    expect(st.last).toBe("client gone: task cancelled");
+    expect(st.rc).not.toBe(0);
+    expect(parseLedger(readFileSync(ledgerPath(h.host.logDir), "utf8")).some((e) => e.event === "WORKER-CLIENT-GONE")).toBe(true);
+    expect(h.host.state().slots.every((x) => x.busyWith === null)).toBe(true);
   });
 
   it("a task over HTTP still writes its status file next to fresh-spawn runs", async () => {
