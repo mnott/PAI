@@ -15,7 +15,7 @@ import { runChain } from "../../workers/chain.js";
 import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
-import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
+import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../workers/status.js";
 import { callerDescription, requestKill } from "../../workers/endreason.js";
@@ -305,6 +305,8 @@ const followCommand: CommandDef = {
   options: [
     { name: "all", type: "boolean", summary: "Follow the workers of all sessions" },
     { name: "auto-exit", type: "number", value: "SECS", optionalValue: true, summary: "Leave SECS seconds after the workers end (default from the config)" },
+    { name: "live", type: "boolean", summary: "Stream even without a terminal (default there: print the tail and exit)" },
+    { name: "tail", type: "number", value: "N", summary: "Entries printed when there is no terminal (default 20)" },
   ],
   examples: ["pai worker follow", "pai worker follow w-20260101-abc", "pai worker follow --all --auto-exit 10"],
   seeAlso: ["pai worker ps", "pai worker replay", "pai worker pane"],
@@ -313,7 +315,17 @@ const followCommand: CommandDef = {
       const { workers } = readWorkersSection();
       const ae = ctx.opts["auto-exit"];
       const autoExit = ae === undefined || ae === false ? 0 : ae === true ? workers.pane.autoExitSecs : Number(ae);
-      await followWorkers(logDir(), (ctx.args.ID as string | undefined) ?? null, flag(ctx, "all"), autoExit);
+      const target = (ctx.args.ID as string | undefined) ?? null;
+      const tailText = followTailOutput(logDir(), target, {
+        live: flag(ctx, "live"),
+        autoExit: ae !== undefined && ae !== false,
+        tail: num(ctx.opts.tail),
+      });
+      if (tailText !== null) {
+        out(tailText);
+        return;
+      }
+      await followWorkers(logDir(), target, flag(ctx, "all"), autoExit);
     }),
 };
 
