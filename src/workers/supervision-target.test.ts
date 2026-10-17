@@ -161,7 +161,6 @@ describe("repeat-loop alerts", () => {
     const say = vi.fn(async () => "ok");
     const kill = vi.fn();
     const loops = { readEvents: () => failing(3), say, kill };
-    await runSupervisionTick(dir, { ...base, now: NOW, statuses: [w], loops }); // first run baselines the state
     const r = await runSupervisionTick(dir, { ...base, now: NOW, statuses: [w], loops });
     const looping = r.events.filter((e) => e.kind === "looping");
     expect(looping).toHaveLength(1);
@@ -177,7 +176,6 @@ describe("repeat-loop alerts", () => {
     const w = { ...worker("running", "sess-A"), provider: "local30x8", pid: 4242 } as WorkerStatus;
     const kill = vi.fn();
     const loops = { readEvents: () => failing(6), say: async () => "ok", kill };
-    await runSupervisionTick(dir, { ...base, now: NOW, statuses: [w], loops });
     const r = await runSupervisionTick(dir, { ...base, now: NOW, statuses: [w], loops });
     expect(kill).toHaveBeenCalledWith(4242);
     expect(r.events.some((e) => e.kind === "looping" && e.text.includes("run stopped"))).toBe(true);
