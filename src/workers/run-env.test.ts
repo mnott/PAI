@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { buildRunEnv, claudeCommand } from "./run-env.js";
+import { buildRunEnv, claudeCommand, routeLoopbackViaRouter } from "./run-env.js";
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
@@ -231,5 +231,35 @@ describe("local-provider worker prompt overhead", () => {
     // every headless worker has auto-memory off (main), interactive runs keep it
     expect(buildRunEnv(nativeAnthropicProvider(), true).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
     expect(buildRunEnv(nativeAnthropicProvider(), false).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBeUndefined();
+  });
+});
+
+describe("routeLoopbackViaRouter", () => {
+  const local = (extra: Partial<WorkerProvider> = {}): WorkerProvider => ({
+    ...provider,
+    baseUrl: "http://127.0.0.1:8034",
+    ...extra,
+  });
+
+  it("routes a loopback provider through the router with the provider header", () => {
+    const p = local();
+    const via = routeLoopbackViaRouter(p, true);
+    expect(via).toBe(true);
+    const env = buildRunEnv(p, true, undefined, "local30x8", via);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8790");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: local30x8");
+  });
+
+  it("falls back to direct when the router is down", () => {
+    expect(routeLoopbackViaRouter(local(), false)).toBe(false);
+  });
+
+  it("stays direct with router: false", () => {
+    expect(routeLoopbackViaRouter(local({ router: false }), true)).toBe(false);
+  });
+
+  it("leaves remote and native providers alone", () => {
+    expect(routeLoopbackViaRouter(provider, true)).toBe(false);
+    expect(routeLoopbackViaRouter(nativeAnthropicProvider(), true)).toBe(false);
   });
 });
