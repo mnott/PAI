@@ -5,12 +5,25 @@
  * what a misrouted worker gets wrong, so it is pinned here.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig, type WorkerProvider } from "./config.js";
-import { capabilityForRun, NoProviderError, resolveCapabilityRun, resolveTarget, setCooldown } from "./routing.js";
+import {
+  autoOrder,
+  capabilityForRun,
+  nextAutoProvider,
+  NoProviderError,
+  readRoutingState,
+  recordBudgetCooldowns,
+  resolveCapabilityRun,
+  resolveTarget,
+  setCooldown,
+  writeRoutingState,
+  type RoutingState,
+} from "./routing.js";
+import { budgetCache, type BudgetReading } from "./budget.js";
 import { parseRunnerArgs } from "./args.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-workers-routing-"));
@@ -313,5 +326,133 @@ describe("resolveTarget: fresh install (no active, no class map)", () => {
 
   it("a configured-but-missing active provider still errors", () => {
     expect(() => resolveTarget(config({ active: "gone", classes: {} }), dir, { className: "implement" })).toThrow(NoProviderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// budget policy: provider fallback driven by the live budget
+// ---------------------------------------------------------------------------
+
+describe("resolveTarget — budget policy (live-budget fallback)", () => {
+  // a private state dir: the budget tests write wall cooldowns
+  const bdir = mkdtempSync(join(tmpdir(), "pai-workers-budget-"));
+  const KIMI: WorkerProvider = { ...GLM, baseUrl: "https://kimi.example.com" };
+
+  const budgetConfig = (over: Record<string, unknown> = {}) =>
+    config({
+      active: "auto",
+      providers: { glm: GLM, kimi: KIMI },
+      routing: {
+        order: [],
+        cooldownMinutes: 30,
+        retryOnQuota: true,
+        policy: "budget",
+        priority: ["anthropic", "glm", "kimi"],
+        budgetWalls: { anthropic: 95, glm: 90, kimi: 85 },
+      },
+      ...over,
+    });
+
+  const seed = (map: Record<string, [number | null, number | null]>) => {
+    const now = Date.now();
+    budgetCache.seed(
+      Object.fromEntries(
+        Object.entries(map).map(([k, [percent, resetAt]]) => [k, { percent, resetAt, fetchedAt: now } satisfies BudgetReading])
+      )
+    );
+  };
+
+  afterEach(() => {
+    budgetCache.clear();
+    writeRoutingState(bdir, { cooldowns: {} } satisfies RoutingState);
+  });
+
+  it("BudgetOrderSkipsWalled: a full anthropic sends the run to glm, with the switch reason", () => {
+    // the operator scenario: anthropic 96%, resets in 30 min → next spawn goes glm
+    seed({ anthropic: [96, Date.now() + 30 * 60_000], glm: [40, null], kimi: [60, null] });
+    const t = resolveTarget(budgetConfig(), bdir, {});
+    expect(t.providerName).toBe("glm");
+    expect(t.via).toBe("auto");
+    expect(t.switchReason).toMatch(/^glm: anthropic 96% until \d{2}:\d{2}$/);
+  });
+
+  it("PriorityRespectedWhenBudgetFree: anthropic first while it has budget, even behind glm", () => {
+    seed({ anthropic: [80, null], glm: [10, null], kimi: [60, null] });
+    const t = resolveTarget(budgetConfig(), bdir, {});
+    expect(t.providerName).toBe("anthropic");
+    expect(t.provider.native).toBe(true);
+    expect(t.switchReason).toBeUndefined();
+  });
+
+  it("kimi serves when anthropic and glm are both walled, naming the first skip", () => {
+    seed({ anthropic: [96, Date.now() + 30 * 60_000], glm: [92, Date.now() + 10 * 60_000], kimi: [60, null] });
+    const t = resolveTarget(budgetConfig(), bdir, {});
+    expect(t.providerName).toBe("kimi");
+    expect(t.switchReason).toMatch(/^kimi: anthropic 96% until \d{2}:\d{2}$/);
+  });
+
+  it("WallCooldownUntilReset: the walled provider cools down until its reset, then re-enters", () => {
+    // the operator scenario, end to end: wall → cooldown until resetAt → back on anthropic
+    const resetAt = Date.now() + 30 * 60_000;
+    seed({ anthropic: [96, resetAt] });
+    recordBudgetCooldowns(budgetConfig(), bdir);
+    // the cooldown runs to the reset, not just to the 10-minute floor
+    const state = readRoutingState(bdir);
+    expect(Math.abs(Date.parse(state.cooldowns["anthropic"]!) - resetAt)).toBeLessThan(1_000);
+
+    const t = resolveTarget(budgetConfig(), bdir, {});
+    expect(t.providerName).toBe("glm");
+
+    // the window resets: anthropic re-enters on its own
+    seed({ anthropic: [40, null] });
+    writeRoutingState(bdir, { cooldowns: {} });
+    const t2 = resolveTarget(budgetConfig(), bdir, {});
+    expect(t2.providerName).toBe("anthropic");
+    expect(t2.switchReason).toBeUndefined();
+  });
+
+  it("a wall closer than the floor still cools down for the full 10 minutes", () => {
+    seed({ anthropic: [96, Date.now() + 3 * 60_000] });
+    recordBudgetCooldowns(budgetConfig(), bdir);
+    const state = readRoutingState(bdir);
+    const ms = Date.parse(state.cooldowns["anthropic"]!) - Date.now();
+    expect(ms).toBeGreaterThan(9 * 60_000);
+    expect(ms).toBeLessThanOrEqual(10 * 60_000);
+  });
+
+  it("MidRunNoSwitch: a quota reroute never lands on a provider with no budget left", () => {
+    // anthropic cooled down, kimi walled → there is nowhere good to reroute
+    seed({ anthropic: [10, null], glm: [10, null], kimi: [90, null] });
+    setCooldown(bdir, "anthropic", 30);
+    expect(nextAutoProvider(budgetConfig(), bdir, "glm")).toBeNull();
+    // kimi with room: the reroute takes it
+    seed({ anthropic: [10, null], glm: [10, null], kimi: [60, null] });
+    expect(nextAutoProvider(budgetConfig(), bdir, "glm")).toBe("kimi");
+  });
+
+  it("policy order keeps the verbatim walk and ignores budget readings", () => {
+    seed({ anthropic: [96, Date.now() + 30 * 60_000], glm: [96, null], kimi: [96, null] });
+    const c = budgetConfig({
+      routing: { order: ["glm", "kimi"], cooldownMinutes: 30, retryOnQuota: true, policy: "order", priority: [], budgetWalls: {} },
+    });
+    const t = resolveTarget(c, bdir, {});
+    expect(t.providerName).toBe("glm");
+    expect(t.switchReason).toBeUndefined();
+  });
+
+  it("defaults: budget policy walks anthropic → glm → kimi, skipping the unconfigured", () => {
+    const c = config({ active: "auto", providers: { glm: GLM } });
+    expect(autoOrder(c)).toEqual(["anthropic", "glm", "kimi"]);
+    // no readings at all: unknown never walls, plain priority wins
+    const t = resolveTarget(c, bdir, {});
+    expect(t.providerName).toBe("anthropic");
+  });
+
+  it("a class's own order wins over the priority list, budget walls still applied", () => {
+    seed({ anthropic: [96, Date.now() + 30 * 60_000], glm: [96, Date.now() + 10 * 60_000], kimi: [10, null] });
+    const c = budgetConfig({ classes: { research: { order: ["glm", "kimi"] } } });
+    const t = resolveTarget(c, bdir, { className: "research" });
+    expect(t.providerName).toBe("kimi");
+    expect(t.switchReason).toMatch(/^kimi: glm 96% until \d{2}:\d{2}$/);
   });
 });

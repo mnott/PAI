@@ -10,6 +10,17 @@
  * retryOnQuota is set, the runner restarts the same task on the next provider
  * (ledger: WORKER-REROUTE).
  *
+ * Policy "budget" (the default) orders candidates by routing.priority —
+ * falling back to routing.order, else DEFAULT_BUDGET_PRIORITY — sorted by
+ * percent ascending within equal priority, and additionally skips every
+ * provider whose live budget reading (budget.ts) reads at or above its wall
+ * (routing.budgetWalls). A walled provider gets a cooldown until
+ * max(now + BUDGET_COOLDOWN_MIN, resetAt), so it stays skipped until its
+ * window resets and re-enters on its own. The chosen target carries a
+ * `switchReason` ("glm: anthropic 96% until 08:02") when budget skipped a
+ * higher-priority provider. A run's provider is resolved once at spawn; a
+ * running worker is never switched mid-flight.
+ *
  * An explicit --provider or a class mapping that pins a provider always
  * bypasses all of this.
  */
@@ -24,16 +35,28 @@ import {
   type ProviderTag,
   WORKER_CLASSES,
   ANTHROPIC_NATIVE,
+  DEFAULT_BUDGET_PRIORITY,
   WorkersConfigError,
   classModelCapability,
   providerCostTier,
   getProviderOrNative,
   resolveCapability,
 } from "./config.js";
+import {
+  type BudgetMap,
+  type BudgetReading,
+  budgetCache,
+  budgetExceeded,
+  budgetFresh,
+  budgetSkipReason,
+  budgetWall,
+} from "./budget.js";
 import { routingStatePath } from "./paths.js";
 
 const QUOTA_SKIP_DEFAULT = 95;
 const PROBE_TIMEOUT_MS = 10_000;
+/** Minimum minutes a budget-walled provider stays in cooldown, even when its reset is closer. */
+export const BUDGET_COOLDOWN_MIN = 10;
 
 export interface RoutingState {
   /** provider name → ISO timestamp when its cooldown ends */
@@ -90,6 +113,19 @@ export function clearCooldown(logDir: string, provider: string): void {
 }
 
 /**
+ * The candidate order for auto-routing: the class's own order, else — policy
+ * "budget" — routing.priority, falling back to routing.order, else
+ * DEFAULT_BUDGET_PRIORITY. Policy "order" uses routing.order as before.
+ */
+export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): string[] {
+  if (cls?.order?.length) return cls.order;
+  if (config.routing.policy === "order") return config.routing.order;
+  if (config.routing.priority.length) return config.routing.priority;
+  if (config.routing.order.length) return config.routing.order;
+  return [...DEFAULT_BUDGET_PRIORITY];
+}
+
+/**
  * Run a provider's quotaProbe and return its percentage (0–100), or null when
  * there is no probe or it printed nothing usable. A probe must never break
  * routing: failures read as "unknown", not as "full".
@@ -120,6 +156,29 @@ export function quotaExceeded(provider: WorkerProvider): boolean {
   return used !== null && used >= quotaSkipThreshold(provider);
 }
 
+/**
+ * Put every provider whose fresh budget reading is at or above its wall into
+ * a cooldown until max(now + BUDGET_COOLDOWN_MIN, resetAt), so the walk below
+ * skips it until its window resets and it re-enters on its own. Never
+ * shortens an existing cooldown (a quota-failure cooldown outlasting the
+ * reset stays). Fresh readings only: a stale cache must not re-wall anyone.
+ */
+export function recordBudgetCooldowns(config: WorkersConfig, logDir: string, now: Date = new Date()): void {
+  if (config.routing.policy === "order") return;
+  const state = readRoutingState(logDir);
+  let dirty = false;
+  for (const [name, r] of Object.entries(budgetCache.snapshot()) as Array<[string, BudgetReading]>) {
+    if (r.percent === null || !budgetFresh(r, now.getTime())) continue;
+    if (!budgetExceeded(r, budgetWall(config.routing, name))) continue;
+    const until = Math.max(now.getTime() + BUDGET_COOLDOWN_MIN * 60_000, r.resetAt ?? 0);
+    const prev = state.cooldowns[name];
+    if (prev && Date.parse(prev) >= until) continue;
+    state.cooldowns[name] = new Date(until).toISOString();
+    dirty = true;
+  }
+  if (dirty) writeRoutingState(logDir, state);
+}
+
 export interface ResolvedTarget {
   providerName: string;
   provider: WorkerProvider;
@@ -129,6 +188,11 @@ export interface ResolvedTarget {
   classMcp: string[] | null;
   /** How the provider was chosen — names the bypass rule for rerouting. */
   via: "flag" | "class" | "active" | "auto";
+  /**
+   * One line on why budget routing moved the run off a higher-priority
+   * provider ("glm: anthropic 96% until 08:02"); absent otherwise.
+   */
+  switchReason?: string;
 }
 
 export class NoProviderError extends WorkersConfigError {}
@@ -159,13 +223,22 @@ function exclusionReason(
   config: WorkersConfig,
   state: RoutingState,
   name: string,
-  cls?: { maxCostTier?: number; requireTags?: string[] }
+  cls?: { maxCostTier?: number; requireTags?: string[] },
+  budgets?: BudgetMap
 ): string | null {
   const p = getProviderOrNative(config, name);
   if (!p) return "not configured";
   if (!p.enabled) return "disabled";
   if (cooldownRemaining(state, name) > 0) return "cooldown";
   if (quotaExceeded(p)) return "quota";
+  if (budgets) {
+    const r = budgets[name];
+    // a fresh-enough reading at or above the provider's wall means full;
+    // unknown (no reading, null percent) never walls
+    if (r && r.percent !== null && budgetExceeded(r, budgetWall(config.routing, name))) {
+      return `budget ${r.percent}% ≥ wall ${budgetWall(config.routing, name)}`;
+    }
+  }
   const tier = providerCostTier(p);
   if (cls?.maxCostTier !== undefined && tier > cls.maxCostTier) {
     return `cost tier ${tier} > max ${cls.maxCostTier}`;
@@ -249,20 +322,41 @@ export function resolveTarget(
   }
 
   // auto: first provider in (class or global) order that is enabled,
-  // cooled-down-free, under quota and within the class constraints
+  // cooled-down-free, under quota and within the class constraints — policy
+  // "budget" additionally skips providers whose live budget is at/above
+  // their wall, preferring the fullest-budget candidate within equal priority
   const state = readRoutingState(logDir);
-  const order = cls?.order ?? config.routing.order;
+  const useBudget = config.routing.policy !== "order";
+  const order = autoOrder(config, cls);
+  const budgets: BudgetMap | undefined = useBudget ? budgetCache.snapshot() : undefined;
+  const candidates = useBudget
+    ? order
+        .map((name, idx) => ({ name, idx, percent: budgets?.[name]?.percent }))
+        .sort((a, b) => a.idx - b.idx || (a.percent ?? 0) - (b.percent ?? 0))
+        .map((c) => c.name)
+    : order;
   const excluded: string[] = [];
-  for (const name of order) {
+  let budgetSkipped: string | null = null;
+  for (const name of candidates) {
     const p = getProviderOrNative(config, name);
-    const why = exclusionReason(config, state, name, cls);
+    const why = exclusionReason(config, state, name, cls, budgets);
     if (why) {
       excluded.push(`${name}: ${why}`);
+      if (useBudget && budgetSkipped === null && why.startsWith("budget") && p) {
+        budgetSkipped = budgetSkipReason(name, budgets![name]);
+      }
       continue;
     }
     // exclusionReason already returned null (no exclusion) above, which is
     // only possible when getProviderOrNative found a real provider
-    return { providerName: name, provider: p!, modelAlias: null, classMcp: cls?.mcp ?? null, via: "auto" };
+    return {
+      providerName: name,
+      provider: p!,
+      modelAlias: null,
+      classMcp: cls?.mcp ?? null,
+      via: "auto",
+      ...(budgetSkipped ? { switchReason: `${name}: ${budgetSkipped}` } : {}),
+    };
   }
   throw new NoProviderError(
     `auto-routing found no usable provider${opts.className ? ` for class "${opts.className}"` : ""} ` +
@@ -273,8 +367,10 @@ export function resolveTarget(
 }
 
 /**
- * Next provider after `from` in auto order, applying the same filters.
- * Used by rerouting; null when the order is exhausted.
+ * Next provider after `from` in auto order, applying the same filters —
+ * including the budget wall under policy "budget", so a reroute never moves
+ * a run onto a provider with no budget left. Used by rerouting; null when
+ * the order is exhausted.
  */
 export function nextAutoProvider(
   config: WorkersConfig,
@@ -283,7 +379,9 @@ export function nextAutoProvider(
   now: Date = new Date()
 ): string | null {
   const state = readRoutingState(logDir);
-  const order = config.routing.order;
+  const useBudget = config.routing.policy !== "order";
+  const order = autoOrder(config);
+  const budgets: BudgetMap | undefined = useBudget ? budgetCache.snapshot() : undefined;
   const start = order.indexOf(from);
   for (let i = start + 1; i < order.length; i++) {
     const name = order[i];
@@ -292,6 +390,10 @@ export function nextAutoProvider(
     const end = state.cooldowns[name];
     if (end && Date.parse(end) > now.getTime()) continue;
     if (quotaExceeded(p)) continue;
+    if (budgets) {
+      const r = budgets[name];
+      if (r && budgetExceeded(r, budgetWall(config.routing, name))) continue;
+    }
     return name;
   }
   return null;
