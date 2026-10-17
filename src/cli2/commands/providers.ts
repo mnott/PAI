@@ -8,6 +8,7 @@ import { ANTHROPIC_NATIVE, nativeAnthropicProvider, readWorkersSection, type Wor
 import type { BudgetReading } from "../../workers/budget.js";
 import { readBudget } from "../lib/health.js";
 import { useProvider } from "../../workers/providers.js";
+import { ok } from "../lib/utils.js";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderTable, type Style } from "../help.js";
 
@@ -76,7 +77,7 @@ function load(): WorkersConfig {
   }
 }
 
-const useCommand: CommandDef = {
+export const useCommand: CommandDef = {
   name: "use",
   summary: "Make a provider the active one",
   description:
@@ -99,7 +100,7 @@ const useCommand: CommandDef = {
     }
     if (ctx.dryRun) return void process.stdout.write(`would make ${name} the active provider\n`);
     const { repointed } = useProvider(name);
-    process.stdout.write(`Active provider: ${name}${repointed ? ` (${repointed} class${repointed === 1 ? "" : "es"} re-pointed)` : ""}\n`);
+    process.stdout.write(ok(`active provider: ${name}${repointed ? `; ${repointed} class(es) re-pointed` : ""}`) + "\n");
   },
 };
 

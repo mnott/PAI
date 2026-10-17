@@ -29,6 +29,7 @@ export function parseArgs(cmd: CommandDef, argv: string[]): Parsed {
   const opts: RunContext["opts"] = {};
   const positional: string[] = [];
   const rest: string[] = [];
+  const multi: Record<string, string[]> = {};
 
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
@@ -70,6 +71,7 @@ export function parseArgs(cmd: CommandDef, argv: string[]): Parsed {
         opts[def.name] = n;
       } else {
         opts[def.name] = value;
+        if (def.repeatable) (multi[def.name] ??= []).push(value);
       }
       continue;
     }
@@ -98,5 +100,5 @@ export function parseArgs(cmd: CommandDef, argv: string[]): Parsed {
   }
   if (rest.length && !cmd.passthrough) throw new UsageError(`unexpected arguments after --: ${rest.join(" ")}`);
 
-  return { args, opts, dryRun: opts["dry-run"] === true, rest, help: opts.help === true };
+  return { args, opts, multi, dryRun: opts["dry-run"] === true, rest, help: opts.help === true };
 }
