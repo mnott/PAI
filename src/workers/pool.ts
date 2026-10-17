@@ -102,6 +102,10 @@ export interface PoolSlotRecord {
   tasks: number;
   /** While a task is mid-turn the slot is exclusive to it. */
   busyWith: string | null;
+  /** Slot-worktree slots: the branch of the current (or last) task. */
+  branch?: string | null;
+  /** Cached share of the last task's first request: 1 = whole prefix reused, ~0 = cold. */
+  firstShare?: number | null;
 }
 
 export interface PoolState {
@@ -233,6 +237,11 @@ export interface PoolEligibilityInput {
    * a long-lived slot cannot serve it.
    */
   worktreeWanted: boolean;
+  /**
+   * The provider can serve worktree runs through slot worktrees (slots.ts):
+   * loopback providers only. A worktree run is then pool-eligible.
+   */
+  slotWorktree?: boolean;
   resumeOf: string | undefined;
   printCmd: boolean | undefined;
   parsed: Pick<ParsedRunnerArgs, "callerSystemPrompt" | "callerMcpConfig" | "mcp" | "allowedTools">;
@@ -290,7 +299,7 @@ export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibl
     return "native-provider";
   }
   if ((input.provider.engine ?? "claude") !== "claude") return "engine";
-  if (input.worktreeWanted) return "worktree";
+  if (input.worktreeWanted && !input.slotWorktree) return "worktree";
   if (input.resumeOf !== undefined) return "resume";
   if (input.printCmd === true) return "print-cmd";
   if (input.parsed.callerSystemPrompt) return "system-prompt";
@@ -363,6 +372,8 @@ export interface PoolTaskRequest {
   stage?: string;
   reportFormat: "json" | "ag2";
   outputFormat: "text" | "json";
+  /** The run wants its own worktree: served by a slot worktree (loopback providers only). */
+  worktree?: boolean;
   /** Task time limit in minutes; null/0 = none. */
   maxMinutes: number | null;
   trailer: string;
@@ -483,6 +494,18 @@ export interface PoolHostDeps {
 /** Hash of the identity a slot is pinned to: provider, model and its cwd. */
 export function slotKey(provider: string, model: string, cwd: string): string {
   return `${provider}\u0000${model}\u0000${cwd}`;
+}
+
+/** Cached share of a first request's prompt tokens (null when it carried no numbers). */
+export function firstRequestShare(u: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }): number | null {
+  const read = u.cache_read_input_tokens ?? 0;
+  const total = (u.input_tokens ?? 0) + read + (u.cache_creation_input_tokens ?? 0);
+  return total > 0 ? read / total : null;
+}
+
+/** "warm" when most of the first request came from the prefix cache. */
+export function warmOrCold(share: number | null | undefined): "warm" | "cold" | null {
+  return share == null ? null : share >= 0.8 ? "warm" : "cold";
 }
 
 export function shortSlotKey(key: string): string {
