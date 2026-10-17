@@ -233,3 +233,22 @@ export function routeLoopbackViaRouter(provider: WorkerProvider, routerUp: boole
   if (provider.router === false || !isLoopbackUrl(provider.baseUrl)) return false;
   return routerUp;
 }
+
+/**
+ * The `routerEnabled` argument buildRunEnv needs for a spawn that has no
+ * worker-run context (pool slots, daemon LLM calls): the global router flag,
+ * or — for a loopback provider — whether the router answers a probe. Router
+ * down for a loopback provider writes one line and runs direct.
+ */
+export async function loopbackRouterChoice(
+  provider: WorkerProvider,
+  providerName: string,
+  globalOn: boolean | undefined,
+  probe: () => Promise<boolean>
+): Promise<boolean | undefined> {
+  if (globalOn || provider.native || provider.protocol === "openai") return globalOn;
+  if (provider.router === false || !isLoopbackProvider(provider)) return globalOn;
+  const up = routeLoopbackViaRouter(provider, await probe());
+  if (!up) process.stderr.write(`pai: router down, ${providerName} runs direct (no router prefix fix)\n`);
+  return up;
+}
