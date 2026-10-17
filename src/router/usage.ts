@@ -49,6 +49,8 @@ export interface UsageRow extends Usage {
   ttftMs?: number;
   /** ms from the first content token to the end of the reply */
   decodeMs?: number;
+  /** input_tokens was estimated from the request size because the server did not report it */
+  input_estimated?: boolean;
 }
 
 const KEYS: Array<keyof Usage> = [
@@ -141,7 +143,7 @@ export class UsageSniffer {
     const line = raw.replace(/\r$/, "");
     if (!line.startsWith("data:")) return;
     const data = line.slice(5).trim();
-    if (this.firstContentAt === undefined && data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":"[^"]/.test(data)) {
+    if (this.firstContentAt === undefined && data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data)) {
       this.firstContentAt = Date.now();
     }
     // cheap prefilter: only usage-bearing events are parsed
