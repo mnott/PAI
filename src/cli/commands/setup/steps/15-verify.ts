@@ -2,7 +2,7 @@
 
 import chalk from "chalk";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
-import { daemonServiceName } from "../../daemon.js";
+import { daemonServiceName } from "../../../../cli2/impl/daemon.js";
 import { line, section } from "../utils.js";
 
 export function stepSummary(

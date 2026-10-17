@@ -3,7 +3,7 @@
  * (assignee "claude" + label "in-progress"). Never closes an issue.
  */
 import type { Command } from "commander";
-import { err } from "../utils.js";
+import { err } from "../lib/utils.js";
 import { formatStale, loadStatusConfig, upsertSection, writeSectionToForge } from "../../session/forge-sink.js";
 import { issueClaim, issueClaims, issueStale } from "../../session/issue-claims.js";
 

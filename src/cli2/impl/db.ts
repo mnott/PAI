@@ -9,7 +9,7 @@
  */
 
 import type { Command } from "commander";
-import { ok, warn, err, dim, bold, header, renderTable } from "../utils.js";
+import { ok, warn, err, dim, bold, header, renderTable } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { migrateToPostgres, renderReport } from "../../storage/migrate-to-postgres.js";
 import { createStorageBackend } from "../../storage/factory.js";

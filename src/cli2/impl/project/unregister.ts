@@ -18,7 +18,7 @@
  * obvious path.
  */
 
-import { ok, warn, err, dim, bold } from "../../utils.js";
+import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 
 export async function cmdUnregister(

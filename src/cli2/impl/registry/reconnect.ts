@@ -23,8 +23,8 @@ import {
 } from "../../../registry/moved.js";
 import { legacyDbDisplayPaths } from "../../../storage/sqlite/legacy-migration.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
-import { encodeDir } from "../../utils.js";
-import { dim, ok, warn } from "../../utils.js";
+import { encodeDir } from "../../lib/utils.js";
+import { dim, ok, warn } from "../../lib/utils.js";
 
 export async function cmdReconnect(opts: { execute?: boolean }): Promise<void> {
   const backend = await getRegistryBackend();

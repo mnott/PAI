@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { ok, warn, err, dim } from "../../utils.js";
+import { ok, warn, err, dim } from "../../lib/utils.js";
 import { slugify, parseSessionFilename } from "../../../registry/migrate.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import { getRegistryBackend } from "../../../storage/factory.js";

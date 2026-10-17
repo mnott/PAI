@@ -11,7 +11,7 @@
  */
 
 import type { Command } from "commander";
-import { ok, warn, err, dim, bold, header } from "../utils.js";
+import { ok, warn, err, dim, bold, header } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import type {

@@ -25,7 +25,7 @@
  */
 
 import { realpathSync } from "node:fs";
-import { ok, err, dim, bold, encodeDir, now } from "../../utils.js";
+import { ok, err, dim, bold, encodeDir, now } from "../../lib/utils.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import { unregistrableReason } from "../../../registry/registrable.js";
 

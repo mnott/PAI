@@ -20,7 +20,7 @@ import {
 import { join } from "node:path";
 import { homedir, userInfo } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
-import { ok, warn, err, dim, bold } from "../utils.js";
+import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";

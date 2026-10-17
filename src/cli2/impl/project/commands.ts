@@ -32,7 +32,7 @@ import {
   shortenPath,
   fmtDate,
   now,
-} from "../../utils.js";
+} from "../../lib/utils.js";
 import {
   detectProject,
   formatDetection,

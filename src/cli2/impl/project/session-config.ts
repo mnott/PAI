@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import chalk from "chalk";
-import { ok, warn, err, dim, bold, header, shortenPath, fmtDate, now, renderTable } from "../../utils.js";
+import { ok, warn, err, dim, bold, header, shortenPath, fmtDate, now, renderTable } from "../../lib/utils.js";
 import type { ProjectRow, SessionConfig, ConfigOption } from "./types.js";
 import { resolveIdentifier, requireProject, getProjectAliases, getProject } from "./helpers.js";
 import { paiConfigFilePath } from "../../../daemon/config.js";

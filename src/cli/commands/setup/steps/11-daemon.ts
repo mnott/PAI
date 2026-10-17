@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { daemonServiceName } from "../../daemon.js";
+import { daemonServiceName } from "../../../../cli2/impl/daemon.js";
 import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 
 export async function stepDaemon(rl: Rl): Promise<boolean> {

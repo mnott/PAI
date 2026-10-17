@@ -7,7 +7,7 @@ import { existsSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
-import { ok, warn, err, dim, bold, header, shortenPath, now, renderTable, encodeDir } from "../../utils.js";
+import { ok, warn, err, dim, bold, header, shortenPath, now, renderTable, encodeDir } from "../../lib/utils.js";
 import type {
   HealthRow,
   HealthCategory,

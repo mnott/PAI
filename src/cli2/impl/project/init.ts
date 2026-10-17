@@ -1,5 +1,5 @@
 /** pai project init — thin wrapper over session/project-setup. */
-import { err } from "../../utils.js";
+import { err } from "../../lib/utils.js";
 import { formatCheck, initProject, projectChecks, type InitOpts } from "../../../session/project-setup.js";
 
 export async function cmdInit(opts: InitOpts): Promise<void> {

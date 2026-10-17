@@ -10,7 +10,7 @@
  * printed first and `--execute` is what touches the database.
  */
 
-import { ok, warn, err, dim, bold, shortenPath } from "../../utils.js";
+import { ok, warn, err, dim, bold, shortenPath } from "../../lib/utils.js";
 import { MergeError } from "../../../registry/merge.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 

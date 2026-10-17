@@ -19,7 +19,7 @@ import {
   checkDeliveryReachability,
   type IdentityLike,
 } from "../../identity/index.js";
-import { ok, err, warn, dim, bold } from "../utils.js";
+import { ok, err, warn, dim, bold } from "../lib/utils.js";
 
 interface ConfigShape {
   identity?: IdentityLike & { sendingAccountAliases?: string[] };

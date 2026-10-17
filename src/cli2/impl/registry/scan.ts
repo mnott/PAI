@@ -4,8 +4,8 @@ import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSy
 import { realpathSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
-import { ok, warn, err, dim, bold } from "../../utils.js";
-import { encodeDir } from "../../utils.js";
+import { ok, warn, err, dim, bold } from "../../lib/utils.js";
+import { encodeDir } from "../../lib/utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../../registry/migrate.js";
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";

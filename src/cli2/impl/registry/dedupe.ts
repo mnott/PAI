@@ -33,7 +33,7 @@
  */
 
 import { realpathSync, copyFileSync, existsSync } from "node:fs";
-import { ok, warn, err, dim, bold } from "../../utils.js";
+import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
 

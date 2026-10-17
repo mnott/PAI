@@ -24,7 +24,7 @@ import {
   findMovedPath,
 } from "./commands.js";
 import { existsSync } from "node:fs";
-import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../utils.js";
+import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../lib/utils.js";
 import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig, cmdMcp, cmdTools } from "./session-config.js";
 import { cmdHealth } from "./health.js";
@@ -50,7 +50,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .option("--all", "Show all entries including cold / zero-session / archived projects")
     .option("-n, --n <count>", "Max rows to show", "20")
     .action(async (opts: { all?: boolean; n?: string }) => {
-      const { cmdMain } = await import("../main-resolver.js");
+      const { cmdMain } = await import("../../../cli/commands/main-resolver.js");
       await cmdMain(undefined, undefined, opts);
     });
 

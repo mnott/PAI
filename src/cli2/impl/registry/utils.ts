@@ -1,7 +1,7 @@
 /** Shared registry helpers for registry command operations. */
 
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
-import { now } from "../../utils.js";
+import { now } from "../../lib/utils.js";
 import { basename, join } from "node:path";
 import { unregistrableReason } from "../../../registry/registrable.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";

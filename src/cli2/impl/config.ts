@@ -48,9 +48,9 @@ import {
 import { STATE_FILE as schedulerStatePath, migrateSchedulerState } from "../../tasks/poller.js";
 import { migrateIdentityFile } from "../../memory/wakeup.js";
 import { migrateScanConfig } from "./registry/scan.js";
-import { oldBackupsDir, backupsDirPath } from "./backup.js";
+import { oldBackupsDir, backupsDirPath } from "../../cli/commands/backup.js";
 import { defaultVaultPath, oldDefaultVaultPath, migrateObsidianVaultDir } from "../../obsidian/sync/generate.js";
-import { getConfigObsidianVaultPathRaw, saveVaultPath as saveObsidianVaultPath } from "./obsidian.js";
+import { getConfigObsidianVaultPathRaw, saveVaultPath as saveObsidianVaultPath } from "../../cli/commands/obsidian.js";
 import { migrateAgentsDir, migrateCommandsDir, type MigrateContentDirResult } from "../../config/adapter-content.js";
 import {
   whisperRulesPath,
@@ -67,14 +67,14 @@ import {
   migrateSessionRouting,
   migrateSecurityEvents,
 } from "../../config/pai-files.js";
-import { scanCacheFilePath, migrateSessionScanCache } from "../../cli/lib/session-scan.js";
+import { scanCacheFilePath, migrateSessionScanCache } from "../../cli2/lib/session-scan.js";
 import { queriesDirPath, migrateQueriesDir } from "../../zettelkasten/query-feedback.js";
 import { migrateSummaryCooldowns } from "../../daemon/session-summary-worker.js";
 import { migrateWorkQueue } from "../../daemon/work-queue.js";
 import { migrateKgBackfillState } from "../../memory/kg-backfill.js";
 import { readWorkersSection, expandHome } from "../../workers/config.js";
 import { migrateWorkerLogs, WorkerLogsMigrationError, activeSpawnedWorkerCount } from "../../workers/logs-migrate.js";
-import { ok, err, dim, bold } from "../utils.js";
+import { ok, err, dim, bold } from "../lib/utils.js";
 
 function sha256FileSync(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");

@@ -11,7 +11,7 @@
 
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { ok, warn, err, dim, bold } from "../utils.js";
+import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
 import { resolveFromModule } from "../../module-paths.js";
 

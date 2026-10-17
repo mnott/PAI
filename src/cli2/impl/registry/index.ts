@@ -1,7 +1,7 @@
 /** Registry command registration and simple sub-commands (stats, rebuild, lookup). */
 
 import type { Command } from "commander";
-import { ok, warn, err, dim, bold, fmtDate } from "../../utils.js";
+import { ok, warn, err, dim, bold, fmtDate } from "../../lib/utils.js";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
