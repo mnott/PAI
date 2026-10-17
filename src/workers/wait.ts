@@ -29,6 +29,8 @@ export interface WaitOptions {
   timeoutMs?: number;
   /** Poll interval; default 2 s. */
   intervalMs?: number;
+  /** Return as soon as ANY named worker is terminal (default: wait for all). */
+  any?: boolean;
 }
 
 const TERMINAL: readonly WorkerStatus["state"][] = ["done", "failed", "killed", "lost"];
@@ -98,7 +100,8 @@ export async function waitWorkers(
     if (!TERMINAL.includes(st.state)) pending.add(id);
   }
   const deadline = Date.now() + timeoutMs;
-  while (pending.size > 0 && Date.now() < deadline) {
+  const anyDone = () => opts.any === true && pending.size < ids.length;
+  while (pending.size > 0 && !anyDone() && Date.now() < deadline) {
     await sleep(Math.min(intervalMs, Math.max(1, deadline - Date.now())));
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);
@@ -107,4 +110,42 @@ export async function waitWorkers(
     }
   }
   return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!)), timedOut: [...pending] };
+}
+
+export const WAIT_MAX_DEFAULT_SECS = 100;
+export const WAIT_MAX_CAP_SECS = 115;
+
+/**
+ * The `pai worker wait` verb: one JSON status line per id. With --max (default
+ * 100, limit 115) it returns as soon as ANY worker finishes or the max elapses:
+ * exit 0 all done, 1 a finished worker failed, 3 some still running (call again
+ * with the unfinished ids). The legacy --timeout waits for ALL and exits 1 on timeout.
+ */
+export async function runWait(
+  logDir: string,
+  ids: string[],
+  o: { max?: number; timeout?: number },
+  out: (line: string) => void,
+  errOut: (line: string) => void
+): Promise<number> {
+  const legacy = o.timeout !== undefined;
+  const { results, timedOut } = await waitWorkers(logDir, ids, {
+    timeoutMs: (legacy ? o.timeout! : Math.min(o.max ?? WAIT_MAX_DEFAULT_SECS, WAIT_MAX_CAP_SECS)) * 1000,
+    any: !legacy,
+  });
+  for (const r of results) out(JSON.stringify(r));
+  const failed = results.filter((r) => !timedOut.includes(r.id) && !r.ok).map((r) => r.id);
+  if (legacy && timedOut.length) {
+    errOut(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`);
+    return 1;
+  }
+  if (failed.length) {
+    errOut(`pai worker wait: failed: ${failed.join(", ")}`);
+    return 1;
+  }
+  if (timedOut.length) {
+    errOut(`pai worker wait: still running: ${timedOut.join(" ")}; call wait again with these ids`);
+    return 3;
+  }
+  return 0;
 }

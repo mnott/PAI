@@ -60,10 +60,10 @@ describe("sleep-poll gate", () => {
   });
 
   it("sums sleeps across one command", () => {
-    for (const cmd of ["sleep 58; sleep 58", "sleep 30 && sleep 30", "sleep 1m\nsleep 1", "sleep 0.5m; sleep 31", "for i in 1 2 3; do sleep 30; done", "until false; do sleep 5; done"]) {
+    for (const cmd of ["sleep 58; sleep 58", "sleep 30 && sleep 31", "sleep 1m\nsleep 1", "sleep 0.5m; sleep 31", "for i in 1 2 3; do sleep 30; done", "until false; do sleep 5; done"]) {
       expect(decisionOf(bash(cmd)).permissionDecision, cmd).toBe("deny");
     }
-    for (const cmd of ["sleep 30; sleep 20", "for i in 1 2; do sleep 20; done", "for i in {1..3}; do sleep 10; done", "while kill -0 123 2>/dev/null; do sleep 15; done"]) {
+    for (const cmd of ["sleep 30; sleep 20", "sleep 60", "sleep 30 && sleep 30", "sleep 45", "for i in 1 2; do sleep 20; done", "for i in {1..3}; do sleep 10; done", "while kill -0 123 2>/dev/null; do sleep 15; done"]) {
       expect(decisionOf(bash(cmd)).permissionDecision, cmd).toBe("allow");
     }
   });

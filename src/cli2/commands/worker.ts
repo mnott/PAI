@@ -23,7 +23,8 @@ import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
-import { waitWorkers } from "../../workers/wait.js";
+import { runWait } from "../../workers/wait.js";
+import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { dim, err, ok } from "../lib/utils.js";
@@ -690,7 +691,7 @@ const waitOnCommand: CommandDef = {
     { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
   ],
   examples: ["pai worker wait-on 12345", "pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60"],
-  seeAlso: ["pai worker wait"],
+  seeAlso: ["pai worker wait", "pai worker wait-url", "pai worker wait-file"],
   run: (ctx) =>
     guard("pai worker wait-on <pid>", async () => {
       const wid = process.env.PAI_WORKER_ID;
@@ -711,29 +712,48 @@ const waitOnCommand: CommandDef = {
 
 const waitCommand: CommandDef = {
   name: "wait",
-  summary: "Wait for workers to finish and print each result",
+  summary: "Wait for child workers; returns when any finishes or --max elapses",
   description:
-    "Blocks until the given workers finish and prints one JSON line per worker. Exit 1 on failure or timeout. Use this or background tasks instead of sleeping and re-checking `ps`.",
+    "Prints one JSON status line per worker id and returns within --max seconds (default 100, limit 115) as soon as ANY of them finishes. Exit 0: all done. Exit 1: a finished worker failed. Exit 3: some still running, call again with the unfinished ids.\n" +
+    "Use this instead of sleeping and re-checking `pai worker ps`. --timeout keeps the old behaviour: wait for ALL, exit 1 on timeout.",
   args: [{ name: "IDS", required: true, variadic: true, summary: "One or more worker ids" }],
-  options: [{ name: "timeout", type: "number", value: "SECS", summary: "Give up after this many seconds (default 900)" }],
-  examples: ["pai worker wait w-20260101-abc", "pai worker wait w-20260101-abc w-20260101-def --timeout 300"],
-  seeAlso: ["pai worker ps", "pai worker wait-on"],
+  options: [
+    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" },
+    { name: "timeout", type: "number", value: "SECS", summary: "Wait for ALL workers, give up after this many seconds (exit 1)" },
+  ],
+  examples: ["pai worker wait w-20260101-abc", "pai worker wait w-20260101-abc w-20260101-def --max 60"],
+  seeAlso: ["pai worker ps", "pai worker wait-on", "pai worker wait-url", "pai worker wait-file"],
   run: (ctx) =>
-    guard("pai worker ps", async () => {
-      const { results, timedOut } = await waitWorkers(logDir(), ctx.args.IDS as string[], {
-        timeoutMs: (num(ctx.opts.timeout) ?? 900) * 1000,
-      });
-      for (const r of results) out(JSON.stringify(r));
-      if (timedOut.length) {
-        process.stderr.write(err(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`) + "\n");
-        return 1;
-      }
-      const failed = results.filter((r) => !r.ok).map((r) => r.id);
-      if (failed.length) {
-        process.stderr.write(err(`pai worker wait: failed: ${failed.join(", ")}`) + "\n");
-        return 1;
-      }
-    }),
+    guard("pai worker ps", () =>
+      runWait(logDir(), ctx.args.IDS as string[], { max: num(ctx.opts.max), timeout: num(ctx.opts.timeout) }, out, (l) =>
+        process.stderr.write(err(l) + "\n")
+      )
+    ),
+};
+
+const waitUrlCommand: CommandDef = {
+  name: "wait-url",
+  summary: "Wait for a server to answer HTTP",
+  description:
+    "Polls the URL with backoff for at most --max seconds (default 100, limit 115). Exit 0: it answered 2xx-4xx. Exit 3: not yet, call again.",
+  args: [{ name: "URL", required: true, summary: "e.g. http://127.0.0.1:8016/v1/models" }],
+  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" }],
+  examples: ["pai worker wait-url http://127.0.0.1:8016/v1/models", "pai worker wait-url http://127.0.0.1:8016/v1/models --max 60"],
+  seeAlso: ["pai worker wait", "pai worker wait-on", "pai worker wait-file"],
+  run: (ctx) => guard("pai worker wait-url <url>", () => waitUrl({ url: String(ctx.args.URL), maxSecs: num(ctx.opts.max) }, { ...realProbeDeps, out })),
+};
+
+const waitFileCommand: CommandDef = {
+  name: "wait-file",
+  summary: "Wait for files to appear",
+  description:
+    "Waits at most --max seconds (default 100, limit 115) until every path exists; prints one line per path. Exit 0: all exist. Exit 3: some missing, call again.",
+  args: [{ name: "PATHS", required: true, variadic: true, summary: "One or more file paths" }],
+  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" }],
+  examples: ["pai worker wait-file /tmp/job.rc", "pai worker wait-file /tmp/a.rc /tmp/b.rc --max 60"],
+  seeAlso: ["pai worker wait", "pai worker wait-on", "pai worker wait-url"],
+  run: (ctx) =>
+    guard("pai worker wait-file <path...>", () => waitFile({ paths: ctx.args.PATHS as string[], maxSecs: num(ctx.opts.max) }, { ...realProbeDeps, out })),
 };
 
 // ---------------------------------------------------------------------------
@@ -874,6 +894,8 @@ export const workerCommand: CommandDef = {
     gcCommand,
     killCommand,
     waitOnCommand,
+    waitUrlCommand,
+    waitFileCommand,
     waitCommand,
     modelCommand,
     capabilityCommand,

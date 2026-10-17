@@ -47,7 +47,8 @@ import { sayToWorker } from "../../../workers/operator.js";
 import { handoffFromInside } from "../../../workers/handoff.js";
 import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../../workers/pending.js";
-import { waitWorkers } from "../../../workers/wait.js";
+import { runWait } from "../../../workers/wait.js";
+import { realProbeDeps, waitFile, waitUrl } from "../../../workers/wait-probes.js";
 import { describeMcp } from "../../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../../workers/controls.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../../workers/proxy/server.js";
@@ -550,26 +551,38 @@ export function registerWorkerCommands(workerCmd: Command): void {
   workerCmd
     .command("wait <ids...>")
     .description(
-      "Poll workers until they finish; prints each result as one JSON line, exit 1 on failure or timeout\n" +
-        "Never busy-wait for a worker: no sleep loops, no sleep-then-`pai worker ps` polling, no manual retry loops. Two sanctioned waits: run workers as background Bash tasks (the harness notifies on completion), or call `pai worker wait`, which blocks until they finish and prints each result. If you catch yourself sleeping to re-check a worker, stop — you already get notified. Supervision events arrive automatically — no polling, no sleeps: the daemon watches your workers and tells you when one finishes, fails or stalls (docs/worker.md, Supervision)."
+      "Wait for child workers: one JSON status line per id, returns as soon as ANY finishes or --max elapses; exit 0 all done, 1 a finished worker failed, 3 some still running (call again with the unfinished ids)\n" +
+        "Never busy-wait for a worker: no sleep loops, no sleep-then-`pai worker ps` polling. Supervision events arrive automatically (docs/worker.md, Supervision)."
     )
-    .option("--timeout <secs>", "Give up after this many seconds (default 900)", parseIntArg)
-    .action(async (ids: string[], opts: { timeout?: number }) => {
+    .option("--max <secs>", "Longest wait in seconds (default 100, limit 115)", parseIntArg)
+    .option("--timeout <secs>", "Wait for ALL workers, give up after this many seconds (exit 1)", parseIntArg)
+    .action(async (ids: string[], opts: { max?: number; timeout?: number }) => {
       try {
-        const { results, timedOut } = await waitWorkers(currentLogDir(), ids, {
-          timeoutMs: (opts.timeout ?? 900) * 1000,
-        });
-        for (const r of results) console.log(JSON.stringify(r));
-        if (timedOut.length) {
-          console.error(err(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`));
-          process.exitCode = 1;
-          return;
-        }
-        const failed = results.filter((r) => !r.ok).map((r) => r.id);
-        if (failed.length) {
-          console.error(err(`pai worker wait: failed: ${failed.join(", ")}`));
-          process.exitCode = 1;
-        }
+        process.exitCode = await runWait(currentLogDir(), ids, opts, console.log, (l) => console.error(err(l)));
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("wait-url <url>")
+    .description("Wait at most --max seconds (default 100, cap 115) for a server to answer HTTP 2xx-4xx; exit 0 up, 3 not yet")
+    .option("--max <secs>", "Longest wait in seconds (default 100, limit 115)", parseIntArg)
+    .action(async (url: string, opts: { max?: number }) => {
+      try {
+        process.exitCode = await waitUrl({ url, maxSecs: opts.max }, realProbeDeps);
+      } catch (e) {
+        fail(e);
+      }
+    });
+
+  workerCmd
+    .command("wait-file <paths...>")
+    .description("Wait at most --max seconds (default 100, cap 115) until every path exists; exit 0 all exist, 3 some missing")
+    .option("--max <secs>", "Longest wait in seconds (default 100, limit 115)", parseIntArg)
+    .action(async (paths: string[], opts: { max?: number }) => {
+      try {
+        process.exitCode = await waitFile({ paths, maxSecs: opts.max }, realProbeDeps);
       } catch (e) {
         fail(e);
       }
