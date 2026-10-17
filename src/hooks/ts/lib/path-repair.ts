@@ -30,6 +30,38 @@ const PATH_KEYS: Record<string, { key: string; mustExist: boolean }> = {
   Grep: { key: "path", mustExist: true },
 };
 
+/**
+ * When a path with .js/.mjs/.jsx extension does not exist but a corresponding
+ * .ts/.mts/.tsx version exists, return the TS version path.
+ * Only applies when the original path itself does not exist.
+ */
+export function tsSibling(value: string, exists: (p: string) => boolean): string | null {
+  if (exists(value)) return null;
+
+  const ext = value.slice(value.lastIndexOf('.'));
+  let replacement: string | null = null;
+
+  switch (ext) {
+    case '.js':
+      replacement = value.slice(0, -3) + '.ts';
+      break;
+    case '.mjs':
+      replacement = value.slice(0, -4) + '.mts';
+      break;
+    case '.jsx':
+      replacement = value.slice(0, -4) + '.tsx';
+      break;
+    default:
+      return null;
+  }
+
+  if (exists(replacement)) {
+    return replacement;
+  }
+
+  return null;
+}
+
 export interface PathRepairInput {
   tool_name?: string;
   cwd?: string;
@@ -57,6 +89,15 @@ function levenshtein(a: string, b: string): number {
     prev = cur;
   }
   return prev[b.length];
+}
+
+/**
+ * Resolve a relative path against cwd and check if it exists.
+ * For relative paths, returns the absolute path after joining with cwd.
+ * For absolute paths, returns the path as-is.
+ */
+function resolvePath(value: string, cwd: string): string {
+  return isAbsolute(value) ? value : join(cwd, value);
 }
 
 /** The repaired form of one missing absolute path, or null when it exists or cannot be repaired. */
@@ -136,7 +177,25 @@ export function repairPath(
   if (input.tool_name === "Bash") return repairBash(input, cwd, exists);
   const spec = PATH_KEYS[input.tool_name ?? ""];
   const value = input.tool_input?.[spec?.key ?? ""];
-  if (!spec || typeof value !== "string" || !isAbsolute(value)) return null;
+  if (!spec || typeof value !== "string") return null;
+
+  // For relative paths, resolve against cwd first
+  const resolvedValue = isAbsolute(value) ? value : join(cwd, value);
+
+  // First try to repair with tsSibling
+  const tsFixed = tsSibling(resolvedValue, exists);
+  if (tsFixed) {
+    const updatedInput = { ...input.tool_input, [spec.key]: tsFixed };
+    if (DENY_REPAIR_TOOLS.has(input.tool_name!)) {
+      // For Edit, MultiEdit, Write, NotebookEdit, deny with the exact path
+      return { old: value, new: tsFixed, updatedInput, missing: true };
+    }
+    return { old: value, new: tsFixed, updatedInput };
+  }
+
+  // If not repaired by tsSibling, proceed with existing logic for absolute paths
+  if (!isAbsolute(value)) return null;
+
   const fixed = repairValue(value, cwd, spec.mustExist, exists);
   if (fixed) return { old: value, new: fixed, updatedInput: { ...input.tool_input, [spec.key]: fixed } };
   // Read/Edit of a file that is not there yet (the unit has not created it): the folder repairs the prefix, the call is denied with the exact path.
