@@ -59,3 +59,27 @@ describe("cockpit page compression", () => {
     expect(outside).not.toContain(">down<");
   });
 });
+
+describe("cockpit layout follow-up", () => {
+  it("top panel: local sizes to content, cloud takes the rest", () => {
+    expect(COCKPIT_HTML).toContain('class="grp grp-cloud"');
+    expect(COCKPIT_HTML).toContain('class="grp grp-local"');
+    expect(COCKPIT_HTML).toMatch(/\.grp-cloud\{flex:1 1 560px\}/);
+    expect(COCKPIT_HTML).toMatch(/\.grp-local\{flex:0 1 auto;width:min-content;min-width:200px;max-width:34%\}/);
+    expect(COCKPIT_HTML).not.toMatch(/\.grp\{flex:1;/);
+  });
+
+  it("shows a loading state until the first limits poll arrives", () => {
+    expect(COCKPIT_HTML).toContain("lim?'<span class=\"dim\">not reported</span>':'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
+    expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
+    expect(COCKPIT_HTML).toContain("lim=j;renderLimits();if(sys)renderSystem();renderDonuts()");
+  });
+
+  it("low-request models render as a chip line, not tiles", () => {
+    expect(COCKPIT_HTML).toContain('id="donutlow"');
+    expect(COCKPIT_HTML).toContain("function lowChips(ms)");
+    expect(COCKPIT_HTML).toMatch(/filter\(function\(m\)\{return m\.requests>=LOW_REQ\}\)/);
+    expect(COCKPIT_HTML).not.toContain("ring low");
+    expect(COCKPIT_HTML).not.toContain('(low?" low":"")');
+  });
+});
