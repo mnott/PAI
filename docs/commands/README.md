@@ -289,7 +289,7 @@ Generated man pages for every `pai` command area. Read any page in the terminal 
 | `pai worker providers update <name>` | Change cost tier and tags of a provider (routing constraints use these) |
 | `pai worker providers use <name>` | Make this provider the active one, re-pointing every class pinned to a provider |
 | `pai worker proxy [stop]` | The local Anthropic↔OpenAI proxy (loopback only); started on demand by `run`, |
-| `pai worker ps` | List workers of this session (RUNNING + FINISHED); --all for every worker |
+| `pai worker ps` | List this session's workers (RUNNING + FINISHED); whenever other sessions have live workers, |
 | `pai worker replay <id>` | Print the transcript of one finished or running worker |
 | `pai worker resume <id> <text>` | Continue a finished worker on the same provider: claude --resume <session> |
 | `pai worker run [args...]` | Run one claude-code worker through the configured provider. |
