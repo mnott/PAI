@@ -31,9 +31,24 @@ pai daemon status                    # should show "running"
 
 → [docs/install.md](docs/install.md) · [docs/install-linux.md](docs/install-linux.md) (both storage paths, Docker, systemd)
 
+## Daily Use: the `pai` command
+
+The everyday job is: find a session, start it, make sure it runs where you want.
+
+```bash
+pai                 # picker: newest sessions first, type to filter, Enter opens
+pai NAME            # open a session by name; shows how it will start (Enter = exactly like last time)
+pai ls              # the same list as a plain table
+pai setups          # orchestrator + worker combinations you can start a session with
+pai more            # every other command, grouped (memory, workers, daemon, ...)
+pai help <command>  # full help for one command, e.g. pai help worker
+```
+
+`pai pause` saves your place before you leave a session and `pai end` finishes it. Everything else (`pai memory`, `pai worker`, `pai project`, `pai daemon`, ...) is listed by `pai more`; the names that hooks, skills and MCP tools call did not change.
+
 ## Command Reference
 
-Every `pai` command area has a man page generated from the live CLI: `pai help`, `pai help memory`, `pai memory --help`.
+Every `pai` command has a page generated from the live CLI: `pai help`, `pai more`, `pai help memory`, `pai memory --help`.
 
 → [docs/command-reference.md](docs/command-reference.md) · [docs/commands/](docs/commands/README.md)
 
