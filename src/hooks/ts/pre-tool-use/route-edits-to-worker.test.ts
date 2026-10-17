@@ -44,4 +44,17 @@ describe("route-edits-to-worker", () => {
   it("allows a source file edit when PAI_WORKER=1", () => {
     expect(runHook(join(repo, "src/workers/run.ts"), { PAI_WORKER: "1" })).toBe("");
   });
+
+  it("orchestrator worker: blocks a source edit and names the local unit command", () => {
+    const out = runHook(join(repo, "src/workers/run.ts"), { PAI_WORKER: "1", PAI_WORKER_ORCHESTRATOR: "1" });
+    const parsed = JSON.parse(out);
+    expect(parsed.decision).toBe("block");
+    expect(parsed.reason).toContain("pai worker run --provider local30x8 --class implement");
+  });
+
+  it("orchestrator worker: still allows Notes and /tmp specs", () => {
+    const env = { PAI_WORKER: "1", PAI_WORKER_ORCHESTRATOR: "1" };
+    expect(runHook(join(repo, "Notes/three-tier-log.md"), env)).toBe("");
+    expect(runHook("/tmp/spec-1.txt", env)).toBe("");
+  });
 });

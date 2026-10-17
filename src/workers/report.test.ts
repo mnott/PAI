@@ -16,6 +16,7 @@ import {
   promptTrailer,
   renderReport,
   workerContractPrompt,
+  ORCHESTRATOR_CONTRACT,
   verifyReportChanges,
   verifyFailNote,
   WORKER_CONTRACT_PROMPT,
@@ -220,6 +221,20 @@ describe("workerContractPrompt — class selection", () => {
       expect(p).toContain('"checks"');
       expect(p).not.toMatch(/^AG2\./m);
     }
+  });
+});
+
+describe("workerContractPrompt — orchestrator mode", () => {
+  it("appends the unit-spawning pattern", () => {
+    const p = workerContractPrompt("implement", "ag2", true);
+    expect(p).toContain("pai worker wait <ids> --max 100");
+    expect(p).toContain("--provider local30x8");
+  });
+  it("leaves the contract alone without the flag", () => {
+    expect(workerContractPrompt("implement", "ag2")).not.toContain("Orchestrator mode");
+  });
+  it("also reaches the short contract", () => {
+    expect(workerContractPrompt("spotcheck", "json", true).endsWith(ORCHESTRATOR_CONTRACT)).toBe(true);
   });
 });
 

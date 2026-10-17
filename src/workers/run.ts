@@ -782,6 +782,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
+        orchestrate: opts.orchestrate,
         limit,
         noBrowser,
         opts,
@@ -1275,6 +1276,8 @@ export interface ExecuteArgs {
   printCmd?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
+  /** --orchestrate: PAI_WORKER_ORCHESTRATOR=1 in the env and the orchestrator addendum in the contract. */
+  orchestrate?: boolean;
   /** Capability name this run resolved through (--capability, or an implied class capability), when it did. */
   capability?: string;
   /** Time limit of the run; null = none. */
@@ -1296,7 +1299,7 @@ export interface ExecuteArgs {
  */
 export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const settings = poolSettings(a.config);
-  if (!settings.enabled) return null;
+  if (!settings.enabled || a.orchestrate) return null; // an orchestrator needs its own env and contract, not a warm slot
   const cwd = a.cwd ?? process.cwd();
   const reason = poolIneligibleReason({
     headless: a.parsed.headless,
@@ -1388,7 +1391,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     viaRouter = routeLoopbackViaRouter(target.provider, await probeRouter());
     if (!viaRouter) process.stderr.write(`pai: router down, ${target.providerName} runs direct (no router prefix fix)\n`);
   }
-  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter);
+  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter, a.orchestrate);
 
   const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo
@@ -1512,7 +1515,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // ONE flag: contract (unless the caller brought their own), placement, caller text
   cmd.push(
     ...appendSystemPromptArgs([
-      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat)] : []),
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate)] : []),
       ...(addendum ? [addendum.text] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),

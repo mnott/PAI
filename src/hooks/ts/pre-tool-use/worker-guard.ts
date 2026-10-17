@@ -23,6 +23,7 @@ import { renderDecision } from "../lib/sleep-poll-gate.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
+import { decideOrchestratorBash } from "../lib/edit-gate.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -78,6 +79,15 @@ async function main(): Promise<void> {
     input = JSON.parse(text) as WorkerGuardInput;
   } catch {
     return;
+  }
+
+  if (process.env.PAI_WORKER_ORCHESTRATOR === "1" && process.env.PAI_WORKER === "1" && input.tool_name === "Bash") {
+    const command = (input.tool_input as { command?: unknown } | undefined)?.command;
+    const d = typeof command === "string" ? decideOrchestratorBash(command) : { decision: "allow" as const };
+    if (d.decision === "block") {
+      process.stdout.write(JSON.stringify({ decision: "block", reason: d.reason }) + "\n");
+      return;
+    }
   }
 
   const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));

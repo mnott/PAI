@@ -157,15 +157,21 @@ function fullContractPrompt(format: "ag2" | "json"): string {
   return lines.join("\n");
 }
 
+/** Appended to the contract of a --orchestrate worker: what the mode means and how units are spawned. */
+export const ORCHESTRATOR_CONTRACT =
+  "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
+  "Write each unit spec to a file under /tmp, start it with `pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge.";
+
 /**
  * The system prompt appended to every headless run, chosen by task class and
  * report format. `spotcheck`/`simple` get a short contract (no delegation
  * language, under 1200 chars in json format / 1500 in ag2); every other class (and no class) gets the
  * full contract. Both end with the AG2 report block unless `format` is
- * "json", the pre-AG2 fallback.
+ * "json", the pre-AG2 fallback. `orchestrate` appends ORCHESTRATOR_CONTRACT.
  */
-export function workerContractPrompt(cls: string | undefined, format: "ag2" | "json"): string {
-  return SHORT_CONTRACT_CLASSES.has(cls ?? "") ? shortContractPrompt(format) : fullContractPrompt(format);
+export function workerContractPrompt(cls: string | undefined, format: "ag2" | "json", orchestrate?: boolean): string {
+  const base = SHORT_CONTRACT_CLASSES.has(cls ?? "") ? shortContractPrompt(format) : fullContractPrompt(format);
+  return orchestrate ? `${base}\n${ORCHESTRATOR_CONTRACT}` : base;
 }
 
 /**

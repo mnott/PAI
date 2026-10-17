@@ -20,7 +20,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { decideEditGate, type EditGateContext } from "../lib/edit-gate.js";
+import { decideEditGate, decideOrchestratorEdit, type EditGateContext } from "../lib/edit-gate.js";
 
 function isUnder(p: string, prefix: string): boolean {
   return p === prefix || p.startsWith(prefix + sep);
@@ -68,18 +68,24 @@ async function main(): Promise<void> {
   }
   if (!text.trim()) return allow();
 
-  let input: { cwd?: string; tool_input?: { file_path?: string } };
+  let input: { cwd?: string; tool_input?: { file_path?: string; notebook_path?: string } };
   try {
     input = JSON.parse(text);
   } catch {
     return allow();
   }
 
-  const filePath =
-    input.tool_input && typeof input.tool_input.file_path === "string" ? input.tool_input.file_path : "";
+  const target = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
+  const filePath = typeof target === "string" ? target : "";
   if (!filePath) return allow();
 
   const abs = resolve(input.cwd ?? process.cwd(), filePath);
+
+  // a --orchestrate worker plans and reviews: the main-session rule applies to it
+  if (process.env.PAI_WORKER_ORCHESTRATOR === "1") {
+    const d = decideOrchestratorEdit(abs);
+    return d.decision === "block" ? block(d.reason) : allow();
+  }
 
   const ctx: EditGateContext = {
     filePath: abs,
