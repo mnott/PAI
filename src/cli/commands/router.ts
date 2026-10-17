@@ -145,7 +145,7 @@ const restartCommand: CommandDef = {
   name: "restart",
   summary: "Restart the router without refusing connections",
   description: "Starts a new router that waits for the port, then stops the old one, which finishes its in-flight streams first. Prints the longest refused interval.",
-  examples: ["pai router restart"],
+  examples: ["pai router restart", "pai router status"],
   seeAlso: ["pai router start", "pai router stop"],
   async run() {
     const result = await restartRouter({
