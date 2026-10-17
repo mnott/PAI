@@ -40,6 +40,8 @@ export interface PathRepair {
   old: string;
   new: string;
   updatedInput: Record<string, unknown>;
+  /** The corrected file does not exist yet (only its folder does): the call cannot succeed, so it is denied. */
+  missing?: boolean;
 }
 
 /** macOS: /tmp, /var, /etc are symlinks into /private. */
@@ -136,8 +138,13 @@ export function repairPath(
   const value = input.tool_input?.[spec?.key ?? ""];
   if (!spec || typeof value !== "string" || !isAbsolute(value)) return null;
   const fixed = repairValue(value, cwd, spec.mustExist, exists);
-  return fixed ? { old: value, new: fixed, updatedInput: { ...input.tool_input, [spec.key]: fixed } } : null;
+  if (fixed) return { old: value, new: fixed, updatedInput: { ...input.tool_input, [spec.key]: fixed } };
+  // Read/Edit of a file that is not there yet (the unit has not created it): the folder repairs the prefix, the call is denied with the exact path.
+  const folder = spec.mustExist && FILE_TOOLS.has(input.tool_name!) ? repairValue(value, cwd, false, exists) : null;
+  return folder ? { old: value, new: folder, updatedInput: { ...input.tool_input, [spec.key]: folder }, missing: true } : null;
 }
+
+const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "NotebookEdit"]);
 
 /** Shell word characters split a command into candidate tokens. */
 const WORD = /[^\s;|&<>()`"'$=,:{}]+/g;
@@ -183,6 +190,7 @@ function repairBash(input: PathRepairInput, cwd: string, exists: (p: string) => 
 const DENY_REPAIR_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
 export function renderRepair(r: PathRepair, tool?: string): string {
+  if (r.missing) return renderDeny(`Wrong path. Use exactly: ${r.new} (it does not exist yet)`);
   if (tool && DENY_REPAIR_TOOLS.has(tool)) return renderDeny(`Wrong path. Use exactly: ${r.new}`);
   const msg = `path repaired: ${r.old} → ${r.new}`;
   const context = `${msg}. ${r.old} does not exist; use exactly ${r.new} in every later Edit, Write and Read.`;
@@ -254,13 +262,29 @@ export function denyReason(input: PathRepairInput, env: NodeJS.ProcessEnv): stri
   return `Your working directory is ${cwd}. Paths outside it are not part of this task. Use a path relative to ${cwd}. Outside it: ${value}`;
 }
 
+/**
+ * Normal worker worktrees: a `cd <abs>` whose target is the cwd under a wrong prefix (a dropped or
+ * mistyped segment) dies with "no such file or directory" and the run loops; deny with the exact fix.
+ */
+function cdReason(command: string, cwd: string): string | null {
+  for (const m of command.matchAll(/(?:^|[;&|(]\s*)cd\s+(\/[^\s;|&<>()"'`]+)/g)) {
+    const target = m[1];
+    if (existsSync(target)) continue;
+    const fixed = repairValue(target, cwd, true, existsSync);
+    if (!fixed) continue;
+    const next = command.replace(target, fixed);
+    return `Wrong path in cd: ${target}. You are already in your worktree ${cwd}; drop the cd. Corrected command: ${next}`;
+  }
+  return null;
+}
+
 /** Bash: deny a missing absolute-path token outside the arm cwd (existing paths are the model's business). */
 function denyBash(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null {
   const cwd = input.cwd;
   const command = input.tool_input?.command;
   if (!cwd || !isAbsolute(cwd) || typeof command !== "string") return null;
   const realCwd = realish(cwd);
-  if (!isIsolatedArm(realCwd)) return null;
+  if (!isIsolatedArm(realCwd)) return cdReason(command, cwd);
   const under = (p: string, root: string) => p === root || p.startsWith(`${root.replace(/\/+$/, "")}/`);
   for (const t of absTokens(command)) {
     if (existsSync(t)) continue;
