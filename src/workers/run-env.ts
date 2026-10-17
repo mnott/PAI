@@ -63,14 +63,16 @@ const NATIVE_STRIP_VARS = [
  * Environment for a run through `provider`. Caller's env minus the Anthropic
  * key. `routerEnabled` routes the run through the local model router instead
  * of the provider's own URL (the openai-protocol proxy route always wins);
- * unset keeps the provider-direct route.
+ * unset keeps the provider-direct route. `orchestrate` marks a batch-orchestrator worker:
+ * PAI_WORKER_ORCHESTRATOR=1 makes the edit gate deny code edits.
  */
 export function buildRunEnv(
   provider: WorkerProvider,
   headless: boolean,
   proxyUrl?: string,
   providerName?: string,
-  routerEnabled?: boolean
+  routerEnabled?: boolean,
+  orchestrate?: boolean
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -81,6 +83,10 @@ export function buildRunEnv(
     // them to read a MEMORY.md that does not exist
     env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
   }
+
+  // a child never inherits its spawner's orchestrator mode; only an explicit --orchestrate sets it
+  delete env.PAI_WORKER_ORCHESTRATOR;
+  if (headless && orchestrate) env.PAI_WORKER_ORCHESTRATOR = "1";
 
   if (provider.native) {
     // Plain Claude Code on its own OAuth/Max-plan login: no base URL, no
