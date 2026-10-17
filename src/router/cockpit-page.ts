@@ -258,7 +258,7 @@ function renderDonuts(){ renderSpeed();
  d.byModel.forEach(function(m){var k=m.provider+"\u0000"+m.model,o=ms[k]||(ms[k]={provider:m.provider,model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
  var mk=Object.keys(ms),dh="";
  if(mk.length===1){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
-  dh='<div class="solo">'+(m.cacheRead+m.cacheWrite?donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div>':'<div class="bignum dim">not reported<span>cache hit ratio</span></div></div>');
+  dh='<div class="solo">'+(m.cacheRead+m.cacheWrite?donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div>':'<div class="bignum dim">not reported<span>cache hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div>')+'</div>';
  }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+(m.cacheRead+m.cacheWrite?donut(dn?m.cacheRead/dn:0):'<div class="bignum dim">not reported</div>')+'<div class="n">'+esc(m.provider)+'</div><div class="s">'+esc(m.model)+' · '+m.requests+' req</div></div>'}).join("");
  $("donut").innerHTML=dh||'<span class="dim">no data</span>';
  var note="cache_read / (read + write + fresh input), per provider / model. Overall: "+pct(t.hitRatio);
