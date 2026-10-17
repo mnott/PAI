@@ -23,7 +23,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { openSync, closeSync, writeSync, mkdirSync } from "node:fs";
+import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
@@ -59,6 +59,7 @@ import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedP
 import {
   appendPoolMetric,
   firstRequestShare,
+  firstRouterShare,
   pickSlot,
   poolCarry,
   poolMetricsPath,
@@ -79,6 +80,7 @@ import {
   type SlotProcess,
   type SlotSpawner,
 } from "./pool.js";
+import { USAGE_LOG_FILE } from "../router/usage.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -294,6 +296,24 @@ export interface PoolHost {
   /** Kill every slot, write final state, close the server. */
   shutdown(): Promise<void>;
   reapSlots(): number;
+}
+
+/** Last ~400 KB of the router usage log as lines (a task's rows are at the end), empty on any error. */
+function routerUsageTail(): string[] {
+  try {
+    const size = statSync(USAGE_LOG_FILE).size;
+    const len = Math.min(size, 400_000);
+    const buf = Buffer.alloc(len);
+    const fd = openSync(USAGE_LOG_FILE, "r");
+    try {
+      readSync(fd, buf, 0, len, size - len);
+    } finally {
+      closeSync(fd);
+    }
+    return buf.toString("utf8").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /** JSON body of a request, capped (task payloads carry a whole spec). */
@@ -844,7 +864,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         poolMetricsPath(logDir)
       );
       state.tokensCarried += fu.cache_read_input_tokens ?? 0;
-      const share = firstRequestShare(fu);
+      let share = firstRequestShare(fu);
+      // a local model reports no cache tokens: take the share from the router row's time to first token
+      if (!share && isLoopbackProvider(provider) && session.record.claudeSession) {
+        share = firstRouterShare(routerUsageTail(), session.record.claudeSession) ?? share;
+      }
       session.record.firstShare = share;
       const wc = warmOrCold(share);
       if (status.pool && share !== null && wc) {
