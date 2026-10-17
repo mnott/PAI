@@ -118,3 +118,20 @@ describe("cockpit system tiles: unused metrics", () => {
     expect(html).not.toContain("hidden:");
   });
 });
+
+describe("cockpit kept prefix-cache reading", () => {
+  const ageMark = new Function(`${COCKPIT_HTML.match(/function ageMark[\s\S]*?\n\}/)![0]}; return ageMark;`)() as (s: unknown) => string;
+
+  it("shows no marker for a fresh reading, a small '(Ns old)' beyond one poll interval", () => {
+    expect(ageMark({ prefixCache: {} })).toBe("");
+    expect(ageMark({ prefixCacheAgeSec: 45 })).toBe("");
+    expect(ageMark({ prefixCacheAgeSec: 90 })).toContain("(90s old)");
+    expect(ageMark({ prefixCacheAgeSec: 300 })).toContain("(5 min old)");
+  });
+
+  it("the ring caption, providers table and local detail all carry the marker", () => {
+    expect(COCKPIT_HTML).toContain("server prefix cache'+ageMark(srv)");
+    expect(COCKPIT_HTML).toContain("'*</span>'+ageMark(srv)");
+    expect(COCKPIT_HTML).toContain("ageMark(s))");
+  });
+});

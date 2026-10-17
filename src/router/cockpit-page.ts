@@ -277,16 +277,20 @@ function ringTiles(ms,servers){
   var dn=m.cacheRead+m.cacheWrite+m.input,low=m.requests<LOW_REQ,ring,cap="";
   var srv=(servers||[]).filter(function(s){return s.provider===m.provider})[0];
   if(m.cacheRead+m.cacheWrite>0){var r=dn?m.cacheRead/dn:0;ring=low?(r>0?donut(r):emptyRing()):donut(r)}
-  else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache</div>'}
+  else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache'+ageMark(srv)+'</div>'}
   else{ring=emptyRing();cap='<div class="s">'+(lim?"not reported":'<span class="dim" title="loading: first limits poll pending">…</span>')+'</div>'}
   return'<div class="ring">'+ring+'<div class="n">'+esc(m.provider)+'</div><div class="s">'+esc(m.model)+' · '+m.requests+' req</div>'+cap+'</div>'
  }).join("");
 }
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
+/** " (Ns old)" when the server counter is a kept reading older than one poll interval (60 s). */
+function ageMark(s){
+ return s&&s.prefixCacheAgeSec>60?' <span class="dim">('+(s.prefixCacheAgeSec>=120?Math.round(s.prefixCacheAgeSec/60)+' min':s.prefixCacheAgeSec+'s')+' old)</span>':''
+}
 function provHit(p,servers){
  var srv=(servers||[]).filter(function(s){return s.provider===p.provider})[0];
  if(p.cacheRead+p.cacheWrite>0||!srv)return pct(p.hitRatio);
- return srv.prefixCache?'<span title="server prefix-cache counter since server start">'+pct(srv.prefixCache.hitRate)+'*</span>':'<span class="dim">n/a</span>';
+ return srv.prefixCache?'<span title="server prefix-cache counter since server start">'+pct(srv.prefixCache.hitRate)+'*</span>'+ageMark(srv):'<span class="dim">n/a</span>';
 }
 /** Line under a local server's ring: tokensSaved (server counter, since server start) against the router log's prompt total (since its first row). */
 function reuseLine(pc,tot,since){
@@ -296,9 +300,9 @@ function reuseLine(pc,tot,since){
  return'<div class="s" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved by the server since it started, of '+fmt(tot)+' prompt tokens in the router log'+w+'.">cached '+pct(pc.tokensSaved/tot)+' · '+fmt(pc.tokensSaved)+' / '+fmt(tot)+'</div>';
 }
 /** One compact line per loopback provider (no ring: the providers grid tile already shows the hit rate). */
-function localDetail(prov,pc,tot){
+function localDetail(prov,pc,tot,age){
  var mem=(pc.entries!=null?pc.entries+" entries":"")+(pc.entries!=null&&pc.memoryMb!=null?" / ":"")+(pc.memoryMb!=null?Math.round(pc.memoryMb)+" MB":"");
- return'<div class="s"><b>'+esc(prov)+'</b> · '+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved (server, since start)'+(mem?' · '+mem:'')+(tot?' · router log: '+fmt(tot)+' prompt tokens (since restart)':'')+'</div>';
+ return'<div class="s"><b>'+esc(prov)+'</b> · '+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved (server, since start)'+(mem?' · '+mem:'')+(tot?' · router log: '+fmt(tot)+' prompt tokens (since restart)':'')+(age||'')+'</div>';
 }
 function table(head,rows,tips){return'<div class="tw"><table><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table></div>'}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
@@ -326,7 +330,7 @@ function renderDonuts(){ renderSpeed();
  $("donutnote").innerHTML=note;
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
- loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider])});
+ loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider],ageMark(s))});
  $("donutlocaltitle").style.display=lh?"":"none";
  $("donutlocal").innerHTML=lh;
 }

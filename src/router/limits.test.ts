@@ -340,6 +340,31 @@ describe("local server up/down and prefix cache", () => {
     expect(r.prefixCache).toBeUndefined();
   });
 
+  it("failing stats poll after a good one keeps the reading with its age; older than 10 min it is unknown", async () => {
+    const stats = { engine_cache: { hits: 5, misses: 5, tokens_saved: 100 } };
+    let failStats = false;
+    const srv = http.createServer((q, res) => {
+      if (q.url === "/v1/cache/stats" && failStats) return void res.destroy();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(q.url === "/v1/models" ? { data: [{ id: "m-served" }] } : stats));
+    });
+    const port = await listen(srv);
+    const dir = mkdtempSync(join(tmpdir(), "pc-"));
+    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const t0 = Date.now();
+    const good = (await cache.get(t0)).find((x) => x.provider === "l")!;
+    expect(good.prefixCache?.hits).toBe(5);
+    expect(good.prefixCacheAgeSec).toBeUndefined();
+    failStats = true;
+    const kept = (await cache.get(t0 + 90_000)).find((x) => x.provider === "l")!;
+    expect(kept.prefixCache?.hits).toBe(5);
+    expect(kept.prefixCacheAgeSec).toBe(90);
+    const stale = (await cache.get(t0 + 601_000)).find((x) => x.provider === "l")!;
+    await close(srv);
+    expect(stale.up).toBe(true);
+    expect(stale.prefixCache).toBeUndefined();
+  });
+
   it("parsePrefixCacheStats: counters in, nothing out when the server carries none", () => {
     expect(parsePrefixCacheStats('{"engine_cache":{"hits":0,"misses":0,"tokens_saved":0}}')).toEqual({ hits: 0, misses: 0, hitRate: 0, tokensSaved: 0 });
     expect(parsePrefixCacheStats('{"engine_cache":null,"error":"x"}')).toBeUndefined();
