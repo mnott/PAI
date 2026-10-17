@@ -68,6 +68,8 @@ const TEE = new RegExp(`\\btee\\s+(?:-[a-z]+\\s+)*(\\S+\\.${CODE_EXT})(?=\\s|$|[
 
 const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p) || isOrchestratorScratch(p);
 
+export const ORCHESTRATOR_BASH_PREFIX = "orchestrator mode: Bash may not write code files";
+
 /** Bash for an orchestrator worker: blocks in-place code writes, allows git mv/rm/merge and running tests. */
 export function decideOrchestratorBash(command: string): EditGateDecision {
   const writesCode =
@@ -78,7 +80,7 @@ export function decideOrchestratorBash(command: string): EditGateDecision {
   return {
     decision: "block",
     reason:
-      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under .pai-scratch/ (allowed).",
+      ORCHESTRATOR_BASH_PREFIX + " in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under .pai-scratch/ (allowed).",
   };
 }
 

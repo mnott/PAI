@@ -14,6 +14,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
+import { NODE_ON_TS_PREFIX, IGNORED_PATH_PREFIX } from "../hooks/ts/lib/worker-bash-rules.js";
+import { PATTERN_KILL_PREFIX } from "../hooks/ts/lib/worker-guard.js";
+import { ORCHESTRATOR_BASH_PREFIX } from "../hooks/ts/lib/edit-gate.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -111,10 +114,14 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   return false;
 }
 
+/** PAI guard denials that steer the model; built from the guards' own exported texts. The sleep-poll gate is deliberately absent (model error). */
+const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const GUARD_REDIRECT = new RegExp([NODE_ON_TS_PREFIX, IGNORED_PATH_PREFIX, ORCHESTRATOR_BASH_PREFIX, PATTERN_KILL_PREFIX].map(reEscape).join("|"), "i");
+
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
-  { test: (r) => /node cannot load TypeScript source|orchestrator mode: Bash may not write code files|pattern-based process kill blocked/i.test(r.raw), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
+  { test: (r) => GUARD_REDIRECT.test(r.raw), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
   { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
   {
     test: (r) => {

@@ -229,8 +229,9 @@ function gitSub(args: string[]): { sub: string; rest: string[] } | null {
 }
 
 const PATTERN_KILL = new Set(["pkill", "killall"]);
+export const PATTERN_KILL_PREFIX = "pattern-based process kill blocked";
 const PATTERN_KILL_REASON =
-  "pattern-based process kill blocked: kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
+  PATTERN_KILL_PREFIX + ": kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
   "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";
 
 /** Decide one segment; `st.cwd` is the tracked working directory. */
