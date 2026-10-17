@@ -13,6 +13,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
+import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -70,7 +71,7 @@ const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
 
 /** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
 function lastCommand(command: string): { name: string; segment: string } | null {
-  const bare = command.replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
+  const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
   const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
   const segment = segs[segs.length - 1];
   if (!segment) return null;

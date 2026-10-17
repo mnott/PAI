@@ -179,6 +179,11 @@ describe("classification", () => {
     const r2 = inp(rec("w1", NOW, "Exit code 1 ls: /tmp/x.rc: No such file or directory", "Bash"), "ls /tmp/x.rc");
     expect(isBenignBash(r2)).toBe(false);
   });
+  it("heredoc bodies do not affect last command", () => {
+    const input = ["cat > /tmp/x.txt <<'EOF'", "it's; a b", "other line; it's", "EOF", "pai worker wait-file /tmp/x.rc --max 90"].join("\n");
+    const r = inp(rec("w1", NOW, "Exit code 3 missing: /tmp/x.rc not yet: 1 of 1 missing after 90s; call wait-file again", "Bash"), input);
+    expect(isBenignBash(r)).toBe(true);
+  });
   it("groupToolErrors still counts guard redirects", () => {
     const raw = "PreToolUse:Bash hook error: node cannot load TypeScript source";
     const r = rec("w1", NOW, raw);
