@@ -403,6 +403,26 @@ function localEditReason(tool: string, p: string, content: unknown, root: string
   return old - now > 40 && now < old / 2 ? `rewrite would delete ${old - now} of ${old} lines; use Edit for the change` : null;
 }
 
+/** True when a tracked file is not in the commit this branch started from (the oldest HEAD reflog entry): the worker added it itself. */
+function addedByBranch(file: string): boolean {
+  try {
+    const dir = dirname(file);
+    const git = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 }).trim();
+    const base = git("reflog", "show", "--format=%H", "HEAD").split("\n").pop();
+    if (!base) return false;
+    const rel = git("ls-files", "--full-name", "--", file).split("\n")[0];
+    if (!rel) return false;
+    try {
+      git("cat-file", "-e", `${base}:${rel}`);
+      return false;
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+}
+
 function localRmReason(segs: Segment[], cwd: string): string | null {
   for (const { words } of segs) {
     const i = words[0] === "rm" ? 1 : words[0] === "git" && words[1] === "rm" ? 2 : -1;
@@ -410,7 +430,7 @@ function localRmReason(segs: Segment[], cwd: string): string | null {
     for (const w of words.slice(i)) {
       if (w.startsWith("-")) continue;
       const f = resolve(cwd, w);
-      if (existsSync(f) && isTracked(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: delete nothing tracked; use Edit for the change`;
+      if (existsSync(f) && isTracked(f) && !addedByBranch(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: delete nothing tracked; use Edit for the change`;
     }
   }
   return null;

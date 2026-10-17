@@ -1,0 +1,100 @@
+import { describe, it, expect } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { discardWorker, gcWorktrees, git, isSlotWorktree, mergeWorker, worktreePath } from "./worktree.js";
+import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
+
+const dir = mkdtempSync(join(tmpdir(), "pai-wtslot-test-"));
+const repo = join(dir, "repo");
+const logDir = join(dir, "logdir");
+
+// Create the repo exactly like worktree.test.ts does
+mkdirSync(repo, { recursive: true });
+git(repo, ["init", "-q"]);
+git(repo, ["config", "user.email", "test@example.invalid"]);
+git(repo, ["config", "user.name", "worker test"]);
+writeFileSync(join(repo, "base.txt"), "base\n", "utf8");
+git(repo, ["add", "."]);
+git(repo, ["commit", "-q", "-m", "init"]);
+
+function status(id: string, over: Partial<WorkerStatus> = {}): WorkerStatus {
+  const s: WorkerStatus = {
+    id,
+    pid: process.pid,
+    label: `label ${id}`,
+    cwd: repo,
+    term: "",
+    provider: "testprov",
+    model: "test-1",
+    state: "done",
+    started: "2026-09-17 10:00:00",
+    updated: "2026-09-17 10:00:00",
+    turns: 0,
+    tools: 0,
+    last: "",
+    rc: 0,
+    secs: 1,
+    ...over,
+  };
+  saveStatus(logDir, s);
+  return s;
+}
+
+function makeTask(id: string, detach: boolean): { slotDir: string; base: string } {
+  const slotDir = join(logDir, "slots", "prov-1");
+  if (!existsSync(slotDir)) {
+    mkdirSync(join(logDir, "slots"), { recursive: true });
+    git(repo, ["worktree", "add", "--detach", slotDir, "HEAD"]);
+  }
+  const base = git(repo, ["rev-parse", "HEAD"]);
+  git(slotDir, ["checkout", "-q", "-b", `worker/${id}`, base]);
+  writeFileSync(join(slotDir, `${id}.txt`), `${id}\n`, "utf8");
+  git(slotDir, ["add", "-A"]);
+  git(slotDir, ["commit", "-q", "-m", `${id} work`]);
+  if (detach) git(slotDir, ["checkout", "-q", "--detach"]);
+  saveStatus(logDir, status(id, { branch: `worker/${id}`, worktreeDir: slotDir, worktreeBase: base, worktreeSnapshot: false, state: "done" }));
+  return { slotDir, base };
+}
+
+describe("slot worktrees", () => {
+  // a) "isSlotWorktree": expect(isSlotWorktree(join(logDir, "slots", "prov-1"))).toBe(true); expect(isSlotWorktree(worktreePath(logDir, "x"))).toBe(false).
+  it("isSlotWorktree", () => {
+    expect(isSlotWorktree(join(logDir, "slots", "prov-1"))).toBe(true);
+    expect(isSlotWorktree(worktreePath(logDir, "x"))).toBe(false);
+  });
+
+  // b) "merge keeps the slot worktree": const { slotDir } = makeTask("s1", true); const msg = mergeWorker(logDir, "s1"); expect(msg).toContain("slot worktree kept"); expect(existsSync(slotDir)).toBe(true); expect(existsSync(join(repo, "s1.txt"))).toBe(true); expect(() => git(repo, ["rev-parse", "--verify", "worker/s1"])).toThrow().
+  it("merge keeps the slot worktree", () => {
+    const { slotDir } = makeTask("s1", true);
+    const msg = mergeWorker(logDir, "s1");
+    expect(msg).toContain("slot worktree kept");
+    expect(existsSync(slotDir)).toBe(true);
+    expect(existsSync(join(repo, "s1.txt"))).toBe(true);
+    expect(() => git(repo, ["rev-parse", "--verify", "worker/s1"])).toThrow();
+  });
+
+  // c) "merge while the slot is still on the branch": const { slotDir } = makeTask("s2", false); mergeWorker(logDir, "s2"); expect(existsSync(slotDir)).toBe(true); expect(() => git(repo, ["rev-parse", "--verify", "worker/s2"])).toThrow().  (Before makeTask the slot must be detached — it is, from test b.)
+  it("merge while the slot is still on the branch", () => {
+    const { slotDir } = makeTask("s2", false);
+    mergeWorker(logDir, "s2");
+    expect(existsSync(slotDir)).toBe(true);
+    expect(() => git(repo, ["rev-parse", "--verify", "worker/s2"])).toThrow();
+  });
+
+  // d) "discard keeps the slot worktree": const { slotDir } = makeTask("s3", true); const msg = discardWorker(logDir, "s3"); expect(msg).toContain("slot worktree kept"); expect(existsSync(slotDir)).toBe(true); expect(() => git(repo, ["rev-parse", "--verify", "worker/s3"])).toThrow().
+  it("discard keeps the slot worktree", () => {
+    const { slotDir } = makeTask("s3", true);
+    const msg = discardWorker(logDir, "s3");
+    expect(msg).toContain("slot worktree kept");
+    expect(existsSync(slotDir)).toBe(true);
+    expect(() => git(repo, ["rev-parse", "--verify", "worker/s3"])).toThrow();
+  });
+
+  // e) "gc never removes a slot worktree": const { slotDir } = makeTask("s4", true); gcWorktrees(logDir, 0); expect(existsSync(slotDir)).toBe(true).
+  it("gc never removes a slot worktree", () => {
+    const { slotDir } = makeTask("s4", true);
+    gcWorktrees(logDir, 0);
+    expect(existsSync(slotDir)).toBe(true);
+  });
+});

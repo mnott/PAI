@@ -23,12 +23,12 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { openSync, closeSync, writeSync, mkdirSync } from "node:fs";
+import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
 import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
-import { buildRunEnv, claudeCommand, loopbackRouterChoice } from "./run-env.js";
+import { buildRunEnv, claudeCommand, isLoopbackProvider, loopbackRouterChoice } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
@@ -53,9 +53,13 @@ import {
   type StreamEvent,
   type UsageBlock,
 } from "./run.js";
+import { ensureSlotWorktree, prepareSlot, releaseSlot, slotPath, slotServesRepo, type SlotPrep } from "./slots.js";
+import { commitsSince, salvageNotes, salvageOnExit, worktreeSystemPrompt } from "./worktree.js";
 import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedPaths, type BashRun } from "./report.js";
 import {
   appendPoolMetric,
+  firstRequestShare,
+  firstRouterShare,
   pickSlot,
   poolCarry,
   poolMetricsPath,
@@ -67,6 +71,7 @@ import {
   readPoolMetrics,
   slotKey,
   slotShouldReap,
+  warmOrCold,
   writePoolState,
   type PoolSlotRecord,
   type PoolState,
@@ -75,6 +80,7 @@ import {
   type SlotProcess,
   type SlotSpawner,
 } from "./pool.js";
+import { USAGE_LOG_FILE } from "../router/usage.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -292,6 +298,24 @@ export interface PoolHost {
   reapSlots(): number;
 }
 
+/** Last ~400 KB of the router usage log as lines (a task's rows are at the end), empty on any error. */
+function routerUsageTail(): string[] {
+  try {
+    const size = statSync(USAGE_LOG_FILE).size;
+    const len = Math.min(size, 400_000);
+    const buf = Buffer.alloc(len);
+    const fd = openSync(USAGE_LOG_FILE, "r");
+    try {
+      readSync(fd, buf, 0, len, size - len);
+    } finally {
+      closeSync(fd);
+    }
+    return buf.toString("utf8").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** JSON body of a request, capped (task payloads carry a whole spec). */
 function readBody(req: IncomingMessage, max = 8 * 1024 * 1024): Promise<string | null> {
   return new Promise((resolve) => {
@@ -491,6 +515,45 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return null; // pool at capacity: the client falls back to a fresh spawn
   };
 
+  /** Slot keys being claimed right now (the spawn awaits, so a second task must not take the same one). */
+  const claimed = new Set<string>();
+
+  /**
+   * A slot for a worktree task: the first slot number whose persistent
+   * worktree serves the task's repo and is not busy. Each slot number owns one
+   * worktree dir (slots.ts), which is the claude process's cwd for its whole
+   * life — the system prompt stays byte-identical from task to task.
+   * The process ends after each task (fresh conversation); the dir and its cached system prompt persist.
+   */
+  const acquireSlotWorktree = async (
+    providerName: string,
+    provider: WorkerProvider,
+    model: string,
+    repo: string,
+    wid: string
+  ): Promise<{ session: PoolSlotSession; n: number; dir: string } | null> => {
+    for (let n = 1; n <= settings.maxSlots; n++) {
+      if (!slotServesRepo(logDir, providerName, n, repo)) continue;
+      const dir = slotPath(logDir, providerName, n);
+      const key = slotKey(providerName, model, dir);
+      const ex = slots.get(key);
+      if (claimed.has(key) || (ex && (ex.busy || ex.record.busyWith))) continue;
+      claimed.add(key);
+      try {
+        ensureSlotWorktree(logDir, providerName, n, repo);
+        const session = await acquire(providerName, provider, model, dir);
+        if (!session) return null;
+        session.record.busyWith = wid;
+        return { session, n, dir };
+      } catch {
+        return null;
+      } finally {
+        claimed.delete(key);
+      }
+    }
+    return null;
+  };
+
   const release = (session: PoolSlotSession): void => {
     session.record.tasks += 1;
     session.record.lastUsedAt = nowStamp(now());
@@ -511,7 +574,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       providerName: task.provider,
       provider,
       nativeAllowed: settings.native,
-      worktreeWanted: false,
+      worktreeWanted: task.worktree === true,
+      slotWorktree: isLoopbackProvider(provider),
       resumeOf: undefined,
       printCmd: false,
       parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [] },
@@ -522,10 +586,32 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     });
     if (inelig) return { pooled: false, reason: inelig };
 
-    const session = await acquire(task.provider, provider, task.model, task.cwd);
-    if (!session) return { pooled: false, reason: "busy" };
-
     const wid = task.id;
+    // a worktree task runs in the slot's own worktree on a fresh branch; every
+    // other task runs in the cwd it came with
+    let prep: SlotPrep | null = null;
+    let session: PoolSlotSession | null;
+    if (task.worktree) {
+      const got = await acquireSlotWorktree(task.provider, provider, task.model, task.cwd, wid);
+      session = got?.session ?? null;
+      if (got && session) {
+        try {
+          prep = prepareSlot(logDir, task.provider, got.n, task.cwd, wid);
+        } catch (e) {
+          session.record.busyWith = null;
+          persist();
+          appendLedger(ledger, "WORKER-NOTE", { id: wid, note: `slot prepare failed: ${(e as Error).message}` });
+          return { pooled: false, reason: "host-error" };
+        }
+        session.record.branch = prep.branch;
+        if (prep.salvagePatch) appendLedger(ledger, "WORKER-NOTE", { id: wid, note: `slot was dirty: diff saved to ${prep.salvagePatch}` });
+      }
+    } else {
+      session = await acquire(task.provider, provider, task.model, task.cwd);
+    }
+    if (!session) return { pooled: false, reason: "busy" };
+    const workDir = prep?.dir ?? task.cwd;
+
     const taskNo = session.record.tasks + 1;
     session.record.busyWith = wid;
     persist();
@@ -551,7 +637,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       origin: "spawn",
       outputFormat: task.outputFormat,
       ...(task.maxMinutes ? { deadlineAt: t0 + task.maxMinutes * 60_000, maxMinutes: task.maxMinutes } : {}),
-      pool: { task: taskNo, slotSession: session.record.claudeSession, hostPid: process.pid },
+      pool: { task: taskNo, slotSession: session.record.claudeSession, hostPid: process.pid, ...(prep ? { slot: prep.dir } : {}) },
+      ...(prep ? { branch: prep.branch, worktreeDir: prep.dir, worktreeBase: prep.base, worktreeSnapshot: false } : {}),
     };
     saveStatus(logDir, status);
     appendLedger(ledger, "WORKER-START", {
@@ -574,7 +661,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         /* a full disk must not take the pool host down */
       }
     };
-    writeEvent({ type: "pooled-task", task: taskNo, slot: session.record.claudeSession, cwd: task.cwd });
+    writeEvent({ type: "pooled-task", task: taskNo, slot: session.record.claudeSession, cwd: workDir, ...(prep ? { branch: prep.branch } : {}) });
 
     let deadlineFired = false;
     const deadTimer =
@@ -595,7 +682,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const scratch: { firstUsage: UsageBlock | null } = { firstUsage: null };
     const toolUses = new Map<string, { name: string; input: unknown }>();
     const bashRuns: BashRun[] = [];
-    const untrackedAtStart = new Set(untrackedPaths(task.cwd));
+    const untrackedAtStart = new Set(untrackedPaths(workDir));
 
     const onEvent = (e: StreamEvent): void => {
       writeEvent(e as Record<string, unknown>);
@@ -651,7 +738,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       saveStatus(logDir, status);
     };
 
-    const text = pooledTaskText(taskNo, task.cwd, task.prompt, task.trailer);
+    const wtNote = prep ? worktreeSystemPrompt(wid, prep.branch, prep.dir) + "\n\n" : "";
+    const text = pooledTaskText(taskNo, workDir, wtNote + task.prompt, task.trailer);
     let resultEvent = await session.feed(text, onEvent);
     if (deadTimer) clearTimeout(deadTimer);
 
@@ -698,7 +786,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
     // proof check against THIS task's bash runs and the untracked files it added
     if (resultEvent?.result && task.reportFormat === "ag2") {
-      const stray = newUntracked(task.cwd, untrackedAtStart);
+      const stray = newUntracked(workDir, untrackedAtStart);
       const chk = checkProof(resultEvent.result, bashRuns, stray);
       if (chk.rewritten || stray.length) {
         resultEvent = { ...resultEvent, result: chk.text };
@@ -708,6 +796,29 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           status.last = `claimed proof not run or failed: ${chk.proof}`;
           appendLedger(ledger, "REPORT-PROOF-UNVERIFIED", { id: wid, proof: chk.proof ?? "?" });
         }
+      }
+    }
+
+    // the slot moves on to its next task: commit what this one left, carry its
+    // Notes/ into the repo, and put the slot on a detached HEAD so the branch
+    // is free for `pai worker merge`
+    if (prep) {
+      try {
+        salvageOnExit(ledger, wid, task.label, prep.dir);
+        for (const l of salvageNotes(task.cwd, prep.dir, wid)) appendLedger(ledger, "WORKER-NOTE", { id: wid, note: l });
+        const had = commitsSince(prep.dir, prep.base);
+        const { commits } = releaseSlot(prep.dir, prep.branch, prep.base);
+        session.record.branch = null;
+        if (commits > 0 || had > 0) status.commits = commits;
+        else {
+          status.branch = null;
+          status.worktreeDir = null;
+          status.worktreeBase = null;
+          status.worktreeSnapshot = null;
+          status.commits = null;
+        }
+      } catch (e) {
+        appendLedger(ledger, "WORKER-NOTE", { id: wid, note: `slot release failed: ${(e as Error).message}` });
       }
     }
 
@@ -753,10 +864,24 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         poolMetricsPath(logDir)
       );
       state.tokensCarried += fu.cache_read_input_tokens ?? 0;
+      let share = firstRequestShare(fu);
+      // a local model reports no cache tokens: take the share from the router row's time to first token
+      if (!share && isLoopbackProvider(provider) && session.record.claudeSession) {
+        share = firstRouterShare(routerUsageTail(), session.record.claudeSession) ?? share;
+      }
+      session.record.firstShare = share;
+      const wc = warmOrCold(share);
+      if (status.pool && share !== null && wc) {
+        status.pool.firstShare = Math.round(share * 1000) / 1000;
+        status.pool.warm = wc;
+        saveStatus(logDir, status);
+      }
     }
     state.tasksServed += 1;
     release(session);
-    if (session.dead) dropSlot(slotKey(task.provider, task.model, task.cwd), "slot exited after task");
+    if (session.dead) dropSlot(slotKey(task.provider, task.model, workDir), "slot exited after task");
+    // a worktree task gets a fresh conversation: the process ends, the next task spawns a new one in the same slot dir
+    else if (prep) dropSlot(slotKey(task.provider, task.model, workDir), "fresh conversation per worktree task");
 
     return { pooled: true, rc, resultEvent, report, status };
   };

@@ -52,6 +52,18 @@ describe("local-provider worker guard", () => {
     expect(bash(LOCAL, "git rm -f src/big.swift").decision).toBe("deny");
     expect(bash(LOCAL, "rm -f nothing-here.tmp").decision).toBe("allow");
   });
+  it("allows rm and git rm of a tracked file the branch added itself, still denies files from the base", () => {
+    const git = (...a: string[]) => execFileSync("git", ["-C", root, ...a], { stdio: "ignore" });
+    writeFileSync(join(root, "src", "mine.ts"), "x\n");
+    writeFileSync(join(root, "src", "mine2.ts"), "x\n");
+    git("add", ".");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "mistake");
+    expect(bash(LOCAL, "git rm --cached src/mine.ts").decision).toBe("allow");
+    expect(bash(LOCAL, "rm src/mine2.ts").decision).toBe("allow");
+    expect(bash(LOCAL, "git rm -f src/mine.ts").decision).toBe("allow");
+    expect(bash(LOCAL, "rm README.md").decision).toBe("deny");
+    expect(bash(LOCAL, "git rm src/big.swift").decision).toBe("deny");
+  });
   it("leaves anthropic workers and the interactive session alone", () => {
     for (const env of [ANTHROPIC, { PAI_WORKER: "1" }, {}] as Record<string, string>[]) {
       expect(write(env, "scratch.swift", "x").decision).toBe("allow");

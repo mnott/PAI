@@ -296,3 +296,31 @@ describe("buildRunEnv orchestrator mode", () => {
     }
   });
 });
+
+describe("buildRunEnv worker shell", () => {
+  it("headless workers get CLAUDE_CODE_SHELL=/bin/bash, native and provider routes alike", () => {
+    expect(buildRunEnv(provider, true).CLAUDE_CODE_SHELL).toBe("/bin/bash");
+    expect(buildRunEnv(nativeAnthropicProvider(), true).CLAUDE_CODE_SHELL).toBe("/bin/bash");
+  });
+
+  it("an interactive run keeps the operator's shell", () => {
+    const saved = process.env.CLAUDE_CODE_SHELL;
+    delete process.env.CLAUDE_CODE_SHELL;
+    try {
+      expect(buildRunEnv(provider, false).CLAUDE_CODE_SHELL).toBeUndefined();
+    } finally {
+      if (saved !== undefined) process.env.CLAUDE_CODE_SHELL = saved;
+    }
+  });
+
+  it("an explicit CLAUDE_CODE_SHELL wins", () => {
+    const saved = process.env.CLAUDE_CODE_SHELL;
+    process.env.CLAUDE_CODE_SHELL = "/bin/sh";
+    try {
+      expect(buildRunEnv(provider, true).CLAUDE_CODE_SHELL).toBe("/bin/sh");
+    } finally {
+      if (saved === undefined) delete process.env.CLAUDE_CODE_SHELL;
+      else process.env.CLAUDE_CODE_SHELL = saved;
+    }
+  });
+});

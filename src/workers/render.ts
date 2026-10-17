@@ -493,6 +493,7 @@ export function renderTable(
     const t = ownedTree(s);
     const parts = [
       ...(t ? [`tree ${basename(t.dir)}`] : []),
+      ...(s.pool?.slot ? [`slot ${basename(s.pool.slot)} #${s.pool.task}${s.pool.warm ? ` ${s.pool.warm}` : ""}`] : []),
       ...(s.resumedFrom ? [`resumed from ${s.resumedFrom}`] : []),
       ...(s.resumedBy ? [`resumed by ${s.resumedBy}`] : []),
       ...(s.route ? [`route ${s.route.reason}`] : []),
