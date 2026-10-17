@@ -23,6 +23,7 @@ Writes a "Continue" block into the project's TODO.md so the next session knows w
 | `--exit` | flag | — | With `all`: also send /exit to each session after it has saved |
 | `--only NAME` | string | — | With `all`: only sessions whose name or id contains NAME (to rehearse on one tab first) |
 | `--wait MS` | number | 180000 | With `all`: longest wait for a session to finish its checkpoint before /exit; busy ones are left open, never killed |
+| `--dry-run` | flag | — | Show what would be written, write nothing |
 
 ```sh
 pai pause --dry-run --no-body

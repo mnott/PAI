@@ -15,6 +15,7 @@ Saves the checkpoint, marks the session note Completed and tells you how to leav
 | `--body-file FILE` | string | — | File holding the checkpoint text to save ('-' reads standard input). Required unless --no-body |
 | `--session-id UUID` | string | — | Claude Code session id; recorded as the handle for `claude --resume` |
 | `--no-body` | flag | — | Save a checkpoint with metadata only, no text |
+| `--dry-run` | flag | — | Show what would be written, write nothing |
 
 ```sh
 pai end --dry-run --no-body

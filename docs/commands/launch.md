@@ -18,6 +18,7 @@ For everyday use prefer `pai new` and `pai open`.
 | `--model ID` | string | — | Model id on that provider (default: its default model) |
 | `--list` | flag | — | Print the provider and model table and stop |
 | `--current` | flag | — | With --list: mark this session's own provider and model |
+| `--dry-run` | flag | — | Print the exec line instead of executing |
 
 ```sh
 pai launch --list

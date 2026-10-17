@@ -5,10 +5,14 @@
 Wipe the stored tab names (recovery)
 
 ```
-pai clear-names
+pai clear-names [options]
 ```
 
 Clears the AIBroker name store and the pai name from every live iTerm2 tab. Use it when tab names are corrupt; afterwards re-label each tab with /Name.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | flag | — | Show what would be cleared, clear nothing |
 
 ```sh
 pai clear-names --dry-run
