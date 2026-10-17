@@ -188,4 +188,62 @@ describe("loop-watch", () => {
     expect(deps.say).toHaveBeenCalledWith("/tmp", "w1", LOOP_NOTE);
     expect(deps.kill).not.toHaveBeenCalled();
   });
+
+  it("handles a readEvents that throws an error", async () => {
+    const statuses: WorkerStatus[] = [
+      { id: "w1", state: "running", pid: 123, provider: "local30x8" } as unknown as WorkerStatus
+    ];
+
+    const deps = {
+      readEvents: vi.fn().mockRejectedValue(new Error("boom")),
+      say: vi.fn(),
+      kill: vi.fn()
+    };
+
+    const sent: Record<string, string> = {};
+    const result = await checkLoops("/tmp", statuses, sent, deps);
+
+    // Should return empty array instead of rejecting
+    expect(result).toEqual([]);
+    expect(deps.readEvents).toHaveBeenCalledWith("/tmp", "w1");
+    expect(deps.say).not.toHaveBeenCalled();
+    expect(deps.kill).not.toHaveBeenCalled();
+  });
+
+  it("handles a missing events file gracefully", async () => {
+    const statuses: WorkerStatus[] = [
+      { id: "w1", state: "running", pid: 123, provider: "local30x8" } as unknown as WorkerStatus
+    ];
+
+    const deps = {
+      readEvents: vi.fn().mockRejectedValue({ code: "ENOENT" }),
+      say: vi.fn(),
+      kill: vi.fn()
+    };
+
+    const sent: Record<string, string> = {};
+    const result = await checkLoops("/tmp", statuses, sent, deps);
+
+    // Should return empty array instead of rejecting
+    expect(result).toEqual([]);
+    expect(deps.readEvents).toHaveBeenCalledWith("/tmp", "w1");
+    expect(deps.say).not.toHaveBeenCalled();
+    expect(deps.kill).not.toHaveBeenCalled();
+  });
+
+  it("handles a missing events file with no deps in temp dir", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "loop-watch-test-"));
+    const statuses: WorkerStatus[] = [
+      { id: "w1", state: "running", pid: 123, provider: "local30x8" } as unknown as WorkerStatus
+    ];
+
+    const result = await checkLoops(dir, statuses, {}, {});
+
+    // Should return empty array instead of rejecting
+    expect(result).toEqual([]);
+  });
 });

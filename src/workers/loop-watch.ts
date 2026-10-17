@@ -31,18 +31,26 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
     readEvents = async (logDir, id) => {
       const path = eventsPath(logDir, id);
       const fs = await import("node:fs");
-      const data = fs.readFileSync(path, "utf8");
-      const lines = data.split("\n");
-      const events: unknown[] = [];
-      for (const line of lines) {
-        if (line.trim() === "") continue;
-        try {
-          events.push(JSON.parse(line));
-        } catch {
-          // skip bad lines
+      try {
+        const data = fs.readFileSync(path, "utf8");
+        const lines = data.split("\n");
+        const events: unknown[] = [];
+        for (const line of lines) {
+          if (line.trim() === "") continue;
+          try {
+            events.push(JSON.parse(line));
+          } catch {
+            // skip bad lines
+          }
         }
+        return events;
+      } catch (err: any) {
+        // Return empty array if file doesn't exist or can't be read
+        if (err.code === "ENOENT") {
+          return [];
+        }
+        throw err;
       }
-      return events;
     },
     say = async (logDir, id, text) => {
       const { sayToWorker } = await import("./operator.js");
@@ -58,38 +66,43 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
   for (const status of statuses) {
     if (status.state !== "running") continue;
 
-    const events = await readEvents(logDir, status.id);
-    const loop = detectRepeatLoop(events);
-    if (!loop) continue;
+    try {
+      const events = await readEvents(logDir, status.id);
+      const loop = detectRepeatLoop(events);
+      if (!loop) continue;
 
-    const action = loopAction(loop.count);
-    if (action === "none") continue;
+      const action = loopAction(loop.count);
+      if (action === "none") continue;
 
-    const local = status.provider !== "anthropic";
-    const dedupKey = `${action}:${loop.name}:${loop.input.slice(0, 80)}`;
-    if (sent[status.id] === dedupKey) continue;
-    sent[status.id] = dedupKey;
+      const local = status.provider !== "anthropic";
+      const dedupKey = `${action}:${loop.name}:${loop.input.slice(0, 80)}`;
+      if (sent[status.id] === dedupKey) continue;
+      sent[status.id] = dedupKey;
 
-    if (action === "warn" && local) {
-      try {
-        await say(logDir, status.id, LOOP_NOTE);
-      } catch {
-        // errors swallowed
+      if (action === "warn" && local) {
+        try {
+          await say(logDir, status.id, LOOP_NOTE);
+        } catch {
+          // errors swallowed
+        }
+      } else if (action === "stop") {
+        try {
+          kill(status.pid);
+        } catch {
+          // errors swallowed
+        }
       }
-    } else if (action === "stop") {
-      try {
-        kill(status.pid);
-      } catch {
-        // errors swallowed
-      }
+
+      findings.push({
+        worker: status.id,
+        action,
+        loop,
+        local,
+      });
+    } catch {
+      // If a single worker's processing fails, skip it and continue with others
+      // This prevents one broken worker from stopping the entire loop detection
     }
-
-    findings.push({
-      worker: status.id,
-      action,
-      loop,
-      local,
-    });
   }
 
   return findings;
