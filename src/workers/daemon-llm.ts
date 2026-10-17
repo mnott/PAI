@@ -23,7 +23,8 @@ import {
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
 import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
-import { buildRunEnv } from "./run-env.js";
+import { buildRunEnv, loopbackRouterChoice } from "./run-env.js";
+import { probeRouter } from "../router/supervisor.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 
 export type { ModelTier } from "./config.js";
@@ -96,7 +97,11 @@ function legacyPlan(tier: ModelTier, config: WorkersConfig | null): LlmSpawnPlan
  * a configured-but-broken provider (unreadable key file) throws, because
  * silently degrading to Anthropic billing is worse than a failed summary.
  */
-export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promise<LlmSpawnPlan> {
+export async function planLlmSpawn(
+  tier: ModelTier,
+  configPath?: string,
+  probe: () => Promise<boolean> = probeRouter
+): Promise<LlmSpawnPlan> {
   let provider: WorkerProvider | null = null;
   let providerName: string | null = null;
   let config: WorkersConfig | null = null;
@@ -128,6 +133,8 @@ export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promis
   }
 
   const model = tierModel(provider, tier);
+  // loopback providers take the router (prefix fixes); down or `router: false` stays direct
+  const viaRouter = proxyUrl ? undefined : await loopbackRouterChoice(provider, providerName, undefined, probe);
   return {
     model,
     args: [
@@ -135,7 +142,7 @@ export async function planLlmSpawn(tier: ModelTier, configPath?: string): Promis
       ...containmentArgs(logDir),
       "-p", "--no-session-persistence",
     ],
-    env: buildRunEnv(provider, true, proxyUrl, providerName),
+    env: buildRunEnv(provider, true, proxyUrl, providerName, viaRouter),
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: providerName,
   };
