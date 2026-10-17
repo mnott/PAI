@@ -627,8 +627,6 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
 /** An alert undrained this long gets its one-line pointer typed into the pane. */
 export const POINTER_AFTER_MS = 60_000;
 
-export type SupervisorState = "active" | "paused" | "finished";
-
 /** Types one line into a pane; false means it did not land (retry next check). */
 export type TypeFn = (iterm: string, line: string) => Promise<boolean>;
 
@@ -657,11 +655,6 @@ export const aibrokerInputFree: InputFreeFn = async (iterm) => {
   }
 };
 
-/** `<session>.paused` / `<session>.finished` markers in the supervision dir. */
-export function supervisorStateFromMarkers(logDir: string, session: string): SupervisorState {
-  return "active";
-}
-
 function pointerText(n: number): string {
   return `${n} worker alert${n === 1 ? "" : "s"} pending — see WORKER EVENTS (supervision)`;
 }
@@ -679,11 +672,10 @@ export async function pointUndrained(
   state: SupervisionState,
   statuses: WorkerStatus[],
   now: Date,
-  deps: { type?: TypeFn; inputFree?: InputFreeFn; supervisorState?: (session: string) => SupervisorState } = {}
+  deps: { type?: TypeFn; inputFree?: InputFreeFn } = {}
 ): Promise<string[]> {
   const type = deps.type ?? aibrokerType;
   const inputFree = deps.inputFree ?? aibrokerInputFree;
-  const supState = deps.supervisorState ?? ((s: string) => supervisorStateFromMarkers(logDir, s));
   const pointered = (state.pointered ??= {});
   const dir = supervisionDirPath(logDir);
   if (!existsSync(dir)) return [];
@@ -721,8 +713,6 @@ export async function pointUndrained(
       }
     }
     if (due.length === 0) continue;
-    // No need to check supervisor state since paused/finished markers are ignored
-    // and always return "active"
     const owner = statuses.find((s) => s.id === due[0].worker);
     const iterm =
       owner?.session?.id ?? itermForClaudeSession(logDir, owner?.spawnerSession ?? session) ?? null;
