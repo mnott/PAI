@@ -44,6 +44,8 @@ export interface ProviderLimits {
   tokensPerSec?: number;
   /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
   prefixCache?: PrefixCacheStats;
+  /** age of `prefixCache` when it is the last good reading kept over a failed poll; absent = fresh */
+  prefixCacheAgeSec?: number;
   error?: string;
   /** the last poll was answered http 429: the reading shown is the last good one */
   rateLimited?: boolean;
@@ -558,6 +560,9 @@ function isLocalUrl(u: string): boolean {
   }
 }
 
+/** A kept prefix-cache reading older than this is treated as unknown. */
+export const PREFIX_STALE_MS = 10 * 60_000;
+
 export interface LimitsDeps {
   providers: () => Record<string, WorkerProvider>;
   rows: () => UsageRow[];
@@ -582,6 +587,8 @@ export class LimitsCache {
   private at = 0;
   private inflight: Promise<ProviderLimits[]> | undefined;
   private backoff: Backoff;
+  /** last good prefix-cache reading per local provider: a server busy prefilling answers /v1/cache/stats too late */
+  private prefixLastGood = new Map<string, { stats: PrefixCacheStats; at: number }>();
 
   constructor(private readonly deps: LimitsDeps, private readonly ttlMs = 60_000) {
     this.backoff = new Backoff(ttlMs);
@@ -603,6 +610,21 @@ export class LimitsCache {
     void this.get().catch(() => undefined);
     return this.value.find((l) => l.provider === provider && l.kind === "local")?.up;
   };
+
+  private keepPrefixCache(r: ProviderLimits, now: number): void {
+    if (r.kind !== "local") return;
+    if (r.prefixCache) {
+      this.prefixLastGood.set(r.provider, { stats: r.prefixCache, at: now });
+      return;
+    }
+    const last = this.prefixLastGood.get(r.provider);
+    if (!last || !r.up || now - last.at > PREFIX_STALE_MS) {
+      if (last && now - last.at > PREFIX_STALE_MS) this.prefixLastGood.delete(r.provider);
+      return;
+    }
+    r.prefixCache = last.stats;
+    r.prefixCacheAgeSec = Math.round((now - last.at) / 1000);
+  }
 
   private async poll(now: number): Promise<ProviderLimits[]> {
     const rows = this.deps.rows();
@@ -642,6 +664,7 @@ export class LimitsCache {
       }
     }
     const results = await Promise.all(jobs);
+    for (const r of results) this.keepPrefixCache(r, now);
     // anthropic keeps its own shared last-good entry and gate (anthropicShared)
     const store = readLastGood(lastGoodFile);
     let dirty = false;

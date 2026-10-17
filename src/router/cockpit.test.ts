@@ -274,7 +274,7 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
   const lowReq = COCKPIT_HTML.match(/var LOW_REQ=\d+;/)![0];
   const fns = new Function(
     "donut", "pct", "esc", "fmt", "lim",
