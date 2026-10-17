@@ -796,6 +796,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       };
       // the session pool (workers.pool) gets first crack: an eligible task
       // runs as one more turn of a warm claude instead of a fresh spawn
+      await gateStart(execArgs);
       const pooledRc = await tryPoolRun(execArgs);
       if (pooledRc !== null) {
         await returnControlsIfHeld(logDir, workerId);
@@ -1256,6 +1257,8 @@ export async function announcePane(
 }
 
 export interface ExecuteArgs {
+  /** capacity + stagger gates already passed (set by gateStart) */
+  gated?: boolean;
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
   target: ReturnType<typeof resolveTarget>;
@@ -1385,6 +1388,90 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, resp.report);
   }
   return rc;
+}
+
+/**
+ * Capacity gate, then stagger gate, for one headless run — the single place
+ * both the pooled and the fresh-spawn path pass through. `status` is the
+ * run's saved status; its capacity/warmup/last fields carry the queue line.
+ */
+async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
+  const { logDir, target, config } = a;
+  const saved = status.last;
+  await capacityGate({
+    logDir,
+    self: { id: wid, provider: target.providerName },
+    cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
+    config: config.capacity,
+    disabled: a.noQueue,
+    log: (line) => {
+      if (!a.quiet) process.stderr.write(`${line}\n`);
+    },
+    onWait: (w) => {
+      if (w) {
+        status.capacity = { provider: w.provider, cap: w.cap, total: w.total, position: w.position, elapsedSec: w.elapsedSec };
+        status.last = w.line;
+      } else {
+        delete status.capacity;
+        status.last = saved;
+      }
+      saveStatus(logDir, status);
+    },
+  });
+  await staggerGate({
+    logDir,
+    self: { id: wid, provider: target.providerName },
+    local: isLocalProvider(target.provider.baseUrl),
+    config: config.stagger,
+    disabled: a.noStagger,
+    log: (line) => {
+      if (!a.quiet) process.stderr.write(`${line}\n`);
+    },
+    onWait: (w) => {
+      if (w) {
+        status.warmup = { for: w.predecessor, provider: w.provider, elapsedSec: w.elapsedSec, limitSec: w.limitSec };
+        status.last = w.line;
+      } else {
+        delete status.warmup;
+        status.last = saved;
+      }
+      saveStatus(logDir, status);
+    },
+  });
+}
+
+/**
+ * Gate a headless run once, before the pool attempt. A placeholder status
+ * (running, this process's pid) is saved first, as a fresh spawn always did,
+ * so the run counts as holding a slot the moment it leaves the queue; the pool
+ * host or executeRun overwrites it under the same id.
+ */
+export async function gateStart(a: ExecuteArgs): Promise<void> {
+  if (!a.parsed.headless || a.printCmd || a.gated) return;
+  const wid = a.id ?? newWorkerId();
+  a.id = wid;
+  const status: WorkerStatus = {
+    id: wid,
+    pid: process.pid,
+    label: a.label,
+    cwd: a.cwd ?? process.cwd(),
+    term: "",
+    provider: a.target.providerName,
+    model: a.model,
+    state: "running",
+    started: nowStamp(),
+    updated: nowStamp(),
+    turns: 0,
+    tools: 0,
+    last: "starting",
+    rc: null,
+    secs: null,
+    origin: "spawn",
+    outputFormat: a.parsed.outputFormat,
+  };
+  saveStatus(a.logDir, status);
+  await runGates(a, wid, status);
+  a.gated = true;
 }
 
 async function executeRun(a: ExecuteArgs): Promise<number> {
@@ -1631,49 +1718,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true };
   else if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
-  if (headless) {
-    const saved = status.last;
-    await capacityGate({
-      logDir,
-      self: { id: wid, provider: target.providerName },
-      cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
-      config: config.capacity,
-      disabled: a.noQueue,
-      log: (line) => {
-        if (!a.quiet) process.stderr.write(`${line}\n`);
-      },
-      onWait: (w) => {
-        if (w) {
-          status.capacity = { provider: w.provider, cap: w.cap, total: w.total, position: w.position, elapsedSec: w.elapsedSec };
-          status.last = w.line;
-        } else {
-          delete status.capacity;
-          status.last = saved;
-        }
-        saveStatus(logDir, status);
-      },
-    });
-    await staggerGate({
-      logDir,
-      self: { id: wid, provider: target.providerName },
-      local: isLocalProvider(target.provider.baseUrl),
-      config: config.stagger,
-      disabled: a.noStagger,
-      log: (line) => {
-        if (!a.quiet) process.stderr.write(`${line}\n`);
-      },
-      onWait: (w) => {
-        if (w) {
-          status.warmup = { for: w.predecessor, provider: w.provider, elapsedSec: w.elapsedSec, limitSec: w.limitSec };
-          status.last = w.line;
-        } else {
-          delete status.warmup;
-          status.last = saved;
-        }
-        saveStatus(logDir, status);
-      },
-    });
-  }
+  if (headless && !a.gated) await runGates(a, wid, status);
 
   const t0 = Date.now();
   const proc = spawn(cmd[0], cmd.slice(1), {
