@@ -26,7 +26,7 @@ try {
   const { workers } = readWorkersSection();
   const logDir = workersLogDir(workers);
   if (claudeSession) recordSessionMapEntry(logDir, cwd, claudeSession, term);
-  let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date(), workers.active);
+  let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date());
   const unmerged = pendingCountCached(logDir, cwd);
   if (unmerged) out = [out, `⚑${unmerged} unmerged`].filter(Boolean).join(" ");
   if (out) process.stdout.write(out + "\n");

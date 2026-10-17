@@ -10,7 +10,7 @@
 
 import { deadlineLabel } from "./deadline.js";
 import { relative, basename } from "node:path";
-import { NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
+import { ANTHROPIC_NATIVE, NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
 import { denialMark, parseDenialText } from "./denials.js";
 import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
@@ -684,75 +684,58 @@ export function paneStatusRow(
 }
 
 /**
- * The statusline bar: `provider ▶N · <models> · oldest <age>` and today's
- * ✓/✗ tail. Three workers used to spell out three goals, three ages and three
- * models on one line and none of it fit; each worker's own pane bottom line
- * now carries `goal · model · started · age` (paneStatusRow) and `pai worker
- * ps` has the full table, so the bar only has to answer how many workers are
- * running, on what models, and how long the oldest has been going. `<models>`
- * lists distinct short model names, most-populous first (ties broken by
- * name), each suffixed `×N` past one; an empty model counts under `?` rather
- * than vanishing (a legacy status with no recorded model is still a worker).
- * `columns`, when known, shrinks only the models segment (shortText) so the
- * head, the `▶N` count and the today tally — the three things worth reading
- * at a glance — never get cut for the one segment that can grow without
- * bound. The chat pane contributes nothing but its provider: its age, state
- * and inbox live in `pai worker ps`, not here.
+ * The statusline bar: `▶N (M nested) · <providers> · oldest <age>` and today's
+ * ✓/✗ tail. `pai worker ps` has the full table and each pane its own bottom
+ * line, so the bar only answers how many workers are running, on which
+ * providers, and how long the oldest has been going. `▶N` counts every live
+ * worker (the whole tree); `(M nested)` says how many of them were spawned by
+ * another worker rather than by a session. `<providers>` lists the provider
+ * names `pai worker providers` shows, most-populous first (ties by name), each
+ * suffixed `×N` past one; native Anthropic runs show their short model name
+ * (`sonnet-5.5`) since "anthropic" alone says nothing. No active-provider
+ * head: it read as "workers run on glm" when none did, and the bar already
+ * shows the session's provider elsewhere. `columns`, when known, shrinks only
+ * the providers segment.
  */
 export function renderStatusLine(
   mine: WorkerStatus[],
   now: Date = new Date(),
-  active: string | null = null,
   columns: number | null = null
 ): string {
-  // `active` is the live routing choice (workers.active). The head names the
-  // provider the next worker goes to, so it has to come from the config on
-  // every refresh: the chat pane's own `provider` is frozen at pane launch and
-  // stops being true the moment `pai worker providers use <name>` runs — the
-  // bar then shows a provider hours out of date (2026-09-19). "auto" is not
-  // one provider, so it falls through to what is actually running.
-  const live = active && active !== "auto" ? active : null;
-  if (!mine.length) return live ?? "";
   // isChatPane carries the migration shim for pre-`origin` entries (see
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
-  const isChat = isChatPane;
-  const chat = mine.find((s) => isChat(s) && isLive(s));
-  const running = mine.filter((s) => !isChat(s) && isLive(s));
+  const running = mine.filter((s) => !isChatPane(s) && isLive(s));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
-
-  let head: string;
-  if (live) head = live;
-  else if (chat) head = chat.provider;
-  else {
-    const providers = new Set(running.map((s) => s.provider));
-    head = providers.size === 1 ? [...providers][0] : "workers";
-  }
-  if (running.length) head += ` ▶${running.length}`;
   const tail = doneToday.length ? `   ✓${ok} ✗${bad} today` : "";
+  if (!running.length) return tail.trim();
 
-  if (!running.length) return head + tail;
+  // nested: spawned by another worker (its parent has a status file; a chain
+  // id or a session is a root, as in tree.ts workerDepth)
+  const ids = new Set(mine.map((s) => s.id));
+  const nested = running.filter((s) => s.parent && ids.has(s.parent)).length;
+  const head = `▶${running.length}${nested ? ` (${nested} nested)` : ""}`;
 
   const counts = new Map<string, number>();
   for (const s of running) {
-    const m = shortModel(s.model) || "?";
-    counts.set(m, (counts.get(m) ?? 0) + 1);
+    const name = s.provider === ANTHROPIC_NATIVE ? shortModel(s.model) || s.provider : s.provider || "?";
+    counts.set(name, (counts.get(name) ?? 0) + 1);
   }
-  const modelsFull = [...counts.entries()]
+  const providersFull = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([m, n]) => (n > 1 ? `${m} ×${n}` : m))
     .join(" · ");
   const oldest = running.reduce((a, b) => (a.started < b.started ? a : b));
   const oldestPart = `oldest ${ageOf(oldest.started, now)}`;
 
-  let models = modelsFull;
+  let providers = providersFull;
   const fixedLen = head.length + 3 + oldestPart.length + tail.length; // + " · "
-  if (columns !== null && fixedLen + 3 + modelsFull.length > columns) {
+  if (columns !== null && fixedLen + 3 + providersFull.length > columns) {
     const budget = columns - fixedLen - 3;
-    models = budget > 0 ? shortText(modelsFull, budget) : "";
+    providers = budget > 0 ? shortText(providersFull, budget) : "";
   }
-  const mid = [models, oldestPart].filter(Boolean).join(" · ");
+  const mid = [providers, oldestPart].filter(Boolean).join(" · ");
   return `${head} · ${mid}${tail}`;
 }

@@ -255,20 +255,20 @@ function renderSpeed(){
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
- d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
+ d.byModel.forEach(function(m){var k=m.provider+"\u0000"+m.model,o=ms[k]||(ms[k]={provider:m.provider,model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
  var mk=Object.keys(ms),dh="";
  if(mk.length===1){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
-  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.model)+' · '+m.requests+' req</span></div></div>';
- }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.model)+'</div><div class="s">'+m.requests+' req</div></div>'}).join("");
+  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
+ }else dh=mk.map(function(k){var m=ms[k],dn=m.cacheRead+m.cacheWrite+m.input;return'<div class="ring">'+donut(dn?m.cacheRead/dn:0)+'<div class="n">'+esc(m.provider)+'</div><div class="s">'+esc(m.model)+' · '+m.requests+' req</div></div>'}).join("");
  $("donut").innerHTML=dh||'<span class="dim">no data</span>';
- var note="cache_read / (read + write + fresh input), per model. Overall: "+pct(t.hitRatio);
+ var note="cache_read / (read + write + fresh input), per provider / model. Overall: "+pct(t.hitRatio);
  var sk=d.sessionSplit;
  if(sk)note+=". continuous "+pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess, "+sk.continuous.requests+" req) · one-shot "+pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess, "+sk.oneShot.requests+" req)";
  if(d.pool&&d.pool.tasks)note+=". pool: "+d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried";
  $("donutnote").textContent=note;
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
- loc.forEach(function(s){var pc=s.prefixCache,r=ms[(s.served||[])[0]];
+ loc.forEach(function(s){var pc=s.prefixCache,r=ms[s.provider+"\u0000"+(s.served||[])[0]];
   if(pc)lh+='<div class="ring">'+donut(pc.hitRate)+'<div class="n">'+esc(s.provider)+'</div><div class="s">'+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved</div><div class="s">requests with any cache hit: '+pct(pc.hitRate)+'</div>'+reuse(s.provider,pc)+'</div>';
   else lh+='<div class="ring"><div class="n">'+esc(s.provider)+'</div><div class="s dim">prefix cache: not reported by this server'+(r&&r.requests?' · '+r.requests+' req':'')+'</div></div>'});
  $("donutlocaltitle").style.display=loc.length?"":"none";

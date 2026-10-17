@@ -69,6 +69,40 @@ export function canonicalModel(id: string): string {
   return m.replace(/\[[^\]]*\]$/, "").replace(/-(?:latest|\d{8})$/, "");
 }
 
+/**
+ * Display owner of each model id: the ENABLED provider that serves it, from
+ * workers.yaml (`models.*` values, canonical ids). Rows logged before local
+ * workers went through the router carry the model id under a resolved
+ * duplicate provider (a disabled one), not the provider name the operator
+ * knows; this is how they fold into it.
+ */
+export function modelOwners(providers: Record<string, { enabled?: boolean; models?: Record<string, unknown> }>): Map<string, string> {
+  const owners = new Map<string, string>();
+  for (const [name, p] of Object.entries(providers)) {
+    if (p.enabled === false) continue;
+    for (const m of Object.values(p.models ?? {})) {
+      if (typeof m === "string" && !owners.has(canonicalModel(m))) owners.set(canonicalModel(m), name);
+    }
+  }
+  return owners;
+}
+
+/**
+ * One provider key per row, the provider name: a row whose provider is not an
+ * enabled one (a disabled duplicate such as the old model-resolved `coder8`)
+ * is attributed to the enabled provider that serves its model. Rows of live
+ * providers, and models nobody serves, stay as logged.
+ */
+export function foldProviders(rows: UsageRow[], providers: Record<string, { enabled?: boolean }>, owners: Map<string, string>): UsageRow[] {
+  if (!owners.size) return rows;
+  const live = (name: string) => name === "anthropic" || providers[name]?.enabled !== false && name in providers;
+  return rows.map((r) => {
+    if (live(r.provider)) return r;
+    const owner = owners.get(canonicalModel(r.model));
+    return owner && owner !== r.provider ? { ...r, provider: owner } : r;
+  });
+}
+
 const tok = (): Tok => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0 });
 const addTok = (t: Tok, r: UsageRow) => {
   t.input += r.input_tokens ?? 0;
@@ -102,13 +136,23 @@ export function retryRows(rows: UsageRow[]): Set<UsageRow> {
   return out;
 }
 
+function configuredProviders(): Record<string, { enabled?: boolean; models?: Record<string, unknown> }> {
+  try {
+    return readWorkersSection().workers.providers;
+  } catch {
+    return {};
+  }
+}
+
 export function buildCockpitData(
   allRows: UsageRow[],
   win: CockpitWindow,
   now: number = Date.now(),
   sessions: Map<string, SessionInfo> = new Map(),
-  pool: PoolCarry | null = null
+  pool: PoolCarry | null = null,
+  providers: Record<string, { enabled?: boolean; models?: Record<string, unknown> }> = {}
 ) {
+  allRows = foldProviders(allRows, providers, modelOwners(providers));
   const { span, bucket } = WINDOWS[win];
   const from = bucketStart(now - span, bucket);
   const rows = allRows.filter((r) => Date.parse(r.ts) >= from);
@@ -374,7 +418,8 @@ export function handleCockpit(
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();
-      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool())));    } catch (e) {
+      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool(), configuredProviders())));
+    } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
   } else if (url.pathname === "/cockpit/system") {
