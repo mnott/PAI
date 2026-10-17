@@ -24,6 +24,9 @@ import {
   type Usage,
   type UsageRow,
 } from "./usage.js";
+import { workersLogDir } from "../workers/paths.js";
+import { recordToolError } from "../workers/tool-errors.js";
+import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
 export const ROUTER_PORT = 8790;
@@ -143,6 +146,11 @@ export interface RouterOptions {
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
   /** cached up/down of a provider (limits poll); breaks ties between providers declaring one model id */
   isUp?: (provider: string) => boolean | undefined;
+  /**
+   * A wrong-case tool name in the model's reply was rewritten to the declared
+   * spelling. Default: router log line + a [model] record in tool-errors.jsonl.
+   */
+  onToolCaseFix?: (info: { from: string; to: string; model: string; provider: string; session?: string }) => void;
 }
 
 // accept-encoding dropped: usage is parsed from the plain response as it streams
@@ -237,6 +245,21 @@ export function modelsReply(
 /** chars/4 over the request body, for providers without count_tokens. */
 export function estimateTokens(rawBody: Buffer): number {
   return Math.ceil(rawBody.length / 4);
+}
+
+/** Log line plus a [model] tool-errors record, so `pai worker errors` keeps the data. */
+function defaultToolCaseFix(log: (line: string) => void): NonNullable<RouterOptions["onToolCaseFix"]> {
+  return (i) => {
+    const text = `tool name case corrected: ${i.from} -> ${i.to}`;
+    log(`${new Date().toISOString()} ${i.model} ${i.provider} ${text}`);
+    recordToolError(workersLogDir(readWorkersSection().workers), {
+      worker: i.session ?? "router",
+      provider: i.provider,
+      label: "router",
+      tool: "router",
+      text,
+    });
+  };
 }
 
 function isLocal(u: URL): boolean {
@@ -401,7 +424,14 @@ export function routerHandler(
           res.writeHead(ures.statusCode ?? 502, rh);
           const sniff = onUsage && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
-          ures.pipe(res);
+          const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
+          const plainSse = /text\/event-stream/i.test(String(ures.headers["content-type"] ?? "")) && !ures.headers["content-encoding"];
+          if (declared.length && plainSse) {
+            const fixer = new ToolCaseSse(declared, (from, to) =>
+              (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
+            );
+            ures.pipe(fixer).pipe(res);
+          } else ures.pipe(res);
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
             const ended = Date.now();

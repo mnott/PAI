@@ -60,6 +60,7 @@ import { itermForClaudeSession } from "./scope.js";
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
 import {
   detectRunningWorkerErrors,
+  benignNote,
   detectToolErrors,
   readToolErrors,
   SAME_WORKER_WINDOW_MS,
@@ -565,7 +566,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       session: p.session,
       rc: null,
       stalledMin: null,
-      text: toolErrorText(p.group),
+      text: toolErrorText(p.group) + benignNote(p.benign),
     });
   }
   for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker)), now.getTime(), sent)) {

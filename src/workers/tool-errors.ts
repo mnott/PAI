@@ -38,7 +38,7 @@ const RAW_MAX = 300;
 const INPUT_MAX = 1000;
 const TAIL_BYTES = 400_000;
 
-export type ErrorClass = "harness" | "model" | "unknown";
+export type ErrorClass = "harness" | "model" | "benign" | "unknown";
 
 export interface Classification {
   cls: ErrorClass;
@@ -56,8 +56,62 @@ const inputPath = (r: ToolErrorRecord): string | undefined => r.input?.split(" "
  * model rules are recorded but alert only at loopAt (Infinity: never);
  * harness rules alert at the usual thresholds; anything else is unknown.
  */
+/** Declared tool names a model may mis-case; the router rewrites these (src/router/tool-case.ts). */
+const CASED_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"];
+
+/** The name in "No such tool available: bash" when it is a wrong-case spelling of a known tool. */
+function wrongCaseTool(raw: string): string | null {
+  const name = raw.match(/No such tool available:?\s*(\S+)/i)?.[1]?.replace(/[.,;:"'`]+$/, "");
+  if (!name || CASED_TOOLS.includes(name)) return null;
+  return CASED_TOOLS.find((t) => t.toLowerCase() === name.toLowerCase()) ? name : null;
+}
+
+const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
+
+/** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
+function lastCommand(command: string): { name: string; segment: string } | null {
+  const bare = command.replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
+  const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
+  const segment = segs[segs.length - 1];
+  if (!segment) return null;
+  const words = segment.split(/\s+/).filter((w) => !/^[A-Za-z_]\w*=/.test(w));
+  const name = (words[0] ?? "").replace(/^.*\//, "");
+  return name ? { name, segment } : null;
+}
+
+/**
+ * Bash exits that are the tool's normal answer, matched on exit code AND
+ * command shape AND output marker: search no-match (exit 1, empty output),
+ * diff/cmp "differ" (exit 1), test/[ false (exit 1, empty output), a vitest
+ * run that reports failing tests (exit 1), zsh's "=== not found" from an
+ * `echo ===` separator, and timeout's own 124/144 after a deliberate bound.
+ */
+export function isBenignBash(r: ToolErrorRecord): boolean {
+  if (r.tool !== "Bash" || !r.input) return false;
+  const m = r.raw.match(/^Exit code (\d+)\s*(.*)$/i);
+  const code = m ? Number(m[1]) : null;
+  const out = (m?.[2] ?? r.raw).trim();
+  const cmd = r.input;
+  if (/^\(eval\):\d+: =+ not found$/.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
+  if (code === null) return false;
+  if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
+  if (code !== 1) return false;
+  const last = lastCommand(cmd);
+  if (!last) return false;
+  const emptyOut = out === "" || /^(\(?no (output|matches)\)?|<no output>)$/i.test(out);
+  if (SEARCH_CMDS.has(last.name)) return emptyOut;
+  if (last.name === "test" || last.name === "[") return emptyOut;
+  if (last.name === "diff" || last.name === "cmp") return !/No such file|Permission denied|usage:|invalid option/i.test(out);
+  if (/\bvitest\b/.test(cmd) && /\b(run|--run)\b|^npx vitest/.test(cmd)) {
+    return /(FAIL\b|Test Files|Tests\s+\d|AssertionError|expected .* to)/.test(out) && !/error TS\d+|Cannot find|SyntaxError|ERR_MODULE/i.test(out);
+  }
+  return false;
+}
+
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
+  { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
+  { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
   {
     test: (r) => {
       const cwd = cwdOf(r.raw), p = inputPath(r);
@@ -257,6 +311,7 @@ export function toolErrorText(g: ToolErrorGroup): string {
   const tail = "harness → stop runs it spoils, fix the cause in PAI/AIBroker, prove it, commit; model → counts against the model, stop the run if it loops; details: pai worker errors";
   if (g.cls === "harness") return `[harness] ${g.hint}: ${what} — fix at the owner. ${tail}`;
   if (g.cls === "model") return `[model ×${g.count}] ${g.hint}: ${what} — counts against the model; stop the run if it loops. ${tail}`;
+  if (g.cls === "benign") return `[benign] ${g.hint}: ${what}`;
   return `[unknown] ${what} — ${tail}`;
 }
 
@@ -274,6 +329,13 @@ export interface RunningErrorPush {
   session: string;
   signature: string;
   group: ToolErrorGroup;
+  /** Benign exits of this worker recorded so far and not pushed. */
+  benign: number;
+}
+
+/** Appended to an alert so the spawner knows what was held back. */
+export function benignNote(n: number): string {
+  return n > 0 ? ` (+${n} benign tool exits suppressed)` : "";
 }
 
 /**
@@ -307,8 +369,13 @@ export function detectRunningWorkerErrors(
 ): RunningErrorPush[] {
   const sessions = new Map(running.map((r) => [r.id, r.session] as const));
   const byWorker = new Map<string, Map<string, ToolErrorRecord[]>>();
+  const benign = new Map<string, number>();
   for (const r of records) {
     if (!sessions.has(r.worker)) continue;
+    if (classifyToolError(r).cls === "benign") {
+      benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1); // recorded and counted, never pushed
+      continue;
+    }
     let bySig = byWorker.get(r.worker);
     if (!bySig) byWorker.set(r.worker, (bySig = new Map()));
     bySig.set(r.signature, [...(bySig.get(r.signature) ?? []), r]);
@@ -319,7 +386,7 @@ export function detectRunningWorkerErrors(
     for (const [sig, all] of bySig) {
       if (pushed[sig] !== undefined) continue; // first occurrence per run, never re-pushed
       pushed[sig] = now;
-      out.push({ worker, session: sessions.get(worker)!, signature: sig, group: groupToolErrors(all)[0] });
+      out.push({ worker, session: sessions.get(worker)!, signature: sig, group: groupToolErrors(all)[0], benign: benign.get(worker) ?? 0 });
     }
   }
   return out;
