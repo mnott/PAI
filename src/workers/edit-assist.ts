@@ -66,8 +66,8 @@ export function editAssist(i: EditAssistInput): string | null {
     }
 
     // Otherwise, determine the region
-    let startIndex = firstIndex !== null ? firstIndex : lastIndex;
-    let endIndex = lastIndex !== null ? lastIndex : firstIndex;
+    let startIndex: number = firstIndex !== null ? firstIndex : lastIndex!;
+    let endIndex: number = lastIndex !== null ? lastIndex : firstIndex!;
 
     // For `last`, prefer a match at an index >= the first's index when several tie
     if (lastIndex !== null && firstIndex !== null && lastIndex < firstIndex) {

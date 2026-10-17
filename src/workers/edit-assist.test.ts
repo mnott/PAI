@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { editAssist, isEditAssistError } from "./edit-assist.js";
+import { editAssist, isEditAssistError, editHintFor } from "./edit-assist.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("editAssist", () => {
   it("returns a specific message when strings are identical", () => {
@@ -134,5 +137,40 @@ describe("isEditAssistError", () => {
 
   it("returns false for unrelated errors", () => {
     expect(isEditAssistError("Some unrelated error")).toBe(false);
+  });
+});
+
+describe("editHintFor", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "edit-hint-"));
+  const filePath = join(tempDir, "a.ts");
+  writeFileSync(filePath, `function foo() {
+  return 1;
+}
+const bar = 2;`);
+
+  it("returns a hint with line numbers when string to replace not found", () => {
+    const result = editHintFor({file_path:"a.ts", old_string:"  return 2;", new_string:"  return 3;"}, "String to replace not found in file", tempDir);
+    expect(result).toContain("2\t");
+    expect(result).toContain("return 1;");
+  });
+
+  it("returns a hint about already containing text when strings are identical", () => {
+    const result = editHintFor({file_path:"a.ts", old_string:"  return 1;", new_string:"  return 1;"}, "No changes to make: old_string and new_string are exactly the same", tempDir);
+    expect(result).toContain("already contains your intended text");
+  });
+
+  it("returns null when file does not exist", () => {
+    const result = editHintFor({file_path:"missing.ts", old_string:"  return 2;", new_string:"  return 3;"}, "String to replace not found in file", tempDir);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when file does not exist and error is about file not existing", () => {
+    const result = editHintFor({file_path:"missing.ts", old_string:"  return 2;", new_string:"  return 3;"}, "File does not exist", tempDir);
+    expect(result).toBeNull();
+  });
+
+  it("includes deletion hint when deleting and file path is correct", () => {
+    const result = editHintFor({file_path:"a.ts", old_string:"  return 2;", new_string:""}, "String to replace not found in file", tempDir);
+    expect(result).toContain("it may already be gone.");
   });
 });
