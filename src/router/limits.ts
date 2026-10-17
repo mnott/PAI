@@ -623,9 +623,8 @@ export class LimitsCache {
   };
 
   /** A background stats answer: remember it (memory + file) and patch the reading already being served. */
-  private prefixArrived(provider: string, stats: PrefixCacheStats | undefined): void {
+  private prefixArrived(provider: string, stats: PrefixCacheStats | undefined, at: number): void {
     if (!stats) return;
-    const at = Date.now();
     this.prefixLastGood.set(provider, { stats, at });
     const cur = this.value.find((l) => l.provider === provider && l.kind === "local");
     if (cur?.up) {
@@ -704,7 +703,7 @@ export class LimitsCache {
       if (isLocalUrl(p.baseUrl)) {
         jobs.push(
           localLimits(name, p, rows, now, (pending) => {
-            const done = pending.then((stats) => this.prefixArrived(name, stats));
+            const done = pending.then((stats) => this.prefixArrived(name, stats, now));
             this.pendingPrefix.add(done);
             void done.finally(() => this.pendingPrefix.delete(done));
           })

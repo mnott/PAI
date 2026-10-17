@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decideWorkerGuard, parseCommand, type WorkerGuardContext } from "./worker-guard.js";
+import { dropHeredocBodies } from "./heredoc.js";
 
 const WT = "/work/wt/abc";
 const MAIN = "/work/main";
@@ -129,6 +130,30 @@ describe("decideWorkerGuard", () => {
     }
   });
 
+  it("allows heredoc commands that would otherwise be denied", () => {
+    const command = `cat >> realworld-cli-log.md \x3c\x3c'EOF'
+cache eviction: do not pkill the server, killall is blocked
+xargs kill
+EOF`;
+    const d = decideWorkerGuard(bash(command), WORKER, () => wtCtx());
+    expect(d.decision).toBe("allow");
+  });
+
+  it("still denies pkill commands in heredocs", () => {
+    const command = `pkill -f foo`;
+    const d = decideWorkerGuard(bash(command), WORKER, () => wtCtx());
+    expect(d.decision).toBe("deny");
+    expect((d as { reason: string }).reason).toContain("by PID");
+  });
+
+  it("allows commands with heredocs that redirect to files", () => {
+    const command = `cat \x3c\x3cEOF > x.txt
+some body
+EOF`;
+    const segments = parseCommand(command);
+    expect(segments.some((s) => s.redirects.includes("x.txt"))).toBe(true);
+  });
+
   it.each([
     ["Write", `${WT}/Notes/TODO.md`, "deny"],
     ["Edit", "Notes/TODO.md", "deny"],
@@ -188,6 +213,36 @@ describe("parseCommand", () => {
       { words: ["e"], redirects: [] },
       { words: ["g"], redirects: [] },
     ]);
+  });
+});
+
+describe("dropHeredocBodies", () => {
+  it("removes heredoc bodies from commands", () => {
+    const command = `cat >> realworld-cli-log.md \x3c\x3c'EOF'
+cache eviction: do not pkill the server, killall is blocked
+xargs kill
+EOF
+`;
+    expect(dropHeredocBodies(command)).toBe(`cat >> realworld-cli-log.md \x3c\x3c'EOF'
+`);
+  });
+
+  it("handles heredocs with different quoting styles", () => {
+    const command = `cat \x3c\x3c"EOF"
+some body
+EOF
+`;
+    expect(dropHeredocBodies(command)).toBe(`cat \x3c\x3c"EOF"
+`);
+  });
+
+  it("handles heredocs with unquoted tags", () => {
+    const command = `cat \x3c\x3cEOF
+some body
+EOF
+`;
+    expect(dropHeredocBodies(command)).toBe(`cat \x3c\x3cEOF
+`);
   });
 });
 
