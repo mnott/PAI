@@ -104,6 +104,12 @@ export interface WorkerStatus {
   origin?: "spawn" | "chat";
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
+  /**
+   * Why budget routing put this run on its provider instead of a fuller one
+   * ahead of it ("glm: anthropic 96% until 08:02"); absent when no switch
+   * happened. Resolved once at spawn — a running worker is never switched.
+   */
+  switchReason?: string;
   /** Fall-through link: the local run this cloud run repeats, and (on the local run) its repeat. */
   fallThroughOf?: string;
   fallThroughTo?: string;

@@ -324,6 +324,28 @@ own `order`), skipping:
 Nothing qualifying fails the run with the exclusion reason of every provider
 in the order.
 
+### Budget policy (default)
+
+By default the auto walk is budget-aware (`routing.policy: "budget"`,
+`"order"` restores the plain walk above): candidates come from
+`routing.priority` — falling back to `routing.order`, else
+`anthropic, glm, kimi` — and every provider whose **live budget** reads at or
+above its wall is skipped, so a run waits a full provider out on the next one
+with room:
+
+- budgets are read from each provider's `usage:` endpoint (anthropic: the
+  OAuth usage endpoint), cached for 5 minutes, fullest window wins; a failed
+  probe reads as "unknown" and never walls anyone,
+- walls default to `anthropic: 95, glm: 90, kimi: 85` (95 for any other
+  provider) and are overridden per provider by `routing.budgetWalls`,
+- a walled provider gets a cooldown until `max(now + 10 min, resetAt)`, so it
+  re-enters on its own once its window resets,
+- the chosen worker's status carries a one-line `switchReason` when budget
+  moved it ("`glm: anthropic 96% until 08:02`"), shown by `pai worker ps`,
+
+A run's provider is resolved once, at spawn: a running worker is never
+switched mid-flight. A quota reroute applies the same walls.
+
 A quota failure before the first tool call is re-run on the next provider and
 logged as `WORKER-REROUTE`. `pai worker providers enable <name>` clears a
 cooldown by hand.

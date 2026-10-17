@@ -212,6 +212,25 @@ export interface WorkersRoutingConfig {
   cooldownMinutes: number;
   /** Reroute a failed-before-first-tool run to the next provider. */
   retryOnQuota: boolean;
+  /**
+   * Auto-routing policy: "budget" (default) walks the priority list but skips
+   * every provider whose live budget probe reads at or above its wall
+   * (routing.budgetWalls) — a run waits a full provider out on the next one
+   * with room, and the full one re-enters when its window resets. "order"
+   * walks routing.order verbatim, quota probes aside.
+   */
+  policy: "budget" | "order";
+  /**
+   * Provider names in operator preference order for policy "budget". Empty
+   * falls back to routing.order, else DEFAULT_BUDGET_PRIORITY.
+   */
+  priority: string[];
+  /**
+   * Per-provider usage percent at or above which budget routing treats the
+   * provider as full (default DEFAULT_BUDGET_WALL). From the provider's
+   * `usage` block (anthropic: the OAuth usage endpoint).
+   */
+  budgetWalls: Record<string, number>;
 }
 
 /** Sub-worker caps: how deep the worker tree may grow, how wide per parent. */
@@ -427,10 +446,35 @@ export const DEFAULT_PANE: WorkersPaneConfig = {
   autoExitSecs: 5,
 };
 
+/**
+ * Budget routing's default preference order (policy "budget" with neither
+ * routing.priority nor routing.order set): Anthropic while it has budget,
+ * then the cloud relays. Providers that are not configured are simply
+ * skipped, so this degrades to plain Anthropic on a fresh install.
+ */
+export const DEFAULT_BUDGET_PRIORITY = ["anthropic", "glm", "kimi"];
+
+/**
+ * Budget walls when routing.budgetWalls names none for a provider: Anthropic
+ * Max-plan 5h, the z.ai 5h window, Kimi — percent used at which budget
+ * routing treats the provider as full.
+ */
+export const DEFAULT_BUDGET_WALLS: Record<string, number> = {
+  anthropic: 95,
+  glm: 90,
+  kimi: 85,
+};
+
+/** Budget wall when neither routing.budgetWalls nor DEFAULT_BUDGET_WALLS knows a provider. */
+export const DEFAULT_BUDGET_WALL = 95;
+
 export const DEFAULT_ROUTING: WorkersRoutingConfig = {
   order: [],
   cooldownMinutes: 30,
   retryOnQuota: true,
+  policy: "budget",
+  priority: [],
+  budgetWalls: {},
 };
 
 export const DEFAULT_TREE: WorkersTreeConfig = {
@@ -891,10 +935,32 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     if (r.retryOnQuota !== undefined && typeof r.retryOnQuota !== "boolean") {
       bad(".routing.retryOnQuota", "must be boolean");
     }
+    if (r.policy !== undefined && r.policy !== "budget" && r.policy !== "order") {
+      bad(".routing.policy", 'must be "budget" or "order"');
+    }
+    if (r.priority !== undefined) {
+      if (!Array.isArray(r.priority) || r.priority.some((x) => typeof x !== "string")) {
+        bad(".routing.priority", "must be an array of provider names");
+      }
+    }
+    if (r.budgetWalls !== undefined) {
+      if (typeof r.budgetWalls !== "object" || r.budgetWalls === null || Array.isArray(r.budgetWalls)) {
+        bad(".routing.budgetWalls", "must be an object of provider name → percent");
+      }
+      for (const [k, v] of Object.entries(r.budgetWalls as Record<string, unknown>)) {
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) {
+          bad(`.routing.budgetWalls.${k}`, "must be a percent 0–100");
+        }
+      }
+    }
     routing = {
       order: routing.order,
       cooldownMinutes: r.cooldownMinutes === undefined ? DEFAULT_ROUTING.cooldownMinutes : r.cooldownMinutes,
       retryOnQuota: r.retryOnQuota === undefined ? DEFAULT_ROUTING.retryOnQuota : r.retryOnQuota === true,
+      policy: (r.policy as WorkersRoutingConfig["policy"]) ?? DEFAULT_ROUTING.policy,
+      priority: r.priority === undefined ? [] : [...(r.priority as string[])],
+      budgetWalls:
+        r.budgetWalls === undefined ? {} : ({ ...(r.budgetWalls as Record<string, number>) }),
     };
   }
 

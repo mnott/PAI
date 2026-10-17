@@ -492,6 +492,7 @@ export function renderTable(
       ...(s.resumedFrom ? [`resumed from ${s.resumedFrom}`] : []),
       ...(s.resumedBy ? [`resumed by ${s.resumedBy}`] : []),
       ...(s.route ? [`route ${s.route.reason}`] : []),
+      ...(s.switchReason ? [s.switchReason] : []),
       ...(s.fallThroughOf ? [`fall-through of ${s.fallThroughOf}`] : []),
       ...(s.fallThroughTo ? [`fell through to ${s.fallThroughTo}`] : []),
     ];

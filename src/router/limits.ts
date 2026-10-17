@@ -208,7 +208,10 @@ export function readEstimateCaps(file: string = ESTIMATE_FILE): Record<string, R
   }
 }
 
-function getJson(url: URL, headers: Record<string, string>): Promise<string> {
+/** The OAuth usage endpoint the anthropic plan readings come from. */
+export const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+
+export function getJson(url: URL, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === "https:" ? https : http;
     const rq = mod.get(url, { headers, timeout: 5000 }, (res) => {
@@ -225,7 +228,7 @@ function sh(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve) => execFile(cmd, args, { timeout: 4000 }, (_e, out) => resolve(String(out ?? "").trim())));
 }
 
-async function anthropicToken(): Promise<string | undefined> {
+export async function anthropicToken(): Promise<string | undefined> {
   for (const args of [["-a", process.env.USER ?? ""], []]) {
     const raw = await sh("security", ["find-generic-password", "-s", "Claude Code-credentials", ...args, "-w"]);
     try {
@@ -243,7 +246,7 @@ async function anthropicLimits(now: number, advisorFile: string, lastGood: LastG
   try {
     const token = await anthropicToken();
     if (!token) throw new Error("no OAuth token in keychain");
-    const body = await getJson(new URL("https://api.anthropic.com/api/oauth/usage"), {
+    const body = await getJson(new URL(ANTHROPIC_USAGE_URL), {
       authorization: `Bearer ${token}`,
       "anthropic-beta": "oauth-2025-04-20",
     });

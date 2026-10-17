@@ -88,14 +88,17 @@ import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
 import {
+  autoOrder,
   capabilityForRun,
   isQuotaFailure,
   nextAutoProvider,
+  recordBudgetCooldowns,
   resolveCapabilityRun,
   resolveTarget,
   setCooldown,
   type CapabilityRunResolution,
 } from "./routing.js";
+import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
 import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
@@ -634,6 +637,19 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     if (routed) {
       route = routed.route;
       providerFlag = routed.providerFlag ?? undefined;
+    }
+  }
+
+  // Budget-aware fallback: probe live budgets (5-min cache) and cooldown any
+  // provider at/above its wall before the walk, so resolveTarget picks the
+  // first priority provider that still has room. Probing must never block a
+  // spawn: failures read as "unknown" inside the cache, never as "full".
+  if (!providerFlag && !capabilityResolution && config.routing.policy !== "order") {
+    try {
+      await budgetCache.warm(config);
+      recordBudgetCooldowns(config, logDir);
+    } catch {
+      /* no readings: budget routing degrades to plain order */
     }
   }
 
@@ -1521,6 +1537,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     origin: headless ? "spawn" : "chat",
     outputFormat: parsed.outputFormat,
     ...(a.route ? { route: a.route } : {}),
+    ...(target.via === "auto" && target.switchReason ? { switchReason: target.switchReason } : {}),
     ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(headless ? { reportFormat: a.reportFormat } : {}),
     ...(trailerApplied ? { promptTrailer: true } : {}),
@@ -1556,6 +1573,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     label,
     ...(a.capability ? { capability: a.capability } : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
+    ...(target.switchReason ? { switch: target.switchReason } : {}),
   });
 
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
@@ -1949,7 +1967,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ) {
       setCooldown(logDir, target.providerName, config.routing.cooldownMinutes);
       const next = nextAutoProvider(config, logDir, target.providerName);
-      if (next && a.reroutes < config.routing.order.length) {
+      if (next && a.reroutes < autoOrder(config).length) {
         appendLedger(ledger, "WORKER-REROUTE", {
           from: target.providerName,
           to: next,
