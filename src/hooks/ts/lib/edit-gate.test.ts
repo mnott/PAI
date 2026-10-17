@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isProseEdit, decideEditGate, type EditGateContext } from "./edit-gate.js";
+import {
+  isProseEdit,
+  decideEditGate,
+  decideOrchestratorEdit,
+  decideOrchestratorBash,
+  type EditGateContext,
+} from "./edit-gate.js";
 
 describe("isProseEdit", () => {
   it.each([
@@ -13,6 +19,50 @@ describe("isProseEdit", () => {
     ["src/foo.md", true],
   ])("%s -> %s", (filePath, expected) => {
     expect(isProseEdit(filePath)).toBe(expected);
+  });
+});
+
+describe("decideOrchestratorEdit", () => {
+  it.each([
+    ["/repo/Notes/three-tier-log.md", "allow"],
+    ["/repo/README.md", "allow"],
+    ["/tmp/spec-1.txt", "allow"],
+    ["/private/tmp/x/spec.json", "allow"],
+    ["/repo/src/workers/run.ts", "block"],
+    ["/repo/package.json", "block"],
+  ])("filePath %s should be %s", (filePath, expected) => {
+    const result = decideOrchestratorEdit(filePath);
+    expect(result.decision).toBe(expected);
+    if (result.decision === "block") {
+      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+      expect(result.reason).toContain(filePath);
+    }
+  });
+});
+
+describe("decideOrchestratorBash", () => {
+  it.each([
+    ["sed -i 's/a/b/' src/x.ts", "block"],
+    ["perl -pi -e 's/a/b/' src/x.ts", "block"],
+    ["perl -0pi -e 's/a/b/' src/x.ts", "block"],
+    ["cat > src/a.ts", "block"],
+    ["echo x >> lib/b.py", "block"],
+    ["printf x | tee src/c.js", "block"],
+    ["git mv src/a.ts src/b.ts", "allow"],
+    ["git rm src/a.ts", "allow"],
+    ["git merge worker/abc", "allow"],
+    ["npx vitest run src/workers", "allow"],
+    ["cat src/a.ts", "allow"],
+    ["echo hi > /tmp/spec.ts", "allow"],
+    ["echo hi > Notes/log.md", "allow"],
+    ["ls 2>&1", "allow"],
+  ])("command %s should be %s", (command, expected) => {
+    const result = decideOrchestratorBash(command);
+    expect(result.decision).toBe(expected);
+    if (result.decision === "block") {
+      expect(result.reason).toContain("Bash may not write code files in place");
+      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+    }
   });
 });
 
