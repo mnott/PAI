@@ -23,8 +23,11 @@ const quit = (code: number): never => {
   if (process.stdout.isTTY) process.stdout.write(SHOW_CURSOR);
   process.exit(code);
 };
-process.on("SIGINT", () => quit(130));
-process.on("SIGTERM", () => quit(143));
+// `pai worker ...` installs its own handlers (a run writes its final status on SIGTERM/SIGINT before exiting).
+if (process.argv[2] !== "worker") {
+  process.on("SIGINT", () => quit(130));
+  process.on("SIGTERM", () => quit(143));
+}
 
 let code = 1;
 try {

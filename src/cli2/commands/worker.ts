@@ -1,0 +1,911 @@
+/**
+ * Workers: `pai worker <verb>` — run a task on another provider, watch it,
+ * talk to it, merge what it did. Thin: every verb calls src/workers/*, the
+ * same code the MCP tools and the Agent hook use. Names, flags, stdout and
+ * exit codes are the ones hooks, prompts, skills and shims already call.
+ */
+
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider } from "../../workers/config.js";
+import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
+import { runWorker, type RunOptions } from "../../workers/run.js";
+import { runChain } from "../../workers/chain.js";
+import { realDeps as waitOnDeps, statusMarker, waitOn } from "../../workers/wait-on.js";
+import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
+import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
+import { followWorkers, psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
+import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
+import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../workers/status.js";
+import { callerDescription, requestKill } from "../../workers/endreason.js";
+import { sayToWorker } from "../../workers/operator.js";
+import { handoffFromInside } from "../../workers/handoff.js";
+import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
+import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
+import { waitWorkers } from "../../workers/wait.js";
+import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
+import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
+import { dim, err, ok } from "../lib/utils.js";
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+function logDir(): string {
+  try {
+    return workersLogDir(readWorkersSection().workers);
+  } catch (e) {
+    throw new CliError(`cannot read the worker configuration: ${msgOf(e)}`, "pai config path   (shows which file is read)");
+  }
+}
+
+const msgOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Run a verb; any thrown error becomes one plain sentence (exit 1) with the next command. */
+async function guard(next: string, fn: () => Promise<number | void> | number | void): Promise<number | void> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof CliError) throw e;
+    throw new CliError(msgOf(e), next);
+  }
+}
+
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const flag = (ctx: RunContext, name: string): boolean => ctx.opts[name] === true;
+const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+const out = (s: string) => process.stdout.write(s + "\n");
+
+// ---------------------------------------------------------------------------
+// run / resume
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything `worker run` hands to the engine, built from the parsed flags.
+ * Pure apart from reading the spec/agent files, so the argv it produces can be
+ * compared with the old command's.
+ */
+export type RunPlan =
+  | { kind: "chain"; chain: Parameters<typeof runChain>[0] }
+  | { kind: "run"; run: RunOptions };
+
+export function buildRunPlan(ctx: RunContext): RunPlan {
+  const o = ctx.opts;
+  const className = str(o.class) ?? str(o.role);
+  const report = str(o.report);
+  if (report !== undefined && report !== "json" && report !== "ag2") {
+    throw new Error(`--report: expected "json" or "ag2", got "${report}"`);
+  }
+  const cwd = str(o.cwd);
+  if (cwd !== undefined) {
+    if (!existsSync(cwd)) throw new Error(`--cwd: directory does not exist: ${cwd}`);
+    if (!statSync(cwd).isDirectory()) throw new Error(`--cwd: not a directory: ${cwd}`);
+  }
+  const noPane = o["no-pane"] === true;
+  let claudeArgs = ctx.rest;
+  let specPath: string | undefined;
+  const spec = str(o.spec);
+  if (spec !== undefined) {
+    if (parseRunnerArgs(ctx.rest).headless) {
+      throw new Error("--spec and -p/--print are mutually exclusive — pass the prompt one way, not both");
+    }
+    const cwdForSpec = cwd ?? process.cwd();
+    specPath = resolveSpecPath(spec, cwdForSpec);
+    claudeArgs = ["-p", readSpecPrompt(spec, cwdForSpec), ...ctx.rest];
+  } else {
+    const hint = longInlinePromptHint(parseRunnerArgs(ctx.rest).prompt);
+    if (hint) process.stderr.write(hint + "\n");
+  }
+
+  assertPaneNotDisabled(noPane);
+  let label = str(o.label);
+  let agentClass: string | undefined;
+  const agent = str(o.agent);
+  if (agent) {
+    const def = loadAgent(agent);
+    claudeArgs = [...agentClaudeArgs(def), ...claudeArgs];
+    let agentProviders: Record<string, WorkerProvider> | undefined;
+    try {
+      agentProviders = readWorkersSection().workers.providers;
+    } catch {
+      agentProviders = undefined;
+    }
+    agentClass = modelToClass(def.model, agentProviders);
+    if (!label) label = agentLabel(agent, parseRunnerArgs(claudeArgs).prompt);
+  }
+  const chain = str(o.chain);
+  if (chain) {
+    const brief = parseRunnerArgs(claudeArgs).prompt;
+    if (!brief) throw new Error("--chain needs the task as -p '<brief>'");
+    return {
+      kind: "chain",
+      chain: {
+        stages: chain.split(","),
+        className: className ?? agentClass,
+        providerFlag: str(o.provider),
+        modelFlag: str(o.model),
+        label,
+        noPane,
+        mcpFlag: str(o.mcp),
+        specPath,
+        cwd,
+        brief,
+        claudeArgs,
+      },
+    };
+  }
+  if (!label) label = deriveLabel(parseRunnerArgs(claudeArgs).prompt, className ?? agentClass ?? "default");
+  return {
+    kind: "run",
+    run: {
+      providerFlag: str(o.provider),
+      urgent: o.urgent === true ? true : undefined,
+      localOk: o["local-ok"] === true ? true : undefined,
+      cloud: o.cloud === true ? true : undefined,
+      className: className ?? agentClass,
+      modelFlag: str(o.model),
+      label,
+      mcpFlag: str(o.mcp),
+      specPath,
+      cwd,
+      noPane,
+      worktreeFlag: o["no-worktree"] === true ? false : o.worktree === true ? true : undefined,
+      maxMinutes: num(o["max-minutes"]),
+      deadline: str(o.deadline),
+      browser: o["no-browser"] === true ? false : o.browser === true ? true : undefined,
+      printCmd: o["print-cmd"] === true || ctx.dryRun ? true : undefined,
+      reportFormatFlag: report as "json" | "ag2" | undefined,
+      noReportRetry: o["no-report-retry"] === true,
+      capabilityFlag: str(o.capability) ?? str(o.for),
+      imageOut: str(o.out),
+      imageSize: str(o.size),
+      imageTimeoutMs: num(o["timeout-ms"]),
+      claudeArgs,
+    },
+  };
+}
+
+const runCommand: CommandDef = {
+  name: "run",
+  summary: "Run one task on a worker (another provider or model)",
+  description:
+    "Starts a Claude Code worker through the chosen provider and waits for it. The task goes in as -p '<task>' or, safer for long text, --spec FILE.\n" +
+    "Options this command does not know (for example -p, --allowedTools) are handed to claude unchanged.\n" +
+    "--label is the row shown in `ps`, `follow` and the status line; without it the first line of the task is used.\n" +
+    "Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the server loads by itself.",
+  allowUnknown: true,
+  options: [
+    { ...OPT.provider, summary: "Provider to run on (default: the active one, else the routing order)" },
+    { name: "class", type: "string", value: "NAME", summary: "Use the provider set for this kind of work (draft, implement, review, research, spotcheck, simple, complex, image)" },
+    { name: "role", type: "string", value: "NAME", summary: "Old name of --class" },
+    { name: "capability", type: "string", value: "NAME", summary: "Run on whichever provider serves this capability (see `pai worker capability`), e.g. image" },
+    { name: "for", type: "string", value: "NAME", summary: "Short for --capability" },
+    { name: "out", type: "string", value: "FILE", summary: "Where an image run writes its PNG (default: next to the worker log)" },
+    { name: "size", type: "string", value: "WxH", summary: "Image size for an image run, e.g. 1024x1024 (default 1024x1024)" },
+    { name: "timeout-ms", type: "number", value: "N", summary: "How long an image run waits for its answer (default 120000)" },
+    { name: "chain", type: "string", value: "STAGES", summary: "Comma-separated stages run one after the other, e.g. draft,implement,review" },
+    { name: "agent", type: "string", value: "NAME", summary: "Run the agent definition ~/.claude/agents/NAME.md on a worker" },
+    { ...OPT.model, summary: "Model for this run (default: the model set for the class)" },
+    { name: "urgent", type: "boolean", summary: "Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`)" },
+    { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
+    { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
+    { name: "label", type: "string", value: "TEXT", summary: "Short task label shown in ps, follow and the status line" },
+    { name: "spec", type: "string", value: "FILE", summary: "Read the task from this file (or - for stdin) instead of -p" },
+    { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
+    { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
+    { name: "no-pane", type: "boolean", summary: "Run without a visible pane (refused unless a worker or the operator override allows it)" },
+    { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
+    { name: "no-worktree", type: "boolean", summary: "Work in place, no worktree" },
+    { name: "max-minutes", type: "number", value: "N", summary: "Stop after N minutes and keep the work (0 = no limit; default from the config, 60)" },
+    { name: "deadline", type: "string", value: "HH:MM", summary: "Stop at this local time (tomorrow if already past); not with --max-minutes" },
+    { name: "browser", type: "boolean", summary: "Allow browser tools" },
+    { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },
+    { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },
+    { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
+    { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },
+  ],
+  examples: [
+    "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
+    "pai worker run --provider glm --spec /tmp/task.txt",
+    "pai worker run --chain draft,implement,review -p 'Add a --json flag to the export command'",
+    "pai worker run --print-cmd --class spotcheck -p 'Say hi'",
+  ],
+  seeAlso: ["pai worker ps", "pai worker follow", "pai worker merge", "pai worker resume"],
+  run: (ctx) =>
+    guard("pai worker run --print-cmd -p 'test'   (shows the command without starting it)", async () => {
+      const plan = buildRunPlan(ctx);
+      return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
+    }),
+};
+
+const resumeCommand: CommandDef = {
+  name: "resume",
+  summary: "Continue a finished worker with a new instruction",
+  description: "Starts a new worker on the same provider and model that picks up the conversation of a finished one (claude --resume).",
+  args: [
+    { name: "ID", required: true, summary: "Id of the finished worker (see `pai worker ps`)" },
+    { name: "TEXT", required: true, summary: "What the worker should do next" },
+  ],
+  options: [
+    { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
+    { name: "no-pane", type: "boolean", summary: "Run without a visible pane (refused unless allowed)" },
+    { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
+    { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
+  ],
+  examples: ["pai worker resume w-20260101-abc 'Also add a test'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
+  seeAlso: ["pai worker ps", "pai worker run"],
+  run: (ctx) =>
+    guard("pai worker ps   (lists worker ids)", async () => {
+      const id = ctx.args.ID as string;
+      const text = ctx.args.TEXT as string;
+      const noPane = flag(ctx, "no-pane");
+      assertPaneNotDisabled(noPane);
+      const dir = logDir();
+      const old = loadStatus(dir, id);
+      if (!old) throw new Error(`no worker named "${id}"`);
+      if (!old.claudeSession) {
+        throw new Error(
+          `worker ${id} recorded no Claude session id — it predates resume support or ran through an engine that does not expose one`
+        );
+      }
+      const claudeArgs = ["--resume", old.claudeSession, "-p", text];
+      const fmt = str(ctx.opts["output-format"]);
+      if (fmt !== undefined) claudeArgs.push("--output-format", fmt);
+      let newId = "";
+      const rc = await runWorker({
+        providerFlag: old.provider,
+        modelFlag: old.model,
+        label: str(ctx.opts.label) || `↩ ${old.label}`,
+        noPane,
+        claudeArgs,
+        resumeOf: id,
+        onWorkerStart: (wid) => {
+          newId = wid;
+        },
+      });
+      if (flag(ctx, "print-id") && newId) out(newId);
+      return rc;
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// Looking at workers
+// ---------------------------------------------------------------------------
+
+const psCommand: CommandDef = {
+  name: "ps",
+  summary: "List this session's workers, running and finished",
+  description:
+    "Shows the workers started from this terminal. When other sessions have live workers too, a MACHINE section lists every live worker on this computer with the session that owns it.",
+  options: [{ name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" }],
+  examples: ["pai worker ps", "pai worker ps --all"],
+  seeAlso: ["pai worker follow", "pai worker pending", "pai worker kill"],
+  run: (ctx) =>
+    guard("pai worker ps --all", () => {
+      const dir = logDir();
+      const pending = pendingResults(dir, process.cwd()).length;
+      if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
+      out(psOutput(dir, flag(ctx, "all")));
+    }),
+};
+
+const followCommand: CommandDef = {
+  name: "follow",
+  summary: "Watch a worker live, or all running workers",
+  description: "Live view of one worker's transcript, or of every running worker in this session. Ctrl-C leaves it.",
+  args: [{ name: "ID", summary: "Worker id (default: all running workers of this session)" }],
+  options: [
+    { name: "all", type: "boolean", summary: "Follow the workers of all sessions" },
+    { name: "auto-exit", type: "number", value: "SECS", optionalValue: true, summary: "Leave SECS seconds after the workers end (default from the config)" },
+  ],
+  examples: ["pai worker follow", "pai worker follow w-20260101-abc", "pai worker follow --all --auto-exit 10"],
+  seeAlso: ["pai worker ps", "pai worker replay", "pai worker pane"],
+  run: (ctx) =>
+    guard("pai worker ps", async () => {
+      const { workers } = readWorkersSection();
+      const ae = ctx.opts["auto-exit"];
+      const autoExit = ae === undefined || ae === false ? 0 : ae === true ? workers.pane.autoExitSecs : Number(ae);
+      await followWorkers(logDir(), (ctx.args.ID as string | undefined) ?? null, flag(ctx, "all"), autoExit);
+    }),
+};
+
+const replayCommand: CommandDef = {
+  name: "replay",
+  summary: "Print the transcript of one worker",
+  description: "Shows what a finished or running worker did, from its recorded events.",
+  args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
+  options: [{ name: "tail", type: "number", value: "N", summary: "Only the last N lines" }],
+  examples: ["pai worker replay w-20260101-abc", "pai worker replay w-20260101-abc --tail 40"],
+  seeAlso: ["pai worker follow", "pai worker log"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      out(replayOutput(logDir(), ctx.args.ID as string, process.stdout.isTTY === true, num(ctx.opts.tail)));
+    }),
+};
+
+const watchCommand: CommandDef = {
+  name: "watch",
+  summary: "Worker list that refreshes every 2 seconds",
+  description: "Runs `pai worker ps --all` again every 2 seconds with the system `watch` program. Ctrl-C leaves it.",
+  examples: ["pai worker watch", "pai worker ps --all"],
+  seeAlso: ["pai worker ps", "pai worker follow"],
+  run: () =>
+    new Promise<number>((resolve, reject) => {
+      const proc = spawn("watch", ["-n", "2", "pai worker ps --all"], { stdio: "inherit" });
+      proc.on("error", (e) => reject(new CliError(`cannot run watch: ${e.message}`, "pai worker ps --all")));
+      proc.on("close", (code) => resolve(code ?? 1));
+    }),
+};
+
+const paneCommand: CommandDef = {
+  name: "pane",
+  summary: "Open a window pane that follows a worker",
+  description:
+    "Opens the follow pane for a worker: a tmux split when you are in tmux, else an iTerm2 pane on macOS, else it prints the follow command to run yourself.",
+  args: [{ name: "ID", summary: "Worker id (default: all running workers)" }],
+  options: [
+    { name: "check", type: "boolean", summary: "Only report whether the pane is open, with its profile file, font and window bounds" },
+    { name: "close-ended", type: "boolean", summary: "Close every open pane whose worker has ended" },
+    { ...OPT.dryRun, summary: "With --close-ended: only list what would be closed" },
+  ],
+  examples: ["pai worker pane", "pai worker pane w-20260101-abc --check", "pai worker pane --close-ended --dry-run"],
+  seeAlso: ["pai worker follow", "pai worker ps"],
+  run: (ctx) =>
+    guard("pai worker follow", async () => {
+      const { workers } = readWorkersSection();
+      const dir = logDir();
+      if (flag(ctx, "close-ended")) {
+        const r = await closeEndedPanes(
+          dir,
+          (wid) => {
+            const st = loadStatus(dir, wid);
+            return st !== null && st.state !== "running";
+          },
+          ctx.dryRun
+        );
+        for (const l of r.closed) out(`${ctx.dryRun ? "would close" : "closed"} ${l}`);
+        for (const l of r.kept) out(`kept ${l}`);
+        if (!r.closed.length) out("no ended worker panes open");
+        return;
+      }
+      const host = await resolveHostSession();
+      const term = host.term;
+      process.stderr.write((host.via === "none" ? `host session: none (${host.reason})` : `host session: ${host.uid} via ${host.via}`) + "\n");
+      const id = ctx.args.ID as string | undefined;
+      if (id) {
+        out(flag(ctx, "check") ? await checkPaneForWorker(id, workers.pane.fontSize, term) : (await openPaneForWorker(dir, workers, id, term)).message);
+      } else {
+        out(await openFollowPane(dir, workers, term, flag(ctx, "check")));
+      }
+    }),
+};
+
+const logCommand: CommandDef = {
+  name: "log",
+  summary: "Worker ledger or the raw events of one worker",
+  description: "No argument lists the worker logs. `all` prints the whole ledger, `tail` its last 20 lines, a worker id its last 30 raw events.",
+  args: [{ name: "WHAT", summary: "all, tail, or a worker id (default: list the logs)" }],
+  examples: ["pai worker log", "pai worker log tail", "pai worker log w-20260101-abc"],
+  seeAlso: ["pai worker replay", "pai worker errors"],
+  run: (ctx) =>
+    guard("pai worker log   (lists the logs)", () => {
+      const dir = logDir();
+      const what = ctx.args.WHAT as string | undefined;
+      const ledger = ledgerPath(dir);
+      if (what === "all") return void out(existsSync(ledger) ? readFileSync(ledger, "utf8") : dim("(no ledger yet)"));
+      if (what === "tail") {
+        if (!existsSync(ledger)) return void out(dim("(no ledger yet)"));
+        return void out(readFileSync(ledger, "utf8").trim().split("\n").slice(-20).join("\n"));
+      }
+      if (what) {
+        const path = eventsPath(dir, what);
+        if (!existsSync(path)) throw new Error(`no event log for ${what}`);
+        return void out(readFileSync(path, "utf8").trim().split("\n").slice(-30).join("\n"));
+      }
+      if (!existsSync(dir)) return void out(dim("(no workers yet)"));
+      for (const f of readdirSync(dir).filter((x) => x.endsWith(".jsonl")).sort()) {
+        const st = statSync(`${dir}/${f}`);
+        out(`  ${f.replace(".jsonl", "")}  ${(st.size / 1024 / 1024).toFixed(1)} MB  ${st.mtime.toISOString().slice(0, 19).replace("T", " ")}`);
+      }
+    }),
+};
+
+const errorsCommand: CommandDef = {
+  name: "errors",
+  summary: "Tool errors workers hit, grouped by kind",
+  description: "Counts the errors workers ran into, with numbers and paths removed so equal errors group together.",
+  options: [{ name: "since", type: "string", value: "AGE", default: "24h", summary: "Only errors newer than this, e.g. 30m, 2h, 1d" }],
+  examples: ["pai worker errors", "pai worker errors --since 2h"],
+  seeAlso: ["pai worker log"],
+  run: (ctx) =>
+    guard("pai worker errors --since 24h", async () => {
+      const { errorsTable, groupToolErrors, parseSince, readToolErrors } = await import("../../workers/tool-errors.js");
+      const since = str(ctx.opts.since) ?? "24h";
+      const ms = parseSince(since);
+      if (ms === null) throw new Error(`bad --since "${since}" (use 30m, 2h, 1d)`);
+      out(errorsTable(groupToolErrors(readToolErrors(logDir(), Date.now() - ms))));
+    }),
+};
+
+const statusLineCommand: CommandDef = {
+  name: "status-line",
+  summary: "One-line worker summary for a status bar",
+  description:
+    "Prints nothing when no worker is in scope. Called by the status line script with the terminal session id, the pane's directory and the Claude session id (which claims the workers that session's shell started).",
+  args: [
+    { name: "TERM", summary: "Terminal session id (default: $ITERM_SESSION_ID)" },
+    { name: "CWD", summary: "Directory of the pane (default: here)" },
+    { name: "SESSION", summary: "Claude session id" },
+  ],
+  examples: ["pai worker status-line", "pai worker status-line \"$ITERM_SESSION_ID\" \"$PWD\" ''"],
+  seeAlso: ["pai worker ps"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      const line = statusLineOutput(
+        logDir(),
+        (ctx.args.TERM as string | undefined) ?? process.env.ITERM_SESSION_ID ?? "",
+        (ctx.args.CWD as string | undefined) ?? process.cwd(),
+        (ctx.args.SESSION as string | undefined) ?? "",
+        new Date(),
+        readWorkersSection().workers.active
+      );
+      if (line) out(line);
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// Talking to workers
+// ---------------------------------------------------------------------------
+
+const sayCommand: CommandDef = {
+  name: "say",
+  summary: "Send a message to a running worker",
+  description: "The message goes to the worker's open input, as if you had typed it in its pane. Prints ok.",
+  args: [
+    { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
+    { name: "TEXT", required: true, summary: "The message" },
+  ],
+  options: [{ name: "goal", type: "string", value: "TEXT", summary: "Rename the worker's goal in ps and its pane before sending" }],
+  examples: ["pai worker say w-20260101-abc 'Also cover the empty case'", "pai worker say w-20260101-abc 'Go on' --goal 'finish the export'"],
+  seeAlso: ["pai worker goal", "pai worker resume"],
+  run: (ctx) =>
+    guard("pai worker ps", async () => {
+      const dir = logDir();
+      const goal = str(ctx.opts.goal);
+      if (goal !== undefined) setWorkerLabel(dir, ctx.args.ID as string, goal);
+      await sayToWorker(dir, ctx.args.ID as string, ctx.args.TEXT as string);
+      out("ok");
+    }),
+};
+
+const goalCommand: CommandDef = {
+  name: "goal",
+  summary: "Rename what a running worker is working on",
+  description: "Changes the label shown in ps and the worker's pane, without sending it a message. Prints ok.",
+  args: [
+    { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
+    { name: "TEXT", required: true, summary: "The new label" },
+  ],
+  examples: ["pai worker goal w-20260101-abc 'fix the retry loop'"],
+  seeAlso: ["pai worker say", "pai worker ps"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      setWorkerLabel(logDir(), ctx.args.ID as string, ctx.args.TEXT as string);
+      out("ok");
+    }),
+};
+
+const handoffCommand: CommandDef = {
+  name: "handoff",
+  summary: "From inside a worker: pass a question or result to its parent",
+  description:
+    'Adds a message to the parent\'s inbox and, when the parent is running, says it to the parent. The payload is JSON: {"kind":"proposal|question|blocker","text":"...","data":{...}}. Sender and receiver come from the environment.',
+  args: [{ name: "JSON", required: true, summary: "The payload as JSON" }],
+  examples: [
+    `pai worker handoff '{"kind":"question","text":"Which branch should I target?"}'`,
+    `pai worker handoff '{"kind":"blocker","text":"Tests need a database","data":{"table":"users"}}'`,
+  ],
+  seeAlso: ["pai worker say"],
+  run: (ctx) =>
+    guard("pai worker handoff '{\"kind\":\"question\",\"text\":\"...\"}'", async () => {
+      const json = ctx.args.JSON as string;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(json);
+      } catch {
+        throw new Error(`payload is not JSON: ${json}`);
+      }
+      const h = await handoffFromInside(logDir(), process.env, payload);
+      out(`ok → ${h.to} (${h.kind}); inbox ${h.to}.inbox.jsonl`);
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// Taking the work back
+// ---------------------------------------------------------------------------
+
+const mergeCommand: CommandDef = {
+  name: "merge",
+  summary: "Merge a worker's branch into your checkout",
+  description: "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch.",
+  args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker pending`)" }],
+  options: [
+    { name: "no-commit", type: "boolean", summary: "Apply the changes uncommitted; keep branch and worktree" },
+    { name: "patch", type: "boolean", summary: "Same as --no-commit" },
+  ],
+  examples: ["pai worker merge w-20260101-abc", "pai worker merge w-20260101-abc --no-commit"],
+  seeAlso: ["pai worker verify", "pai worker pending", "pai worker discard"],
+  run: (ctx) =>
+    guard("pai worker pending", () => {
+      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch") }));
+    }),
+};
+
+const verifyCommand: CommandDef = {
+  name: "verify",
+  summary: "Check that a worker's changes are already in your checkout",
+  description:
+    "Compares what the worker committed with the working tree (or --against a ref). Exit 0 when every file is identical, so discarding is safe; exit 1 otherwise. Also reads archived workers.",
+  args: [{ name: "ID", required: true, summary: "Worker id" }],
+  options: [
+    { name: "against", type: "string", value: "REF", summary: "Compare against this git ref instead of the working tree" },
+    { ...OPT.json, summary: "Print the result as JSON" },
+  ],
+  examples: ["pai worker verify w-20260101-abc", "pai worker verify w-20260101-abc --against main --json"],
+  seeAlso: ["pai worker merge", "pai worker discard"],
+  run: (ctx) =>
+    guard("pai worker pending", () => {
+      const r = verifyWorker(logDir(), ctx.args.ID as string, { against: str(ctx.opts.against) });
+      if (flag(ctx, "json")) out(JSON.stringify(r, null, 2));
+      else {
+        for (const f of r.files) out(`${f.state.padEnd(9)} ${f.path}`);
+        out(`${r.ok ? "all identical" : "not applied"} (${r.files.length} file(s), ${r.ref} vs ${r.against})`);
+      }
+      return r.ok ? 0 : 1;
+    }),
+};
+
+const pendingCommand: CommandDef = {
+  name: "pending",
+  summary: "Finished workers whose work is not merged yet",
+  description:
+    "Lists workers whose branch or worktree holds work that is not in this repository. With --gate it works as a release check: exit 1 with the list unless PAI_ALLOW_PENDING=1.",
+  options: [
+    { name: "all", type: "boolean", summary: "Every repository, not just this one" },
+    { ...OPT.json, summary: "Machine-readable output" },
+    { name: "gate", type: "boolean", summary: "Release check: exit 1 with the list unless PAI_ALLOW_PENDING=1" },
+  ],
+  examples: ["pai worker pending", "pai worker pending --all --json", "pai worker pending --gate"],
+  seeAlso: ["pai worker merge", "pai worker discard"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      const res = pendingResults(logDir(), flag(ctx, "all") ? undefined : process.cwd());
+      if (flag(ctx, "gate")) {
+        const g = pendingGate(res);
+        if (g.message) process.stderr.write(g.message + "\n");
+        return g.code;
+      }
+      if (flag(ctx, "json")) out(JSON.stringify(res, null, 2));
+      else out(res.length ? formatPending(res, flag(ctx, "all")) : "no pending worker results");
+    }),
+};
+
+const discardCommand: CommandDef = {
+  name: "discard",
+  summary: "Throw away a worker's branch and worktree",
+  description: "Removes the worktree and branch of a worker and keeps nothing. Use `verify` first if you are unsure.",
+  args: [{ name: "ID", required: true, summary: "Worker id" }],
+  examples: ["pai worker discard w-20260101-abc"],
+  seeAlso: ["pai worker verify", "pai worker merge", "pai worker gc"],
+  run: (ctx) =>
+    guard("pai worker pending", () => {
+      out(discardWorker(logDir(), ctx.args.ID as string));
+    }),
+};
+
+const gcCommand: CommandDef = {
+  name: "gc",
+  summary: "Archive leftover worker worktrees",
+  description: "Moves old finished workers' worktrees into refs/pai-archive/ID. Files git ignores are not kept.",
+  options: [
+    { name: "older-than", type: "string", value: "HOURS", default: "24", summary: "Minimum age of a finished worker, in hours" },
+    { ...OPT.dryRun, summary: "Print what would be archived, change nothing" },
+  ],
+  examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72"],
+  seeAlso: ["pai worker discard", "pai worker pending"],
+  run: (ctx) =>
+    guard("pai worker gc --dry-run", () => {
+      const raw = str(ctx.opts["older-than"]) ?? "24";
+      const hours = Number(raw);
+      if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
+      const res = gcWorktrees(logDir(), hours, ctx.dryRun);
+      const verb = ctx.dryRun ? "would archive" : "archived";
+      for (const r of res) out(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
+      out(`${res.filter((r) => r.archive).length} ${ctx.dryRun ? "would be archived" : "archived"}`);
+    }),
+};
+
+const killCommand: CommandDef = {
+  name: "kill",
+  summary: "Stop a running worker",
+  description: "Sends SIGTERM to the worker; it saves its final state and exits. A worker whose process id has been reused by something else is marked lost and nothing is signalled.",
+  args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
+  examples: ["pai worker kill w-20260101-abc"],
+  seeAlso: ["pai worker ps"],
+  run: (ctx) =>
+    guard("pai worker ps", async () => {
+      const id = ctx.args.ID as string;
+      const dir = logDir();
+      const status = loadStatus(dir, id);
+      if (!status) throw new Error(`no worker named "${id}"`);
+      if (status.state !== "running") throw new Error(`worker ${id} is not running (state: ${status.state})`);
+      if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
+      if (!ownsPid(status)) {
+        status.state = "lost";
+        status.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
+        status.rc = null;
+        saveStatus(dir, status);
+        out(`worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`);
+        return;
+      }
+      try {
+        requestKill(dir, ledgerPath(dir), id);
+        process.kill(status.pid, "SIGTERM");
+        // The run's own SIGTERM handler writes the terminal status; only write ours if it never did.
+        const selfReported = await waitForTerminalStatus(dir, id);
+        if (!selfReported) {
+          const latest = loadStatus(dir, id) ?? status;
+          latest.state = "killed";
+          latest.rc = latest.rc ?? 143;
+          latest.last = latest.last || "killed by signal SIGTERM";
+          latest.endReason = "pai-worker-kill";
+          latest.endBy = callerDescription();
+          saveStatus(dir, latest);
+        }
+        out(`sent SIGTERM to worker ${id} (pid ${status.pid})`);
+      } catch (e) {
+        if (msgOf(e).includes("ESRCH")) throw new Error(`process ${status.pid} not found (already exited?)`);
+        throw e;
+      }
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// Waiting
+// ---------------------------------------------------------------------------
+
+const waitOnCommand: CommandDef = {
+  name: "wait-on",
+  summary: "Wait for a background job to finish",
+  description:
+    "Waits at most --max seconds (default 110, limit 115) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.\n" +
+    "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.",
+  args: [{ name: "PID", required: true, summary: "Process id of the job" }],
+  options: [
+    { name: "log", type: "string", value: "FILE", summary: "Log file whose last lines are printed on return; FILE.rc holds the exit code" },
+    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 115)" },
+    { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
+  ],
+  examples: ["pai worker wait-on 12345", "pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60"],
+  seeAlso: ["pai worker wait"],
+  run: (ctx) =>
+    guard("pai worker wait-on <pid>", async () => {
+      const wid = process.env.PAI_WORKER_ID;
+      const mark = wid ? statusMarker(logDir(), wid) : undefined;
+      // a killed wait-on must not leave a stale waitingOn behind
+      for (const sig of ["SIGINT", "SIGTERM"] as const) {
+        process.once(sig, () => {
+          mark?.(null);
+          process.exit(128 + (sig === "SIGINT" ? 2 : 15));
+        });
+      }
+      return await waitOn(
+        { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail) },
+        { ...waitOnDeps, mark }
+      );
+    }),
+};
+
+const waitCommand: CommandDef = {
+  name: "wait",
+  summary: "Wait for workers to finish and print each result",
+  description:
+    "Blocks until the given workers finish and prints one JSON line per worker. Exit 1 on failure or timeout. Use this or background tasks instead of sleeping and re-checking `ps`.",
+  args: [{ name: "IDS", required: true, variadic: true, summary: "One or more worker ids" }],
+  options: [{ name: "timeout", type: "number", value: "SECS", summary: "Give up after this many seconds (default 900)" }],
+  examples: ["pai worker wait w-20260101-abc", "pai worker wait w-20260101-abc w-20260101-def --timeout 300"],
+  seeAlso: ["pai worker ps", "pai worker wait-on"],
+  run: (ctx) =>
+    guard("pai worker ps", async () => {
+      const { results, timedOut } = await waitWorkers(logDir(), ctx.args.IDS as string[], {
+        timeoutMs: (num(ctx.opts.timeout) ?? 900) * 1000,
+      });
+      for (const r of results) out(JSON.stringify(r));
+      if (timedOut.length) {
+        process.stderr.write(err(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`) + "\n");
+        return 1;
+      }
+      const failed = results.filter((r) => !r.ok).map((r) => r.id);
+      if (failed.length) {
+        process.stderr.write(err(`pai worker wait: failed: ${failed.join(", ")}`) + "\n");
+        return 1;
+      }
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// Which model, which provider
+// ---------------------------------------------------------------------------
+
+const modelCommand: CommandDef = {
+  name: "model",
+  summary: "Show or set the model a provider uses",
+  description:
+    "No arguments lists the models of every provider.\n" +
+    "`model MODEL-ID` sets the default model of the active provider.\n" +
+    "`model CAPABILITY` shows one capability (default, fast, image, ...); `model CAPABILITY MODEL-ID` sets it.\n" +
+    "`pai worker capability` chooses which provider serves a capability.",
+  args: [
+    { name: "WHAT", summary: "A capability name, or a model id to set as default" },
+    { name: "MODEL", summary: "Model id to set for that capability" },
+  ],
+  options: [
+    { ...OPT.provider, summary: "Provider to read or change (default: the active one)" },
+    { name: "capability", type: "string", value: "NAME", summary: "Capability to show or set, with the model id as the only argument" },
+  ],
+  examples: ["pai worker model", "pai worker model fast", "pai worker model fast glm-fast --provider glm"],
+  seeAlso: ["pai worker capability", "pai providers"],
+  run: (ctx) =>
+    guard("pai worker model", () => {
+      const { workers } = readWorkersSection();
+      let what = ctx.args.WHAT as string | undefined;
+      let model = ctx.args.MODEL as string | undefined;
+      const cap = str(ctx.opts.capability);
+      const provider = str(ctx.opts.provider);
+      if (cap !== undefined) {
+        if (!isModelCapability(cap)) throw new WorkersConfigError(`"${cap}" is not a valid capability name`);
+        if (model !== undefined) throw new WorkersConfigError("with --capability pass only a model id");
+        model = what;
+        what = cap;
+      }
+      if (what === undefined) {
+        for (const line of describeModels(workers)) out(`  ${line}`);
+        return;
+      }
+      let capability: ModelCapability = "default";
+      let id = what;
+      if (isModelCapability(what)) {
+        capability = what;
+        if (model === undefined) {
+          const name = resolveProviderName(workers, provider);
+          const p = getProviderOrNative(workers, name);
+          if (p) out(`  ${name} ${capability} ${p.models[capability] ?? "(none)"}`);
+          return;
+        }
+        id = model;
+      } else if (model !== undefined) {
+        throw new WorkersConfigError(`unexpected second argument "${model}" — usage: model [<capability>] <model-id>`);
+      }
+      const name = resolveProviderName(workers, provider);
+      const fresh = setProviderModel(name, capability, id);
+      const p = getProviderOrNative(fresh, name);
+      if (p) {
+        out(ok(`${name} ${capability} model: ${p.models[capability]}`));
+        out(dim(`  ${modelPrefsText(p)}`));
+      }
+    }),
+};
+
+const capabilityCommand: CommandDef = {
+  name: "capability",
+  summary: "Choose which provider serves a capability (e.g. image)",
+  description:
+    "No arguments lists every preference and what it resolves to now. `capability NAME PROVIDER[,PROVIDER...]` sets the list (the first usable one wins); `capability NAME --unset` removes it.\n" +
+    "A provider of kind image preferred for \"image\" is what `pai worker run --capability image` calls.",
+  args: [
+    { name: "NAME", summary: "Capability name, e.g. image" },
+    { name: "PROVIDERS", summary: "Provider names, comma-separated, best first" },
+  ],
+  options: [
+    { name: "unset", type: "boolean", summary: "Remove the preference for NAME" },
+    { ...OPT.json, summary: "Machine-readable output" },
+  ],
+  examples: ["pai worker capability", "pai worker capability image imagegen,backup", "pai worker capability image --unset"],
+  seeAlso: ["pai worker model", "pai worker run"],
+  run: (ctx) =>
+    guard("pai worker capability", () => {
+      const name = ctx.args.NAME as string | undefined;
+      const providers = ctx.args.PROVIDERS as string | undefined;
+      if (name === undefined) {
+        const { workers } = readWorkersSection();
+        const lines = describeCapabilities(workers);
+        if (flag(ctx, "json")) out(JSON.stringify(lines));
+        else for (const line of lines) out(`  ${line}`);
+        return;
+      }
+      if (flag(ctx, "unset")) {
+        unsetCapabilityPreference(name);
+        out(ok(`removed the capability preference for "${name}"`));
+        return;
+      }
+      if (providers === undefined) {
+        throw new Error(`usage: pai worker capability ${name} <provider>[,<provider>…]  (or --unset to remove it)`);
+      }
+      const workers = setCapabilityPreference(name, providers.split(",").map((p) => p.trim()));
+      const line = describeCapabilities(workers).find((l) => l.startsWith(`${name}:`));
+      out(ok(`${name}: [${workers.capabilities[name]?.join(", ")}]`));
+      if (line) out(`  -> ${line.split(" -> ")[1]}`);
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// The group
+// ---------------------------------------------------------------------------
+
+/** Worker verbs not ported yet: running one says to use the old `pai`. */
+const laterVerb = (name: string, summary: string): CommandDef => ({
+  name,
+  summary,
+  description: summary,
+  examples: [`pai worker ${name}`],
+  later: `worker ${name}`,
+  // allowUnknown so the old command's own flags reach the "use the old pai" message instead of a usage error
+  allowUnknown: true,
+});
+
+export const WORKER_LATER: CommandDef[] = [
+  laterVerb("on", "Route Agent-tool subagents to workers"), // later: worker on
+  laterVerb("off", "Stop routing; Agent-tool subagents run on Anthropic again"), // later: worker off
+  laterVerb("pool", "Worker session pool: on, off, status"), // later: worker pool
+  laterVerb("fallback", "Machine-wide fallback provider: on, off, status"), // later: worker fallback
+  laterVerb("install", "Install the Agent hook and the glm shims"), // later: worker install
+  laterVerb("proxy", "The local Anthropic-to-OpenAI proxy"), // later: worker proxy
+  laterVerb("mcp", "MCP servers workers may load"), // later: worker mcp
+  laterVerb("controls", "Hand the desktop controls to a worker or take them back"), // later: worker controls
+  laterVerb("providers", "Providers: list, add, remove, use, enable, disable, test"), // later: worker providers
+  laterVerb("classes", "Which provider serves which class of work"), // later: worker classes
+  laterVerb("set", "Set the provider of a class"), // later: worker set
+  laterVerb("unset", "Remove the provider of a class"), // later: worker unset
+  laterVerb("roles", "Old name of classes"), // later: worker roles
+  laterVerb("policy", "Local or cloud routing policy"), // later: worker policy
+  laterVerb("bench", "Benchmark providers"), // later: worker bench
+  laterVerb("config", "Worker configuration file: path, init, migrate, check"), // later: worker config
+  laterVerb("local", "Local model provider"), // later: worker local
+];
+
+export const workerCommand: CommandDef = {
+  name: "worker",
+  summary: "Run tasks on other providers: run, ps, follow, merge, ...",
+  description:
+    "Workers are Claude Code runs on a provider you chose (cheaper, faster or local) that do one task while you keep working.\n" +
+    "Start one with `run`, watch it with `ps` or `follow`, then bring its work back with `merge`.",
+  examples: ["pai worker run --class implement -p 'Fix the retry loop'", "pai worker ps", "pai worker merge w-20260101-abc"],
+  seeAlso: ["pai providers", "pai help worker run"],
+  subcommands: [
+    runCommand,
+    resumeCommand,
+    psCommand,
+    followCommand,
+    replayCommand,
+    watchCommand,
+    paneCommand,
+    logCommand,
+    errorsCommand,
+    statusLineCommand,
+    sayCommand,
+    goalCommand,
+    handoffCommand,
+    mergeCommand,
+    verifyCommand,
+    pendingCommand,
+    discardCommand,
+    gcCommand,
+    killCommand,
+    waitOnCommand,
+    waitCommand,
+    modelCommand,
+    capabilityCommand,
+    ...WORKER_LATER,
+  ],
+};

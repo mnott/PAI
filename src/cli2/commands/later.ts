@@ -44,7 +44,6 @@ export const LATER_GROUPS: Pick<GroupDef, "id" | "commands">[] = [
   {
     id: "workers",
     commands: [
-      later("worker", "Run subagents on other providers: run, ps, follow, merge, ..."), // later: worker
       later("router", "Request router: start, stop, status, run, stats"), // later: router
     ],
   },
