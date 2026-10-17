@@ -2,8 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai, treeDiff, treeFor } from "../lib/legacy-check.js";
-import { registerTopicCommands } from "../impl/topic.js";
+import { helpProblems, runPai } from "../lib/legacy-check.js";
 import { topicCommand } from "./topic.js";
 
 let home = "";
@@ -15,9 +14,6 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllEnvs());
 
 describe("pai topic", () => {
-  it("declares exactly the subcommands, flags and arguments the implementation registers", () => {
-    expect(treeDiff(topicCommand, treeFor(registerTopicCommands, "topic"))).toEqual([]);
-  });
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(topicCommand)).toEqual([]);
   });
@@ -25,5 +21,10 @@ describe("pai topic", () => {
     const r = await runPai(["topic","check"]);
     expect(r.code).toBe(2);
     expect(r.out + r.err).toContain("missing required argument CONTEXT");
+  });
+  it("pai topic check rejects an out-of-range threshold with exit 1", async () => {
+    const r = await runPai(["topic","check","some text","--threshold","2"]);
+    expect(r.code).toBe(1);
+    expect(r.out + r.err).toContain("--threshold must be a number between 0 and 1");
   });
 });

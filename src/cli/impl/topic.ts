@@ -12,7 +12,6 @@
  *   pai topic check "database schema migration" --threshold 0.7
  */
 
-import type { Command } from "commander";
 import { ok, warn, err, dim, bold, header } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
@@ -88,22 +87,21 @@ function printTopicResult(result: TopicCheckResult): void {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-async function cmdCheck(
+export async function topicCheck(
   context: string,
   opts: {
     current?: string;
     threshold?: string;
     json?: boolean;
   }
-): Promise<void> {
+): Promise<number> {
   const client = makeClient();
 
   const threshold = opts.threshold ? parseFloat(opts.threshold) : undefined;
 
   if (threshold !== undefined && (isNaN(threshold) || threshold < 0 || threshold > 1)) {
     console.error(err("  --threshold must be a number between 0 and 1"));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   try {
@@ -115,16 +113,13 @@ async function cmdCheck(
 
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));
-      return;
+      return 0;
     }
 
     printTopicResult(result);
 
     // Exit with code 1 if a shift was detected (useful for scripting / hooks)
-    if (result.shifted) {
-      process.exitCode = 1;
-      return;
-    }
+    return result.shifted ? 1 : 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log();
@@ -132,39 +127,6 @@ async function cmdCheck(
     console.log(dim(`  ${msg}`));
     console.log(dim("  Start it with: pai daemon serve"));
     console.log();
-    process.exitCode = 1;
-    return;
+    return 1;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerTopicCommands(topicCmd: Command): void {
-  // pai topic check <context>
-  topicCmd
-    .command("check <context>")
-    .description(
-      "Check whether context text has drifted to a different project.\n" +
-      'Example: pai topic check "working on JWT authentication"\n' +
-      "Exit code 1 if a shift is detected (useful for hooks)."
-    )
-    .option(
-      "--current <slug>",
-      "The project this session is currently routed to"
-    )
-    .option(
-      "--threshold <n>",
-      "Confidence threshold [0-1] to declare a shift (default: 0.6)"
-    )
-    .option("--json", "Output raw JSON result")
-    .action(
-      async (
-        context: string,
-        opts: { current?: string; threshold?: string; json?: boolean }
-      ) => {
-        await cmdCheck(context, opts);
-      }
-    );
 }
