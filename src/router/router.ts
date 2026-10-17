@@ -91,6 +91,71 @@ export function stripThinking(body: Record<string, unknown>): Record<string, unk
   return { ...body, messages: cleaned };
 }
 
+/**
+ * Claude Code opens the system prompt with `x-anthropic-billing-header: ...
+ * cch=<hash of the body>; ...`, a block that differs on every request. It sits
+ * in front of the whole conversation, so a prefix cache (local servers) can
+ * reuse only what precedes it (the tool definitions, ~3-5k tokens) and
+ * re-prefills everything after it each turn. Only Anthropic uses the header.
+ */
+export function stripBillingHeader(body: Record<string, unknown>): Record<string, unknown> {
+  const system = body.system;
+  if (!Array.isArray(system)) return body;
+  const kept = system.filter(
+    (b) => !(b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" && (b as { text: string }).text.startsWith("x-anthropic-billing-header:"))
+  );
+  return kept.length === system.length ? body : { ...body, system: kept };
+}
+
+function blockText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : ""))
+    .join("\n");
+}
+
+/**
+ * Claude Code appends a `role:"system"` message (environment + `<total_tokens>`
+ * counter) after every user turn and keeps the old ones. A local server's chat
+ * template hoists system messages into the single system block at the front, so
+ * each turn grows that block by ~18 tokens and everything after it moves: the
+ * prefix cache hits only up to the end of the system prompt (measured
+ * 2026-10-17, 2638 of 5982 tokens, +18 per turn). Folding each one into the
+ * user message before it keeps the history append-only; a leading one becomes
+ * a user message.
+ */
+export function foldSystemMessages(body: Record<string, unknown>): Record<string, unknown> {
+  const messages = body.messages;
+  if (!Array.isArray(messages) || !messages.some((m) => m && (m as { role?: unknown }).role === "system")) return body;
+  const out: Array<{ role: string; content: unknown }> = [];
+  for (const m of messages as Array<{ role: string; content: unknown }>) {
+    if (!m || m.role !== "system") {
+      out.push(m);
+      continue;
+    }
+    const text = blockText(m.content);
+    if (!text) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.role === "user") {
+      const blocks = typeof prev.content === "string" ? [{ type: "text", text: prev.content }] : Array.isArray(prev.content) ? prev.content : [];
+      out[out.length - 1] = { ...prev, content: [...blocks, { type: "text", text }] };
+    } else {
+      out.push({ role: "user", content: [{ type: "text", text }] });
+    }
+  }
+  return { ...body, messages: out };
+}
+
+function isLoopback(baseUrl: string): boolean {
+  try {
+    const h = new URL(baseUrl).hostname;
+    return h === "127.0.0.1" || h === "localhost" || h === "[::1]" || h === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export interface Upstream {
   url: URL;
   headers: Record<string, string>;
@@ -151,8 +216,9 @@ export function prepare(
   if (res.kind === "claude") {
     base = res.base;
   } else {
-    out = stripThinking(out);
+    out = stripBillingHeader(stripThinking(out));
     base = res.provider.baseUrl;
+    if (isLoopback(base)) out = foldSystemMessages(out);
     let token: string | null;
     try {
       token = resolveProviderKey(res.provider);
