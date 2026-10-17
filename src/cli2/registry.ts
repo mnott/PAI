@@ -6,6 +6,13 @@ import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands
 import { providersCommand } from "./commands/providers.js";
 import { moreCommand, setupsCommand } from "./commands/setups.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
+import { findCommand, memoryCommand } from "./commands/memory.js";
+import { kgCommand } from "./commands/kg.js";
+import { zettelCommand } from "./commands/zettel.js";
+import { observationCommand } from "./commands/observation.js";
+import { obsidianCommand } from "./commands/obsidian.js";
+import { skillCommand } from "./commands/skill.js";
+import { auditCommand } from "./commands/audit.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -24,3 +31,7 @@ export const GROUPS: GroupDef[] = [
   { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
   ...LATER_GROUPS.map((g) => ({ id: g.id, title: titles[g.id as keyof typeof titles], daily: false, commands: g.commands })),
 ];
+
+// Memory, knowledge and audit commands (one file per group in ./commands).
+GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, findCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand);
+GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand);

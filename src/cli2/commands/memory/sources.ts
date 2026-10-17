@@ -22,7 +22,7 @@
  *                 backlog that will finish from a treadmill that never will
  */
 
-import { ok, warn, dim, bold, header, renderTable } from "../../utils.js";
+import { ok, warn, dim, bold, header, renderTable } from "../../lib/utils.js";
 import type { StorageBackend } from "../../../storage/interface.js";
 
 const num = (v: unknown): number => Number(v ?? 0);

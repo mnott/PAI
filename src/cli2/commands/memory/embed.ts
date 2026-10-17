@@ -3,7 +3,7 @@
 import type { Command } from "commander";
 import type { StorageBackend } from "../../../storage/interface.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
-import { dim, bold, ok, err } from "../../utils.js";
+import { dim, bold, ok, err } from "../../lib/utils.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
 
