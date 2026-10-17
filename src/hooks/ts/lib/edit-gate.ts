@@ -35,6 +35,42 @@ export function isProseEdit(filePath: string): boolean {
   return filePath.split(/[\\/]/).some((segment) => segment === "Notes" || segment === "notes");
 }
 
+export function decideOrchestratorEdit(filePath: string): EditGateDecision {
+  if (isProseEdit(filePath)) return { decision: "allow" };
+  if (
+    filePath === "/tmp" ||
+    filePath.startsWith("/tmp/") ||
+    filePath === "/private/tmp" ||
+    filePath.startsWith("/private/tmp/")
+  ) {
+    return { decision: "allow" };
+  }
+  return {
+    decision: "block",
+    reason: `orchestrator mode: this worker plans and reviews and does not edit code — retrying Edit/Write on ${filePath} or any other code file will be denied the same way. Next step: write a unit spec to a file under /tmp, then run pai worker run --provider local30x8 --class implement -p "$(cat <spec>)" and review its diff when it finishes (target: ${filePath})`,
+  };
+}
+
+const CODE_EXT = "(?:ts|tsx|js|jsx|mjs|cjs|json|py|go|rs|java|c|cc|cpp|h|sh|css|html|yml|yaml|toml)";
+const IN_PLACE = /\bsed\s+(?:-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z0-9]*i/;
+const REDIRECT = new RegExp(`(?<![>&\\d])>>?\\s*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
+const TEE = new RegExp(`\\btee\\s+(?:-[a-z]+\\s+)*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
+
+const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p);
+
+/** Bash for an orchestrator worker: blocks in-place code writes, allows git mv/rm/merge and running tests. */
+export function decideOrchestratorBash(command: string): EditGateDecision {
+  const writesCode =
+    IN_PLACE.test(command) ||
+    [...command.matchAll(REDIRECT), ...command.matchAll(TEE)].some((m) => !isScratch(m[1]));
+  if (!writesCode) return { decision: "allow" };
+  return {
+    decision: "block",
+    reason:
+      "orchestrator mode: Bash may not write code files in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed.",
+  };
+}
+
 export function decideEditGate(ctx: EditGateContext): EditGateDecision {
   if (ctx.isPaiWorker) return { decision: "allow" };
   if (ctx.isExemptPrefix) return { decision: "allow" };
