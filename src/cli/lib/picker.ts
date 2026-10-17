@@ -22,7 +22,7 @@ export interface PickerState {
   cursor: number;
 }
 
-export type PickerAction = "none" | "select" | "cancel";
+export type PickerAction = "none" | "select" | "cancel" | "cd";
 
 /** Pure: one keypress -> next state and what the driver should do. */
 export function pickerKey(state: PickerState, str: string | undefined, key: Key, visibleCount: number): { state: PickerState; action: PickerAction } {
@@ -32,6 +32,7 @@ export function pickerKey(state: PickerState, str: string | undefined, key: Key,
   if (key.name === "down") return { state: { ...state, cursor: Math.min(Math.max(0, visibleCount - 1), state.cursor + 1) }, action: "none" };
   if (key.name === "backspace") return { state: { filter: state.filter.slice(0, -1), cursor: 0 }, action: "none" };
   if (key.ctrl && key.name === "u") return { state: { filter: "", cursor: 0 }, action: "none" };
+  if (key.ctrl && key.name === "g") return { state, action: "cd" };
   if (str && !key.ctrl && str >= " " && str !== "\u007f") return { state: { filter: state.filter + str, cursor: 0 }, action: "none" };
   return { state, action: "none" };
 }
@@ -49,6 +50,8 @@ export interface PickerOpts<T> {
   detail?(item: T): string;
   maxRows?: number;
   empty?: string;
+  /** Called when the user presses Ctrl-G on a row */
+  onCd?: (row: T) => void;
 }
 
 export function filterItems<T>(items: T[], filter: string, text: (i: T) => string): T[] {
@@ -78,7 +81,7 @@ export function pickerView<T>(state: PickerState, opts: PickerOpts<T>, st: Style
   if (shown.length > max) lines.push(st.dim(`  … ${shown.length} in total`));
   const cur = shown[state.cursor];
   const detail = cur && opts.detail ? opts.detail(cur) : "";
-  lines.push("", detail ? `  ${detail}` : "", st.dim(opts.footer));
+  lines.push("", detail ? `  ${detail}` : "", st.dim(opts.footer + " · Ctrl-G cd"));
   return lines;
 }
 
@@ -129,6 +132,13 @@ export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, outpu
       state = r.state;
       if (r.action === "cancel") return finish(null);
       if (r.action === "select") return finish(shown[state.cursor] ?? null);
+      if (r.action === "cd") {
+        const row = shown[state.cursor];
+        if (row) {
+          opts.onCd?.(row);
+          return finish(null);
+        }
+      }
       draw();
     };
     const onEnd = () => finish(null);
