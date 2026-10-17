@@ -494,11 +494,12 @@ function appendEventFile(logDir: string, ev: SupervisionEvent): void {
 }
 
 /** Record that an event reached its owner's terminal — the hook then skips it. */
-function appendPushReceipt(logDir: string, ev: SupervisionEvent): void {
+function appendPushReceipt(logDir: string, ev: SupervisionEvent, key: string = ev.session): void {
   try {
-    appendFileSync(supervisionPushedPath(logDir, ev.session), `${ev.id}\n`, "utf8");
-  } catch {
-    // a missing receipt only means the hook may repeat the line
+    appendFileSync(supervisionPushedPath(logDir, key), `${ev.id}\n`, "utf8");
+  } catch (e) {
+    // a missing receipt only means the hook may repeat the line, but the cause must be findable
+    logSkip(logDir, key, ev, `receipt write failed: ${(e as Error).message}`);
   }
 }
 
@@ -838,7 +839,7 @@ async function pointPass(
     // so an announced event can never be counted again
     for (const ev of summary ? [...stale, ...due] : due) {
       pointered[ev.id] = now.getTime();
-      appendPushReceipt(logDir, ev);
+      appendPushReceipt(logDir, ev, session); // the key the events were read from, not ev.session
     }
     typedPanes.add(iterm);
     typed.push(session);
