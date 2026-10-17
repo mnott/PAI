@@ -215,6 +215,14 @@ function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, st
  * dedup against delivered ids is the caller's job (see filterUndelivered).
  * Workers without an owning session are skipped — nobody to notify.
  */
+/** A dead, zero-turn registration older than this never ran: no alerts for it. */
+export const HOLLOW_MS = 10 * 60_000;
+
+/** Undelivered alerts older than this are history, not news. */
+export const BACKLOG_AGE_MS = 3_600_000;
+/** This many stale alerts collapse into one summary notice. */
+export const BACKLOG_MIN = 10;
+
 export function detectSupervisionEvents(
   statuses: WorkerStatus[],
   opts: DetectOptions
@@ -245,6 +253,10 @@ export function detectSupervisionEvents(
         kind = "failed";
         rc = s.state === "lost" ? null : s.rc;
       }
+    } else if (!isAlive(s.pid) && (s.turns ?? 0) === 0 && ageMs(s.updated, opts.now) > HOLLOW_MS) {
+      // hollow registration: never ran a turn and its runner is long gone —
+      // there is no run to report on, so nothing to alert about
+      continue;
     } else if (!isAlive(s.pid) && ageMs(s.updated, opts.now) > deadGraceMs) {
       // state says running but the runner is gone (SIGKILL, crash) — the
       // status will never get its rc, so supervision is the only witness
@@ -736,29 +748,47 @@ export async function pointUndrained(
     } catch {
       // no receipts
     }
-    const due: SupervisionEvent[] = [];
+    let due: SupervisionEvent[] = [];
+    const stale: SupervisionEvent[] = [];
     for (const l of lines.slice(cursor)) {
       try {
         const ev = JSON.parse(l) as SupervisionEvent;
+        if (ev.session && ev.session !== session) continue; // foreign event: never this session's
         const age = now.getTime() - new Date(ev.ts.replace(" ", "T")).getTime();
-        if (age > POINTER_AFTER_MS && !receipts.has(ev.id) && !pointered[ev.id]) due.push(ev);
+        if (receipts.has(ev.id) || pointered[ev.id]) continue;
+        if (age > BACKLOG_AGE_MS) stale.push(ev);
+        else if (age > POINTER_AFTER_MS) due.push(ev);
       } catch {
         // damaged line: the hook consumes it
       }
     }
-    if (due.length === 0) continue;
-    const iterm = paneForSession(logDir, session, statuses.find((s) => s.id === due[0].worker));
+    // a long gap: one summary instead of a flood, then past them for good
+    let summary = false;
+    if (stale.length >= BACKLOG_MIN) summary = true;
+    else due = [...stale, ...due];
+    if (due.length === 0 && !summary) continue;
+    const first = summary ? stale[0] : due[0];
+    const iterm = paneForSession(logDir, session, statuses.find((s) => s.id === first.worker));
     if (!iterm) {
-      logSkip(logDir, session, due[0], "no pane resolved for the owning session");
+      logSkip(logDir, session, first, "no pane resolved for the owning session");
       continue;
     }
     try {
       if (!(await inputFree(iterm))) continue;
-      if (!(await type(iterm, pointerText(due.length)))) continue;
+      const line = summary
+        ? `${stale.length} older worker events skipped; \`pai worker errors\` has them` +
+          (due.length ? `; ${pointerText(due.length)}` : "")
+        : pointerText(due.length);
+      if (!(await type(iterm, line))) continue;
     } catch {
       continue;
     }
-    for (const ev of due) pointered[ev.id] = now.getTime();
+    // announced = delivered: the receipt is permanent, unlike the 24 h pointered map,
+    // so an announced event can never be counted again
+    for (const ev of summary ? [...stale, ...due] : due) {
+      pointered[ev.id] = now.getTime();
+      appendPushReceipt(logDir, ev);
+    }
     typed.push(session);
   }
   for (const [id, t] of Object.entries(pointered)) if (now.getTime() - t > 86_400_000) delete pointered[id];
