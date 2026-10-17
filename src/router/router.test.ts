@@ -190,3 +190,39 @@ describe("duplicate model ids", () => {
     expect(lines.filter((l) => l.includes("declared by several providers"))).toHaveLength(1);
   });
 });
+
+describe("router tool-name case correction", () => {
+  it("rewrites a wrong-case tool_use in the SSE reply to the declared spelling and reports it", async () => {
+    const sse =
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"bash","input":{}}}\n\n';
+    const up = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(sse);
+    });
+    const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({
+      providers: { p: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "glm-5.3" } } },
+    }).providers;
+    const fixes: string[] = [];
+    const r = createRouter(() => prov, `http://127.0.0.1:${upPort}`, () => {}, undefined, undefined, {
+      onToolCaseFix: (i) => fixes.push(`${i.from}->${i.to}`),
+    });
+    const port = await listen(r);
+    try {
+      const body = await new Promise<string>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST" }, (x) => {
+          let b = "";
+          x.on("data", (c) => (b += c));
+          x.on("end", () => resolve(b));
+        });
+        q.end(JSON.stringify({ model: "glm-5.3", stream: true, tools: [{ name: "Bash" }], messages: [{ role: "user", content: "x" }] }));
+      });
+      expect(body).toContain('"name":"Bash"');
+      expect(fixes).toEqual(["bash->Bash"]);
+    } finally {
+      r.close();
+      up.close();
+    }
+  });
+});
