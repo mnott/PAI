@@ -47,7 +47,7 @@ export function nodeOnTypeScriptReason(command: string): string | null {
       // Check for node -e, node --eval, node -p with code that requires/import src files
       if (words[i + 1] === "-e" || words[i + 1] === "--eval" || words[i + 1] === "-p") {
         const code = words[i + 2];
-        if (code && (code.includes("require(") || code.includes("import(") || /from ["'][^"']*src\/[^"']*\.(?:js|ts)["']/.test(code))) {
+        if (code && (/(?:require|import)\s*\(\s*['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code) || /from\s+['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code))) {
           return "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
         }
         continue;
@@ -82,6 +82,15 @@ export function tscFileArgReason(command: string): string | null {
     while (i < words.length && ["sudo", "time", "env", "nohup"].includes(words[i])) i++;
 
     if (i >= words.length) continue;
+
+    // Skip npx flags that directly follow npx
+    if (words[i] === "npx") {
+      let j = i + 1;
+      while (j < words.length && words[j].startsWith("-")) j++;
+      if (j < words.length && words[j] === "tsc") {
+        i = j; // Move i to point to "tsc"
+      }
+    }
 
     const cmd = words[i];
     if (cmd === "tsc" || (cmd === "npx" && words[i + 1] === "tsc") || cmd === "./node_modules/.bin/tsc") {
