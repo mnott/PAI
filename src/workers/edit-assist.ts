@@ -53,22 +53,26 @@ export function editAssist(i: EditAssistInput): string | null {
     const firstIndex = findBestMatch(first);
     const lastIndex = findBestMatch(last);
 
+    // Check if we're deleting
+    const deleting = i.newString.trim() === "";
+
     // If neither anchor is found return "old_string not found and no similar line exists in the file"
     if (firstIndex === null && lastIndex === null) {
       let result = "old_string not found and no similar line exists in the file; re-read the file (Read) before editing again.";
-      if (i.newString.trim() === "") {
+      if (deleting) {
         result += "\nif you are deleting this, grep for it first: it may already be gone.";
       }
       return result;
     }
 
     // Otherwise, determine the region
-    let startIndex = firstIndex !== null ? firstIndex : lastIndex!;
-    let endIndex = lastIndex !== null ? lastIndex : firstIndex!;
+    let startIndex = firstIndex !== null ? firstIndex : lastIndex;
+    let endIndex = lastIndex !== null ? lastIndex : firstIndex;
 
     // For `last`, prefer a match at an index >= the first's index when several tie
-    if (lastIndex !== null && lastIndex < firstIndex!) {
-      endIndex = firstIndex!;
+    if (lastIndex !== null && firstIndex !== null && lastIndex < firstIndex) {
+      startIndex = lastIndex;
+      endIndex = firstIndex;
     }
 
     // Widen by 3 lines of context each side (clamped), cap at 40 lines
@@ -80,7 +84,7 @@ export function editAssist(i: EditAssistInput): string | null {
     const regionLength = endIndex - startIndex + 1;
     if (regionLength > 40) {
       const half = Math.floor(40 / 2);
-      startIndex = Math.max(0, firstIndex! - half);
+      startIndex = Math.max(0, (firstIndex ?? lastIndex ?? 0) - half);
       endIndex = Math.min(fileLines.length - 1, startIndex + 39);
     }
 
@@ -91,7 +95,7 @@ export function editAssist(i: EditAssistInput): string | null {
     }
 
     const header = `closest region of the file (lines ${startIndex + 1}-${endIndex + 1}), copy old_string from here exactly, including whitespace:`;
-    return `${header}\n${regionLines.join("\n")}`;
+    return `${header}\n${regionLines.join("\n")}${deleting ? "\nif you are deleting this, grep for it first: it may already be gone." : ""}`;
   }
 
   // Deletion hint for when the edit is a deletion
@@ -144,7 +148,23 @@ function computeSimilarity(s1: string, s2: string): number {
 /**
  * Checks if an error text is one that editAssist can handle.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 export function isEditAssistError(errorText: string): boolean {
   return errorText.includes("No changes to make: old_string and new_string are exactly the same") ||
          errorText.includes("String to replace not found in file");
+}
+
+/** Hint for a failed Edit tool call: reads the target file under cwd and delegates to editAssist; null when it has nothing to add. */
+export function editHintFor(input: unknown, errorText: string, cwd: string): string | null {
+  if (!isEditAssistError(errorText) || typeof input !== "object" || input === null) return null;
+  const i = input as Record<string, unknown>;
+  const oldString = typeof i.old_string === "string" ? i.old_string : "";
+  const newString = typeof i.new_string === "string" ? i.new_string : "";
+  let fileText: string | null = null;
+  if (typeof i.file_path === "string") {
+    try { fileText = readFileSync(resolve(cwd, i.file_path), "utf8"); } catch { fileText = null; }
+  }
+  return editAssist({ oldString, newString, errorText, fileText });
 }
