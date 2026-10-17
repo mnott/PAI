@@ -1316,6 +1316,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     nativeAllowed: settings.native,
     worktreeWanted:
       a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
+    slotWorktree: isLoopbackProvider(a.target.provider),
     resumeOf: a.resumeOf,
     printCmd: a.printCmd,
     parsed: a.parsed,
@@ -1357,6 +1358,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
         maxMinutes: limitMinutes,
         trailer: promptTrailer(a.reportFormat),
+        worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
       },
       timeoutMs
     );

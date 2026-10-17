@@ -8,7 +8,7 @@
  */
 
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
-import { poolCarry, poolHostAlive, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
+import { warmOrCold, poolCarry, poolHostAlive, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
 import type { PoolMetricRow, PoolSlotRecord, PoolState } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
 import { parseLedger, type LedgerLine } from "../workers/ledger.js";
@@ -25,6 +25,11 @@ export interface PoolPanelSlot {
   tokensCarried: number;
   /** First-request cache hit ratio over this slot's tasks (null = no task yet). */
   hitRatio: number | null;
+  /** Task the slot is serving right now, and its branch (slot-worktree slots). */
+  task: string | null;
+  branch: string | null;
+  /** Was the last task's first request served from the prefix cache ("warm") or prefilled ("cold")? */
+  firstRequest: "warm" | "cold" | null;
 }
 
 export interface PoolPanelData {
@@ -83,6 +88,9 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
       tasks: s.tasks,
       tokensCarried: c.tokensCarried,
       hitRatio: rows.length ? c.hitRatio : null,
+      task: s.busyWith,
+      branch: s.branch ?? null,
+      firstRequest: warmOrCold(s.firstShare),
     };
   });
   const carry = poolCarry(i.metrics);
@@ -203,7 +211,7 @@ function renderPool(p){
    ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"],
    ["not pooled (24 h)",p.last24h.notPooled+" of "+p.last24h.runs,p.last24h.topReason?"top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled?"reasons not logged yet":"")]
   ].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span><span style="display:block">'+k[2]+'</span></div>'}).join("")+'</div>';
- var rows=p.slots.length?table(["provider","model","cwd","state","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<p class="dim">no slots (a slot spawns with the first pooled task)</p>';
+ var rows=p.slots.length?table(["provider","model","cwd","state","task","branch","first req","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<p class="dim">no slots (a slot spawns with the first pooled task)</p>';
  var rs=p.last24h.reasons.length?'<p class="dim">rejections (24 h): '+p.last24h.reasons.map(function(r){return esc(r.reason)+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":"")+'</p>':"";
  el.innerHTML=head+rows+rs+'<p class="dim">'+esc(p.message)+'</p>';
 }
