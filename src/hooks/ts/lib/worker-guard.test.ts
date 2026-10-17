@@ -75,6 +75,10 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
   ["kill backtick pgrep", bash("kill -9 `pgrep node`"), wtCtx(), "by PID"],
   ["pgrep | xargs kill", bash("pgrep -f uvicorn | xargs kill"), wtCtx(), "by PID"],
   ["pkill in bash -c", bash(`bash -c 'pkill -9 node'`), wtCtx(), "by PID"],
+  ["node on .ts", bash("node src/foo.ts"), wtCtx(), "node cannot load TypeScript source"],
+  ["npx tsc with file arg", bash("npx tsc --noEmit src/a.ts"), wtCtx(), "tsc with a file argument ignores tsconfig.json"],
+  ["git add -f", bash("git add -f Notes/x.md"), wtCtx(), "Notes/ and other ignored paths stay untracked"],
+  ["git add with ignored path", bash("git add Notes/x.md"), wtCtx({ isIgnored: (p) => p.startsWith("Notes/") }), "Notes/ and other ignored paths stay untracked"],
 ];
 
 const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
@@ -102,6 +106,10 @@ const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
   ["pkill in echo", bash("echo pkill is denied"), wtCtx()],
   ["stderr dup redirect", bash("npm test 2>&1 | tail"), wtCtx()],
   ["git checkout -b in worktree", bash("git checkout -b topic"), wtCtx()],
+  ["node on mjs", bash("node scripts/build-hooks.mjs"), wtCtx()],
+  ["npx tsc without file arg", bash("npx tsc --noEmit"), wtCtx()],
+  ["git add with non-ignored path", bash("git add src/a.ts"), wtCtx()],
+  ["git add -A", bash("git add -A"), wtCtx()],
 ];
 
 describe("decideWorkerGuard", () => {
