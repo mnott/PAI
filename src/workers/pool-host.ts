@@ -27,7 +27,7 @@ import { openSync, closeSync, writeSync, mkdirSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
-import { readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
+import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv, claudeCommand, loopbackRouterChoice } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
@@ -500,7 +500,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   /** One pooled task, end to end. */
   const runTask = async (task: PoolTaskRequest): Promise<PoolTaskResponse> => {
-    const provider = config.providers[task.provider];
+    const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
     // re-checks so a stale client cannot push an incompatible task into a
@@ -510,6 +510,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       prompt: task.prompt,
       providerName: task.provider,
       provider,
+      nativeAllowed: settings.native,
       worktreeWanted: false,
       resumeOf: undefined,
       printCmd: false,

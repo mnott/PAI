@@ -41,7 +41,7 @@ const provider = (over: Partial<WorkerProvider> = {}): WorkerProvider => ({
 const testConfig = (over: { maxSlots?: number; idleSecs?: number } = {}): WorkersConfig => ({
   ...defaultWorkersConfig(),
   caveman: false,
-  pool: { enabled: true, maxSlots: over.maxSlots ?? 1, idleSecs: over.idleSecs ?? 0, port: 0 },
+  pool: { enabled: true, maxSlots: over.maxSlots ?? 1, idleSecs: over.idleSecs ?? 0, port: 0, native: true },
   providers: {
     fakeprov: provider(),
     anthropic: provider({ native: true }),
@@ -350,14 +350,14 @@ describe("pooled task lifecycle", () => {
     expect(raw).toContain("idle timeout");
   });
 
-  it("the host re-checks eligibility: native providers and unknown providers are refused", async () => {
+  it("the host serves native anthropic (workers.pool.native on) and refuses unknown providers", async () => {
     const h = makeHost();
     liveHosts.push(h.host);
     const native = await h.host.runTask(task({ id: "wn", provider: "anthropic" }));
-    expect(native).toEqual({ pooled: false, reason: "native-provider" });
+    expect(native.pooled).toBe(true);
     const unknown = await h.host.runTask(task({ id: "wu", provider: "nope" }));
     expect(unknown).toEqual({ pooled: false, reason: "engine" });
-    expect(h.slots.length).toBe(0);
+    expect(h.slots.length).toBe(1);
   });
 });
 

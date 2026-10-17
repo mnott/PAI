@@ -54,9 +54,9 @@ describe("pool settings", () => {
     expect(cfg.pool.enabled).toBe(false);
     expect(poolSettings(cfg)).toEqual(DEFAULT_POOL_SETTINGS);
     expect(
-      poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 2, idleSecs: 60, port: 9000 } })
-    ).toEqual({ enabled: true, maxSlots: 2, idleSecs: 60, port: 9000 });
-    expect(poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 5, idleSecs: 0, port: 8798 } }).idleSecs).toBe(0);
+      poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false } })
+    ).toEqual({ enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false });
+    expect(poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 5, idleSecs: 0, port: 8798, native: true } }).idleSecs).toBe(0);
   });
 });
 
@@ -103,9 +103,21 @@ describe("eligibility gate", () => {
     expect(poolIneligibleReason({ ...base(), prompt: null })).toBe("interactive");
   });
 
-  it("native anthropic keeps fresh spawns — by name and by flag", () => {
-    expect(poolIneligibleReason({ ...base(), providerName: "anthropic" })).toBe("native-provider");
-    expect(poolIneligibleReason({ ...base(), provider: provider({ native: true }) })).toBe("native-provider");
+  it("native anthropic is pooled by default, refused when workers.pool.native is off — by name and by flag", () => {
+    expect(poolIneligibleReason({ ...base(), providerName: "anthropic" })).toBeNull();
+    expect(poolIneligibleReason({ ...base(), provider: provider({ native: true }), nativeAllowed: true })).toBeNull();
+    expect(poolIneligibleReason({ ...base(), providerName: "anthropic", nativeAllowed: false })).toBe("native-provider");
+    expect(poolIneligibleReason({ ...base(), provider: provider({ native: true }), nativeAllowed: false })).toBe("native-provider");
+  });
+
+  it("native anthropic with a worktree stays unpooled", () => {
+    expect(poolIneligibleReason({ ...base(), providerName: "anthropic", worktreeWanted: true })).toBe("worktree");
+  });
+
+  it("poolSettings.native defaults on and follows workers.pool.native", () => {
+    const cfg = defaultWorkersConfig();
+    expect(poolSettings(cfg).native).toBe(true);
+    expect(poolSettings({ ...cfg, pool: { ...cfg.pool, native: false } }).native).toBe(false);
   });
 
   it("non-claude engines are refused", () => {

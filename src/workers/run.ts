@@ -1303,6 +1303,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     prompt: a.parsed.prompt,
     providerName: a.target.providerName,
     provider: a.target.provider,
+    nativeAllowed: settings.native,
     worktreeWanted:
       a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
     resumeOf: a.resumeOf,

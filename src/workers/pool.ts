@@ -58,6 +58,8 @@ export interface PoolSettings {
   idleSecs: number;
   /** Loopback port the host listens on. */
   port: number;
+  /** Native anthropic runs may use pooled slots (worktree runs never do). */
+  native: boolean;
 }
 
 export const DEFAULT_POOL_SETTINGS: PoolSettings = {
@@ -65,6 +67,7 @@ export const DEFAULT_POOL_SETTINGS: PoolSettings = {
   maxSlots: 3,
   idleSecs: 900,
   port: 8798,
+  native: true,
 };
 
 export function poolSettings(config: WorkersConfig): PoolSettings {
@@ -74,6 +77,7 @@ export function poolSettings(config: WorkersConfig): PoolSettings {
     maxSlots: p?.maxSlots ?? DEFAULT_POOL_SETTINGS.maxSlots,
     idleSecs: p?.idleSecs ?? DEFAULT_POOL_SETTINGS.idleSecs,
     port: p?.port ?? DEFAULT_POOL_SETTINGS.port,
+    native: p?.native !== false,
   };
 }
 
@@ -221,6 +225,8 @@ export interface PoolEligibilityInput {
   /** Resolved provider name ("anthropic" for the built-in). */
   providerName: string;
   provider: Pick<WorkerProvider, "native" | "engine" | "protocol">;
+  /** workers.pool.native; undefined = allowed. */
+  nativeAllowed?: boolean;
   /**
    * The run will get its own git worktree (worktreeWanted: flag first, then
    * writable tools in a git cwd). A worktree is a fresh directory per run, so
@@ -276,7 +282,13 @@ export function toolGrantMatchesSlot(allowedTools: string[]): boolean {
  */
 export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibleReason | null {
   if (!input.headless || input.prompt === null) return "interactive";
-  if (input.providerName === ANTHROPIC_NATIVE || input.provider.native) return "native-provider";
+  // A native run on Claude Code's own login behaves like a fresh spawn inside a
+  // slot (same env via buildRunEnv, same slim profile, model fixed in the slot
+  // key, identical router pin); only caution kept it out. A worktree run is
+  // refused by the "worktree" rule below. workers.pool.native=false switches it off.
+  if ((input.providerName === ANTHROPIC_NATIVE || input.provider.native) && input.nativeAllowed === false) {
+    return "native-provider";
+  }
   if ((input.provider.engine ?? "claude") !== "claude") return "engine";
   if (input.worktreeWanted) return "worktree";
   if (input.resumeOf !== undefined) return "resume";
