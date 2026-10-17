@@ -58,15 +58,50 @@ export function routingTable(providers: Record<string, WorkerProvider>): Map<str
   return table;
 }
 
+/** model id (suffix-free) → every enabled routable provider declaring it, config order. */
+export function routingCandidates(providers: Record<string, WorkerProvider>): Map<string, string[]> {
+  const table = new Map<string, string[]>();
+  for (const [name, p] of Object.entries(providers)) {
+    if (p.native || p.enabled === false || !p.baseUrl || p.protocol !== "anthropic" || (p.engine ?? "claude") !== "claude") continue;
+    for (const id of new Set(Object.values(p.models).filter((m): m is string => !!m).map(stripContextSuffix))) {
+      const names = table.get(id) ?? [];
+      names.push(name);
+      table.set(id, names);
+    }
+  }
+  return table;
+}
+
+/** Model ids declared by more than one enabled provider (the first used to win blindly). */
+export function duplicateModelIds(providers: Record<string, WorkerProvider>): Array<{ model: string; providers: string[] }> {
+  return [...routingCandidates(providers)].filter(([, n]) => n.length > 1).map(([model, names]) => ({ model, providers: names }));
+}
+
+export interface ResolveHints {
+  /** provider the caller named (x-pai-provider); honoured when it declares the model */
+  provider?: string;
+  /** cached up/down of a provider; undefined = unknown */
+  isUp?: (provider: string) => boolean | undefined;
+  /** called with the model id and candidates when the id is ambiguous */
+  onDuplicate?: (model: string, candidates: string[]) => void;
+}
+
 export function resolveModel(
   rawModel: string,
   providers: Record<string, WorkerProvider>,
-  claudeBase: string = CLAUDE_UPSTREAM
+  claudeBase: string = CLAUDE_UPSTREAM,
+  hints: ResolveHints = {}
 ): Resolution {
   const model = stripContextSuffix(rawModel);
   if (isClaudeId(model)) return { kind: "claude", model, base: claudeBase };
   const table = routingTable(providers);
   let name = table.get(model);
+  const cands = routingCandidates(providers).get(model) ?? [];
+  if (cands.length > 1) {
+    hints.onDuplicate?.(model, cands);
+    if (hints.provider && cands.includes(hints.provider)) name = hints.provider;
+    else name = cands.find((c) => hints.isUp?.(c) === true) ?? cands.find((c) => hints.isUp?.(c) !== false) ?? name;
+  } else if (hints.provider && cands.includes(hints.provider)) name = hints.provider;
   if (!name) {
     // family prefixes: glm-* → glm, k3/kimi-* → kimi
     if (/^glm-/.test(model) && providers.glm) name = "glm";
@@ -106,6 +141,8 @@ export interface RouterOptions {
    * this (they carry their own token, see src/router/cockpit-auth.ts).
    */
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
+  /** cached up/down of a provider (limits poll); breaks ties between providers declaring one model id */
+  isUp?: (provider: string) => boolean | undefined;
 }
 
 // accept-encoding dropped: usage is parsed from the plain response as it streams
@@ -122,7 +159,8 @@ export function prepare(
   inHeaders: http.IncomingHttpHeaders,
   rawBody: Buffer,
   providers: Record<string, WorkerProvider>,
-  claudeBase: string = CLAUDE_UPSTREAM
+  claudeBase: string = CLAUDE_UPSTREAM,
+  hints: Omit<ResolveHints, "provider"> = {}
 ): { ok: true; up: Upstream; target: Target; requested: string } | { ok: false; status: number; message: string } {
   let body: Record<string, unknown>;
   try {
@@ -131,7 +169,11 @@ export function prepare(
     return { ok: false, status: 400, message: "invalid JSON body" };
   }
   if (typeof body.model !== "string") return { ok: false, status: 400, message: "missing model" };
-  const res = resolveModel(body.model, providers, claudeBase);
+  const named = inHeaders["x-pai-provider"];
+  const res = resolveModel(body.model, providers, claudeBase, {
+    ...hints,
+    ...(typeof named === "string" && named ? { provider: named } : {}),
+  });
   if (res.kind === "unknown") {
     return {
       ok: false,
@@ -230,6 +272,12 @@ export function routerHandler(
 ): (req: http.IncomingMessage, res: http.ServerResponse) => void {
   const busts = new BustDetector();
   const gaps = new GapTracker();
+  const warned = new Set<string>();
+  const onDuplicate = (model: string, cands: string[]) => {
+    if (warned.has(model)) return;
+    warned.add(model);
+    log(`${new Date().toISOString()} warning: model id ${model} is declared by several providers (${cands.join(", ")}); preferring one that is up`);
+  };
   return (req, res) => {
     if (extra?.(req, res)) return;
     const guard = options?.remoteAllowed;
@@ -294,7 +342,10 @@ export function routerHandler(
         ureq.end();
         return;
       }
-      const prep = prepare(path, req.headers, Buffer.concat(chunks), providers, claudeBase);
+      const prep = prepare(path, req.headers, Buffer.concat(chunks), providers, claudeBase, {
+        ...(options?.isUp ? { isUp: options.isUp } : {}),
+        onDuplicate,
+      });
       if (!prep.ok) return fail(prep.status, prep.message);
       const { up, target, requested } = prep;
       const prov = target.kind === "claude" ? "anthropic" : target.name;
@@ -304,7 +355,7 @@ export function routerHandler(
       const gap = onUsage && !isCount ? gaps.gap(sessionId, started) : undefined;
       const changed =
         onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
-      const record = (status: number, usage: Usage) => {
+      const record = (status: number, usage: Usage, timing: { ttftMs?: number; decodeMs?: number } = {}) => {
         if (!onUsage || isCount) return;
         const row: UsageRow = {
           ts: new Date().toISOString(),
@@ -313,6 +364,7 @@ export function routerHandler(
           status,
           ms: Date.now() - started,
           ...usage,
+          ...timing,
           bytes: up.body.length,
           cache: verdict(usage),
         };
@@ -352,7 +404,13 @@ export function routerHandler(
           ures.pipe(res);
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
-            record(ures.statusCode ?? 502, sniff ? sniff.finish() : emptyUsage());
+            const ended = Date.now();
+            const first = sniff?.firstContentAt;
+            record(
+              ures.statusCode ?? 502,
+              sniff ? sniff.finish() : emptyUsage(),
+              first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}
+            );
           });
         }
       );

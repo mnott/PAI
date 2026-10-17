@@ -598,6 +598,12 @@ export class LimitsCache {
     return this.inflight;
   }
 
+  /** Last polled up/down of a local provider; undefined = never polled or not a local server. Refreshes in the background. */
+  isUp = (provider: string): boolean | undefined => {
+    void this.get().catch(() => undefined);
+    return this.value.find((l) => l.provider === provider && l.kind === "local")?.up;
+  };
+
   private async poll(now: number): Promise<ProviderLimits[]> {
     const rows = this.deps.rows();
     let providers: Record<string, WorkerProvider> = {};

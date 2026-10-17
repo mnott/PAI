@@ -98,7 +98,7 @@ const runCommand: CommandDef = {
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-    const handler = routerHandler(undefined, undefined, undefined, append, cockpit, remote ? { remoteAllowed: defaultV1Guard } : undefined);
+    const handler = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });
     return new Promise<number>(() => {
       const server = http.createServer(handler);
       server.on("error", (e) => {

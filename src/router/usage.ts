@@ -45,6 +45,10 @@ export interface UsageRow extends Usage {
   x_app?: string;
   /** which prompt part changed inside a session: system, tools, messages */
   bust?: string[];
+  /** ms from request start to the first content token; absent on old rows and non-streamed replies */
+  ttftMs?: number;
+  /** ms from the first content token to the end of the reply */
+  decodeMs?: number;
 }
 
 const KEYS: Array<keyof Usage> = [
@@ -98,6 +102,8 @@ export class UsageSniffer {
   private json = "";
   private jsonOverflow = false;
   private mode: "sse" | "json" | undefined;
+  /** wall-clock ms of the first content_block_delta (text or tool-input), SSE only */
+  firstContentAt: number | undefined;
 
   constructor(contentType: string | undefined) {
     if (contentType) this.mode = /text\/event-stream/i.test(contentType) ? "sse" : "json";
@@ -135,6 +141,9 @@ export class UsageSniffer {
     const line = raw.replace(/\r$/, "");
     if (!line.startsWith("data:")) return;
     const data = line.slice(5).trim();
+    if (this.firstContentAt === undefined && data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":"[^"]/.test(data)) {
+      this.firstContentAt = Date.now();
+    }
     // cheap prefilter: only usage-bearing events are parsed
     if (!data.includes('"usage"')) return;
     try {

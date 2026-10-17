@@ -5,6 +5,7 @@
  * them). `pai providers ...` shares the provider subcommands defined here.
  */
 
+import { duplicateModelIds } from "../../router/router.js";
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -556,6 +557,9 @@ const configCheckCommand: CommandDef = {
       out(ok(`${target} OK — ${Object.keys(data.providers).length} provider(s), ${Object.keys(data.classes).length} class(es)`));
       const both = Object.entries(data.providers).filter(([, p]) => p.key && p.keyFile).map(([n]) => n);
       if (both.length) out(dim(`  note: ${both.join(", ")} — both key and key_file set; key wins`));
+      for (const d of duplicateModelIds(data.providers)) {
+        out(warn(`  warning: model id ${d.model} is declared by ${d.providers.join(", ")} — the router prefers the one that is up; give them distinct ids or disable one`));
+      }
       const mode = statSync(target).mode & 0o777;
       if (Object.values(data.providers).some((p) => p.key) && mode !== 0o600) {
         out(warn(`  warning: ${target} contains a key: field but is mode ${mode.toString(8)} — chmod 600 ${target}`));

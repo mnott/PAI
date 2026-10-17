@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CliError, type CommandDef } from "../define.js";
 import { parseArgs, UsageError } from "../parse.js";
 import { GROUPS } from "../registry.js";
@@ -164,5 +164,28 @@ describe("clickr argv for controls", () => {
   it("you hands over with agent and pid; me takes back", () => {
     expect(controlsArgv("w1", "you", 42)).toEqual(["controls", "you", "--agent", "w1", "--pid", "42"]);
     expect(controlsArgv("w1", "me", 42)).toEqual(["controls", "me"]);
+  });
+});
+
+describe("config check duplicate model ids", () => {
+  it("warns when two enabled providers declare one model id", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const f = join(mkdtempSync(join(tmpdir(), "wcheck-")), "workers.yaml");
+    writeFileSync(
+      f,
+      "providers:\n  a:\n    url: http://127.0.0.1:8018\n    models:\n      default: same-model\n  b:\n    url: http://127.0.0.1:8034\n    models:\n      default: same-model\n",
+      { mode: 0o600 }
+    );
+    const c = capture();
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((x: string | Uint8Array) => (lines.push(String(x)), true));
+    try {
+      expect(await runCli(GROUPS, ["worker", "config", "check", f], c.io)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.join("\n")).toContain("model id same-model is declared by a, b");
   });
 });

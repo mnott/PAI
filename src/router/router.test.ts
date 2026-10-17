@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig } from "../workers/config.js";
 import http from "node:http";
-import { createRouter, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
+import { createRouter, duplicateModelIds, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
 
 const dir = mkdtempSync(join(tmpdir(), "router-"));
 writeFileSync(join(dir, "glm"), "glm-secret\n");
@@ -136,5 +136,57 @@ describe("router http", () => {
       r.close();
       up.close();
     }
+  });
+});
+
+describe("duplicate model ids", () => {
+  const dup = parseWorkersConfig({
+    providers: {
+      coder8: { baseUrl: "http://127.0.0.1:8018", models: { default: "qwen3-coder-30b-8bit" } },
+      local30x8: { baseUrl: "http://127.0.0.1:8034", models: { default: "qwen3-coder-30b-8bit" } },
+    },
+  }).providers;
+  const req = (headers: Record<string, string> = {}, hints = {}) =>
+    prepare("/v1/messages", { ...hdr, ...headers }, body({ model: "qwen3-coder-30b-8bit", messages: [] }), dup, undefined, hints);
+  const name = (r: ReturnType<typeof req>) => (r.ok && r.target.kind === "provider" ? r.target.name : "?");
+
+  it("prefers the provider that is up", () => {
+    const seen: string[] = [];
+    const r = req({}, { isUp: (p: string) => p === "local30x8", onDuplicate: (m: string) => seen.push(m) });
+    expect(name(r)).toBe("local30x8");
+    expect(seen).toEqual(["qwen3-coder-30b-8bit"]);
+  });
+  it("keeps first-match when nothing is known", () => {
+    expect(name(req())).toBe("coder8");
+  });
+  it("honours an explicit x-pai-provider route even when it is down", () => {
+    expect(name(req({ "x-pai-provider": "coder8" }, { isUp: (p: string) => p === "local30x8" }))).toBe("coder8");
+  });
+  it("lists duplicates", () => {
+    expect(duplicateModelIds(dup)).toEqual([{ model: "qwen3-coder-30b-8bit", providers: ["coder8", "local30x8"] }]);
+    expect(duplicateModelIds(providers)).toEqual([]);
+  });
+  it("warns once per process through the handler", async () => {
+    const lines: string[] = [];
+    const dead = parseWorkersConfig({
+      providers: {
+        a: { baseUrl: "http://127.0.0.1:1", models: { default: "dup-model" } },
+        b: { baseUrl: "http://127.0.0.1:2", models: { default: "dup-model" } },
+      },
+    }).providers;
+    const server = createRouter(() => dead, "http://127.0.0.1:1", (l) => lines.push(l), undefined, undefined, { isUp: (p) => p === "b" });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => {
+        const q = http.request({ port, method: "POST", path: "/v1/messages", headers: { "content-type": "application/json" } }, (res) => {
+          res.resume();
+          res.on("close", () => resolve());
+        });
+        q.end(JSON.stringify({ model: "dup-model", messages: [] }));
+      });
+    }
+    server.close();
+    expect(lines.filter((l) => l.includes("declared by several providers"))).toHaveLength(1);
   });
 });

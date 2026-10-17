@@ -109,7 +109,7 @@ export function registerRouterCommands(program: Command): void {
         undefined,
         append,
         cockpit,
-        remote ? { remoteAllowed: defaultV1Guard } : undefined
+        { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp }
       );
       const server = http.createServer(handler);
       server.on("error", (e) => {
