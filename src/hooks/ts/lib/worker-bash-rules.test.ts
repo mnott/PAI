@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules";
+import { nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules.js";
 
 describe("nodeOnTypeScriptReason", () => {
   it("should deny node with .ts file", () => {
