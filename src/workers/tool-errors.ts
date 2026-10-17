@@ -3,8 +3,11 @@
  *
  * The runner records every failed tool_result as one JSONL line
  * (<logDir>/tool-errors.jsonl) under a normalised signature. Supervision's
- * tick reads that file and, when the same signature repeats, tells the
- * orchestrator once (see detectToolErrors, called from runSupervisionTick).
+ * tick reads that file on two routes (see runSupervisionTick): while a worker
+ * is RUNNING, the first occurrence of each signature — all classes — is
+ * pushed to the session that spawned it (detectRunningWorkerErrors);
+ * everything else keeps the actionable-only thresholds (detectToolErrors,
+ * the same signature repeating tells the orchestrator once per 30 min).
  * `pai worker errors` lists the signatures grouped.
  */
 
@@ -255,6 +258,71 @@ export function toolErrorText(g: ToolErrorGroup): string {
   if (g.cls === "harness") return `[harness] ${g.hint}: ${what} — fix at the owner. ${tail}`;
   if (g.cls === "model") return `[model ×${g.count}] ${g.hint}: ${what} — counts against the model; stop the run if it loops. ${tail}`;
   return `[unknown] ${what} — ${tail}`;
+}
+
+/**
+ * A running worker whose spawner is known: errors go to that session.
+ */
+export interface RunningWorkerRef {
+  id: string;
+  /** Owning session key (the spawner's claude session id, else the iTerm uuid). */
+  session: string;
+}
+
+export interface RunningErrorPush {
+  worker: string;
+  session: string;
+  signature: string;
+  group: ToolErrorGroup;
+}
+
+/**
+ * Stable short tag of a signature, for claim ids: once-per-(worker,signature)
+ * delivery that survives a lost state file.
+ */
+export function toolErrorSigTag(signature: string): string {
+  let h = 5381;
+  for (let i = 0; i < signature.length; i++) h = ((h * 33) ^ signature.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/**
+ * While a worker is RUNNING, its tool errors are pushed to the session that
+ * spawned it — the FIRST occurrence of each signature, ALL classes. 2026-10-17:
+ * a run doomed from its first tool call (worktree of the wrong repo → every
+ * path error [model]-class) was silently classified away by the
+ * actionable-only filter, and the spawner learned of it only by polling
+ * `pai worker errors`. Actionability is not the daemon's to guess: the
+ * spawner wrote the spec and knows what a spoiled run looks like. Later
+ * occurrences of a pushed signature are counted (the group's count, and the
+ * run-end result report carries the totals), never re-pushed; nothing is
+ * pushed after the run ends. `sent` maps worker id → signature → push time
+ * and is updated for the returned pushes.
+ */
+export function detectRunningWorkerErrors(
+  running: readonly RunningWorkerRef[],
+  records: readonly ToolErrorRecord[],
+  sent: Record<string, Record<string, number>>,
+  now: number
+): RunningErrorPush[] {
+  const sessions = new Map(running.map((r) => [r.id, r.session] as const));
+  const byWorker = new Map<string, Map<string, ToolErrorRecord[]>>();
+  for (const r of records) {
+    if (!sessions.has(r.worker)) continue;
+    let bySig = byWorker.get(r.worker);
+    if (!bySig) byWorker.set(r.worker, (bySig = new Map()));
+    bySig.set(r.signature, [...(bySig.get(r.signature) ?? []), r]);
+  }
+  const out: RunningErrorPush[] = [];
+  for (const [worker, bySig] of byWorker) {
+    const pushed = (sent[worker] ??= {});
+    for (const [sig, all] of bySig) {
+      if (pushed[sig] !== undefined) continue; // first occurrence per run, never re-pushed
+      pushed[sig] = now;
+      out.push({ worker, session: sessions.get(worker)!, signature: sig, group: groupToolErrors(all)[0] });
+    }
+  }
+  return out;
 }
 
 /** "30m", "2h", "1d" → ms; null when unparsable. */

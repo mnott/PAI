@@ -47,6 +47,21 @@ pai worker run --label "short task label" --class research \\
 - \`worker_replay\` with id — the transcript of one worker.
 - CLI equivalents: \`pai worker ps\`, \`pai worker follow <id>\`.
 
+### Live error supervision
+
+- While workers run, read the tool-error stream directly at every check-in
+  (at least every ~5 min): \`pai worker errors\`. Triage each NEW signature:
+  - harness (hook refusals, out-of-cwd/denied paths, timeouts, API 401/5xx)
+    → stop the runs it spoils, fix the cause at the owner, prove it, report;
+  - model (no-op edit loops, wrong args, grep-no-match, empty first turn) →
+    count it in the result, kill that run only if it loops;
+  - unknown → inspect before deciding.
+- Pushed alerts are duplicates of this stream: never wait for them, never
+  re-triage what you already handled.
+- Do NOT tail -F the jsonl in a Monitor — the push already covers it; raw
+  streaming only when PAI itself is the suspect.
+- Triage ends in a fix or a counted verdict, never a note.
+
 ### Routing
 
 - \`worker_status\` — on/off, active provider, providers, run tally.

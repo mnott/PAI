@@ -61,6 +61,7 @@ import {
   type WorkerProvider,
 } from "./config.js";
 import { buildRunEnv, claudeCommand } from "./run-env.js";
+import { detectCurrentModel } from "./launch.js";
 
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
@@ -429,6 +430,71 @@ export function modelArgs(model: string, callerPinned: boolean): string[] {
 }
 
 /**
+ * Two model ids name the same model when their canonical forms do: a
+ * bracketed suffix is a context-window variant, not another model
+ * ("glm-5.3[1m]" IS "glm-5.3", announced with a 1M window — the same
+ * collision the init event's adoptInitModel sees).
+ */
+export function canonicalModelId(id: string): string {
+  return id.trim().replace(/\[[^\]]*\]$/, "");
+}
+
+export interface ModelStepDown {
+  /** The model id the run goes out on. */
+  model: string;
+  /** One launch-preamble line, or null when resolution is unchanged. */
+  notice: string | null;
+}
+
+/**
+ * The model step-down: a worker never runs on the orchestrator's own model —
+ * enforced here, not remembered (config.ts states the principle). Until
+ * 2026-10-17 it was only enforced where a model id is named explicitly: with
+ * no --model, the class map's default tier resolved glm's default model —
+ * glm-5.3[1m], the very model the orchestrating session itself ran — and
+ * nothing detected the equality. Mechanical now: when the resolved id equals
+ * the orchestrating session's (detected from the environment exactly the way
+ * `pai launch --list --current` does it, launch.ts's detectCurrentModel), the
+ * same provider's fast model replaces it. An explicit operator --model always
+ * wins, including "use your own model" — the runner's own flag and a --model
+ * pinned in the claude args both count as explicit. A provider without a
+ * distinct fast model keeps the resolved model with a warning; a run is never
+ * refused over this. An undetectable orchestrator model changes nothing.
+ */
+export function stepDownOrchestratorModel(opts: {
+  resolved: string;
+  providerName: string;
+  provider: Pick<WorkerProvider, "models">;
+  /** Explicit --model (the runner's own flag): the operator's choice wins. */
+  modelFlag?: string;
+  /** The caller pinned --model in the claude args: also explicit. */
+  callerPinned?: boolean;
+  env?: NodeJS.ProcessEnv;
+}): ModelStepDown {
+  if (opts.modelFlag || opts.callerPinned) return { model: opts.resolved, notice: null };
+  const orchestrator = detectCurrentModel(opts.env ?? process.env);
+  if (!orchestrator) return { model: opts.resolved, notice: null };
+  if (canonicalModelId(opts.resolved) !== canonicalModelId(orchestrator)) {
+    return { model: opts.resolved, notice: null };
+  }
+  const fast = opts.provider.models.fast;
+  if (!fast || canonicalModelId(fast) === canonicalModelId(opts.resolved)) {
+    return {
+      model: opts.resolved,
+      notice:
+        `pai: worker model == orchestrator model — provider "${opts.providerName}" has no distinct ` +
+        `fast model, keeping ${opts.resolved} (workers never inherit the orchestrator's model)`,
+    };
+  }
+  return {
+    model: fast,
+    notice:
+      `pai: worker model == orchestrator model — stepped down to ${fast} ` +
+      `(workers never inherit the orchestrator's model); pass --model to override`,
+  };
+}
+
+/**
  * Whether the run's assembled cmd gets a forced --model. Headless workers
  * always take the resolved class/provider model — that table exists so
  * spawned subagents stay cheap. An interactive launch (`pai worker run` with
@@ -594,9 +660,22 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
 
-  const model = capabilityResolution
+  let model = capabilityResolution
     ? capabilityResolution.model
     : resolveRunModel(target, opts.className, opts.modelFlag);
+  if (!capabilityResolution) {
+    // capability runs pin their model on purpose (an image prompt on the
+    // image model); the step-down guards the class/provider resolution only
+    const step = stepDownOrchestratorModel({
+      resolved: model,
+      providerName: target.providerName,
+      provider: target.provider,
+      modelFlag: opts.modelFlag,
+      callerPinned: parsed.callerModel,
+    });
+    model = step.model;
+    if (step.notice && !opts.quiet) process.stderr.write(`${step.notice}\n`);
+  }
   const reportFormat = resolveReportFormat(opts.reportFormatFlag);
 
   // tracked across every engine (including a quota reroute's recursive
