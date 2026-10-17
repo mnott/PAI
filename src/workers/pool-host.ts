@@ -24,6 +24,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { openSync, closeSync, writeSync, mkdirSync } from "node:fs";
+import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
 import { readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
@@ -261,6 +262,14 @@ export interface PoolHostOptions {
   /** Test hooks: the env/argv builders, so tests can run a fake claude. */
   envFor?: (providerName: string, provider: WorkerProvider) => NodeJS.ProcessEnv;
   cmdHead?: (env: NodeJS.ProcessEnv, caveman: boolean) => string[];
+  /**
+   * Route slot traffic through the local model router when it is enabled
+   * (the default resolves it from the daemon config): the router resolves
+   * the slot's model to the provider, injects the key, and logs usage+cache
+   * per session — without it, pooled traffic bypasses the router's usage
+   * log entirely and the cockpit's hit ratios fly blind for pooled sessions.
+   */
+  routerEnabled?: boolean;
   now?: () => Date;
   /** Disable the idle reaper interval (tests drive reapSlots directly). */
   noReaper?: boolean;
@@ -312,8 +321,12 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const settings = poolSettings(config);
   const port = opts.port ?? poolPort(config);
   const spawner = opts.spawner ?? realSpawner;
-  const envFor = opts.envFor ?? ((name: string, p: WorkerProvider) => buildRunEnv(p, true, undefined, name));
-  const cmdHead = opts.cmdHead ?? ((env: NodeJS.ProcessEnv, caveman: boolean) => claudeCommand(env, caveman));
+  // one router decision for both builders: the env carries the router route,
+  // the argv pins it again via --settings (the user settings' env outranks
+  // the process env — see pinnedSettingsArgs)
+  const routerOn = opts.routerEnabled ?? loadConfig().router.enabled;
+  const envFor = opts.envFor ?? ((name: string, p: WorkerProvider) => buildRunEnv(p, true, undefined, name, routerOn));
+  const cmdHead = opts.cmdHead ?? ((env: NodeJS.ProcessEnv, caveman: boolean) => claudeCommand(env, caveman, routerOn));
   const now = opts.now ?? (() => new Date());
   const ledger = ledgerPath(logDir);
   mkdirSync(logDir, { recursive: true });

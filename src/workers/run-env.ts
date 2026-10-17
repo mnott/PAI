@@ -59,12 +59,18 @@ const NATIVE_STRIP_VARS = [
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
 ] as const;
 
-/** Environment for a run through `provider`. Caller's env minus the Anthropic key. */
+/**
+ * Environment for a run through `provider`. Caller's env minus the Anthropic
+ * key. `routerEnabled` routes the run through the local model router instead
+ * of the provider's own URL (the openai-protocol proxy route always wins);
+ * unset keeps the provider-direct route.
+ */
 export function buildRunEnv(
   provider: WorkerProvider,
   headless: boolean,
   proxyUrl?: string,
-  providerName?: string
+  providerName?: string,
+  routerEnabled?: boolean
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -96,6 +102,15 @@ export function buildRunEnv(
     // openai-protocol provider: the proxy holds the real key; the runner only
     // needs a placeholder so Claude Code sends an auth header at all
     env.ANTHROPIC_BASE_URL = proxyUrl;
+  } else if (routerEnabled) {
+    // Router on: the run goes through the local model router, which resolves
+    // the requested model to this provider, injects the key itself and logs
+    // usage+cache per session — the same settings.json pin an interactive
+    // session uses (5f870a4). A provider-direct route would send the same
+    // traffic past that accounting entirely (measured 2026-10-17: pooled
+    // slots carried 87% cache while the router log had zero rows for them),
+    // so there is no provider-direct fallback while the router is enabled.
+    env.ANTHROPIC_BASE_URL = routerUrl();
   } else {
     const resolved = resolveProviderKey(provider);
     if (resolved) token = resolved;
@@ -127,6 +142,11 @@ export function buildRunEnv(
 
 /** First-party route a native run is pinned to when caveman is off. */
 export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
+
+/** Loopback URL of the local model router — the route every accounted run takes. */
+export function routerUrl(): string {
+  return `http://127.0.0.1:${ROUTER_PORT}`;
+}
 
 /**
  * The argv head every Claude Code spawn starts from, for an env built by
@@ -173,7 +193,7 @@ export function pinnedSettingsArgs(
   routerEnabled: boolean = loadConfig().router.enabled,
   extra?: Record<string, unknown>
 ): string[] {
-  const native = routerEnabled ? `http://127.0.0.1:${ROUTER_PORT}` : ANTHROPIC_FIRST_PARTY_URL;
+  const native = routerEnabled ? routerUrl() : ANTHROPIC_FIRST_PARTY_URL;
   const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || native };
   if (env.ANTHROPIC_BASE_URL) for (const k of PINNED_KEYS) if (env[k]) pinned[k] = env[k] as string;
   return ["--settings", JSON.stringify({ env: pinned, ...extra })];
