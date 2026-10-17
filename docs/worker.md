@@ -605,6 +605,26 @@ path and a short hash in the worker status.
 
 `--all` (or no iTerm at all) widens to every worker.
 
+### No hidden workers (machine view)
+
+Scoping is a VIEW, never a hiding place: whenever live workers of other
+sessions exist, `pai worker ps` appends a `scope: MACHINE` section listing
+every live spawned worker on the host, each row tagged with its owner session
+(`[AIBroker]`, `[PAI]`, …), so every session sees one machine truth. The
+status line counts the same machine-wide set — `▶N` is the number of live
+worker panes on the host, identical in every session. A pgrep-level
+cross-check reports any `pai worker run` process no live status file owns, so
+stripping a status file cannot hide a run either.
+
+Pane enforcement is deterministic: a headless run either opens and verifies a
+visible pane in the spawning session's window (a cross-session spawn attaches
+its pane to ITS session's window), or it is refused. The only ways to run
+hidden are the operator's: `PAI_WORKER_ALLOW_HIDDEN=1` in the operator's own
+shell (stripped from every spawned worker, so it never flows down through
+sessions), or the override file `~/.claude/pai/headless-ok`. A daemon — which
+has no window to attach a pane to — cannot start workers unless the operator
+granted one of those. `pai worker run --no-pane` is refused on the same terms.
+
 ## Follow, replay and the pane
 
 `follow` renders the live transcript with a `HH:MM:SS │ ` gutter (dim; the

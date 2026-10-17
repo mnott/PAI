@@ -256,7 +256,10 @@ export function registerWorkerCommands(workerCmd: Command): void {
 
   workerCmd
     .command("ps")
-    .description("List workers of this session (RUNNING + FINISHED); --all for every worker")
+    .description(
+      "List this session's workers (RUNNING + FINISHED); whenever other sessions have live workers,\n" +
+        "a MACHINE section lists every live worker on the host with its owner session"
+    )
     .option("--all", "Show workers of all sessions, not just this terminal's")
     .action((opts: { all?: boolean }) => {
       try {

@@ -349,7 +349,7 @@ describe("renderEvent", () => {
   });
 });
 
-describe("statusLineOutput scope", () => {
+describe("statusLineOutput machine count", () => {
   const logDir = mkdtempSync(join(tmpdir(), "pai-statusline-"));
   const base = {
     pid: process.pid, // alive, so the row actually renders
@@ -371,24 +371,29 @@ describe("statusLineOutput scope", () => {
   } as WorkerStatus;
   const now = new Date("2026-09-17T10:00:45");
 
-  it("claims an orchestrator-spawned worker via the claude session id", () => {
+  it("StatuslineMatchesPaneCount: counts workers of every session, machine-wide", () => {
     saveStatus(logDir, { ...base, id: "20260917-100000-1" });
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now)).toMatch(
-      /prov ▶1/
-    );
-  });
-  it("hides it from another session's tab and from plain terminal scope", () => {
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now)).toBe("");
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toBe("");
-  });
-  it("terminal scope still wins for workers that have a terminal", () => {
+    // this session's Bash-spawned worker AND another session's pane worker:
+    // the bar shows one number for the machine, the same the panes show
     saveStatus(logDir, {
       ...base,
       id: "20260917-100001-2",
       term: "w11t0p0:AAAA-BBBB",
       spawnerSession: null,
+      session: { id: "AAAA-BBBB", name: "OtherSession" },
     });
-    expect(statusLineOutput(logDir, "w11t0p0:ZZZZ-YYYY", "/nowhere", "", now)).toMatch(/prov ▶1/);
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now)).toMatch(
+      /prov ▶2/
+    );
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/prov ▶2/);
+  });
+  it("the terminal's own chat pane is never counted as a worker", () => {
+    saveStatus(logDir, { ...base, id: "20260917-100002-3", origin: "chat", label: "unlabeled", turns: 0 });
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2/);
+  });
+  it("an ended worker leaves the count", () => {
+    saveStatus(logDir, { ...base, id: "20260917-100003-4", state: "done", rc: 0, secs: 3 });
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2/);
   });
 });
 

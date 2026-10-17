@@ -24,10 +24,10 @@
 
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { spawn, type SpawnOptions } from "node:child_process";
+import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
-import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
-import { currentTabKey, resolveSession, workerInScope } from "./scope.js";
+import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
+import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
@@ -75,6 +75,52 @@ export const BACKFILL_EVENTS = 200;
 // ps
 // ---------------------------------------------------------------------------
 
+/**
+ * Live `pai worker run` processes on this machine that no live status file
+ * owns: the cross-check that makes hiding a worker impossible even by
+ * stripping its status file. Every legitimate spawn has a status (its own pid
+ * plus its recorded parentPid — the zsh wrapper shell around the pai process,
+ * which ps also shows naming the worker). Pane follows are views, not runs.
+ */
+export function strayWorkerProcesses(
+  statuses: Pick<WorkerStatus, "pid" | "started" | "state" | "parentPid">[],
+  psOut: string = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" })
+): Array<{ pid: number; command: string }> {
+  const owned = new Set<number>();
+  for (const s of statuses) {
+    if (s.state !== "running" || !ownsPid(s as WorkerStatus)) continue;
+    owned.add(s.pid);
+    if (s.parentPid && s.parentPid > 0) owned.add(s.parentPid);
+  }
+  const out: Array<{ pid: number; command: string }> = [];
+  for (const line of psOut.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const at = t.indexOf(" ");
+    if (at <= 0) continue;
+    const pid = Number(t.slice(0, at));
+    const command = t.slice(at + 1);
+    if (!Number.isInteger(pid) || pid <= 0 || owned.has(pid)) continue;
+    // anchored on the invocation lead: `pai worker run` or `node <…> worker
+    // run` (the pai bin is the runner's argv[1]). A substring search would
+    // flag every claude child whose PROMPT merely mentions `pai worker run`
+    // (observed live), and shell wrappers around a real run are owned through
+    // the run's recorded parentPid instead.
+    if (!/^(?:node \S+ |pai )?worker run\b/.test(command)) continue;
+    out.push({ pid, command: command.slice(0, 120) });
+  }
+  return out;
+}
+
+/**
+ * The one `ps` face: this session's workers first (the tree it owns), then —
+ * whenever live workers from other sessions exist — a MACHINE section listing
+ * EVERY live worker on the host with its owner session, so no session can
+ * look at its own truth while another session's worker runs unlisted. A
+ * `--all` call already shows everything and gets no second section. Stray
+ * `pai worker run` processes without a status file are appended as the
+ * pgrep-level cross-check.
+ */
 export function psOutput(
   logDir: string,
   showAll: boolean,
@@ -92,7 +138,43 @@ export function psOutput(
         ? `scope: session ${resolveSession(term)!.name}`
         : `scope: tab ${currentTabKey(env)} (this iTerm tab)`;
   const inbox = inboxCounts(logDir, scoped);
-  return renderTable(c, scoped, scopeLabel, new Date(), inbox);
+  const parts = [renderTable(c, scoped, scopeLabel, new Date(), inbox)];
+  // machine view: every live spawned worker on the host, whoever owns it —
+  // chat panes are terminals, not spawned workers, and never counted
+  const scopedIds = new Set(scoped.map((s) => s.id));
+  const machine = statuses
+    .filter((s) => !isChatPane(s) && isLive(s))
+    .map((s) => {
+      // owner session name on every row: registry lookup when the status
+      // itself does not carry one ("?" rows are the only ones left bare)
+      const name = ownerSessionName(s);
+      return name === "?" || s.session?.name === name
+        ? s
+        : { ...s, session: { id: s.session?.id ?? "", name } };
+    });
+  const foreign = machine.filter((s) => !scopedIds.has(s.id));
+  if (!showAll && term && foreign.length) {
+    const here = machine.length - foreign.length;
+    parts.push(
+      renderTable(
+        c,
+        machine,
+        `scope: MACHINE — every live worker on this host (${machine.length} running` +
+          `${here ? `, ${here} in this session` : ""}); the tag names each row's owner session`,
+        new Date(),
+        {}
+      )
+    );
+  }
+  const stray = strayWorkerProcesses(statuses);
+  if (stray.length) {
+    parts.push(
+      c("yellow", `MACHINE cross-check: ${stray.length} pai worker run process(es) with no status file:`) +
+        "\n" +
+        stray.map((s) => `  pid ${s.pid}  ${s.command}`).join("\n")
+    );
+  }
+  return parts.join("\n");
 }
 
 /** Handoffs waiting in each listed worker's inbox: id → count. */
@@ -1125,24 +1207,24 @@ function sleep(ms: number): Promise<void> {
 // status line
 // ---------------------------------------------------------------------------
 
-/** Workers of this terminal for the status bar; "" when there are none. */
+/**
+ * The status bar's worker line, counted MACHINE-WIDE: every live spawned
+ * worker on the host, whoever launched it. The bar used to count only this
+ * terminal's scope while panes of other sessions were visible on the same
+ * screen — two truths, one screen (2026-10-17). With every run pane-gated,
+ * the machine's live count IS the pane count, so the bar shows it; `term`,
+ * `cwd` and `claudeSession` stay in the signature (callers keep passing them)
+ * but no longer filter the count.
+ */
 export function statusLineOutput(
   logDir: string,
-  term: string,
-  cwd: string,
-  claudeSession: string = "",
+  _term: string,
+  _cwd: string,
+  _claudeSession: string = "",
   now: Date = new Date(),
   /** Live routing choice (workers.active) — the head of the line. */
   active: string | null = null
 ): string {
-  const statuses = loadStatuses(logDir);
-  const mine = statuses.filter((s) => {
-    const sameScope = term && workerInScope(s, term);
-    // orchestrator Bash spawns have no terminal identity; their spawner
-    // session (the claude session rendering this bar) claims them instead
-    const spawnedHere = claudeSession && s.spawnerSession === claudeSession;
-    const sameDir = cwd && s.cwd.startsWith(cwd);
-    return sameScope || spawnedHere || (!term && sameDir);
-  });
-  return renderStatusLine(mine, now, active);
+  const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s));
+  return renderStatusLine(statuses, now, active);
 }

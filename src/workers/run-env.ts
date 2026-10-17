@@ -38,8 +38,13 @@ const SESSION_IDENTITY_VARS = [
  * every core tool deferred out of reach — only ToolSearch remains callable,
  * granted tools included (2026-09-18, verified by stripping exactly this one
  * var). Interactive runs set it deliberately below.
+ *
+ * PAI_WORKER_ALLOW_HIDDEN is the operator's own consent to run a worker with
+ * no pane. It must die at the spawn boundary like the session identities
+ * above: a worker (or a daemon born of an operator shell) never passes the
+ * consent on, so "allowed hidden" applies only to the process it was set for.
  */
-const HEADLESS_STRIP_VARS = ["ENABLE_TOOL_SEARCH"] as const;
+const HEADLESS_STRIP_VARS = ["ENABLE_TOOL_SEARCH", "PAI_WORKER_ALLOW_HIDDEN"] as const;
 
 /**
  * Provider-specific env vars a native-Anthropic run must never carry — not

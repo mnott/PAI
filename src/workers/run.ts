@@ -96,7 +96,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { runImageCapability } from "./engines/image.js";
-import { headlessAllowed, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
+import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -1063,9 +1063,14 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
  * The fail-closed pane gate: a headless run proceeds only behind a pane that
  * was opened and verified visible (see openVerifiedPane). Runs BEFORE the
  * worker has an id on disk, so a refusal leaves nothing in `pai worker ps`.
- * Skipped (false) for in-process callers that pass noPane (daemon, keepalive)
- * and for the two headlessAllowed() cases; the caller then falls back to the
- * best-effort announcePane.
+ *
+ * Deterministic (no hidden workers): the ONLY skips are headlessAllowed() —
+ * a worker's own child (PAI_WORKER=1), the operator's PAI_WORKER_ALLOW_HIDDEN=1
+ * or their override file. `dryRun` (--print-cmd audits) skips too: it spawns
+ * nothing. An explicit hidden request (noPane from a daemon, keepalive or an
+ * in-process caller) without that consent is refused, not silently honoured —
+ * a spawning session with no window (daemon) has no pane to attach to and
+ * cannot run workers.
  */
 export async function requireVisiblePane(
   logDir: string,
@@ -1073,17 +1078,28 @@ export async function requireVisiblePane(
   wid: string,
   term: string,
   noPane: boolean,
+  dryRun: boolean,
   ledger: string
 ): Promise<boolean> {
-  if (noPane || headlessAllowed()) return false;
+  if (dryRun) return false;
+  const allow = headlessAllowed();
+  if (allow) {
+    process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
+    return false;
+  }
+  const how = `hidden runs need the operator's ${ALLOW_HIDDEN_ENV}=1 or ${headlessOverridePath()}`;
+  if (noPane) {
+    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: `headless requested, no override (${how})`.slice(0, 300) });
+    throw new Error(`worker not started, no visible pane: headless requested but nothing may run hidden (${how})`);
+  }
   try {
     const where = await openVerifiedPane(logDir, config, wid, term);
     process.stderr.write(`[pai worker] pane verified for ${wid}: ${where}\n`);
     return true;
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: reason.slice(0, 300) });
-    throw new Error(`worker not started, no visible pane: ${reason}`);
+    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: `${reason} (${how})`.slice(0, 300) });
+    throw new Error(`worker not started, no visible pane: ${reason} (${how})`);
   }
 }
 
@@ -1262,7 +1278,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
-  const paneVerified = headless && (await requireVisiblePane(logDir, config, wid, term, noPane || a.printCmd === true, ledgerPath(logDir)));
+  const paneVerified = headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
@@ -1957,7 +1973,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
-  const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, ledgerPath(logDir));
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, false, ledgerPath(logDir));
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
 

@@ -24,6 +24,7 @@ import { readWorkersSection } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { loadStatus } from "./status.js";
+import { headlessAllowed } from "./pane.js";
 
 /**
  * The trivial prompt every cache beat (and probe) carries. Kept in one place
@@ -121,6 +122,8 @@ export interface BeatOptions {
   configPath?: string;
   /** Preset worker id (tests); a fresh stamp when omitted. */
   id?: string;
+  /** Hidden-run consent check (tests inject); default headlessAllowed(). */
+  allowHidden?: () => string | null;
 }
 
 /** True while a beat's worker is still running — the overlap guard reads it. */
@@ -157,6 +160,17 @@ export async function runKeepaliveBeat(opts: BeatOptions = {}): Promise<BeatMetr
     const { workers: config } = readWorkersSection(opts.configPath);
     const logDir = workersLogDir(config);
     const id = opts.id ?? beatId();
+    // No hidden workers: the beat runs with noPane (it is infrastructure with
+    // no window to attach a pane to), so it needs the operator's consent like
+    // any other headless run. Without it the beat is skipped — cheaper than
+    // an error per beat, and the ledger line says why the cache went cold.
+    const allowed = (opts.allowHidden ?? headlessAllowed)();
+    if (!allowed) {
+      appendLedger(ledgerPath(logDir), "WORKER-KEEPALIVE-SKIP", {
+        reason: "no pane and no hidden-run override (operator: PAI_WORKER_ALLOW_HIDDEN=1)",
+      });
+      return null;
+    }
     const rc = await runWorker({
       claudeArgs: ["-p", HEARTBEAT_PROMPT],
       className: KEEPALIVE_CLASS,

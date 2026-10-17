@@ -539,9 +539,12 @@ export function renderTable(
     const meter = contextMeter(c, s, 60);
     const p = chain ? "  " : rowPrefix(depth, subLast);
     const q = chain ? "      " : rowCont(depth, subLast);
+    // owner session tag on running rows too: in the MACHINE section every row
+    // must say whose worker it is (finished rows already carry it)
+    const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )

@@ -416,6 +416,13 @@ describe("fail-closed visibility", () => {
     expect(headlessAllowed({}, process.execPath)).toContain("operator override file");
   });
 
+  it("OverrideEnvWorks: PAI_WORKER_ALLOW_HIDDEN=1 is an operator override, without the file", () => {
+    const none = join(tmpdir(), "pai-no-such-override");
+    expect(headlessAllowed({ PAI_WORKER_ALLOW_HIDDEN: "1" }, none)).toContain("PAI_WORKER_ALLOW_HIDDEN=1");
+    expect(headlessAllowed({ PAI_WORKER_ALLOW_HIDDEN: "0" }, none)).toBeNull();
+    expect(() => assertPaneNotDisabled(true, { PAI_WORKER_ALLOW_HIDDEN: "1" })).not.toThrow();
+  });
+
   it("--no-pane and PAI_WORKER_AUTOPANE=0 are refused for a Claude session, allowed for a worker", () => {
     vi.stubEnv("PAI_HEADLESS_OK_FILE", join(tmpdir(), "pai-no-such-override"));
     expect(() => assertPaneNotDisabled(true, {})).toThrow("--no-pane refused");

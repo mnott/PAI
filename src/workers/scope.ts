@@ -109,6 +109,27 @@ export function sessionTag(worker: { session?: { name?: string } | null }): stri
   return worker.session?.name ? `[${worker.session.name}]` : "";
 }
 
+/**
+ * Who owns a worker, for machine-wide listings (every session must be able to
+ * attribute every live worker): the AIBroker session name when the worker or
+ * the registry knows it, else the owning tab key, else "?" — never nothing,
+ * or the row would be exactly the kind of unattributable entry this exists
+ * to prevent.
+ */
+export function ownerSessionName(
+  s: Pick<WorkerStatus, "session" | "term">,
+  registryPath: string = AIBROKER_REGISTRY
+): string {
+  if (s.session?.name) return s.session.name;
+  const uuid = s.session?.id || itermUuid(s.term ?? "");
+  if (uuid) {
+    const resolved = resolveSession(uuid, registryPath);
+    if (resolved?.name) return resolved.name;
+  }
+  const tab = tabKey(s.term ?? "");
+  return tab ? `tab ${tab}` : "?";
+}
+
 // ---------------------------------------------------------------------------
 // spawner sessions — attribution for workers launched from a Claude Code Bash
 // ---------------------------------------------------------------------------

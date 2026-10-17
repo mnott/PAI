@@ -910,6 +910,7 @@ describe("requireVisiblePane (fail closed)", () => {
     stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.mocked(pane.openVerifiedPane).mockReset();
     vi.stubEnv("PAI_WORKER", "");
+    vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "");
     vi.stubEnv("PAI_HEADLESS_OK_FILE", join(dir, "no-such-override"));
   });
 
@@ -921,32 +922,47 @@ describe("requireVisiblePane (fail closed)", () => {
 
   it("opens and verifies the pane before the worker starts", async () => {
     vi.mocked(pane.openVerifiedPane).mockResolvedValue("window 7 tab 1/1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", false, ledger)).toBe(true);
+    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", false, false, ledger)).toBe(true);
     expect(stderr).toHaveBeenCalledWith("[pai worker] pane verified for w1: window 7 tab 1/1\n");
   });
 
   it("refuses with the reason and a WORKER-REFUSED ledger line when verification fails", async () => {
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: pane too small"));
-    await expect(requireVisiblePane(dir, cfg, "w1", "term-1", false, ledger)).rejects.toThrow(
+    await expect(requireVisiblePane(dir, cfg, "w1", "term-1", false, false, ledger)).rejects.toThrow(
       "worker not started, no visible pane: pane verification failed: pane too small"
     );
     const lines = parseLedger(readFileSync(ledger, "utf8"));
     expect(lines.some((l) => l.event === "WORKER-REFUSED" && l.fields.id === "w1")).toBe(true);
   });
 
+  it("NoPaneRefusedWithoutOverride: an in-process hidden request is refused, nothing spawned", async () => {
+    await expect(requireVisiblePane(dir, cfg, "w1", "", true, false, ledger)).rejects.toThrow(
+      /no visible pane: headless requested/
+    );
+    expect(pane.openVerifiedPane).not.toHaveBeenCalled();
+    const lines = parseLedger(readFileSync(ledger, "utf8"));
+    expect(lines.some((l) => l.event === "WORKER-REFUSED" && l.fields.id === "w1")).toBe(true);
+  });
+
+  it("OverrideEnvWorks: the operator's env lets the same hidden request through", async () => {
+    vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "1");
+    expect(await requireVisiblePane(dir, cfg, "w1", "", true, false, ledger)).toBe(false);
+    expect(pane.openVerifiedPane).not.toHaveBeenCalled();
+  });
+
+  it("skips (false) for --print-cmd dry runs and for a worker's children", async () => {
+    expect(await requireVisiblePane(dir, cfg, "w1", "", true, true, ledger)).toBe(false);
+    vi.stubEnv("PAI_WORKER", "1");
+    expect(await requireVisiblePane(dir, cfg, "w1", "", false, false, ledger)).toBe(false);
+    expect(pane.openVerifiedPane).not.toHaveBeenCalled();
+  });
+
   it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the gate", async () => {
     vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("no pane"));
     const off = { ...cfg, pane: { ...cfg.pane, enabled: false } };
-    await expect(requireVisiblePane(dir, off, "w1", "term-1", false, ledger)).rejects.toThrow("no visible pane");
+    await expect(requireVisiblePane(dir, off, "w1", "term-1", false, false, ledger)).rejects.toThrow("no visible pane");
     expect(pane.openVerifiedPane).toHaveBeenCalledTimes(1);
-  });
-
-  it("skips (false) for in-process noPane callers and for a worker's children", async () => {
-    expect(await requireVisiblePane(dir, cfg, "w1", "", true, ledger)).toBe(false);
-    vi.stubEnv("PAI_WORKER", "1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "", false, ledger)).toBe(false);
-    expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 });
 

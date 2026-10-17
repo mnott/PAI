@@ -1099,12 +1099,17 @@ export function headlessOverridePath(): string {
 
 /**
  * Why this process may run a worker without a verified pane, null when it may
- * not. Two reasons only: it is itself a worker (PAI_WORKER=1: a child spawned
- * inside its parent's pane may stay headless) or the operator created the
- * override file.
+ * not. Three reasons only: it is itself a worker (PAI_WORKER=1: a child
+ * spawned inside its parent's pane may stay headless), the operator set
+ * PAI_WORKER_ALLOW_HIDDEN=1 in their own shell (buildRunEnv strips it from
+ * every spawned worker, so the consent ends at the process it was set for),
+ * or the operator created the override file.
  */
+export const ALLOW_HIDDEN_ENV = "PAI_WORKER_ALLOW_HIDDEN";
+
 export function headlessAllowed(env: NodeJS.ProcessEnv = process.env, file: string = headlessOverridePath()): string | null {
   if (env.PAI_WORKER === "1") return "PAI_WORKER=1 (child of a worker, runs inside its parent's pane)";
+  if (env[ALLOW_HIDDEN_ENV] === "1") return `${ALLOW_HIDDEN_ENV}=1 (operator override)`;
   if (existsSync(file)) return `operator override file ${file}`;
   return null;
 }
@@ -1236,6 +1241,10 @@ export async function openVerifiedPane(
 export function assertPaneNotDisabled(noPaneFlag: boolean, env: NodeJS.ProcessEnv = process.env): void {
   const what = noPaneFlag ? "--no-pane" : env.PAI_WORKER_AUTOPANE === "0" ? "PAI_WORKER_AUTOPANE=0" : "";
   if (what && !headlessAllowed(env)) {
-    throw new Error(`${what} refused: every worker runs behind a visible pane (only a worker's own children or the operator's ${headlessOverridePath()} may skip it)`);
+    throw new Error(
+      `${what} refused: every worker runs behind a visible pane ` +
+        `(only a worker's own children, the operator's ${ALLOW_HIDDEN_ENV}=1, ` +
+        `or the operator's ${headlessOverridePath()} may skip it)`
+    );
   }
 }

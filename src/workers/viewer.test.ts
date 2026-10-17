@@ -20,10 +20,14 @@ import {
   followWorkers,
   initialFollowState,
   makeOperatorInput,
+  psOutput,
+  statusLineOutput,
+  strayWorkerProcesses,
   workerEnded,
   type FollowIO,
   type OperatorInputDeps,
 } from "./viewer.js";
+import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const plain = makeColor(false);
 const color = makeColor(true);
@@ -760,4 +764,78 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(buf).toContain("ended done rc=0 after 2s");
     expect(readFileSync(ledgerPath(dir), "utf8")).toContain("reason=worker-ended");
   }, 8000);
+});
+
+describe("ps machine scope (no hidden workers)", () => {
+  const logDir = mkdtempSync(join(tmpdir(), "pai-ps-machine-"));
+  // a fresh stamp: real isLive compares it against ps's own start time (within
+  // 120 s), so the fixture row counts as live for the whole test run
+  const base = {
+    pid: process.pid, // alive, so the row is live
+    label: "cross-session task",
+    cwd: "/repo",
+    provider: "prov",
+    model: "m",
+    state: "running",
+    started: nowStamp(),
+    updated: nowStamp(),
+    turns: 1,
+    tools: 1,
+    last: "Bash: npm test",
+    rc: null,
+    secs: null,
+    origin: "spawn",
+  } as WorkerStatus;
+  const mineTerm = "w5t0p0:11111111-2222-3333-4444-555555555555";
+  const env = { ITERM_SESSION_ID: mineTerm } as NodeJS.ProcessEnv;
+
+  it("CrossSessionWorkerListed: another session's live worker shows in the MACHINE section", () => {
+    saveStatus(logDir, { ...base, id: "20260917-100000-1", term: mineTerm });
+    saveStatus(logDir, {
+      ...base,
+      id: "20260917-100001-2",
+      term: "w7t0p0:99999999-8888-7777-6666-555555555555",
+      session: { id: "99999999-8888-7777-6666-555555555555", name: "AIBroker" },
+    });
+    const out = psOutput(logDir, false, env, false);
+    expect(out).toContain("scope: tab w5t0"); // this session's own tree first
+    expect(out).toContain("scope: MACHINE");
+    expect(out).toContain("20260917-100001-2");
+    expect(out).toContain("[AIBroker]"); // owner session named on the row
+    // --all shows everything once, with no duplicate machine section
+    const all = psOutput(logDir, true, env, false);
+    expect(all).toContain("20260917-100001-2");
+    expect(all).not.toContain("scope: MACHINE");
+  });
+
+  it("no machine section while every live worker is this session's", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-ps-own-"));
+    saveStatus(dir, { ...base, id: "20260917-100002-3", term: mineTerm });
+    expect(psOutput(dir, false, env, false)).not.toContain("scope: MACHINE");
+  });
+
+  it("chat panes are terminals, not workers: never in the machine count", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-ps-chat-"));
+    saveStatus(dir, { ...base, id: "20260917-100003-4", term: "w9t0p0:aaaa-bbbb", origin: "chat", label: "unlabeled", turns: 0 });
+    expect(psOutput(dir, false, env, false)).not.toContain("scope: MACHINE");
+    expect(statusLineOutput(dir, mineTerm, "/repo", "", new Date())).toBe("");
+  });
+
+  it("strayWorkerProcesses: a pai worker run without a live status file is reported", () => {
+    const ps = [
+      `  101 /bin/zsh --login`,
+      `  102 node /usr/local/bin/pai worker run -p 'ghost task'`, // no status owns it
+      `  103 /bin/zsh -c eval 'pai worker run -p wrapper'`, // shell wrapper: never the marker itself
+      `  104 claude --settings {} -p 'mentions pai worker run in its prompt'`, // prompt noise, not a run
+      `  105 ${process.execPath} pai worker follow 20260917-100000-1`, // a pane view, not a run
+      `  ${process.pid} node /usr/local/bin/pai worker run -p 'owned by a live status'`,
+    ].join("\n");
+    const stray = strayWorkerProcesses(
+      // this process's own pid is genuinely "live" (ps start time matches), so
+      // its run line above is owned and never reported
+      [{ pid: process.pid, parentPid: 103, started: nowStamp(), state: "running" }],
+      ps
+    );
+    expect(stray.map((s) => s.pid)).toEqual([102]);
+  });
 });
