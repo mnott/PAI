@@ -341,3 +341,17 @@ describe("renderRepair", () => {
     expect(repairPath({ tool_name: "Edit", cwd: CWD, tool_input: { file_path: GOOD } }, W, fs(GOOD))).toBeNull();
   });
 });
+
+describe("worktree cwd", () => {
+  const WT = "/Users/dev/.claude/pai/logs/workers/worktrees/20261017-120000-1";
+  const bad = "/Users/dev/.claude/pai/logs/worktrees/20261017-120000-1/src/workers/daemon-llm.ts";
+  const fixed = `${WT}/src/workers/daemon-llm.ts`;
+  it("repairs a Read path with the 'workers' segment dropped", () => {
+    const r = repairPath({ tool_name: "Read", cwd: WT, tool_input: { file_path: bad } }, W, (p) => p === fixed);
+    expect(r?.new).toBe(fixed);
+  });
+  it("repairs an Edit path the same way", () => {
+    const r = repairPath({ tool_name: "Edit", cwd: WT, tool_input: { file_path: bad } }, W, (p) => p === fixed);
+    expect(r?.new).toBe(fixed);
+  });
+});
