@@ -135,7 +135,7 @@ export function renderCommandHelp(path: string[], cmd: CommandDef, st: Style): s
     out.push(
       renderTable(
         ["Command", "Description"],
-        cmd.subcommands.filter((s) => !s.later).map((s) => [st.cyan(s.name), s.summary]),
+        cmd.subcommands.filter((s) => !s.later && !s.hidden).map((s) => [st.cyan(s.name), s.summary]),
         st
       )
     );

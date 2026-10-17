@@ -2,14 +2,30 @@
 
 import type { CommandDef, GroupDef } from "./define.js";
 import { docCommand, helpCommand } from "./commands/meta.js";
-import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands/later.js";
+import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER, WORKER_LATER } from "./commands/later.js";
 import { providersCommand } from "./commands/providers.js";
+import { PROVIDER_EDIT_COMMANDS, WORKER_CONFIG_COMMANDS } from "./commands/worker-config.js";
+import { routerCommand } from "./commands/router.js";
 import { moreCommand, setupsCommand } from "./commands/setups.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
   subcommands: [...(sessionCommand.subcommands ?? []), ...SESSION_LATER],
+};
+
+const workerGroup: CommandDef = {
+  name: "worker",
+  summary: "Run subagents on other providers: providers, classes, config, policy, ...",
+  description: "Subagents that run on other providers. Setup lives here: providers, classes, config, policy, local, fallback, pool, proxy, mcp, on, off, install.",
+  examples: ["pai worker providers", "pai worker policy"],
+  subcommands: [...WORKER_CONFIG_COMMANDS, ...WORKER_LATER],
+};
+
+// `pai providers add|remove|...` are the same command objects as `pai worker providers ...`.
+const providersTop: CommandDef = {
+  ...providersCommand,
+  subcommands: [...(providersCommand.subcommands ?? []), ...PROVIDER_EDIT_COMMANDS],
 };
 
 const titles = {
@@ -20,7 +36,12 @@ const titles = {
 
 export const GROUPS: GroupDef[] = [
   { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, ...SESSION_SHORTCUTS_LATER] },
-  { id: "providers", title: "Providers", daily: true, commands: [providersCommand] },
+  { id: "providers", title: "Providers", daily: true, commands: [providersTop] },
   { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
-  ...LATER_GROUPS.map((g) => ({ id: g.id, title: titles[g.id as keyof typeof titles], daily: false, commands: g.commands })),
+  ...LATER_GROUPS.map((g) => ({
+    id: g.id,
+    title: titles[g.id as keyof typeof titles],
+    daily: false,
+    commands: g.id === "workers" ? [workerGroup, routerCommand, ...g.commands] : g.commands,
+  })),
 ];

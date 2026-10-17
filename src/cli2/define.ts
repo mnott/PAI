@@ -22,11 +22,15 @@ export interface OptDef {
   value?: string;
   default?: string | number | boolean;
   summary: string;
+  /** May be given several times; every value is in RunContext.multi (opts holds the last). */
+  repeatable?: boolean;
 }
 
 export interface RunContext {
   args: Record<string, string | string[] | undefined>;
   opts: Record<string, string | number | boolean | undefined>;
+  /** Every value of a repeatable option, in order. */
+  multi?: Record<string, string[]>;
   /** Global --dry-run: print the exec line instead of executing. */
   dryRun: boolean;
   /** Everything after a bare `--` (passed to claude verbatim). */
@@ -58,6 +62,8 @@ export interface CommandDef {
   later?: string;
   /** Listed on the first screen (`pai`); everything else is under `pai more`. */
   daily?: boolean;
+  /** Works, but is not listed in help (an old spelling kept for callers). */
+  hidden?: boolean;
   /** Accept `-- args` and pass them on. */
   passthrough?: boolean;
   run?: (ctx: RunContext) => Promise<number | void> | number | void;
