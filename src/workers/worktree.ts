@@ -16,12 +16,15 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { invalidatePendingCache } from "./pending.js";
+
+/** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
+export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
 
 export function worktreesDir(logDir: string): string {
   return join(logDir, "worktrees");
@@ -326,24 +329,13 @@ export function salvageOnExit(
   }
 }
 
-/** Untracked, gitignored files under the worktree's Notes/ (repo-relative). */
-function untrackedNotes(wtDir: string): string[] {
-  try {
-    return git(wtDir, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "Notes"])
-      .split("\0")
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Copy the worktree's untracked Notes/ files into the original checkout before
  * the worktree is removed (Notes/ is gitignored, so nothing else carries them).
  * Never overwrites: a name that exists with different content gets
  * `<name>.<id>.md`; identical content is skipped. Returns one line per file.
  */
-function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
+export function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
   const lines: string[] = [];
   if (!existsSync(wtDir)) return lines;
   for (const rel of untrackedNotes(wtDir)) {
@@ -369,6 +361,17 @@ function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
     }
   }
   return lines;
+}
+
+/** Untracked, gitignored files under the worktree's Notes/ (repo-relative). */
+function untrackedNotes(wtDir: string): string[] {
+  try {
+    return git(wtDir, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "Notes"])
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /** Remove a worktree directory from git's books and the filesystem. */
@@ -808,7 +811,8 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit);
   // salvage first: only a commit can carry uncommitted work through the merge
-  const salvage = existsSync(st.worktreeDir!)
+  const slot = isSlotWorktree(st.worktreeDir!);
+  const salvage = existsSync(st.worktreeDir!) && !slot
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
     : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
@@ -834,21 +838,34 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
         `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
     );
   }
-  if (existsSync(st.worktreeDir!)) assertWorktreeClean(st.worktreeDir!, id);
+  if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
-  for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
-  removeWorktree(st.cwd, st.worktreeDir!, true);
+  if (!slot) for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
+  if (!slot) removeWorktree(st.cwd, st.worktreeDir!, true);
   let branchGone = true;
   try {
-    git(st.cwd, ["branch", "-d", st.branch!]);
+    if (slot) {
+      // For slot worktrees, we need to ensure we're not on the branch before deleting it
+      try {
+        const currentBranch = git(st.worktreeDir!, ["rev-parse", "--abbrev-ref", "HEAD"]);
+        if (currentBranch === st.branch) {
+          git(st.worktreeDir!, ["checkout", "-q", "--detach"]);
+        }
+      } catch {
+        // If we cannot determine or change the branch, proceed with deletion anyway
+      }
+      git(st.cwd, ["branch", "-D", st.branch!]);
+    } else {
+      git(st.cwd, ["branch", "-d", st.branch!]);
+    }
   } catch {
     branchGone = false; // -d refuses anything not fully merged; keep the branch, say so
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   invalidatePendingCache(logDir, st.cwd);
-  const base = `merged ${st.branch} into ${st.cwd} (worktree removed${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
+  const base = `merged ${st.branch} into ${st.cwd} (${slot ? "slot worktree kept" : "worktree removed"}${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
   const notes: string[] = [];
   if (salvage.committed.length) {
     notes.push(`salvaged ${salvage.committed.length} uncommitted change(s): ${salvage.committed.join(", ")}`);
@@ -862,6 +879,23 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */
 export function discardWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
+  if (isSlotWorktree(st.worktreeDir!)) {
+    // For slot worktrees, we don't remove the worktree, just detach if needed and delete the branch
+    try {
+      const currentBranch = git(st.worktreeDir!, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      if (currentBranch === st.branch) {
+        git(st.worktreeDir!, ["checkout", "-q", "--detach"]);
+      }
+    } catch {
+      // If we cannot determine or change the branch, proceed with deletion anyway
+    }
+    try {
+      git(st.cwd, ["branch", "-D", st.branch!]);
+    } catch {
+      // If deletion fails, we still return a message
+    }
+    return `discarded worker ${id}: slot worktree kept, branch ${st.branch} deleted`;
+  }
   const lost = untrackedNotes(st.worktreeDir!);
   for (const f of lost) console.log(`will be lost: ${f} (worker ${id})`);
   removeWorktree(st.cwd, st.worktreeDir!, true);
@@ -1042,7 +1076,7 @@ export function gcWorktrees(
 
   for (const st of statuses) {
     const tree = ownedTree(st);
-    if (!tree || !existsSync(tree.dir) || isLive(st)) continue;
+    if (!tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir)) continue;
     let end = 0;
     try {
       end = statSync(statusPath(logDir, st.id)).mtimeMs;
@@ -1057,7 +1091,7 @@ export function gcWorktrees(
     for (const ent of readdirSync(root, { withFileTypes: true })) {
       const dir = join(root, ent.name);
       // owned by a status (the last id of a resume chain) is that status's business
-      if (!ent.isDirectory() || owned.has(resolve(dir))) continue;
+      if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir)) continue;
       try {
         if (statSync(dir).mtimeMs > cutoff) continue;
       } catch {
