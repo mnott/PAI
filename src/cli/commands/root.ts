@@ -17,6 +17,7 @@ import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
 import { allSetups, findSetup, loadSaved, orchestratorLabel, shortModel, workersLabel, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
+import { writeFileSync } from "node:fs";
 
 export const CANCELLED = 130;
 
@@ -296,6 +297,7 @@ export async function runRoot(
   }
 
   let picked: SessionRow | undefined;
+  let cdDir: string | undefined;
   if (!args.name) {
     if (!term.isTTY) {
       out(plainTable(rows, st));
@@ -303,7 +305,7 @@ export async function runRoot(
       out(st.dim("Open one: pai <name>   ·   more commands: pai more"));
       return 0;
     }
-    picked = (await runPicker(pickerOpts(rows, st), st, term.input, term.output)) ?? undefined;
+    picked = (await runPicker({ ...pickerOpts(rows, st), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
     if (!picked) return CANCELLED;
   } else {
     const matches = matchRows(rows, args.name);
@@ -321,10 +323,22 @@ export async function runRoot(
       out(plainTable(matches, st));
       throw new CliError(`${matches.length} sessions match "${args.name}"`, `pai "<a longer part of the name>"`);
     } else {
-      picked = (await runPicker(pickerOpts(matches, st, undefined), st, term.input, term.output)) ?? undefined;
+      picked = (await runPicker({ ...pickerOpts(matches, st, undefined), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
       if (!picked) return CANCELLED;
     }
   }
+
+  // Handle Ctrl-G cd action
+  if (cdDir !== undefined) {
+    if (process.env.PAI_PICK_OUT) {
+      writeFileSync(process.env.PAI_PICK_OUT, cdDir);
+      return 0;
+    } else {
+      term.output.write(cdDir + "\n");
+      return 0;
+    }
+  }
+
   return openRow(picked, workers, args.with, args.dryRun, term);
 }
 

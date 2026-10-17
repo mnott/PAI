@@ -457,6 +457,10 @@ export function routerHandler(
           bytes: up.body.length,
           cache: verdict(usage),
         };
+        if (target.kind === "provider" && row.input_tokens === 0 && (row.output_tokens ?? 0) > 0 && status < 400) {
+          row.input_tokens = estimateTokens(up.body);
+          row.input_estimated = true;
+        }
         if (session) row.session = session;
         if (sessionId) row.session_id = sessionId;
         row.requested_model = requested;

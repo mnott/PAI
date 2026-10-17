@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runSupervisionTick, supervisionDirPath, type SupervisorState, type TypeFn } from "./supervision.js";
+import { runSupervisionTick, supervisionDirPath, type SupervisionState, type TypeFn } from "./supervision.js";
 import type { WorkerStatus } from "./status.js";
 
 const NOW = new Date("2026-10-17T10:00:00");

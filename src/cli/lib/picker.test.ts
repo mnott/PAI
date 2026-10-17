@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeStyle } from "../help.js";
 import { filterItems, pickerKey, pickerView, runPicker, readOneKey, type Key, type PickerOpts, type TtyIn } from "./picker.js";
 
@@ -61,6 +61,9 @@ describe("pickerKey", () => {
     expect(pickerKey(s0, undefined, { name: "escape" }, 2).action).toBe("cancel");
     expect(pickerKey(s0, "\u0003", { name: "c", ctrl: true }, 2).action).toBe("cancel");
   });
+  it("Ctrl-G triggers cd action", () => {
+    expect(pickerKey(s0, undefined, { name: "g", ctrl: true }, 2).action).toBe("cd");
+  });
 });
 
 describe("pickerView", () => {
@@ -95,6 +98,14 @@ describe("runPicker with a fake TTY", () => {
     input.press("\u0003", { name: "c", ctrl: true });
     await expect(p).resolves.toBeNull();
     expect(input.raw).toBe(false);
+  });
+  it("Ctrl-G calls onCd and resolves null", async () => {
+    const onCd = vi.fn();
+    const input = new FakeIn();
+    const p = runPicker({ ...opts, onCd }, st, input as unknown as TtyIn, { write: () => undefined });
+    input.press(undefined, { name: "g", ctrl: true });
+    await expect(p).resolves.toBeNull();
+    expect(onCd).toHaveBeenCalledWith(items[0]);
   });
   it("input closing (EOF) settles the prompt with null instead of hanging", async () => {
     const a = new FakeIn();
