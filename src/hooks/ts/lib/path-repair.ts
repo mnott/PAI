@@ -13,6 +13,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { dropHeredocBodies } from "./heredoc.js";
 
 export const MAX_DISTANCE = 3;
 
@@ -91,14 +92,6 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-/**
- * Resolve a relative path against cwd and check if it exists.
- * For relative paths, returns the absolute path after joining with cwd.
- * For absolute paths, returns the path as-is.
- */
-function resolvePath(value: string, cwd: string): string {
-  return isAbsolute(value) ? value : join(cwd, value);
-}
 
 /** The repaired form of one missing absolute path, or null when it exists or cannot be repaired. */
 function repairValue(
@@ -388,7 +381,7 @@ export function armGuardReason(input: PathRepairInput, env: NodeJS.ProcessEnv): 
   const armRe = new RegExp(`(?:/private)?${rootRe}/([^/\\s"';|&<>)]+)`, "g");
   const cwd = input.cwd && isAbsolute(input.cwd) ? canon(realish(input.cwd)) : "";
   const under = (p: string, r: string) => p === r || p.startsWith(`${r}/`);
-  for (const seg of expandVars(command).split(/[;|&\n]+/)) {
+  for (const seg of expandVars(dropHeredocBodies(command)).split(/[;|&\n]+/)) {
     const redirect = [...seg.matchAll(/>>?\s*(\S+)/g)].map((m) => m[1]);
     const targets = DESTRUCTIVE.test(` ${seg}`) ? seg : redirect.join(" ");
     for (const m of targets.matchAll(armRe)) {
