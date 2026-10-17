@@ -13,6 +13,7 @@ import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
 import { fetchLiveSessions } from "../lib/aibroker-client.js";
 import { dryRunText, buildHarness, execHarness, type Harness } from "../lib/harness.js";
 import { probeResume, transcriptModelFor } from "../lib/launch.js";
+import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { renameSession } from "../lib/names.js";
 import {
   assertAvailable,
@@ -71,6 +72,17 @@ export interface SessionRow {
   lastActive: string;
   lastActiveMs: number;
   status: string;
+  /** Last thing the user typed, one line. */
+  message: string;
+  /** Working directory the session opens in, when it still exists. */
+  dir?: string;
+  /** Can the provider it last ran on be used right now? */
+  health: Health;
+}
+
+/** Last user text on one line, without the <tag> wrappers Claude Code adds to notifications. */
+export function oneLine(text: string | undefined): string {
+  return (text ?? "").replace(/<[^>]{1,60}>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function originOf(s: ScannedSession, workers: WorkersConfig | null): SessionOrigin | null {
@@ -79,6 +91,11 @@ function originOf(s: ScannedSession, workers: WorkersConfig | null): SessionOrig
 }
 
 export async function collectRows(opts: { project?: string; all?: boolean }): Promise<SessionRow[]> {
+  const { rows } = await collectView(opts);
+  return rows;
+}
+
+export async function collectView(opts: { project?: string; all?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
   let workers: WorkersConfig | null = null;
   try {
     workers = readWorkersSection().workers;
@@ -91,7 +108,8 @@ export async function collectRows(opts: { project?: string; all?: boolean }): Pr
   ]);
   const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
   const needle = opts.project?.toLowerCase();
-  return scanned
+  const budget = workers ? await readBudget(workers) : {};
+  const rows = scanned
     .filter((s) => !needle || projectOf(s).toLowerCase().includes(needle) || s.decodedPath.toLowerCase().includes(needle))
     .sort((a, b) => b.mtime - a.mtime)
     .map((s) => {
@@ -106,8 +124,12 @@ export async function collectRows(opts: { project?: string; all?: boolean }): Pr
         lastActive: `${fmtAge(s.mtime)}${fmtAge(s.mtime) === "now" ? "" : " ago"}`,
         lastActiveMs: s.mtime,
         status: liveIds.has(s.uuid) ? "live" : s.sessionStatus,
+        message: oneLine(s.lastUserPrompt),
+        dir: sessionDir(s),
+        health: origin && workers ? providerHealth(origin.provider, workers, budget) : ({ state: "ok", reason: "ok" } as Health),
       };
     });
+  return { rows, workers };
 }
 
 const statusColor = (st: Style, s: string) =>
@@ -374,7 +396,7 @@ export const sessionCommand: CommandDef = {
   subcommands: [listCommand, openCommand, newCommand, renameCommand],
 };
 
-export const lsCommand: CommandDef = { ...listCommand, name: "ls", aliasOf: "session list" };
+export const lsCommand: CommandDef = { ...listCommand, name: "ls", aliasOf: "session list", daily: true };
 export const openTop: CommandDef = { ...openCommand, aliasOf: "session open" };
 export const newTop: CommandDef = { ...newCommand, aliasOf: "session new" };
 export const renameTop: CommandDef = { ...renameCommand, aliasOf: "session rename" };

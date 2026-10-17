@@ -56,6 +56,8 @@ export interface CommandDef {
   aliasOf?: string;
   /** Placeholder for a command not yet ported: the old command it replaces. */
   later?: string;
+  /** Listed on the first screen (`pai`); everything else is under `pai more`. */
+  daily?: boolean;
   /** Accept `-- args` and pass them on. */
   passthrough?: boolean;
   run?: (ctx: RunContext) => Promise<number | void> | number | void;

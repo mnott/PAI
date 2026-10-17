@@ -1,14 +1,37 @@
 #!/usr/bin/env node
 /**
  * pai (rewrite) — entry point. Temporary bin name `pai2` while the old CLI in
- * src/cli is still `pai`. All behaviour lives in run.ts and the registry.
+ * src/cli is still `pai`.
+ *
+ * The entry settles on every path: it awaits one promise (runCli), turns
+ * Ctrl-C into a quiet exit 130 with the cursor restored, and ends with an
+ * explicit process.exit. The old entry awaited a command that could be left
+ * pending when a prompt was cancelled; the event loop then emptied and Node
+ * printed "unsettled top-level await".
  */
 
 import { dropItermBundleId } from "../utils/env.js";
 import { drainStdio } from "./lib/exit.js";
+import { rootCommand } from "./commands/root.js";
 import { GROUPS } from "./registry.js";
-import { runCli } from "./run.js";
+import { defaultIo, runCli } from "./run.js";
 
 dropItermBundleId();
-process.exitCode = await runCli(GROUPS, process.argv.slice(2));
+
+const SHOW_CURSOR = "\u001b[?25h";
+const quit = (code: number): never => {
+  if (process.stdout.isTTY) process.stdout.write(SHOW_CURSOR);
+  process.exit(code);
+};
+process.on("SIGINT", () => quit(130));
+process.on("SIGTERM", () => quit(143));
+
+let code = 1;
+try {
+  code = await runCli(GROUPS, process.argv.slice(2), defaultIo(), rootCommand);
+} catch (e) {
+  process.stderr.write(`pai: unexpected failure: ${e instanceof Error ? e.message : String(e)}\nNext: re-run with PAI_DEBUG=1 for details.\n`);
+  if (process.env.PAI_DEBUG && e instanceof Error) process.stderr.write((e.stack ?? "") + "\n");
+}
 await drainStdio();
+quit(code);

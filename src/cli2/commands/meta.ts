@@ -4,6 +4,7 @@ import { writeFileSync } from "node:fs";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderCommandHelp, renderMarkdown, renderMore, renderOverview, suggest } from "../help.js";
 import { GROUPS } from "../registry.js";
+import { rootCommand } from "./root.js";
 import { cliVersion, resolve } from "../run.js";
 import { UsageError } from "../parse.js";
 
@@ -17,7 +18,7 @@ export const helpCommand: CommandDef = {
   run(ctx) {
     const st = makeStyle(colorEnabled());
     const words = (ctx.args.COMMAND as string[]) ?? [];
-    if (words.length === 0) return void process.stdout.write(renderOverview(GROUPS, cliVersion(), st) + "\n");
+    if (words.length === 0) return void process.stdout.write(renderOverview(GROUPS, rootCommand, cliVersion(), st) + "\n");
     if (words[0] === "more") return void process.stdout.write(renderMore(GROUPS, st) + "\n");
     const r = resolve(GROUPS, words);
     if (r.rest.length) {

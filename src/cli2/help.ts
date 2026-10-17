@@ -69,17 +69,15 @@ export function renderTable(headers: string[], rows: string[][], st: Style, inde
 // ---------------------------------------------------------------------------
 
 function distance(a: string, b: string): number {
-  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
-    let diag = prev[0];
-    prev[0] = i;
     for (let j = 1; j <= b.length; j++) {
-      const tmp = prev[j];
-      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diag = tmp;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
     }
   }
-  return prev[b.length];
+  return d[a.length][b.length];
 }
 
 /** Closest candidate to `input`, or null when nothing is plausibly meant. */
@@ -183,46 +181,50 @@ export function renderCommandHelp(path: string[], cmd: CommandDef, st: Style): s
 // ---------------------------------------------------------------------------
 
 const DAILY_EXAMPLES = [
-  ["pai ls", "what sessions do I have?"],
-  ["pai open my-session", "continue it, on the provider it used"],
-  ["pai open my-session --provider kimi", "continue it on another provider"],
-  ["pai new --provider glm", "fresh session here on glm"],
-  ["pai providers use glm", "make glm the default"],
+  ["pai", "pick a session (type to filter, Enter opens)"],
+  ['pai "20 - Webseiten"', "open it; shows how it will start"],
+  ["pai ls", "the sessions as a table"],
+  ["pai setups", "orchestrator + worker combinations"],
+  ['pai setups save "my mix"', "keep the current combination"],
+  ['pai webseiten --with "glm only"', "scripting: start it that way, no questions"],
 ];
 
-function commandRows(cmds: CommandDef[], st: Style): string[][] {
-  return cmds.map((c) => [st.cyan(c.name), c.summary]);
-}
-
-/** `pai` with no arguments: daily commands only, grouped, with examples. */
-export function renderOverview(groups: GroupDef[], version: string, st: Style): string {
+/** `pai --help`: only the daily things, then a pointer to `pai more`. */
+export function renderOverview(groups: GroupDef[], root: CommandDef, version: string, st: Style): string {
+  const daily = groups.flatMap((g) => g.commands).filter((c) => c.daily);
   const out: string[] = [];
-  out.push(`${st.bold("pai")} ${st.dim(version)} — sessions and providers for Claude Code`, "");
-  out.push(`${st.head("Usage")}  ${st.bold("pai <command> [options]")}`, "");
-  for (const g of groups.filter((x) => x.daily && x.commands.some((c) => !c.later))) {
-    out.push(st.head(g.title));
-    out.push(renderList(commandRows(g.commands.filter((c) => !c.later), st), st), "");
-  }
-  out.push(st.head("Examples"));
-  for (const [cmd, why] of DAILY_EXAMPLES) out.push(`  ${st.green("$")} ${cmd.padEnd(40)} ${st.dim(why)}`);
-  out.push("");
+  out.push(`${st.bold("pai")} ${st.dim(version)} — find a session, start it, choose where it runs`, "");
+  out.push(`${st.head("Usage")}  ${st.bold("pai [NAME] [options]")}   ${st.dim("or")}   ${st.bold("pai <command>")}`, "");
+  out.push(st.head("Daily"));
   out.push(
-    st.dim(`More: ${groups.filter((g) => !g.daily).map((g) => g.title).join(", ")} — pai help more`),
-    st.dim("Details for one command: pai help <command>   (same as pai <command> --help)"),
+    renderList(
+      [
+        [st.cyan("pai"), "Pick a session: type to filter, Enter opens it"],
+        [st.cyan("pai NAME"), root.summary],
+        ...daily.map((c) => [st.cyan(`pai ${c.name}`), c.summary]),
+      ],
+      st
+    ),
     ""
   );
+  out.push(st.head("Examples"));
+  for (const [cmd, why] of DAILY_EXAMPLES) out.push(`  ${st.green("$")} ${cmd.padEnd(34)} ${st.dim(why)}`);
+  out.push("");
+  out.push(`more commands: ${st.bold("pai more")}   ${st.dim("·   details for one command: pai help <command>")}`, "");
   return out.join("\n");
 }
 
-/** `pai help more`: everything that is not a daily command. */
+/** `pai more`: every command that is not on the first screen, by group. */
 export function renderMore(groups: GroupDef[], st: Style): string {
   const out: string[] = [st.head("More commands"), ""];
-  for (const g of groups.filter((x) => !x.daily)) {
+  for (const g of groups) {
+    const cmds = g.commands.filter((c) => !c.daily);
+    if (!cmds.length) continue;
     out.push(st.bold(g.title));
     out.push(
       renderTable(
         ["Command", "Description", "Status"],
-        g.commands.map((c) => [st.cyan(c.name), c.summary, c.later ? st.yellow("old pai only") : st.green("ready")]),
+        cmds.map((c) => [st.cyan(c.name), c.summary, c.later ? st.yellow("old pai only") : st.green("ready")]),
         st
       ),
       ""

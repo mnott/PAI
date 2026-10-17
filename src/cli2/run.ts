@@ -72,10 +72,12 @@ export function resolve(groups: GroupDef[], argv: string[]): Resolved {
 }
 
 /** Run the CLI. Returns the process exit code. */
-export async function runCli(groups: GroupDef[], argv: string[], io: Io = defaultIo()): Promise<number> {
+export async function runCli(groups: GroupDef[], argv: string[], io: Io = defaultIo(), root?: CommandDef): Promise<number> {
   const st = io.style;
-  if (argv.length === 0) {
-    io.out(renderOverview(groups, cliVersion(), st));
+  const overview = () =>
+    renderOverview(groups, root ?? { name: "pai", summary: "Open a session by name", description: "", examples: [] }, cliVersion(), st);
+  if (argv.length === 0 && !root) {
+    io.out(overview());
     return 0;
   }
   if (argv[0] === "--version" || argv[0] === "-V") {
@@ -83,17 +85,24 @@ export async function runCli(groups: GroupDef[], argv: string[], io: Io = defaul
     return 0;
   }
   if (argv[0] === "--help" || argv[0] === "-h") {
-    io.out(renderOverview(groups, cliVersion(), st));
+    io.out(overview());
     return 0;
   }
+  // Not a command word: it is a session name (or --with ...) for the daily path.
+  const isCommand = argv.length > 0 && !argv[0].startsWith("-") && groups.some((g) => g.commands.some((c) => c.name === argv[0]));
+  const target = !isCommand && root ? root : undefined;
 
   let resolved: Resolved | undefined;
   try {
-    resolved = resolve(groups, argv);
+    resolved = target ? { path: [], cmd: target, rest: argv } : resolve(groups, argv);
     const { cmd, path, rest } = resolved;
     const parsed = parseArgs(cmd, rest);
     const noArgs = rest.length === 0;
     if (parsed.help || (noArgs && !cmd.run && cmd.subcommands?.length)) {
+      if (target) {
+        io.out(overview());
+        return 0;
+      }
       io.out(renderCommandHelp(path, cmd, st));
       return 0;
     }

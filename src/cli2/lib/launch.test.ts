@@ -199,14 +199,14 @@ describe("the probe has exactly one implementation", () => {
     const definers = tsFiles(SRC).filter((f) =>
       /\bfunction\s+probeResume\b/.test(readFileSync(f, "utf8"))
     );
-    expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli/lib/launch.ts"]);
+    expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli2/lib/launch.ts"]);
   });
 
   it("providerResumePlan lives beside it, also exactly once", () => {
     const definers = tsFiles(SRC).filter((f) =>
       /\bfunction\s+providerResumePlan\b/.test(readFileSync(f, "utf8"))
     );
-    expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli/lib/launch.ts"]);
+    expect(definers.map((f) => f.slice(SRC.length + 1))).toEqual(["cli2/lib/launch.ts"]);
   });
 });
 

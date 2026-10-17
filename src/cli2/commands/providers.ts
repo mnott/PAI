@@ -5,7 +5,8 @@
  */
 
 import { ANTHROPIC_NATIVE, nativeAnthropicProvider, readWorkersSection, type WorkersConfig } from "../../workers/config.js";
-import { budgetCache, type BudgetReading } from "../../workers/budget.js";
+import type { BudgetReading } from "../../workers/budget.js";
+import { readBudget } from "../lib/health.js";
 import { useProvider } from "../../workers/providers.js";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderTable, type Style } from "../help.js";
@@ -64,17 +65,6 @@ export function providersTable(rows: ProviderRow[], st: Style): string {
   );
 }
 
-async function readBudget(workers: WorkersConfig): Promise<Record<string, BudgetReading | undefined>> {
-  try {
-    return await Promise.race([
-      budgetCache.warm(workers),
-      new Promise<Record<string, BudgetReading>>((res) => setTimeout(() => res({}), 4000).unref()),
-    ]);
-  } catch {
-    return {};
-  }
-}
-
 function load(): WorkersConfig {
   try {
     return readWorkersSection().workers;
@@ -125,7 +115,7 @@ export const providersCommand: CommandDef = {
   subcommands: [useCommand],
   async run(ctx) {
     const workers = load();
-    const rows = providerRows(workers, await readBudget(workers));
+    const rows = providerRows(workers, await readBudget(workers, 4000));
     if (ctx.opts.json) return void process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
     const st = makeStyle(colorEnabled());
     process.stdout.write(providersTable(rows, st) + "\n\n");

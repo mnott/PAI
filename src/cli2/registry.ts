@@ -4,6 +4,7 @@ import type { CommandDef, GroupDef } from "./define.js";
 import { docCommand, helpCommand } from "./commands/meta.js";
 import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands/later.js";
 import { providersCommand } from "./commands/providers.js";
+import { moreCommand, setupsCommand } from "./commands/setups.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
 
 const sessionGroup: CommandDef = {
@@ -18,8 +19,8 @@ const titles = {
 } as const;
 
 export const GROUPS: GroupDef[] = [
-  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, openTop, newTop, renameTop, sessionGroup, ...SESSION_SHORTCUTS_LATER] },
+  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, ...SESSION_SHORTCUTS_LATER] },
   { id: "providers", title: "Providers", daily: true, commands: [providersCommand] },
-  { id: "help", title: "Help", daily: true, commands: [helpCommand, docCommand] },
+  { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
   ...LATER_GROUPS.map((g) => ({ id: g.id, title: titles[g.id as keyof typeof titles], daily: false, commands: g.commands })),
 ];
