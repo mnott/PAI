@@ -131,6 +131,22 @@ describe("forceAddReason", () => {
   it("should allow git add with no ignored paths", () => {
     expect(forceAddReason("git add src/a.ts src/b.ts", isIgnored)).toBeNull();
   });
+
+  // Test for .pai-scratch paths
+  it("should deny git add .pai-scratch/x.ts with isIgnored always false", () => {
+    const alwaysFalse = (path: string) => false;
+    expect(forceAddReason("git add .pai-scratch/x.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+  });
+
+  it("should deny git add ./.pai-scratch/a/b.ts with isIgnored always false", () => {
+    const alwaysFalse = (path: string) => false;
+    expect(forceAddReason("git add ./.pai-scratch/a/b.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+  });
+
+  it("should deny git add /w/t/.pai-scratch/c.ts with isIgnored always false", () => {
+    const alwaysFalse = (path: string) => false;
+    expect(forceAddReason("git add /w/t/.pai-scratch/c.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+  });
 });
 
 describe("gitAddPaths", () => {

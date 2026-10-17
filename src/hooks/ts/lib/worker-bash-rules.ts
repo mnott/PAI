@@ -174,8 +174,11 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
         // Skip flags and special arguments
         if (arg.startsWith("-") || arg === "." || arg === "-A" || arg === "-u" || arg === "-p") continue;
 
+        // Helper to check if a path should be ignored, including paths containing .pai-scratch
+        const ignoredPath = (p: string, isIgnored: (p: string) => boolean) => p.split("/").includes(".pai-scratch") || isIgnored(p);
+
         // Check if path is ignored
-        if (isIgnored(arg)) {
+        if (ignoredPath(arg, isIgnored)) {
           return "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
         }
       }
