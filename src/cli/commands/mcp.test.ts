@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,11 +22,12 @@ describe("pai mcp", () => {
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(mcpCommand)).toEqual([]);
   });
-  it("pai mcp status exits 0", async () => {
+  const distPath = join("dist", "cli", "index.mjs");
+  it.skipIf(!existsSync(distPath))("pai mcp status exits 0", async () => {
     const r = await runPai(["mcp","status"]);
     expect(r.code).toBe(0);
   });
-  it("pai mcp install extra exits 2", async () => {
+  it.skipIf(!existsSync(distPath))("pai mcp install extra exits 2", async () => {
     const r = await runPai(["mcp","install","extra"]);
     expect(r.code).toBe(2);
     expect(r.out + r.err).toContain("unexpected argument");
