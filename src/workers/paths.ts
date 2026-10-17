@@ -17,7 +17,7 @@ import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
  * other PAI_HOME file: PAI_HOME/logs/workers if it exists, else the old
  * ~/.claude/logs/workers (with a one-time notice), else the new path.
  */
-export function workersLogDir(config: WorkersConfig): string {
+export function workersLogDir(config: Pick<WorkersConfig, "logDir">): string {
   const expanded = expandHome(config.logDir);
   if (config.logDir !== DEFAULT_LOG_DIR) return expanded;
   return resolvePaiFile(paiHomePath("logs", "workers"), [expanded], "pai config migrate --logs");
