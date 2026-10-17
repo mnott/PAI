@@ -79,10 +79,14 @@ describe("decideOrchestratorBash", () => {
     if (result.decision === "block") {
       expect(result.reason).toContain("Bash may not write code files in place");
       expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
-    } else {
-      expect(result.reason).toContain("Scratch files go under .pai-scratch/ (allowed)");
     }
   });
+});
+
+it("the block reason names the scratch dir", () => {
+  const r = decideOrchestratorBash("echo hi > src/a.ts");
+  expect(r.decision).toBe("block");
+  expect((r as { reason: string }).reason).toContain(".pai-scratch/");
 });
 
 describe("decideEditGate", () => {
