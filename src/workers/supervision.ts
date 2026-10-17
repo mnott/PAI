@@ -52,7 +52,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./status.js";
 import { itermForClaudeSession } from "./scope.js";
@@ -66,7 +66,7 @@ import {
   toolErrorSigTag,
   toolErrorText,
 } from "./tool-errors.js";
-import { sendToSession } from "../cli/lib/aibroker-client.js";
+import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -303,6 +303,8 @@ export interface SupervisionState {
    * is never re-pushed in that run; the map is pruned with the worker.
    */
   runningErrorSent?: Record<string, Record<string, number>>;
+  /** event id → time its pointer was typed into the spawner's pane (dedup). */
+  pointered?: Record<string, number>;
 }
 
 /** Cap on remembered workers: terminal and delivered is history, not state. */
@@ -492,6 +494,8 @@ export interface TickOptions {
   push?: PushFn;
   /** Preloaded map, so a test (or a batch of ticks) can share one read. */
   statuses?: WorkerStatus[];
+  /** Injectable typing/guard/supervisor-state for the undrained-pointer pass. */
+  pointer?: Parameters<typeof pointUndrained>[4];
 }
 
 export interface TickResult {
@@ -610,6 +614,130 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   }
 
   markDelivered(state, written);
+  await pointUndrained(logDir, state, statuses, now, opts.pointer);
   saveSupervisionState(statePath, pruneState(state, statuses));
   return { events: written, pushed };
+}
+
+// ---------------------------------------------------------------------------
+// Pointer escalation — an alert must not wait for the next user turn
+// ---------------------------------------------------------------------------
+
+/** An alert undrained this long gets its one-line pointer typed into the pane. */
+export const POINTER_AFTER_MS = 60_000;
+
+export type SupervisorState = "active" | "paused" | "finished";
+
+/** Types one line into a pane; false means it did not land (retry next check). */
+export type TypeFn = (iterm: string, line: string) => Promise<boolean>;
+
+/** Whether the pane's input line holds no unsent text. Unknown counts as occupied. */
+export type InputFreeFn = (iterm: string) => Promise<boolean>;
+
+export const aibrokerType: TypeFn = async (iterm, line) => {
+  const r = await sendToSession(iterm, line);
+  return r.ok || r.timedOut === true;
+};
+
+/** Live pane scrollback: the input box is the last `❯` line; empty after it means free. */
+export const aibrokerInputFree: InputFreeFn = async (iterm) => {
+  try {
+    const res = (await callAiBroker("session_content", { target: iterm, lines: 15 })) as {
+      content?: string;
+      sessions?: Array<{ sessionId?: string; content?: string }>;
+    };
+    const content =
+      res.content ?? res.sessions?.find((s) => s.sessionId && iterm.includes(s.sessionId))?.content;
+    if (typeof content !== "string") return false;
+    const prompts = content.split("\n").filter((l) => /^\s*[❯>](\s|$)/.test(l));
+    if (prompts.length === 0) return false;
+    return prompts[prompts.length - 1].replace(/^\s*[❯>]/, "").trim() === "";
+  } catch {
+    return false;
+  }
+};
+
+/** `<session>.paused` / `<session>.finished` markers in the supervision dir. */
+export function supervisorStateFromMarkers(logDir: string, session: string): SupervisorState {
+  const dir = supervisionDirPath(logDir);
+  if (existsSync(join(dir, `${session}.finished`))) return "finished";
+  if (existsSync(join(dir, `${session}.paused`))) return "paused";
+  return "active";
+}
+
+function pointerText(n: number): string {
+  return `${n} worker alert${n === 1 ? "" : "s"} pending — see WORKER EVENTS (supervision)`;
+}
+
+/**
+ * Type the pointer for every alert still undrained after POINTER_AFTER_MS.
+ * Undrained = beyond the session's hook cursor and not already typed in full
+ * (push receipt). One pointer per session per pass, covering all its due
+ * alerts; each alert is pointered once (state.pointered), so a queued pointer
+ * is never re-typed. Paused/finished supervisors and occupied input lines
+ * type nothing and retry on the next check.
+ */
+export async function pointUndrained(
+  logDir: string,
+  state: SupervisionState,
+  statuses: WorkerStatus[],
+  now: Date,
+  deps: { type?: TypeFn; inputFree?: InputFreeFn; supervisorState?: (session: string) => SupervisorState } = {}
+): Promise<string[]> {
+  const type = deps.type ?? aibrokerType;
+  const inputFree = deps.inputFree ?? aibrokerInputFree;
+  const supState = deps.supervisorState ?? ((s: string) => supervisorStateFromMarkers(logDir, s));
+  const pointered = (state.pointered ??= {});
+  const dir = supervisionDirPath(logDir);
+  if (!existsSync(dir)) return [];
+  const sessions = readdirSync(dir)
+    .filter((f) => f.endsWith(".events"))
+    .map((f) => f.slice(0, -".events".length));
+  const typed: string[] = [];
+  for (const session of sessions) {
+    let lines: string[];
+    try {
+      lines = readFileSync(supervisionEventsPath(logDir, session), "utf8").split("\n").filter((l) => l.trim());
+    } catch {
+      continue;
+    }
+    let cursor = 0;
+    try {
+      cursor = Math.max(0, Number(readFileSync(join(dir, `${session}.cursor`), "utf8").trim()) || 0);
+    } catch {
+      // no cursor: nothing drained yet
+    }
+    let receipts = new Set<string>();
+    try {
+      receipts = new Set(readFileSync(supervisionPushedPath(logDir, session), "utf8").split("\n").map((l) => l.trim()));
+    } catch {
+      // no receipts
+    }
+    const due: SupervisionEvent[] = [];
+    for (const l of lines.slice(cursor)) {
+      try {
+        const ev = JSON.parse(l) as SupervisionEvent;
+        const age = now.getTime() - new Date(ev.ts.replace(" ", "T")).getTime();
+        if (age > POINTER_AFTER_MS && !receipts.has(ev.id) && !pointered[ev.id]) due.push(ev);
+      } catch {
+        // damaged line: the hook consumes it
+      }
+    }
+    if (due.length === 0) continue;
+    if (supState(session) !== "active") continue;
+    const owner = statuses.find((s) => s.id === due[0].worker);
+    const iterm =
+      owner?.session?.id ?? itermForClaudeSession(logDir, owner?.spawnerSession ?? session) ?? null;
+    if (!iterm) continue;
+    try {
+      if (!(await inputFree(iterm))) continue;
+      if (!(await type(iterm, pointerText(due.length)))) continue;
+    } catch {
+      continue;
+    }
+    for (const ev of due) pointered[ev.id] = now.getTime();
+    typed.push(session);
+  }
+  for (const [id, t] of Object.entries(pointered)) if (now.getTime() - t > 86_400_000) delete pointered[id];
+  return typed;
 }
