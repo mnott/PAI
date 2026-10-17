@@ -159,6 +159,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       printCmd: o["print-cmd"] === true || ctx.dryRun ? true : undefined,
       reportFormatFlag: report as "json" | "ag2" | undefined,
       noReportRetry: o["no-report-retry"] === true,
+      orchestrate: o.orchestrate === true ? true : undefined,
       capabilityFlag: str(o.capability) ?? str(o.for),
       imageOut: str(o.out),
       imageSize: str(o.size),
@@ -207,6 +208,7 @@ const runCommand: CommandDef = {
     { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },
     { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },
+    { name: "orchestrate", type: "boolean", summary: "This worker plans and reviews; code edits are denied and go to local units" },
   ],
   examples: [
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
