@@ -14,6 +14,8 @@
  * worker-tool-name-repair.ts) does only I/O.
  */
 
+export const R_TOOL_DENY_REASON = "write your R report as plain text in your final answer, not as a tool call";
+
 export interface ToolNameRepairInput {
   tool_name?: string;
   cwd?: string;
@@ -50,12 +52,32 @@ export function bareToolName(name: string, known: readonly string[] = KNOWN_TOOL
   return known.find((t) => t.toLowerCase() === bare.toLowerCase()) ?? null;
 }
 
+export function reportToolDenial(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): string | null {
+  if (env.PAI_WORKER !== "1") return null;
+  const name = input.tool_name ?? "";
+  // Match exact "R" or "functions.R" (with dots)
+  if (name === "R" || name === "functions.R") {
+    return R_TOOL_DENY_REASON;
+  }
+  return null;
+}
+
 export function repairToolName(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): ToolNameRepair | null {
   if (env.PAI_WORKER !== "1") return null;
   const name = input.tool_name ?? "";
   const known = bareToolName(name);
   if (!known) return null;
   return { old: name, new: known, updatedInput: { ...(input.tool_input ?? {}) } };
+}
+
+export function renderToolDenial(reason: string): string {
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  });
 }
 
 export function renderRepair(r: ToolNameRepair): string {

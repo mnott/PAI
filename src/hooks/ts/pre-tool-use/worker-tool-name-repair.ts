@@ -8,12 +8,13 @@
  * else passes untouched. Only I/O here; the rule lives in
  * lib/tool-name-repair.ts. Each repair is logged one line to
  * ~/.claude/pai/logs/workers/tool-repair.log. A no-op in interactive sessions.
+ * Denies the "R" tool call in workers.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { renderRepair, repairToolName, type ToolNameRepairInput } from "../lib/tool-name-repair.js";
+import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial } from "../lib/tool-name-repair.js";
 
 async function main(): Promise<void> {
   let text = "";
@@ -28,6 +29,12 @@ async function main(): Promise<void> {
   try {
     input = JSON.parse(text) as ToolNameRepairInput;
   } catch {
+    return;
+  }
+
+  const denial = reportToolDenial(input, process.env);
+  if (denial) {
+    process.stdout.write(renderToolDenial(denial) + "\n");
     return;
   }
 

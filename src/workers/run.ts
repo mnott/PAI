@@ -38,6 +38,7 @@
  */
 
 import { recordToolError } from "./tool-errors.js";
+import { editHintFor } from "./edit-assist.js";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -1731,6 +1732,17 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       })
     : null;
 
+  // A failed Edit fires no hook, so the closest-region hint rides in as a user turn (harness line, not an operator message to answer).
+  const injectHarnessHint = (text: string): void => {
+    const stdin = proc.stdin;
+    if (!headless || !stdin || !stdin.writable || stdin.writableEnded) return;
+    try {
+      stdin.write(stdinUserMessage(`[harness] ${text}`) + "\n");
+    } catch {
+      // the hint is a courtesy
+    }
+  };
+
   let killed = false;
   const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit)) : null;
   const cleanup = () => {
@@ -1873,6 +1885,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
               });
             }
             const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+            if (use?.name === "Edit" && block.is_error === true) {
+              const hint = editHintFor(use.input, toolResultText(block.content), worktree?.dir ?? cwd);
+              if (hint) injectHarnessHint(hint);
+            }
             if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block) });
           }
           if (sawResult) saveStatus(logDir, status);

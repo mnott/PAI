@@ -69,15 +69,16 @@ import {
   toolErrorText,
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
+import { checkLoops, type LoopDeps } from "./loop-watch.js";
 
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
-export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping" | "toolerror";
+export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping" | "toolerror" | "looping";
 
 /** The kinds that fire mid-run and re-arm on turn progress (see eventId). */
-const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping", "toolerror"];
+const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping", "toolerror", "looping"];
 
 export interface SupervisionEvent {
   /** Deterministic dedup key — see eventId(). */
@@ -207,6 +208,7 @@ function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, st
   if (kind === "thrashing")
     return `worker ${s.id} ${s.label} thrashing: ${s.consecFails} consecutive failed commands ${tail}`;
   if (kind === "sleeping") return `worker ${s.id} ${s.label} sleeping ${s.sleepSec}s in one command ${tail}`;
+  if (kind === "looping") return `worker ${s.id} ${s.label} looping: ?x identical failing ? call ${tail}`;
   const why = rc === null ? "runner gone" : `rc=${rc}`;
   return `worker ${s.id} ${s.label} failed ${why} ${tail}`;
 }
@@ -319,6 +321,8 @@ export interface SupervisionState {
   runningErrorSent?: Record<string, Record<string, number>>;
   /** event id → time its pointer was typed into the spawner's pane (dedup). */
   pointered?: Record<string, number>;
+  /** worker id → dedup key of the last repeat-loop finding handled (see loop-watch.ts). */
+  loopSent?: Record<string, string>;
 }
 
 /** Cap on remembered workers: terminal and delivered is history, not state. */
@@ -494,11 +498,12 @@ function appendEventFile(logDir: string, ev: SupervisionEvent): void {
 }
 
 /** Record that an event reached its owner's terminal — the hook then skips it. */
-function appendPushReceipt(logDir: string, ev: SupervisionEvent): void {
+function appendPushReceipt(logDir: string, ev: SupervisionEvent, key: string = ev.session): void {
   try {
-    appendFileSync(supervisionPushedPath(logDir, ev.session), `${ev.id}\n`, "utf8");
-  } catch {
-    // a missing receipt only means the hook may repeat the line
+    appendFileSync(supervisionPushedPath(logDir, key), `${ev.id}\n`, "utf8");
+  } catch (e) {
+    // a missing receipt only means the hook may repeat the line, but the cause must be findable
+    logSkip(logDir, key, ev, `receipt write failed: ${(e as Error).message}`);
   }
 }
 
@@ -514,6 +519,8 @@ export interface TickOptions {
   statuses?: WorkerStatus[];
   /** Injectable typing/guard/supervisor-state for the undrained-pointer pass. */
   pointer?: Parameters<typeof pointUndrained>[4];
+  /** Injectable for tests. */
+  loops?: LoopDeps;
 }
 
 export interface TickResult {
@@ -599,6 +606,27 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       rc: null,
       stalledMin: null,
       text: toolErrorText(g),
+    });
+  }
+
+  const loopSent = (state.loopSent ??= {});
+  for (const w of Object.keys(loopSent)) if (!statuses.some((s) => s.id === w)) delete loopSent[w];
+  for (const f of await checkLoops(logDir, statuses.filter((s) => ownershipKey(s)), loopSent, opts.loops ?? {})) {
+    const owner = byId.get(f.worker);
+    if (!owner) continue;
+    pending.push({
+      id: `${owner.id}#looping@${f.action}`,
+      ts: nowStamp(now),
+      kind: "looping",
+      worker: owner.id,
+      label: owner.label,
+      session: ownershipKey(owner)!,
+      rc: null,
+      stalledMin: null,
+      text:
+        `worker ${owner.id} ${owner.label} looping: ${f.loop.count}x identical failing ${f.loop.name} call` +
+        (f.action === "stop" ? " - run stopped, diff kept" : f.local ? " - correction injected" : "") +
+        ` - see pai worker replay ${owner.id}`,
     });
   }
 
@@ -838,7 +866,7 @@ async function pointPass(
     // so an announced event can never be counted again
     for (const ev of summary ? [...stale, ...due] : due) {
       pointered[ev.id] = now.getTime();
-      appendPushReceipt(logDir, ev);
+      appendPushReceipt(logDir, ev, session); // the key the events were read from, not ev.session
     }
     typedPanes.add(iterm);
     typed.push(session);

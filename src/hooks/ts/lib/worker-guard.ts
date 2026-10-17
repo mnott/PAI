@@ -23,6 +23,7 @@ import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
+import { forceAddReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
@@ -44,6 +45,8 @@ export interface WorkerGuardContext {
   sharedCheckout?: () => boolean;
   /** package.json `scripts.test` of the tree, null when unknown. */
   testScript: () => string | null;
+  /** Whether git ignores this path (git check-ignore); absent = nothing is ignored. */
+  isIgnored?: (path: string) => boolean;
 }
 
 interface Segment {
@@ -427,9 +430,14 @@ export function decideWorkerGuard(
   }
   if (tool === "Bash") {
     const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
-    if (d.decision === "allow" && isLocalWorker(env) && typeof ti.command === "string") {
-      const why = localRmReason(parseCommand(ti.command), ctx().cwd);
+    if (d.decision === "allow" && typeof ti.command === "string") {
+      const cmd = ti.command as string;
+      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false));
       if (why) return deny(why);
+      if (isLocalWorker(env)) {
+        const why2 = localRmReason(parseCommand(cmd), ctx().cwd);
+        if (why2) return deny(why2);
+      }
     }
     // A too-long tool timeout alone is clamped, not refused: models re-issued the same call and burned turns on denials.
     if (d.decision === "allow" && typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {

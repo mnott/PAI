@@ -25,6 +25,9 @@ describe("benign tool exits", () => {
     ["[ false", "Exit code 1", "[ -d nope ]"],
     ["vitest red before the fix", "Exit code 1 FAIL src/a.test.ts > x AssertionError: expected 1 to be 2", "npx vitest run src/a.test.ts"],
     ["echo === separator", "(eval):1: === not found", "echo === && ls"],
+    ["echo == separator", "(eval):1: == not found", "echo == && ls"],
+    ["echo = separator", "(eval):1: = not found", "echo = ; ls"],
+    ["== after other output", "Exit code 127 header\n(eval):3: == not found", "echo ok; echo == ; ls"],
     ["timeout 124", "Exit code 124", "timeout 30 npm test"],
     ["timeout 144", "Exit code 144", "timeout 30 sleep 40"],
   ];

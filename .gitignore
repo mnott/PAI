@@ -33,6 +33,9 @@ History/
 Journal/
 scratchpad/
 
+# Orchestrator workers' throwaway verification files (never committed)
+.pai-scratch/
+
 # Obsidian vault metadata files
 PAI.md
 _index.md
