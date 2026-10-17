@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bareToolName, renderRepair, repairToolName } from "./tool-name-repair.js";
+import { bareToolName, renderRepair, repairToolName, reportToolDenial, renderToolDenial } from "./tool-name-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const call = (tool_name: string, tool_input: Record<string, unknown> = {}) => ({ tool_name, tool_input });
@@ -60,6 +60,36 @@ describe("renderRepair", () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(out.hookSpecificOutput.updatedInput).toEqual({ pattern: "a*" });
     expect(out.hookSpecificOutput.additionalContext).toContain("never Glob.glob");
+  });
+});
+
+describe("reportToolDenial", () => {
+  it("R denied for worker", () => {
+    expect(reportToolDenial(call("R"), W)).toBe("write your R report as plain text in your final answer, not as a tool call");
+  });
+
+  it("functions.R denied for worker", () => {
+    expect(reportToolDenial(call("functions.R"), W)).toBe("write your R report as plain text in your final answer, not as a tool call");
+  });
+
+  it("R not denied when PAI_WORKER unset", () => {
+    expect(reportToolDenial(call("R"), {} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it("R not denied for tool names Read, Bash, Grep", () => {
+    expect(reportToolDenial(call("Read"), W)).toBeNull();
+    expect(reportToolDenial(call("Bash"), W)).toBeNull();
+    expect(reportToolDenial(call("Grep"), W)).toBeNull();
+  });
+});
+
+describe("renderToolDenial", () => {
+  it("renderToolDenial output parses as JSON and contains the reason", () => {
+    const denial = "write your R report as plain text in your final answer, not as a tool call";
+    const output = renderToolDenial(denial);
+    const parsed = JSON.parse(output);
+    expect(parsed.decision).toBe("deny");
+    expect(parsed.reason).toBe(denial);
   });
 });
 
