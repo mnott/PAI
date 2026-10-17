@@ -332,6 +332,7 @@ export const clearNamesCmd: CommandDef = {
   summary: "Wipe the stored tab names (recovery)",
   description:
     "Clears the AIBroker name store and the pai name from every live iTerm2 tab. Use it when tab names are corrupt; afterwards re-label each tab with /Name.",
+  options: [{ ...OPT.dryRun, summary: "Show what would be cleared, clear nothing" }],
   examples: ["pai clear-names --dry-run", "pai clear-names"],
   seeAlso: ["pai sessions pause-all"],
   run: (c) => legacy(() => cmdClearNames({ dryRun: c.dryRun })),
