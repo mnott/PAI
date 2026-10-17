@@ -14,6 +14,7 @@ import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionI
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
+import { buildSpeed } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -208,6 +209,13 @@ export function buildCockpitData(
     arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
   }
 
+  // prompt tokens per provider over the whole log: denominator for the local
+  // servers' tokensSaved counter, which the stats endpoint gives no total for
+  const promptByProvider: Record<string, number> = {};
+  for (const r of allRows) {
+    promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
+  }
+
   const withRatio = <T extends Tok>(x: T) => ({ ...x, hitRatio: hitRatio(x) });
   const sessionSplit: SessionKindSplit = splitBySessionKind(rows);
   return {
@@ -226,6 +234,8 @@ export function buildCockpitData(
       buckets: PAUSE_BUCKETS.map((label) => ({ label, ...(pm.get(label) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 }) })),
     })),
     bustParts,
+    speed: buildSpeed(allRows, now, canonicalModel),
+    promptByProvider,
     workers: sessionRows.filter((s) => s.worker),
     daily: { days, models: daily },
     // continuous vs one-shot sessions: the overall ratio alone averages a

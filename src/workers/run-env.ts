@@ -111,6 +111,8 @@ export function buildRunEnv(
     // slots carried 87% cache while the router log had zero rows for them),
     // so there is no provider-direct fallback while the router is enabled.
     env.ANTHROPIC_BASE_URL = routerUrl();
+    // names the provider so the router can tell apart providers that declare the same model id
+    if (providerName) env.ANTHROPIC_CUSTOM_HEADERS = `x-pai-provider: ${providerName}`;
   } else {
     const resolved = resolveProviderKey(provider);
     if (resolved) token = resolved;

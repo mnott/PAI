@@ -52,6 +52,8 @@ ${POOL_PANEL_HTML}
 <section class="card c4"><h2>Cache hit ratio / providers</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div>
 <h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local prefix cache (server counters)</h2><div id="donutlocal" class="rings"></div><div id="donutlocalnote" class="dim"></div>
 <h2 style="margin-top:12px">Providers: errors, retries, speed</h2><div id="providers"></div></section>
+<section class="card c12"><h2>Speed per model (TTFT, read, write)</h2><div id="speed"></div>
+<p class="dim">TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.</p></section>
 <section class="card c12"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
 <p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
 <section class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
@@ -245,7 +247,13 @@ function donut(ratio,sz){
 }
 function table(head,rows){return'<table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
-function renderDonuts(){
+function reuse(prov,pc){var tot=(data.promptByProvider||{})[prov];if(!tot||tot<pc.tokensSaved)return'<div class="s dim">prompt tokens served from cache: n/a (no prompt total)</div>';return'<div class="s">prompt tokens served from cache: '+pct(pc.tokensSaved/tot)+' ('+fmt(pc.tokensSaved)+' of '+fmt(tot)+', total from the router usage log)</div>'}
+function renderSpeed(){
+ var sp=(data&&data.speed)||[];
+ function c(st,k,u){return st[k]==null?'<span class="dim">-</span>':fmt(st[k])+u}
+ $("speed").innerHTML=sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]})):'<span class="dim">no timed requests yet (timing is recorded for streamed replies since the router restart)</span>';
+}
+function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
  d.byModel.forEach(function(m){var o=ms[m.model]||(ms[m.model]={model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
  var mk=Object.keys(ms),dh="";
@@ -261,7 +269,7 @@ function renderDonuts(){
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
  loc.forEach(function(s){var pc=s.prefixCache,r=ms[(s.served||[])[0]];
-  if(pc)lh+='<div class="ring">'+donut(pc.hitRate)+'<div class="n">'+esc(s.provider)+'</div><div class="s">'+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved</div></div>';
+  if(pc)lh+='<div class="ring">'+donut(pc.hitRate)+'<div class="n">'+esc(s.provider)+'</div><div class="s">'+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved</div><div class="s">requests with any cache hit: '+pct(pc.hitRate)+'</div>'+reuse(s.provider,pc)+'</div>';
   else lh+='<div class="ring"><div class="n">'+esc(s.provider)+'</div><div class="s dim">prefix cache: not reported by this server'+(r&&r.requests?' · '+r.requests+' req':'')+'</div></div>'});
  $("donutlocaltitle").style.display=loc.length?"":"none";
  $("donutlocal").innerHTML=lh||'<span class="dim">no local model servers running</span>';
