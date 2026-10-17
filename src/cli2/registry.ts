@@ -5,11 +5,15 @@ import { docCommand, helpCommand } from "./commands/meta.js";
 import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands/later.js";
 import { providersCommand } from "./commands/providers.js";
 import { moreCommand, setupsCommand } from "./commands/setups.js";
+import { SESSION_NOTE_COMMANDS, sessionsCommand } from "./commands/session-notes.js";
+import { backupTop, cdTop, clearNamesCmd, endTop, findTop, launchTop, listTop, notesTop, pauseTop, restoreTop, resumeTop, shellInitTop, updateTop } from "./commands/lifecycle.js";
+import { hooksDbCommand } from "./commands/hooks-db.js";
+import { installAlias, setupCommand } from "./commands/setup.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
-  subcommands: [...(sessionCommand.subcommands ?? []), ...SESSION_LATER],
+  subcommands: [...(sessionCommand.subcommands ?? []), ...SESSION_NOTE_COMMANDS, ...SESSION_LATER],
 };
 
 const titles = {
@@ -18,9 +22,14 @@ const titles = {
   daemon: "Daemon & setup",
 } as const;
 
+const BATCH_B_EXTRA: Partial<Record<string, CommandDef[]>> = {
+  memory: [findTop, notesTop, listTop, cdTop],
+  daemon: [setupCommand, installAlias, updateTop, hooksDbCommand, backupTop, restoreTop, shellInitTop, launchTop],
+};
+
 export const GROUPS: GroupDef[] = [
-  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, ...SESSION_SHORTCUTS_LATER] },
+  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, pauseTop, endTop, resumeTop, clearNamesCmd, sessionsCommand, ...SESSION_SHORTCUTS_LATER] },
   { id: "providers", title: "Providers", daily: true, commands: [providersCommand] },
   { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
-  ...LATER_GROUPS.map((g) => ({ id: g.id, title: titles[g.id as keyof typeof titles], daily: false, commands: g.commands })),
+  ...LATER_GROUPS.map((g) => ({ id: g.id, title: titles[g.id as keyof typeof titles], daily: false, commands: [...g.commands, ...(BATCH_B_EXTRA[g.id] ?? [])] })),
 ];

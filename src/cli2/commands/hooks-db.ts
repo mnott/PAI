@@ -17,6 +17,7 @@
 
 import { getRegistryBackend } from "../../storage/factory.js";
 import type { RegistryBackend, Session } from "../../storage/registry-interface.js";
+import type { CommandDef } from "../define.js";
 
 // ---------------------------------------------------------------------------
 // Shared lookup
@@ -68,3 +69,43 @@ export async function runPreCompactHook(backend: RegistryBackend, projectSlug: s
     createdAt: Date.now(),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Command
+// ---------------------------------------------------------------------------
+
+async function hook(run: (backend: RegistryBackend, slug: string) => Promise<void>, slug: string): Promise<number> {
+  try {
+    await run(await getRegistryBackend(), slug);
+  } catch {
+    // never surface a failure to the calling hook script
+  }
+  return 0;
+}
+
+export const hooksDbCommand: CommandDef = {
+  name: "hooks-db",
+  summary: "Registry updates for the stop and pre-compact hooks",
+  description:
+    "Called by the shell hooks, not by hand. Marks the latest session of a project completed (session-stop) or compacted (pre-compact). Always exits 0 so a hook can never block a session.",
+  examples: ["pai hooks-db session-stop my-project", "pai hooks-db pre-compact my-project"],
+  seeAlso: ["pai session handover"],
+  subcommands: [
+    {
+      name: "session-stop",
+      summary: "Mark the project's latest session completed",
+      description: "Used by the stop hook. Exits 0 whatever happens.",
+      args: [{ name: "PROJECT_SLUG", required: true, summary: "Project slug" }],
+      examples: ["pai hooks-db session-stop my-project", "pai hooks-db session-stop \"$PROJECT_SLUG\""],
+      run: (c) => hook(runSessionStopHook, c.args.PROJECT_SLUG as string),
+    },
+    {
+      name: "pre-compact",
+      summary: "Mark the project's open session compacted and log it",
+      description: "Used by the pre-compact hook. Exits 0 whatever happens.",
+      args: [{ name: "PROJECT_SLUG", required: true, summary: "Project slug" }],
+      examples: ["pai hooks-db pre-compact my-project", "pai hooks-db pre-compact \"$PROJECT_SLUG\""],
+      run: (c) => hook(runPreCompactHook, c.args.PROJECT_SLUG as string),
+    },
+  ],
+};
