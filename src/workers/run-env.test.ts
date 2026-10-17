@@ -263,3 +263,36 @@ describe("routeLoopbackViaRouter", () => {
     expect(routeLoopbackViaRouter(nativeAnthropicProvider(), true)).toBe(false);
   });
 });
+
+describe("buildRunEnv orchestrator mode", () => {
+  it("sets PAI_WORKER_ORCHESTRATOR=1 for non-native provider when orchestrate=true", () => {
+    const env = buildRunEnv(provider, true, undefined, undefined, undefined, true);
+    expect(env.PAI_WORKER_ORCHESTRATOR).toBe("1");
+  });
+
+  it("sets PAI_WORKER_ORCHESTRATOR=1 for native provider when orchestrate=true", () => {
+    const env = buildRunEnv(nativeAnthropicProvider(), true, undefined, undefined, undefined, true);
+    expect(env.PAI_WORKER_ORCHESTRATOR).toBe("1");
+  });
+
+  it("does not set PAI_WORKER_ORCHESTRATOR when orchestrate is not specified", () => {
+    const env = buildRunEnv(provider, true);
+    expect(env.PAI_WORKER_ORCHESTRATOR).toBeUndefined();
+  });
+
+  it("does not set PAI_WORKER_ORCHESTRATOR when orchestrate=false", () => {
+    const env = buildRunEnv(provider, true, undefined, undefined, undefined, false);
+    expect(env.PAI_WORKER_ORCHESTRATOR).toBeUndefined();
+  });
+
+  it("does not override existing PAI_WORKER_ORCHESTRATOR when set beforehand", () => {
+    const saved = process.env.PAI_WORKER_ORCHESTRATOR;
+    try {
+      process.env.PAI_WORKER_ORCHESTRATOR = "1";
+      const env = buildRunEnv(provider, true, undefined, undefined, undefined, false);
+      expect(env.PAI_WORKER_ORCHESTRATOR).toBeUndefined();
+    } finally {
+      process.env.PAI_WORKER_ORCHESTRATOR = saved;
+    }
+  });
+});
