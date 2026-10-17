@@ -160,7 +160,8 @@ function fullContractPrompt(format: "ag2" | "json"): string {
 /** Appended to the contract of a --orchestrate worker: what the mode means and how units are spawned. */
 export const ORCHESTRATOR_CONTRACT =
   "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
-  "Write each unit spec to a file under /tmp, start it with `pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge.";
+  "Write each unit spec to a file under /tmp, start it with `pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge. " +
+  "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them with `npx vitest run --dir .pai-scratch`.";
 
 /**
  * The system prompt appended to every headless run, chosen by task class and
