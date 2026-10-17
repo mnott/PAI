@@ -1,0 +1,81 @@
+/** Step 3: Embedding model selection for semantic search. */
+
+import { c, line, section, type Rl, promptMenu, promptYesNo, readConfigRaw } from "../utils.js";
+import { CONFIG_FILE } from "../../../../daemon/config.js";
+import { detectBackends, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL } from "../../../../memory/backends/index.js";
+
+/**
+ * Probe the embedding backends (also under --yes). A fresh install adopts the
+ * fastest available one; an existing install (embeddingModel already set) may
+ * hold vectors from the current backend, so it is only told what is available.
+ */
+async function stepBackend(rl: Rl, fresh: boolean): Promise<Record<string, unknown>> {
+  const { results, recommended } = await detectBackends();
+  line();
+  for (const r of results) console.log(`  ${r.ok ? c.ok(r.id) : c.dim(r.id)}: ${r.reason}`);
+  if (!recommended) return {};
+  if (!fresh) {
+    console.log(c.dim(`  Recommended: ${recommended}. Switch with \`pai memory backend use ${recommended}\` + \`pai memory reembed\`.`));
+    return {};
+  }
+  if (recommended === OLLAMA_ID && (await promptYesNo(rl, "Use Ollama (GPU, several times faster)?", true))) {
+    return { embedding: { backend: OLLAMA_ID, model: OLLAMA_DEFAULT_MODEL, ollama: { baseUrl: OLLAMA_DEFAULT_URL } } };
+  }
+  return {};
+}
+
+export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
+  section("Step 3: Embedding Model");
+
+  const existing = readConfigRaw();
+  if (existing.embeddingModel) {
+    console.log(c.ok(`Embedding model: ${existing.embeddingModel}. Skipping.`));
+    return { embeddingModel: existing.embeddingModel, ...(await stepBackend(rl, false)) };
+  }
+
+  line();
+  line("  An embedding model converts your text into vectors for semantic search.");
+  line("  Models are downloaded from HuggingFace on first use.");
+  line();
+
+  const choice = await promptMenu(rl, [
+    {
+      label: "Snowflake Arctic Embed m v1.5",
+      description: "768 dims, ~118MB download. Best retrieval quality per MB (MTEB score 55.14). Asymmetric retrieval — different handling for queries vs documents. Best for most users.",
+    },
+    {
+      label: "BGE Small EN v1.5",
+      description: "384 dims, ~32MB download. Lightweight and fast. Good for limited disk space or when faster embedding is more important than maximum quality. English only.",
+    },
+    {
+      label: "Nomic Embed Text v1.5",
+      description: "768 dims, ~100MB download. 8K token context window — excellent for long documents. Matryoshka dimensions (can truncate for speed/size tradeoffs).",
+    },
+    {
+      label: "None — skip embeddings",
+      description: "BM25/keyword search only. No model download needed. You can add embeddings later by running `pai memory embed` after selecting a model.",
+    },
+  ]);
+
+  const models: Record<number, string | null> = {
+    0: "Snowflake/snowflake-arctic-embed-m-v1.5",
+    1: "BAAI/bge-small-en-v1.5",
+    2: "nomic-ai/nomic-embed-text-v1.5",
+    3: null,
+  };
+
+  const selectedModel = models[choice];
+
+  line();
+  if (selectedModel) {
+    console.log(c.ok(`Model selected: ${selectedModel}`));
+    console.log(c.dim("  The model will be downloaded on first use of `pai memory embed`."));
+  } else {
+    console.log(c.ok("Skipping embeddings. Keyword search will still work."));
+    console.log(c.dim(`  Add later: update embeddingModel in ${CONFIG_FILE}`));
+  }
+
+  // Backends embed the Arctic model only; other choices stay on the in-process path.
+  const backendUpdate = selectedModel === models[0] ? await stepBackend(rl, true) : {};
+  return { embeddingModel: selectedModel ?? "none", ...backendUpdate };
+}
