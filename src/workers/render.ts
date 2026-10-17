@@ -210,6 +210,8 @@ export interface StatusRow {
   tool?: string;
   /** a finished state freezes the row with ✓/✗ instead of the ticker part. */
   state?: string | null;
+  /** set while the run waits in the stagger gate for a cache warm-up. */
+  warmup?: { elapsedSec: number; limitSec: number } | null;
 }
 
 export { fmtElapsed };
@@ -230,6 +232,8 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
   parts.push(`turns ${s.turns}`, `tools ${s.tools}`, fmtElapsed(s.elapsed));
   if (s.state && s.state !== "running") {
     parts.push(s.state === "done" ? c("green", "✓ done") : c("red", "✗ failed"));
+  } else if (s.warmup) {
+    parts.push(warmupText(s.warmup) as string);
   } else {
     parts.push(`⋯ ${Math.max(0, Math.floor(s.idle ?? 0))}s`);
     for (const p of [s.intent, s.tool]) if (p && p.trim()) parts.push(p.trim());
@@ -641,6 +645,11 @@ export function shortModel(model: string | null | undefined): string {
   return wide ? `${id}[1m]` : id;
 }
 
+/** `waiting (warm-up) 7s/12s` for a run held in the stagger gate, else null. */
+export function warmupText(w: { elapsedSec: number; limitSec: number } | null | undefined): string | null {
+  return w ? `waiting (warm-up) ${Math.max(0, Math.floor(w.elapsedSec))}s/${Math.floor(w.limitSec)}s` : null;
+}
+
 /**
  * The goal of a statusline row: what the worker is FOR, never what it is doing
  * this second. The operator's `--label` is the goal and is preferred over
@@ -669,7 +678,7 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
  * than rendering a bare gap.
  */
 export function paneStatusRow(
-  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount">,
+  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount" | "warmup">,
   now: Date = new Date(),
   columns: number | null = null
 ): string {
@@ -679,7 +688,7 @@ export function paneStatusRow(
   const tail = [model, started ? `started ${started}` : "", elapsed, denialMark(s)].filter(Boolean).join(" · ");
   const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
   // a blocked worker's footer says what it waits on instead of its goal
-  const head = s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget);
+  const head = warmupText(s.warmup) ?? (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
   return `${head} · ${tail}`;
 }
 

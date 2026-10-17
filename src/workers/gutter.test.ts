@@ -211,6 +211,12 @@ describe("chatStatusRow", () => {
     );
   });
 
+  it("shows the stagger warm-up wait instead of the ticker", () => {
+    const row = chatStatusRow(plain, { ...running, warmup: { elapsedSec: 7, limitSec: 12 } });
+    expect(row).toContain("waiting (warm-up) 7s/12s");
+    expect(row).not.toContain("⋯");
+  });
+
   it("renders exactly the label the statusline meter renders (one shared format)", () => {
     expect(chatStatusRow(plain, running)).toContain(contextMeter(plain, running) ?? "");
     expect(chatStatusRow(color, { ...running, contextTokens: 150000 })).toContain(

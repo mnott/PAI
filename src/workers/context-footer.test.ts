@@ -36,6 +36,13 @@ describe("context footer", () => {
       "g · sonnet-5.5 · 48k / 200k · started 10:00 · 45s"
     );
   });
+  it("a run waiting in the stagger gate reads waiting (warm-up) instead of its goal", () => {
+    const warmup = { for: "w0", provider: "local30x8", elapsedSec: 7, limitSec: 12 };
+    const row = paneStatusRow({ ...s, warmup }, now);
+    expect(row).toContain("waiting (warm-up) 7s/12s");
+    expect(row).not.toContain("g ·");
+    expect(paneStatusRow(s, now)).toContain("g ·");
+  });
   it("unknown window shows only used", () => {
     expect(contextFooter({ contextUsed: 48_000, contextWindow: null })).toBe("48k");
   });
