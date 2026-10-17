@@ -2,7 +2,8 @@
 
 import type { CommandDef, GroupDef } from "./define.js";
 import { docCommand, helpCommand } from "./commands/meta.js";
-import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER, WORKER_LATER } from "./commands/later.js";
+import { LATER_GROUPS, SESSION_LATER, SESSION_SHORTCUTS_LATER } from "./commands/later.js";
+import { workerCommand } from "./commands/worker.js";
 import { providersCommand } from "./commands/providers.js";
 import { PROVIDER_EDIT_COMMANDS, WORKER_CONFIG_COMMANDS } from "./commands/worker-config.js";
 import { routerCommand } from "./commands/router.js";
@@ -19,11 +20,11 @@ const sessionGroup: CommandDef = {
 };
 
 const workerGroup: CommandDef = {
-  name: "worker",
-  summary: "Run subagents on other providers: providers, classes, config, policy, ...",
-  description: "Subagents that run on other providers. Setup lives here: providers, classes, config, policy, local, fallback, pool, proxy, mcp, on, off, install.",
-  examples: ["pai worker providers", "pai worker policy"],
-  subcommands: [...WORKER_CONFIG_COMMANDS, ...WORKER_LATER],
+  ...workerCommand,
+  summary: "Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ...",
+  description: workerCommand.description + "\nSetup lives here too: providers, classes, config, policy, local, fallback, pool, proxy, mcp, on, off, install.",
+  examples: [...(workerCommand.examples ?? []), "pai worker providers", "pai worker policy"],
+  subcommands: [...(workerCommand.subcommands ?? []), ...WORKER_CONFIG_COMMANDS],
 };
 
 // `pai providers add|remove|...` are the same command objects as `pai worker providers ...`.
