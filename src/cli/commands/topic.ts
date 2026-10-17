@@ -4,20 +4,18 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { legacyRunner } from "../lib/legacy.js";
-import { registerTopicCommands } from "../impl/topic.js";
-
-const L = legacyRunner("topic", registerTopicCommands);
+import { topicCheck } from "../impl/topic.js";
 
 export const topicSubcommands: CommandDef[] = [
-L({
+{
   name: "check",
   summary: "Check whether a text belongs to a different project than the current one",
   description: "Check whether a text belongs to a different project than the current one.\n\nCheck whether context text has drifted to a different project.\nExample: pai topic check \"working on JWT authentication\"\nExit code 1 if a shift is detected (useful for hooks).",
   args: [{ name: "CONTEXT", summary: "The text to check, in quotes", required: true }],
   options: [{ name: "current", type: "string", value: "SLUG", summary: "The project this session is currently routed to" }, { name: "threshold", type: "string", value: "N", summary: "Confidence threshold [0-1] to declare a shift (default: 0.6)" }, { name: "json", type: "boolean", summary: "Output raw JSON result" }],
   examples: ["pai topic check \"fix the login page\"","pai topic check \"fix the login page\" --current my-app --json"],
-}),
+  run: (ctx) => topicCheck(String(ctx.args.CONTEXT), { current: ctx.opts.current as string | undefined, threshold: ctx.opts.threshold as string | undefined, json: ctx.opts.json === true }),
+},
 ];
 
 export const topicCommand: CommandDef = {
