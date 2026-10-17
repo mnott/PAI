@@ -10,6 +10,8 @@ import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit } from "../../router/cockpit.js";
 import { LimitsCache } from "../../router/limits.js";
+import { listenRetry } from "../../router/listen.js";
+import { drainServers } from "../../router/drain.js";
 import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
@@ -103,12 +105,16 @@ const runCommand: CommandDef = {
     return new Promise<number>(() => {
       const server = http.createServer(handler);
       const tail = remote ? http.createServer(handler) : undefined;
+      tail?.on("error", (e) => {
+        process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
+        process.exit(1);
+      });
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
       listenRetry(server, port, "127.0.0.1", { waitMs: waitBindMs }).then(() => {
         if (!managed) return;
         mkdirSync(dirname(ROUTER_PID_FILE), { recursive: true });
         writeFileSync(ROUTER_PID_FILE, String(process.pid));
-      }, (e) => {
+      }, (e: unknown) => {
         process.stderr.write(`pai: router: ${(e as Error).message}\n`);
         process.exit(1);
       });
