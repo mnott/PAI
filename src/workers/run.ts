@@ -215,6 +215,8 @@ export interface RunOptions {
   reportFormatFlag?: "json" | "ag2";
   /** --no-report-retry: skip the one bounded re-ask on an invalid AG2 final message. */
   noReportRetry?: boolean;
+  /** --orchestrate: the worker plans and reviews; code edits are denied (PAI_WORKER_ORCHESTRATOR=1). */
+  orchestrate?: boolean;
   /** --capability/--for: run through resolveCapability instead of resolveTarget. */
   capabilityFlag?: string;
   /** --out: image-engine output path (default: <logDir>/<id>.png). */

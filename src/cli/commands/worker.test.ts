@@ -89,7 +89,7 @@ describe("worker run: what is handed to the engine", () => {
     expect(r.run.noReportRetry).toBe(false);
   });
   it("maps --role and --for to --class and --capability, and the no- switches to false", () => {
-    const r = plan(["--role", "review", "--for", "image", "--no-worktree", "--no-browser", "--no-pane", "--no-report-retry", "-p", "x"]);
+    const r = plan(["--role", "review", "--for", "image", "--no-worktree", "--no-browser", "--no-pane", "--no-report-retry", "--orchestrate", "-p", "x"]);
     if (r.kind !== "run") throw new Error("expected run");
     expect(r.run.className).toBe("review");
     expect(r.run.capabilityFlag).toBe("image");
@@ -97,6 +97,17 @@ describe("worker run: what is handed to the engine", () => {
     expect(r.run.browser).toBe(false);
     expect(r.run.noReportRetry).toBe(true);
     expect(r.run.noPane).toBe(true);
+    expect(r.run.orchestrate).toBe(true);
+  });
+  it("passes --orchestrate through to the run plan", () => {
+    const r = plan(["--orchestrate", "-p", "x"]);
+    if (r.kind !== "run") throw new Error("expected run");
+    expect(r.run.orchestrate).toBe(true);
+  });
+  it("passes --orchestrate through to the run plan", () => {
+    const r2 = plan(["-p", "x"]);
+    if (r2.kind !== "run") throw new Error("expected run");
+    expect(r2.run.orchestrate).toBeUndefined();
   });
   it("carries provider, model, deadline, max-minutes, mcp, report and the routing switches", () => {
     const r = plan(["--provider", "p", "--model", "m", "--deadline", "23:59", "--max-minutes", "5", "--mcp", "a,b", "--report", "json", "--urgent", "--cloud", "--local-ok", "--worktree", "--print-cmd", "-p", "x"]);
