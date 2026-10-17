@@ -13,6 +13,7 @@ import {
   DEFAULT_POOL_SETTINGS,
   appendPoolMetric,
   carriedShare,
+  firstRequestShare,
   poolCarry,
   poolDir,
   poolHostAlive,
@@ -30,6 +31,7 @@ import {
   slotIdleFor,
   slotKey,
   slotShouldReap,
+  warmOrCold,
   writePoolState,
   type PoolMetricRow,
   type PoolSlotRecord,
@@ -167,6 +169,44 @@ describe("eligibility gate", () => {
   it("stream-json consumers and missing cwds fall back", () => {
     expect(poolIneligibleReason({ ...base(), outputFormat: "stream-json" })).toBe("stream-json");
     expect(poolIneligibleReason({ ...base(), cwd: "/some/repo" })).toBe("cwd");
+  });
+});
+
+describe("pool eligibility with worktreeWanted", () => {
+  const base = () => ({
+    headless: true,
+    prompt: "do a thing",
+    providerName: "glm",
+    provider: provider(),
+    worktreeWanted: false,
+    resumeOf: undefined,
+    printCmd: false,
+    parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [] },
+    mcpFlag: undefined,
+    noBrowser: true,
+    outputFormat: "text" as const,
+    cwd: tmpdir(),
+  });
+
+  it("worktreeWanted: true and no slotWorktree expect 'worktree'; with slotWorktree: true expect null", () => {
+    expect(poolIneligibleReason({ ...base(), worktreeWanted: true })).toBe("worktree");
+    expect(poolIneligibleReason({ ...base(), worktreeWanted: true, slotWorktree: true })).toBeNull();
+  });
+});
+
+describe("firstRequestShare", () => {
+  it("computes the cache read share", () => {
+    expect(firstRequestShare({input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 0})).toBeCloseTo(0.9);
+    expect(firstRequestShare({})).toBeNull();
+    expect(firstRequestShare({input_tokens: 38000, cache_read_input_tokens: 3100})).toBeLessThan(0.1);
+  });
+});
+
+describe("warmOrCold", () => {
+  it("classifies the share", () => {
+    expect(warmOrCold(0.95)).toBe("warm");
+    expect(warmOrCold(0.08)).toBe("cold");
+    expect(warmOrCold(null)).toBeNull();
   });
 });
 
