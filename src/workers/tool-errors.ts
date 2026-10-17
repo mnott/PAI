@@ -83,7 +83,7 @@ function lastCommand(command: string): { name: string; segment: string } | null 
  * Bash exits that are the tool's normal answer, matched on exit code AND
  * command shape AND output marker: search no-match (exit 1, empty output),
  * diff/cmp "differ" (exit 1), test/[ false (exit 1, empty output), a vitest
- * run that reports failing tests (exit 1), zsh's "=== not found" from an
+ * run that reports failing tests (exit 1), zsh's "=, ==, === not found" (any run of =) from an
  * `echo ===` separator, and timeout's own 124/144 after a deliberate bound.
  */
 export function isBenignBash(r: ToolErrorRecord): boolean {
@@ -92,7 +92,7 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   const code = m ? Number(m[1]) : null;
   const out = (m?.[2] ?? r.raw).trim();
   const cmd = r.input;
-  if (/^\(eval\):\d+: =+ not found$/.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
+  if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
   if (code === null) return false;
   if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
   if (code !== 1) return false;
