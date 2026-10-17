@@ -1221,10 +1221,8 @@ export function statusLineOutput(
   _term: string,
   _cwd: string,
   _claudeSession: string = "",
-  now: Date = new Date(),
-  /** Live routing choice (workers.active) — the head of the line. */
-  active: string | null = null
+  now: Date = new Date()
 ): string {
   const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s));
-  return renderStatusLine(statuses, now, active);
+  return renderStatusLine(statuses, now);
 }

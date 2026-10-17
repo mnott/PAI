@@ -450,8 +450,7 @@ const statusLineCommand: CommandDef = {
         (ctx.args.TERM as string | undefined) ?? process.env.ITERM_SESSION_ID ?? "",
         (ctx.args.CWD as string | undefined) ?? process.cwd(),
         (ctx.args.SESSION as string | undefined) ?? "",
-        new Date(),
-        readWorkersSection().workers.active
+        new Date()
       );
       if (line) out(line);
     }),

@@ -383,9 +383,9 @@ describe("statusLineOutput machine count", () => {
       session: { id: "AAAA-BBBB", name: "OtherSession" },
     });
     expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now)).toMatch(
-      /prov ▶2/
+      /▶2 · prov/
     );
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/prov ▶2/);
+    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2 · prov/);
   });
   it("the terminal's own chat pane is never counted as a worker", () => {
     saveStatus(logDir, { ...base, id: "20260917-100002-3", origin: "chat", label: "unlabeled", turns: 0 });
@@ -437,13 +437,13 @@ describe("renderStatusLine", () => {
     expect(agentLabel("Explore", "fix the thing")).toContain("fix the thing");
   });
 
-  it("chat pane alone: the provider and nothing else — no count, age, state, inbox", () => {
-    expect(renderStatusLine([chat], now)).toBe("glm");
+  it("chat pane alone: nothing — no provider, count, age, state, inbox", () => {
+    expect(renderStatusLine([chat], now)).toBe("");
   });
 
   it("one worker: ▶1 · model · oldest age", () => {
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
-    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 · m · oldest 45s");
+    expect(renderStatusLine([chat, w], now)).toBe("▶1 · glm · oldest 45s");
   });
 
   it("3 workers over two models: counts ordered by count desc, then name", () => {
@@ -451,7 +451,7 @@ describe("renderStatusLine", () => {
     const b = spawn({ id: "20260917-100000-2222", label: "b", model: "sonnet-5" });
     const d = spawn({ id: "20260917-100000-3333", label: "d", model: "haiku-4.5" });
     const out = renderStatusLine([chat, a, b, d], now);
-    expect(out).toBe("glm ▶3 · sonnet-5 ×2 · haiku-4.5 · oldest 45s");
+    expect(out).toBe("▶3 · glm ×3 · oldest 45s");
   });
 
   it("counts only running workers with a live pid in ▶N", () => {
@@ -466,7 +466,7 @@ describe("renderStatusLine", () => {
     const stale: WorkerStatus = { ...chat, pid: 999999 };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([stale, w], now);
-    expect(out).toBe("glm ▶1 · m · oldest 45s");
+    expect(out).toBe("▶1 · glm · oldest 45s");
     expect(out).not.toContain("interactive");
   });
 
@@ -474,9 +474,9 @@ describe("renderStatusLine", () => {
     const legacy: WorkerStatus = { ...chat, id: "20260917-091645-7777", started: "2026-09-17 09:16:45", label: "(no prompt)", origin: undefined };
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
     const out = renderStatusLine([legacy, w], now);
-    expect(out).toBe("glm ▶1 · m · oldest 45s");
+    expect(out).toBe("▶1 · glm · oldest 45s");
     const legacy2: WorkerStatus = { ...legacy, label: "unlabeled" };
-    expect(renderStatusLine([legacy2, w], now)).toBe("glm ▶1 · m · oldest 45s");
+    expect(renderStatusLine([legacy2, w], now)).toBe("▶1 · glm · oldest 45s");
   });
 
   it("no goal, label or step leaks into the bar — that is pane/ps territory", () => {
@@ -486,7 +486,7 @@ describe("renderStatusLine", () => {
       last: 'Bash: grep -n -A4 "x" src/',
     });
     const out = renderStatusLine([chat, w], now);
-    expect(out).toBe("glm ▶1 · m · oldest 45s");
+    expect(out).toBe("▶1 · glm · oldest 45s");
     expect(out).not.toContain("grep");
     expect(out).not.toContain("Bash");
     expect(out).not.toContain("fix black buttons");
@@ -514,7 +514,7 @@ describe("renderStatusLine", () => {
 
   it("an empty model counts under ? rather than vanishing", () => {
     const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons", model: "" });
-    expect(renderStatusLine([chat, w], now)).toBe("glm ▶1 · ? · oldest 45s");
+    expect(renderStatusLine([chat, w], now)).toBe("▶1 · glm · oldest 45s");
   });
 
   it("each running worker's model shortens in the models segment", () => {
@@ -522,11 +522,10 @@ describe("renderStatusLine", () => {
     const b = spawn({ id: "20260917-100000-2222", label: "glm job", provider: "glm", model: "glm-5.3[1m]" });
     const c = spawn({ id: "20260917-100000-3333", label: "kimi job", provider: "kimi", model: "k3[1m]" });
     const out = renderStatusLine([chat, a, b, c], now);
-    expect(out).toBe("glm ▶3 · glm-5.3[1m] · k3[1m] · opus-5[1m] · oldest 45s");
+    expect(out).toBe("▶3 · glm · kimi · opus-5[1m] · oldest 45s");
   });
 
-  it("zero workers: the head alone, no models or oldest segment", () => {
-    expect(renderStatusLine([chat], now)).toBe("glm");
+  it("zero workers: no providers or oldest segment", () => {
     expect(renderStatusLine([chat], now)).not.toContain("oldest");
   });
 
@@ -535,10 +534,10 @@ describe("renderStatusLine", () => {
     const b = spawn({ id: "20260917-100000-2222", label: "b", model: "haiku-4.5" });
     const c = spawn({ id: "20260917-100000-3333", label: "c", model: "opus-5" });
     const full = renderStatusLine([chat, a, b, c], now);
-    expect(full).toBe("glm ▶3 · haiku-4.5 · opus-5 · sonnet-5 · oldest 45s");
-    const trimmed = renderStatusLine([chat, a, b, c], now, null, 30);
+    expect(full).toBe("▶3 · glm ×3 · oldest 45s");
+    const trimmed = renderStatusLine([chat, a, b, c], now, 12);
     expect(trimmed.length).toBeLessThanOrEqual(30);
-    expect(trimmed).toContain("glm ▶3");
+    expect(trimmed).toContain("▶3");
     expect(trimmed).toContain("oldest 45s");
     expect(trimmed).not.toBe(full);
   });
@@ -553,41 +552,35 @@ describe("renderStatusLine", () => {
     const done = spawn({ id: "20260917-100000-5555", label: "done earlier", state: "done", rc: 0, secs: 12 });
     const failed = spawn({ id: "20260917-100000-5556", label: "failed earlier", state: "failed", rc: 1, secs: 5 });
     const out = renderStatusLine([chat, done, failed], now);
-    expect(out).toBe("glm   ✓1 ✗1 today");
+    expect(out).toBe("✓1 ✗1 today");
   });
 
-  // The head must name the provider the next worker goes to. That is the live
-  // `workers.active`, not the provider frozen into the chat pane's status file
-  // when it launched — switching providers has to move the bar (2026-09-19).
-  describe("head follows the active provider", () => {
-    it("renders the built-in provider, which has no baseUrl and no keyFile", () => {
-      // "anthropic" is synthetic: it is never a key in workers.providers, so
-      // any "is it configured" filter would drop it — it must still render
-      const workers = parseWorkersConfig({
-        active: "anthropic",
-        providers: {
-          glm: { enabled: true, baseUrl: "https://example.invalid", models: { default: "glm-x" } },
-        },
-      });
-      expect(workers.providers.anthropic).toBeUndefined();
-      expect(nativeAnthropicProvider().baseUrl).toBe("");
-      expect(nativeAnthropicProvider().keyFile).toBeNull();
-      expect(renderStatusLine([chat], now, workers.active)).toBe("anthropic");
+  describe("counts the whole tree, names providers, no active-provider head", () => {
+    const tree = (): WorkerStatus[] => [
+      chat,
+      spawn({ id: "20260917-100000-0001", provider: "local30x8", model: "qwen3-coder-30b-8bit" }),
+      spawn({ id: "20260917-100000-0002", provider: "local30x8", model: "qwen3-coder-30b-8bit" }),
+      spawn({ id: "20260917-100000-0003", provider: "anthropic", model: "claude-sonnet-5-5" }),
+      spawn({ id: "20260917-100000-0004", provider: "local30x8", model: "qwen3-coder-30b-8bit", parent: "20260917-100000-0003" }),
+      spawn({ id: "20260917-100000-0005", provider: "local30x8", model: "qwen3-coder-30b-8bit", parent: "20260917-100000-0003" }),
+      spawn({ id: "20260917-100000-0006", provider: "local30x8", model: "qwen3-coder-30b-8bit", parent: "20260917-100000-0003" }),
+    ];
+
+    it("parent + nested children: ▶6 (3 nested), provider names, stable order", () => {
+      // active provider glm, no glm worker: "glm" appears nowhere
+      const out = renderStatusLine(tree(), now);
+      expect(out).toBe("▶6 (3 nested) · local30x8 ×5 · sonnet-5.5 · oldest 45s");
+      expect(out).not.toContain("glm");
+      expect(out).not.toContain("qwen");
     });
 
-    it("overrides the pane's launch-time provider on every refresh", () => {
-      const w = spawn({ id: "20260917-100000-4969", label: "fix black buttons" });
-      expect(renderStatusLine([chat, w], now, "anthropic")).toBe("anthropic ▶1 · m · oldest 45s");
-      expect(renderStatusLine([chat, w], now, "kimi")).toContain("kimi ▶1");
+    it("a chain id as parent is a root, not nested", () => {
+      const w = spawn({ id: "20260917-100000-0009", parent: "chain-123" });
+      expect(renderStatusLine([w], now)).toBe("▶1 · glm · oldest 45s");
     });
 
-    it("shows the active provider even with nothing running at all", () => {
-      expect(renderStatusLine([], now, "anthropic")).toBe("anthropic");
-      expect(renderStatusLine([], now, null)).toBe("");
-    });
-
-    it('"auto" is not one provider, so it falls through to what is running', () => {
-      expect(renderStatusLine([chat], now, "auto")).toBe("glm");
+    it("no live workers: empty, or just today's tally", () => {
+      expect(renderStatusLine([], now)).toBe("");
     });
   });
 });
