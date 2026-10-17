@@ -7,7 +7,7 @@
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { closeEndedPanes } from "../../workers/pane.js";
+import { closeEndedPanes, loadRegistry } from "../../workers/pane.js";
 import { loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
@@ -456,14 +456,27 @@ const SUPERVISION_TICK_MS = 30_000;
 /** First supervision pass waits for the first statuses to exist at all. */
 const SUPERVISION_STARTUP_DELAY_MS = 15_000;
 
-/** A finished worker's pane is left alone this long (the pane's own auto-exit runs first). */
-const PANE_REAP_GRACE_MS = 60_000;
+/** A finished worker's pane is left alone this long (status timestamps have 1 s resolution), then the fast reaper closes it. */
+const PANE_REAP_GRACE_MS = 3_000;
+
+/** How often the pane reaper checks the registry for panes of ended workers. */
+const PANE_REAP_TICK_MS = 2_000;
 
 /** True once a worker is terminal and has been for longer than the reap grace. */
 export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
   if (!st || st.state === "running") return false;
   const at = Date.parse(st.updated.replace(" ", "T"));
   return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
+}
+
+/**
+ * One fast reaper pass: closes follow panes of ended workers, touching iTerm only when the registry lists one.
+ */
+export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Promise<string[]> {
+  const due = loadRegistry(logDir).some((e) => paneReapable(loadStatus(logDir, e.worker), now));
+  if (!due) return [];
+  const r = await closeEndedPanes(logDir, (wid) => paneReapable(loadStatus(logDir, wid), now), false);
+  return r.closed;
 }
 
 /**
@@ -511,19 +524,28 @@ export function startWorkerSupervisor(): void {
         ticking = false;
       });
     };
-    // reaper: follow panes of workers that ended > 60 s ago (any ending path)
-    const logDir = workersLogDir(readWorkersSection().workers);
-    closeEndedPanes(logDir, (wid) => paneReapable(loadStatus(logDir, wid)), false)
-      .then((r) => {
-        for (const l of r.closed) process.stderr.write(`[pai-daemon] Pane reaper: closed ${l}\n`);
-      })
-      .catch(() => {});
   };
 
   const first = setTimeout(tick, SUPERVISION_STARTUP_DELAY_MS);
   if (first.unref) first.unref();
   const timer = setInterval(tick, SUPERVISION_TICK_MS);
   if (timer.unref) timer.unref();
+
+  let reaping = false;
+  const reapTimer = setInterval(() => {
+    if (reaping) return;
+    reaping = true;
+    reapEndedPanesOnce(workersLogDir(readWorkersSection().workers))
+      .then((closed) => {
+        for (const l of closed) process.stderr.write(`[pai-daemon] Pane reaper: closed ${l}\n`);
+      })
+      .catch(() => {})
+      .finally(() => {
+        reaping = false;
+      });
+  }, PANE_REAP_TICK_MS);
+  if (reapTimer.unref) reapTimer.unref();
+
   process.stderr.write(
     `[pai-daemon] Worker supervisor: every ${Math.round(SUPERVISION_TICK_MS / 1000)}s\n`
   );
