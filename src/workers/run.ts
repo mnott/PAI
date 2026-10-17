@@ -1506,12 +1506,25 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // must come off the command line (bare -p stays: stream-json needs --print).
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
   const toolArgs = headless ? headlessToolGrants(parsed.allowedTools) : [];
-  const { text: promptText, applied: trailerApplied } = headlessPromptText(
+  // A local server prefix-caches system prompt + tools, and a worktree's id,
+  // path, branch and the deadline minute differ per unit: left in the system
+  // prompt they cut the shared prefix before the tool definitions (measured
+  // 2026-10-17: 3.1k of 38k tokens shared). They go at the head of the task
+  // message instead. Anthropic and remote providers keep them in the system prompt.
+  const volatileInTask = headless && !target.provider.native && isLoopbackProvider(target.provider);
+  const volatileParts = volatileInTask
+    ? [
+        ...(worktree ? [worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)] : []),
+        ...(limit ? [deadlinePromptLine(limit)] : []),
+      ]
+    : [];
+  const { text: taskText, applied: trailerApplied } = headlessPromptText(
     parsed.prompt,
     headless,
     parsed.callerSystemPrompt,
     a.reportFormat
   );
+  const promptText = taskText !== null && volatileParts.length ? volatileParts.join("\n") + "\n\n" + taskText : taskText;
   const claudeCmd = claudeCommand(env, config.caveman);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
@@ -1528,9 +1541,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless
-        ? [worktree ? worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot) : inPlaceSystemPrompt()]
+        ? [worktree ? (volatileInTask ? "" : worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)) : inPlaceSystemPrompt()]
         : []),
-      ...(headless && limit ? [deadlinePromptLine(limit)] : []),
+      ...(headless && limit && !volatileInTask ? [deadlinePromptLine(limit)] : []),
       ...parsed.callerSystemPrompts,
     ])
   );
@@ -1542,6 +1555,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       JSON.stringify({
         cmd,
         cwd: worktree?.dir ?? cwd,
+        ...(promptText !== null ? { stdin: promptText } : {}),
         browser: noBrowser ? "off" : "on",
         ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : { limit: "none" }),
       })
