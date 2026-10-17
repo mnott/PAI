@@ -12,7 +12,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
 
 export const MAX_DISTANCE = 3;

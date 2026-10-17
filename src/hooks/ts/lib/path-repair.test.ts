@@ -222,23 +222,13 @@ describe("armGuardReason", () => {
     expect(armGuardReason(bash(`cat ${arm}/f`, tmpdir()), env)).toBeNull();
     expect(armGuardReason(bash(`rm -rf ${arm}`, tmpdir()), { PAI_AB_ARMS_ROOT: root })).toBeNull();
   });
-  it("ignores destructive commands inside heredoc body", () => {
-    const cmd = [
-      'cat > notes.md << \'EOF\'',
-      'rm -rf ${arm}/x',
-      'echo hi > ${arm}/f',
-      'EOF'
-    ].join('\n');
+  it("ignores trigger text inside a heredoc body", () => {
+    const cmd = ["cat > notes.md << 'EOF'", `rm -rf ${arm}/x`, `echo hi > ${arm}/f`, "EOF"].join("\n");
     expect(armGuardReason(bash(cmd, tmpdir()), env)).toBeNull();
   });
-  it("denies destructive commands outside heredoc body", () => {
-    const cmd = [
-      'cat > notes.md << \'EOF\'',
-      'echo hi > ${arm}/f',
-      'EOF',
-      'rm -rf ${arm}/x'
-    ].join('\n');
-    expect(armGuardReason(bash(cmd, tmpdir()), env)).toBeNull();
+  it("still denies a destructive command after the heredoc", () => {
+    const cmd = ["cat > notes.md << 'EOF'", "hello", "EOF", `rm -rf ${arm}/x`].join("\n");
+    expect(armGuardReason(bash(cmd, tmpdir()), env)).not.toBeNull();
   });
 });
 
