@@ -17,6 +17,37 @@ const row = (minAgo: number, o: Partial<UsageRow> = {}): UsageRow => ({
   session_id: "s1", ...o,
 });
 
+describe("cockpit provider keys", () => {
+  const providers = {
+    local30x8: { enabled: true, models: { default: "qwen3-coder-30b-8bit" } },
+    coder8: { enabled: false, models: { default: "qwen3-coder-30b-8bit" } },
+    glm: { enabled: true, models: { default: "glm-5.3" } },
+  };
+  it("folds a row logged under a disabled duplicate provider into the provider serving that model", () => {
+    const rows = [
+      row(2, { provider: "local30x8", model: "qwen3-coder-30b-8bit" }), // router-era row: provider name
+      row(3, { provider: "coder8", model: "qwen3-coder-30b-8bit" }), // historic row: resolved duplicate
+      row(4, { provider: "glm", model: "glm-5.3" }),
+      row(5, { provider: "unknown", model: "nobody-serves-this" }),
+    ];
+    const d = buildCockpitData(rows, "1h", NOW, new Map(), null, providers);
+    expect(d.byModel.map((m) => `${m.provider}/${m.model}/${m.requests}`).sort()).toEqual([
+      "glm/glm-5.3/1",
+      "local30x8/qwen3-coder-30b-8bit/2",
+      "unknown/nobody-serves-this/1",
+    ]);
+    expect(d.byProvider.map((p) => p.provider).sort()).toEqual(["glm", "local30x8", "unknown"]);
+    expect(Object.keys(d.promptByProvider).sort()).toEqual(["glm", "local30x8", "unknown"]);
+  });
+  it("without a config rows stay as logged", () => {
+    const d = buildCockpitData([row(2, { provider: "coder8" })], "1h", NOW);
+    expect(d.byProvider.map((p) => p.provider)).toEqual(["coder8"]);
+  });
+  it("the page keys pies by provider with the model as sub-label", () => {
+    expect(COCKPIT_HTML).toContain('m.provider+"\\u0000"+m.model');
+  });
+});
+
 describe("cockpit aggregation", () => {
   it("buckets pauses", () => {
     expect([undefined, 5, 59.9, 60, 299, 300, 3599, 3600].map(pauseBucket)).toEqual(["first", "<1m", "<1m", "1-5m", "1-5m", "5-60m", "5-60m", ">60m"]);
