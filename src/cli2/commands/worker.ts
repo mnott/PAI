@@ -487,7 +487,7 @@ const goalCommand: CommandDef = {
     { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
     { name: "TEXT", required: true, summary: "The new label" },
   ],
-  examples: ["pai worker goal w-20260101-abc 'fix the retry loop'"],
+  examples: ["pai worker goal w-20260101-abc 'fix the retry loop'", "pai worker goal w-20260101-abc 'review the export tests'"],
   seeAlso: ["pai worker say", "pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", () => {
@@ -596,7 +596,7 @@ const discardCommand: CommandDef = {
   summary: "Throw away a worker's branch and worktree",
   description: "Removes the worktree and branch of a worker and keeps nothing. Use `verify` first if you are unsure.",
   args: [{ name: "ID", required: true, summary: "Worker id" }],
-  examples: ["pai worker discard w-20260101-abc"],
+  examples: ["pai worker discard w-20260101-abc", "pai worker verify w-20260101-abc && pai worker discard w-20260101-abc"],
   seeAlso: ["pai worker verify", "pai worker merge", "pai worker gc"],
   run: (ctx) =>
     guard("pai worker pending", () => {
@@ -631,7 +631,7 @@ const killCommand: CommandDef = {
   summary: "Stop a running worker",
   description: "Sends SIGTERM to the worker; it saves its final state and exits. A worker whose process id has been reused by something else is marked lost and nothing is signalled.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
-  examples: ["pai worker kill w-20260101-abc"],
+  examples: ["pai worker kill w-20260101-abc", "pai worker ps   (find the id first)"],
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", async () => {
