@@ -16,6 +16,14 @@
 
 export const R_TOOL_DENY_REASON = "write your R report as plain text in your final answer, not as a tool call";
 
+export const PARAM_ALIASES: Record<string, Record<string, string>> = {
+  Read: { path: "file_path", filePath: "file_path", file: "file_path" },
+  Edit: { path: "file_path", filePath: "file_path", file: "file_path" },
+  Write: { path: "file_path", filePath: "file_path", file: "file_path" },
+  Bash: { cmd: "command" },
+  Grep: { regex: "pattern" },
+};
+
 export interface ToolNameRepairInput {
   tool_name?: string;
   cwd?: string;
@@ -52,6 +60,11 @@ export function bareToolName(name: string, known: readonly string[] = KNOWN_TOOL
   return known.find((t) => t.toLowerCase() === bare.toLowerCase()) ?? null;
 }
 
+export const INVENTED_TOOL_DIRECTIVES: Record<string, string> = {
+  Git: "there is no Git tool; use Bash with git ...",
+  R: R_TOOL_DENY_REASON,
+};
+
 export function reportToolDenial(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): string | null {
   if (env.PAI_WORKER !== "1") return null;
   const name = input.tool_name ?? "";
@@ -60,6 +73,46 @@ export function reportToolDenial(input: ToolNameRepairInput, env: NodeJS.Process
     return R_TOOL_DENY_REASON;
   }
   return null;
+}
+
+export function repairParams(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): ToolNameRepair | null {
+  if (env.PAI_WORKER !== "1") return null;
+  const tool = input.tool_name;
+  if (!tool) return null;
+
+  const aliases = PARAM_ALIASES[tool];
+  if (!aliases) return null;
+
+  const tool_input = input.tool_input ?? {};
+  const updatedInput = { ...tool_input };
+  const renames: string[] = [];
+
+  for (const [alias, declared] of Object.entries(aliases)) {
+    if (alias in tool_input && !(declared in tool_input)) {
+      updatedInput[declared] = tool_input[alias];
+      delete updatedInput[alias];
+      renames.push(`${alias}→${declared}`);
+    }
+  }
+
+  if (renames.length === 0) return null;
+
+  // For the new string, we want to show only the final declared parameters
+  // We should only include the actual parameters that are present, not all aliases
+  const declaredParams = Object.keys(updatedInput).filter(key => Object.values(aliases).includes(key));
+  return {
+    old: `${tool}(${renames.join(",")})`,
+    new: `${tool}(${declaredParams.join(",")})`,
+    updatedInput
+  };
+}
+
+export function inventedToolDirective(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): string | null {
+  if (env.PAI_WORKER !== "1") return null;
+  const name = input.tool_name ?? "";
+  // Strip leading "functions." prefix if present
+  const cleanName = name.startsWith("functions.") ? name.slice(10) : name;
+  return INVENTED_TOOL_DIRECTIVES[cleanName] ?? null;
 }
 
 export function repairToolName(input: ToolNameRepairInput, env: NodeJS.ProcessEnv): ToolNameRepair | null {
