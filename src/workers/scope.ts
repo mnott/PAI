@@ -145,6 +145,8 @@ export function ownerSessionName(
 export interface SessionMapEntry {
   session: string;
   ts: number;
+  /** Working directory the entry was recorded for; absent on legacy entries, whose map key is the cwd. */
+  cwd?: string;
   /**
    * The tab's ITERM_SESSION_ID, when the status line could see one — the
    * bridge back from a claude session id to the terminal it runs in
@@ -187,7 +189,9 @@ export function recordSessionMapEntry(
   } catch {
     map = {}; // a damaged map is rewritten, never fatal
   }
-  const prev = map[cwd];
+  // one entry per (cwd, session): two sessions in the same directory must not overwrite each other
+  const key = `${cwd}\u0000${session}`;
+  const prev = map[key];
   if (
     prev &&
     prev.session === session &&
@@ -197,10 +201,12 @@ export function recordSessionMapEntry(
     return;
   }
   const pruned: Record<string, SessionMapEntry> = {};
-  for (const [dir, e] of Object.entries(map)) {
-    if (now - e.ts < SESSION_MAP_PRUNE_MS) pruned[dir] = e;
+  for (const [k, e] of Object.entries(map)) {
+    // a legacy cwd-keyed entry for this cwd is superseded by the per-session key
+    if (k === cwd && e.session === session) continue;
+    if (now - e.ts < SESSION_MAP_PRUNE_MS) pruned[k] = e;
   }
-  pruned[cwd] = { session, ts: now, ...(term ? { term } : {}) };
+  pruned[key] = { session, ts: now, cwd, ...(term ? { term } : {}) };
   try {
     mkdirSync(logDir, { recursive: true });
     const tmp = `${path}.tmp`;
@@ -230,8 +236,20 @@ export function resolveSpawnerSession(
   const path = sessionMapPath(logDir);
   if (!existsSync(path) || !cwd) return null;
   try {
-    const entry = (JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>)[cwd];
-    if (entry && entry.session && now - entry.ts < SPAWNER_SESSION_TTL_MS) return entry.session;
+    const map = JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>;
+    const fresh = Object.entries(map)
+      .filter(([k, e]) => e.session && (e.cwd ?? k) === cwd && now - e.ts < SPAWNER_SESSION_TTL_MS)
+      .map(([, e]) => e);
+    const sessions = new Set(fresh.map((e) => e.session));
+    if (sessions.size === 1) return fresh[0].session;
+    if (sessions.size > 1) {
+      // several sessions share this directory: only the caller's own pane tells them apart
+      const uuid = itermUuid(env.ITERM_SESSION_ID ?? "");
+      const own = uuid ? fresh.filter((e) => e.term && itermUuid(e.term) === uuid) : [];
+      const ownSessions = new Set(own.map((e) => e.session));
+      if (ownSessions.size === 1) return own[0].session;
+      return null; // ambiguous: attribute to nobody rather than to a neighbour
+    }
   } catch {
     // a damaged map simply attributes nothing
   }
