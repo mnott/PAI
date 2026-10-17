@@ -506,6 +506,36 @@ export function firstRequestShare(u: { input_tokens?: number; cache_read_input_t
   return total > 0 ? read / total : null;
 }
 
+/** Cold prefill speed of the local server (measured), tokens per second. */
+export const LOCAL_PREFILL_TOK_PER_S = 1100;
+
+/**
+ * Cached share of a local first request, inferred from a router usage row: the time to first token
+ * against the time a full cold prefill of input_tokens would take. Null for short prompts (under 2000
+ * tokens) or rows without numbers.
+ */
+export function routerRowShare(row: { input_tokens?: number; ttftMs?: number }): number | null {
+  const n = row.input_tokens ?? 0;
+  if (n < 2000 || row.ttftMs == null) return null;
+  const coldMs = (n / LOCAL_PREFILL_TOK_PER_S) * 1000;
+  const share = Math.min(1, Math.max(0, 1 - row.ttftMs / coldMs));
+  return Math.round(share * 1000) / 1000;
+}
+
+/** The share of the FIRST router row (file order) of one claude session; lines are router-usage.jsonl lines. */
+export function firstRouterShare(lines: string[], sessionId: string): number | null {
+  for (const line of lines) {
+    let row: { session_id?: string; input_tokens?: number; ttftMs?: number };
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (row.session_id === sessionId) return routerRowShare(row);
+  }
+  return null;
+}
+
 /** "warm" when most of the first request came from the prefix cache. */
 export function warmOrCold(share: number | null | undefined): "warm" | "cold" | null {
   return share == null ? null : share >= 0.8 ? "warm" : "cold";

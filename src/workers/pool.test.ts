@@ -33,6 +33,8 @@ import {
   slotShouldReap,
   warmOrCold,
   writePoolState,
+  routerRowShare,
+  firstRouterShare,
   type PoolMetricRow,
   type PoolSlotRecord,
 } from "./pool.js";
@@ -410,4 +412,27 @@ describe("client transport", () => {
       trailer: "",
     };
   }
+});
+
+describe("router-row warm/cold", () => {
+  it("routerRowShare: fast first token on a long prompt is warm, a slow one cold", () => {
+    expect(routerRowShare({ input_tokens: 28112, ttftMs: 520 })).toBeGreaterThan(0.95);
+    expect(routerRowShare({ input_tokens: 13728, ttftMs: 5338 })).toBeLessThan(0.6);
+    expect(routerRowShare({ input_tokens: 24052, ttftMs: 40000 })).toBe(0);
+  });
+  it("routerRowShare: short prompts and missing numbers give null", () => {
+    expect(routerRowShare({ input_tokens: 1500, ttftMs: 100 })).toBeNull();
+    expect(routerRowShare({ input_tokens: 9000 })).toBeNull();
+    expect(routerRowShare({})).toBeNull();
+  });
+  it("firstRouterShare: takes the first row of the session, skips bad lines and other sessions", () => {
+    const lines = [
+      "not json",
+      JSON.stringify({ session_id: "other", input_tokens: 20000, ttftMs: 100 }),
+      JSON.stringify({ session_id: "s1", input_tokens: 20000, ttftMs: 100 }),
+      JSON.stringify({ session_id: "s1", input_tokens: 21000, ttftMs: 30000 }),
+    ];
+    expect(firstRouterShare(lines, "s1")).toBeGreaterThan(0.95);
+    expect(firstRouterShare(lines, "missing")).toBeNull();
+  });
 });
