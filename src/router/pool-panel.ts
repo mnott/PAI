@@ -189,7 +189,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
 export const sharedPoolPanel = cachedPoolPanel();
 
 /** The card, placed in the page body. */
-export const POOL_PANEL_HTML = `<section class="card c12"><h2>Worker pool</h2><div id="poolpanel"></div></section>`;
+export const POOL_PANEL_HTML = `<section class="card c12"><h2>Worker pool<span class="tip" id="pooltip" tabindex="0" aria-label="Worker pool status" data-tip="Worker pool status">ⓘ</span></h2><div id="poolpanel"></div></section>`;
 
 /** Page script (no template literals, ES5): defines loadPool(); uses the page's esc, fmt, pct, table helpers. */
 export const POOL_PANEL_JS = String.raw`
@@ -203,9 +203,10 @@ function renderPool(p){
    ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"],
    ["not pooled (24 h)",p.last24h.notPooled+" of "+p.last24h.runs,p.last24h.topReason?"top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled?"reasons not logged yet":"")]
   ].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span><span style="display:block">'+k[2]+'</span></div>'}).join("")+'</div>';
- var rows=p.slots.length?table(["provider","model","cwd","state","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<p class="dim">no slots (a slot spawns with the first pooled task)</p>';
- var rs=p.last24h.reasons.length?'<p class="dim">rejections (24 h): '+p.last24h.reasons.map(function(r){return esc(r.reason)+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":"")+'</p>':"";
- el.innerHTML=head+rows+rs+'<p class="dim">'+esc(p.message)+'</p>';
+ var rows=p.slots.length?table(["provider","model","cwd","state","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<span class="dim" title="A slot spawns with the first pooled task.">no slots</span>';
+ var rs=p.last24h.reasons.length?"\nRejections (24 h): "+p.last24h.reasons.map(function(r){return r.reason+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":""):"";
+ setTip($("pooltip"),p.message+rs);
+ el.innerHTML=head+rows;
 }
 function loadPool(){fetch("/cockpit/pool",{cache:"no-store"}).then(function(r){return r.json()}).then(renderPool).catch(function(){})}
 `;

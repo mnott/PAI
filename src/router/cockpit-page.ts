@@ -14,29 +14,34 @@ export const COCKPIT_HTML = String.raw`<!doctype html>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
 @media(prefers-color-scheme:dark){:root{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
-header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
-h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+header{flex-wrap:wrap;display:flex;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
+h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
 .tabs button{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:3px 12px;cursor:pointer;font:inherit}
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
-main{padding:16px 20px;display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0;overflow:auto}
+main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.tw{overflow-x:auto}
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
 @media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}
-.gauges{display:flex;flex-wrap:wrap;gap:18px}.gauge{text-align:center;min-width:130px}
+.gauges{display:flex;flex-wrap:wrap;gap:10px 14px}.gauge{text-align:center;min-width:110px}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
-table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:3px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:left}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
-.kpis{display:flex;gap:26px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
-.groups{display:flex;gap:28px;flex-wrap:wrap}.grp{flex:1;min-width:260px}.grp+.grp{border-left:1px solid var(--line);padding-left:24px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
+.groups{display:flex;gap:16px;flex-wrap:wrap}.grp{flex:1;min-width:260px}.grp+.grp{border-left:1px solid var(--line);padding-left:24px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.rings{display:flex;flex-wrap:wrap;gap:10px}.ring{text-align:center;min-width:100px}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{flex-basis:100%;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
-.rings .solo{display:flex;align-items:center;justify-content:center;gap:16px;width:100%;flex-wrap:wrap}.bignum{font-size:26px;font-weight:600;text-align:center}.bignum span{display:block;font-size:11px;color:var(--dim);font-weight:400}
+.rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
+.rings .solo{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:16px;width:100%;flex-wrap:wrap}.bignum{font-size:26px;font-weight:600;text-align:center}.bignum span{display:block;font-size:11px;color:var(--dim);font-weight:400}
 svg text{fill:var(--dim);font-size:10px}
+.tip{position:relative;display:inline-block;margin-left:5px;width:14px;height:14px;line-height:14px;text-align:center;font:11px/14px inherit;font-style:normal;text-transform:none;letter-spacing:0;color:var(--dim);cursor:help;border-radius:50%;vertical-align:middle}
+.tip:hover,.tip:focus{color:var(--acc);outline:none}
+.tip::after{content:attr(data-tip);display:none;position:absolute;z-index:5;top:18px;left:-6px;width:max-content;max-width:min(340px,72vw);padding:6px 9px;background:var(--fg);color:var(--bg);border-radius:6px;font-size:12px;font-weight:400;line-height:1.4;white-space:pre-line;text-align:left;text-transform:none;letter-spacing:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.tip:hover::after,.tip:focus::after{display:block}
+.downs{width:100%;color:var(--dim)}.downs summary{cursor:pointer}.downs .chip{margin:2px 2px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;white-space:nowrap}.chip b{font-weight:600}
 #sessions td:first-child span[title]{display:inline-block;max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
@@ -44,18 +49,16 @@ svg text{fill:var(--dim);font-size:10px}
 <span id="stamp">loading...</span></header>
 <main>
 <section class="card c12"><div class="groups"><div class="grp"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
-<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:10px"></div></section>
+<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 ${POOL_PANEL_HTML}
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
-<section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
-<h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
-<section class="card c4"><h2>Cache hit ratio / providers</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div>
-<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local prefix cache (server counters)</h2><div id="donutlocal"></div><div id="donutlocalnote" class="dim" style="white-space:pre-line"></div>
-<h2 style="margin-top:12px">Providers: errors, retries, speed</h2><div id="providers"></div></section>
-<section class="card c12"><h2>Speed per model (TTFT, read, write)</h2><div id="speed"></div>
-<p class="dim">TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.</p></section>
-<section class="card c12"><h2>Cache verdict by pause (per model)</h2><div id="pause"></div>
-<p class="dim">Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.</p></section>
+<section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
+<h2 style="margin-top:8px">Power and GPU/CPU load<span class="tip" tabindex="0" aria-label="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis." data-tip="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis.">ⓘ</span></h2><div id="power"></div><div class="legend" id="plegend"></div></section>
+<section class="card c4"><h2>Cache hit ratio<span class="tip" tabindex="0" aria-label="cache_read / (read + write + fresh input), per provider / model." data-tip="cache_read / (read + write + fresh input), per provider / model.">ⓘ</span></h2><div id="donut" class="rings"></div><div id="donutnote" class="chips"></div>
+<h2 id="donutlocaltitle" style="margin-top:8px;display:none">Local prefix cache<span class="tip" tabindex="0" aria-label="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money." data-tip="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money.">ⓘ</span></h2><div id="donutlocal"></div>
+<h2 style="margin-top:8px">Providers<span class="tip" tabindex="0" aria-label="* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token." data-tip="* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token.">ⓘ</span></h2><div id="providers"></div></section>
+<section class="card c12"><h2>Speed per model<span class="tip" tabindex="0" aria-label="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked." data-tip="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.">ⓘ</span></h2><div id="speed"></div></section>
+<section class="card c12"><h2>Cache verdict by pause<span class="tip" tabindex="0" aria-label="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it." data-tip="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.">ⓘ</span></h2><div id="pause"></div></section>
 <section class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
 <section class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
 <section class="card c6"><h2>Tokens per day per model (14 d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
@@ -67,6 +70,9 @@ var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]=
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}
+/** Tooltip icon: the long text lives in data-tip (CSS hover/focus) and aria-label (screen readers). */
+function tip(t){return'<span class="tip" tabindex="0" aria-label="'+esc(t)+'" data-tip="'+esc(t)+'">ⓘ</span>'}
+function setTip(el,t){el.setAttribute("aria-label",t);el.setAttribute("data-tip",t)}
 function pct(x){return(x*100).toFixed(1)+"%"}
 function tot(t){return t.input+t.output+t.cacheWrite+t.cacheRead}
 function dur(ms){if(ms<=0)return"now";var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+"d "+h+"h":h?h+"h "+String(m).padStart(2,"0")+"m":m+"m "+String(s%60).padStart(2,"0")+"s"}
@@ -83,16 +89,17 @@ function gauge(l,w,age){
   '<div class="s" data-reset="'+(w.resetAt||0)+'">'+(w.resetAt?'resets in '+dur(w.resetAt-Date.now()):'reset unknown')+'</div></div>';
 }
 function renderLimits(){
- if(!lim)return;var c="",lo="";
+ if(!lim)return;var c="",lo="",dn=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
-  if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div>';lo+=h;return}
+  if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div>';if(l.up)lo+=h;else dn.push(l.provider);return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   c+=h;
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
+ if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var sys=null;
@@ -181,7 +188,7 @@ function renderPower(){
  if(!sys||!sys.series)return;
  var ss=sys.series.series;
  lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,760,150);
- $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("")+'<span>(W on the left axis, load % on the fixed 0-100 right axis, buckets as above)</span>';
+ $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("");
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
@@ -243,11 +250,11 @@ function twoToneModelBars(el,labels,buckets,models,w,h){
 function legend(el,keys){el.innerHTML=keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 function donut(ratio,sz){
- var r=48,c=2*Math.PI*r,d=c*ratio;sz=sz||100;
+ var r=48,c=2*Math.PI*r,d=c*ratio;sz=sz||84;
  return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 140 140"><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="16"/><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="16" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 70 70)"/><text x="70" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+(sz>120?28:22)+'px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
 }
 function emptyRing(sz){
- sz=sz||100;
+ sz=sz||84;
  return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 140 140"><circle cx="70" cy="70" r="48" fill="none" stroke="var(--line)" stroke-width="16"/></svg>';
 }
 var LOW_REQ=5;
@@ -259,7 +266,7 @@ function ringTiles(ms,servers){
   var dn=m.cacheRead+m.cacheWrite+m.input,low=m.requests<LOW_REQ,ring,cap="";
   var srv=(servers||[]).filter(function(s){return s.provider===m.provider})[0];
   if(m.cacheRead+m.cacheWrite>0){var r=dn?m.cacheRead/dn:0;ring=low?(r>0?donut(r):emptyRing()):donut(r)}
-  else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s">server prefix cache</div>'}
+  else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache</div>'}
   else{ring=emptyRing();cap='<div class="s">'+(low?"too few requests":"not reported")+'</div>'}
   return'<div class="ring'+(low?" low":"")+'">'+ring+'<div class="n">'+esc(m.provider)+'</div><div class="s">'+esc(m.model)+' · '+m.requests+' req</div>'+cap+'</div>'
  }).join("");
@@ -273,22 +280,22 @@ function provHit(p,servers){
 /** Line under a local server's ring: tokensSaved (server counter, since server start) against the router log's prompt total (since its first row). */
 function reuseLine(pc,tot,since){
  var w=since?" since "+since.slice(0,16).replace("T"," "):"";
- if(!tot)return'<div class="s dim">prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start); no prompt tokens in the router log</div>';
- if(tot<pc.tokensSaved)return'<div class="s">prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start) vs '+fmt(tot)+' prompt tokens in the router log'+w+' — windows differ, no ratio</div>';
- return'<div class="s">prompt tokens served from cache: '+pct(pc.tokensSaved/tot)+' ('+fmt(pc.tokensSaved)+' saved by the server since it started, of '+fmt(tot)+' prompt tokens in the router log'+w+')</div>';
+ if(!tot)return'<div class="s dim" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start); no prompt tokens in the router log.">cached '+fmt(pc.tokensSaved)+' · no log</div>';
+ if(tot<pc.tokensSaved)return'<div class="s" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start) vs '+fmt(tot)+' prompt tokens in the router log'+w+' — windows differ, no ratio.">cached '+fmt(pc.tokensSaved)+' vs '+fmt(tot)+' (windows differ)</div>';
+ return'<div class="s" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved by the server since it started, of '+fmt(tot)+' prompt tokens in the router log'+w+'.">cached '+pct(pc.tokensSaved/tot)+' · '+fmt(pc.tokensSaved)+' / '+fmt(tot)+'</div>';
 }
 /** One compact line per loopback provider (no ring: the providers grid tile already shows the hit rate). */
 function localDetail(prov,pc,tot){
  var mem=(pc.entries!=null?pc.entries+" entries":"")+(pc.entries!=null&&pc.memoryMb!=null?" / ":"")+(pc.memoryMb!=null?Math.round(pc.memoryMb)+" MB":"");
  return'<div class="s"><b>'+esc(prov)+'</b> · '+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved (server, since start)'+(mem?' · '+mem:'')+(tot?' · router log: '+fmt(tot)+' prompt tokens (since restart)':'')+'</div>';
 }
-function table(head,rows){return'<table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
+function table(head,rows,tips){return'<div class="tw"><table><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table></div>'}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
 function renderSpeed(){
  var sp=(data&&data.speed)||[];
  function c(st,k,u){return st[k]==null?'<span class="dim">-</span>':fmt(st[k])+u}
- $("speed").innerHTML=sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]})):'<span class="dim">no timed requests yet (timing is recorded for streamed replies since the router restart)</span>';
+ $("speed").innerHTML=sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]}),{"TTFT p50 1h":"Median time from request sent to first content token, last hour.","TTFT p50 24h":"Median time from request sent to first content token, last 24 hours.","p90 1h":"90th percentile TTFT, last hour.","p90 24h":"90th percentile TTFT, last 24 hours.","read tok/s 1h":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads).","write tok/s 1h":"Output tokens / decode time, replies of 16+ tokens only."}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>';
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
@@ -298,17 +305,17 @@ function renderDonuts(){ renderSpeed();
   dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
  }else dh=ringTiles(ms,allSrv2);
  $("donut").innerHTML=dh||'<span class="dim">no data</span>';
- var note="cache_read / (read + write + fresh input), per provider / model. Overall: "+pct(t.hitRatio);
+ function chip(l,v,tt){return'<span class="chip"'+(tt?' title="'+esc(tt)+'"':'')+'>'+l+' <b>'+v+'</b></span>'}
+ var note=chip("overall",pct(t.hitRatio),"cache_read / (read + write + fresh input), all providers and models");
  var sk=d.sessionSplit;
- if(sk)note+=". continuous "+pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess, "+sk.continuous.requests+" req) · one-shot "+pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess, "+sk.oneShot.requests+" req)";
- if(d.pool&&d.pool.tasks)note+=". pool: "+d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried";
- $("donutnote").textContent=note;
+ if(sk)note+=chip("continuous",pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess)","continuous sessions: "+sk.continuous.sessions+" sessions, "+sk.continuous.requests+" requests")+chip("one-shot",pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess)","one-shot sessions: "+sk.oneShot.sessions+" sessions, "+sk.oneShot.requests+" requests");
+ if(d.pool&&d.pool.tasks)note+=chip("pool",d.pool.tasks+" task(s) · "+fmt(d.pool.tokensCarried),d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried");
+ $("donutnote").innerHTML=note;
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
  loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider])});
  $("donutlocaltitle").style.display=lh?"":"none";
  $("donutlocal").innerHTML=lh;
- $("donutlocalnote").textContent=lh?"Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ.\nA hit skips re-computing the cached prompt part (latency), not money.":"";
 }
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){
@@ -323,8 +330,8 @@ function render(){
  var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
  var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),760,220):twoToneModelBars($("series"),labs,buckets,models,760,220);
- $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim">idle buckets compressed — the x axis is not time-linear</span>':"");
- $("wnote").textContent=wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.";
+ $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
+ setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  renderDonuts();
  var ph=d.cachePause.map(function(cm){
@@ -332,13 +339,13 @@ function render(){
   return'<tr><td>'+esc(cm.model)+'</td>'+cells+'</tr>'}).join("");
  var labs=d.cachePause.length?d.cachePause[0].buckets.map(function(b){return b.label}):[];
  $("pause").innerHTML=ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>';
- $("providers").innerHTML=table(["provider","req","err%","retries","avg ms (end-to-end)","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}))+
-  '<p class="dim">* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token.</p><p class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</p>';
+ $("providers").innerHTML=table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
+  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>';
  $("sessions").innerHTML=table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,20).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}));
  $("workers").innerHTML=d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,15).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>';
  var dm=Object.keys(d.daily.models),ds=d.daily.days.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][i]});return o});
  var dgap=stackedBars($("daily"),d.daily.days.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,520,200);
- legend($("dlegend"),dm);if(dgap)$("dlegend").innerHTML+='<span class="dim">idle buckets compressed — the x axis is not time-linear</span>';
+ legend($("dlegend"),dm);if(dgap)$("dlegend").innerHTML+='<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>';
 }
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
