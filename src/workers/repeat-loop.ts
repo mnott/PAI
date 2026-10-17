@@ -3,6 +3,8 @@
  * Pure: takes the worker's stream-json events, returns the trailing run.
  */
 
+import { classifyToolError, summarizeToolInput } from "./tool-errors.js";
+
 export interface RepeatLoop {
   name: string;
   count: number;
@@ -42,7 +44,7 @@ function resultText(content: unknown): string {
 
 /** The trailing run (>= minRepeat) of identical, failed tool calls, or null. */
 export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): RepeatLoop | null {
-  const uses = new Map<string, { name: string; key: string }>();
+  const uses = new Map<string, { name: string; key: string; input: unknown }>();
   const calls: Call[] = [];
   for (const e of events) {
     const ev = e as { type?: string; message?: { content?: unknown } };
@@ -51,13 +53,15 @@ export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): R
     for (const b of blocks as Array<Record<string, unknown>>) {
       if (!b || typeof b !== "object") continue;
       if (ev.type === "assistant" && b.type === "tool_use" && typeof b.id === "string") {
-        uses.set(b.id, { name: String(b.name ?? "?"), key: canon(b.input) });
+        uses.set(b.id, { name: String(b.name ?? "?"), key: canon(b.input), input: b.input });
       } else if (ev.type === "user" && b.type === "tool_result" && typeof b.tool_use_id === "string") {
         const use = uses.get(b.tool_use_id);
         if (!use) continue;
         const text = resultText(b.content);
         const failed = b.is_error === true || (use.name === "Bash" && /^Exit code (?!0\b)\d+/.test(text.trim()));
-        calls.push({ ...use, failed });
+        // designed non-zero answers (wait verbs exit 3, grep no-match, diff...) are not failures
+        const benign = failed && classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input) }).cls === "benign";
+        calls.push({ name: use.name, key: use.key, failed: failed && !benign });
       }
     }
   }

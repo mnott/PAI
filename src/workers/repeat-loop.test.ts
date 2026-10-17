@@ -119,3 +119,10 @@ describe("repeat-loop", () => {
     });
   });
 });
+describe("repeat-loop benign polling", () => {
+  it("6x identical wait-file exit 3 is not a loop", () => {
+    const input = { command: "cd /tmp/d; pai worker wait-file b0.json --max 100" };
+    const events = Array.from({ length: 6 }, (_, i) => [use(`w${i}`, "Bash", input), res(`w${i}`, "Exit code 3\nnot yet", true)]).flat();
+    expect(detectRepeatLoop(events)).toBeNull();
+  });
+});
