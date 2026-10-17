@@ -13,6 +13,7 @@ import { backupTop, cdTop, clearNamesCmd, endTop, findTop, launchTop, listTop, n
 import { hooksDbCommand } from "./commands/hooks-db.js";
 import { installAlias, setupCommand } from "./commands/setup.js";
 import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
+import { BATCH_C } from "./commands/batch-c.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -52,6 +53,6 @@ export const GROUPS: GroupDef[] = [
     id: g.id,
     title: titles[g.id as keyof typeof titles],
     daily: false,
-    commands: [...(g.id === "workers" ? [workerGroup, routerCommand] : []), ...g.commands, ...(BATCH_B_EXTRA[g.id] ?? [])],
+    commands: [...(g.id === "workers" ? [workerGroup, routerCommand] : []), ...g.commands, ...(BATCH_B_EXTRA[g.id] ?? []), ...(BATCH_C[g.id] ?? [])],
   })),
 ];

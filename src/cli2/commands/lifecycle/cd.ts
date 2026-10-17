@@ -3,8 +3,8 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { getRegistryBackend } from "../../../storage/factory.js";
-import { resolveIdentifier } from "../../../cli/commands/project/helpers.js";
-import { findMovedPath } from "../../../cli/commands/project/commands.js";
+import { resolveIdentifier } from "../../impl/project/helpers.js";
+import { findMovedPath } from "../../impl/project/commands.js";
 import { err, warn, ok, dim, shortenPath, encodeDir, now } from "../../lib/utils.js";
 
 export async function runCd(identifier: string): Promise<void> {

@@ -5,7 +5,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { detectProject, formatDetectionJson } from "../../cli/commands/detect.js";
+import { detectProject, formatDetectionJson } from "../../cli2/impl/detect.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 // Static on purpose: a lazy dist import breaks a long-running daemon after a rebuild.
 import { encodeDir } from "../../cli/utils.js";
