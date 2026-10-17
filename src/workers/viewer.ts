@@ -609,6 +609,7 @@ export async function followWorkers(
       intent: ticker.intent,
       tool: waitingNow() ?? ticker.tool,
       state: fin ? (st.state === "running" ? "done" : st.state) : null,
+      warmup: st.warmup ?? null,
     };
   };
   // what a blocked worker waits on, from the freshest status the pane has

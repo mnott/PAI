@@ -180,3 +180,29 @@ describe("planLlmSpawn — containment (the 2026-09-18 config-corruption fix)", 
     expect(tools).toBe("");
   });
 });
+
+describe("planLlmSpawn: loopback providers take the router", () => {
+  const LOCAL = { ...PROVIDER, baseUrl: "http://127.0.0.1:8080/v1", keyFile: "" };
+  function setup(extra: Record<string, unknown> = {}): void {
+    writeConfig({ enabled: true, active: "loc", providers: { loc: { ...LOCAL, ...extra } } });
+  }
+
+  it("router up: base URL is the router and x-pai-provider names the provider", async () => {
+    setup();
+    const plan = await planLlmSpawn("sonnet", configPath, async () => true);
+    expect(plan.env.ANTHROPIC_BASE_URL).not.toContain(":8080");
+    expect(plan.env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: loc");
+  });
+
+  it("router down: runs direct", async () => {
+    setup();
+    const plan = await planLlmSpawn("sonnet", configPath, async () => false);
+    expect(plan.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+  });
+
+  it("router: false opts out even when the router is up", async () => {
+    setup({ router: false });
+    const plan = await planLlmSpawn("sonnet", configPath, async () => true);
+    expect(plan.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8080/v1");
+  });
+});

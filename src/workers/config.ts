@@ -266,6 +266,8 @@ export interface WorkersPoolConfig {
   idleSecs: number;
   /** Loopback port the pool host listens on. */
   port: number;
+  /** Native anthropic (Claude Code's own login) runs may use pooled slots; worktree runs never do. */
+  native: boolean;
 }
 
 /** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
@@ -506,6 +508,7 @@ export const DEFAULT_POOL: WorkersPoolConfig = {
   maxSlots: 3,
   idleSecs: 900,
   port: 8798,
+  native: true,
 };
 
 /**
@@ -1016,6 +1019,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
     const pc = w.pool as Record<string, unknown>;
     if (pc.enabled !== undefined && typeof pc.enabled !== "boolean") bad(".pool.enabled", "must be boolean");
+    if (pc.native !== undefined && typeof pc.native !== "boolean") bad(".pool.native", "must be boolean");
     if (pc.maxSlots !== undefined) {
       if (typeof pc.maxSlots !== "number" || !Number.isInteger(pc.maxSlots) || pc.maxSlots < 1 || pc.maxSlots > 8) {
         bad(".pool.maxSlots", "must be an integer 1 … 8");
@@ -1036,6 +1040,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
       maxSlots: pc.maxSlots === undefined ? DEFAULT_POOL.maxSlots : pc.maxSlots,
       idleSecs: pc.idleSecs === undefined ? DEFAULT_POOL.idleSecs : pc.idleSecs,
       port: pc.port === undefined ? DEFAULT_POOL.port : pc.port,
+      native: pc.native === undefined ? DEFAULT_POOL.native : pc.native === true,
     };
   }
 

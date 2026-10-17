@@ -27,8 +27,9 @@ import { openSync, closeSync, writeSync, mkdirSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
-import { readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
-import { buildRunEnv, claudeCommand } from "./run-env.js";
+import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
+import { buildRunEnv, claudeCommand, loopbackRouterChoice } from "./run-env.js";
+import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { nowStamp, saveStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
@@ -261,7 +262,10 @@ export interface PoolHostOptions {
   port?: number;
   spawner?: SlotSpawner;
   /** Test hooks: the env/argv builders, so tests can run a fake claude. */
-  envFor?: (providerName: string, provider: WorkerProvider) => NodeJS.ProcessEnv;
+  /** `routerOn` is the per-provider router choice (loopback providers follow the router probe). */
+  envFor?: (providerName: string, provider: WorkerProvider, routerOn?: boolean) => NodeJS.ProcessEnv;
+  /** Router liveness probe for loopback providers; defaults to the real one. */
+  probeRouter?: () => Promise<boolean>;
   cmdHead?: (env: NodeJS.ProcessEnv, caveman: boolean) => string[];
   /**
    * Route slot traffic through the local model router when it is enabled
@@ -326,7 +330,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   // the argv pins it again via --settings (the user settings' env outranks
   // the process env — see pinnedSettingsArgs)
   const routerOn = opts.routerEnabled ?? loadConfig().router.enabled;
-  const envFor = opts.envFor ?? ((name: string, p: WorkerProvider) => buildRunEnv(p, true, undefined, name, routerOn));
+  const envFor = opts.envFor ?? ((name: string, p: WorkerProvider, via?: boolean) => buildRunEnv(p, true, undefined, name, via ?? routerOn));
   const cmdHead = opts.cmdHead ?? ((env: NodeJS.ProcessEnv, caveman: boolean) => claudeCommand(env, caveman, routerOn));
   const now = opts.now ?? (() => new Date());
   const ledger = ledgerPath(logDir);
@@ -366,7 +370,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     model: string,
     cwd: string
   ): Promise<PoolSlotSession | null> => {
-    const env = envFor(providerName, provider);
+    // loopback providers take the router like worker runs do (prefix fixes); down or `router: false` stays direct
+    const via = await loopbackRouterChoice(provider, providerName, routerOn, opts.probeRouter ?? probeRouter);
+    const env = envFor(providerName, provider, via);
     // no PAI_WORKER_ID on a slot: it serves many tasks; children it spawns
     // stand on their own rather than attribute to a stale worker id
     delete env.PAI_WORKER_ID;
@@ -494,7 +500,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   /** One pooled task, end to end. */
   const runTask = async (task: PoolTaskRequest): Promise<PoolTaskResponse> => {
-    const provider = config.providers[task.provider];
+    const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
     // re-checks so a stale client cannot push an incompatible task into a
@@ -504,6 +510,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       prompt: task.prompt,
       providerName: task.provider,
       provider,
+      nativeAllowed: settings.native,
       worktreeWanted: false,
       resumeOf: undefined,
       printCmd: false,

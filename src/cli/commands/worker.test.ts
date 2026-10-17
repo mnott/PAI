@@ -74,8 +74,12 @@ describe("worker run: what is handed to the engine", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pai-worker-run-"));
+    vi.stubEnv("PAI_WORKER", "1");
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
 
   it("passes claude args verbatim and derives the label from the prompt", () => {
     const r = plan(["--class", "implement", "-p", "Fix the loop\nsecond line", "--allowedTools", "Read"]);
