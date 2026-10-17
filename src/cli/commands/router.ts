@@ -4,7 +4,7 @@
  */
 
 import http from "node:http";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
@@ -77,6 +77,7 @@ const runCommand: CommandDef = {
   options: [
     { name: "port", type: "string", value: "PORT", default: String(ROUTER_PORT), summary: "Port to listen on" },
     { name: "usage-file", type: "string", value: "PATH", summary: "Read the cockpit's accounting from this file and record nothing (second instances)" },
+    { name: "wait-bind", type: "string", value: "SECONDS", summary: "Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`)" },
   ],
   examples: ["pai router run", "pai router run --port 8791 --usage-file ./usage.jsonl"],
   seeAlso: ["pai router start"],
@@ -101,32 +102,30 @@ const runCommand: CommandDef = {
     const handler = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });
     return new Promise<number>(() => {
       const server = http.createServer(handler);
-      server.on("error", (e) => {
-        process.stderr.write(`pai: router: ${(e as Error).message}\n`);
-        process.exit(1);
-      });
       const tail = remote ? http.createServer(handler) : undefined;
-      tail?.on("error", (e) => {
-        process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
-        process.exit(1);
-      });
-      server.listen(port, "127.0.0.1", () => {
+      const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
+      listenRetry(server, port, "127.0.0.1", { waitMs: waitBindMs }).then(() => {
         if (!managed) return;
         mkdirSync(dirname(ROUTER_PID_FILE), { recursive: true });
         writeFileSync(ROUTER_PID_FILE, String(process.pid));
+      }, (e) => {
+        process.stderr.write(`pai: router: ${(e as Error).message}\n`);
+        process.exit(1);
       });
       tail?.listen(port, addr, async () => {
         out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
       });
       const bye = () => {
-        if (managed) {
-          try {
-            unlinkSync(ROUTER_PID_FILE);
-          } catch {
-            /* ignore */
+        void drainServers(tail ? [server, tail] : [server], { timeoutMs: 120000 }).then(() => {
+          if (managed) {
+            try {
+              if (readFileSync(ROUTER_PID_FILE, "utf8").trim() === String(process.pid)) unlinkSync(ROUTER_PID_FILE);
+            } catch {
+              /* ignore */
+            }
           }
-        }
-        process.exit(0);
+          process.exit(0);
+        });
       };
       process.on("SIGTERM", bye);
       process.on("SIGINT", bye);
