@@ -55,6 +55,18 @@ export function groupLimits<T extends { kind: string }>(limits: T[]): { cloud: T
   return { cloud: limits.filter((l) => l.kind !== "local"), local: limits.filter((l) => l.kind === "local") };
 }
 
+/**
+ * One key per model however the client spelled it: Claude Code sends
+ * "claude-opus-5-5[1m]" for the 1M-context variant, snapshots carry a
+ * -YYYYMMDD suffix, gateways a provider prefix. Only claude ids are folded;
+ * other providers' ids are theirs and stay as served.
+ */
+export function canonicalModel(id: string): string {
+  const m = id.trim().toLowerCase().replace(/^anthropic\//, "");
+  if (!m.startsWith("claude-")) return id;
+  return m.replace(/\[[^\]]*\]$/, "").replace(/-(?:latest|\d{8})$/, "");
+}
+
 const tok = (): Tok => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0 });
 const addTok = (t: Tok, r: UsageRow) => {
   t.input += r.input_tokens ?? 0;
@@ -112,6 +124,7 @@ export function buildCockpitData(
   const bustParts: Record<string, number> = {};
 
   for (const r of rows) {
+    const model = canonicalModel(r.model);
     const t = Date.parse(r.ts);
     addTok(total, r);
     const isErr = r.status >= 400;
@@ -119,13 +132,13 @@ export function buildCockpitData(
 
     const b = series[Math.floor((bucketStart(t, bucket) - from) / bucket)];
     if (b) {
-      const m = (b.models[r.model] ??= { ...tok(), requests: 0 });
+      const m = (b.models[model] ??= { ...tok(), requests: 0 });
       addTok(m, r);
       m.requests++;
     }
 
-    const mk = `${r.provider}\u0000${r.model}`;
-    const m = byModel.get(mk) ?? { ...tok(), model: r.model, provider: r.provider, requests: 0, errors: 0 };
+    const mk = `${r.provider}\u0000${model}`;
+    const m = byModel.get(mk) ?? { ...tok(), model, provider: r.provider, requests: 0, errors: 0 };
     addTok(m, r);
     m.requests++;
     if (isErr) m.errors++;
@@ -152,11 +165,11 @@ export function buildCockpitData(
       for (const part of r.bust) bustParts[part] = (bustParts[part] ?? 0) + 1;
     }
     if (r.ts > s.lastTs) s.lastTs = r.ts;
-    s.models.add(r.model);
+    s.models.add(model);
     bySession.set(sid, s);
 
     if (r.status < 400) {
-      const pm = pause.get(r.model) ?? new Map();
+      const pm = pause.get(model) ?? new Map();
       const pb = pauseBucket(r.gap_s);
       const c = pm.get(pb) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 };
       c.n++;
@@ -164,7 +177,7 @@ export function buildCockpitData(
       c.readTok += r.cache_read_input_tokens ?? 0;
       c.writeTok += r.cache_creation_input_tokens ?? 0;
       pm.set(pb, c);
-      pause.set(r.model, pm);
+      pause.set(model, pm);
     }
   }
 
@@ -190,7 +203,7 @@ export function buildCockpitData(
   for (const r of allRows) {
     const t = Date.parse(r.ts);
     if (t < dayFrom) continue;
-    const arr = (daily[r.model] ??= days.map(() => 0));
+    const arr = (daily[canonicalModel(r.model)] ??= days.map(() => 0));
     arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
   }
 
@@ -287,10 +300,17 @@ export function parseWindow(q: string | null): CockpitWindow {
 export type LimitsSource = Pick<LimitsCache, "get">;
 
 /** Local model servers as the SYSTEM panel shows them (from the limits poll). */
-function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "served">> {
+export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "served" | "prefixCache">> {
   return limits
     .filter((l) => l.kind === "local")
-    .map(({ provider, up, rssMb, tokensPerSec, served }) => ({ provider, up, rssMb, tokensPerSec, ...(served ? { served } : {}) }));
+    .map(({ provider, up, rssMb, tokensPerSec, served, prefixCache }) => ({
+      provider,
+      up,
+      rssMb,
+      tokensPerSec,
+      ...(served ? { served } : {}),
+      ...(prefixCache ? { prefixCache } : {}),
+    }));
 }
 
 /**

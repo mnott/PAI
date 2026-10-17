@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, groupLimits, handleCockpit, pauseBucket, retryRows, weightedTokens } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
 import type { UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -116,7 +119,18 @@ describe("limits parsing", () => {
 
 describe("cockpit http", () => {
   it("serves page, data and limits; GET only; no keys in output", async () => {
-    const limits = new LimitsCache({ providers: () => ({}), rows: () => [], advisorFile: "/nonexistent" }, 60_000);
+    const tmp = mkdtempSync(join(tmpdir(), "pai-cockpit-"));
+    const limits = new LimitsCache(
+      {
+        providers: () => ({}),
+        rows: () => [],
+        advisorFile: "/nonexistent",
+        lastGoodFile: join(tmp, "last.json"),
+        gate: new Backoff(300_000, undefined, join(tmp, "gate.json")),
+        fetchAnthropic: () => Promise.reject(new Error("offline")),
+      },
+      60_000
+    );
     const srv = http.createServer((req, res) => {
       if (!handleCockpit(req, res, limits, () => [{ ...row(1), ts: new Date().toISOString() }], () => new Map())) res.end("other");
     });
@@ -196,5 +210,34 @@ describe("cockpit weights and groups", () => {
   });
   it("exposes the weights in the data", () => {
     expect(buildCockpitData([], "1h").weights).toEqual(TOKEN_WEIGHTS);
+  });
+});
+
+describe("local prefix cache in the system panel", () => {
+  it("LocalPrefixCacheReported: servers carry the server's own counters; a server that reports none carries none", () => {
+    const pc = { hits: 66, misses: 2, hitRate: 66 / 68, tokensSaved: 259867 };
+    const out = systemServers([
+      { provider: "a", kind: "local", windows: [], up: true, served: ["m"], prefixCache: pc, fetchedAt: 1 },
+      { provider: "b", kind: "local", windows: [], up: true, fetchedAt: 1 },
+      { provider: "anthropic", kind: "plan", windows: [], fetchedAt: 1 },
+    ]);
+    expect(out.map((s) => s.provider)).toEqual(["a", "b"]);
+    expect(out[0]!.prefixCache).toEqual(pc);
+    expect("prefixCache" in out[1]!).toBe(false);
+  });
+});
+
+describe("one key per model", () => {
+  it("OpusOnce: [1m], snapshot-dated and provider-prefixed spellings fold into one column; other providers' ids are untouched", () => {
+    const spellings = ["claude-opus-5-5", "claude-opus-5-5[1m]", "Claude-Opus-5-5-20260101", "anthropic/claude-opus-5-5"];
+    expect(spellings.map(canonicalModel)).toEqual(Array(4).fill("claude-opus-5-5"));
+    expect(canonicalModel("glm-5.3")).toBe("glm-5.3");
+    expect(canonicalModel("qwen3-coder-30b-8bit")).toBe("qwen3-coder-30b-8bit");
+    const d = buildCockpitData(spellings.map((model, i) => row(5 + i, { model })), "1h", NOW);
+    expect(d.byModel.map((m) => m.model)).toEqual(["claude-opus-5-5"]);
+    expect(d.byModel[0]!.requests).toBe(4);
+    expect(Object.keys(d.series.find((b) => Object.keys(b.models).length)!.models)).toEqual(["claude-opus-5-5"]);
+    expect(Object.keys(d.daily.models)).toEqual(["claude-opus-5-5"]);
+    expect(d.bySession[0]!.models).toEqual(["claude-opus-5-5"]);
   });
 });
