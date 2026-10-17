@@ -54,6 +54,7 @@
   "homepage": "https://github.com/mnott/PAI",
   "bin": {
     "pai": "dist/cli/index.mjs",
+    "pai2": "dist/cli2/index.mjs",
     "pai-daemon": "dist/daemon/index.mjs",
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },

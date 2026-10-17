@@ -5,6 +5,7 @@ export default defineConfig({
     "src/index.ts",
     "src/cli/index.ts",
     "src/cli/program.ts",
+    "src/cli2/index.ts",
     "src/daemon/index.ts",
     "src/daemon-mcp/index.ts",
   ],
