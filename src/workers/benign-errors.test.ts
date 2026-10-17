@@ -30,6 +30,8 @@ describe("benign tool exits", () => {
     ["== after other output", "Exit code 127 header\n(eval):3: == not found", "echo ok; echo == ; ls"],
     ["timeout 124", "Exit code 124", "timeout 30 npm test"],
     ["timeout 144", "Exit code 144", "timeout 30 sleep 40"],
+    ["wait-file exit 3 not yet", "Exit code 3 missing: b0.json not yet: 1 of 1 missing after 100s; call wait-file again", "cd x; pai worker wait-file b0.json"],
+    ["wait exit 3 still running", "Exit code 3 w1 still running", "pai worker wait w1 --max 100"],
   ];
   for (const [name, raw, input] of benign) {
     it(`${name} is benign and not pushed`, () => {
@@ -51,6 +53,8 @@ describe("benign tool exits", () => {
     ["vitest import crash", "Exit code 1 SyntaxError: Unexpected token", "npx vitest run src/a.test.ts"],
     ["exit 124 without timeout", "Exit code 124", "make all"],
     ["=== not found without echo", "(eval):1: === not found", "ls"],
+    ["wait-file exit 2", "Exit code 2 bad usage", "pai worker wait-file b0.json"],
+    ["unrelated exit 3 not yet", "Exit code 3 not yet", "make all"],
   ];
   for (const [name, raw, input] of real) {
     it(`${name} is still pushed`, () => {

@@ -95,8 +95,9 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
   if (code === null) return false;
   if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
-  if (code !== 1) return false;
   const last = lastCommand(cmd);
+  if (code === 3 && last && /^pai\s+worker\s+wait(-on|-url|-file)?\b/.test(last.segment)) return /not yet|still running/i.test(out);
+  if (code !== 1) return false;
   if (!last) return false;
   const emptyOut = out === "" || /^(\(?no (output|matches)\)?|<no output>)$/i.test(out);
   if (SEARCH_CMDS.has(last.name)) return emptyOut;
