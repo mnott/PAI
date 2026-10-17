@@ -17,6 +17,7 @@
  * Code.
  */
 
+import { DEFAULT_CAPACITY, type CapacityConfig } from "./capacity.js";
 import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -127,6 +128,8 @@ export interface WorkerProvider {
    * this explicit value, for engines without one, e.g. codex).
    */
   contextWindow?: number;
+  /** Most runs this provider serves at once; more queue (capacity.ts). Default 3 on loopback, unlimited otherwise. */
+  maxConcurrent?: number;
   /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
   costTier?: number;
   /** Capability tags; classes filter auto-routing via requireTags. */
@@ -424,6 +427,8 @@ export interface WorkersConfig {
   defaultMaxMinutes: number;
   /** Start gate for same-provider runs (workers.stagger); see stagger.ts. */
   stagger: StaggerConfig;
+  /** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
+  capacity: CapacityConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /**
@@ -543,6 +548,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
     stagger: { ...DEFAULT_STAGGER },
+    capacity: { ...DEFAULT_CAPACITY },
     noBrowserByDefault: false,
     caveman: false,
     fallback: null,
@@ -666,6 +672,12 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  if (p.maxConcurrent !== undefined) {
+    if (typeof p.maxConcurrent !== "number" || !Number.isInteger(p.maxConcurrent) || p.maxConcurrent < 1) {
+      bad(`.providers.${name}.maxConcurrent`, "must be a positive integer");
+    }
+  }
+
   const upstreamUrl = str(p.upstreamUrl);
   if (protocol === "openai" && !upstreamUrl) {
     bad(`.providers.${name}.upstreamUrl`, `is required for protocol "openai" (the Chat Completions base, e.g. "https://api.openai.com/v1")`);
@@ -754,6 +766,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
     ...(quotaSkipAt !== undefined ? { quotaSkipAt } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(p.maxConcurrent !== undefined ? { maxConcurrent: p.maxConcurrent as number } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
     ...(usage ? { usage } : {}),
@@ -1063,6 +1076,17 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
       stagger[k] = t[k] as number;
     }
   }
+  const capacity = { ...DEFAULT_CAPACITY };
+  if (w.capacity !== undefined) {
+    if (typeof w.capacity !== "object" || w.capacity === null || Array.isArray(w.capacity)) {
+      bad(".capacity", "must be an object");
+    }
+    const t = w.capacity as Record<string, unknown>;
+    if (t.enabled !== undefined) {
+      if (typeof t.enabled !== "boolean") bad(".capacity.enabled", "must be true or false");
+      capacity.enabled = t.enabled as boolean;
+    }
+  }
   if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
     bad(".noBrowserByDefault", "must be true or false");
   }
@@ -1128,6 +1152,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     stagger,
+    capacity,
     noBrowserByDefault,
     caveman,
     fallback,
@@ -1211,6 +1236,7 @@ export function writeWorkersSection(
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         stagger: workers.stagger,
+        capacity: workers.capacity,
         noBrowserByDefault: workers.noBrowserByDefault,
         caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),

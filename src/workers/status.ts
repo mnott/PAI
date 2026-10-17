@@ -108,6 +108,8 @@ export interface WorkerStatus {
    * wait/kill/pane logic still sees a live run, `last` carries the line.
    */
   warmup?: { for: string; provider: string; elapsedSec: number; limitSec: number };
+  /** Set while the capacity gate queues this run behind the provider cap (capacity.ts); `last` carries the line. */
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number };
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
   /**

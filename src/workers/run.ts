@@ -88,6 +88,7 @@ import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, isLocalProvider, routeRun, type RouteInfo } from "./policy.js";
+import { capacityGate, resolveCap } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
   autoOrder,
@@ -166,6 +167,8 @@ export interface RunOptions {
   noPane?: boolean;
   /** --no-stagger: skip the same-provider start gate. */
   noStagger?: boolean;
+  /** --no-queue: skip the per-provider concurrency cap. */
+  noQueue?: boolean;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
   /** --mcp value: server/set names, comma-separated. */
@@ -763,6 +766,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         claudeArgs: opts.claudeArgs,
         noPane: opts.noPane ?? false,
         noStagger: opts.noStagger,
+        noQueue: opts.noQueue,
         mcpFlag: opts.mcpFlag,
         cwd: opts.cwd,
         specPath: opts.specPath,
@@ -1257,6 +1261,7 @@ export interface ExecuteArgs {
   claudeArgs: string[];
   noPane: boolean;
   noStagger?: boolean;
+  noQueue?: boolean;
   mcpFlag?: string;
   cwd?: string;
   specPath?: string;
@@ -1605,6 +1610,26 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   if (headless) {
     const saved = status.last;
+    await capacityGate({
+      logDir,
+      self: { id: wid, provider: target.providerName },
+      cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
+      config: config.capacity,
+      disabled: a.noQueue,
+      log: (line) => {
+        if (!a.quiet) process.stderr.write(`${line}\n`);
+      },
+      onWait: (w) => {
+        if (w) {
+          status.capacity = { provider: w.provider, cap: w.cap, total: w.total, position: w.position, elapsedSec: w.elapsedSec };
+          status.last = w.line;
+        } else {
+          delete status.capacity;
+          status.last = saved;
+        }
+        saveStatus(logDir, status);
+      },
+    });
     await staggerGate({
       logDir,
       self: { id: wid, provider: target.providerName },
