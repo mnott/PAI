@@ -50,7 +50,7 @@ ${POOL_PANEL_HTML}
 <section class="card c8"><h2>Tokens per bucket by kind</h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:12px">Power and GPU/CPU load, same buckets</h2><div id="power"></div><div class="legend" id="plegend"></div><p class="dim" id="wnote"></p></section>
 <section class="card c4"><h2>Cache hit ratio / providers</h2><div id="donut" class="rings"></div><div id="donutnote" class="dim"></div>
-<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local prefix cache (server counters)</h2><div id="donutlocal" class="rings"></div><div id="donutlocalnote" class="dim"></div>
+<h2 id="donutlocaltitle" style="margin-top:12px;display:none">Local prefix cache (server counters)</h2><div id="donutlocal"></div><div id="donutlocalnote" class="dim" style="white-space:pre-line"></div>
 <h2 style="margin-top:12px">Providers: errors, retries, speed</h2><div id="providers"></div></section>
 <section class="card c12"><h2>Speed per model (TTFT, read, write)</h2><div id="speed"></div>
 <p class="dim">TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.</p></section>
@@ -277,6 +277,11 @@ function reuseLine(pc,tot,since){
  if(tot<pc.tokensSaved)return'<div class="s">prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start) vs '+fmt(tot)+' prompt tokens in the router log'+w+' — windows differ, no ratio</div>';
  return'<div class="s">prompt tokens served from cache: '+pct(pc.tokensSaved/tot)+' ('+fmt(pc.tokensSaved)+' saved by the server since it started, of '+fmt(tot)+' prompt tokens in the router log'+w+')</div>';
 }
+/** One compact line per loopback provider (no ring: the providers grid tile already shows the hit rate). */
+function localDetail(prov,pc,tot){
+ var mem=(pc.entries!=null?pc.entries+" entries":"")+(pc.entries!=null&&pc.memoryMb!=null?" / ":"")+(pc.memoryMb!=null?Math.round(pc.memoryMb)+" MB":"");
+ return'<div class="s"><b>'+esc(prov)+'</b> · '+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved (server, since start)'+(mem?' · '+mem:'')+(tot?' · router log: '+fmt(tot)+' prompt tokens (since restart)':'')+'</div>';
+}
 function table(head,rows){return'<table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
@@ -300,12 +305,10 @@ function renderDonuts(){ renderSpeed();
  $("donutnote").textContent=note;
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
- loc.forEach(function(s){var pc=s.prefixCache,r=ms[s.provider+"\u0000"+(s.served||[])[0]];
-  if(pc)lh+='<div class="ring">'+donut(pc.hitRate)+'<div class="n">'+esc(s.provider)+'</div><div class="s">'+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved</div><div class="s">requests with any cache hit: '+pct(pc.hitRate)+'</div>'+reuse(s.provider,pc)+'</div>';
-  else lh+='<div class="ring"><div class="n">'+esc(s.provider)+'</div><div class="s dim">prefix cache: not reported by this server'+(r&&r.requests?' · '+r.requests+' req':'')+'</div></div>'});
- $("donutlocaltitle").style.display=loc.length?"":"none";
- $("donutlocal").innerHTML=lh||'<span class="dim">no local model servers running</span>';
- $("donutlocalnote").textContent=loc.length?"Local prefix cache, as each server counts it since it started (the router log below covers only the time since the router restarted): hits / (hits + misses). Free to use; a hit skips re-computing the cached part of the prompt (latency), it does not save money.":"";
+ loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider])});
+ $("donutlocaltitle").style.display=lh?"":"none";
+ $("donutlocal").innerHTML=lh;
+ $("donutlocalnote").textContent=lh?"Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ.\nA hit skips re-computing the cached prompt part (latency), not money.":"";
 }
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){

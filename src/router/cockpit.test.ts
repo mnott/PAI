@@ -274,11 +274,11 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["emptyRing", "ringTiles", "provHit", "reuseLine"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const body = ["emptyRing", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
   const lowReq = COCKPIT_HTML.match(/var LOW_REQ=\d+;/)![0];
   const fns = new Function(
     "donut", "pct", "esc", "fmt",
-    `${lowReq}\n${body}\nreturn {ringTiles, provHit, reuseLine};`
+    `${lowReq}\n${body}\nreturn {ringTiles, provHit, reuseLine, localDetail};`
   )(
     (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
     (r: number) => `${(r * 100).toFixed(1)}%`,
@@ -288,6 +288,7 @@ describe("cockpit cache rings and providers table", () => {
     ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
     provHit: (p: unknown, servers: unknown[]) => string;
     reuseLine: (pc: unknown, tot: number | undefined, since?: string) => string;
+    localDetail: (prov: string, pc: unknown, tot?: number) => string;
   };
   const m = (provider: string, model: string, requests: number, cacheRead = 0, input = 0) => ({ provider, model, requests, cacheRead, cacheWrite: 0, input });
   const pc = { hits: 1205, misses: 9, hitRate: 0.993, tokensSaved: 22_660_000 };
@@ -299,6 +300,14 @@ describe("cockpit cache rings and providers table", () => {
     expect(html).toContain("local30x8");
     expect(html).toContain("qwen · 164 req");
     expect(html).not.toContain("bignum");
+  });
+  it("the local prefix cache panel is a ring-free detail line; the ring appears once per provider", () => {
+    const line = fns.localDetail("local30x8", { ...pc, entries: 12, memoryMb: 512.4 }, 5000);
+    expect(line).not.toContain("donut");
+    for (const w of ["1205 hit / 9 miss", "tokens saved", "12 entries", "512 MB", "since start", "since restart"]) expect(line).toContain(w);
+    const tile = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, [{ provider: "local30x8", prefixCache: pc }]);
+    expect((tile + line).match(/class="donut"/g)).toHaveLength(1);
+    expect(COCKPIT_HTML).toMatch(/\$\("donutlocal"\)\.innerHTML=lh;/);
   });
   it("without server stats the tile is an empty grey ring with a small caption", () => {
     const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, []);
