@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bareToolName, renderRepair, repairToolName, reportToolDenial, renderToolDenial } from "./tool-name-repair.js";
+import { bareToolName, renderRepair, repairToolName, reportToolDenial, renderToolDenial, repairParams, inventedToolDirective } from "./tool-name-repair.js";
 
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const call = (tool_name: string, tool_input: Record<string, unknown> = {}) => ({ tool_name, tool_input });
@@ -90,6 +90,75 @@ describe("renderToolDenial", () => {
     const parsed = JSON.parse(output);
     expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe(denial);
+  });
+});
+
+describe("repairParams", () => {
+  it("Read path→file_path", () => {
+    const r = repairParams({ tool_name: "Read", tool_input: { path: "/x" } }, W)!;
+    expect(r.updatedInput).toEqual({ file_path: "/x" });
+  });
+
+  it("Edit filePath→file_path keeping other keys", () => {
+    const r = repairParams({ tool_name: "Edit", tool_input: { filePath: "/x", old_string: "old" } }, W)!;
+    expect(r.updatedInput).toEqual({ file_path: "/x", old_string: "old" });
+    expect(r.old).toBe("Edit(filePath→file_path)");
+    expect(r.new).toBe("Edit(file_path)");
+  });
+
+  it("Write file→file_path", () => {
+    const r = repairParams({ tool_name: "Write", tool_input: { file: "/x" } }, W)!;
+    expect(r.updatedInput).toEqual({ file_path: "/x" });
+  });
+
+  it("Bash cmd→command", () => {
+    const r = repairParams({ tool_name: "Bash", tool_input: { cmd: "ls" } }, W)!;
+    expect(r.updatedInput).toEqual({ command: "ls" });
+  });
+
+  it("Grep regex→pattern", () => {
+    const r = repairParams({ tool_name: "Grep", tool_input: { regex: "pattern" } }, W)!;
+    expect(r.updatedInput).toEqual({ pattern: "pattern" });
+  });
+
+  it("Read with both path and file_path keeps file_path and returns null", () => {
+    const r = repairParams({ tool_name: "Read", tool_input: { path: "/x", file_path: "/y" } }, W);
+    expect(r).toBeNull();
+  });
+
+  it("Read with file_path only returns null", () => {
+    const r = repairParams({ tool_name: "Read", tool_input: { file_path: "/x" } }, W);
+    expect(r).toBeNull();
+  });
+
+  it("non-worker env ({}) returns null", () => {
+    expect(repairParams({ tool_name: "Read", tool_input: { path: "/x" } }, {} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it("unknown tool Glob with { path: \"x\" } returns null", () => {
+    expect(repairParams({ tool_name: "Glob", tool_input: { path: "x" } }, W)).toBeNull();
+  });
+});
+
+describe("inventedToolDirective", () => {
+  it("Git gives a string containing \"Bash\"", () => {
+    const r = inventedToolDirective({ tool_name: "Git" }, W)!;
+    expect(r).toContain("Bash");
+  });
+
+  it("R and functions.R give the R directive", () => {
+    const r1 = inventedToolDirective({ tool_name: "R" }, W)!;
+    expect(r1).toBe("write your R report as plain text in your final answer, not as a tool call");
+    const r2 = inventedToolDirective({ tool_name: "functions.R" }, W)!;
+    expect(r2).toBe("write your R report as plain text in your final answer, not as a tool call");
+  });
+
+  it("Read gives null", () => {
+    expect(inventedToolDirective({ tool_name: "Read" }, W)).toBeNull();
+  });
+
+  it("non-worker gives null", () => {
+    expect(inventedToolDirective({ tool_name: "Git" }, {} as NodeJS.ProcessEnv)).toBeNull();
   });
 });
 
