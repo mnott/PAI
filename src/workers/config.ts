@@ -22,7 +22,7 @@ import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
@@ -274,9 +274,6 @@ export interface WorkersPoolConfig {
   /** Native anthropic (Claude Code's own login) runs may use pooled slots; worktree runs never do. */
   native: boolean;
 }
-
-/** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
-export type CostTier = 1 | 2 | 3 | 4 | 5;
 
 /** The tier aliases the CLI and daemon tables understand — class proxies, not
  *  Anthropic model names: any provider's model maps onto one of these. */
@@ -1274,10 +1271,7 @@ export function writeWorkersSection(
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */
-export function expandHome(p: string): string {
-  if (p === "~" || p.startsWith("~/")) return join(homedir(), p.slice(1));
-  return p;
-}
+export { expandHome };
 
 // ---------------------------------------------------------------------------
 // Runnability checks (proxy / codex providers included)
@@ -1319,16 +1313,6 @@ export function resolveProviderKey(p: WorkerProvider): string | null {
   const token = content.trim();
   if (!token) throw new WorkersConfigError(`key file is empty: ${keyPath}`);
   return token;
-}
-
-/** True when the provider's token resolves (inline key or readable, non-empty
- *  key file). Presence only: the value is never returned. */
-export function hasProviderKey(p: WorkerProvider): boolean {
-  try {
-    return !!resolveProviderKey(p);
-  } catch {
-    return false;
-  }
 }
 
 /** `key: ****` + last 4 chars — never the full value. Used everywhere a

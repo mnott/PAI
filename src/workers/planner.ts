@@ -29,7 +29,7 @@ import { loadStatus, newWorkerId } from "./status.js";
 import { parseRunnerArgs, shortText } from "./args.js";
 import { swapPromptArg } from "./chain.js";
 import { runWorker, printResult, type RunOptions, type StreamEvent } from "./run.js";
-import { git, mergeWorker } from "./worktree.js";
+import { git, MergeConflictError, mergeWorker } from "./worktree.js";
 import type { WorkerReport } from "./report.js";
 
 /** Where a planner run's plan file lives: <logDir>/plans/<planner id>.json. */
@@ -248,7 +248,7 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
   // --- phase 3: the planner merges each finished child's branch into its
   // OWN worktree branch, in spawn order — never into the operator's checkout
   // — reusing `pai worker merge`'s own logic (mergeWorker). A conflicting
-  // merge is aborted cleanly so the planner's branch stays clean and the
+  // merge is aborted by mergeWorker so the planner's branch stays clean and the
   // next child still gets a try; the child's branch is left intact either way.
   const merged: string[] = [];
   const conflicted: { id: string; branch: string; paths: string[] }[] = [];
@@ -260,17 +260,9 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
       try {
         mergeWorker(logDir, r.id);
         merged.push(r.id);
-      } catch {
-        let paths: string[] = [];
-        try {
-          git(plannerWorktreeDir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
-          paths = git(plannerWorktreeDir, ["diff", "--name-only", "--diff-filter=U"])
-            .split("\n")
-            .filter(Boolean);
-          git(plannerWorktreeDir, ["merge", "--abort"]);
-        } catch {
-          // no merge was left in progress: the failure was not a conflict
-        }
+      } catch (e) {
+        // mergeWorker already restored the checkout; a conflict carries its paths
+        const paths = e instanceof MergeConflictError ? e.paths : [];
         conflicted.push({ id: r.id, branch: st.branch, paths });
       }
     }

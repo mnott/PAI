@@ -25,9 +25,6 @@ import { dirname } from "node:path";
 import type http from "node:http";
 import { paiHomePath } from "../config/pai-home.js";
 
-/** Tailscale owns the CGNAT block 100.64.0.0/10 = 100.64.0.0–100.127.255.255. */
-export const TAILSCALE_CIDR = "100.64.0.0/10";
-
 export const LOOPBACK = "127.0.0.1";
 
 /** The /v1 remote rule: loopback (any 127/8, ::1, v4-mapped) or the tailnet. */

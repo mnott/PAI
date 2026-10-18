@@ -143,6 +143,7 @@ import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { pinNotices, projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
+import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
   buildCodexArgs,
@@ -272,13 +273,6 @@ export function isoStamp(d = new Date(), offMin = -d.getTimezoneOffset()): strin
   return `${t.toISOString().slice(0, 19)}${sign}${hh}:${mm}`;
 }
 
-export interface UsageBlock {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_read_input_tokens?: number;
-  cache_creation_input_tokens?: number;
-}
-
 // a type alias (not an interface): it must stay assignable to
 // Record<string, unknown> when written into the event transcript
 export type StreamEvent = {
@@ -324,10 +318,10 @@ export function usageContextTokens(u: UsageBlock | undefined): number | null {
   return t > 0 ? t : null;
 }
 
-/** Current context fill of one assistant turn: input + cache read + cache creation (no output). */
+/** Current context fill of one assistant turn: the input side, no output. */
 export function usageContextUsed(u: UsageBlock | undefined): number | null {
   if (!u) return null;
-  const t = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+  const t = inputSideTokens(u);
   return t > 0 ? t : null;
 }
 

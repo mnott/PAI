@@ -937,6 +937,13 @@ export function verifyWorker(logDir: string, id: string, opts: { against?: strin
  * genuinely means it holds nothing, and reporting success there would
  * destroy the worktree for no gain.
  */
+/** A merge git refused because of conflicts; the checkout was restored, `paths` lists the conflicted files. */
+export class MergeConflictError extends Error {
+  constructor(message: string, readonly paths: string[]) {
+    super(message);
+  }
+}
+
 export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean; verify?: string } = {}): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
@@ -965,10 +972,26 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   try {
     git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
-    throw new Error(
-      `worker ${id}: git refused the merge of ${st.branch} — ${(e as Error).message}. ` +
-        `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
-    );
+    let files: string[] = [];
+    let inProgress = false;
+    try {
+      inProgress = existsSync(resolve(st.cwd, git(st.cwd, ["rev-parse", "--git-path", "MERGE_HEAD"])));
+      if (inProgress) files = git(st.cwd, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
+    } catch {
+      /* fall through to the generic message */
+    }
+    if (inProgress) {
+      git(st.cwd, ["merge", "--abort"]);
+      if (git(st.cwd, ["rev-parse", "HEAD"]) !== oldHead || git(st.cwd, ["status", "--porcelain", "--untracked-files=no"])) {
+        throw new Error(`worker ${id}: git merge --abort left ${st.cwd} not at ${oldHead}; inspect it before retrying`);
+      }
+    }
+    const msg =
+      `worker ${id}: git refused the merge of ${st.branch}` +
+        (files.length
+          ? ` — conflict in ${files.join(", ")}: merge main into the worker branch in its kept worktree (${st.worktreeDir}), resolve, then re-run pai worker merge ${id}`
+          : ` — ${(e as Error).message}. The worktree ${st.worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`);
+    throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
   }
   const verifyLine = [opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "", stubScan(st.cwd, oldHead)].filter(Boolean).join("\n");
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
