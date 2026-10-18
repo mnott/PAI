@@ -9,7 +9,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export interface CapacityConfig {
   enabled: boolean;
@@ -85,7 +85,7 @@ export interface CapacityResult {
 export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | null> {
   if (o.disabled || !o.config.enabled || o.cap === undefined || o.cap <= 0) return null;
   const { logDir, self, cap } = o;
-  const load = o.load ?? loadStatuses;
+  const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0), loadStatuses(dir)));
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -99,7 +99,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     const queue = liveQueue(logDir, self.provider, isAlive);
     const queued = new Set(queue);
     const holding = load(logDir).filter(
-      (s) => s.id !== self.id && s.provider === self.provider && isLive(s, (w) => isAlive(w.pid)) && !queued.has(s.id),
+      (s) => s.id !== self.id && s.provider === self.provider && isLive(s, o.isAlive ? (w) => isAlive(w.pid) : ownsPid) && !queued.has(s.id),
     ).length;
     const position = queue.indexOf(self.id) + 1;
     return { holding, position: position || queue.length + 1, queued: queue.length };
