@@ -228,7 +228,7 @@ describe("workerContractPrompt — orchestrator mode", () => {
   it("appends the unit-spawning pattern", () => {
     const p = workerContractPrompt("implement", "ag2", true);
     expect(p).toContain("pai worker wait <ids> --max 100");
-    expect(p).toContain("--provider local30x8");
+    expect(p).toContain("--provider <the local provider named in your brief>");
   });
   it("leaves the contract alone without the flag", () => {
     expect(workerContractPrompt("implement", "ag2")).not.toContain("Orchestrator mode");

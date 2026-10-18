@@ -47,7 +47,8 @@ describe("decideOrchestratorEdit", () => {
     const result = decideOrchestratorEdit(filePath);
     expect(result.decision).toBe(expected);
     if (result.decision === "block") {
-      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+      expect(result.reason).not.toContain("local30x8");
+      expect(result.reason).toContain("pai worker run --provider <the local provider named in your brief> --class implement");
       expect(result.reason).toContain(filePath);
       expect(result.reason).toContain(".pai-scratch");
     }
@@ -91,7 +92,8 @@ describe("decideOrchestratorBash", () => {
     expect(result.decision).toBe(expected);
     if (result.decision === "block") {
       expect(result.reason).toContain("Bash may not write code files in place");
-      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+      expect(result.reason).not.toContain("local30x8");
+      expect(result.reason).toContain("pai worker run --provider <the local provider named in your brief> --class implement");
     }
   });
 });

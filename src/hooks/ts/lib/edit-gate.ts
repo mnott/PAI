@@ -57,7 +57,7 @@ export function decideOrchestratorEdit(filePath: string): EditGateDecision {
   }
   return {
     decision: "block",
-    reason: `orchestrator mode: this worker plans and reviews and does not edit code — retrying Edit/Write on ${filePath} or any other code file will be denied the same way. Next step: write a unit spec to a file under /tmp, then run pai worker run --provider local30x8 --class implement -p "$(cat <spec>)" and review its diff when it finishes (target: ${filePath}). Throwaway verification files (test scripts, dumps) may be written under ${SCRATCH_DIR}/ in your worktree (gitignored, never committed); run them with npx vitest run --dir ${SCRATCH_DIR}.`,
+    reason: `orchestrator mode: this worker plans and reviews and does not edit code — retrying Edit/Write on ${filePath} or any other code file will be denied the same way. Next step: write a unit spec to a file under /tmp, then run pai worker run --provider <the local provider named in your brief> --class implement -p "$(cat <spec>)" and review its diff when it finishes (target: ${filePath}). Throwaway verification files (test scripts, dumps) may be written under ${SCRATCH_DIR}/ in your worktree (gitignored, never committed); run them with npx vitest run --dir ${SCRATCH_DIR}.`,
   };
 }
 
@@ -147,7 +147,7 @@ export function decideOrchestratorBash(command: string): EditGateDecision {
   return {
     decision: "block",
     reason:
-      ORCHESTRATOR_BASH_PREFIX + " in place. Write a unit spec to a file under /tmp and run pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under .pai-scratch/ (allowed).",
+      ORCHESTRATOR_BASH_PREFIX + " in place. Write a unit spec to a file under /tmp and run pai worker run --provider <the local provider named in your brief> --class implement -p \"$(cat <spec>)\" instead; git mv, git rm, git merge and running tests are allowed. Scratch files go under .pai-scratch/ (allowed).",
   };
 }
 
