@@ -27,6 +27,7 @@ import {
 import { workersLogDir } from "../workers/paths.js";
 import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
+import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
 export const ROUTER_PORT = 8790;
@@ -332,6 +333,15 @@ function isLocal(u: URL): boolean {
   return u.hostname === "127.0.0.1" || u.hostname === "localhost";
 }
 
+/** The forwarded body parsed once more for the prompt-token count; null when it somehow is not JSON. */
+function safeBody(raw: Buffer): Record<string, unknown> | null {
+  try {
+    return JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export function createRouter(
   loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
   claudeBase: string = CLAUDE_UPSTREAM,
@@ -457,10 +467,7 @@ export function routerHandler(
           bytes: up.body.length,
           cache: verdict(usage),
         };
-        if (target.kind === "provider" && row.input_tokens === 0 && (row.output_tokens ?? 0) > 0 && status < 400) {
-          row.input_tokens = estimateTokens(up.body);
-          row.input_estimated = true;
-        }
+        const needsInput = target.kind === "provider" && row.input_tokens === 0 && (row.output_tokens ?? 0) > 0 && status < 400;
         if (session) row.session = session;
         if (sessionId) row.session_id = sessionId;
         row.requested_model = requested;
@@ -471,8 +478,25 @@ export function routerHandler(
         if (ua) row.user_agent = ua;
         if (app) row.x_app = app;
         if (changed.length) row.bust = changed;
-        onUsage(row);
+        if (!needsInput) {
+          onUsage(row);
+          return;
+        }
+        void Promise.resolve(counted).then((c) => {
+          if (c !== null) row.input_tokens = c;
+          else {
+            row.input_tokens = estimateTokens(up.body);
+            row.input_estimated = true;
+          }
+          onUsage(row);
+        });
       };
+      // A loopback model server may not report its prompt-token count at all;
+      // count it with the served model's tokenizer and fill the client stream
+      // (InputTokensSse) and this row from that. Null count = unknown: the row
+      // keeps the flagged chars/4 estimate, the stream stays untouched.
+      const mayCount = target.kind === "provider" && !isCount && isLocal(up.url);
+      const counted: Promise<number | null> = mayCount ? promptTokenCount(safeBody(up.body) ?? {}, target.model) : Promise.resolve(null);
       const mod = up.url.protocol === "https:" ? https : http;
       const ureq = mod.request(
         up.url,
@@ -496,12 +520,25 @@ export function routerHandler(
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
           const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
           const plainSse = /text\/event-stream/i.test(String(ures.headers["content-type"] ?? "")) && !ures.headers["content-encoding"];
-          if (declared.length && plainSse) {
-            const fixer = new ToolCaseSse(declared, (from, to) =>
-              (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
-            );
+          const fixer =
+            declared.length && plainSse
+              ? new ToolCaseSse(declared, (from, to) =>
+                  (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
+                )
+              : undefined;
+          const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
+          // ures -> [input fill] -> [tool-case fix] -> res
+          if (fill && fixer) {
+            ures.pipe(fill);
+            fill.pipe(fixer);
+            fixer.pipe(res);
+          } else if (fill) {
+            ures.pipe(fill).pipe(res);
+          } else if (fixer) {
             ures.pipe(fixer).pipe(res);
-          } else ures.pipe(res);
+          } else {
+            ures.pipe(res);
+          }
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
             const ended = Date.now();

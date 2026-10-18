@@ -1,10 +1,12 @@
 /**
  * usage.ts — exact token tallies per model from stream events / transcripts.
  *
- * One summing function (`sumUsage`) serves `pai worker usage` (the workers of
- * an A/B arm) and `pai audit tokens usage` (the top session transcript). A
- * message id shows up in several stream events with growing usage; only the
- * last one counts.
+ * `sumUsage` (each message id once, its last usage) serves the transcript
+ * side, `pai audit tokens usage`; the worker side, `pai worker usage`, reads
+ * a run log through `sumRunUsage`, which prefers the run's `result` event —
+ * the harness books the run's authoritative totals there, and local servers
+ * that report no per-turn counts still show their tokens (src/router/
+ * prompt-tokens.ts makes the router fill what the server never reported).
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -56,6 +58,56 @@ export interface SumResult {
   byModel: Map<string, Tally>;
   /** total_cost_usd of the last result event, when there was one. */
   costUsd: number | null;
+}
+
+/** camelCase per-model totals of a result event's modelUsage block as a tally. */
+function tallyOfModelUsage(mu: Record<string, unknown>): Tally {
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    input: num(mu.inputTokens),
+    cacheRead: num(mu.cacheReadInputTokens),
+    cacheWrite5m: num(mu.cacheCreationInputTokens),
+    cacheWrite1h: 0,
+    output: num(mu.outputTokens),
+  };
+}
+
+const tallyIsZero = (t: Tally): boolean => !t.input && !t.cacheRead && !t.cacheWrite5m && !t.cacheWrite1h && !t.output;
+
+/**
+ * Sum usage of a *run* event log (a worker's, as opposed to a transcript):
+ * the run's `result` event is authoritative when it carries usage or
+ * modelUsage — local servers report per-turn counts as 0, and the harness
+ * fills them only into the result event. Without a result event (killed run)
+ * the assistant turns are summed like a transcript. `fallbackModel` books
+ * result-event usage that names no model on the run's own model.
+ */
+export function sumRunUsage(jsonl: string, fallbackModel?: string): SumResult {
+  const perTurn = sumUsage(jsonl);
+  let result: { model?: string; usage?: RichUsage; modelUsage?: Record<string, Record<string, unknown>> } | undefined;
+  for (const line of jsonl.split("\n")) {
+    if (!line.includes('"result"')) continue;
+    try {
+      const e = JSON.parse(line) as { type?: string; model?: string; usage?: RichUsage; modelUsage?: Record<string, Record<string, unknown>> };
+      if (e.type === "result") result = e;
+    } catch {
+      /* torn line */
+    }
+  }
+  if (!result) return perTurn;
+  const byModel = new Map<string, Tally>();
+  const mu = result.modelUsage;
+  if (mu && typeof mu === "object" && Object.keys(mu).length) {
+    for (const [key, v] of Object.entries(mu)) {
+      if (!v || typeof v !== "object") continue;
+      const model = typeof (v as { canonicalModel?: unknown }).canonicalModel === "string" ? (v as { canonicalModel: string }).canonicalModel : key;
+      byModel.set(model, tallyOfModelUsage(v));
+    }
+  } else if (result.usage && !tallyIsZero(tallyOf(result.usage))) {
+    const model = result.model ?? fallbackModel ?? (perTurn.byModel.size === 1 ? [...perTurn.byModel.keys()][0] : "?");
+    byModel.set(model, tallyOf(result.usage));
+  }
+  return byModel.size ? { byModel, costUsd: perTurn.costUsd } : perTurn;
 }
 
 /** Sum assistant usage of JSONL text: each message id once (its last usage), grouped by model. */
@@ -162,7 +214,7 @@ export function workerUsage(logDir: string, sel: WorkerSelect, baseUrls: Record<
   for (const st of selectWorkers(loadStatuses(logDir), sel)) {
     const path = eventsPath(logDir, st.id);
     if (!existsSync(path)) continue;
-    const { byModel, costUsd } = sumUsage(readFileSync(path, "utf8"));
+    const { byModel, costUsd } = sumRunUsage(readFileSync(path, "utf8"), st.model);
     if (byModel.size === 0) continue;
     const local = isLocalProvider(baseUrls[st.provider] ?? "");
     const models = [...byModel.keys()];

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { priceTableText, renderUsage, sumUsage, transcriptUsage, usageJson, workerUsage } from "./usage.js";
+import { priceTableText, renderUsage, sumRunUsage, sumUsage, transcriptUsage, usageJson, workerUsage } from "./usage.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -65,6 +65,71 @@ describe("workerUsage", () => {
     expect(b.rows).toHaveLength(1);
     expect(b.cloud.workers).toBe(1);
     expect(b.cloud.tally.input).toBe(1);
+  });
+});
+
+describe("sumRunUsage", () => {
+  // the shape of a local run's log: every turn 0/0, the harness fills the totals into the result event
+  const resultEvent = JSON.stringify({
+    type: "result",
+    total_cost_usd: 0.631925,
+    usage: { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 25277 },
+    modelUsage: {
+      "qwen3-coder-30b-8bit": {
+        inputTokens: 0,
+        outputTokens: 25277,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        canonicalModel: "qwen3-coder-30b-8bit",
+      },
+    },
+  });
+  const zeroTurns = jl(
+    asst("m1", "qwen3-coder-30b-8bit", { input_tokens: 0, output_tokens: 0 }),
+    asst("m2", "qwen3-coder-30b-8bit", { input_tokens: 0, output_tokens: 0 })
+  );
+
+  it("(a) prefers the result event's totals over zero per-turn usage", () => {
+    const r = sumRunUsage(zeroTurns + resultEvent + "\n", "qwen3-coder-30b-8bit");
+    expect(r.byModel.get("qwen3-coder-30b-8bit")).toEqual({ input: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 25277 });
+    expect(r.costUsd).toBeCloseTo(0.631925);
+  });
+
+  it("(b) sums the per-turn usage when there is no result event (killed run)", () => {
+    const r = sumRunUsage(
+      jl(
+        asst("m1", "qwen3-coder-30b-8bit", { input_tokens: 500, output_tokens: 40 }),
+        asst("m1", "qwen3-coder-30b-8bit", { input_tokens: 500, output_tokens: 90 }),
+        asst("m2", "qwen3-coder-30b-8bit", { input_tokens: 20, output_tokens: 10 })
+      )
+    );
+    expect(r.byModel.get("qwen3-coder-30b-8bit")).toEqual({ input: 520, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 100 });
+  });
+
+  it("books result usage without modelUsage on the run's own model, but keeps per-turn sums when the result is empty too", () => {
+    const bare = JSON.stringify({ type: "result", total_cost_usd: 1, usage: { input_tokens: 700, output_tokens: 200 } }) + "\n";
+    expect(sumRunUsage(zeroTurns + bare, "local-model").byModel.get("local-model")).toMatchObject({ input: 700, output: 200 });
+    const empty = JSON.stringify({ type: "result", total_cost_usd: 1, usage: { input_tokens: 0, output_tokens: 0 } }) + "\n";
+    expect(sumRunUsage(zeroTurns + empty).byModel.get("qwen3-coder-30b-8bit")).toMatchObject({ input: 0, output: 0 });
+  });
+
+  it("keeps sumUsage (transcript semantics) at the per-turn sum", () => {
+    expect(sumUsage(zeroTurns + resultEvent + "\n").byModel.get("qwen3-coder-30b-8bit")).toMatchObject({ input: 0, output: 0 });
+  });
+});
+
+describe("workerUsage result events", () => {
+  it("reports the local arm's output tokens from the result event", () => {
+    const dir = tmp();
+    status(dir, "l1", "local30x8", "qwen3-coder-30b-8bit", "ab-local one", "2026-10-18 09:00:00");
+    writeFileSync(
+      join(dir, "l1.jsonl"),
+      jl(asst("m1", "qwen3-coder-30b-8bit", { input_tokens: 0, output_tokens: 0 }), JSON.stringify({ type: "result", total_cost_usd: 0.6, usage: { input_tokens: 0, output_tokens: 25277 }, modelUsage: { "qwen3-coder-30b-8bit": { inputTokens: 0, outputTokens: 25277, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } }))
+    );
+    const rep = workerUsage(dir, { labelPrefix: "ab-local" }, { local30x8: "http://127.0.0.1:8034" });
+    expect(rep.local.tally.output).toBe(25277);
+    expect(rep.rows[0].model).toBe("qwen3-coder-30b-8bit");
+    expect(renderUsage(rep, { workers: true })).toContain("25,277");
   });
 });
 
