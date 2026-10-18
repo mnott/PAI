@@ -33,6 +33,7 @@ Walk ~/.claude/projects/ and configured scan_dirs, upsert all projects
 | `--remove-dir PATH` | string | — | Remove a directory from scan_dirs config |
 | `--show-dirs` | flag | — | Show currently configured scan directories |
 | `--quick` | flag | — | Minimal output mode (used by hooks and daemon) |
+| `--filter-report` | flag | — | Dry run: count existing registry rows that match the worker/temp/worktree filter; deletes nothing |
 
 ```sh
 pai registry scan
