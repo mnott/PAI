@@ -27,8 +27,12 @@ beforeAll(() => {
 });
 
 describe("local-provider worker guard", () => {
-  it("denies a new file in the repo root", () => {
-    const d = write(LOCAL, "scratch.swift", "x");
+  it("allows a legitimate new root file", () => {
+    for (const f of ["notes.txt", "LICENSE", "pyproject.toml", "NEWREADME.md"]) expect(write(LOCAL, f, "x").decision).toBe("allow");
+  });
+  it("denies a scratch file in the repo root", () => {
+    for (const f of ["tmp_check.py", "debug.log", "test_foo.py"]) expect(write(LOCAL, f, "x").decision).toBe("deny");
+    const d = write(LOCAL, "scratch.js", "x");
     expect(d.decision).toBe("deny");
     expect((d as { reason: string }).reason).toContain("$TMPDIR");
   });
@@ -47,13 +51,8 @@ describe("local-provider worker guard", () => {
     expect(write(LOCAL, "src/big.swift", lines(98)).decision).toBe("allow");
     expect(write(LOCAL, "src/big.swift", lines(60)).decision).toBe("allow");
   });
-  it("denies a Write of over 300 lines to an existing file, allows a new file", () => {
-    const d = write(LOCAL, "src/big.swift", lines(301));
-    expect(d.decision).toBe("deny");
-    expect((d as { reason: string }).reason).toContain("build large files from several Edit calls");
-    expect(write(LOCAL, "src/big.swift", lines(300)).decision).toBe("allow");
-    expect(write(LOCAL, "src/brand-new.swift", lines(500)).decision).toBe("allow");
-    expect(write(ANTHROPIC, "src/big.swift", lines(301)).decision).toBe("allow");
+  it("allows a large Write (no line cap)", () => {
+    expect(write(LOCAL, "src/big.swift", lines(301)).decision).toBe("allow");
   });
   it("denies rm and git rm of a tracked file, allows untracked", () => {
     expect(bash(LOCAL, "rm README.md").decision).toBe("deny");
