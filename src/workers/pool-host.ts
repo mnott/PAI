@@ -65,6 +65,8 @@ import {
   poolMetricsPath,
   poolStatePath,
   pooledTaskText,
+  pooledUnitPrompt,
+  splitSharedSpec,
   poolIneligibleReason,
   poolPort,
   poolSettings,
@@ -130,6 +132,8 @@ export const realSpawner: SlotSpawner = (argv, cwd, env) => {
  */
 export class PoolSlotSession {
   readonly record: PoolSlotRecord;
+  /** The spec's shared preamble this process carries in its system prompt (null = none). */
+  shared: string | null = null;
   private proc: SlotProcess;
   private listeners = new Set<(e: StreamEvent) => void>();
   private exited = false;
@@ -394,7 +398,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     providerName: string,
     provider: WorkerProvider,
     model: string,
-    cwd: string
+    cwd: string,
+    shared?: string | null
   ): Promise<PoolSlotSession | null> => {
     // loopback providers take the router like worker runs do (prefix fixes); down or `router: false` stays direct
     const via = await loopbackRouterChoice(provider, providerName, routerOn, opts.probeRouter ?? probeRouter);
@@ -427,6 +432,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         // prompt it is cached with the rest of the prefix instead of per task
         ...(addendum ? [addendum.text] : []),
         ...(slim.length ? [WORKER_BRIEF] : []),
+        // the spec's marked shared preamble: inside the cached prefix, not in the user turn
+        ...(shared ? [shared] : []),
       ])
     );
     cmd = ensureToolSearch(cmd);
@@ -445,6 +452,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const proc = spawner(cmd, cwd, env);
     record.pid = proc.pid;
     const session = new PoolSlotSession(record, proc);
+    session.shared = shared ?? null;
 
     // the init event announces the session id — when the build emits it at
     // startup. Some builds only speak with the first turn, so a timeout is
@@ -495,7 +503,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     providerName: string,
     provider: WorkerProvider,
     model: string,
-    cwd: string
+    cwd: string,
+    shared?: string | null
   ): Promise<PoolSlotSession | null> => {
     const key = slotKey(providerName, model, cwd);
     reapSlots();
@@ -513,7 +522,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (pick.evict) {
       dropSlot(slotKey(pick.evict.provider, pick.evict.model, pick.evict.cwd), "evicted for new slot");
     }
-    if (pick.canSpawn) return spawnSlot(providerName, provider, model, cwd);
+    if (pick.canSpawn) return spawnSlot(providerName, provider, model, cwd, shared);
     return null; // pool at capacity: the client falls back to a fresh spawn
   };
 
@@ -532,7 +541,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     provider: WorkerProvider,
     model: string,
     repo: string,
-    wid: string
+    wid: string,
+    shared?: string | null
   ): Promise<{ session: PoolSlotSession; n: number; dir: string } | null> => {
     for (let n = 1; n <= settings.maxSlots; n++) {
       if (!slotServesRepo(logDir, providerName, n, repo)) continue;
@@ -543,7 +553,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       claimed.add(key);
       try {
         ensureSlotWorktree(logDir, providerName, n, repo);
-        const session = await acquire(providerName, provider, model, dir);
+        const session = await acquire(providerName, provider, model, dir, shared);
         if (!session) return null;
         session.record.busyWith = wid;
         return { session, n, dir };
@@ -593,8 +603,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // other task runs in the cwd it came with
     let prep: SlotPrep | null = null;
     let session: PoolSlotSession | null;
+    const split = splitSharedSpec(task.prompt);
     if (task.worktree) {
-      const got = await acquireSlotWorktree(task.provider, provider, task.model, task.cwd, wid);
+      // worktree tasks get a fresh process, so the spec's shared block can ride in its system prompt
+      const got = await acquireSlotWorktree(task.provider, provider, task.model, task.cwd, wid, split.shared);
       session = got?.session ?? null;
       if (got && session) {
         try {
@@ -751,8 +763,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       saveStatus(logDir, status);
     };
 
-    const wtNote = prep ? worktreeSystemPrompt(wid, prep.branch, prep.dir) + "\n\n" : "";
-    const text = pooledTaskText(taskNo, workDir, wtNote + task.prompt, task.trailer);
+    // stable bytes first: the per-unit worker id and branch ride after the spec, not ahead of it
+    const wtNote = prep ? worktreeSystemPrompt(wid, prep.branch, prep.dir) : "";
+    // a shared block only left the user turn when this very process carries it in its system prompt
+    const unitSpec = session.shared && split.shared === session.shared ? split.unit : task.prompt;
+    const text = pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
     let resultEvent = await session.feed(text, onEvent);
     if (deadTimer) clearTimeout(deadTimer);
     clientGone?.removeEventListener("abort", onClientGone);
@@ -867,6 +882,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // cache-carry metric: the FIRST assistant usage of the task's turn
     if (scratch.firstUsage) {
       const fu = scratch.firstUsage;
+      let share = firstRequestShare(fu);
+      // a local model reports no cache tokens: take the share from the router row's time to first token
+      if (!share && isLoopbackProvider(provider) && session.record.claudeSession) {
+        share = firstRouterShare(routerUsageTail(opts.usageLogFile ?? usageLogFile()), session.record.claudeSession) ?? share;
+      }
       appendPoolMetric(
         {
           ts: new Date().toISOString(),
@@ -879,15 +899,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           output_tokens: fu.output_tokens ?? 0,
           cache_creation_input_tokens: fu.cache_creation_input_tokens ?? 0,
           cache_read_input_tokens: fu.cache_read_input_tokens ?? 0,
+          ...(isLoopbackProvider(provider) && share !== null ? { firstShare: Math.round(share * 1000) / 1000 } : {}),
         },
         poolMetricsPath(logDir)
       );
       state.tokensCarried += fu.cache_read_input_tokens ?? 0;
-      let share = firstRequestShare(fu);
-      // a local model reports no cache tokens: take the share from the router row's time to first token
-      if (!share && isLoopbackProvider(provider) && session.record.claudeSession) {
-        share = firstRouterShare(routerUsageTail(opts.usageLogFile ?? usageLogFile()), session.record.claudeSession) ?? share;
-      }
       session.record.firstShare = share;
       const wc = warmOrCold(share);
       if (status.pool && share !== null && wc) {

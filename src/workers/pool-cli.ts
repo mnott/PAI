@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { readWorkersSection, writeWorkersSection } from "./config.js";
 import { fmtTokens } from "./status.js";
 import {
+  formatCarryByProvider,
   poolCarry,
   poolDir,
   poolHostAlive,
@@ -148,10 +149,11 @@ export async function poolStatusText(logDir: string): Promise<string> {
   } else {
     lines.push(`slots: none (a slot spawns with the first pooled task)`);
   }
-  const carry = poolCarry(readPoolMetrics(poolMetricsPath(logDir)));
+  const rows = readPoolMetrics(poolMetricsPath(logDir));
+  const carry = poolCarry(rows);
   lines.push(
-    `tasks served ${state.tasksServed} · carried ${fmtTokens(carry.tokensCarried)} cache-read tokens ` +
-      `over ${carry.tasks} task(s) · first-request hit ratio ${(carry.hitRatio * 100).toFixed(1)}%`
+    `tasks served ${state.tasksServed} · carried ${fmtTokens(carry.tokensCarried)} cache-read tokens · ` +
+      `first-request hit ratio ${formatCarryByProvider(rows)}`
   );
   return lines.join("\n");
 }

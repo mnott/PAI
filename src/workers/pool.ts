@@ -170,6 +170,8 @@ export interface PoolMetricRow {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  /** Loopback providers: the server-side first-request share (the model itself reports no cache tokens). */
+  firstShare?: number;
 }
 
 /** Append one task's carry record; accounting must never break a run. */
@@ -220,6 +222,44 @@ export function poolCarry(rows: PoolMetricRow[]): PoolCarry {
   }
   const denom = read + write + fresh;
   return { tasks: rows.length, tokensCarried: read, hitRatio: denom ? read / denom : 0 };
+}
+
+/** First-request carry of one provider: token-based for cloud providers, server-side share for local ones. */
+export interface ProviderCarry {
+  provider: string;
+  /** Rows that carry a number (zero-report rows are dropped). */
+  tasks: number;
+  hitRatio: number;
+  /** True when hitRatio is the mean router/server share rather than cache tokens. */
+  server: boolean;
+}
+
+export function poolCarryByProvider(rows: PoolMetricRow[]): ProviderCarry[] {
+  const groups = new Map<string, PoolMetricRow[]>();
+  for (const r of rows) groups.set(r.provider, [...(groups.get(r.provider) ?? []), r]);
+  const out: ProviderCarry[] = [];
+  for (const [provider, rs] of groups) {
+    const reported = rs.filter(
+      (r) => (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) > 0
+    );
+    if (reported.length) {
+      out.push({ provider, tasks: reported.length, hitRatio: poolCarry(reported).hitRatio, server: false });
+      continue;
+    }
+    const shares = rs.flatMap((r) => (typeof r.firstShare === "number" ? [r.firstShare] : []));
+    if (shares.length) {
+      out.push({ provider, tasks: shares.length, hitRatio: shares.reduce((a, b) => a + b, 0) / shares.length, server: true });
+    }
+  }
+  return out;
+}
+
+/** "anthropic 42% (5 tasks) · local 69% (63 tasks)", or "n/a" with no reporting rows. */
+export function formatCarryByProvider(rows: PoolMetricRow[]): string {
+  const parts = poolCarryByProvider(rows).map(
+    (c) => `${c.provider} ${Math.round(c.hitRatio * 100)}% (${c.tasks} task${c.tasks === 1 ? "" : "s"}${c.server ? ", server" : ""})`
+  );
+  return parts.length ? parts.join(" · ") : "n/a";
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +374,32 @@ export function poolTaskBoundary(taskNo: number, cwd: string): string {
     `directory is ${cwd}; relative paths in the spec resolve there. Work only on the task ` +
     `below.</system-reminder>`
   );
+}
+
+/** Marker lines a spec uses to set its shared preamble apart from the per-unit part. */
+export const SHARED_MARKER = "--- shared ---";
+export const UNIT_MARKER = "--- unit ---";
+
+/**
+ * Split a spec written as `--- shared ---` … `--- unit ---` … into its shared
+ * preamble (goes to the slot's system prompt, inside the cached prefix) and
+ * the unit part. Without both markers in that order the spec is unchanged.
+ */
+export function splitSharedSpec(prompt: string): { shared: string | null; unit: string } {
+  const lines = prompt.split("\n");
+  const a = lines.findIndex((l) => l.trim() === SHARED_MARKER);
+  const b = lines.findIndex((l, i) => i > a && l.trim() === UNIT_MARKER);
+  if (a < 0 || b < 0) return { shared: null, unit: prompt };
+  const shared = lines.slice(a + 1, b).join("\n").trim();
+  if (!shared) return { shared: null, unit: prompt };
+  const head = lines.slice(0, a).join("\n").trim();
+  const unit = [head, lines.slice(b + 1).join("\n").trim()].filter(Boolean).join("\n\n");
+  return { shared, unit };
+}
+
+/** The spec followed by the per-unit worktree note (worker id, branch): the stable text leads. */
+export function pooledUnitPrompt(spec: string, worktreeNote: string): string {
+  return worktreeNote ? `${spec}\n\n${worktreeNote}\n\n` : spec;
 }
 
 /** The full text fed to the slot for one task: boundary + spec + trailer. */
