@@ -123,6 +123,18 @@ export function parseCommand(raw: string): Segment[] {
   return segs;
 }
 
+const REV_LIKE = /^(HEAD|FETCH_HEAD|ORIG_HEAD|[0-9a-f]{7,40})$|[~^@]|^refs\/tags\//;
+
+/** `git switch --detach` / `git checkout --detach|<rev>` (no pathspec): leaves HEAD off the worker's branch. */
+function detachesHead(g: { sub: string; rest: string[] }): boolean {
+  if (g.sub !== "switch" && g.sub !== "checkout") return false;
+  if (g.rest.includes("--detach") || (g.sub === "switch" && g.rest.includes("-d"))) return true;
+  if (g.sub !== "checkout" || g.rest.includes("--")) return false;
+  if (g.rest.some((a) => /^-[bB]$|^--orphan$/.test(a))) return false;
+  const pos = g.rest.filter((a) => !isFlag(a));
+  return pos.length > 0 && REV_LIKE.test(pos[0]);
+}
+
 const WRAPPERS = new Set(["sudo", "command", "env", "time", "nohup", "exec", "builtin"]);
 
 const CONTROL_WORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "xargs"]);
@@ -316,6 +328,9 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
     if (g.sub === "tag") {
       const listing = !g.rest.some((a) => !isFlag(a)) || g.rest.some((a) => /^(-l|--list|-n\d*|--contains|--points-at)$/.test(a));
       if (!listing) return deny("git tag blocked: releases are the orchestrator's");
+    }
+    if (ctx.inWorktree && detachesHead(g)) {
+      return deny("detaching HEAD in your worktree blocked: commits made there land off your branch; commit on your branch");
     }
     if (!ctx.inWorktree && (ctx.sharedCheckout?.() ?? true) && !isPrivateClone(ctx.cwd)) {
       if (GIT_TREE_CMDS.has(g.sub)) {
