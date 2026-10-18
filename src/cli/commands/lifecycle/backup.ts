@@ -31,12 +31,11 @@ import { paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
 // Paths
 // ---------------------------------------------------------------------------
 
-const HOME = homedir();
 const CONFIG_FILE = paiConfigFilePath();
 
 /** Old backups dir, inside ~/.pai/ (pre-2026-09-19). */
 export function oldBackupsDir(): string {
-  return join(HOME, ".pai", "backups");
+  return join(homedir(), ".pai", "backups");
 }
 
 /** Backups dir: PAI_HOME/backups if present, else the old ~/.pai/backups

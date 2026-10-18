@@ -8,10 +8,10 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 
-export const USAGE_LOG_FILE = join(homedir(), ".claude", "pai", "logs", "router-usage.jsonl");
+export const usageLogFile = (): string => paiHomePath("logs", "router-usage.jsonl");
 
 export type CacheVerdict = "hit" | "write" | "miss";
 
@@ -270,7 +270,7 @@ export function sessionTag(header: string | string[] | undefined): string | unde
 
 // ---- storage + stats -----------------------------------------------------
 
-export function appendUsage(row: UsageRow, file: string = USAGE_LOG_FILE): void {
+export function appendUsage(row: UsageRow, file: string = usageLogFile()): void {
   try {
     mkdirSync(dirname(file), { recursive: true });
     appendFileSync(file, JSON.stringify(row) + "\n");
@@ -279,7 +279,7 @@ export function appendUsage(row: UsageRow, file: string = USAGE_LOG_FILE): void 
   }
 }
 
-export function readUsage(file: string = USAGE_LOG_FILE): UsageRow[] {
+export function readUsage(file: string = usageLogFile()): UsageRow[] {
   if (!existsSync(file)) return [];
   const rows: UsageRow[] = [];
   for (const l of readFileSync(file, "utf8").split("\n")) {

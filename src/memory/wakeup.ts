@@ -35,7 +35,7 @@ const EXTRACT_SECTIONS = [
 ];
 
 /** Identity file location. */
-const IDENTITY_FILE = join(homedir(), ".pai", "identity.txt");
+const IDENTITY_FILE = () => join(homedir(), ".pai", "identity.txt");
 
 // ---------------------------------------------------------------------------
 // L0: Identity
@@ -51,7 +51,7 @@ export function loadL0Identity(
   opts: { newPath?: string; legacyPath?: string } = {}
 ): string {
   const newPath = opts.newPath ?? paiHomePath("identity.txt");
-  const legacyPath = opts.legacyPath ?? IDENTITY_FILE;
+  const legacyPath = opts.legacyPath ?? IDENTITY_FILE();
   const path = existsSync(newPath) ? newPath : legacyPath;
   if (!existsSync(path)) return "";
   try {
@@ -70,7 +70,7 @@ export function migrateIdentityFile(
   opts: { dryRun?: boolean; from?: string; to?: string } = {}
 ): MigrateFileResult {
   const toPath = opts.to ?? paiHomePath("identity.txt");
-  const fromPath = opts.from ?? IDENTITY_FILE;
+  const fromPath = opts.from ?? IDENTITY_FILE();
   return migratePaiFile(toPath, [fromPath], { dryRun: opts.dryRun });
 }
 

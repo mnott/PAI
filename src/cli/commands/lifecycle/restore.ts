@@ -33,7 +33,6 @@ import { backupsDirPath } from "./backup.js";
 // Paths
 // ---------------------------------------------------------------------------
 
-const HOME = homedir();
 const CONFIG_FILE = paiConfigFilePath();
 const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
@@ -90,7 +89,7 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
 
   if (backupPath) {
     resolvedDir = backupPath.startsWith("~")
-      ? backupPath.replace(/^~/, HOME)
+      ? backupPath.replace(/^~/, homedir())
       : backupPath;
 
     if (!existsSync(resolvedDir)) {

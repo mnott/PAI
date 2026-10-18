@@ -58,7 +58,7 @@ function buildClcDirMap(): Map<string, string> {
 // Config helpers
 // ---------------------------------------------------------------------------
 
-const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
+const CLAUDE_PROJECTS_DIR = () => join(homedir(), ".claude", "projects");
 
 /** Old registry-scan config path: ~/.pai/config.json (pre-2026-09-19). Named
  *  "config.json" there, but that name is taken at PAI_HOME by the daemon
@@ -178,15 +178,15 @@ export async function performScan(): Promise<ScanResult> {
     skipped: [],
   };
 
-  if (!existsSync(CLAUDE_PROJECTS_DIR)) {
-    throw new Error(`Claude projects directory not found: ${CLAUDE_PROJECTS_DIR}`);
+  if (!existsSync(CLAUDE_PROJECTS_DIR())) {
+    throw new Error(`Claude projects directory not found: ${CLAUDE_PROJECTS_DIR()}`);
   }
 
   // Drop rows registered before worktrees were refused (worker/agent worktrees).
   await pruneWorktreeProjects(backend);
 
-  const entries = readdirSync(CLAUDE_PROJECTS_DIR).filter((name) => {
-    const full = join(CLAUDE_PROJECTS_DIR, name);
+  const entries = readdirSync(CLAUDE_PROJECTS_DIR()).filter((name) => {
+    const full = join(CLAUDE_PROJECTS_DIR(), name);
     return statSync(full).isDirectory();
   });
 
@@ -245,7 +245,7 @@ export async function performScan(): Promise<ScanResult> {
       // Non-fatal
     }
 
-    const claudeNotesDir = join(CLAUDE_PROJECTS_DIR, encodedDir, "Notes");
+    const claudeNotesDir = join(CLAUDE_PROJECTS_DIR(), encodedDir, "Notes");
 
     if (existsSync(claudeNotesDir)) {
       const rootNotesDir = join(rootPath, "Notes");

@@ -29,22 +29,22 @@ interface LegacyJsonRegistry {
   [key: string]: unknown;
 }
 
-const SESSION_REGISTRY_PATH = join(homedir(), ".claude", "session-registry.json");
+const SESSION_REGISTRY_PATH = () => join(homedir(), ".claude", "session-registry.json");
 
 // ---------------------------------------------------------------------------
 // cmdMigrate
 // ---------------------------------------------------------------------------
 
 export async function cmdMigrate(): Promise<void> {
-  if (!existsSync(SESSION_REGISTRY_PATH)) {
-    console.error(err(`session-registry.json not found: ${SESSION_REGISTRY_PATH}`));
+  if (!existsSync(SESSION_REGISTRY_PATH())) {
+    console.error(err(`session-registry.json not found: ${SESSION_REGISTRY_PATH()}`));
     process.exitCode = 1;
     return;
   }
 
   let registry: LegacyJsonRegistry;
   try {
-    const raw = readFileSync(SESSION_REGISTRY_PATH, "utf8");
+    const raw = readFileSync(SESSION_REGISTRY_PATH(), "utf8");
     registry = JSON.parse(raw) as LegacyJsonRegistry;
   } catch (e) {
     console.error(err(`Failed to parse session-registry.json: ${e}`));

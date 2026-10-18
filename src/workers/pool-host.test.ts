@@ -157,6 +157,7 @@ function makeHost(
   const host = createPoolHost({
     config: testConfig(cfgOver),
     logDir,
+    usageLogFile: join(logDir, "no-router-usage.jsonl"),
     spawner: (argv, cwd, env) => spawner(argv, cwd, env),
     // the production env/argv builders, for the route tests below
     ...(opts.prodBuilders ? {} : { envFor: () => ({}) }),

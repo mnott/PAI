@@ -80,7 +80,7 @@ import {
   type SlotProcess,
   type SlotSpawner,
 } from "./pool.js";
-import { USAGE_LOG_FILE } from "../router/usage.js";
+import { usageLogFile } from "../router/usage.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -265,6 +265,8 @@ export class PoolSlotSession {
 export interface PoolHostOptions {
   config?: WorkersConfig;
   logDir?: string;
+  /** Router usage log read for the local-model first-request share; defaults to the live log. */
+  usageLogFile?: string;
   port?: number;
   spawner?: SlotSpawner;
   /** Test hooks: the env/argv builders, so tests can run a fake claude. */
@@ -299,12 +301,12 @@ export interface PoolHost {
 }
 
 /** Last ~400 KB of the router usage log as lines (a task's rows are at the end), empty on any error. */
-function routerUsageTail(): string[] {
+function routerUsageTail(file: string): string[] {
   try {
-    const size = statSync(USAGE_LOG_FILE).size;
+    const size = statSync(file).size;
     const len = Math.min(size, 400_000);
     const buf = Buffer.alloc(len);
-    const fd = openSync(USAGE_LOG_FILE, "r");
+    const fd = openSync(file, "r");
     try {
       readSync(fd, buf, 0, len, size - len);
     } finally {
@@ -884,7 +886,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       let share = firstRequestShare(fu);
       // a local model reports no cache tokens: take the share from the router row's time to first token
       if (!share && isLoopbackProvider(provider) && session.record.claudeSession) {
-        share = firstRouterShare(routerUsageTail(), session.record.claudeSession) ?? share;
+        share = firstRouterShare(routerUsageTail(opts.usageLogFile ?? usageLogFile()), session.record.claudeSession) ?? share;
       }
       session.record.firstShare = share;
       const wc = warmOrCold(share);

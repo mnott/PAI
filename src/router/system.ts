@@ -23,11 +23,11 @@
 
 import { execFile } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { bucketStart, WINDOWS, type CockpitWindow } from "./cockpit.js";
 
-export const SYSTEM_RING_FILE = join(homedir(), ".claude", "pai", "logs", "router-system.jsonl");
+export const systemRingFile = (): string => paiHomePath("logs", "router-system.jsonl");
 const MIN = 60_000;
 const DAY = 86_400_000;
 /** direct commands are sub-second; never wait longer */
@@ -307,7 +307,7 @@ export class SystemMonitor {
   private topAt = 0;
 
   constructor(deps: SystemDeps = {}) {
-    this.file = deps.file ?? SYSTEM_RING_FILE;
+    this.file = deps.file ?? systemRingFile();
     this.ttlMs = deps.ttlMs ?? 5_000;
     this.ringMs = deps.ringMs ?? MIN;
     this.keepMs = deps.keepMs ?? 7 * DAY;

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,11 +28,14 @@ function runKeepalive(env: NodeJS.ProcessEnv): string {
   return execFileSync("bun", [ENTRYPOINT, "daemon", "keepalive"], {
     encoding: "utf8",
     timeout: 15_000,
-    env,
+    // HOME inside the temp dir so legacy homedir() lookups never see the real ~; PAI_WORKER blanked
+    env: { ...env, HOME: env.PAI_HOME, PAI_WORKER: "" },
   });
 }
 
-describe("pai daemon keepalive", () => {
+const HAS_BUN = spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!HAS_BUN)("pai daemon keepalive", () => {
   it("reports disabled with defaults and no counters/ledger yet", () => {
     const { paiHome, configFile } = tempHome();
     writeFileSync(configFile, JSON.stringify({}), "utf8");
