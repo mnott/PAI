@@ -4,7 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { daemonServeCmd, daemonMigrateCmd, daemonStatusCmd, daemonRestartCmd, daemonInstallCmd, daemonUninstallCmd, daemonKeepaliveCmd, daemonLogsCmd, daemonQuietCmd } from "../impl/daemon.js";
+import { daemonServeCmd, daemonMigrateCmd, daemonStatusCmd, daemonRestartCmd, daemonInstallCmd, daemonUninstallCmd, daemonKeepaliveCmd, daemonLogsCmd } from "../impl/daemon.js";
 
 export const daemonSubcommands: CommandDef[] = [
 {
@@ -63,16 +63,6 @@ export const daemonSubcommands: CommandDef[] = [
   examples: ["pai daemon keepalive","pai daemon status"],
   seeAlso: ["pai daemon logs","pai daemon uninstall"],
   run: () => daemonKeepaliveCmd(),
-},
-{
-  name: "quiet",
-  summary: "Pause background maintenance for benchmark or overnight runs",
-  description: "Pause background maintenance for benchmark or overnight runs.\n\nWhile quiet the daemon defers the registry scan, index and embed passes, triple extraction, the nightly maintenance cycle and disk housekeeping. Each deferred kind runs once when quiet ends (off, or --until reached). Session notes, summaries and the context handover keep running.",
-  args: [{ name: "ACTION", summary: "on, off or status", required: true }],
-  options: [{ name: "until", type: "string", value: "HH:MM", summary: "With `on`: end quiet at the next HH:MM local time" }],
-  examples: ["pai daemon quiet on","pai daemon quiet on --until 07:00","pai daemon quiet off","pai daemon quiet status"],
-  seeAlso: ["pai daemon status"],
-  run: (ctx) => daemonQuietCmd(String(ctx.args.ACTION), { until: ctx.opts.until as string | undefined }),
 },
 {
   name: "logs",

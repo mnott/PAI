@@ -22,7 +22,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
-import { describeQuiet, nextOccurrence, readQuiet, writeQuiet } from "../../daemon/quiet.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
@@ -191,8 +190,6 @@ async function cmdStatus(): Promise<number> {
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
     if (s["dashboard"]) console.log(dim(`    Dashboard:   ${s["dashboard"]}`));
-    const quiet = readQuiet();
-    if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 
     // Lead with the outage and the backlog. Everything below them — index
     // state, totals — describes a system that is not moving, and printing those
@@ -621,30 +618,6 @@ export async function daemonServeCmd(): Promise<number> {
 
 export function daemonMigrateCmd(opts: { connectionString?: string }): Promise<number> {
   return cmdMigrate(opts.connectionString);
-}
-
-export function daemonQuietCmd(action: string, opts: { until?: string }): number {
-  if (action === "status") {
-    console.log(`Quiet mode: ${describeQuiet(readQuiet())}`);
-    return 0;
-  }
-  if (action === "off") {
-    if (opts.until) { console.error(err("--until only applies to `quiet on`.")); return 1; }
-    writeQuiet(false);
-    console.log(ok("Quiet mode off. Deferred jobs run once within about 30s."));
-    return 0;
-  }
-  if (action !== "on") { console.error(err(`Unknown action "${action}": use on, off or status.`)); return 1; }
-  let until: number | undefined;
-  try {
-    until = opts.until ? nextOccurrence(opts.until) : undefined;
-  } catch (e) {
-    console.error(err(e instanceof Error ? e.message : String(e)));
-    return 1;
-  }
-  writeQuiet(true, until);
-  console.log(ok(`Quiet mode ${describeQuiet(readQuiet())}.`));
-  return 0;
 }
 
 export function daemonStatusCmd(): Promise<number> {

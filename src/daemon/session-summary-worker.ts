@@ -17,7 +17,6 @@
  * thrown (not swallowed) so the work queue retry logic handles them.
  */
 
-import { deferIfQuiet } from "./quiet.js";
 import {
   existsSync,
   mkdirSync,
@@ -927,10 +926,6 @@ async function extractAndStoreTriples(params: {
     if (!storageBackend?.supportsPostgresFeatures) {
       return;
     }
-
-    // Quiet mode: the summary itself still ran; the LLM extraction waits and
-    // is caught up once from the notes (kg backfill) when quiet ends.
-    if (deferIfQuiet("triple-extraction")) return;
 
     // Check config flag (default: true)
     const cfg = daemonConfig as (typeof daemonConfig & { kg_extraction_enabled?: boolean }) | undefined;

@@ -237,15 +237,13 @@ export function enqueue(params: {
  * Pick the next pending item that is ready to process (respects nextRetryAt).
  * Returns null if no eligible item exists.
  * Highest priority (lowest number) is processed first; ties broken by createdAt.
- * Types in `skip` stay pending (quiet mode defers them without dropping them).
  */
-export function dequeue(skip?: ReadonlySet<WorkItemType>): WorkItem | null {
+export function dequeue(): WorkItem | null {
   const now = new Date().toISOString();
 
   const eligible = _queue
     .filter((i) => {
       if (i.status !== "pending") return false;
-      if (skip?.has(i.type)) return false;
       if (i.nextRetryAt && i.nextRetryAt > now) return false;
       return true;
     })

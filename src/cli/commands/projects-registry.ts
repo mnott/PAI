@@ -23,8 +23,7 @@ const registryScanCommand: CommandDef = {
     { name: "add-dir", type: "string", value: "PATH", summary: "Add a directory to scan_dirs config" },
     { name: "remove-dir", type: "string", value: "PATH", summary: "Remove a directory from scan_dirs config" },
     { name: "show-dirs", type: "boolean", summary: "Show currently configured scan directories" },
-    { name: "quick", type: "boolean", summary: "Minimal output mode (used by hooks and daemon)" },
-    { name: "filter-report", type: "boolean", summary: "Dry run: count existing registry rows that match the worker/temp/worktree filter; deletes nothing" }
+    { name: "quick", type: "boolean", summary: "Minimal output mode (used by hooks and daemon)" }
   ],
   examples: ["pai registry scan","pai registry scan --show-dirs"],
   seeAlso: ["pai registry migrate"],
@@ -32,8 +31,7 @@ const registryScanCommand: CommandDef = {
     addDir: ctx.opts["add-dir"] as string | undefined,
     removeDir: ctx.opts["remove-dir"] as string | undefined,
     showDirs: ctx.opts["show-dirs"] === true,
-    quick: ctx.opts.quick === true,
-    filterReport: ctx.opts["filter-report"] === true
+    quick: ctx.opts.quick === true
   }),
 };
 

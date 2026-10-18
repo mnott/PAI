@@ -161,8 +161,6 @@ export interface ScanResult {
   sessionsScanned: number;
   sessionsNew: number;
   skipped: string[];
-  /** Entries refused by the registration filter (worker/temp/worktree paths), before any disk check. */
-  filtered: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +176,6 @@ export async function performScan(): Promise<ScanResult> {
     sessionsScanned: 0,
     sessionsNew: 0,
     skipped: [],
-    filtered: [],
   };
 
   if (!existsSync(CLAUDE_PROJECTS_DIR())) {
@@ -207,15 +204,6 @@ export async function performScan(): Promise<ScanResult> {
       if (existsSync(clcPath)) {
         rootPath = clcPath;
       }
-    }
-
-    // Paths that can never be projects (worker logs/worktrees, temp dirs) are
-    // refused before the disk check, so they are not counted as "not found".
-    const refused = unregistrableReason(rootPath);
-    if (refused) {
-      result.filtered.push(`${encodedDir} (${rootPath} — ${refused})`);
-      result.projectsScanned++;
-      continue;
     }
 
     if (!existsSync(rootPath)) {
@@ -488,9 +476,6 @@ export async function cmdScan(opts: { quick?: boolean } = {}): Promise<void> {
     console.log(dim(`  Projects: ${result.projectsNew} new, ${result.projectsUpdated} updated`));
     console.log(dim(`  Sessions: ${result.sessionsNew} new`));
 
-    if (result.filtered.length) {
-      console.log(dim(`  ${result.filtered.length} entr(ies) not registered (worker, temp or worktree path).`));
-    }
     if (result.skipped.length) {
       console.log();
       console.log(warn(`  ${result.skipped.length} project(s) skipped (path not found on disk):`));

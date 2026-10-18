@@ -25,12 +25,9 @@ import {
   markFailed,
   cleanup,
   getStats,
-  hasPendingOrProcessingOfType,
   NonRetryableError,
   type WorkItem,
-  type WorkItemType,
 } from "./work-queue.js";
-import { deferIfQuiet } from "./quiet.js";
 
 import {
   handleSessionSummary,
@@ -132,17 +129,8 @@ export function notifyNewWork(): void {
 // Item processor (sequential — one item per tick)
 // ---------------------------------------------------------------------------
 
-/** Queue item types held back while quiet; empty when not quiet. */
-function quietSkippedTypes(): ReadonlySet<WorkItemType> | undefined {
-  if (!hasPendingOrProcessingOfType("registry-scan") || !deferIfQuiet("registry-scan")) return undefined;
-  return new Set<WorkItemType>(["registry-scan"]);
-}
-
 async function processNextItem(): Promise<void> {
-  // The one dispatch point for queued work: quiet mode leaves maintenance
-  // items pending (not dropped) and records the kind for the flush.
-  const skip = quietSkippedTypes();
-  const item = dequeue(skip);
+  const item = dequeue();
   if (!item) return;
 
   process.stderr.write(
@@ -353,12 +341,6 @@ async function handleRegistryScan(): Promise<void> {
     `${result.projectsScanned} projects (${result.projectsNew} new, ${result.projectsUpdated} updated), ` +
     `${result.sessionsScanned} sessions (${result.sessionsNew} new) in ${elapsed}ms.\n`
   );
-
-  if (result.filtered.length > 0) {
-    process.stderr.write(
-      `[work-queue-worker] Registry scan: ${result.filtered.length} entr(ies) not registered (worker, temp or worktree path).\n`
-    );
-  }
 
   if (result.skipped.length > 0) {
     process.stderr.write(

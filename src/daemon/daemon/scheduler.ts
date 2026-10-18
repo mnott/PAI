@@ -20,7 +20,6 @@ import { runWorktreeGcDaily } from "../worktree-gc.js";
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
-import { deferIfQuiet, type DeferredKind } from "../quiet.js";
 import { enqueueRegistryScan } from "../work-queue-worker.js";
 import { PassSpawnError, runPassChild, type PassName } from "../pass-priority.js";
 import {
@@ -98,21 +97,6 @@ async function runPassPrioritised<T>(name: PassName, inProcess: () => Promise<T>
 
 /** Minimum interval between vault index runs (30 minutes). */
 const VAULT_INDEX_MIN_INTERVAL_MS = 30 * 60 * 1000;
-
-/** What quiet mode runs (once) per deferred kind when it ends. */
-export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "triple-extraction">, () => Promise<void>> {
-  return {
-    index: () => runIndex().then(() => runVaultIndex()),
-    embed: () => runEmbed(),
-    maintenance: async () => {
-      await runIndex();
-      await runVaultIndex();
-      await runEmbed();
-      await runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
-      await runWorktreeGcDaily();
-    },
-  };
-}
 
 /**
  * Run a full index pass. Guards against overlapping runs with indexInProgress.
@@ -227,11 +211,7 @@ export function startIndexScheduler(): void {
   // Chaining embed onto the end of every index pass makes the alternation
   // guaranteed rather than a race: index, then vault, then embed, every cycle.
   const cycle = (label: string, withEmbed: boolean) =>
-    // Quiet mode: the whole cycle (index, vault, embed, stale pass, worktree gc)
-    // is one deferred job, run once when quiet ends.
-    deferIfQuiet(withEmbed ? "maintenance" : "index")
-      ? Promise.resolve()
-      : runIndex()
+    runIndex()
       .then(() => runVaultIndex())
       .then(() => (withEmbed ? runEmbed() : undefined))
       .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
@@ -422,7 +402,6 @@ export function startEmbedScheduler(): void {
   }
 
   const timer = setInterval(() => {
-    if (deferIfQuiet("embed")) return;
     runEmbed().catch((e) => {
       process.stderr.write(`[pai-daemon] Scheduled embed error: ${e}\n`);
     });
