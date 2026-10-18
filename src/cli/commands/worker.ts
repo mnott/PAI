@@ -305,7 +305,7 @@ const usageCommand: CommandDef = {
   name: "usage",
   summary: "Token totals per provider and model for a set of workers",
   description:
-    "Sums the exact tokens of the selected workers (each assistant message counted once) per provider and model: input, cache read, cache write 5m and 1h, output, plus the reported cost. Local providers are marked and carry no cost. " +
+    "Sums the exact tokens of the selected workers per provider and model: input, cache read, cache write 5m and 1h, output, plus the reported cost. A run's result event is authoritative when it carries totals; otherwise the assistant messages are summed (killed runs). Local providers are marked and carry no cost. " +
     "This is the worker side of the A/B comparison; the top session's side is `pai audit tokens usage`.",
   options: [
     { name: "label", type: "string", value: "PREFIX", summary: "Only workers whose label starts with PREFIX" },
