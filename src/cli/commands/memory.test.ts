@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { Command } from "commander";
-import { argvFromContext, runBridged } from "../lib/bridge.js";
 import { parseArgs, UsageError } from "../parse.js";
 import { resolve, runCli, type Io } from "../run.js";
 import { makeStyle } from "../help.js";
@@ -50,25 +49,7 @@ describe("definitions", () => {
   });
 });
 
-describe("argv reconstruction", () => {
-  it("memory search keeps positionals, values and --no-rerank", () => {
-    const cmd = leaf(["memory", "search"]);
-    const p = parseArgs(cmd, ["hello", "--project", "p1", "--limit", "5", "--no-rerank", "--recency", "0"]);
-    const argv = argvFromContext(cmd, p);
-    expect(argv[0]).toBe("hello");
-    expect(argv).toEqual(expect.arrayContaining(["--project", "p1", "--limit", "5", "--no-rerank", "--recency", "0"]));
-  });
-  it("audit tokens files passes variadic paths and --json", () => {
-    const cmd = leaf(["audit", "tokens", "files"]);
-    const argv = argvFromContext(cmd, parseArgs(cmd, ["a.md", "b.md", "--json"]));
-    expect(argv).toEqual(["a.md", "b.md", "--json"]);
-  });
-  it("false and unset booleans are not emitted; defaults are", () => {
-    const cmd = leaf(["kg", "list"]);
-    expect(argvFromContext(cmd, parseArgs(cmd, []))).toEqual(["--limit", "50"]);
-    const bf = leaf(["kg", "backfill"]);
-    expect(argvFromContext(bf, parseArgs(bf, ["--dry-run"]))).toEqual(["--dry-run"]);
-  });
+describe("flag parsing", () => {
   it("find -n maps to --n", () => {
     const p = parseArgs(findCommand, ["q", "-n", "3", "--json"]);
     expect(p.opts.n).toBe(3);
@@ -76,27 +57,6 @@ describe("argv reconstruction", () => {
   });
   it("unknown flag is a usage error naming the nearest flag", () => {
     expect(() => parseArgs(leaf(["memory", "search"]), ["q", "--limt", "3"])).toThrow(UsageError);
-  });
-});
-
-describe("runBridged", () => {
-  const def = { args: [{ name: "X", required: true, summary: "" }], options: [{ name: "flag", type: "boolean" as const, summary: "" }] };
-  const ctx = (x: string, flag: boolean) => ({ args: { X: x }, opts: { flag }, dryRun: false, rest: [] });
-
-  it("hands the rebuilt argv to the registered action and returns exit code 0", async () => {
-    const seen = vi.fn();
-    const reg = (n: Command) => void n.command("go <x>").option("--flag").action((x, o) => seen(x, o));
-    expect(await runBridged(reg, "grp", ["go"], def, ctx("v", true))).toBe(0);
-    expect(seen).toHaveBeenCalledWith("v", { flag: true });
-  });
-  it("returns the exit code an action sets", async () => {
-    const reg = (n: Command) => void n.command("go <x>").action(() => { process.exitCode = 1; });
-    expect(await runBridged(reg, "grp", ["go"], def, ctx("v", false))).toBe(1);
-    expect(process.exitCode).toBeUndefined();
-  });
-  it("turns a missing required option into a plain error with the help command", async () => {
-    const reg = (n: Command) => void n.command("go <x>").requiredOption("--id <n>", "id").action(() => {});
-    await expect(runBridged(reg, "grp", ["go"], def, ctx("v", false))).rejects.toMatchObject({ hint: "pai help grp go", exitCode: 1 });
   });
 });
 

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai } from "../lib/legacy-check.js";
+import { helpProblems, runPai } from "../lib/test-helpers.js";
 import { identityCommand } from "./identity.js";
 
 let home = "";
