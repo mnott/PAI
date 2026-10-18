@@ -23,3 +23,21 @@ describe("renderEvent tool_result errors", () => {
     expect(o).toContain("\x1b[31m!");
   });
 });
+
+describe("renderEvent wait poll exit 3", () => {
+  const c = makeColor(true);
+  const run = (tool: string, text: string) =>
+    renderEvent(c, "", ev(text) as never, "/w", { t1: tool }).join("\n");
+  it("wait --max exit 3 is a neutral line", () => {
+    const o = run("Bash:wait", 'Exit code 3\n{"id":"x","state":"running"}\npai worker wait: still running: x');
+    expect(o).toContain("still running, waiting again");
+    expect(o).not.toContain("!");
+    expect(o).not.toContain("\x1b[31m");
+  });
+  it("wait exit 1 stays an error", () => {
+    expect(run("Bash:wait", "Exit code 1\npai worker wait: failed: x")).toContain("\x1b[31m!");
+  });
+  it("other Bash exit 3 stays an error", () => {
+    expect(run("Bash", "Exit code 3\nboom")).toContain("\x1b[31m!");
+  });
+});

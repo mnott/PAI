@@ -310,3 +310,14 @@ describe("detectRunningWorkerErrors", () => {
     expect(toolErrorSigTag("Read|abc")).not.toBe(toolErrorSigTag("Bash|abc"));
   });
 });
+
+describe("classifyToolError wait poll", () => {
+  const w = (raw: string, input: string) => classifyToolError({ ts: 0, worker: "w", provider: "p", label: "", tool: "Bash", signature: "", raw, input });
+  it("multi-line wait --max exit 3 is benign", () => {
+    expect(w('Exit code 3\n{"id":"x","state":"running"}\npai worker wait: still running: x', "pai worker wait --max 100 x").cls).toBe("benign");
+  });
+  it("wait exit 1 and other exit 3 are not benign", () => {
+    expect(w("Exit code 1\npai worker wait: failed: x", "pai worker wait x").cls).not.toBe("benign");
+    expect(w("Exit code 3\nboom", "make build").cls).not.toBe("benign");
+  });
+});

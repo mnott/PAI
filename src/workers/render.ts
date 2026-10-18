@@ -13,7 +13,8 @@ import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
 import { denialMark, parseDenialText } from "./denials.js";
-import { fmtElapsed, waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
+import { bashExitCode, WAIT_EXIT_STILL_RUNNING } from "./wait.js";
+import { fmtElapsed,waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
 import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
 import { ownedTree } from "./worktree.js";
 import { workerDepth } from "./tree.js";
@@ -378,6 +379,8 @@ export function renderEvent(
         if (lines.length > 3) {
           out.push(`${prefix}${c("dim", `    … ${lines.length} lines`)}`);
         }
+      } else if (isError && tools[(b as { tool_use_id?: string }).tool_use_id ?? ""] === "Bash:wait" && bashExitCode(text) === WAIT_EXIT_STILL_RUNNING) {
+        out.push(`${prefix}${c("yellow", "… still running, waiting again")}`);
       } else if (isError) {
         // guard/hook denials are expected friction (amber); other errors are real (red)
         const denied = parseDenialText(text) !== null || / blocked:/.test(text);

@@ -175,3 +175,17 @@ describe("waitWorkers claim verification", () => {
     expect(results[0].unconfirmed).toBeUndefined();
   });
 });
+
+describe("isExpectedWaitExit", () => {
+  it("wait/wait-file exit 3 is expected", async () => {
+    const { isExpectedWaitExit } = await import("./wait.js");
+    expect(isExpectedWaitExit("pai worker wait --max 100 abc", 3)).toBe(true);
+    expect(isExpectedWaitExit("pai worker wait-file /tmp/x", 3)).toBe(true);
+  });
+  it("exit 1 and other commands stay errors", async () => {
+    const { isExpectedWaitExit } = await import("./wait.js");
+    expect(isExpectedWaitExit("pai worker wait abc", 1)).toBe(false);
+    expect(isExpectedWaitExit("grep foo bar", 3)).toBe(false);
+    expect(isExpectedWaitExit("pai worker wait abc", null)).toBe(false);
+  });
+});

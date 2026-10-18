@@ -15,6 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync
 import { join } from "node:path";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
+import { bashExitCode, isExpectedWaitExit } from "./wait.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -71,7 +72,7 @@ function wrongCaseTool(raw: string): string | null {
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
 
 /** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
-function lastCommand(command: string): { name: string; segment: string } | null {
+export function lastCommand(command: string): { name: string; segment: string } | null {
   const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
   const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
   const segment = segs[segs.length - 1];
@@ -91,14 +92,14 @@ function lastCommand(command: string): { name: string; segment: string } | null 
 export function isBenignBash(r: ToolErrorRecord): boolean {
   if (r.tool !== "Bash" || !r.input) return false;
   const m = r.raw.match(/^Exit code (\d+)\s*(.*)$/i);
-  const code = m ? Number(m[1]) : null;
+  const code = bashExitCode(r.raw);
   const out = (m?.[2] ?? r.raw).trim();
   const cmd = r.input;
   if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
   if (code === null) return false;
   if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
   const last = lastCommand(cmd);
-  if (code === 3 && last && /^pai\s+worker\s+wait(-on|-url|-file)?\b/.test(last.segment)) return /not yet|still running/i.test(out);
+  if (last && isExpectedWaitExit(last.segment, code)) return true;
   if (code !== 1) return false;
   if (!last) return false;
   const emptyOut = out === "" || /^(\(?no (output|matches)\)?|<no output>)$/i.test(out);

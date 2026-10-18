@@ -67,6 +67,14 @@ import {
 } from "./render.js";
 import { parseWaitOn, waitingLine } from "./waiting.js";
 import { denialLines } from "./denials.js";
+import { lastCommand } from "./tool-errors.js";
+import { isWaitPollCommand } from "./wait.js";
+
+/** Whether a Bash command ends in a `pai worker wait*` poll. */
+const isWaitPoll = (cmd: string): boolean => {
+  const last = lastCommand(cmd);
+  return last !== null && isWaitPollCommand(last.segment);
+};
 
 /** How many existing events a fresh follow pane replays before going live. */
 export const BACKFILL_EVENTS = 200;
@@ -271,7 +279,8 @@ export function applyEvent(
     for (const b of e.message?.content ?? []) {
       if (b.type === "tool_use" && b.id) {
         const cmd = (b.input as { command?: unknown } | undefined)?.command;
-        tools[b.id] = b.name === "Bash" && typeof cmd === "string" && parseWaitOn(cmd) ? "Bash:wait-on" : (b.name ?? "?");
+        const bashCmd = b.name === "Bash" && typeof cmd === "string" ? cmd : null;
+        tools[b.id] = bashCmd && parseWaitOn(bashCmd) ? "Bash:wait-on" : bashCmd && isWaitPoll(bashCmd) ? "Bash:wait" : (b.name ?? "?");
       }
     }
   }

@@ -134,6 +134,28 @@ export async function waitWorkers(
   return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!, pending.has(id))), timedOut: [...pending] };
 }
 
+/** Exit code of every wait verb that means "not yet, call again". */
+export const WAIT_EXIT_STILL_RUNNING = 3;
+
+/**
+ * Whether the last command of a Bash `command` is a `pai worker wait*` poll.
+ * `last` is that last segment (after ; && | etc.), as the caller splits it.
+ */
+export function isWaitPollCommand(last: string): boolean {
+  return /^pai\s+worker\s+wait(-on|-url|-file)?\b/.test(last.trim());
+}
+
+/** A wait poll that exited with its documented "still running" code: an answer, not an error. */
+export function isExpectedWaitExit(lastSegment: string, exitCode: number | null): boolean {
+  return exitCode === WAIT_EXIT_STILL_RUNNING && isWaitPollCommand(lastSegment);
+}
+
+/** The N of a leading "Exit code N" line in a Bash error result, else null. */
+export function bashExitCode(text: string): number | null {
+  const m = /^\s*Exit code (\d+)/i.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
 export const WAIT_MAX_DEFAULT_SECS = 100;
 export const WAIT_MAX_CAP_SECS = 590;
 
