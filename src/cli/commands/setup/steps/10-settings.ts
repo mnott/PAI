@@ -68,6 +68,7 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-tool-output.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
       { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
       { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/stop-hook.mjs" },
       { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type Stop" },
       { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/pai-session-stop.sh" },

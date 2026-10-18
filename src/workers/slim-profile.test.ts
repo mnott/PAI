@@ -102,3 +102,19 @@ describe("slimSettings non-anthropic provider", () => {
     expect((slimSettings(user, {}, nativeAnthropicProvider()) as any).env).toEqual(user.env);
   });
 });
+
+describe("slim profile note hook", () => {
+  const local = { ...nativeAnthropicProvider(), native: false, baseUrl: "http://127.0.0.1:1", env: {} } as WorkerProvider;
+
+  it("adds the note PostToolUse hook for native and local providers, once even if the user has one", () => {
+    const user = { hooks: { PostToolUse: [{ matcher: "*", hooks: [{ command: "x/worker-note.mjs" }] }] } };
+    for (const p of [undefined, local]) {
+      const s = slimSettings(user, {}, p, 'node "/d/hooks/worker-note.mjs" "/logs"') as any;
+      expect(s.hooks.PostToolUse).toEqual([{ matcher: "*", hooks: [{ type: "command", command: 'node "/d/hooks/worker-note.mjs" "/logs"' }] }]);
+    }
+  });
+
+  it("adds none without a hook command", () => {
+    expect((slimSettings(USER) as any).hooks.PostToolUse).toBeUndefined();
+  });
+});

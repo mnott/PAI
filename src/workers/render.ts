@@ -455,6 +455,13 @@ function chainLabelOf(stages: WorkerStatus[]): string {
  * that is not a worker is a chain id and gets its old `chain <id>` header.
  * `⎇` marks an unmerged worktree branch, `◆N` an inbox with N handoffs.
  */
+/** Delivery state of the latest note: pending until the worker's next tool call, then the delivery time. */
+function noteMark(s: WorkerStatus): string {
+  if (s.notePending?.length) return " [note pending]";
+  if (s.noteDeliveredAt) return ` [note delivered ${s.noteDeliveredAt.slice(11, 16)}]`;
+  return "";
+}
+
 export function renderTable(
   c: Paint,
   statuses: WorkerStatus[],
@@ -559,7 +566,7 @@ export function renderTable(
       )
     );
     lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
-    if (s.note) lines.push(treeLine(`${q}${c("dim", `note: ${s.note.replace(/\s+/g, " ").slice(0, 100)}`)}`, chain, last));
+    if (s.note) lines.push(treeLine(`${q}${c("dim", `note: ${s.note.replace(/\s+/g, " ").slice(0, 100)}${noteMark(s)}`)}`, chain, last));
     lines.push(
       treeLine(
         s.waitingOn
