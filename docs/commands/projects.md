@@ -33,11 +33,13 @@ Use --all to include cold / zero-session / archived projects.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | flag | — | Show all entries including cold / zero-session / archived projects |
+| `--workers` | flag | — | With --all: also show headless worker sessions |
 | `-n, --n COUNT` | string | — | Max rows to show |
 
 ```sh
 pai project list
 pai project list --all
+pai project list --all --workers
 ```
 
 See also: `pai project list-raw`
