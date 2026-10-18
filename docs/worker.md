@@ -531,10 +531,71 @@ pai worker merge <id>     # git merge --no-ff worker/<id> + remove the worktree
 pai worker discard <id>   # remove worktree and branch, keep nothing
 ```
 
+```
+pai worker merge <id> --verify "npx tsc --noEmit && npx vitest run"
+pai worker merge <id> --no-verify
+```
+
+`--verify CMD` (or `merge.verify` in `workers.yaml`, see
+[workers-config.md](workers-config.md)) runs on the merged tree; when it exits
+non-zero the merge is reverted with `git revert` (never reset) and the branch
+is kept. `--no-verify` skips the configured default and prints a warning. A
+built-in stub scan of the added `src/` lines (`TODO: implement`, empty stubs,
+`not implemented` throws) runs after every merge and reverts it the same way.
+Before a worktree is removed, gitignored knowledge files (such as `Notes/`)
+are copied into the main checkout.
+
 `ps` marks a worker with an unmerged branch `⎇<commits>` (yellow); the status
 file records `branch`, `commits` and `worktreeDir`. Chains give a worktree to
 the implement stage only; `--worktree` forces one on, `--no-worktree` opts
 out.
+
+### Usage tallies
+
+`pai worker usage [--label PREFIX] [--since WHEN] [--until WHEN] [--json]` sums
+the exact tokens of the selected workers per provider and model: input, cache
+read, cache write (5m and 1h), output and the reported cost. Local providers
+are marked and carry no cost; cloud providers show their cost. The top
+session's side of the comparison is `pai audit tokens usage <transcript>`.
+
+```
+pai worker usage --since 2h
+```
+
+### Worker pool
+
+`pai worker pool on|off|status` keeps long-lived headless claude slots warm so
+that successive small runs share the provider's prompt cache. `on` starts the
+background host and enables routing, `off` stops both, `status` (default)
+shows the slots, tasks served and cache savings. Each slot runs in its own
+slot worktree; a pooled run still gets a pane, and the per-provider capacity
+cap and the stagger gate are honoured: a run over the cap waits in the queue
+(`--no-queue` and `--no-stagger` on `worker run` opt out). The pool is off by
+default.
+
+### Cleaning up: `pai worker gc`
+
+`pai worker gc [--older-than HOURS] [--all-finished] [--dry-run]` moves the
+worktrees of old finished workers (default 24 h; `--all-finished` ignores
+age) to `refs/pai-archive/<id>`, so no commit is lost. `--dry-run` changes
+nothing and reports what each worktree carries, including gitignored
+knowledge files. Those (`Notes/` and the like, not `node_modules`, `dist`,
+logs) are salvaged into the main checkout before removal; a worktree that
+cannot be salvaged is kept. A daily gc runs on its own.
+
+### Waiting
+
+Never sleep-poll. The wait verbs return within `--max` seconds (default
+100-110, up to 590; waits over about 110 s need the Bash timeout raised, which
+the PAI hook does automatically). Exit 0 means ready, 3 means not yet, call
+again.
+
+| Verb | Waits for |
+|------|-----------|
+| `pai worker wait <ids...>` | child workers; returns when ANY finishes (`--timeout` waits for all) |
+| `pai worker wait-on <pid>` | a detached process (`--log` prints its last lines) |
+| `pai worker wait-file <paths...>` | every path to exist |
+| `pai worker wait-url <url>` | the URL to answer, polled with backoff |
 
 ### The planner class
 

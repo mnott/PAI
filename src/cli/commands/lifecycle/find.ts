@@ -49,7 +49,7 @@ interface SessionMatch {
 // History file location
 // ---------------------------------------------------------------------------
 
-const HISTORY_FILE = join(homedir(), ".claude", "history.jsonl");
+const HISTORY_FILE = () => join(homedir(), ".claude", "history.jsonl");
 
 // ---------------------------------------------------------------------------
 // Shorten project path for display
@@ -82,7 +82,7 @@ export async function searchHistory(
   query: string,
   maxResults: number
 ): Promise<SessionMatch[]> {
-  if (!existsSync(HISTORY_FILE)) return [];
+  if (!existsSync(HISTORY_FILE())) return [];
 
   const queryLower = query.toLowerCase();
   // Escape regex special chars from query for safety — but we're doing
@@ -98,7 +98,7 @@ export async function searchHistory(
   };
 
   const rl = createInterface({
-    input: createReadStream(HISTORY_FILE, { encoding: "utf8" }),
+    input: createReadStream(HISTORY_FILE(), { encoding: "utf8" }),
     crlfDelay: Infinity,
   });
 
@@ -168,7 +168,7 @@ export async function cmdFind(
 ): Promise<void> {
   const maxResults = parseInt(opts.n ?? "20", 10);
 
-  if (!existsSync(HISTORY_FILE)) {
+  if (!existsSync(HISTORY_FILE())) {
     console.error(err(`~/.claude/history.jsonl not found.`));
     process.exitCode = 1;
     return;

@@ -267,6 +267,37 @@ pai audit tokens mcp --connect
 
 See also: `pai audit tokens`
 
+#### pai audit tokens usage
+
+Exact token totals per model for one session transcript
+
+```
+pai audit tokens usage TRANSCRIPT [options]
+```
+
+Sums a Claude Code session transcript's assistant usage (each message id once, its final usage) per model. This is the tier-0 side of the A/B comparison: the top orchestrator session; its workers are `pai worker usage`.
+
+Prices (USD per million tokens, matched on the model name):
+  opus    input $5/M, output $25/M
+  sonnet  input $3/M, output $15/M
+  haiku   input $1/M, output $5/M
+  cache read 0.1x input, cache write 5m 1.25x, cache write 1h 2x
+
+| Argument | Required | Description |
+|---|---|---|
+| `TRANSCRIPT` | yes | Session transcript .jsonl |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | flag | — | Print JSON instead of a table |
+
+```sh
+pai audit tokens usage ~/.claude/projects/-my-proj/SESSION.jsonl
+pai audit tokens usage ./session.jsonl --json
+```
+
+See also: `pai worker usage`, `pai audit tokens session`
+
 #### pai audit tokens ladder
 
 LIVE: first-turn context per configuration step

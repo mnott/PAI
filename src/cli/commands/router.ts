@@ -16,7 +16,7 @@ import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
-import { ROUTER_LOG_FILE, ROUTER_PID_FILE, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
@@ -34,7 +34,7 @@ const startCommand: CommandDef = {
     const pid = routerRunningPid();
     if (pid) return void out(ok(`router already running (pid ${pid})`));
     const started = spawnRouter(process.argv[1]!);
-    out(ok(`router starting on 127.0.0.1:${ROUTER_PORT} (pid ${started}), log ${ROUTER_LOG_FILE}`));
+    out(ok(`router starting on 127.0.0.1:${ROUTER_PORT} (pid ${started}), log ${routerLogFile()}`));
   },
 };
 
@@ -49,7 +49,7 @@ const stopCommand: CommandDef = {
     if (!pid) return void out(dim("router not running"));
     process.kill(pid, "SIGTERM");
     try {
-      unlinkSync(ROUTER_PID_FILE);
+      unlinkSync(routerPidFile());
     } catch {
       /* already gone */
     }
@@ -109,8 +109,8 @@ const runCommand: CommandDef = {
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
       listenRetry(server, port, "127.0.0.1", { waitMs: waitBindMs }).then(() => {
         if (!managed) return;
-        mkdirSync(dirname(ROUTER_PID_FILE), { recursive: true });
-        writeFileSync(ROUTER_PID_FILE, String(process.pid));
+        mkdirSync(dirname(routerPidFile()), { recursive: true });
+        writeFileSync(routerPidFile(), String(process.pid));
       }, (e: unknown) => {
         process.stderr.write(`pai: router: ${(e as Error).message}\n`);
         process.exit(1);
@@ -127,7 +127,7 @@ const runCommand: CommandDef = {
         void drainServers(tail ? [server, tail] : [server], { timeoutMs: 120000 }).then(() => {
           if (managed) {
             try {
-              if (readFileSync(ROUTER_PID_FILE, "utf8").trim() === String(process.pid)) unlinkSync(ROUTER_PID_FILE);
+              if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
             } catch {
               /* ignore */
             }

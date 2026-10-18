@@ -79,7 +79,7 @@ export function migrateSummaryCooldowns(opts: { dryRun?: boolean } = {}): Migrat
 }
 
 /** Claude Code projects directory. */
-const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
+const CLAUDE_PROJECTS_DIR = () => join(homedir(), ".claude", "projects");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,7 +161,7 @@ function encodeProjectPath(cwd: string): string {
  */
 export function findLatestJsonl(cwd: string): string | null {
   const encoded = encodeProjectPath(cwd);
-  const projectDir = join(CLAUDE_PROJECTS_DIR, encoded);
+  const projectDir = join(CLAUDE_PROJECTS_DIR(), encoded);
 
   if (!existsSync(projectDir)) {
     process.stderr.write(

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { readUsage, splitBySessionKind, USAGE_LOG_FILE, type SessionKindSplit, type UsageRow } from "./usage.js";
+import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
@@ -303,7 +303,7 @@ export function buildCockpitData(
 }
 
 /** Reread the usage log only when its size or mtime changed. */
-export function cachedRows(file: string = USAGE_LOG_FILE): () => UsageRow[] {
+export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
   let key = "";
   let rows: UsageRow[] = [];
   return () => {

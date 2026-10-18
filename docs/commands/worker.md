@@ -56,6 +56,8 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--cwd DIR` | string | — | Directory the worker runs in (default: here) |
 | `--mcp NAMES` | string | — | MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`) |
 | `--no-pane` | flag | — | Run without a visible pane (refused unless a worker or the operator override allows it) |
+| `--no-queue` | flag | — | Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent) |
+| `--no-stagger` | flag | — | Do not wait for an earlier run on the same provider to warm its prompt cache |
 | `--worktree` | flag | — | Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo) |
 | `--no-worktree` | flag | — | Work in place, no worktree |
 | `--max-minutes N` | number | — | Stop after N minutes and keep the work (0 = no limit; default from the config, 60) |
@@ -65,6 +67,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--print-cmd` | flag | — | Print the claude command as JSON and exit without starting anything |
 | `--report FORMAT` | string | — | Final report format: json or ag2 (default ag2) |
 | `--no-report-retry` | flag | — | Do not ask once more when the final report is malformed |
+| `--orchestrate` | flag | — | This worker plans and reviews; code edits are denied and go to local units |
 
 ```sh
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
@@ -125,6 +128,30 @@ pai worker ps --all
 
 See also: `pai worker follow`, `pai worker pending`, `pai worker kill`
 
+### pai worker usage
+
+Token totals per provider and model for a set of workers
+
+```
+pai worker usage [options]
+```
+
+Sums the exact tokens of the selected workers (each assistant message counted once) per provider and model: input, cache read, cache write 5m and 1h, output, plus the reported cost. Local providers are marked and carry no cost. This is the worker side of the A/B comparison; the top session's side is `pai audit tokens usage`.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--label PREFIX` | string | — | Only workers whose label starts with PREFIX |
+| `--since WHEN` | string | — | Only workers started at or after WHEN (ISO time, or 1h / 30m) |
+| `--until WHEN` | string | — | Only workers started at or before WHEN (ISO time, or 1h / 30m) |
+| `--json` | flag | — | Machine-readable JSON output |
+
+```sh
+pai worker usage --since 2h
+pai worker usage --label armA --since 2026-10-18T06:00:00 --json
+```
+
+See also: `pai audit tokens usage`, `pai worker ps`
+
 ### pai worker follow
 
 Watch a worker live, or all running workers
@@ -143,6 +170,8 @@ Live view of one worker's transcript, or of every running worker in this session
 |---|---|---|---|
 | `--all` | flag | — | Follow the workers of all sessions |
 | `--auto-exit SECS` | number | — | Leave SECS seconds after the workers end (default from the config) |
+| `--live` | flag | — | Stream even without a terminal (default there: print the tail and exit) |
+| `--tail N` | number | — | Entries printed when there is no terminal (default 20) |
 
 ```sh
 pai worker follow
@@ -365,7 +394,7 @@ Merge a worker's branch into your checkout
 pai worker merge ID [options]
 ```
 
-Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch.
+Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error("not implemented` revert the merge the same way.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -375,10 +404,13 @@ Merges branch worker/ID into the original checkout, then removes the worktree an
 |---|---|---|---|
 | `--no-commit` | flag | — | Apply the changes uncommitted; keep branch and worktree |
 | `--patch` | flag | — | Same as --no-commit |
+| `--verify CMD` | string | — | Run CMD after the merge; revert the merge when it fails (default: workers.yaml merge.verify) |
+| `--no-verify` | flag | — | Skip the configured merge.verify default (prints a warning) |
 
 ```sh
 pai worker merge w-20260101-abc
 pai worker merge w-20260101-abc --no-commit
+pai worker merge 20261018-0301-1 --verify "npx tsc --noEmit"
 ```
 
 See also: `pai worker verify`, `pai worker pending`, `pai worker discard`
@@ -462,16 +494,18 @@ Archive leftover worker worktrees
 pai worker gc [options]
 ```
 
-Moves old finished workers' worktrees into refs/pai-archive/ID. Files git ignores are not kept.
+Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like; not node_modules, dist, coverage, logs) are copied into the main checkout; a worktree that cannot be salvaged is kept. --dry-run prints what each worktree carries.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--older-than HOURS` | string | 24 | Minimum age of a finished worker, in hours |
-| `--dry-run` | flag | — | Print what would be archived, change nothing |
+| `--all-finished` | flag | — | Any finished worker, regardless of age |
+| `--dry-run` | flag | — | Print what would be archived and what each worktree carries, change nothing |
 
 ```sh
 pai worker gc --dry-run
 pai worker gc --older-than 72
+pai worker gc --all-finished
 ```
 
 See also: `pai worker discard`, `pai worker pending`
@@ -505,7 +539,7 @@ Wait for a background job to finish
 pai worker wait-on PID [options]
 ```
 
-Waits at most --max seconds (default 110, limit 115) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.
+Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.
 Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.
 
 | Argument | Required | Description |
@@ -515,7 +549,7 @@ Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! >
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--log FILE` | string | — | Log file whose last lines are printed on return; FILE.rc holds the exit code |
-| `--max SECS` | number | — | Longest wait in seconds (default 110, limit 115) |
+| `--max SECS` | number | — | Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) |
 | `--tail N` | number | — | Log lines printed on return (default 20) |
 
 ```sh
@@ -523,17 +557,68 @@ pai worker wait-on 12345
 pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60
 ```
 
-See also: `pai worker wait`
+See also: `pai worker wait`, `pai worker wait-url`, `pai worker wait-file`
+
+### pai worker wait-url
+
+Wait for a server to answer HTTP
+
+```
+pai worker wait-url URL [options]
+```
+
+Polls the URL with backoff for at most --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically). Exit 0: it answered 2xx-4xx. Exit 3: not yet, call again.
+
+| Argument | Required | Description |
+|---|---|---|
+| `URL` | yes | e.g. http://127.0.0.1:8016/v1/models |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--max SECS` | number | — | Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) |
+
+```sh
+pai worker wait-url http://127.0.0.1:8016/v1/models
+pai worker wait-url http://127.0.0.1:8016/v1/models --max 60
+```
+
+See also: `pai worker wait`, `pai worker wait-on`, `pai worker wait-file`
+
+### pai worker wait-file
+
+Wait for files to appear
+
+```
+pai worker wait-file PATHS... [options]
+```
+
+Waits at most --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) until every path exists; prints one line per path. Exit 0: all exist. Exit 3: some missing, call again.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PATHS...` | yes | One or more file paths |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--max SECS` | number | — | Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) |
+
+```sh
+pai worker wait-file /tmp/job.rc
+pai worker wait-file /tmp/a.rc /tmp/b.rc --max 60
+```
+
+See also: `pai worker wait`, `pai worker wait-on`, `pai worker wait-url`
 
 ### pai worker wait
 
-Wait for workers to finish and print each result
+Wait for child workers; returns when any finishes or --max elapses
 
 ```
 pai worker wait IDS... [options]
 ```
 
-Blocks until the given workers finish and prints one JSON line per worker. Exit 1 on failure or timeout. Use this or background tasks instead of sleeping and re-checking `ps`.
+Prints one JSON status line per worker id and returns within --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) as soon as ANY of them finishes. Exit 0: all done. Exit 1: a finished worker failed. Exit 3: some still running, call again with the unfinished ids.
+Use this instead of sleeping and re-checking `pai worker ps`. --timeout keeps the old behaviour: wait for ALL, exit 1 on timeout.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -541,14 +626,15 @@ Blocks until the given workers finish and prints one JSON line per worker. Exit 
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--timeout SECS` | number | — | Give up after this many seconds (default 900) |
+| `--max SECS` | number | — | Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) |
+| `--timeout SECS` | number | — | Wait for ALL workers, give up after this many seconds (exit 1) |
 
 ```sh
 pai worker wait w-20260101-abc
-pai worker wait w-20260101-abc w-20260101-def --timeout 300
+pai worker wait w-20260101-abc w-20260101-def --max 60
 ```
 
-See also: `pai worker ps`, `pai worker wait-on`
+See also: `pai worker ps`, `pai worker wait-on`, `pai worker wait-url`, `pai worker wait-file`
 
 ### pai worker model
 
@@ -1371,6 +1457,7 @@ See also: `pai worker providers`
 | `pai worker run` | Run one task on a worker (another provider or model) |
 | `pai worker resume` | Continue a finished worker with a new instruction |
 | `pai worker ps` | List this session's workers, running and finished |
+| `pai worker usage` | Token totals per provider and model for a set of workers |
 | `pai worker follow` | Watch a worker live, or all running workers |
 | `pai worker replay` | Print the transcript of one worker |
 | `pai worker watch` | Worker list that refreshes every 2 seconds |
@@ -1388,7 +1475,9 @@ See also: `pai worker providers`
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker kill` | Stop a running worker |
 | `pai worker wait-on` | Wait for a background job to finish |
-| `pai worker wait` | Wait for workers to finish and print each result |
+| `pai worker wait-url` | Wait for a server to answer HTTP |
+| `pai worker wait-file` | Wait for files to appear |
+| `pai worker wait` | Wait for child workers; returns when any finishes or --max elapses |
 | `pai worker model` | Show or set the model a provider uses |
 | `pai worker capability` | Choose which provider serves a capability (e.g. image) |
 | `pai worker providers` | Providers workers can run on: list, add, remove, use, enable, disable, test |

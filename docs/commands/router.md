@@ -2,7 +2,7 @@
 
 # pai router
 
-Local model router: start, stop, status, run, stats
+Local model router: start, stop, restart, status, run, stats
 
 ```
 pai router <command>
@@ -51,6 +51,23 @@ pai router status
 
 See also: `pai router start`
 
+### pai router restart
+
+Restart the router without refusing connections
+
+```
+pai router restart
+```
+
+Starts a new router that waits for the port, then stops the old one, which finishes its in-flight streams first. Prints the longest refused interval.
+
+```sh
+pai router restart
+pai router status
+```
+
+See also: `pai router start`, `pai router stop`
+
 ### pai router status
 
 Show whether the router is running
@@ -83,6 +100,7 @@ A port other than the default never touches the pid file.
 |---|---|---|---|
 | `--port PORT` | string | 8790 | Port to listen on |
 | `--usage-file PATH` | string | — | Read the cockpit's accounting from this file and record nothing (second instances) |
+| `--wait-bind SECONDS` | string | — | Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`) |
 
 ```sh
 pai router run
@@ -119,6 +137,7 @@ See also: `pai router status`
 |---|---|
 | `pai router start` | Start the router in the background |
 | `pai router stop` | Stop the router |
+| `pai router restart` | Restart the router without refusing connections |
 | `pai router status` | Show whether the router is running |
 | `pai router run` | Run the router in the foreground |
 | `pai router stats` | Token and cache totals per provider and model |

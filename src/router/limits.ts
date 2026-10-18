@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { homedir } from "node:os";
+import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
@@ -69,10 +69,10 @@ export interface PrefixCacheStats {
   memoryMb?: number;
 }
 
-export const ESTIMATE_FILE = join(homedir(), ".claude", "pai", "router-limits.json");
-export const ADVISOR_FILE = join(homedir(), ".claude", "pai", "advisor-mode.json");
+export const estimateFile = (): string => paiHomePath("router-limits.json");
+export const advisorModeFile = (): string => paiHomePath("advisor-mode.json");
 /** Last good plan reading per provider, so a rate-limited poll shows an age, not "reset unknown". */
-export const LASTGOOD_FILE = join(homedir(), ".claude", "pai", "logs", "router-limits-last.json");
+export const lastGoodPath = (): string => paiHomePath("logs", "router-limits-last.json");
 /** A last good reading older than this is too stale to serve when the endpoint fails. */
 export const PLAN_LASTGOOD_MAX_AGE = 2 * 3_600_000;
 /** Upper bound for the poll delay after repeated 429s. */
@@ -80,7 +80,7 @@ export const BACKOFF_MAX = 30 * 60_000;
 /** Anthropic's usage endpoint is polled at most this often, by all processes together. */
 export const ANTHROPIC_POLL_MS = 5 * 60_000;
 /** Shared poll state (backoff per provider), read by the router, the budget probe and the statusline. */
-export const GATE_FILE = join(homedir(), ".claude", "pai", "logs", "router-poll-gate.json");
+export const gateFile = (): string => paiHomePath("logs", "router-poll-gate.json");
 
 /** The windows of one provider's last successful poll. */
 export interface LastGoodEntry {
@@ -90,7 +90,7 @@ export interface LastGoodEntry {
   prefixCache?: PrefixCacheStats;
 }
 
-export function readLastGood(file: string = LASTGOOD_FILE): Record<string, LastGoodEntry> {
+export function readLastGood(file: string = lastGoodPath()): Record<string, LastGoodEntry> {
   try {
     const j = JSON.parse(readFileSync(file, "utf8")) as Record<string, Partial<LastGoodEntry>>;
     const out: Record<string, LastGoodEntry> = {};
@@ -306,7 +306,7 @@ export function estimateWindows(
   return out;
 }
 
-export function readEstimateCaps(file: string = ESTIMATE_FILE): Record<string, Record<string, number>> {
+export function readEstimateCaps(file: string = estimateFile()): Record<string, Record<string, number>> {
   try {
     return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, Record<string, number>>) : {};
   } catch {
@@ -363,7 +363,7 @@ export interface AnthropicPollOpts {
 
 let liveGate: Backoff | undefined;
 export function sharedGate(): Backoff {
-  return (liveGate ??= new Backoff(ANTHROPIC_POLL_MS, BACKOFF_MAX, GATE_FILE));
+  return (liveGate ??= new Backoff(ANTHROPIC_POLL_MS, BACKOFF_MAX, gateFile()));
 }
 
 async function fetchAnthropicUsage(): Promise<string> {
@@ -382,7 +382,7 @@ async function fetchAnthropicUsage(): Promise<string> {
  */
 export async function anthropicShared(now: number, o: AnthropicPollOpts = {}): Promise<ProviderLimits> {
   const gate = o.gate ?? sharedGate();
-  const file = o.lastGoodFile ?? LASTGOOD_FILE;
+  const file = o.lastGoodFile ?? lastGoodPath();
   const lg = readLastGood(file)["anthropic"];
   const base = { provider: "anthropic", kind: "plan" as const, fetchedAt: now };
   const wait = gate.remaining("anthropic", now);
@@ -600,9 +600,9 @@ export interface LimitsDeps {
   rows: () => UsageRow[];
   advisorFile?: string;
   estimateFile?: string;
-  /** Last-good store override (tests); defaults to LASTGOOD_FILE. */
+  /** Last-good store override (tests); defaults to lastGoodPath(). */
   lastGoodFile?: string;
-  /** Shared poll gate override (tests); defaults to GATE_FILE. */
+  /** Shared poll gate override (tests); defaults to gateFile(). */
   gate?: Backoff;
   /** Replaces the anthropic keychain + https fetch (tests). */
   fetchAnthropic?: () => Promise<string>;
@@ -628,7 +628,7 @@ export class LimitsCache {
   constructor(private readonly deps: LimitsDeps, private readonly ttlMs = 60_000) {
     this.backoff = new Backoff(ttlMs);
     // a restart must not lose the last good reading: it is served with its age until the staleness limit
-    for (const [k, v] of Object.entries(readLastGood(this.deps.lastGoodFile ?? LASTGOOD_FILE))) {
+    for (const [k, v] of Object.entries(readLastGood(this.deps.lastGoodFile ?? lastGoodPath()))) {
       if (v.prefixCache) this.prefixLastGood.set(k, { stats: v.prefixCache, at: v.fetchedAt });
     }
   }
@@ -647,7 +647,7 @@ export class LimitsCache {
       cur.prefixCache = stats;
       delete cur.prefixCacheAgeSec;
     }
-    const file = this.deps.lastGoodFile ?? LASTGOOD_FILE;
+    const file = this.deps.lastGoodFile ?? lastGoodPath();
     const store = readLastGood(file);
     store[provider] = { windows: [], fetchedAt: at, prefixCache: stats };
     writeLastGood(file, store);
@@ -694,7 +694,7 @@ export class LimitsCache {
       /* config unreadable: still report anthropic */
     }
     const caps = readEstimateCaps(this.deps.estimateFile);
-    const lastGoodFile = this.deps.lastGoodFile ?? LASTGOOD_FILE;
+    const lastGoodFile = this.deps.lastGoodFile ?? lastGoodPath();
     const lastGood = readLastGood(lastGoodFile);
     const jobs: Array<Promise<ProviderLimits>> = [];
     const skipped: string[] = [];
@@ -710,7 +710,7 @@ export class LimitsCache {
       anthropicShared(now, {
         gate: this.deps.gate ?? sharedGate(),
         lastGoodFile,
-        advisorFile: this.deps.advisorFile ?? ADVISOR_FILE,
+        advisorFile: this.deps.advisorFile ?? advisorModeFile(),
         ...(this.deps.fetchAnthropic ? { fetchUsage: this.deps.fetchAnthropic } : {}),
       })
     );

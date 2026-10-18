@@ -23,4 +23,7 @@ Browse the same pages on GitHub under [`docs/commands/`](commands/README.md). Ea
 | [`pai daemon`](commands/daemon.md) | Daemon lifecycle |
 | [`pai notify`](commands/notify.md) | Notification configuration |
 | [`pai backup`](commands/backup.md) · [`pai restore`](commands/restore.md) | Data safety |
+| [`pai router`](commands/router.md) | Provider router: start, stop, restart, status, stats (see [router.md](router.md)) |
+| [`pai worker usage`](commands/worker.md#pai-worker-usage) | Token tallies per provider and model for workers |
+| [`pai audit tokens usage`](commands/audit.md) | Token totals of a session transcript |
 | … | See [the full index](commands/README.md) for all areas |

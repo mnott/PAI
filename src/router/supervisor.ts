@@ -5,26 +5,26 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
 import { pidAlive } from "../workers/status.js";
 import { ROUTER_PORT } from "./router.js";
 
-export const ROUTER_PID_FILE = join(homedir(), ".claude", "pai", "router.pid");
-export const ROUTER_LOG_FILE = join(homedir(), ".claude", "pai", "logs", "router.log");
+export const routerPidFile = (): string => paiHomePath("router.pid");
+export const routerLogFile = (): string => paiHomePath("logs", "router.log");
 
 export function routerRunningPid(): number | null {
-  if (!existsSync(ROUTER_PID_FILE)) return null;
-  const pid = parseInt(readFileSync(ROUTER_PID_FILE, "utf8"), 10);
+  if (!existsSync(routerPidFile())) return null;
+  const pid = parseInt(readFileSync(routerPidFile(), "utf8"), 10);
   if (!pid) return null;
   return pidAlive(pid) ? pid : null;
 }
 
 /** Spawn `<cli> router run` detached, logging to the router log. Returns the child pid. */
 export function spawnRouter(cliEntry: string, extraArgs: string[] = []): number | undefined {
-  mkdirSync(dirname(ROUTER_LOG_FILE), { recursive: true });
-  const fd = openSync(ROUTER_LOG_FILE, "a");
+  mkdirSync(dirname(routerLogFile()), { recursive: true });
+  const fd = openSync(routerLogFile(), "a");
   const child = spawn(process.execPath, [cliEntry, "router", "run", ...extraArgs], {
     detached: true,
     stdio: ["ignore", fd, fd],

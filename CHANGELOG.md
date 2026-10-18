@@ -6,7 +6,35 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **CLI rewrite** — the command line runs on a native `CommandDef` help system
+  that replaces Commander; the Commander dependency is removed. `pai-daemon`
+  no longer uses Commander either. `docs/commands/` is generated from the
+  same definitions.
+- **Long waits** — `wait`, `wait-on`, `wait-file` and `wait-url` accept
+  `--max` up to 590 s; the PAI hook raises the Bash timeout automatically.
+  `worker wait` returns when any worker finishes.
+- **Worker pool** — pooled runs get panes, and the capacity and stagger gates
+  are honoured.
+- **Guard marker** — PAI denials carry a marker so they are told apart from
+  other hook failures.
+
 ### Added
+
+- **`pai worker usage`** — token tallies per provider and model for workers.
+- **`pai audit tokens usage`** — exact token totals for a session transcript.
+- **`pai router restart`** — restarts the router without refusing connections.
+- **`pai worker merge --verify` / `--no-verify`**, the `merge.verify` config
+  key and a built-in stub scan that reverts a merge adding stubs.
+- **`pai worker gc`** — knowledge check and salvage of gitignored notes before
+  worktree removal, `--dry-run` report, `--all-finished`, and a daily gc.
+- **`pai worker wait-file` / `wait-url`**.
+- **Docs** — `docs/router.md`, worker usage, pool, gc and wait sections in
+  `docs/worker.md`.
+- **Operator notes (local model servers)** — the qwen3_coder tool-call parser
+  needs a patch for the `<<` token; do not enable a reasoning parser for
+  coder models.
 
 - **One storage layer, Postgres-only when configured** — `src/storage/` owns
   all persistence: registry, memory, vault, knowledge graph (entities and

@@ -44,7 +44,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai rename`](rename.md) | Give a session a new name |
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
 | [`pai resume`](resume.md) | Open a session by name or id (same as `pai open`) |
-| [`pai router`](router.md) | Local model router: start, stop, status, run, stats |
+| [`pai router`](router.md) | Local model router: start, stop, restart, status, run, stats |
 | [`pai session`](session.md) | Work with sessions: list, open, new, rename |
 | [`pai sessions`](sessions.md) | Old plural session commands (use `ls` and `session`) |
 | [`pai setup`](setup.md) | First-time setup: storage, search, hooks, daemon |
@@ -75,6 +75,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens skills` | Token cost of the skill and command catalogue |
 | `pai audit tokens spawn` | Helper-session overhead: subagents vs workers |
 | `pai audit tokens subagents` | Token cost of subagent definitions |
+| `pai audit tokens usage` | Exact token totals per model for one session transcript |
 | `pai backup` | Back up the registry, config and Postgres database |
 | `pai cd` | Print a project's directory (the shell wrapper changes into it) |
 | `pai clear-names` | Wipe the stored tab names (recovery) |
@@ -239,7 +240,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai rename` | Give a session a new name |
 | `pai restore` | Restore PAI data from a backup |
 | `pai resume` | Open a session by name or id (same as `pai open`) |
-| `pai router` | Local model router: start, stop, status, run, stats |
+| `pai router` | Local model router: start, stop, restart, status, run, stats |
+| `pai router restart` | Restart the router without refusing connections |
 | `pai router run` | Run the router in the foreground |
 | `pai router start` | Start the router in the background |
 | `pai router stats` | Token and cache totals per provider and model |
@@ -369,9 +371,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker run` | Run one task on a worker (another provider or model) |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker status-line` | One-line worker summary for a status bar |
+| `pai worker usage` | Token totals per provider and model for a set of workers |
 | `pai worker verify` | Check that a worker's changes are already in your checkout |
-| `pai worker wait` | Wait for workers to finish and print each result |
+| `pai worker wait` | Wait for child workers; returns when any finishes or --max elapses |
+| `pai worker wait-file` | Wait for files to appear |
 | `pai worker wait-on` | Wait for a background job to finish |
+| `pai worker wait-url` | Wait for a server to answer HTTP |
 | `pai worker watch` | Worker list that refreshes every 2 seconds |
 | `pai zettel` | Explore the links between your notes |
 | `pai zettel converse` | Ask the vault a question |
