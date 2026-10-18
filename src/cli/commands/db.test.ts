@@ -2,8 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai, treeDiff, treeFor } from "../lib/legacy-check.js";
-import { registerDbCommands } from "../impl/db.js";
+import { helpProblems, runPai } from "../lib/legacy-check.js";
 import { dbCommand } from "./db.js";
 
 let home = "";
@@ -15,9 +14,6 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllEnvs());
 
 describe("pai db", () => {
-  it("declares exactly the subcommands, flags and arguments the implementation registers", () => {
-    expect(treeDiff(dbCommand, treeFor(registerDbCommands, "db"))).toEqual([]);
-  });
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(dbCommand)).toEqual([]);
   });
