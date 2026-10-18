@@ -6,8 +6,8 @@
  * directories are disposable by construction. Measured on the real registry,
  * 2026-08-04:
  *
- *   08 - Others/MDF/Infrastruktur/.claude/worktrees/cool-haibt      1 session
- *   08 - Others/MDF/Infrastruktur/.claude/worktrees/strange-haibt   7 sessions
+ *   08 - Others/Client/Infrastructure/.claude/worktrees/cool-haibt      1 session
+ *   08 - Others/Client/Infrastructure/.claude/worktrees/strange-haibt   7 sessions
  *   /private/tmp/ops-webui                                          dead
  *   /private/tmp/claude-501/-Users-…-AIBroker/aae854c6-…            dead
  *

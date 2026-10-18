@@ -41,7 +41,7 @@ describe("normalising a directory name", () => {
   it("treats decomposed and precomposed Unicode as the same name", () => {
     // macOS readdir hands back decomposed forms. Without NFC these differ byte
     // for byte and the match fails for a reason nobody can see by reading it.
-    expect(norm("Stadtoldendorf-Ü")).toBe(norm("Stadtoldendorf-Ü"));
+    expect(norm("Sampletown-Ü")).toBe(norm("Sampletown-Ü"));
   });
 });
 
@@ -60,13 +60,13 @@ describe("an ancestor was renamed", () => {
     // 32 entries went dead from a single rename. Each is resolved independently,
     // so a partial disk state cannot take the rest down with it.
     mkdirSync(join(root, "🧠 Ideaverse", "Appstore", "ringsaday"), { recursive: true });
-    mkdirSync(join(root, "🧠 Ideaverse", "Raspi", "Stadtoldendorf"), { recursive: true });
+    mkdirSync(join(root, "🧠 Ideaverse", "Raspi", "Sampletown"), { recursive: true });
 
     expect(relocateRenamedAncestor(join(root, "Ideaverse", "Appstore", "ringsaday"))).toBe(
       join(root, "🧠 Ideaverse", "Appstore", "ringsaday")
     );
-    expect(relocateRenamedAncestor(join(root, "Ideaverse", "Raspi", "Stadtoldendorf"))).toBe(
-      join(root, "🧠 Ideaverse", "Raspi", "Stadtoldendorf")
+    expect(relocateRenamedAncestor(join(root, "Ideaverse", "Raspi", "Sampletown"))).toBe(
+      join(root, "🧠 Ideaverse", "Raspi", "Sampletown")
     );
   });
 
@@ -92,20 +92,20 @@ describe("an ordering prefix was added or removed", () => {
    * same kind of rename as gaining an emoji. norm() cannot see it because the
    * digits survive: "webseiten" against "20webseiten".
    *
-   * Found because MDF.md links to `Infrastruktur/20 - Webseiten` while the
-   * registry holds a dead entry for plain `Infrastruktur/Webseiten`.
+   * Found because Client.md links to `Infrastructure/20 - Webseiten` while the
+   * registry holds a dead entry for plain `Infrastructure/Webseiten`.
    */
   it("matches a directory that gained a numeric prefix", () => {
-    mkdirSync(join(root, "Infrastruktur", "20 - Webseiten"), { recursive: true });
-    expect(relocateRenamedAncestor(join(root, "Infrastruktur", "Webseiten"))).toBe(
-      join(root, "Infrastruktur", "20 - Webseiten")
+    mkdirSync(join(root, "Infrastructure", "20 - Webseiten"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infrastructure", "Webseiten"))).toBe(
+      join(root, "Infrastructure", "20 - Webseiten")
     );
   });
 
   it("matches a directory that lost its numeric prefix", () => {
-    mkdirSync(join(root, "Infrastruktur", "Webseiten"), { recursive: true });
-    expect(relocateRenamedAncestor(join(root, "Infrastruktur", "20 - Webseiten"))).toBe(
-      join(root, "Infrastruktur", "Webseiten")
+    mkdirSync(join(root, "Infrastructure", "Webseiten"), { recursive: true });
+    expect(relocateRenamedAncestor(join(root, "Infrastructure", "20 - Webseiten"))).toBe(
+      join(root, "Infrastructure", "Webseiten")
     );
   });
 
@@ -126,7 +126,7 @@ describe("an ordering prefix was added or removed", () => {
 
   it("does NOT match a suffix even when the match would be unique", () => {
     // The case that would actually bite, and the reason the suffix rule is not
-    // merely inelegant. The real `MDF/Infrastruktur/` is wall-to-wall numbered, so
+    // merely inelegant. The real `Client/Infrastructure/` is wall-to-wall numbered, so
     // a suffix rule on `Setup` hits eight candidates and the uniqueness rule
     // vetoes it — the danger stays invisible. `Analysis` against
     // `00 - Migration Analysis` hits exactly ONE, so it would be relocated
@@ -144,8 +144,8 @@ describe("an ordering prefix was added or removed", () => {
 
 describe("never relocating onto another project's directory", () => {
   /**
-   * Caught by the AIBroker session: `~/PAI` was "recovered" to `~/dev/ai/PAI`,
-   * which resolves to `~/Daten/Cloud/Development/ai/PAI` — a directory an ACTIVE
+   * Caught by the AIBroker session: `~/PAI` was "recovered" to `~/dev/PAI`,
+   * which resolves to `~/Cloud/Development/PAI` — a directory an ACTIVE
    * project already owns. Two registry entries for one directory is the mess that
    * had been merged out of this registry hours earlier.
    *
@@ -245,8 +245,8 @@ describe("refusing to guess", () => {
   });
 
   it("does not match a dangling symlink", () => {
-    // Measured: `🧠 Ideaverse/Raspi/Stadtoldendorf` is a symlink to
-    // `08 - Others/MDF/Stadtoldendorf`, which no longer exists. The name matches
+    // Measured: `🧠 Ideaverse/Raspi/Sampletown` is a symlink to
+    // `08 - Others/Client/Sampletown`, which no longer exists. The name matches
     // perfectly and the entry still cannot be recovered — relocating onto a
     // broken link produces a path existsSync rejects, so health would re-flag it
     // dead on the next run and the "fix" would be pure churn.

@@ -13,7 +13,7 @@
  * an empty list means nothing is self-addressed, an unparseable address is not
  * self-addressed, and no pattern is ever inferred.
  *
- * Aliases are NOT matched by pattern, deliberately. `matthias.nott+x@gmail.com`
+ * Aliases are NOT matched by pattern, deliberately. `first.last+x@example.com`
  * and `owner.name@example.com` are the same mailbox, and Gmail also ignores
  * dots — but the general forms of those rules ("same local part before a plus",
  * "same domain") also match addresses belonging to other people. Gmail's own

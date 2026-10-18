@@ -2,7 +2,7 @@
  * agentish.ts — Agentish v2 (AG2), the wire format a worker's final report
  * uses by default: a kind line plus one-letter k=v lines instead of JSON
  * prose. Spec and validator live in the `aibroker` CLI
- * (see /Users/i052341/Daten/Cloud/Development/ai/AIBroker/docs/agentish.md);
+ * (see AIBroker: docs/agentish.md);
  * this module shells out to it when present and falls back to a frozen copy
  * of the spec text otherwise, so a worker still gets a contract when
  * `aibroker` is not installed on its box.

@@ -27,6 +27,7 @@
     "docker/init.sql",
     "docker/docker-compose.yml",
     "src/hooks",
+    "!src/hooks/**/*.test.ts",
     "docs",
     "README.md",
     "LICENSE",
