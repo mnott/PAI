@@ -44,7 +44,7 @@ Before starting, verify:
 
 ### Step 1 — Find JSONL Files
 
-Claude Code encodes project paths lossily: `/`, spaces, dots, hyphens all become `-`. A project may have been accessed from multiple base directories (e.g., `~/Daten/Cloud/Development/ai/PAI` and `~/dev/ai/PAI` both encode to different paths).
+Claude Code encodes project paths lossily: `/`, spaces, dots, hyphens all become `-`. A project may have been accessed from multiple base directories (e.g., `~/Cloud/Development/PAI` and `~/dev/PAI` both encode to different paths).
 
 **Search strategy — use glob patterns, not exact paths:**
 
@@ -56,7 +56,7 @@ ls ~/.claude/projects/ | grep -i "<project-slug-fragment>"
 ls ~/.claude/projects/<encoded-path>/*.jsonl 2>/dev/null
 
 # Also check the dev copy if the project has one
-# Example: if cwd is ~/dev/ai/PAI, also check ~/Daten/Cloud/Development/ai/PAI encoding
+# Example: if cwd is ~/dev/PAI, also check ~/Cloud/Development/PAI encoding
 ```
 
 Collect ALL JSONL files from ALL matching encoded paths. A session may have been started from either location.

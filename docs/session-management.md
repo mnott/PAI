@@ -89,7 +89,7 @@ Sessions:
   --  ----------  ----------  --------  ----------------------------  --------------------------
   1   AIBroker    live        now       —                             —
   2   PAI         resumable   2m ago    /…dev/ai/PAI                  "refactor session listing…"
-  3   MDF         transcript  3d ago    /…MDF/Infrastruktur/Webseiten "ok so we recently had…"
+  3   Client         transcript  3d ago    /…Client/Infrastructure/Webseiten "ok so we recently had…"
 ```
 
 Status values: `live` (active iTerm tab), `resumable` (clean snapshot on disk), `transcript` (history available, not resumable), `stub` (empty or minimal).
@@ -103,8 +103,8 @@ Sessions matching "mdf":
 
   #  id        when              project                              last matching prompt
   -  --------  ----------------  -----------------------------------  -------------------------
-  1  6269cf64  2026-05-21 08:20  /…MDF/Infrastruktur/20 - Webseiten  "ok so we recently had an order…"
-  2  abe2d977  2026-02-23 08:40  /…MDF/Infrastruktur/20 - Webseiten  "yes the session notes for Whazaa…"
+  1  6269cf64  2026-05-21 08:20  /…Client/Infrastructure/20 - Webseiten  "ok so we recently had an order…"
+  2  abe2d977  2026-02-23 08:40  /…Client/Infrastructure/20 - Webseiten  "yes the session notes for Whazaa…"
 
   Enter # to launch (1-2), or press Enter to cancel:
 ```

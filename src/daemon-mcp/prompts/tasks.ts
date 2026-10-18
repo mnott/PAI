@@ -65,7 +65,7 @@ pai task add "Short actionable title" \\
 **Always file into the sub-project for the PAI project you are working in**, using \`--into <name>\`. It is created if it does not exist:
 
 \`\`\`bash
-pai task add "Title" --into Clickr --owner clickr --body "..."
+pai task add "Title" --into SampleTool --owner sampletool --body "..."
 \`\`\`
 
 Creating that sub-project is **following the convention, not inventing structure**. Do not file flat into the root out of caution — a flat pile buries findings across projects, and every session that hesitates makes it worse. Only omit \`--into\` for something genuinely cross-cutting.

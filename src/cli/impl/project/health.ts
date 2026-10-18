@@ -79,7 +79,7 @@ function findOrphanedNotesDirs(project: ProjectRow): string[] {
  *               sessions are the only thing of value on it, so the remedy is
  *               merge — archiving strands them.
  *   MISNAMED    the path EXISTS and another project owns a subtree of it, under a
- *               slug that has nothing to do with it. `pferde` on `08 - Others/MDF`.
+ *               slug that has nothing to do with it. `pferde` on `08 - Others/Client`.
  *               health never reported this at all, because existsSync says yes.
  *   DEAD        the path is gone and nothing claims it. Archive is correct here.
  *
