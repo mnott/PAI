@@ -88,6 +88,7 @@ import {
 } from "./status.js";
 import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
+import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, isLocalProvider, routeRun, type RouteInfo } from "./policy.js";
 import { capacityGate, resolveCap } from "./capacity.js";
@@ -202,6 +203,8 @@ export interface RunOptions {
   browser?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
+  /** "provider/model (why)" — one line on how the provider was chosen. */
+  routeWhy?: string;
   /** --urgent: wants a fast turnaround (policy auto/prefer-local route to the cloud). */
   urgent?: boolean;
   /** --local-ok: this run may go local under policy prefer-cloud. */
@@ -668,6 +671,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     : resolveTarget(config, logDir, {
         flagProvider: providerFlag,
         className: opts.className,
+        cwd: opts.cwd,
       });
   assertProviderRunnable(target.providerName, target.provider);
 
@@ -697,6 +701,9 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     if (step.notice && !opts.quiet) process.stderr.write(`${step.notice}\n`);
   }
   const reportFormat = resolveReportFormat(opts.reportFormatFlag);
+  // the route and why, once (also recorded in the status as routeWhy)
+  const routeWhy = target.routeWhy ? `${target.providerName}/${model} (${target.routeWhy})` : undefined;
+  if (routeWhy && !opts.quiet) process.stderr.write(`pai worker: route ${routeWhy}\n`);
 
   // tracked across every engine (including a quota reroute's recursive
   // runWorker call) so the exit hook below knows which status to check,
@@ -780,6 +787,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         reroutes: opts._reroutes ?? 0,
         emptyRetried: opts._emptyRetried ?? false,
         route,
+        routeWhy,
         fallThroughOf: opts._fallThroughOf,
         printCmd: opts.printCmd,
         reportFormat,
@@ -1280,6 +1288,8 @@ export interface ExecuteArgs {
   route?: RouteInfo;
   fallThroughOf?: string;
   printCmd?: boolean;
+  /** "provider/model (why)" — one line on how the provider was chosen. */
+  routeWhy?: string;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
   /** --orchestrate: PAI_WORKER_ORCHESTRATOR=1 in the env and the orchestrator addendum in the contract. */
@@ -1553,6 +1563,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+  applySessionProviderEnv(env, target);
   if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
 
   const mcpFlag = noBrowser ? stripBrowserNames(a.mcpFlag ? [a.mcpFlag] : [])[0] : a.mcpFlag;
@@ -1661,6 +1672,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         cwd: worktree?.dir ?? cwd,
         ...(promptText !== null ? { stdin: promptText } : {}),
         browser: noBrowser ? "off" : "on",
+        ...(a.routeWhy ? { route: a.routeWhy } : {}),
+        sessionProviderEnv: env.PAI_SESSION_PROVIDER ?? null,
         ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : { limit: "none" }),
       })
     );
@@ -1688,6 +1701,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     origin: headless ? "spawn" : "chat",
     outputFormat: parsed.outputFormat,
     ...(a.route ? { route: a.route } : {}),
+    ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(target.via === "auto" && target.switchReason ? { switchReason: target.switchReason } : {}),
     ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(headless ? { reportFormat: a.reportFormat } : {}),
