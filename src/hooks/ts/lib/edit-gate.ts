@@ -98,6 +98,15 @@ function inPlaceTargets(segment: string): string[] | null {
       scriptSeen = true;
       continue;
     }
+    if (w === "--expression" || w === "--file") {
+      i++;
+      scriptSeen = true;
+      continue;
+    }
+    if (/^--(?:expression|file)=/.test(w) || (isSed && /^-[A-Za-z]*[ef]./.test(w) && !/^-[A-Za-z]*i/.test(w))) {
+      scriptSeen = true;
+      continue;
+    }
     if (w.startsWith("-")) continue;
     if (!scriptSeen) {
       scriptSeen = true;
