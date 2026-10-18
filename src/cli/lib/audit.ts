@@ -37,7 +37,6 @@
  * instead of a table.
  */
 
-import type { Command } from "commander";
 import { homedir } from "node:os";
 import { mkdirSync, readdirSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -702,98 +701,294 @@ async function cmdCombined(opts: { json?: boolean; record?: string }): Promise<v
  * consumed by the parent before the child's own `opts()` is populated, and
  * `--json` on `pai audit tokens files` silently produced the table output.
  */
-export function registerAuditCommands(auditCmd: Command): void {
-  const tokensCmd = auditCmd
-    .command("tokens")
-    .description(
-      "Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP"
-    )
-    .option("--json", "Print JSON instead of a table")
-    .option("--record <dir>", "Write a dated, numbered markdown+JSON snapshot of the combined report to <dir>")
-    .action(async () => {
-      await cmdCombined(jsonOpt() as { json?: boolean; record?: string });
-    });
+// This function is now unused and can be removed
+// export function registerAuditCommands(auditCmd: Command): void {
+//   const tokensCmd = auditCmd
+//     .command("tokens")
+//     .description(
+//       "Token-waste audit: memory files, hooks, session usage, spawn overhead, daemon, env, schedule, skill catalogue, subagents, MCP"
+//     )
+//     .option("--json", "Print JSON instead of a table")
+//     .option("--record <dir>", "Write a dated, numbered markdown+JSON snapshot of the combined report to <dir>")
+//     .action(async () => {
+//       await cmdCombined(jsonOpt() as { json?: boolean; record?: string });
+//     });
+//
+//   const jsonOpt = (): { json?: boolean } => tokensCmd.opts() as { json?: boolean };
+//
+//   tokensCmd
+//     .command("files")
+//     .description("Token count per memory file (CLAUDE.md chain, CORE skill, whisper rules, auto-memory)")
+//     .argument("[paths...]", "Files to count (default: the standard memory set)")
+//     .action(async (paths: string[]) => {
+//       await cmdFiles(paths, jsonOpt());
+//     });
+//
+//   tokensCmd
+//     .command("hooks")
+//     .description("Token cost of every SessionStart / UserPromptSubmit hook")
+//     .action(() => cmdHooks(jsonOpt()));
+//
+//   tokensCmd
+//     .command("session")
+//     .description("Cache/input/output token split for a session transcript (default: newest)")
+//     .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
+//     .option("--ctx-threshold <n>", "Override the derived compaction trigger (default: derived from the session's own window and measured/configured trigger — see 'window'/'trigger' in the report header)")
+//     .option("--history [n]", "List first-turn context of the newest n sessions in this project's transcript directory (default 20)")
+//     .option("--turn <n>", "Attribute API call n's context growth to the transcript lines injected since the previous call")
+//     .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean; turn?: string }) => {
+//       await cmdSession(path, { ...jsonOpt(), ...opts });
+//     });
+//
+//   tokensCmd
+//     .command("spawn")
+//     .description("Spawn-overhead comparison: Agent-tool subagents vs. pai workers")
+//     .option("-n, --n <count>", "How many of the newest logs per group to read (default 10)")
+//     .option("--detail", "Print one row per log (first-turn ctx, prompt tokens, overhead, model, path)")
+//     .action(async (opts: { n?: string; detail?: boolean }) => {
+//       await cmdSpawn({ ...jsonOpt(), ...opts });
+//     });
+//
+//   tokensCmd
+//     .command("daemon")
+//     .description("LLM spawns, KG-extraction parse failures, work-queue counts from the daemon log")
+//     .action(() => cmdDaemon(jsonOpt()));
+//
+//   tokensCmd
+//     .command("env")
+//     .description("ANTHROPIC_BASE_URL / model-override env on every live claude process")
+//     .action(() => cmdEnv(jsonOpt()));
+//
+//   tokensCmd
+//     .command("schedule")
+//     .description("Launchd agents / crontab entries that outpace the measured prompt-cache TTL")
+//     .action(async () => {
+//       await cmdSchedule(jsonOpt());
+//     });
+//
+//   tokensCmd
+//     .command("skills")
+//     .description("Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate names")
+//     .option("--top <n>", "How many top-by-tokens entries to show (default 15)")
+//     .action((opts: { top?: string }) => {
+//       cmdSkills({ ...jsonOpt(), ...opts });
+//     });
+//
+//   tokensCmd
+//     .command("subagents")
+//     .description("Token cost of Claude Code subagent definitions (~/.claude/agents, <cwd>/.claude/agents) and their model pinning")
+//     .action(() => cmdSubagents(jsonOpt()));
+//
+//   tokensCmd
+//     .command("mcp")
+//     .description("MCP servers: configured vs. pinned vs. loaded-live vs. used in the last 30 days")
+//     .option("--connect", "Actually connect to every stdio MCP server to count exposed tools (side-effecting; never on by default)")
+//     .action(async (opts: { connect?: boolean }) => {
+//       await cmdMcp({ ...jsonOpt(), ...opts });
+//     });
+//
+//   tokensCmd
+//     .command("ladder")
+//     .description("LIVE: first-turn context at increasing headless-worker configuration (spawns real claude -p calls)")
+//     .option("--live", "Actually spawn claude -p (billed API traffic); refuses without this flag")
+//     .option("--model <model>", "Model to probe with (default haiku)")
+//     .option("--mcp-config <path>", "MCP config for the L2 rung (default: newest *.mcp.json in the workers log dir)")
+//     .action(async (opts: { live?: boolean; model?: string; mcpConfig?: string }) => {
+//       await cmdLadder({ ...jsonOpt(), ...opts });
+//     });
+// }
 
-  const jsonOpt = (): { json?: boolean } => tokensCmd.opts() as { json?: boolean };
+// ---------------------------------------------------------------------------
+// Exported command functions
+// ---------------------------------------------------------------------------
 
-  tokensCmd
-    .command("files")
-    .description("Token count per memory file (CLAUDE.md chain, CORE skill, whisper rules, auto-memory)")
-    .argument("[paths...]", "Files to count (default: the standard memory set)")
-    .action(async (paths: string[]) => {
-      await cmdFiles(paths, jsonOpt());
-    });
+/** Exported function for audit tokens files command */
+export async function auditFilesCmd(paths: string[], opts: { json?: boolean }): Promise<number> {
+  const targets = paths.length > 0 ? paths : defaultFileSet(process.cwd());
+  const report = auditFiles(targets);
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printFiles(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("hooks")
-    .description("Token cost of every SessionStart / UserPromptSubmit hook")
-    .action(() => cmdHooks(jsonOpt()));
+/** Exported function for audit tokens hooks command */
+export function auditHooksCmd(opts: { json?: boolean }): number {
+  const report = auditHooks(process.cwd());
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printHooks(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("session")
-    .description("Cache/input/output token split for a session transcript (default: newest)")
-    .argument("[path]", "Session JSONL path (default: newest under ~/.claude/projects)")
-    .option("--ctx-threshold <n>", "Override the derived compaction trigger (default: derived from the session's own window and measured/configured trigger — see 'window'/'trigger' in the report header)")
-    .option("--history [n]", "List first-turn context of the newest n sessions in this project's transcript directory (default 20)")
-    .option("--turn <n>", "Attribute API call n's context growth to the transcript lines injected since the previous call")
-    .action(async (path: string | undefined, opts: { ctxThreshold?: string; history?: string | boolean; turn?: string }) => {
-      await cmdSession(path, { ...jsonOpt(), ...opts });
-    });
+/** Exported function for audit tokens session command */
+export async function auditSessionCmd(
+  path: string | undefined,
+  opts: { json?: boolean; ctxThreshold?: string; history?: string | boolean; turn?: string }
+): Promise<number> {
+  if (opts.history !== undefined) {
+    const limit = typeof opts.history === "string" ? parseInt(opts.history, 10) : 20;
+    const rows = await sessionHistory(process.cwd(), limit);
+    if (opts.json) {
+      printJson(rows);
+      return 0;
+    }
+    printSessionHistory(rows);
+    return 0;
+  }
+  if (opts.turn !== undefined) {
+    const target = path ?? newestSessionLog();
+    if (!target) {
+      console.error(err("  No session transcript found."));
+      return 1;
+    }
+    const tb = turnBreakdown(target, parseInt(opts.turn, 10));
+    if (!tb) {
+      console.error(err(`  Turn ${opts.turn} not found in ${target}.`));
+      return 1;
+    }
+    if (opts.json) {
+      printJson(tb);
+      return 0;
+    }
+    printTurnBreakdown(tb);
+    return 0;
+  }
+  const threshold = opts.ctxThreshold ? parseInt(opts.ctxThreshold, 10) : undefined;
+  const report = await auditSession(path, threshold);
+  if (!report) {
+    console.error(err("  No session transcript found."));
+    return 1;
+  }
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printSession(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("spawn")
-    .description("Spawn-overhead comparison: Agent-tool subagents vs. pai workers")
-    .option("-n, --n <count>", "How many of the newest logs per group to read (default 10)")
-    .option("--detail", "Print one row per log (first-turn ctx, prompt tokens, overhead, model, path)")
-    .action(async (opts: { n?: string; detail?: boolean }) => {
-      await cmdSpawn({ ...jsonOpt(), ...opts });
-    });
+/** Exported function for audit tokens spawn command */
+export async function auditSpawnCmd(opts: { json?: boolean; n?: string; detail?: boolean }): Promise<number> {
+  const n = opts.n ? parseInt(opts.n, 10) : 10;
+  const report = await auditSpawn(n);
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printSpawn(report, opts.detail);
+  return 0;
+}
 
-  tokensCmd
-    .command("daemon")
-    .description("LLM spawns, KG-extraction parse failures, work-queue counts from the daemon log")
-    .action(() => cmdDaemon(jsonOpt()));
+/** Exported function for audit tokens daemon command */
+export function auditDaemonCmd(opts: { json?: boolean }): number {
+  const report = auditDaemon();
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printDaemon(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("env")
-    .description("ANTHROPIC_BASE_URL / model-override env on every live claude process")
-    .action(() => cmdEnv(jsonOpt()));
+/** Exported function for audit tokens env command */
+export function auditEnvCmd(opts: { json?: boolean }): number {
+  const report = auditEnv();
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printEnv(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("schedule")
-    .description("Launchd agents / crontab entries that outpace the measured prompt-cache TTL")
-    .action(async () => {
-      await cmdSchedule(jsonOpt());
-    });
+/** Exported function for audit tokens schedule command */
+export async function auditScheduleCmd(opts: { json?: boolean }): Promise<number> {
+  const ttl = await scheduleTtlSeconds();
+  const report = auditSchedule(ttl);
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printSchedule(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("skills")
-    .description("Token cost of the SKILL.md / command / plugin catalogue, top entries, duplicate names")
-    .option("--top <n>", "How many top-by-tokens entries to show (default 15)")
-    .action((opts: { top?: string }) => {
-      cmdSkills({ ...jsonOpt(), ...opts });
-    });
+/** Exported function for audit tokens skills command */
+export function auditSkillsCmd(opts: { json?: boolean; top?: string }): number {
+  const top = opts.top ? parseInt(opts.top, 10) : 15;
+  const report = auditSkills();
+  if (opts.json) {
+    printJson({ ...report, top: topByTokens(report, top) });
+    return 0;
+  }
+  printSkills(report, top);
+  return 0;
+}
 
-  tokensCmd
-    .command("subagents")
-    .description("Token cost of Claude Code subagent definitions (~/.claude/agents, <cwd>/.claude/agents) and their model pinning")
-    .action(() => cmdSubagents(jsonOpt()));
+/** Exported function for audit tokens subagents command */
+export function auditSubagentsCmd(opts: { json?: boolean }): number {
+  const report = auditSubagents(homedir(), process.cwd());
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printSubagents(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("mcp")
-    .description("MCP servers: configured vs. pinned vs. loaded-live vs. used in the last 30 days")
-    .option("--connect", "Actually connect to every stdio MCP server to count exposed tools (side-effecting; never on by default)")
-    .action(async (opts: { connect?: boolean }) => {
-      await cmdMcp({ ...jsonOpt(), ...opts });
-    });
+/** Exported function for audit tokens mcp command */
+export async function auditMcpCmd(opts: { json?: boolean; connect?: boolean }): Promise<number> {
+  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect });
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printMcp(report);
+  return 0;
+}
 
-  tokensCmd
-    .command("ladder")
-    .description("LIVE: first-turn context at increasing headless-worker configuration (spawns real claude -p calls)")
-    .option("--live", "Actually spawn claude -p (billed API traffic); refuses without this flag")
-    .option("--model <model>", "Model to probe with (default haiku)")
-    .option("--mcp-config <path>", "MCP config for the L2 rung (default: newest *.mcp.json in the workers log dir)")
-    .action(async (opts: { live?: boolean; model?: string; mcpConfig?: string }) => {
-      await cmdLadder({ ...jsonOpt(), ...opts });
-    });
+/** Exported function for audit tokens ladder command */
+export async function auditLadderCmd(opts: { json?: boolean; live?: boolean; model?: string; mcpConfig?: string }): Promise<number> {
+  if (!opts.live) {
+    console.log(
+      warn(
+        "Refusing to run: `pai audit tokens ladder` spawns several real `claude -p` calls " +
+        "(billed API traffic). Pass --live to run it."
+      )
+    );
+    return 0;
+  }
+  const { workers } = readWorkersSection();
+  const logDir = workersLogDir(workers);
+  const report = await auditLadder({ model: opts.model, mcpConfigPath: opts.mcpConfig, logDir });
+  if (opts.json) {
+    printJson(report);
+    return 0;
+  }
+  printLadder(report);
+  return 0;
+}
+
+/** Exported function for audit tokens command (combined) */
+export async function auditTokensCmd(opts: { json?: boolean; record?: string }): Promise<number> {
+  const data = await gatherCombined();
+
+  if (opts.json) {
+    printJson(data);
+  } else {
+    console.log(header("pai audit tokens — combined report"));
+    console.log(dim(`token encoding: ${data.encoding}`));
+    const rows = data.findings.map((f) => [severityColor(f.severity, f.finding), severityColor(f.severity, f.severity), f.evidence]);
+    console.log(renderTable(["FINDING", "SEVERITY", "EVIDENCE"], rows));
+  }
+
+  if (opts.record) {
+    recordCombinedReport(opts.record, data);
+  }
+  return 0;
 }
