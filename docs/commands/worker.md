@@ -334,7 +334,7 @@ The message goes to the worker's open input, as if you had typed it in its pane.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--goal TEXT` | string | — | Rename the worker's goal in ps and its pane before sending |
+| `--goal TEXT` | string | — | Record a goal note shown in ps (the label stays) before sending |
 
 ```sh
 pai worker say w-20260101-abc 'Also cover the empty case'
@@ -345,18 +345,18 @@ See also: `pai worker goal`, `pai worker resume`
 
 ### pai worker goal
 
-Rename what a running worker is working on
+Leave a goal note on a running worker
 
 ```
 pai worker goal ID TEXT
 ```
 
-Changes the label shown in ps and the worker's pane, without sending it a message. Prints ok.
+Records a note shown under the worker's task in ps; the label is not changed and no message is sent. Prints ok.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | yes | Worker id (see `pai worker ps`) |
-| `TEXT` | yes | The new label |
+| `TEXT` | yes | The note |
 
 ```sh
 pai worker goal w-20260101-abc 'fix the retry loop'
@@ -1470,7 +1470,7 @@ See also: `pai worker providers`
 | `pai worker errors` | Tool errors workers hit, grouped by kind |
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker say` | Send a message to a running worker |
-| `pai worker goal` | Rename what a running worker is working on |
+| `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker merge` | Merge a worker's branch into your checkout |
 | `pai worker verify` | Check that a worker's changes are already in your checkout |

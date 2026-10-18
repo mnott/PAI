@@ -336,7 +336,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker follow` | Watch a worker live, or all running workers |
 | `pai worker gc` | Archive leftover worker worktrees |
-| `pai worker goal` | Rename what a running worker is working on |
+| `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker install` | Set up the Agent hook and command shims |
 | `pai worker kill` | Stop a running worker |
