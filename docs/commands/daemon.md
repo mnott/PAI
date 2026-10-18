@@ -148,6 +148,35 @@ pai daemon status
 
 See also: `pai daemon logs`, `pai daemon uninstall`
 
+### pai daemon quiet
+
+Pause background maintenance for benchmark or overnight runs
+
+```
+pai daemon quiet ACTION [options]
+```
+
+Pause background maintenance for benchmark or overnight runs.
+
+While quiet the daemon defers the registry scan, index and embed passes, triple extraction, the nightly maintenance cycle and disk housekeeping. Each deferred kind runs once when quiet ends (off, or --until reached). Session notes, summaries and the context handover keep running.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ACTION` | yes | on, off or status |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--until HH:MM` | string | — | With `on`: end quiet at the next HH:MM local time |
+
+```sh
+pai daemon quiet on
+pai daemon quiet on --until 07:00
+pai daemon quiet off
+pai daemon quiet status
+```
+
+See also: `pai daemon status`
+
 ### pai daemon logs
 
 Show the end of the daemon log
@@ -183,6 +212,7 @@ See also: `pai daemon keepalive`
 | `pai daemon install` | Install the daemon as a login service |
 | `pai daemon uninstall` | Remove the daemon service |
 | `pai daemon keepalive` | Show session keepalive settings and recent activity |
+| `pai daemon quiet` | Pause background maintenance for benchmark or overnight runs |
 | `pai daemon logs` | Show the end of the daemon log |
 
 ## See also
