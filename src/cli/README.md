@@ -67,7 +67,7 @@ Enter on the launch screen refuses it in plain words and points to `s`; choosing
 ## Library choice
 
 Parser and help: none added — `define.ts` command objects + a ~100-line parser (`parse.ts`) + chalk (already a dependency).
-Commander cannot print our error wording (did-you-mean, missing-argument Usage line) without replacing most of its output.
+A general-purpose parser cannot print our error wording (did-you-mean, missing-argument Usage line) without replacing most of its output.
 Prompts: no prompt library — the picker needs aligned multi-column rows with a live filter, which prompt libraries do not render;
 `lib/picker.ts` (~150 lines, no dependency) has a pure state machine and view, and runs against a fake TTY in tests.
 

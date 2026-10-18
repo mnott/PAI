@@ -4,7 +4,6 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { registerProjectsCommands } from "../impl/project/projects-index.js";
 import {
   projectListCmd,
   projectListRawCmd,

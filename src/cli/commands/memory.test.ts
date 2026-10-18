@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { Command } from "commander";
 import { parseArgs, UsageError } from "../parse.js";
 import { resolve, runCli, type Io } from "../run.js";
 import { makeStyle } from "../help.js";

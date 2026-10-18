@@ -2,8 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai, treeDiff, treeFor } from "../lib/legacy-check.js";
-import { registerProjectsCommands } from "../impl/project/projects-index.js";
+import { helpProblems, runPai } from "../lib/test-helpers.js";
 import { projectCommand, projectAliasCommand } from "./project.js";
 
 let home = "";
@@ -15,9 +14,6 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllEnvs());
 
 describe("pai project", () => {
-  it("declares exactly the subcommands, flags and arguments the implementation registers", () => {
-    expect(treeDiff(projectCommand, treeFor(registerProjectsCommands, "project"))).toEqual([]);
-  });
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(projectCommand)).toEqual([]);
   });

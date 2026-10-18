@@ -5,7 +5,7 @@
  *
  * Everything that knows about worker providers reads this module: the CLI
  * (`pai worker …`), the MCP tools (worker_*), and the Agent-routing hook.
- * Keep it free of commander/MCP imports so all three layers stay thin over it.
+ * Keep it free of CLI/MCP imports so all three layers stay thin over it.
  *
  * Keys are never stored here — only paths to 0600 files. A provider without a
  * keyFile is a local server and gets the placeholder token "local".

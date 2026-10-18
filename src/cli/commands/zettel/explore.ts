@@ -71,7 +71,3 @@ export async function zettelExploreCmd(
   return 0;
 }
 
-export function registerExploreCommand(parent: import("commander").Command): void {
-  // This function is kept for backward compatibility but will not be used
-  // as the command is now directly defined in zettel.ts
-}
