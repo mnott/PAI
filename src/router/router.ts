@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import zlib from "node:zlib";
 import {
   BustDetector,
   emptyUsage,
@@ -221,8 +222,30 @@ export interface RouterOptions {
 }
 
 // accept-encoding dropped: usage is parsed from the plain response as it streams
-const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "accept-encoding"]);
+const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "accept-encoding", "content-encoding"]);
 const AUTH = new Set(["authorization", "x-api-key"]);
+
+/**
+ * Decode a request body per its Content-Encoding. The router always parses the
+ * body, so an unknown encoding is a 415, a corrupt one a 400. Every upstream
+ * (loopback or cloud) then gets the plain re-serialized body: local servers
+ * cannot read gzip, and plain is always valid for Anthropic, at the cost of
+ * some upload bandwidth that the compression would have saved.
+ */
+export function decodeBody(
+  raw: Buffer,
+  encoding: string | string[] | undefined
+): { ok: true; body: Buffer; encoded: boolean } | { ok: false; status: number; message: string } {
+  const enc = (Array.isArray(encoding) ? encoding.join(",") : encoding ?? "").trim().toLowerCase();
+  if (!enc || enc === "identity") return { ok: true, body: raw, encoded: false };
+  const fn = enc === "gzip" || enc === "x-gzip" ? zlib.gunzipSync : enc === "deflate" ? zlib.inflateSync : enc === "br" ? zlib.brotliDecompressSync : null;
+  if (!fn) return { ok: false, status: 415, message: `unsupported request Content-Encoding "${enc}"; the router accepts gzip, deflate, br or none` };
+  try {
+    return { ok: true, body: fn(raw), encoded: true };
+  } catch (e) {
+    return { ok: false, status: 400, message: `request body is not valid ${enc} data: ${(e as Error).message}` };
+  }
+}
 
 function joinUrl(base: string, path: string): URL {
   return new URL(base.replace(/\/+$/, "") + path);
@@ -391,6 +414,7 @@ export function routerHandler(
   const busts = new BustDetector();
   const gaps = new GapTracker();
   const warned = new Set<string>();
+  let warnedCompressed = false;
   const onDuplicate = (model: string, cands: string[]) => {
     if (warned.has(model)) return;
     warned.add(model);
@@ -460,7 +484,13 @@ export function routerHandler(
         ureq.end();
         return;
       }
-      const prep = prepare(path, req.headers, Buffer.concat(chunks), providers, claudeBase, {
+      const dec = decodeBody(Buffer.concat(chunks), req.headers["content-encoding"]);
+      if (!dec.ok) return fail(dec.status, dec.message);
+      if (dec.encoded && !warnedCompressed) {
+        warnedCompressed = true;
+        log(`${new Date().toISOString()} router: request bodies arrive ${String(req.headers["content-encoding"]).trim().toLowerCase()}-compressed`);
+      }
+      const prep = prepare(path, req.headers, dec.body, providers, claudeBase, {
         ...(options?.isUp ? { isUp: options.isUp } : {}),
         onDuplicate,
       });
