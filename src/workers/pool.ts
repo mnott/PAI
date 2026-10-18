@@ -43,7 +43,7 @@ import { dirname, join } from "node:path";
 import { ANTHROPIC_NATIVE, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
-import type { StreamEvent, UsageBlock } from "./run.js";
+import { inputSideTokens, type StreamEvent, type UsageBlock } from "./run.js";
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
 import { workersLogDir } from "./paths.js";
@@ -604,10 +604,7 @@ export interface PoolHostTask extends PoolTaskRequest {
  */
 export function carriedShare(u: UsageBlock | undefined): number | null {
   if (!u) return null;
-  const denom =
-    (u.input_tokens ?? 0) +
-    (u.cache_read_input_tokens ?? 0) +
-    (u.cache_creation_input_tokens ?? 0);
+  const denom = inputSideTokens(u);
   if (!denom) return null;
   return (u.cache_read_input_tokens ?? 0) / denom;
 }
