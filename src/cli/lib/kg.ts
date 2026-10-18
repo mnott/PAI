@@ -10,7 +10,6 @@
  * All commands require the Postgres backend (KG tables live in Postgres).
  */
 
-import type { Command } from "commander";
 import type { StorageBackend } from "../../storage/interface.js";
 
 import { ok, warn, err, dim, bold, header } from "./utils.js";
@@ -45,16 +44,16 @@ function shorten(s: string, n: number): string {
 // pai kg backfill
 // ---------------------------------------------------------------------------
 
-async function cmdBackfill(opts: {
+export async function kgBackfillCmd(opts: {
   project?: string;
-  limit?: string;
+  limit?: string | number;
   dryRun?: boolean;
-}): Promise<void> {
-  const limit = opts.limit ? parseInt(opts.limit, 10) : undefined;
+}): Promise<number> {
+  const limit = opts.limit ? parseInt(String(opts.limit), 10) : undefined;
   if (limit !== undefined && (isNaN(limit) || limit < 1)) {
     console.error(err("  --limit must be a positive integer"));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 
   console.log();
@@ -86,11 +85,12 @@ async function cmdBackfill(opts: {
       console.log(`    ${warn("Errors:")}             ${result.errors}`);
     }
     console.log();
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
@@ -98,14 +98,14 @@ async function cmdBackfill(opts: {
 // pai kg query
 // ---------------------------------------------------------------------------
 
-async function cmdQuery(opts: {
+export async function kgQueryCmd(opts: {
   subject?: string;
   predicate?: string;
   object?: string;
-  asOf?: string;
+  asOf?: string | number;
   project?: string;
   json?: boolean;
-}): Promise<void> {
+}): Promise<number> {
   const backend = await getBackend();
   const registry = await getRegistryBackend();
   const close = () => backend.close();
@@ -124,7 +124,7 @@ async function cmdQuery(opts: {
     if (asOf && isNaN(asOf.getTime())) {
       console.error(err(`  Invalid --as-of date: ${opts.asOf}`));
       process.exitCode = 1;
-      return;
+      return 1;
     }
 
     const triples = await backend.queryKgTriples({
@@ -137,7 +137,7 @@ async function cmdQuery(opts: {
 
     if (opts.json) {
       console.log(JSON.stringify(triples, null, 2));
-      return;
+      return 0;
     }
 
     console.log();
@@ -152,6 +152,7 @@ async function cmdQuery(opts: {
       );
     }
     console.log();
+    return 0;
   } finally {
     await close();
   }
@@ -161,8 +162,8 @@ async function cmdQuery(opts: {
 // pai kg list
 // ---------------------------------------------------------------------------
 
-async function cmdList(opts: { project?: string; limit?: string }): Promise<void> {
-  const limit = opts.limit ? parseInt(opts.limit, 10) : 50;
+export async function kgListCmd(opts: { project?: string; limit?: string | number }): Promise<number> {
+  const limit = opts.limit ? parseInt(String(opts.limit), 10) : 50;
   const backend = await getBackend();
   const registry = await getRegistryBackend();
   const close = () => backend.close();
@@ -191,6 +192,7 @@ async function cmdList(opts: { project?: string; limit?: string }): Promise<void
       console.log(dim(`  (${triples.length - slice.length} more — increase --limit)`));
     }
     console.log();
+    return 0;
   } finally {
     await close();
   }
@@ -200,7 +202,7 @@ async function cmdList(opts: { project?: string; limit?: string }): Promise<void
 // pai kg stats
 // ---------------------------------------------------------------------------
 
-async function cmdStats(): Promise<void> {
+export async function kgStatsCmd(): Promise<number> {
   const backend = await getBackend();
   try {
     const stats = await backend.getKgStats();
@@ -214,61 +216,8 @@ async function cmdStats(): Promise<void> {
     console.log(`  ${bold("Distinct predicates:")}  ${stats.predicates}`);
     console.log(`  ${bold("Contradictions:")}       ${stats.contradictions}`);
     console.log();
+    return 0;
   } finally {
     await backend.close();
   }
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerKgCommands(kgCmd: Command): void {
-  kgCmd
-    .command("backfill")
-    .description("Populate the KG from existing session notes (idempotent)")
-    .option("--project <slug>", "Restrict backfill to a single project")
-    .option("--limit <n>", "Maximum number of notes to process")
-    .option("--dry-run", "List notes that would be processed without extracting")
-    .action(async (opts: { project?: string; limit?: string; dryRun?: boolean }) => {
-      await cmdBackfill(opts);
-    });
-
-  kgCmd
-    .command("query")
-    .description("Query KG triples by subject, predicate, object, time, or project")
-    .option("--subject <s>", "Filter by subject")
-    .option("--predicate <p>", "Filter by predicate")
-    .option("--object <o>", "Filter by object")
-    .option("--as-of <date>", "Point-in-time query (YYYY-MM-DD or ISO 8601)")
-    .option("--project <slug>", "Restrict to a project slug")
-    .option("--json", "Output raw JSON")
-    .action(
-      async (opts: {
-        subject?: string;
-        predicate?: string;
-        object?: string;
-        asOf?: string;
-        project?: string;
-        json?: boolean;
-      }) => {
-        await cmdQuery(opts);
-      }
-    );
-
-  kgCmd
-    .command("list")
-    .description("List currently-valid triples")
-    .option("--project <slug>", "Restrict to a project slug")
-    .option("--limit <n>", "Maximum triples to print", "50")
-    .action(async (opts: { project?: string; limit?: string }) => {
-      await cmdList(opts);
-    });
-
-  kgCmd
-    .command("stats")
-    .description("Show triple counts and contradiction count")
-    .action(async () => {
-      await cmdStats();
-    });
 }
