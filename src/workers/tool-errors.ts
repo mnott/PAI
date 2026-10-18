@@ -181,6 +181,12 @@ export function summarizeToolInput(input: unknown): string | undefined {
   return s ? s.replace(/\s+/g, " ").slice(0, INPUT_MAX) : undefined;
 }
 
+export function clipRaw(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= RAW_MAX) return normalized;
+  return normalized.slice(0, 180) + " … " + normalized.slice(-117);
+}
+
 export function recordToolError(
   logDir: string,
   rec: { worker: string; provider: string; label: string; tool: string; text: string; input?: unknown },
@@ -195,7 +201,7 @@ export function recordToolError(
       label: rec.label,
       tool: rec.tool,
       signature: normalizeError(rec.tool, rec.text),
-      raw: rec.text.replace(/\s+/g, " ").trim().slice(0, RAW_MAX),
+      raw: clipRaw(rec.text),
     };
     const input = summarizeToolInput(rec.input);
     if (input) line.input = input;
