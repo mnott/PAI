@@ -1,14 +1,14 @@
 /** `pai memory ...`: search and index what was written down. */
 
 import type { Command } from "commander";
-import { OPT, type CommandDef, type OptDef } from "../define.js";
+import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
 import { bridged } from "../lib/bridge.js";
 import { registerBackendCommands } from "./memory/backend.js";
 import { registerEmbedCommand } from "./memory/embed.js";
 import { registerIndexCommand } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { registerSearchCommand } from "./memory/search.js";
-import { registerSourcesCommand } from "./memory/sources-cmd.js";
+import { memorySourcesCmd } from "./memory/sources-cmd.js";
 import { registerStatsCommands } from "./memory/stats.js";
 
 const background: OptDef = { name: "background", type: "boolean", summary: "Run at low priority so the computer stays responsive" };
@@ -88,16 +88,23 @@ export const memorySettingsCommand = m(registerStatsCommands, ["settings"], {
   seeAlso: ["pai config path"],
 });
 
-export const memorySourcesCommand = m(registerSourcesCommand, ["sources"], {
+export const memorySourcesCommand = {
   name: "sources",
   summary: "Where the indexed content comes from",
   description:
     "Shows what the indexer has taken in: composition by source, which roots content enters from, the heaviest single files, " +
     "and how many chunks are rewritten per day (which tells a finite backlog from a treadmill).",
-  options: [{ name: "limit", type: "number", value: "N", default: 8, summary: "Rows per section" }],
+  options: [{ name: "limit", type: "number", value: "N", default: 8, summary: "Rows per section" } as const],
   examples: ["pai memory sources", "pai memory sources --limit 20"],
   seeAlso: ["pai memory status"],
-});
+  run: async (ctx: any) => {
+    const limit = ctx.opts.limit !== undefined ? ctx.opts.limit : 8;
+    if (typeof limit !== 'number') {
+      throw new CliError("Option --limit must be a number", "pai help memory sources", 2);
+    }
+    return await memorySourcesCmd(ctx.args, { limit });
+  },
+};
 
 const backendDetect = m(registerBackendCommands, ["backend", "detect"], {
   name: "detect",
