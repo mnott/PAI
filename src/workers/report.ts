@@ -363,6 +363,22 @@ function relShort(p: string, cwd: string): string {
 export interface BashRun {
   command: string;
   failed: boolean;
+  /** last ~400 chars of the tool result text, when recorded */
+  output?: string;
+}
+
+/** Failure markers in a run's output tail that void it as proof even when its exit status was 0. */
+const OUTPUT_FAILURE = /\berror TS\d+|\bFAILED\b|Tests?\s+\d+\s+failed|\b\d+ failed\b|✗|×\s/;
+
+/**
+ * Whether `part` in `raw` has its exit status masked: a `||` anywhere after it
+ * (`a && echo ok || echo FAILED` always exits 0), or a command ending in
+ * `; true` / `; :`. A trailing `|| true` is covered by the `||` rule. Not a shell parser.
+ */
+function exitMasked(raw: string, part: string): boolean {
+  if (/;\s*(true|:)\s*$/.test(raw)) return true;
+  const i = raw.indexOf(part);
+  return i >= 0 && raw.slice(i + part.length).includes("||");
 }
 
 const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
@@ -408,16 +424,24 @@ export function checkProof(
     const claimed = parsed.fields.p;
     // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
     const parts = claimed.split(/;|&&/).map(normaliseCommand).filter(Boolean);
-    const ok = runs.filter((r) => !r.failed).map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
-    const ran = ok.some((r) => r.raw.includes(squeeze(claimed))) || (parts.length > 0 && parts.every((c) => ok.some((r) => r.norm.includes(c) || r.raw.includes(c))));
-    if (!ran) {
+    const match = (rs: BashRun[], unmasked: boolean): boolean => {
+      const ok = rs.map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
+      const hit = (r: { raw: string; norm: string }, c: string): boolean => (r.norm.includes(c) || r.raw.includes(c)) && !(unmasked && exitMasked(r.raw, c));
+      const whole = squeeze(claimed);
+      return ok.some((r) => r.raw.includes(whole) && !(unmasked && exitMasked(r.raw, whole))) || (parts.length > 0 && parts.every((c) => ok.some((r) => hit(r, c))));
+    };
+    const passing = runs.filter((r) => !r.failed);
+    const clean = passing.filter((r) => !OUTPUT_FAILURE.test(r.output ?? ""));
+    const ran = match(passing, false);
+    const why = !ran ? `claimed proof not run or failed: ${parsed.fields.p}` : !match(passing, true) ? "claimed proof masked its exit code" : !match(clean, true) ? "claimed proof output shows a failure" : "";
+    if (why) {
       rewritten = true;
       proof = parsed.fields.p;
       out = out
         .split("\n")
         .filter((l) => !/^\s*y=/.test(l))
         .map((l) => (/^\s*r=\+\s*$/.test(l) ? "r=~" : l))
-        .concat(`y=claimed proof not run or failed: ${parsed.fields.p}`)
+        .concat(`y=${why}`)
         .join("\n");
     }
   }

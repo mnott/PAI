@@ -730,7 +730,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
             if (use?.name === "Bash") {
               const text = typeof block.content === "string" ? block.content : "";
               const failed = block.is_error === true || /Exit code [1-9]/.test(text);
-              bashRuns.push({ command: String((use.input as { command?: unknown })?.command ?? ""), failed });
+              bashRuns.push({ command: String((use.input as { command?: unknown })?.command ?? ""), failed, output: text.slice(-400) });
             }
           }
         }
