@@ -14,9 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
-import { NODE_ON_TS_PREFIX, IGNORED_PATH_PREFIX } from "../hooks/ts/lib/worker-bash-rules.js";
-import { PATTERN_KILL_PREFIX } from "../hooks/ts/lib/worker-guard.js";
-import { ORCHESTRATOR_BASH_PREFIX } from "../hooks/ts/lib/edit-gate.js";
+import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -114,14 +112,12 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   return false;
 }
 
-/** PAI guard denials that steer the model; built from the guards' own exported texts. The sleep-poll gate is deliberately absent (model error). */
-const reEscape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const GUARD_REDIRECT = new RegExp([NODE_ON_TS_PREFIX, IGNORED_PATH_PREFIX, ORCHESTRATOR_BASH_PREFIX, PATTERN_KILL_PREFIX].map(reEscape).join("|"), "i");
-
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
-  { test: (r) => GUARD_REDIRECT.test(r.raw), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
+  // The sleep-poll gate is a model error and must win over the generic guard rule below.
+  { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
+  { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
   { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
   {
     test: (r) => {
@@ -133,7 +129,6 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
   { test: (r) => /exactly the same|String to replace not found/i.test(r.raw), c: { cls: "model", hint: "Edit with a wrong old_string", loopAt: 5 } },
   { test: (r) => /no AI attribution/i.test(r.raw), c: { cls: "model", hint: "commit guard: AI attribution denied", loopAt: 3 } },
   { test: (r) => /git checkout .*blocked|checkout .* blocked/i.test(r.raw), c: { cls: "model", hint: "guard: git checkout blocked", loopAt: 3 } },
-  { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => /Bash timeout .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: Bash timeout blocked", loopAt: 3 } },
   {
     test: (r) => {

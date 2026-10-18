@@ -20,9 +20,8 @@ export interface SleepPollGateInput {
 }
 
 /** An allow may rewrite the tool input and tell the model why (`updatedInput`, `additionalContext`). */
-export type GateDecision =
-  | { decision: "allow"; updatedInput?: Record<string, unknown>; context?: string }
-  | { decision: "deny"; reason: string };
+import { type GateDecision } from "./render-decision.js";
+export type { GateDecision };
 
 /** Longest total sleep a command may carry: a single `sleep N` with N <= 60, or several summing to <= 60. */
 export const SLEEP_ALLOWED_SECS = 60;
@@ -143,25 +142,4 @@ export function decideSleepPollGate(
   if (secs <= SLEEP_ALLOWED_SECS) return { decision: "allow" };
 
   return { decision: "deny", reason: denyReason(secs, isWorker, command) };
-}
-
-/** Render a decision as the JSON the harness reads on the hook's stdout. */
-export function renderDecision(d: GateDecision): string {
-  if (d.decision === "allow") {
-    return JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "allow",
-        ...(d.updatedInput && { updatedInput: d.updatedInput }),
-        ...(d.context && { additionalContext: d.context }),
-      },
-    });
-  }
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: d.reason,
-    },
-  });
 }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError, clipRaw } from "./tool-errors.js";
+import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 import type { WorkerStatus } from "./status.js";
 import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord, isBenignBash } from "./tool-errors.js";
 
@@ -151,9 +152,14 @@ describe("classification", () => {
   });
   it("PAI guard redirects are benign", () => {
     const raws = [
-      "PreToolUse:Bash hook error: node cannot load TypeScript source",
-      "PreToolUse:Bash hook error: orchestrator mode: Bash may not write code files",
-      "PreToolUse:Bash hook error: pattern-based process kill blocked"
+      "PreToolUse:Bash hook error: " + GUARD_MARKER + "node cannot load TypeScript source",
+      "PreToolUse:Bash hook error: " + GUARD_MARKER + "orchestrator mode: Bash may not write code files",
+      "PreToolUse:Bash hook error: " + GUARD_MARKER + "pattern-based process kill blocked",
+      "PreToolUse:Bash hook error: " + GUARD_MARKER + "tsc with a file argument ignores tsconfig.json; run npx tsc --noEmit",
+      "PreToolUse:Edit hook error: " + GUARD_MARKER + "Wrong path. Use exactly: /w/src/a.ts",
+      "PreToolUse:Agent hook error: " + GUARD_MARKER + "Anthropic subagents are denied; use pai worker run",
+      "PreToolUse:mcp__x__y hook error: " + GUARD_MARKER + "stale deferred-tool schema; call ToolSearch first",
+      "PreToolUse:R hook error: " + GUARD_MARKER + "write your R report as plain text in your final answer, not as a tool call"
     ];
     for (const raw of raws) {
       const r = rec("w1", NOW, raw);
@@ -162,10 +168,18 @@ describe("classification", () => {
     }
   });
   it("Notes/ force-add denial is a guard redirect, not a harness error", () => {
-    const raw = "PreToolUse:Bash hook error: Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
+    const raw = "PreToolUse:Bash hook error: " + GUARD_MARKER + "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
     const r = inp(rec("w1", NOW, raw, "Bash"), "git add -f Notes/three-tier-log.md && git commit -qm x");
     expect(classifyToolError(r).cls).toBe("benign");
     expect(classifyToolError(r).hint).toMatch(/guard redirect/);
+  });
+  it("sleep-poll denial with the marker stays a model error", () => {
+    const r = rec("w1", NOW, "PreToolUse:Bash hook error: " + GUARD_MARKER + "sleep 90 blocked: use pai worker wait", "Bash");
+    expect(classifyToolError(r).cls).toBe("model");
+  });
+  it("a guard-like text without the marker is not benign", () => {
+    const r = rec("w1", NOW, "PreToolUse:Bash hook error: tsc with a file argument ignores tsconfig.json; run npx tsc --noEmit", "Bash");
+    expect(classifyToolError(r).cls).not.toBe("benign");
   });
   it("harness errors alert at the usual thresholds", () => {
     for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
@@ -191,7 +205,7 @@ describe("classification", () => {
     expect(isBenignBash(r)).toBe(true);
   });
   it("groupToolErrors still counts guard redirects", () => {
-    const raw = "PreToolUse:Bash hook error: node cannot load TypeScript source";
+    const raw = "PreToolUse:Bash hook error: " + GUARD_MARKER + "node cannot load TypeScript source";
     const r = rec("w1", NOW, raw);
     const groups = groupToolErrors([r]);
     expect(groups).toHaveLength(1);

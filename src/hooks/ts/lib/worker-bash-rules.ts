@@ -7,9 +7,9 @@
 import { parseCommand } from "./worker-guard.js";
 
 /** Guard reason texts; tool-errors.ts builds its guard-redirect rule from these. */
-export const NODE_ON_TS_PREFIX = "node cannot load TypeScript source";
+const NODE_ON_TS_PREFIX = "node cannot load TypeScript source";
 export const NODE_ON_TS_REASON = NODE_ON_TS_PREFIX + ". Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.";
-export const IGNORED_PATH_PREFIX = "Notes/ and other ignored paths stay untracked";
+const IGNORED_PATH_PREFIX = "Notes/ and other ignored paths stay untracked";
 export const IGNORED_PATH_REASON = IGNORED_PATH_PREFIX + "; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
 
 /** Returns exactly "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`." when any segment (after prefix strip) is:

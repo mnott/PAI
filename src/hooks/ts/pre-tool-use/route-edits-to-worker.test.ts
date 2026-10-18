@@ -37,8 +37,9 @@ describe("route-edits-to-worker", () => {
   it("blocks a source file edit with the standing message", () => {
     const out = runHook(join(repo, "src/workers/run.ts"));
     const parsed = JSON.parse(out);
-    expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toContain("main session does not edit code");
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("PAI guard: ");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("main session does not edit code");
   });
 
   it("allows a source file edit when PAI_WORKER=1", () => {
@@ -48,8 +49,8 @@ describe("route-edits-to-worker", () => {
   it("orchestrator worker: blocks a source edit and names the local unit command", () => {
     const out = runHook(join(repo, "src/workers/run.ts"), { PAI_WORKER: "1", PAI_WORKER_ORCHESTRATOR: "1" });
     const parsed = JSON.parse(out);
-    expect(parsed.decision).toBe("block");
-    expect(parsed.reason).toContain("pai worker run --provider local30x8 --class implement");
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("pai worker run --provider local30x8 --class implement");
   });
 
   it("orchestrator worker: still allows Notes and /tmp specs", () => {

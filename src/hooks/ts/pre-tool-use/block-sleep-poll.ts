@@ -15,7 +15,8 @@
  * is tested there.
  */
 
-import { decideSleepPollGate, renderDecision, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
+import { decideSleepPollGate, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
+import { renderDecision } from "../lib/render-decision.js";
 
 function allow(): void {
   process.exit(0);

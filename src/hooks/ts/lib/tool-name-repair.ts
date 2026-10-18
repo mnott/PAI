@@ -14,6 +14,8 @@
  * worker-tool-name-repair.ts) does only I/O.
  */
 
+import { renderDecision } from "./render-decision.js";
+
 export const R_TOOL_DENY_REASON = "write your R report as plain text in your final answer, not as a tool call";
 
 export const PARAM_ALIASES: Record<string, Record<string, string>> = {
@@ -124,13 +126,7 @@ export function repairToolName(input: ToolNameRepairInput, env: NodeJS.ProcessEn
 }
 
 export function renderToolDenial(reason: string): string {
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: reason,
-    },
-  });
+  return renderDecision({ decision: "deny", reason });
 }
 
 export function renderParamRepair(r: ToolNameRepair): string {
