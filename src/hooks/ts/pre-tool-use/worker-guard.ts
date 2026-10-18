@@ -16,7 +16,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { renderDecision } from "../lib/render-decision.js";
@@ -24,6 +24,8 @@ import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
+import { emptyLoopState, LOOP_DENY_REASON, stepLoopGuard, type LoopState } from "../lib/loop-guard.js";
+import { recordToolError } from "../../../workers/tool-errors.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -66,6 +68,43 @@ function buildContext(cwd: string): WorkerGuardContext {
   };
 }
 
+/** Per-worker repeat window in <logDir>/loop-guard/<id>.json; true when this call is a loop repeat. */
+function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): boolean {
+  const id = env.PAI_WORKER_ID;
+  if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return false;
+  try {
+    const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+    const dir = join(logDir, "loop-guard");
+    const file = join(dir, `${id.replace(/[^\w.-]/g, "_")}.json`);
+    let state: LoopState = emptyLoopState();
+    try {
+      const j = JSON.parse(readFileSync(file, "utf8")) as LoopState;
+      if (Array.isArray(j.window)) state = j;
+    } catch {
+      // first call or damaged state: start a fresh window
+    }
+    const command = (input.tool_input as { command?: unknown } | undefined)?.command;
+    const r = stepLoopGuard(state, input.tool_name, typeof command === "string" ? command : undefined);
+    if (r.state !== state) {
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(file, JSON.stringify(r.state));
+    }
+    if (r.deny) {
+      recordToolError(logDir, {
+        worker: id,
+        provider: env.PAI_WORKER_PROVIDER ?? "?",
+        label: env.PAI_WORKER_LABEL ?? "?",
+        tool: "Bash",
+        text: `loop guard: same command ${typeof command === "string" ? command : ""}`,
+        input: input.tool_input,
+      });
+    }
+    return r.deny;
+  } catch {
+    return false; // a guard fault must never block work
+  }
+}
+
 async function main(): Promise<void> {
   let text = "";
   try {
@@ -89,6 +128,11 @@ async function main(): Promise<void> {
       process.stdout.write(renderDecision({ decision: "deny", reason: d.reason }) + "\n");
       return;
     }
+  }
+
+  if (loopRepeat(input, process.env)) {
+    process.stdout.write(renderDecision({ decision: "deny", reason: LOOP_DENY_REASON }) + "\n");
+    return;
   }
 
   const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));

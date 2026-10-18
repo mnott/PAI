@@ -162,6 +162,7 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
   { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
   // The sleep-poll gate is a model error and must win over the generic guard rule below.
+  { test: (r) => /^loop guard:/i.test(r.raw), c: { cls: "model", hint: "loop: same command repeated without a change", loopAt: Infinity } },
   { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
   { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
