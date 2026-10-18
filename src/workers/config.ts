@@ -237,9 +237,13 @@ export interface WorkersRoutingConfig {
   /**
    * Per-provider usage percent at or above which budget routing treats the
    * provider as full (default DEFAULT_BUDGET_WALL). From the provider's
-   * `usage` block (anthropic: the OAuth usage endpoint).
+   * `usage` block (anthropic: the OAuth usage endpoint). A number applies to
+   * every window; a map by window name ({"5h": 95, "7d": 70}) walls each
+   * window on its own, a window with no entry using the provider's number
+   * (map form has none) and then DEFAULT_BUDGET_WALLS. A provider is full
+   * when ANY window it reports is at or above that window's wall.
    */
-  budgetWalls: Record<string, number>;
+  budgetWalls: Record<string, number | Record<string, number>>;
 }
 
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
@@ -984,11 +988,16 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
     if (r.budgetWalls !== undefined) {
       if (typeof r.budgetWalls !== "object" || r.budgetWalls === null || Array.isArray(r.budgetWalls)) {
-        bad(".routing.budgetWalls", "must be an object of provider name → percent");
+        bad(".routing.budgetWalls", "must be an object of provider name → percent or window → percent");
       }
+      const okPct = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
       for (const [k, v] of Object.entries(r.budgetWalls as Record<string, unknown>)) {
-        if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) {
-          bad(`.routing.budgetWalls.${k}`, "must be a percent 0–100");
+        if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+          for (const [w, pct] of Object.entries(v as Record<string, unknown>)) {
+            if (!okPct(pct)) bad(`.routing.budgetWalls.${k}.${w}`, "must be a percent 0–100");
+          }
+        } else if (!okPct(v)) {
+          bad(`.routing.budgetWalls.${k}`, "must be a percent 0–100 or a map of window name → percent");
         }
       }
     }
@@ -999,7 +1008,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
       policy: (r.policy as WorkersRoutingConfig["policy"]) ?? DEFAULT_ROUTING.policy,
       priority: r.priority === undefined ? [] : [...(r.priority as string[])],
       budgetWalls:
-        r.budgetWalls === undefined ? {} : ({ ...(r.budgetWalls as Record<string, number>) }),
+        r.budgetWalls === undefined ? {} : ({ ...(r.budgetWalls as WorkersRoutingConfig["budgetWalls"]) }),
     };
   }
 

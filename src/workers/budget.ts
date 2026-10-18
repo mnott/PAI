@@ -37,6 +37,8 @@ export interface BudgetReading {
   resetAt: number | null;
   /** Epoch ms the reading was fetched. */
   fetchedAt: number;
+  /** Every window the endpoint reported, for per-window walls; absent on a bare reading. */
+  windows?: Array<{ name: string; percent: number; resetAt?: number }>;
 }
 
 export type BudgetMap = Record<string, BudgetReading>;
@@ -56,6 +58,10 @@ export function pickBudgetWindow(windows: LimitWindow[], now: number): BudgetRea
   return { percent: best.percent, resetAt: best.resetAt ?? null, fetchedAt: now };
 }
 
+function withWindows(r: BudgetReading, windows: LimitWindow[]): BudgetReading {
+  return { ...r, windows: windows.map((w) => ({ name: w.name, percent: w.percent, ...(w.resetAt ? { resetAt: w.resetAt } : {}) })) };
+}
+
 /**
  * Fetch one provider's budget reading. anthropic (native) reads the OAuth
  * usage endpoint with the keychain token; every other provider its
@@ -69,7 +75,7 @@ export async function fetchBudgetReading(name: string, p: WorkerProvider): Promi
       // the shared door: a reading the router or another probe took within the
       // poll interval is reused, and a 429 backoff is honoured, not retried
       const r = await anthropicShared(now);
-      return pickBudgetWindow(r.windows, r.fetchedAt);
+      return withWindows(pickBudgetWindow(r.windows, r.fetchedAt), r.windows);
     }
     if (!p.usage) return { percent: null, resetAt: null, fetchedAt: now };
     const key = resolveProviderKey(p);
@@ -78,7 +84,8 @@ export async function fetchBudgetReading(name: string, p: WorkerProvider): Promi
     const body = await getJson(new URL(p.usage.url), {
       [hn!.toLowerCase()]: prefix ? `${prefix} ${key}` : String(key),
     });
-    return pickBudgetWindow(windowsFromJson(body, p.usage), now);
+    const windows = windowsFromJson(body, p.usage);
+    return withWindows(pickBudgetWindow(windows, now), windows);
   } catch {
     return { percent: null, resetAt: null, fetchedAt: now };
   }
@@ -154,14 +161,51 @@ export class BudgetCache {
 /** The process-wide cache routing reads; run.ts warms it before resolving. */
 export const budgetCache = new BudgetCache();
 
-/** A provider's wall: routing.budgetWalls[name], else the built-in default for it, else 95. */
-export function budgetWall(routing: WorkersRoutingConfig, name: string): number {
-  return routing.budgetWalls[name] ?? DEFAULT_BUDGET_WALLS[name] ?? DEFAULT_BUDGET_WALL;
+/**
+ * A provider's wall for one window: routing.budgetWalls[name] as a map entry
+ * for that window, else its plain number, else the built-in default, else 95.
+ */
+export function budgetWall(routing: WorkersRoutingConfig, name: string, window?: string): number {
+  const w = routing.budgetWalls[name];
+  if (typeof w === "number") return w;
+  if (w && window !== undefined && w[window] !== undefined) return w[window]!;
+  return DEFAULT_BUDGET_WALLS[name] ?? DEFAULT_BUDGET_WALL;
 }
 
 /** At or above its wall? Unknown (absent/null percent) is never full. */
 export function budgetExceeded(r: BudgetReading | undefined, wall: number): boolean {
   return !!r && r.percent !== null && r.percent >= wall;
+}
+
+/** The window that makes a provider full, with its wall. */
+export interface BudgetHit {
+  window: string | null;
+  percent: number;
+  wall: number;
+  resetAt: number | null;
+}
+
+/**
+ * Is the provider full? True when ANY window it reports is at or above that
+ * window's wall (a bare reading without windows is judged on its one percent).
+ * Returns the first window over its wall, null when there is room or the
+ * reading is unknown.
+ */
+export function budgetFull(
+  routing: WorkersRoutingConfig,
+  name: string,
+  r: BudgetReading | undefined
+): BudgetHit | null {
+  if (!r || r.percent === null) return null;
+  if (r.windows?.length) {
+    for (const w of r.windows) {
+      const wall = budgetWall(routing, name, w.name);
+      if (w.percent >= wall) return { window: w.name, percent: w.percent, wall, resetAt: w.resetAt ?? null };
+    }
+    return null;
+  }
+  const wall = budgetWall(routing, name);
+  return r.percent >= wall ? { window: null, percent: r.percent, wall, resetAt: r.resetAt } : null;
 }
 
 /** Is this reading fresh enough to act on (wall cooldowns) at `now`? */
@@ -180,6 +224,6 @@ export function budgetUntilLabel(r: BudgetReading, now: Date = new Date()): stri
  * Why `chosen` is not the walled provider skipped ahead of it:
  * "anthropic 96% until 08:02" — the one-line switch reason.
  */
-export function budgetSkipReason(name: string, r: BudgetReading, now: Date = new Date()): string {
-  return `${name} ${r.percent}% until ${budgetUntilLabel(r, now)}`;
+export function budgetSkipReason(name: string, r: BudgetReading, now: Date = new Date(), percent: number | null = r.percent): string {
+  return `${name} ${percent}% until ${budgetUntilLabel(r, now)}`;
 }

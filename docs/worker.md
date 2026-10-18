@@ -337,7 +337,16 @@ with room:
   OAuth usage endpoint), cached for 5 minutes, fullest window wins; a failed
   probe reads as "unknown" and never walls anyone,
 - walls default to `anthropic: 95, glm: 90, kimi: 85` (95 for any other
-  provider) and are overridden per provider by `routing.budgetWalls`,
+  provider) and are overridden per provider by `routing.budgetWalls`; a value
+  is a number (every window) or a map by window name
+  (`glm: {"5h": 95, "7d": 70}`): a provider is full when ANY window it reports
+  is at or above that window's wall, a window without an entry using the
+  provider's number, else the default,
+- a run started from a session is sticky to the session's provider: it stays
+  there until that provider is disabled, cooling down or full, then walks the
+  priority list (class pins and `active:` ignored, loopback providers never
+  picked) — the route line reads `anthropic full (5h 96% >= 95) -> glm`;
+  with every provider full it falls through to the configured routing,
 - a walled provider gets a cooldown until `max(now + 10 min, resetAt)`, so it
   re-enters on its own once its window resets,
 - the chosen worker's status carries a one-line `switchReason` when budget

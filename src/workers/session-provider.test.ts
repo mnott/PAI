@@ -102,7 +102,7 @@ describe("session provider routing", () => {
     expect(t.routeWhy).toBe("config: active glm");
   });
 
-  it("a transcript with an unknown model falls through to config", () => {
+  it("a transcript with an unknown model falls to the budget chain, not config", () => {
     transcript("sess-c", "mystery-1");
     const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: { CLAUDE_CODE_SESSION_ID: "sess-c" } });
     expect(t.via).toBe("active");
@@ -119,12 +119,13 @@ describe("session provider routing", () => {
     expect([t.providerName, t.via]).toEqual(["glm", "flag"]);
   });
 
-  it("a session provider in cooldown falls through to config", () => {
+  it("a session provider in cooldown falls to the budget chain, not config", () => {
     const state = { cooldowns: { anthropic: new Date(Date.now() + 600_000).toISOString() } };
     mkdirSync(join(tmp, "x"), { recursive: true });
     writeFileSync(join(tmp, "routing-state.json"), JSON.stringify(state));
     const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: { PAI_SESSION_PROVIDER: "anthropic" } });
-    expect(t.via).not.toBe("session");
+    expect(t.providerName).not.toBe("anthropic");
+    expect(t.routeWhy).toContain("anthropic cooling down ->");
   });
 });
 

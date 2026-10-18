@@ -46,13 +46,14 @@ import {
   type BudgetMap,
   type BudgetReading,
   budgetCache,
-  budgetExceeded,
+  budgetFull,
+  type BudgetHit,
   budgetFresh,
   budgetSkipReason,
-  budgetWall,
 } from "./budget.js";
 import { routingStatePath } from "./paths.js";
 import { detectSessionProvider } from "./session-provider.js";
+import { isLoopbackProvider } from "./run-env.js";
 
 const QUOTA_SKIP_DEFAULT = 95;
 const PROBE_TIMEOUT_MS = 10_000;
@@ -170,8 +171,9 @@ export function recordBudgetCooldowns(config: WorkersConfig, logDir: string, now
   let dirty = false;
   for (const [name, r] of Object.entries(budgetCache.snapshot()) as Array<[string, BudgetReading]>) {
     if (r.percent === null || !budgetFresh(r, now.getTime())) continue;
-    if (!budgetExceeded(r, budgetWall(config.routing, name))) continue;
-    const until = Math.max(now.getTime() + BUDGET_COOLDOWN_MIN * 60_000, r.resetAt ?? 0);
+    const hit = budgetFull(config.routing, name, r);
+    if (!hit) continue;
+    const until = Math.max(now.getTime() + BUDGET_COOLDOWN_MIN * 60_000, hit.resetAt ?? r.resetAt ?? 0);
     const prev = state.cooldowns[name];
     if (prev && Date.parse(prev) >= until) continue;
     state.cooldowns[name] = new Date(until).toISOString();
@@ -221,6 +223,10 @@ function mustBeRunnable(name: string, p: WorkerProvider): WorkerProvider {
   return p;
 }
 
+function budgetHitLabel(hit: BudgetHit): string {
+  return `${hit.window ? `${hit.window} ` : ""}${hit.percent}% >= ${hit.wall}`;
+}
+
 /** Why one provider of a routing order did not qualify (message fragment). */
 function exclusionReason(
   config: WorkersConfig,
@@ -238,9 +244,8 @@ function exclusionReason(
     const r = budgets[name];
     // a fresh-enough reading at or above the provider's wall means full;
     // unknown (no reading, null percent) never walls
-    if (r && r.percent !== null && budgetExceeded(r, budgetWall(config.routing, name))) {
-      return `budget ${r.percent}% ≥ wall ${budgetWall(config.routing, name)}`;
-    }
+    const hit = budgetFull(config.routing, name, r);
+    if (hit) return `budget ${hit.percent}% ≥ wall ${hit.wall}`;
   }
   const tier = providerCostTier(p);
   if (cls?.maxCostTier !== undefined && tier > cls.maxCostTier) {
@@ -312,17 +317,42 @@ export function resolveTarget(
   });
   if (session) {
     const p = getProviderOrNative(config, session.name);
-    if (p?.enabled && cooldownRemaining(readRoutingState(logDir), session.name) === 0) {
-      const capability = classModelCapability(opts.className);
-      return {
-        providerName: session.name,
-        provider: p,
-        modelAlias: capability === "fast" ? "fast" : "default",
-        classMcp: cls?.mcp ?? null,
-        via: "session",
-        routeWhy: `session: ${session.why}`,
-      };
+    const state = readRoutingState(logDir);
+    const capability = classModelCapability(opts.className);
+    const sessionTarget = (name: string, provider: WorkerProvider, routeWhy: string, switchReason?: string): ResolvedTarget => ({
+      providerName: name,
+      provider,
+      modelAlias: capability === "fast" ? "fast" : "default",
+      classMcp: cls?.mcp ?? null,
+      via: "session",
+      routeWhy,
+      ...(switchReason ? { switchReason } : {}),
+    });
+    const budgets: BudgetMap | undefined =
+      config.routing.policy !== "order" ? budgetCache.snapshot() : undefined;
+    const hit = budgets ? budgetFull(config.routing, session.name, budgets[session.name]) : null;
+    if (p?.enabled && cooldownRemaining(state, session.name) === 0 && !hit) {
+      return sessionTarget(session.name, p, `session: ${session.why}`);
     }
+
+    // the session's provider is out (disabled, cooling down or full): the budget
+    // fallback chain, never class pins or `active:`, and never a loopback provider
+    const why = !p
+      ? `${session.name} not configured`
+      : !p.enabled
+        ? `${session.name} disabled`
+        : hit
+          ? `${session.name} full (${budgetHitLabel(hit)})`
+          : `${session.name} cooling down`;
+    for (const name of autoOrder(config)) {
+      if (name === session.name) continue;
+      const q = getProviderOrNative(config, name);
+      if (!q || !q.enabled || isLoopbackProvider(q)) continue;
+      if (cooldownRemaining(state, name) > 0) continue;
+      if (budgets && budgetFull(config.routing, name, budgets[name])) continue;
+      return sessionTarget(name, q, `session: ${session.why}; ${why} -> ${name}`, `${name}: ${why}`);
+    }
+    // everything full: fall through to the configured routing as before
   }
 
   if (opts.className && clsTarget !== undefined && typeof clsTarget !== "object") {
@@ -382,7 +412,8 @@ export function resolveTarget(
     if (why) {
       excluded.push(`${name}: ${why}`);
       if (useBudget && budgetSkipped === null && why.startsWith("budget") && p) {
-        budgetSkipped = budgetSkipReason(name, budgets![name]);
+        const r = budgets![name]!;
+        budgetSkipped = budgetSkipReason(name, r, new Date(), budgetFull(config.routing, name, r)?.percent);
       }
       continue;
     }
@@ -432,7 +463,7 @@ export function nextAutoProvider(
     if (quotaExceeded(p)) continue;
     if (budgets) {
       const r = budgets[name];
-      if (r && budgetExceeded(r, budgetWall(config.routing, name))) continue;
+      if (budgetFull(config.routing, name, r)) continue;
     }
     return name;
   }

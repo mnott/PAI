@@ -459,3 +459,112 @@ describe("resolveTarget — budget policy (live-budget fallback)", () => {
     expect(t.switchReason).toMatch(/^kimi: glm 96% until \d{2}:\d{2}$/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// sticky session provider: per-window walls, budget fallback chain
+// ---------------------------------------------------------------------------
+
+describe("session provider — sticky, budget fallback, per-window walls", () => {
+  const sdir = mkdtempSync(join(tmpdir(), "pai-workers-sticky-"));
+  const LOCAL: WorkerProvider = { ...GLM, baseUrl: "http://127.0.0.1:8000" };
+  const KIMI: WorkerProvider = { ...GLM, baseUrl: "https://kimi.example.com" };
+  const env = (name: string) => ({ PAI_SESSION_PROVIDER: name }) as NodeJS.ProcessEnv;
+
+  const cfg = (walls: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+    config({
+      active: "kimi",
+      providers: { glm: GLM, kimi: KIMI, local30x8: LOCAL },
+      classes: { implement: "glm/fast" },
+      routing: {
+        order: [],
+        cooldownMinutes: 30,
+        retryOnQuota: true,
+        policy: "budget",
+        priority: ["anthropic", "local30x8", "glm", "kimi"],
+        budgetWalls: walls,
+      },
+      ...over,
+    });
+
+  const seedW = (map: Record<string, Array<[string, number]>>) => {
+    const now = Date.now();
+    budgetCache.seed(
+      Object.fromEntries(
+        Object.entries(map).map(([k, ws]) => [
+          k,
+          {
+            percent: Math.max(...ws.map(([, p]) => p)),
+            resetAt: null,
+            fetchedAt: now,
+            windows: ws.map(([name, percent]) => ({ name, percent })),
+          } satisfies BudgetReading,
+        ])
+      )
+    );
+  };
+
+  afterEach(() => {
+    budgetCache.clear();
+    writeRoutingState(sdir, { cooldowns: {} } satisfies RoutingState);
+  });
+
+  it("a number wall applies to every window", () => {
+    seedW({ anthropic: [["5h", 10], ["7d", 96]] });
+    const t = resolveTarget(cfg({ anthropic: 95 }), sdir, { sessionEnv: env("anthropic") });
+    expect(t.providerName).toBe("glm");
+  });
+
+  it("a map wall applies per window; 7d over its wall with 5h low is full", () => {
+    seedW({ anthropic: [["5h", 5], ["7d", 71]] });
+    const walls = { anthropic: { "5h": 95, "7d": 70 } };
+    const t = resolveTarget(cfg(walls), sdir, { sessionEnv: env("anthropic") });
+    expect(t.providerName).toBe("glm");
+    expect(t.routeWhy).toContain("anthropic full (7d 71% >= 70) -> glm");
+    seedW({ anthropic: [["5h", 5], ["7d", 69]] });
+    expect(resolveTarget(cfg(walls), sdir, { sessionEnv: env("anthropic") }).providerName).toBe("anthropic");
+  });
+
+  it("session anthropic under its walls stays on anthropic (via session)", () => {
+    seedW({ anthropic: [["5h", 20], ["7d", 30]], glm: [["5h", 1]] });
+    const t = resolveTarget(cfg({}), sdir, { sessionEnv: env("anthropic"), className: "implement" });
+    expect(t.providerName).toBe("anthropic");
+    expect(t.via).toBe("session");
+  });
+
+  it("session anthropic 5h full -> glm; class pin, active and local in priority are ignored", () => {
+    seedW({ anthropic: [["5h", 96], ["7d", 10]], glm: [["5h", 1], ["7d", 20]] });
+    const t = resolveTarget(cfg({}), sdir, { sessionEnv: env("anthropic"), className: "implement" });
+    expect(t.providerName).toBe("glm");
+    expect(t.modelAlias).toBe("default");
+    expect(t.routeWhy).toContain("anthropic full (5h 96% >= 95) -> glm");
+  });
+
+  it("local30x8 is never chosen by the fallback, even first in line", () => {
+    seedW({ anthropic: [["5h", 99]], glm: [["5h", 99]], kimi: [["5h", 10]] });
+    const c = cfg({}, { active: "glm" });
+    const t = resolveTarget(c, sdir, { sessionEnv: env("anthropic") });
+    expect(t.providerName).toBe("kimi");
+  });
+
+  it("every provider full keeps the old fall-through (class pin)", () => {
+    seedW({ anthropic: [["5h", 99]], glm: [["5h", 99]], kimi: [["5h", 99]] });
+    const t = resolveTarget(cfg({}), sdir, { sessionEnv: env("anthropic"), className: "implement" });
+    expect(t.via).toBe("class");
+    expect(t.providerName).toBe("glm");
+  });
+
+  it("no session provider: old behaviour, class pin wins", () => {
+    seedW({ anthropic: [["5h", 99]] });
+    const t = resolveTarget(cfg({}), sdir, { sessionEnv: {} as NodeJS.ProcessEnv, className: "implement", home: sdir, cwd: sdir });
+    expect(t.via).toBe("class");
+  });
+
+  it("config validation: bad map values throw, number and map forms parse", () => {
+    const mk = (budgetWalls: unknown) => () => config({ routing: { budgetWalls } });
+    expect(mk({ anthropic: 90 })).not.toThrow();
+    expect(mk({ anthropic: { "5h": 95, "7d": 70 } })).not.toThrow();
+    expect(mk({ anthropic: { "7d": 170 } })).toThrow(/budgetWalls\.anthropic\.7d/);
+    expect(mk({ anthropic: { "7d": "x" } })).toThrow();
+    expect(mk({ anthropic: [1] })).toThrow();
+  });
+});
