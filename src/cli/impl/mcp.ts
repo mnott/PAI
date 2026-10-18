@@ -9,7 +9,6 @@
  * with a note, a missing one is added.
  */
 
-import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
@@ -47,7 +46,7 @@ const SERVERS: McpServerSpec[] = [
 // install
 // ---------------------------------------------------------------------------
 
-function cmdInstall(): void {
+export function mcpInstallCmd(): number {
   const config = readClaudeJson();
 
   // Ensure mcpServers key exists
@@ -88,14 +87,15 @@ function cmdInstall(): void {
 
   if (!changed) {
     console.log(dim("  Use `pai mcp status` to verify the configuration."));
-    return;
+    return 0;
   }
 
   try {
     writeClaudeJson(config);
+    return 0;
   } catch (e) {
     console.error(err(`Failed to write ~/.claude.json: ${e}`));
-    process.exitCode = 1;
+    return 1;
   }
 }
 
@@ -103,7 +103,7 @@ function cmdInstall(): void {
 // status
 // ---------------------------------------------------------------------------
 
-function cmdStatus(): void {
+export function mcpStatusCmd(): number {
   const config = readClaudeJson();
 
   const servers =
@@ -148,28 +148,5 @@ function cmdStatus(): void {
   );
 
   console.log();
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerMcpCommands(mcpCmd: Command): void {
-  mcpCmd
-    .command("install")
-    .description(
-      "Register the PAI MCP server (pai) in ~/.claude.json (restart Claude Code to activate)"
-    )
-    .action(() => {
-      cmdInstall();
-    });
-
-  mcpCmd
-    .command("status")
-    .description(
-      "Show whether the PAI MCP server (pai) is registered and the binary exists"
-    )
-    .action(() => {
-      cmdStatus();
-    });
+  return 0;
 }

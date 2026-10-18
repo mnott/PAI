@@ -4,26 +4,25 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { legacyRunner } from "../lib/legacy.js";
-import { registerMcpCommands } from "../impl/mcp.js";
-
-const L = legacyRunner("mcp", registerMcpCommands);
+import { mcpInstallCmd, mcpStatusCmd } from "../impl/mcp.js";
 
 export const mcpSubcommands: CommandDef[] = [
-L({
+{
   name: "install",
   summary: "Register the PAI MCP server with Claude Code",
   description: "Register the PAI MCP server with Claude Code.\n\nRegister the PAI MCP server (pai) in ~/.claude.json (restart Claude Code to activate)",
   examples: ["pai mcp install","pai mcp status"],
   seeAlso: ["pai mcp status"],
-}),
-L({
+  run: (ctx) => mcpInstallCmd(),
+},
+{
   name: "status",
   summary: "Show whether the PAI MCP server is registered",
   description: "Show whether the PAI MCP server is registered.\n\nShow whether the PAI MCP server (pai) is registered and the binary exists",
   examples: ["pai mcp status","pai mcp status"],
   seeAlso: ["pai mcp install"],
-}),
+  run: (ctx) => mcpStatusCmd(),
+},
 ];
 
 export const mcpCommand: CommandDef = {
