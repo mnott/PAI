@@ -6,7 +6,7 @@ import { bridged } from "../lib/bridge.js";
 import { registerBackendCommands } from "./memory/backend.js";
 import { registerEmbedCommand } from "./memory/embed.js";
 import { registerIndexCommand } from "./memory/index-cmd.js";
-import { registerPassCommand } from "./memory/pass.js";
+import { memoryPassCmd } from "./memory/pass.js";
 import { registerSearchCommand } from "./memory/search.js";
 import { registerSourcesCommand } from "./memory/sources-cmd.js";
 import { registerStatsCommands } from "./memory/stats.js";
@@ -147,14 +147,15 @@ export const memoryReembedCommand = m(registerBackendCommands, ["reembed"], {
   seeAlso: ["pai memory embed", "pai memory backend use"],
 });
 
-const memoryPassCommand = m(registerPassCommand, ["pass"], {
+const memoryPassCommand: CommandDef = {
   name: "pass",
   summary: "Internal: one background pass started by the daemon",
   description: "Used by the background service to run an index or embed pass at low priority and report one JSON line. Not meant to be typed.",
   args: [{ name: "NAME", required: true, summary: "index, embed or noop" }],
   options: [{ name: "sleep", type: "number", value: "MS", default: 0, summary: "noop pass only: sleep this many milliseconds" }],
   examples: ["pai memory pass noop --sleep 10", "pai memory pass index"],
-});
+  run: async (ctx) => memoryPassCmd(ctx.args.NAME as string, { sleep: ctx.opts["sleep"] }),
+};
 
 export const memoryCommand: CommandDef = {
   name: "memory",
