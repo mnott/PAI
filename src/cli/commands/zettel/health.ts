@@ -1,19 +1,18 @@
 /** zettel health: vault structural health audit. */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
 
-async function cmdHealth(opts: {
+export async function zettelHealthCmd(opts: {
   scope?: string;
   project?: string;
-  days?: string;
-  include?: string;
-}): Promise<void> {
+  days?: number;
+  include?: string
+}): Promise<number> {
   const scope = (opts.scope ?? "full") as "full" | "recent" | "project";
   const projectPath = opts.project;
-  const recentDays = parseInt(opts.days ?? "30", 10);
+  const recentDays = opts.days ?? 30;
   const includeTypes = opts.include
     ? (opts.include.split(",").map(s => s.trim()) as Array<"dead_links" | "orphans" | "disconnected" | "low_connectivity">)
     : undefined;
@@ -35,6 +34,7 @@ async function cmdHealth(opts: {
   const bar = scoreColor("█".repeat(filled)) + dim("░".repeat(barWidth - filled));
   console.log(`  Health Score: ${scoreColor(bold(String(score)))}%  [${bar}]`);
   console.log();
+
   console.log(dim(`  Files: ${result.totalFiles}   Links: ${result.totalLinks}`));
   console.log();
 
@@ -86,23 +86,5 @@ async function cmdHealth(opts: {
   }
 
   console.log();
-}
-
-export function registerHealthCommand(parent: Command): void {
-  parent
-    .command("health")
-    .description("Vault structural health audit: dead links, orphans, connectivity")
-    .option("--scope <s>", "Scope: full | recent | project", "full")
-    .option("--project <path>", "Project path prefix (requires --scope project)")
-    .option("--days <n>", "Look-back window in days (requires --scope recent)", "30")
-    .option("--include <types>", "Comma-separated subset: dead_links,orphans,disconnected,low_connectivity")
-    .action(async (opts: { scope?: string; project?: string; days?: string; include?: string }) => {
-      try {
-        await cmdHealth(opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }
