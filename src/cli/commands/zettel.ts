@@ -6,6 +6,7 @@ import { bridged } from "../lib/bridge.js";
 import { registerZettelCommands } from "./zettel/index.js";
 import { zettelExploreCmd } from "./zettel/explore.js";
 import { zettelHealthCmd } from "./zettel/health.js";
+import { zettelSurpriseCmd } from "./zettel/surprise.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
@@ -39,7 +40,7 @@ export const zettelCommand: CommandDef = {
         mode: ctx.opts.mode === undefined ? undefined : String(ctx.opts.mode),
       }),
     },
-    z(["surprise"], {
+    {
       name: "surprise",
       summary: "Find notes that are alike in meaning but far apart in links",
       description: "Surprising connections: pairs of notes that say similar things yet are not linked near each other.",
@@ -52,7 +53,13 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ["pai zettel surprise my-note --vault-project-id 3", "pai zettel surprise my-note --vault-project-id 3 --limit 5"],
       seeAlso: ["pai zettel suggest"],
-    }),
+      run: (ctx) => zettelSurpriseCmd(ctx.args.NOTE as string, {
+        vaultProjectId: ctx.opts["vault-project-id"] as string | number | undefined,
+        limit: ctx.opts.limit as number | undefined,
+        minSimilarity: ctx.opts["min-similarity"] as number | undefined,
+        minDistance: ctx.opts["min-distance"] as number | undefined,
+      }),
+    },
     z(["converse"], {
       name: "converse",
       summary: "Ask the vault a question",
