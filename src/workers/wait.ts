@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
-import { loadStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export interface WaitResult {
   id: string;
@@ -36,6 +36,8 @@ export interface WaitOptions {
   intervalMs?: number;
   /** Return as soon as ANY named worker is terminal (default: wait for all). */
   any?: boolean;
+  /** Pid ownership check (default: the one kill uses). */
+  owns?: (s: Pick<WorkerStatus, "pid" | "started">) => boolean;
 }
 
 const TERMINAL: readonly WorkerStatus["state"][] = ["done", "failed", "killed", "lost"];
@@ -113,6 +115,7 @@ export async function waitWorkers(
   const timeoutMs = opts.timeoutMs ?? 900_000;
   const intervalMs = opts.intervalMs ?? 2_000;
   const known = new Map<string, WorkerStatus>();
+  reconcileStatuses(logDir, new Date(), 0, opts.owns);
   const pending = new Set<string>();
   // the pre-sleep check: already-finished workers return without waiting
   for (const id of ids) {
@@ -125,6 +128,7 @@ export async function waitWorkers(
   const anyDone = () => opts.any === true && pending.size < ids.length;
   while (pending.size > 0 && !anyDone() && Date.now() < deadline) {
     await sleep(Math.min(intervalMs, Math.max(1, deadline - Date.now())));
+    reconcileStatuses(logDir, new Date(), 0, opts.owns);
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);
       if (st) known.set(id, st); // a vanished file keeps the last known status

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadStatus, nowStamp, pidAlive, reconcileStatuses, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, markStartFailed, nowStamp, pidAlive, reconcileStatuses, saveStatus, type WorkerStatus } from "./status.js";
 import { renderStatusLine } from "./render.js";
 
 let dir: string;
@@ -51,5 +51,34 @@ describe("pidAlive EPERM", () => {
     });
     expect(pidAlive(123)).toBe(false);
     expect(pidAlive(123, { epermAlive: true })).toBe(true);
+  });
+});
+
+describe("dead pid is lost without waiting for the grace", () => {
+  it("ps view and wait both report lost", async () => {
+    const { waitWorkers } = await import("./wait.js");
+    const { psOutput } = await import("./viewer.js");
+    saveStatus(dir, { ...mk("g", 999999), updated: nowStamp(new Date()) });
+    psOutput(dir, true, {}, false);
+    expect(loadStatus(dir, "g")?.state).toBe("lost");
+    saveStatus(dir, { ...mk("g", 999999), updated: nowStamp(new Date()) });
+    const r = await waitWorkers(dir, ["g"], { timeoutMs: 500, intervalMs: 10, owns: dead });
+    expect(r.timedOut).toEqual([]);
+    expect(r.results[0].state).toBe("lost");
+    expect(loadStatus(dir, "g")?.state).toBe("lost");
+  });
+
+  it("reconcile with grace 0 marks a fresh dead-pid status lost", () => {
+    saveStatus(dir, mk("h", 999999), T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 1000), 0, dead)).toEqual(["h"]);
+  });
+
+  it("a failed start records failed and the reason", () => {
+    const s = mk("i", process.pid);
+    saveStatus(dir, s, T0);
+    markStartFailed(dir, s, new Error("spawn claude ENOENT"));
+    const got = loadStatus(dir, "i")!;
+    expect(got.state).toBe("failed");
+    expect(got.last).toContain("spawn claude ENOENT");
   });
 });

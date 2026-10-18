@@ -495,6 +495,14 @@ export function reconcileStatuses(
   return lost;
 }
 
+/** Record a start that died before the claude process ran: failed, with the error in `last`. */
+export function markStartFailed(logDir: string, status: WorkerStatus, err: unknown): void {
+  status.state = "failed";
+  status.rc = status.rc ?? 1;
+  status.last = "failed to start: " + (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 200);
+  saveStatus(logDir, status);
+}
+
 /** "42s" under 90s, "7m" above — the coarse age the table and bar show. */
 export function ageOf(ts: string, now: Date = new Date()): string {
   const t = Date.parse(ts.replace(" ", "T"));
