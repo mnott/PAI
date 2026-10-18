@@ -2,8 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { helpProblems, runPai, treeDiff, treeFor } from "../lib/legacy-check.js";
-import { registerNotifyCommands } from "../impl/notify.js";
+import { helpProblems, runPai } from "../lib/legacy-check.js";
 import { notifyCommand } from "./notify.js";
 
 let home = "";
@@ -15,9 +14,6 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllEnvs());
 
 describe("pai notify", () => {
-  it("declares exactly the subcommands, flags and arguments the implementation registers", () => {
-    expect(treeDiff(notifyCommand, treeFor(registerNotifyCommands, "notify"))).toEqual([]);
-  });
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(notifyCommand)).toEqual([]);
   });
@@ -30,5 +26,15 @@ describe("pai notify", () => {
     const r = await runPai(["notify","send","info"]);
     expect(r.code).toBe(2);
     expect(r.out + r.err).toContain("missing required argument MESSAGE");
+  });
+  it("pai notify status exits 1", async () => {
+    const r = await runPai(["notify","status"]);
+    // This will fail due to no daemon, so it exits 1
+    expect(r.code).toBe(1);
+  });
+  it("pai notify test exits 1", async () => {
+    const r = await runPai(["notify","test"]);
+    // This will fail due to no daemon, so it exits 1
+    expect(r.code).toBe(1);
   });
 });

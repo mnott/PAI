@@ -10,7 +10,6 @@
  * All sub-commands communicate with the running daemon via IPC.
  */
 
-import type { Command } from "commander";
 import { ok, warn, err, dim, bold, header } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
@@ -72,11 +71,12 @@ function printConfig(config: NotificationConfig, activeChannels: string[]): void
 // Command implementations
 // ---------------------------------------------------------------------------
 
-async function cmdStatus(): Promise<void> {
+export async function notifyStatusCmd(): Promise<number> {
   const client = makeClient();
   try {
     const { config, activeChannels } = await client.getNotificationConfig();
     printConfig(config, activeChannels);
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.log();
@@ -84,19 +84,18 @@ async function cmdStatus(): Promise<void> {
     console.log(dim(`  ${msg}`));
     console.log(dim("  Start it with: pai daemon serve"));
     console.log();
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
-async function cmdSet(opts: {
+export async function notifySetCmd(opts: {
   mode?: string;
   ntfyUrl?: string;
   ntfyPriority?: string;
   whatsappRecipient?: string;
   enableChannel?: string[];
   disableChannel?: string[];
-}): Promise<void> {
+}): Promise<number> {
   const client = makeClient();
 
   // Build the patch object
@@ -111,8 +110,7 @@ async function cmdSet(opts: {
     ];
     if (!validModes.includes(opts.mode as NotificationMode)) {
       console.error(err(`Invalid mode: ${opts.mode}. Valid: ${validModes.join(", ")}`));
-      process.exitCode = 1;
-      return;
+      return 1;
     }
     patch.mode = opts.mode as NotificationMode;
   }
@@ -161,8 +159,7 @@ async function cmdSet(opts: {
     console.error(err("No changes specified. Use --mode, --enable, --disable, etc."));
     console.log(dim("  Example: pai notify set --mode voice"));
     console.log(dim("  Example: pai notify set --mode auto --enable macos --disable ntfy"));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   try {
@@ -173,15 +170,15 @@ async function cmdSet(opts: {
     console.log(ok("  Notification config updated."));
     console.log(`  ${bold("Mode:")} ${modeColor(config.mode)}`);
     console.log();
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
-async function cmdTest(opts: { event?: string }): Promise<void> {
+export async function notifyTestCmd(opts: { event?: string }): Promise<number> {
   const client = makeClient();
   const event = (opts.event ?? "info") as NotificationEvent;
 
@@ -209,19 +206,19 @@ async function cmdTest(opts: { event?: string }): Promise<void> {
 
     console.log(dim(`  Mode: ${result.mode}`));
     console.log();
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
-async function cmdSend(
+export async function notifySendCmd(
   event: string,
   message: string,
   opts: { title?: string }
-): Promise<void> {
+): Promise<number> {
   const client = makeClient();
   const validEvents: NotificationEvent[] = [
     "error", "progress", "completion", "info", "debug",
@@ -231,8 +228,7 @@ async function cmdSend(
     console.error(
       err(`Invalid event: ${event}. Valid: ${validEvents.join(", ")}`)
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   try {
@@ -251,90 +247,10 @@ async function cmdSend(
     if (result.channelsFailed.length > 0) {
       console.log(warn(`  Failed: ${result.channelsFailed.join(", ")}`));
     }
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  Failed: ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerNotifyCommands(notifyCmd: Command): void {
-  // pai notify status (default / alias for get)
-  notifyCmd
-    .command("status")
-    .description("Show current notification mode and active channels")
-    .action(async () => {
-      await cmdStatus();
-    });
-
-  // pai notify get (alias for status)
-  notifyCmd
-    .command("get")
-    .description("Show current notification config (alias for status)")
-    .action(async () => {
-      await cmdStatus();
-    });
-
-  // pai notify set
-  notifyCmd
-    .command("set")
-    .description("Update notification mode or channel configuration")
-    .option(
-      "--mode <mode>",
-      "Notification mode: auto | voice | whatsapp | ntfy | macos | cli | off"
-    )
-    .option("--enable <channel...>", "Enable one or more channels")
-    .option("--disable <channel...>", "Disable one or more channels")
-    .option("--ntfy-url <url>", "Set the ntfy.sh topic URL")
-    .option(
-      "--ntfy-priority <level>",
-      "Set ntfy priority: min | low | default | high | urgent"
-    )
-    .option("--whatsapp-recipient <contact>", "Set WhatsApp recipient")
-    .action(
-      async (opts: {
-        mode?: string;
-        enable?: string[];
-        disable?: string[];
-        ntfyUrl?: string;
-        ntfyPriority?: string;
-        whatsappRecipient?: string;
-      }) => {
-        await cmdSet({
-          mode: opts.mode,
-          enableChannel: opts.enable,
-          disableChannel: opts.disable,
-          ntfyUrl: opts.ntfyUrl,
-          ntfyPriority: opts.ntfyPriority,
-          whatsappRecipient: opts.whatsappRecipient,
-        });
-      }
-    );
-
-  // pai notify test
-  notifyCmd
-    .command("test")
-    .description("Send a test notification through configured channels")
-    .option(
-      "--event <event>",
-      "Event type to test: error | progress | completion | info | debug",
-      "info"
-    )
-    .action(async (opts: { event?: string }) => {
-      await cmdTest(opts);
-    });
-
-  // pai notify send <event> <message>
-  notifyCmd
-    .command("send <event> <message>")
-    .description("Send a notification with an explicit event type and message")
-    .option("--title <title>", "Optional notification title")
-    .action(async (event: string, message: string, opts: { title?: string }) => {
-      await cmdSend(event, message, opts);
-    });
 }
