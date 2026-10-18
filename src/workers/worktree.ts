@@ -14,7 +14,7 @@
  * place; `--no-worktree` opts out, `--worktree` forces one on.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
@@ -806,7 +806,7 @@ export function verifyWorker(logDir: string, id: string, opts: { against?: strin
  * genuinely means it holds nothing, and reporting success there would
  * destroy the worktree for no gain.
  */
-export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean } = {}): string {
+export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean; verify?: string } = {}): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit);
@@ -830,6 +830,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   assertNoNodeModules(st.cwd, mergeBase, st.branch!, id);
   assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
   if (opts.noCommit) return applyNoCommit(st.cwd, id, st.branch!, st.worktreeDir!, mergeBase, incomingPaths);
+  const oldHead = git(st.cwd, ["rev-parse", "HEAD"]);
   try {
     git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
@@ -838,6 +839,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
         `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
     );
   }
+  const verifyLine = opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "";
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
@@ -873,7 +875,26 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   if (salvage.skipped.length) {
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
-  return notes.length ? `${base}; ${notes.join("; ")}` : base;
+  const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
+  return verifyLine ? `${verifyLine}\n${merged}` : merged;
+}
+
+/**
+ * Run the --verify command on the merged tree (stdio inherited, worker env
+ * markers removed). Non-zero: revert the merge with a new commit (never a
+ * reset — the checkout is shared) and throw; branch and worktree stay so the
+ * work can be fixed and re-merged.
+ */
+export function runVerify(cwd: string, cmd: string, oldHead: string): string {
+  const env = { ...process.env };
+  delete env.PAI_WORKER;
+  delete env.PAI_WORKER_ORCHESTRATOR;
+  const r = spawnSync("sh", ["-c", cmd], { cwd, env, stdio: "inherit" });
+  if (r.status === 0) return `verify passed: ${cmd}`;
+  const head = git(cwd, ["rev-parse", "HEAD"]);
+  const isMergeCommit = git(cwd, ["rev-list", "--parents", "-n", "1", "HEAD"]).split(" ").length > 2;
+  git(cwd, isMergeCommit ? ["revert", "-m", "1", "--no-edit", head] : ["revert", "--no-edit", `${oldHead}..HEAD`]);
+  throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${head}; the worker branch is kept`);
 }
 
 /** `pai worker discard <id>`: drop worktree and branch, keep nothing. */
