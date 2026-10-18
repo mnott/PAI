@@ -26,6 +26,8 @@ export interface LoopDeps {
   readEvents?: (logDir: string, id: string) => unknown[];
   say?: (logDir: string, id: string, text: string) => Promise<unknown>;
   kill?: (pid: number) => void;
+  /** Ends the worker's live sub-workers before the worker itself is stopped. */
+  killChildren?: (logDir: string, id: string) => Promise<unknown>;
 }
 
 export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent: Record<string, string>, deps: LoopDeps = {}): Promise<LoopFinding[]> {
@@ -61,6 +63,10 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
     kill = (pid: number) => {
       process.kill(pid, "SIGTERM");
     },
+    killChildren = async (logDir, id) => {
+      const { killTree } = await import("./kill-tree.js");
+      return killTree(logDir, id, { skipRoot: true });
+    },
   } = deps;
 
   const findings: LoopFinding[] = [];
@@ -89,6 +95,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
         }
       } else if (action === "stop") {
         try {
+          await killChildren(logDir, status.id).catch(() => undefined);
           kill(status.pid);
         } catch {
           // errors swallowed
