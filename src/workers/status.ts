@@ -391,14 +391,22 @@ export async function waitForTerminalStatus(
   }
 }
 
-export function alive(pid: number | null | undefined): boolean {
-  if (!pid || pid <= 0) return false;
+/**
+ * Signal-0 liveness probe. EPERM means the pid exists but belongs to another
+ * user: `epermAlive` picks whether that counts as alive.
+ */
+export function pidAlive(pid: number, opts: { epermAlive?: boolean } = {}): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    return !!opts.epermAlive && (e as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+export function alive(pid: number | null | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  return pidAlive(pid);
 }
 
 /**

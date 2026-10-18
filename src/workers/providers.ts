@@ -242,9 +242,6 @@ export function useProvider(
   return { workers, repointed };
 }
 
-/** Which model capability of a provider a set touches (MODEL_CAPABILITIES). */
-export type ModelSlot = ModelCapability;
-
 /**
  * The provider a model command targets: the named one, else the active one.
  * "auto" and an unset active both ask for an explicit name.
