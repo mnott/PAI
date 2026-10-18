@@ -139,11 +139,6 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "question, blocker; results are sent for you when you finish). Sibling workers are not a",
     "coordination path — there is no sideways channel; everything goes up to your parent.",
     "",
-    "Asking for help: if one sub-task is beyond you, `pai worker help --task \"<one paragraph>\" [--files a,b]`",
-    "runs a stronger model on exactly that and prints its report; continue with it. Help is budgeted per",
-    "unit (default 2 calls): exit 4 (\"help budget used\") means no more, so report the blocker in your R x= line.",
-    "Do not use it for work you can do.",
-    "",
   ];
   lines.push(
     ...(format === "ag2"

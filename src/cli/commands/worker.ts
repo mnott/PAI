@@ -22,7 +22,6 @@ import { loadStatus, setWorkerNote } from "../../workers/status.js";
 import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
-import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
@@ -329,12 +328,7 @@ const usageCommand: CommandDef = {
         },
         baseUrls
       );
-      const help = readHelpLedger(logDir());
-      out(
-        flag(ctx, "json")
-          ? JSON.stringify({ ...(usageJson(rep) as object), help }, null, 2)
-          : renderUsage(rep, { workers: true }) + (help.length ? `\n\nhelp calls:\n${renderHelpReport(help)}` : "")
-      );
+      out(flag(ctx, "json") ? JSON.stringify(usageJson(rep), null, 2) : renderUsage(rep, { workers: true }));
     }),
 };
 
@@ -577,51 +571,6 @@ const handoffCommand: CommandDef = {
       }
       const h = await handoffFromInside(logDir(), process.env, payload);
       out(`ok → ${h.to} (${h.kind}); inbox ${h.to}.inbox.jsonl`);
-    }),
-};
-
-const helpCommand: CommandDef = {
-  name: "help",
-  summary: "From inside a worker: ask a stronger model to do one sub-task (budgeted)",
-  description:
-    "Runs a bounded sub-worker (class implement, in place, 20 minutes at most) on a stronger provider and prints its report and the files it changed. " +
-    "Each orchestrated unit gets a small budget of help calls (default 2, PAI_HELP_BUDGET); past it the verb exits 4 and you report the blocker instead. " +
-    "Every call is recorded in help-ledger.jsonl; --report lists them.",
-  options: [
-    { name: "task", type: "string", value: "TEXT", summary: "The one-paragraph sub-task" },
-    { name: "provider", type: "string", value: "NAME", summary: "Provider to ask (default anthropic)" },
-    { name: "model", type: "string", value: "NAME", summary: "Model to ask (default sonnet)" },
-    { name: "files", type: "string", value: "A,B", summary: "Files the sub-task concerns, comma-separated" },
-    { name: "report", type: "boolean", summary: "List the recorded help calls instead of asking" },
-    { name: "scope", type: "string", value: "ID", summary: "With --report: only this unit" },
-  ],
-  examples: [
-    "pai worker help --task 'Rewrite the retry loop in src/net.ts to back off exponentially' --files src/net.ts",
-    "pai worker help --report --scope 20261018-0301-1",
-  ],
-  seeAlso: ["pai worker handoff", "pai worker usage"],
-  run: (ctx) =>
-    guard("pai worker help --task '<sub-task>'", async () => {
-      if (flag(ctx, "report")) {
-        out(renderHelpReport(readHelpLedger(logDir(), str(ctx.opts.scope))));
-        return;
-      }
-      const task = str(ctx.opts.task)?.trim();
-      if (!task) throw new Error("--task is required");
-      const res = await requestHelp(
-        logDir(),
-        {
-          task,
-          provider: str(ctx.opts.provider) ?? "anthropic",
-          model: str(ctx.opts.model) ?? "sonnet",
-          files: (str(ctx.opts.files) ?? "").split(",").map((f) => f.trim()).filter(Boolean),
-          cwd: process.cwd(),
-        },
-        { spawnWorker: spawnPaiWorker, changedFiles: gitChangedFiles, now: Date.now }
-      );
-      if (res.refused) throw new CliError(res.message, undefined, HELP_REFUSED_EXIT);
-      out(res.text);
-      return res.ok ? 0 : 1;
     }),
 };
 
@@ -992,7 +941,6 @@ export const workerCommand: CommandDef = {
     sayCommand,
     goalCommand,
     handoffCommand,
-    helpCommand,
     mergeCommand,
     verifyCommand,
     pendingCommand,
