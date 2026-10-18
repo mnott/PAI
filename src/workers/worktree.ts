@@ -944,10 +944,37 @@ export class MergeConflictError extends Error {
   }
 }
 
+/**
+ * A worker that detached HEAD in its worktree and committed leaves those
+ * commits off its branch. When HEAD is detached and a strict descendant of the
+ * branch tip, fast-forward the branch to it. Returns the adopted sha, else null.
+ */
+export function adoptDetachedHead(dir: string, branch: string): string | null {
+  try {
+    if (!existsSync(dir)) return null;
+    try {
+      git(dir, ["symbolic-ref", "-q", "HEAD"]);
+      return null; // on a branch
+    } catch {
+      // detached
+    }
+    const head = git(dir, ["rev-parse", "HEAD"]);
+    const tip = git(dir, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]);
+    if (head === tip) return null;
+    git(dir, ["merge-base", "--is-ancestor", tip, head]);
+    git(dir, ["update-ref", `refs/heads/${branch}`, head, tip]);
+    return head;
+  } catch {
+    return null; // no branch, diverged, or unreadable: nothing to adopt
+  }
+}
+
 export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean; verify?: string } = {}): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit);
+  const adopted = adoptDetachedHead(st.worktreeDir!, st.branch!);
+  if (adopted) console.log(`worker ${id}: adopted detached HEAD ${adopted.slice(0, 7)} into ${st.branch}`);
   // salvage first: only a commit can carry uncommitted work through the merge
   const slot = isSlotWorktree(st.worktreeDir!);
   const salvage = existsSync(st.worktreeDir!) && !slot
@@ -1185,6 +1212,8 @@ export interface GcEntry {
   knowledge?: Knowledge;
   /** one line per file copied into the main checkout */
   salvaged?: string[];
+  /** sha of a detached HEAD fast-forwarded onto the branch before archiving */
+  adopted?: string;
 }
 
 export interface ArchiveResult {
@@ -1286,6 +1315,66 @@ export function busyPid(dir: string): number {
   return 0;
 }
 
+/** gc for a finished slot worker: archive the branch tip under refs/pai-archive/<id>, delete the branch. */
+function archiveSlotBranch(
+  logDir: string,
+  st: WorkerStatus,
+  tree: { dir: string; branch: string },
+  dryRun: boolean,
+  report: boolean,
+  out: GcEntry[]
+): void {
+  const id = st.id;
+  const target = `refs/pai-archive/${id}`;
+  let repo: string;
+  try {
+    const raw = git(st.cwd, ["rev-parse", "--git-common-dir"]);
+    repo = isAbsolute(raw) ? raw : resolve(st.cwd, raw);
+    git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${tree.branch}`]);
+  } catch {
+    return; // branch already gone or repo unreadable: nothing to archive
+  }
+  let onBranch = false;
+  try {
+    onBranch = existsSync(tree.dir) && git(tree.dir, ["symbolic-ref", "-q", "HEAD"]) === `refs/heads/${tree.branch}`;
+  } catch {
+    // detached
+  }
+  if (onBranch) return void out.push({ id, skipped: `slot worktree is still on ${tree.branch}` });
+  const adopted = dryRun ? null : adoptDetachedHead(tree.dir, tree.branch);
+  const knowledge = (): Knowledge => {
+    const k: Knowledge = { commits: [], dirty: [], ignored: [], missing: [] };
+    try {
+      k.commits = git(repo, ["cherry", mainRef(repo), `refs/heads/${tree.branch}`])
+        .split("\n")
+        .filter((l) => l.startsWith("+ "))
+        .map((l) => l.slice(2));
+    } catch {
+      // no comparable base
+    }
+    return k;
+  };
+  const entry = (extra: Partial<GcEntry> = {}): GcEntry => ({
+    id,
+    archive: target,
+    ...(report ? { knowledge: knowledge() } : {}),
+    ...(adopted ? { adopted } : {}),
+    ...extra,
+  });
+  if (dryRun) return void out.push(entry());
+  try {
+    const k = knowledge();
+    git(repo, ["update-ref", target, `refs/heads/${tree.branch}`]);
+    git(repo, ["branch", "-D", tree.branch]);
+    if (k.commits.length) console.log(`archived ${k.commits.length} commit(s) of worker ${id} in ${target}`);
+    saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
+    appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
+    out.push(entry());
+  } catch (e) {
+    out.push({ id, skipped: (e as Error).message.split("\n")[0] });
+  }
+}
+
 /**
  * Archive worktrees of finished workers older than `olderThanHours` and
  * status-less orphan directories: uncommitted state is salvaged onto the
@@ -1314,10 +1403,11 @@ export function gcWorktrees(
     }
     if (dryRun) return void out.push(report ? { id, archive: target, knowledge: worktreeKnowledge(logDir, id, dir) } : { id, archive: target });
     try {
+      const adopted = adoptDetachedHead(dir, branch);
       const res = archiveWorktree(logDir, id, dir, branch);
       if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
       appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
-      out.push(res.salvaged.length ? { id, archive: target, salvaged: res.salvaged } : { id, archive: target });
+      out.push({ id, archive: target, ...(res.salvaged.length ? { salvaged: res.salvaged } : {}), ...(adopted ? { adopted } : {}) });
     } catch (e) {
       out.push({ id, skipped: (e as Error).message.split("\n")[0] });
     }
@@ -1335,6 +1425,20 @@ export function gcWorktrees(
     }
     if (end > cutoff) continue;
     archive(st.id, tree.dir, tree.branch, st);
+  }
+
+  // Pooled-slot workers: a branch in the shared slot worktree, never a tree of their own.
+  for (const st of statuses) {
+    const tree = ownedTree(st);
+    if (!tree || st.merged || st.archived || isLive(st) || !isSlotWorktree(tree.dir)) continue;
+    let end = 0;
+    try {
+      end = Math.floor(statSync(statusPath(logDir, st.id)).mtimeMs);
+    } catch {
+      continue;
+    }
+    if (end > cutoff) continue;
+    archiveSlotBranch(logDir, st, tree, dryRun, report, out);
   }
 
   if (existsSync(root)) {

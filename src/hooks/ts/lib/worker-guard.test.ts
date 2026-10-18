@@ -58,6 +58,10 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
   ["git clean -fd in shared checkout", bash("git clean -fd"), sharedCtx, "shared checkout"],
   ["git switch in shared checkout", bash("git switch other"), sharedCtx, "shared checkout"],
   ["git checkout branch in shared checkout", bash("git checkout other"), sharedCtx, "shared checkout"],
+  ["checkout HEAD~0 detaches", bash("git checkout HEAD~0"), wtCtx(), "commit on your branch"],
+  ["checkout sha detaches", bash("git checkout 890d64d"), wtCtx(), "commit on your branch"],
+  ["checkout --detach", bash("git checkout --detach"), wtCtx(), "commit on your branch"],
+  ["switch --detach", bash("git switch --detach main"), wtCtx(), "commit on your branch"],
   ["TODO.md via redirect", bash("echo x >> Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
   ["TODO.md via tee", bash("echo x | tee Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
   ["TODO.md via sed -i", bash("sed -i '' s/a/b/ Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
@@ -83,6 +87,8 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
 ];
 
 const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
+  ["checkout -b new branch", bash("git checkout -b feat HEAD~1"), wtCtx()],
+  ["checkout a file from a rev", bash("git checkout HEAD -- src/a.ts"), wtCtx()],
   ["ln -s inside worktree", bash("ln -s ../node_modules/x lib/x"), wtCtx()],
   ["ln -s absolute inside worktree", bash(`ln -s ${WT}/a b`), wtCtx()],
   ["cp -R within worktree", bash("cp -R src /work/wt/abc/tmp/src2"), wtCtx()],

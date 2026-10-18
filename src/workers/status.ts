@@ -559,6 +559,14 @@ function sleepSum(text: string): number {
   return sum;
 }
 
+/**
+ * `while ... read ...; do ...; done < file`: a bounded loop over the file's lines. Its length is
+ * unknown here, so the per-step sleep stands alone (the gate's intent is "no single wait > 60s").
+ */
+function readsFromFile(header: string, afterDone: string): boolean {
+  return /\bread\b/.test(header) && /^\s*<(?!<)/.test(afterDone);
+}
+
 /** Iterations of a `for x in <words>` header, or null when not provably small. */
 function forIterations(header: string): number | null {
   const words = header.replace(/^\s*\w+\s+in\s+/, "").trim();
@@ -584,7 +592,7 @@ export function totalSleepSecs(command: string): number {
     if (m[1] === "for") {
       const n = forIterations(m[2]);
       total += n === null ? Math.max(SLEEP_FLOOR_SECS, body) : body * (n - 1);
-    } else if (!/\bkill\s+-0\b/.test(m[2])) {
+    } else if (!/\bkill\s+-0\b/.test(m[2]) && !readsFromFile(m[2], command.slice(m.index + m[0].length))) {
       total += SLEEP_FLOOR_SECS;
     }
   }

@@ -103,3 +103,21 @@ function backupPath(): string {
 export function claudeJsonBackupPath(): string {
   return backupPath();
 }
+
+/**
+ * Mark `absPath` as trusted in Claude Code's per-project state
+ * (projects[<path>].hasTrustDialogAccepted), so launching it skips the
+ * "trust this folder" dialog. Goes through readClaudeJson/writeClaudeJson, so
+ * a malformed file throws instead of being replaced. Returns false when the
+ * path was already trusted (nothing written).
+ */
+export function trustProjectPath(absPath: string): boolean {
+  const config = readClaudeJson();
+  const projects =
+    typeof config.projects === "object" && config.projects !== null ? (config.projects as Record<string, unknown>) : {};
+  const entry =
+    typeof projects[absPath] === "object" && projects[absPath] !== null ? (projects[absPath] as Record<string, unknown>) : {};
+  if (entry.hasTrustDialogAccepted === true) return false;
+  writeClaudeJson({ ...config, projects: { ...projects, [absPath]: { ...entry, hasTrustDialogAccepted: true } } });
+  return true;
+}

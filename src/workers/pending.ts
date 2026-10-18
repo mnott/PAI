@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isLive, loadStatuses } from "./status.js";
 import { statusPath } from "./paths.js";
-import { git, uncommittedPaths } from "./worktree.js";
+import { adoptDetachedHead, git, uncommittedPaths } from "./worktree.js";
 import { fmtAge } from "../utils/fmt-age.js";
 
 export interface PendingResult {
@@ -50,6 +50,7 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
     let dirty = 0;
     try {
       if (st.branch) {
+        adoptDetachedHead(st.worktreeDir, st.branch);
         commits = git(repo, ["cherry", "HEAD", `refs/heads/${st.branch}`])
           .split("\n")
           .filter((l) => l.startsWith("+")).length;

@@ -12,7 +12,8 @@
 import { existsSync } from "node:fs";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
-import { resolveFromModule } from "../../module-paths.js";
+import { join } from "node:path";
+import { packageRoot, resolveFromModule } from "../../module-paths.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -21,6 +22,15 @@ import { resolveFromModule } from "../../module-paths.js";
 /** Absolute path of a built entry under dist/ (chunk depth varies, so walk up — see module-paths). */
 function distEntry(entry: string): string {
   return resolveFromModule(import.meta.url, `dist/${entry}`);
+}
+
+/** Like distEntry, but a missing build yields the expected path instead of throwing (status reports it). */
+function expectedDistEntry(entry: string): string {
+  try {
+    return distEntry(entry);
+  } catch {
+    return join(packageRoot(import.meta.url), "dist", entry);
+  }
 }
 
 interface McpServerSpec {
@@ -118,7 +128,7 @@ export function mcpStatusCmd(): number {
   let allReady = true;
 
   for (const spec of SERVERS) {
-    const bin = distEntry(spec.entry);
+    const bin = expectedDistEntry(spec.entry);
     const registered = spec.name in servers;
     const binExists = existsSync(bin);
 

@@ -14,6 +14,7 @@ import {
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
+import { trustProjectPath } from "../../../config/claude-json.js";
 import { unregistrableReason } from "../../../registry/registrable.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import type { Project } from "../../../storage/registry-interface.js";
@@ -265,7 +266,7 @@ export function findMovedPath(registeredPath: string): { found?: string; ambiguo
 
 export async function cmdAdd(
   rawPath: string,
-  opts: { slug?: string; type?: string; displayName?: string }
+  opts: { slug?: string; type?: string; displayName?: string; trust?: boolean }
 ): Promise<void> {
   const backend = await getRegistryBackend();
   const rootPath = resolvePath(rawPath);
@@ -345,6 +346,14 @@ export async function cmdAdd(
     ensurePaiMarker(rootPath, slug, displayName);
   } catch {
     // Non-fatal — warn but don't fail the add command.
+  }
+
+  if (opts.trust !== false) {
+    try {
+      trustProjectPath(rootPath);
+    } catch (e) {
+      console.error(warn(`Could not mark ${rootPath} trusted in Claude Code: ${(e as Error).message.split("\n")[0]}`));
+    }
   }
 
   console.log(ok(`Project added: ${bold(slug)}`));

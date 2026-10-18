@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardWorker, gcWorktrees, git, isSlotWorktree, mergeWorker, worktreePath } from "./worktree.js";
-import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
+import { statusPath } from "./paths.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-wtslot-test-"));
 const repo = join(dir, "repo");
@@ -96,5 +97,34 @@ describe("slot worktrees", () => {
     const { slotDir } = makeTask("s4", true);
     gcWorktrees(logDir, 0);
     expect(existsSync(slotDir)).toBe(true);
+  });
+
+  it("gc archives finished slot branches (dry run first) and adopts a detached HEAD", () => {
+    const { slotDir } = makeTask("s5", true);
+    // detached commit past the branch tip
+    writeFileSync(join(slotDir, "s5-extra.txt"), "x\n", "utf8");
+    git(slotDir, ["add", "-A"]);
+    git(slotDir, ["commit", "-q", "-m", "detached work"]);
+    const head = git(slotDir, ["rev-parse", "HEAD"]);
+    const old = new Date(Date.now() - 3 * 24 * 3_600_000);
+    utimesSync(statusPath(logDir, "s5"), old, old);
+    const dry = gcWorktrees(logDir, 24, true).filter((r) => r.id === "s5");
+    expect(dry).toEqual([{ id: "s5", archive: "refs/pai-archive/s5" }]);
+    expect(git(repo, ["rev-parse", "--verify", "worker/s5"])).toBeTruthy();
+    const res = gcWorktrees(logDir, 24).filter((r) => r.id === "s5");
+    expect(res).toEqual([{ id: "s5", archive: "refs/pai-archive/s5", adopted: head }]);
+    expect(() => git(repo, ["rev-parse", "--verify", "worker/s5"])).toThrow();
+    expect(git(repo, ["rev-parse", "refs/pai-archive/s5"])).toBe(head);
+    expect(existsSync(slotDir)).toBe(true);
+    expect(loadStatus(logDir, "s5")?.archived).toBe("refs/pai-archive/s5");
+  });
+
+  it("mergeWorker adopts a detached HEAD descended from the branch tip", () => {
+    const { slotDir } = makeTask("s6", true);
+    writeFileSync(join(slotDir, "s6-extra.txt"), "x\n", "utf8");
+    git(slotDir, ["add", "-A"]);
+    git(slotDir, ["commit", "-q", "-m", "detached work"]);
+    mergeWorker(logDir, "s6");
+    expect(existsSync(join(repo, "s6-extra.txt"))).toBe(true);
   });
 });

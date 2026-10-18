@@ -691,6 +691,7 @@ const gcCommand: CommandDef = {
       const verb = ctx.dryRun ? "would archive" : "archived";
       for (const r of res) {
         out(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
+        if (r.adopted) out(`  adopted detached HEAD ${r.adopted.slice(0, 7)}`);
         if (ctx.dryRun && r.knowledge) {
           const k = formatKnowledge(r.knowledge);
           for (const l of k.length ? k : ["carries nothing"]) out(`  ${l}`);
