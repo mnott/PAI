@@ -466,6 +466,20 @@ describe("checkProof", () => {
       expect(v.text).toContain("u=scratch.swift");
     }
   });
+  it("downgrades a proof whose exit code was masked or whose output shows a failure", async () => {
+    const { checkProof } = await import("./report.js");
+    const masked = 'npx tsc --noEmit > /dev/null 2>&1 && echo "TypeScript compilation: PASSED" || echo "TypeScript compilation: FAILED"';
+    const r = R.replace("p=npm test", "p=npx tsc --noEmit");
+    const a = checkProof(r, [{ command: masked, failed: false, output: "TypeScript compilation: FAILED" }]);
+    expect(a.rewritten).toBe(true);
+    expect(a.text).toContain("r=~");
+    expect(a.text).toContain("y=claimed proof masked its exit code");
+    expect(checkProof(r, [{ command: "npx tsc --noEmit; true", failed: false }]).rewritten).toBe(true);
+    expect(checkProof(r, [{ command: "npx tsc --noEmit", failed: false, output: "" }]).rewritten).toBe(false);
+    const c = checkProof(R.replace("p=npm test", "p=npx vitest run x.test.ts"), [{ command: "npx vitest run x.test.ts", failed: false, output: "Tests  2 failed | 5 passed" }]);
+    expect(c.rewritten).toBe(true);
+    expect(c.text).toContain("y=claimed proof output shows a failure");
+  });
 });
 
 describe("workerContractPrompt - .pai-scratch test", () => {

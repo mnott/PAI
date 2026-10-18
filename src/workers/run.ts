@@ -1936,7 +1936,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
               const hint = editHintFor(use.input, toolResultText(block.content), worktree?.dir ?? cwd);
               if (hint) injectHarnessHint(hint);
             }
-            if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block) });
+            if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block), output: toolResultText(block.content).slice(-400) });
           }
           if (sawResult) saveStatus(logDir, status);
         }
