@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readWorkersSection, writeWorkersSection, parseWorkersConfig, WorkersConfigError } from "./config.js";
+import { readWorkersSection, writeWorkersSection, parseWorkersConfig, parseProvider, WorkersConfigError } from "./config.js";
 import {
   starterWorkersYamlText,
   workersYamlPath,
@@ -790,5 +790,86 @@ describe("merge.verify", () => {
     expect(() => readMergeVerify(p)).toThrow(/merge\.verify: must be a non-empty string/);
     writeFileSync(p, "merge: nope\n", "utf8");
     expect(() => readMergeVerify(p)).toThrow(/merge: must be a mapping/);
+  });
+});
+
+describe("provider router key in workers.yaml", () => {
+  function setup() {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    const { raw, workers } = readWorkersSection(jsonPath);
+    const name = Object.keys(workers.providers).find((n) => n !== "anthropic")!;
+    return { jsonPath, yamlPath, raw, workers, name };
+  }
+
+  it("absent key leaves router undefined", () => {
+    const { workers, name } = setup();
+    expect(workers.providers[name].router).toBeUndefined();
+  });
+
+  it("router: false is read from yaml and kept by a round-trip write", () => {
+    const { jsonPath, yamlPath, raw, workers, name } = setup();
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace(new RegExp(`^(  ${name}:\\n)`, "m"), "$1    router: false\n"));
+    const read = readWorkersSection(jsonPath);
+    expect(read.workers.providers[name].router).toBe(false);
+    writeWorkersSection(read.raw, read.workers, jsonPath);
+    expect(readWorkersSection(jsonPath).workers.providers[name].router).toBe(false);
+    void raw; void workers;
+  });
+
+  it("writing router: false on a provider persists it to yaml", () => {
+    const { jsonPath, yamlPath, raw, workers, name } = setup();
+    workers.providers[name].router = false;
+    writeWorkersSection(raw, workers, jsonPath);
+    expect(readFileSync(yamlPath, "utf8")).toMatch(/router: false/);
+    expect(readWorkersSection(jsonPath).workers.providers[name].router).toBe(false);
+  });
+
+  it("rejects a non-boolean router", () => {
+    const { jsonPath, yamlPath, name } = setup();
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace(new RegExp(`^(  ${name}:\\n)`, "m"), "$1    router: nope\n"));
+    expect(() => readWorkersSection(jsonPath)).toThrow(/router/);
+  });
+});
+
+describe("provider contract key in workers.yaml", () => {
+  function setup() {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    const { raw, workers } = readWorkersSection(jsonPath);
+    const name = Object.keys(workers.providers).find((n) => n !== "anthropic")!;
+    return { jsonPath, yamlPath, raw, workers, name };
+  }
+  const addKey = (yamlPath: string, name: string, line: string) =>
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace(new RegExp(`^(  ${name}:\\n)`, "m"), `$1    ${line}\n`));
+
+  it("absent key leaves contract undefined", () => {
+    const { workers, name } = setup();
+    expect(workers.providers[name].contract).toBeUndefined();
+  });
+
+  it("contract is read from yaml and reaches the parsed provider", () => {
+    const { jsonPath, yamlPath, name } = setup();
+    addKey(yamlPath, name, "contract: /tmp/x-contract.md");
+    expect(readWorkersSection(jsonPath).workers.providers[name].contract).toBe("/tmp/x-contract.md");
+  });
+
+  it("parseProvider honours contract and rejects a non-string", () => {
+    const base = { baseUrl: "http://x", keyFile: "/tmp/k", models: { default: "a" } };
+    expect(parseProvider("p", { ...base, contract: "/tmp/c.md" }).contract).toBe("/tmp/c.md");
+    expect(() => parseProvider("p", { ...base, contract: 5 })).toThrow(/contract/);
+  });
+
+  it("contract survives a round-trip write", () => {
+    const { jsonPath, yamlPath, name } = setup();
+    addKey(yamlPath, name, "contract: /tmp/x-contract.md");
+    const read = readWorkersSection(jsonPath);
+    writeWorkersSection(read.raw, read.workers, jsonPath);
+    expect(readFileSync(yamlPath, "utf8")).toMatch(/contract: \/tmp\/x-contract.md/);
+    expect(readWorkersSection(jsonPath).workers.providers[name].contract).toBe("/tmp/x-contract.md");
   });
 });
