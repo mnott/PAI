@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
+import { pidAlive } from "./status.js";
 
 export type EndReason = "exit" | "deadline" | "pai-worker-kill" | "parent-gone" | "external-signal";
 
@@ -65,15 +66,6 @@ function readMarker(logDir: string, id: string): KillRequest | null {
   }
 }
 
-export function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 /** Command name of a pid (`ps -o comm=`), or undefined when it is gone or ps fails. */
 export function commOf(pid: number): string | undefined {
   try {
@@ -113,7 +105,7 @@ export function decideEndReason(a: {
   if (!a.signal) return { reason: "exit" };
   const marker = readMarker(a.logDir, a.id);
   if (marker) return { reason: "pai-worker-kill", by: marker.by, note: `${a.signal} requested by pid ${marker.pid}` };
-  const alive = (a.isAlive ?? pidAlive)(a.parentPid ?? process.ppid);
+  const alive = (a.isAlive ?? ((p: number) => pidAlive(p, { epermAlive: true })))(a.parentPid ?? process.ppid);
   const parent = `parent ${a.parentPid ?? "?"}${a.parentComm ? ` (${a.parentComm})` : ""}`;
   if (!alive) return { reason: "parent-gone", note: `${a.signal}; ${parent} not alive` };
   return {
