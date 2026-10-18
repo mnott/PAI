@@ -1,28 +1,26 @@
 /** zettel themes: detect emerging theme clusters in recently edited notes. */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
+import { CliError } from "../../define.js";
 
-async function cmdThemes(opts: {
-  vaultProjectId?: string;
-  days?: string;
-  minSize?: string;
-  maxThemes?: string;
-  threshold?: string;
-}): Promise<void> {
-  if (!opts.vaultProjectId) {
-    console.error(err("  --vault-project-id is required"));
-    process.exitCode = 1;
-    return;
+export async function zettelThemesCmd(opts: {
+  vaultProjectId?: string | number;
+  days?: number;
+  minSize?: number;
+  maxThemes?: number;
+  threshold?: number
+}): Promise<number> {
+  if (opts.vaultProjectId === undefined) {
+    throw new CliError("--vault-project-id is required", "pai help zettel themes", 1);
   }
 
-  const vaultProjectId = parseInt(opts.vaultProjectId, 10);
-  const lookbackDays = parseInt(opts.days ?? "30", 10);
-  const minClusterSize = parseInt(opts.minSize ?? "3", 10);
-  const maxThemes = parseInt(opts.maxThemes ?? "10", 10);
-  const similarityThreshold = parseFloat(opts.threshold ?? "0.65");
+  const vaultProjectId = Number(opts.vaultProjectId);
+  const lookbackDays = opts.days ?? 30;
+  const minClusterSize = opts.minSize ?? 3;
+  const maxThemes = opts.maxThemes ?? 10;
+  const similarityThreshold = opts.threshold ?? 0.65;
 
   const { zettelThemes } = await import("../../../zettelkasten/index.js");
   const backend = await getFedBackend();
@@ -43,7 +41,7 @@ async function cmdThemes(opts: {
   if (result.themes.length === 0) {
     console.log(warn(`  No themes detected in the last ${lookbackDays} days. Try --days with a larger window.`));
     console.log();
-    return;
+    return 0;
   }
 
   const fromDate = new Date(result.timeWindow.from).toISOString().slice(0, 10);
@@ -75,24 +73,6 @@ async function cmdThemes(opts: {
     }
     console.log();
   }
-}
 
-export function registerThemesCommand(parent: Command): void {
-  parent
-    .command("themes")
-    .description("Detect emerging theme clusters in recently edited notes")
-    .requiredOption("--vault-project-id <n>", "Project ID for the vault in the federation DB")
-    .option("--days <n>", "Look-back window in days", "30")
-    .option("--min-size <n>", "Minimum notes per cluster", "3")
-    .option("--max-themes <n>", "Maximum themes to return", "10")
-    .option("--threshold <f>", "Similarity threshold for clustering (0–1)", "0.65")
-    .action(async (opts: { vaultProjectId?: string; days?: string; minSize?: string; maxThemes?: string; threshold?: string }) => {
-      try {
-        await cmdThemes(opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }
