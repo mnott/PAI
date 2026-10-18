@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules.js";
+import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules.js";
 
 describe("nodeOnTypeScriptReason", () => {
   it("should deny node with .ts file", () => {
@@ -173,4 +173,26 @@ describe("gitAddPaths", () => {
   it("should return paths for cd && git add", () => {
     expect(gitAddPaths("cd x && git add src/a.ts")).toEqual(["src/a.ts"]);
   });
+});
+describe("maskedProofReason", () => {
+  const masked = [
+    "npx tsc --noEmit > /dev/null",
+    "npx tsc --noEmit 2>/dev/null",
+    "npx vitest run src/x || echo failed",
+    "npm test || true",
+    "npm run test; true",
+    "npx tsc --noEmit || :",
+    "pai worker merge abc --verify 'x' &>/dev/null",
+    "cd x && npx vitest run || true",
+  ];
+  for (const c of masked) it(`denies ${c}`, () => expect(maskedProofReason(c)).toContain("run it bare"));
+  const fine = [
+    "npx tsc --noEmit",
+    "npx tsc --noEmit 2>&1 | tail -20",
+    "npx vitest run src/x && echo ok",
+    "npm test; echo done",
+    "ls > /dev/null || true",
+    "cat <<'EOF'\nnpx tsc > /dev/null || true\nEOF",
+  ];
+  for (const c of fine) it(`allows ${c.split("\n")[0]}`, () => expect(maskedProofReason(c)).toBeNull());
 });
