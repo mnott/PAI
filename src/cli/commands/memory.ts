@@ -5,7 +5,7 @@ import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
 import { bridged } from "../lib/bridge.js";
 import { registerBackendCommands } from "./memory/backend.js";
 import { memoryEmbedCmd } from "./memory/embed.js";
-import { registerIndexCommand } from "./memory/index-cmd.js";
+import { memoryIndexCmd } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { memorySearchCmd } from "./memory/search.js";
 import { memorySourcesCmd } from "./memory/sources-cmd.js";
@@ -16,7 +16,7 @@ const projectSlug = { name: "PROJECT", summary: "Project name as shown by `pai p
 
 const m = (register: (c: Command) => void, path: string[], def: Omit<CommandDef, "run">) => bridged(register, "memory", path, def);
 
-export const memoryIndexCommand = m(registerIndexCommand, ["index"], {
+export const memoryIndexCommand: CommandDef = {
   name: "index",
   summary: "Read project notes and memory files into the search index",
   description:
@@ -31,7 +31,13 @@ export const memoryIndexCommand = m(registerIndexCommand, ["index"], {
   ],
   examples: ["pai memory index", "pai memory index my-project --embed", "pai memory index --background"],
   seeAlso: ["pai memory embed", "pai memory status"],
-});
+  run: (ctx) => memoryIndexCmd(ctx.args.PROJECT as string | undefined, {
+    all: ctx.opts.all === true,
+    embed: ctx.opts.embed === true,
+    direct: ctx.opts.direct === true,
+    background: ctx.opts.background === true,
+  }),
+};
 
 export const memoryEmbedCommand: CommandDef = {
   name: "embed",

@@ -1,6 +1,5 @@
 /** Memory index command: index one or all projects into the memory store. */
 
-import type { Command } from "commander";
 import type { StorageBackend } from "../../../storage/interface.js";
 import type { IndexResult } from "../../../memory/indexer-backend.js";
 import { indexProjectWithBackend } from "../../../memory/indexer-backend.js";
@@ -32,82 +31,78 @@ async function indexAllProjects(
   return { projects: projects.length, result: totals };
 }
 
-export function registerIndexCommand(memoryCmd: Command): void {
-  memoryCmd
-    .command("index [project-slug]")
-    .description("Index memory files for one project or all projects")
-    .option("--all", "Index all active projects (default when no slug given)")
-    .option("--embed", "Also generate embeddings for newly indexed chunks (Phase 2.5)")
-    .option("--direct", "Skip daemon IPC and run index directly (for debugging)")
-    .option("--background", "Run at background priority (taskpolicy -b + nice); implies --direct")
-    .action(async (projectSlug: string | undefined, opts: { all?: boolean; embed?: boolean; direct?: boolean; background?: boolean }) => {
-      if (opts.background) {
-        opts.direct = true;
-        reexecBackground();
-      }
-      // If daemon is running and no --direct flag, trigger via IPC (non-blocking)
-      if (!opts.direct && !projectSlug) {
-        try {
-          const config = loadConfig();
-          const client = new PaiClient(config.socketPath);
-          await client.triggerIndex();
-          console.log(ok("Index triggered in daemon.") + dim("  Check daemon logs for progress."));
-          console.log(dim("  Run `pai daemon logs` to watch progress."));
-          return;
-        } catch {
-          console.log(dim("Daemon not running. Running direct index..."));
-        }
-      }
+export async function memoryIndexCmd(
+  projectSlug: string | undefined,
+  opts: { all?: boolean; embed?: boolean; direct?: boolean; background?: boolean }
+): Promise<number> {
+  if (opts.background) {
+    opts.direct = true;
+    reexecBackground();
+  }
+  // If daemon is running and no --direct flag, trigger via IPC (non-blocking)
+  if (!opts.direct && !projectSlug) {
+    try {
+      const config = loadConfig();
+      const client = new PaiClient(config.socketPath);
+      await client.triggerIndex();
+      console.log(ok("Index triggered in daemon.") + dim("  Check daemon logs for progress."));
+      console.log(dim("  Run `pai daemon logs` to watch progress."));
+      return 0;
+    } catch {
+      console.log(dim("Daemon not running. Running direct index..."));
+    }
+  }
 
-      let backend: StorageBackend;
-      try {
-        backend = await getStorageBackend();
-      } catch (e) {
-        console.error(err(`Failed to open storage backend: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
+  let backend: StorageBackend;
+  try {
+    backend = await getStorageBackend();
+  } catch (e) {
+    console.error(err(`Failed to open storage backend: ${e}`));
+    process.exitCode = 1;
+    return 1;
+  }
 
-      if (projectSlug) {
-        const registry = await getRegistryBackend();
-        const project = await registry.getProjectBySlug(projectSlug);
+  if (projectSlug) {
+    const registry = await getRegistryBackend();
+    const project = await registry.getProjectBySlug(projectSlug);
 
-        if (!project || project.status !== "active") {
-          console.error(err(`Project not found or not active: ${projectSlug}`));
-          process.exitCode = 1;
-          return;
-        }
+    if (!project || project.status !== "active") {
+      console.error(err(`Project not found or not active: ${projectSlug}`));
+      process.exitCode = 1;
+      return 1;
+    }
 
-        console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));
-        const result = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
+    console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));
+    const result = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
 
-        console.log(
-          ok(`Done.`) +
-          `  ${bold(String(result.filesProcessed))} files indexed` +
-          `, ${bold(String(result.chunksCreated))} chunks created` +
-          `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
-        );
+    console.log(
+      ok(`Done.`) +
+      `  ${bold(String(result.filesProcessed))} files indexed` +
+      `, ${bold(String(result.chunksCreated))} chunks created` +
+      `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
+    );
 
-        if (opts.embed) {
-          await runEmbed(backend, project.id, project.slug);
-        }
+    if (opts.embed) {
+      await runEmbed(backend, project.id, project.slug);
+    }
 
-      } else if (opts.all || !projectSlug) {
-        console.log(dim("Indexing all active projects..."));
+  } else if (opts.all || !projectSlug) {
+    console.log(dim("Indexing all active projects..."));
 
-        const { projects, result } = await indexAllProjects(backend);
+    const { projects, result } = await indexAllProjects(backend);
 
-        console.log(
-          ok(`Done.`) +
-          `  ${bold(String(projects))} projects` +
-          `, ${bold(String(result.filesProcessed))} files indexed` +
-          `, ${bold(String(result.chunksCreated))} chunks created` +
-          `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
-        );
+    console.log(
+      ok(`Done.`) +
+      `  ${bold(String(projects))} projects` +
+      `, ${bold(String(result.filesProcessed))} files indexed` +
+      `, ${bold(String(result.chunksCreated))} chunks created` +
+      `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
+    );
 
-        if (opts.embed) {
-          await runEmbed(backend);
-        }
-      }
-    });
+    if (opts.embed) {
+      await runEmbed(backend);
+    }
+  }
+
+  return 0;
 }
