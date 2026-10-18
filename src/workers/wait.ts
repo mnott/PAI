@@ -7,9 +7,9 @@
  * with exit 1 naming whoever failed or timed out.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
-import { parseWorkerReport, type WorkerReport } from "./report.js";
+import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
 import { loadStatus, type WorkerStatus } from "./status.js";
 
 export interface WaitResult {
@@ -18,7 +18,12 @@ export interface WaitResult {
   state: WorkerStatus["state"];
   rc: number | null;
   secs: number | null;
-  ok: boolean;
+  /** Absent while the worker is still running (wait timed out): not a verdict. */
+  ok?: boolean;
+  /** Claimed changes the filesystem does not confirm (same check as the result banner's "verify:" note). */
+  unconfirmed?: string[];
+  /** True when the wait's own timeout elapsed with the worker still running. */
+  timedOut?: true;
   /** The `result` text of the last result event in the worker's transcript. */
   result: string | null;
   report: WorkerReport | null;
@@ -64,17 +69,34 @@ function lastResultText(logDir: string, id: string): string | null {
   return null;
 }
 
-function toWaitResult(logDir: string, st: WorkerStatus): WaitResult {
+/**
+ * Paths the report claims changed that verifyReportChanges (the check behind
+ * the "verify: ... not confirmed" banner and the R! marker) does not confirm.
+ * Empty when there is no claim or the worker's tree is gone (merged/discarded).
+ */
+function unconfirmedClaims(st: WorkerStatus, report: WorkerReport | null): string[] {
+  if (!report?.changed?.length) return [];
+  const dir = st.worktreeDir ?? st.cwd;
+  if (!dir || !existsSync(dir)) return [];
+  const startMs = Date.parse(st.started);
+  const v = verifyReportChanges(report.changed, dir, Number.isNaN(startMs) ? 0 : startMs);
+  return v.failures.map((f) => f.path);
+}
+
+function toWaitResult(logDir: string, st: WorkerStatus, pending: boolean): WaitResult {
   const result = lastResultText(logDir, st.id);
+  const report = parseWorkerReport(result ?? "");
+  const unconfirmed = pending ? [] : unconfirmedClaims(st, report);
   return {
     id: st.id,
     label: st.label,
     state: st.state,
     rc: st.rc,
     secs: st.secs,
-    ok: st.state === "done" && (st.rc ?? 0) === 0,
+    ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 && unconfirmed.length === 0 }),
+    ...(unconfirmed.length ? { unconfirmed } : {}),
     result,
-    report: parseWorkerReport(result ?? ""),
+    report,
   };
 }
 
@@ -109,7 +131,7 @@ export async function waitWorkers(
       if (!st || TERMINAL.includes(known.get(id)!.state)) pending.delete(id);
     }
   }
-  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!)), timedOut: [...pending] };
+  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!, pending.has(id))), timedOut: [...pending] };
 }
 
 export const WAIT_MAX_DEFAULT_SECS = 100;
@@ -119,7 +141,8 @@ export const WAIT_MAX_CAP_SECS = 590;
  * The `pai worker wait` verb: one JSON status line per id. With --max (default
  * 100, limit 115) it returns as soon as ANY worker finishes or the max elapses:
  * exit 0 all done, 1 a finished worker failed, 3 some still running (call again
- * with the unfinished ids). The legacy --timeout waits for ALL and exits 1 on timeout.
+ * with the unfinished ids). The legacy --timeout waits for ALL and exits 1 on timeout
+ * (same code as a failed worker; stderr and `timedOut:true` in the JSON tell them apart).
  */
 export async function runWait(
   logDir: string,
@@ -134,9 +157,9 @@ export async function runWait(
     any: !legacy,
   });
   for (const r of results) out(JSON.stringify(r));
-  const failed = results.filter((r) => !timedOut.includes(r.id) && !r.ok).map((r) => r.id);
+  const failed = results.filter((r) => r.ok === false).map((r) => r.id);
   if (legacy && timedOut.length) {
-    errOut(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`);
+    errOut(`still running after ${o.timeout}s (wait timed out, worker not affected): ${timedOut.join(", ")}`);
     return 1;
   }
   if (failed.length) {

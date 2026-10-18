@@ -622,7 +622,7 @@ pai worker wait IDS... [options]
 ```
 
 Prints one JSON status line per worker id and returns within --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) as soon as ANY of them finishes. Exit 0: all done. Exit 1: a finished worker failed. Exit 3: some still running, call again with the unfinished ids.
-Use this instead of sleeping and re-checking `pai worker ps`. --timeout keeps the old behaviour: wait for ALL, exit 1 on timeout.
+Use this instead of sleeping and re-checking `pai worker ps`. --timeout keeps the old behaviour: wait for ALL, exit 1 on timeout (the same code as a failed worker; a timed-out worker's JSON has "state":"running", "timedOut":true and no "ok", and stderr says the worker is not affected).
 
 | Argument | Required | Description |
 |---|---|---|
