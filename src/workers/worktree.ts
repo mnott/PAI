@@ -1305,7 +1305,8 @@ export function gcWorktrees(
     if (!tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir)) continue;
     let end = 0;
     try {
-      end = statSync(statusPath(logDir, st.id)).mtimeMs;
+      // whole ms like Date.now(): a sub-ms-newer mtime must not read as "after now"
+      end = Math.floor(statSync(statusPath(logDir, st.id)).mtimeMs);
     } catch {
       continue;
     }
@@ -1319,7 +1320,7 @@ export function gcWorktrees(
       // owned by a status (the last id of a resume chain) is that status's business
       if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir)) continue;
       try {
-        if (statSync(dir).mtimeMs > cutoff) continue;
+        if (Math.floor(statSync(dir).mtimeMs) > cutoff) continue;
       } catch {
         continue;
       }
