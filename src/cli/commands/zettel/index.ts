@@ -1,8 +1,4 @@
 /** Barrel: registers all zettel sub-commands and exports registerZettelCommands. */
 
-import type { Command } from "commander";
-import { registerSuggestCommand } from "./suggest.js";
-
-export function registerZettelCommands(parent: Command): void {
-  registerSuggestCommand(parent);
-}
+// This file is no longer used after converting the suggest command to direct execution
+// All imports and exports have been removed as part of the Commander removal process
