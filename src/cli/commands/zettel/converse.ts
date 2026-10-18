@@ -1,23 +1,21 @@
 /** zettel converse: ask the vault a question and get a synthesis prompt. */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
+import { CliError } from "../../define.js";
 
-async function cmdConverse(
+export async function zettelConverseCmd(
   question: string,
-  opts: { vaultProjectId?: string; depth?: string; limit?: string }
-): Promise<void> {
-  if (!opts.vaultProjectId) {
-    console.error(err("  --vault-project-id is required"));
-    process.exitCode = 1;
-    return;
+  opts: { vaultProjectId?: string | number; depth?: number; limit?: number }
+): Promise<number> {
+  if (opts.vaultProjectId === undefined) {
+    throw new CliError("--vault-project-id is required", "pai help zettel converse", 1);
   }
 
-  const vaultProjectId = parseInt(opts.vaultProjectId, 10);
-  const depth = parseInt(opts.depth ?? "2", 10);
-  const limit = parseInt(opts.limit ?? "15", 10);
+  const vaultProjectId = Number(opts.vaultProjectId);
+  const depth = opts.depth ?? 2;
+  const limit = opts.limit ?? 15;
 
   const { zettelConverse } = await import("../../../zettelkasten/index.js");
   const backend = await getFedBackend();
@@ -32,7 +30,7 @@ async function cmdConverse(
   if (result.relevantNotes.length === 0) {
     console.log(warn("  No relevant notes found. Try rephrasing your question."));
     console.log();
-    return;
+    return 0;
   }
 
   console.log();
@@ -68,22 +66,6 @@ async function cmdConverse(
     console.log(`  ${dim(line)}`);
   }
   console.log();
-}
 
-export function registerConverseCommand(parent: Command): void {
-  parent
-    .command("converse <question>")
-    .description("Ask the vault a question and get a synthesis prompt with relevant notes")
-    .requiredOption("--vault-project-id <n>", "Project ID for the vault in the federation DB")
-    .option("--depth <n>", "Graph expansion depth around matched notes", "2")
-    .option("--limit <n>", "Maximum relevant notes to include", "15")
-    .action(async (question: string, opts: { vaultProjectId?: string; depth?: string; limit?: string }) => {
-      try {
-        await cmdConverse(question, opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }

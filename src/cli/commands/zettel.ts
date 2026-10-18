@@ -7,6 +7,7 @@ import { registerZettelCommands } from "./zettel/index.js";
 import { zettelExploreCmd } from "./zettel/explore.js";
 import { zettelHealthCmd } from "./zettel/health.js";
 import { zettelSurpriseCmd } from "./zettel/surprise.js";
+import { zettelConverseCmd } from "./zettel/converse.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
@@ -60,7 +61,7 @@ export const zettelCommand: CommandDef = {
         minDistance: ctx.opts["min-distance"] as number | undefined,
       }),
     },
-    z(["converse"], {
+    {
       name: "converse",
       summary: "Ask the vault a question",
       description: "Finds the notes relevant to a question and prints a prompt that bundles them, ready to hand to a model.",
@@ -72,7 +73,12 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ['pai zettel converse "what did we decide about caching?" --vault-project-id 3', 'pai zettel converse "why did the build break" --vault-project-id 3 --depth 1'],
       seeAlso: ["pai memory search"],
-    }),
+      run: (ctx) => zettelConverseCmd(ctx.args.QUESTION as string, {
+        vaultProjectId: ctx.opts["vault-project-id"] as string | number | undefined,
+        depth: ctx.opts.depth as number | undefined,
+        limit: ctx.opts.limit as number | undefined,
+      }),
+    },
     z(["themes"], {
       name: "themes",
       summary: "Spot topics emerging in recent notes",
