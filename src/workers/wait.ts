@@ -7,9 +7,9 @@
  * with exit 1 naming whoever failed or timed out.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
-import { parseWorkerReport, type WorkerReport } from "./report.js";
+import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
 import { loadStatus, type WorkerStatus } from "./status.js";
 
 export interface WaitResult {
@@ -20,6 +20,8 @@ export interface WaitResult {
   secs: number | null;
   /** Absent while the worker is still running (wait timed out): not a verdict. */
   ok?: boolean;
+  /** Claimed changes the filesystem does not confirm (same check as the result banner's "verify:" note). */
+  unconfirmed?: string[];
   /** True when the wait's own timeout elapsed with the worker still running. */
   timedOut?: true;
   /** The `result` text of the last result event in the worker's transcript. */
@@ -67,17 +69,34 @@ function lastResultText(logDir: string, id: string): string | null {
   return null;
 }
 
+/**
+ * Paths the report claims changed that verifyReportChanges (the check behind
+ * the "verify: ... not confirmed" banner and the R! marker) does not confirm.
+ * Empty when there is no claim or the worker's tree is gone (merged/discarded).
+ */
+function unconfirmedClaims(st: WorkerStatus, report: WorkerReport | null): string[] {
+  if (!report?.changed?.length) return [];
+  const dir = st.worktreeDir ?? st.cwd;
+  if (!dir || !existsSync(dir)) return [];
+  const startMs = Date.parse(st.started);
+  const v = verifyReportChanges(report.changed, dir, Number.isNaN(startMs) ? 0 : startMs);
+  return v.failures.map((f) => f.path);
+}
+
 function toWaitResult(logDir: string, st: WorkerStatus, pending: boolean): WaitResult {
   const result = lastResultText(logDir, st.id);
+  const report = parseWorkerReport(result ?? "");
+  const unconfirmed = pending ? [] : unconfirmedClaims(st, report);
   return {
     id: st.id,
     label: st.label,
     state: st.state,
     rc: st.rc,
     secs: st.secs,
-    ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 }),
+    ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 && unconfirmed.length === 0 }),
+    ...(unconfirmed.length ? { unconfirmed } : {}),
     result,
-    report: parseWorkerReport(result ?? ""),
+    report,
   };
 }
 

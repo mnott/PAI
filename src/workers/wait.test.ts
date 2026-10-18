@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWait, waitWorkers } from "./wait.js";
@@ -13,12 +13,15 @@ import { saveStatus, type WorkerStatus } from "./status.js";
 
 const logDir = mkdtempSync(join(tmpdir(), "pai-wait-test-"));
 
+mkdirSync(join(logDir, "src"));
+writeFileSync(join(logDir, "src", "a.ts"), "x", "utf8"); // the file reportText claims
+
 function status(id: string, over: Partial<WorkerStatus> = {}): void {
   const s: WorkerStatus = {
     id,
     pid: process.pid,
     label: `label ${id}`,
-    cwd: "/tmp",
+    cwd: logDir,
     term: "",
     provider: "testprov",
     model: "test-1",
@@ -139,5 +142,36 @@ describe("waitWorkers", () => {
   it("finished workers keep ok true/false and no timedOut", async () => {
     const { results } = await waitWorkers(logDir, ["done1", "failed1"], { intervalMs: 5 });
     expect(results.map((r) => [r.ok, r.timedOut])).toEqual([[true, undefined], [false, undefined]]);
+  });
+});
+
+describe("waitWorkers claim verification", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pai-wait-claim-"));
+  writeFileSync(join(dir, "real.ts"), "x", "utf8");
+  const claim = (path: string) => JSON.stringify({ changed: [{ path, summary: "s" }] });
+  const started = "2020-01-01 00:00:00";
+
+  it("fabricated claim: ok:false with unconfirmed paths", async () => {
+    status("fab", { cwd: dir, started });
+    events("fab", [{ type: "result", result: claim("ghost.ts") }]);
+    const { results } = await waitWorkers(logDir, ["fab"], { intervalMs: 1, timeoutMs: 50 });
+    expect(results[0].ok).toBe(false);
+    expect(results[0].unconfirmed).toEqual(["ghost.ts"]);
+  });
+
+  it("real change: ok:true, no unconfirmed field", async () => {
+    status("real", { cwd: dir, started });
+    events("real", [{ type: "result", result: claim("real.ts") }]);
+    const { results } = await waitWorkers(logDir, ["real"], { intervalMs: 1, timeoutMs: 50 });
+    expect(results[0].ok).toBe(true);
+    expect(results[0].unconfirmed).toBeUndefined();
+  });
+
+  it("research report without changes: unchanged", async () => {
+    status("res", { cwd: dir, started });
+    events("res", [{ type: "result", result: JSON.stringify({ notes: "answer" }) }]);
+    const { results } = await waitWorkers(logDir, ["res"], { intervalMs: 1, timeoutMs: 50 });
+    expect(results[0].ok).toBe(true);
+    expect(results[0].unconfirmed).toBeUndefined();
   });
 });
