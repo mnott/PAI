@@ -6,6 +6,16 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-10-18
+
+### Fixed
+
+- **Worker pool:** a pooled task is cancelled when its client disconnects; pooled runs pass the capacity and stagger gates; `maxConcurrent` from workers.yaml is honoured (the YAML reader dropped it).
+- **Merges:** a conflicted `pai worker merge` aborts instead of leaving the checkout mid-merge; worker proof checks reject masked exit codes and failure output.
+- **Tests:** HOME-stubbed tests no longer read or write the real `~/.claude.json` or router files (paths resolved at call time); gc age check race fixed.
+- **Panes:** a crowded window falls back to a new tab or window instead of refusing the worker.
+- **Guards:** main-session guards block git mutation in slot worktrees and ad-hoc worktree or branch removal; workers may not mask proof commands.
+
 ### Changed
 
 - **CLI rewrite** — the command line runs on a native `CommandDef` help system
