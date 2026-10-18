@@ -114,6 +114,7 @@ Register a project directory in the PAI registry
 | `--slug SLUG` | string | — | Override auto-generated slug |
 | `--type TYPE` | string | — | Project type: local | central | obsidian-linked | external |
 | `--display-name NAME` | string | — | Human-readable display name |
+| `--no-trust` | flag | — | Do not mark the folder trusted in Claude Code (~/.claude.json) |
 
 ```sh
 pai project add ~/code/my-app
