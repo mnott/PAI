@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tryPoolRun } from "./run.js";
 import { ledgerPath } from "./paths.js";
 
@@ -29,6 +29,12 @@ const args = (logDir: string, pool: boolean, over: Record<string, unknown> = {})
   }) as never;
 
 describe("pool fallback to a fresh spawn", () => {
+  // a worker running the suite inherits PAI_WORKER=1, which lets hidden runs through and changes the pane path
+  beforeEach(() => {
+    for (const k of ["PAI_WORKER", "PAI_WORKER_PROVIDER", "PAI_SESSION_PROVIDER", "PAI_WORKER_AUTOPANE", "PAI_WORKER_ALLOW_HIDDEN"]) vi.stubEnv(k, undefined);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
   it("pool off: null, nothing written", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-fb-"));
     expect(await tryPoolRun(args(d, false))).toBeNull();

@@ -2,7 +2,7 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gateStart, tryPoolRun } from "./run.js";
 import { loadStatuses, nowStamp, saveStatus } from "./status.js";
 
@@ -13,7 +13,12 @@ vi.mock("./pane.js", async (importOriginal) => {
 });
 
 const servers: Server[] = [];
+// a worker running the suite inherits PAI_WORKER=1, which lets hidden runs through and changes the pane path
+beforeEach(() => {
+  for (const k of ["PAI_WORKER", "PAI_WORKER_PROVIDER", "PAI_SESSION_PROVIDER", "PAI_WORKER_AUTOPANE", "PAI_WORKER_ALLOW_HIDDEN"]) vi.stubEnv(k, undefined);
+});
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const s of servers.splice(0)) {
     s.closeAllConnections?.();
     await new Promise<void>((r) => s.close(() => r()));
