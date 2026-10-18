@@ -415,7 +415,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // a slot is born like a bare headless worker: the default core grant,
     // narrowed schemas (headlessToolsFlag([]) names none) included
     cmd.push(...(headlessToolsFlag([]).length ? headlessToolsFlag([]) : ["--tools", DEFAULT_WORKER_TOOLS]));
-    const slim = slimProfileArgs(logDir, "pool-slot", [], env);
+    const slim = slimProfileArgs(logDir, "pool-slot", [], env, undefined, provider);
     cmd.push(...slim);
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
     // stream-json input is a print-mode feature: without -p the CLI would

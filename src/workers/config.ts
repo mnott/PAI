@@ -128,6 +128,14 @@ export interface WorkerProvider {
    * this explicit value, for engines without one, e.g. codex).
    */
   contextWindow?: number;
+  /**
+   * Extended thinking for runs through this provider. Unset = off for a
+   * non-native provider: the worker settings then carry
+   * CLAUDE_CODE_DISABLE_THINKING and an unset effort level, so the request has
+   * neither `thinking` nor `output_config` (a local server's own reasoning
+   * default then applies). `true` leaves Claude Code's defaults alone.
+   */
+  thinking?: boolean;
   /** Most runs this provider serves at once; more queue (capacity.ts). Default 3 on loopback, unlimited otherwise. */
   maxConcurrent?: number;
   /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
@@ -685,6 +693,14 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  let thinking: boolean | undefined;
+  if (p.thinking !== undefined) {
+    if (p.thinking !== "on" && p.thinking !== "off" && typeof p.thinking !== "boolean") {
+      bad(`.providers.${name}.thinking`, 'must be "on" or "off"');
+    }
+    thinking = p.thinking === "on" || p.thinking === true;
+  }
+
   const contextWindow = p.contextWindow === undefined ? undefined : p.contextWindow;
   if (contextWindow !== undefined) {
     if (typeof contextWindow !== "number" || contextWindow <= 0) {
@@ -786,6 +802,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
     ...(quotaSkipAt !== undefined ? { quotaSkipAt } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
     ...(p.maxConcurrent !== undefined ? { maxConcurrent: p.maxConcurrent as number } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
