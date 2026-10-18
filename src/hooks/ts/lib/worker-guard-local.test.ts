@@ -59,6 +59,10 @@ describe("local-provider worker guard", () => {
     expect(bash(LOCAL, "git rm -f src/big.swift").decision).toBe("deny");
     expect(bash(LOCAL, "rm -f nothing-here.tmp").decision).toBe("allow");
   });
+  it("block message gives the delete: report instruction", () => {
+    const d = bash(LOCAL, "rm README.md");
+    expect((d as { reason: string }).reason).toContain("list it in your report as `delete: README.md (<reason>)`; your orchestrator deletes it.");
+  });
   it("allows rm and git rm of a tracked file the branch added itself, still denies files from the base", () => {
     const git = (...a: string[]) => execFileSync("git", ["-C", root, ...a], { stdio: "ignore" });
     writeFileSync(join(root, "src", "mine.ts"), "x\n");

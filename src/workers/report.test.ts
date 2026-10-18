@@ -335,6 +335,13 @@ describe("verifyReportChanges", () => {
     });
   });
 
+  it("does not flag a reported pending deletion (delete: entry)", () => {
+    withTmpDir((dir) => {
+      const r = verifyReportChanges([{ path: "delete:", summary: "src/old.test.ts (subject removed)" }, { path: "delete: src/x.ts (gone)" }], dir, Date.now());
+      expect(r).toEqual({ ok: true, failures: [] });
+    });
+  });
+
   it("flags a claimed path that was never written", () => {
     withTmpDir((dir) => {
       const start = Date.now();

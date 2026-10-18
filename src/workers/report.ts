@@ -161,6 +161,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
 export const ORCHESTRATOR_CONTRACT =
   "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
   "Write each unit spec to a file under /tmp, start it with `pai worker run --provider <the local provider named in your brief> --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge. " +
+  "Pending deletions that local workers report as `delete: <file> (<reason>)` are done by you with `git rm`. " +
   "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them with `npx vitest run --dir .pai-scratch`. " +
   "When several unit specs share rules, the AG2 report format or a Do-not list, write that block once at the top of each spec between a line `--- shared ---` and a line `--- unit ---` (byte-identical across the specs), then the unit's own goal after the second marker: the pool puts the shared block into the slot's cached system prompt.";
 
@@ -328,6 +329,8 @@ export function verifyReportChanges(
   for (const ch of changed ?? []) {
     const raw = (ch.path ?? "").trim();
     if (!raw) continue;
+    // `delete: <file> (<reason>)`: a pending deletion a local worker left to its orchestrator; nothing to confirm.
+    if (/^delete:/i.test(raw)) continue;
     const abs = isAbsolute(raw) ? raw : resolve(cwd, raw);
     let mtimeMs: number | null;
     try {
