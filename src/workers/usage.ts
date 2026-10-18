@@ -98,10 +98,32 @@ export function sumRunUsage(jsonl: string, fallbackModel?: string): SumResult {
   const byModel = new Map<string, Tally>();
   const mu = result.modelUsage;
   if (mu && typeof mu === "object" && Object.keys(mu).length) {
+    const named: [string, Tally][] = [];
     for (const [key, v] of Object.entries(mu)) {
       if (!v || typeof v !== "object") continue;
       const model = typeof (v as { canonicalModel?: unknown }).canonicalModel === "string" ? (v as { canonicalModel: string }).canonicalModel : key;
-      byModel.set(model, tallyOfModelUsage(v));
+      named.push([model, tallyOfModelUsage(v)]);
+    }
+    const whole = result.usage ? tallyOf(result.usage) : undefined;
+    if (named.length === 1 && whole && !tallyIsZero(whole)) {
+      // modelUsage has no 5m/1h split; the result's usage block does, and it is the same run total
+      byModel.set(named[0][0], whole);
+    } else if (named.length > 1 && whole && whole.cacheWrite5m + whole.cacheWrite1h > 0) {
+      // modelUsage has per-model totals but no cache TTL split: apply the run-wide 1h share to each
+      // model, rounding by cumulative position so the per-model sums stay exact
+      const total = whole.cacheWrite5m + whole.cacheWrite1h;
+      let seen = 0;
+      let given1h = 0;
+      for (const [model, t] of named) {
+        const write = t.cacheWrite5m;
+        seen += write;
+        const upTo1h = Math.round((seen * whole.cacheWrite1h) / total);
+        const w1h = Math.min(write, upTo1h - given1h);
+        given1h += w1h;
+        byModel.set(model, { ...t, cacheWrite5m: write - w1h, cacheWrite1h: w1h });
+      }
+    } else {
+      for (const [model, t] of named) byModel.set(model, t);
     }
   } else if (result.usage && !tallyIsZero(tallyOf(result.usage))) {
     const model = result.model ?? fallbackModel ?? (perTurn.byModel.size === 1 ? [...perTurn.byModel.keys()][0] : "?");
