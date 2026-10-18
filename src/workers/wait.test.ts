@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { waitWorkers } from "./wait.js";
+import { runWait, waitWorkers } from "./wait.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 
 const logDir = mkdtempSync(join(tmpdir(), "pai-wait-test-"));
@@ -99,7 +99,9 @@ describe("waitWorkers", () => {
     });
     expect(timedOut).toEqual(["stuck"]);
     expect(results[0].state).toBe("running");
-    expect(results[0].ok).toBe(false);
+    expect(results[0].timedOut).toBe(true);
+    expect(results[0].ok).toBeUndefined();
+    expect(JSON.stringify(results[0])).not.toContain('"ok":false');
   });
 
   it("picks up a worker that flips to done mid-poll", async () => {
@@ -119,5 +121,23 @@ describe("waitWorkers", () => {
     } finally {
       clearTimeout(t);
     }
+  });
+
+  it("runWait --timeout on a running worker: timedOut JSON, no ok, clear stderr, exit 1", async () => {
+    status("slow", { state: "running", rc: null, secs: null });
+    const out: string[] = [];
+    const err: string[] = [];
+    const rc = await runWait(logDir, ["slow"], { timeout: 0.05 }, (l) => out.push(l), (l) => err.push(l));
+    const j = JSON.parse(out[0]);
+    expect(j.state).toBe("running");
+    expect(j.timedOut).toBe(true);
+    expect("ok" in j).toBe(false);
+    expect(err[0]).toMatch(/still running after 0.05s \(wait timed out, worker not affected\)/);
+    expect(rc).toBe(1);
+  });
+
+  it("finished workers keep ok true/false and no timedOut", async () => {
+    const { results } = await waitWorkers(logDir, ["done1", "failed1"], { intervalMs: 5 });
+    expect(results.map((r) => [r.ok, r.timedOut])).toEqual([[true, undefined], [false, undefined]]);
   });
 });

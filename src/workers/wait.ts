@@ -18,7 +18,10 @@ export interface WaitResult {
   state: WorkerStatus["state"];
   rc: number | null;
   secs: number | null;
-  ok: boolean;
+  /** Absent while the worker is still running (wait timed out): not a verdict. */
+  ok?: boolean;
+  /** True when the wait's own timeout elapsed with the worker still running. */
+  timedOut?: true;
   /** The `result` text of the last result event in the worker's transcript. */
   result: string | null;
   report: WorkerReport | null;
@@ -64,7 +67,7 @@ function lastResultText(logDir: string, id: string): string | null {
   return null;
 }
 
-function toWaitResult(logDir: string, st: WorkerStatus): WaitResult {
+function toWaitResult(logDir: string, st: WorkerStatus, pending: boolean): WaitResult {
   const result = lastResultText(logDir, st.id);
   return {
     id: st.id,
@@ -72,7 +75,7 @@ function toWaitResult(logDir: string, st: WorkerStatus): WaitResult {
     state: st.state,
     rc: st.rc,
     secs: st.secs,
-    ok: st.state === "done" && (st.rc ?? 0) === 0,
+    ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 }),
     result,
     report: parseWorkerReport(result ?? ""),
   };
@@ -109,7 +112,7 @@ export async function waitWorkers(
       if (!st || TERMINAL.includes(known.get(id)!.state)) pending.delete(id);
     }
   }
-  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!)), timedOut: [...pending] };
+  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!, pending.has(id))), timedOut: [...pending] };
 }
 
 export const WAIT_MAX_DEFAULT_SECS = 100;
@@ -119,7 +122,8 @@ export const WAIT_MAX_CAP_SECS = 590;
  * The `pai worker wait` verb: one JSON status line per id. With --max (default
  * 100, limit 115) it returns as soon as ANY worker finishes or the max elapses:
  * exit 0 all done, 1 a finished worker failed, 3 some still running (call again
- * with the unfinished ids). The legacy --timeout waits for ALL and exits 1 on timeout.
+ * with the unfinished ids). The legacy --timeout waits for ALL and exits 1 on timeout
+ * (same code as a failed worker; stderr and `timedOut:true` in the JSON tell them apart).
  */
 export async function runWait(
   logDir: string,
@@ -134,9 +138,9 @@ export async function runWait(
     any: !legacy,
   });
   for (const r of results) out(JSON.stringify(r));
-  const failed = results.filter((r) => !timedOut.includes(r.id) && !r.ok).map((r) => r.id);
+  const failed = results.filter((r) => r.ok === false).map((r) => r.id);
   if (legacy && timedOut.length) {
-    errOut(`pai worker wait: timed out waiting for ${timedOut.join(", ")}`);
+    errOut(`still running after ${o.timeout}s (wait timed out, worker not affected): ${timedOut.join(", ")}`);
     return 1;
   }
   if (failed.length) {
