@@ -24,7 +24,7 @@ import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
-import { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } from "../../config/claude-json.js";
+import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
 import { resolveFromModule } from "../../module-paths.js";
 import { serviceManagerAllowed } from "../../service-manager.js";
@@ -39,7 +39,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-// CLAUDE_JSON_PATH now imported from src/config/claude-json.ts
 const PLIST_LABEL = "com.pai.pai-daemon";
 const LAUNCH_AGENTS_DIR = join(HOME, "Library", "LaunchAgents");
 const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${PLIST_LABEL}.plist`);

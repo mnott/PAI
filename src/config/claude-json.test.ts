@@ -20,7 +20,7 @@ import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "pai-claude-json-"));
 process.env.HOME = home;
 
-const { readClaudeJson, writeClaudeJson, CLAUDE_JSON_PATH } = await import("./claude-json.js");
+const { readClaudeJson, writeClaudeJson, claudeJsonPath } = await import("./claude-json.js");
 
 const POPULATED = JSON.stringify(
   {
@@ -32,12 +32,12 @@ const POPULATED = JSON.stringify(
 );
 
 function seed(contents: string): void {
-  writeFileSync(CLAUDE_JSON_PATH, contents, "utf8");
+  writeFileSync(claudeJsonPath(), contents, "utf8");
 }
 
 describe("readClaudeJson", () => {
   beforeEach(() => {
-    if (existsSync(CLAUDE_JSON_PATH)) unlinkSync(CLAUDE_JSON_PATH);
+    if (existsSync(claudeJsonPath())) unlinkSync(claudeJsonPath());
   });
 
   it("returns {} when the file does not exist — a legitimate first run", () => {
@@ -52,14 +52,14 @@ describe("readClaudeJson", () => {
   it("leaves a malformed file untouched", () => {
     seed("{ this is not json");
     try { readClaudeJson(); } catch { /* expected */ }
-    expect(readFileSync(CLAUDE_JSON_PATH, "utf8")).toBe("{ this is not json");
+    expect(readFileSync(claudeJsonPath(), "utf8")).toBe("{ this is not json");
   });
 });
 
 describe("writeClaudeJson", () => {
   beforeEach(() => {
-    if (existsSync(CLAUDE_JSON_PATH)) unlinkSync(CLAUDE_JSON_PATH);
-    const bak = `${CLAUDE_JSON_PATH}.bak-pai`;
+    if (existsSync(claudeJsonPath())) unlinkSync(claudeJsonPath());
+    const bak = `${claudeJsonPath()}.bak-pai`;
     if (existsSync(bak)) unlinkSync(bak);
   });
 
@@ -69,7 +69,7 @@ describe("writeClaudeJson", () => {
     (config.mcpServers as Record<string, unknown>)["pai"] = { command: "node" };
     writeClaudeJson(config);
 
-    const after = JSON.parse(readFileSync(CLAUDE_JSON_PATH, "utf8"));
+    const after = JSON.parse(readFileSync(claudeJsonPath(), "utf8"));
     expect(Object.keys(after.mcpServers)).toHaveLength(4);
     expect(Object.keys(after.projects)).toHaveLength(2);
   });
@@ -80,7 +80,7 @@ describe("writeClaudeJson", () => {
     (config.mcpServers as Record<string, unknown>)["pai"] = { command: "node" };
     writeClaudeJson(config);
 
-    const bak = `${CLAUDE_JSON_PATH}.bak-pai`;
+    const bak = `${claudeJsonPath()}.bak-pai`;
     expect(existsSync(bak)).toBe(true);
     expect(JSON.parse(readFileSync(bak, "utf8")).mcpServers.pai).toBeUndefined();
   });
@@ -98,6 +98,21 @@ describe("the original data-loss path", () => {
     }).toThrow();
 
     // The corrupt file is still there to be repaired, not replaced.
-    expect(readFileSync(CLAUDE_JSON_PATH, "utf8")).toBe("{ corrupt");
+    expect(readFileSync(claudeJsonPath(), "utf8")).toBe("{ corrupt");
+  });
+});
+
+describe("claudeJsonPath", () => {
+  it("resolves HOME at call time, not import time", () => {
+    const other = mkdtempSync(join(tmpdir(), "pai-claude-json-late-"));
+    const prev = process.env.HOME;
+    process.env.HOME = other;
+    try {
+      expect(claudeJsonPath().startsWith(other)).toBe(true);
+      writeFileSync(join(other, ".claude.json"), JSON.stringify({ mcpServers: { x: {} } }), "utf8");
+      expect(readClaudeJson()).toEqual({ mcpServers: { x: {} } });
+    } finally {
+      process.env.HOME = prev;
+    }
   });
 });
