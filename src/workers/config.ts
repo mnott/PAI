@@ -22,7 +22,7 @@ import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
@@ -1274,10 +1274,7 @@ export function writeWorkersSection(
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */
-export function expandHome(p: string): string {
-  if (p === "~" || p.startsWith("~/")) return join(homedir(), p.slice(1));
-  return p;
-}
+export { expandHome };
 
 // ---------------------------------------------------------------------------
 // Runnability checks (proxy / codex providers included)

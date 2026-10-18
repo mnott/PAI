@@ -4,6 +4,7 @@ import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSy
 import { realpathSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
+import { expandHome } from "../../../daemon/config.js";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { encodeDir } from "../../lib/utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../../registry/migrate.js";
@@ -114,8 +115,7 @@ export function canonicalPath(p: string): string {
 }
 
 export function resolveHome(p: string): string {
-  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
-  return resolve(p);
+  return resolve(expandHome(p));
 }
 
 // ---------------------------------------------------------------------------
