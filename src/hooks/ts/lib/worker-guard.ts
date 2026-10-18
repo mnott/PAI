@@ -463,7 +463,7 @@ function localRmReason(segs: Segment[], cwd: string): string | null {
     for (const w of words.slice(i)) {
       if (w.startsWith("-")) continue;
       const f = resolve(cwd, w);
-      if (existsSync(f) && isTracked(f) && !addedByBranch(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: delete nothing tracked; use Edit for the change`;
+      if (existsSync(f) && isTracked(f) && !addedByBranch(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: Local workers do not delete tracked files. Leave ${w} as is, finish the rest, and list it in your report as \`delete: ${w} (<reason>)\`; your orchestrator deletes it.`;
     }
   }
   return null;
