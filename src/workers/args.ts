@@ -37,6 +37,15 @@ export interface ParsedRunnerArgs {
   allowedTools: string[];
 }
 
+/**
+ * True when `v` is a real command-line option token (`--flag`, `--flag=x`,
+ * `-c`), not task text. The value after -p is the prompt unless it is one of
+ * these, so a spec starting `--- shared ---` or `-x` still counts as the prompt.
+ */
+export function isFlagToken(v: string): boolean {
+  return /^--[A-Za-z][\w-]*(=.*)?$/s.test(v) || /^-[cdhprvV]$/.test(v);
+}
+
 export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
   let prompt: string | null = null;
   let outputFormat: ParsedRunnerArgs["outputFormat"] = "text";
@@ -56,7 +65,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
     if (a === "-p" || a === "--print") {
       headless = true;
       rest.push(a);
-      if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
+      if (i + 1 < argv.length && !isFlagToken(argv[i + 1])) {
         prompt = argv[i + 1];
         rest.push(prompt);
         i += 1;
@@ -104,7 +113,7 @@ export function parseRunnerArgs(argv: string[]): ParsedRunnerArgs {
       if (a === "--tools") callerTools = true;
       if (a.startsWith("--tools=")) callerTools = true;
       if (
-        prompt === null && !a.startsWith("-") && rest.length > 0 &&
+        prompt === null && !isFlagToken(a) && rest.length > 0 &&
         (rest[rest.length - 1] === "-p" || rest[rest.length - 1] === "--print")
       ) {
         prompt = a;
@@ -151,7 +160,7 @@ export function stripPromptValues(argv: string[]): string[] {
     const a = argv[i];
     const isPrint = a === "-p" || a === "--print";
     out.push(a);
-    if (isPrint && i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
+    if (isPrint && i + 1 < argv.length && !isFlagToken(argv[i + 1])) {
       i += 1; // drop the prompt value; the flag itself stays
     }
   }

@@ -23,7 +23,7 @@ import { readWorkersSection } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, workersLogDir } from "./paths.js";
 import { newWorkerId } from "./status.js";
-import { shortText } from "./args.js";
+import { isFlagToken, shortText } from "./args.js";
 import { runWorker, type RunOptions } from "./run.js";
 
 /** Where a chain's spec file lives: <logDir>/specs/<chain id>.md. */
@@ -41,7 +41,7 @@ export function swapPromptArg(claudeArgs: string[], prompt: string): string[] {
   for (let i = 0; i < claudeArgs.length; i++) {
     const a = claudeArgs[i];
     if (a === "-p" || a === "--print") {
-      if (i + 1 < claudeArgs.length && !claudeArgs[i + 1].startsWith("-")) i += 1;
+      if (i + 1 < claudeArgs.length && !isFlagToken(claudeArgs[i + 1])) i += 1;
       continue;
     }
     out.push(a);

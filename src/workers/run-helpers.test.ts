@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
+import { preEventFailure } from "./run.js";
 import { appendSystemPromptArgs, longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
@@ -1088,5 +1089,33 @@ describe("isEmptyResponse", () => {
   });
   it("empty result but tools ran: not empty", () => {
     expect(isEmptyResponse("", 2)).toBe(false);
+  });
+});
+
+describe("prompt values that look like options", () => {
+  for (const text of ["--- shared ---\nReply ok\n--- unit ---\ngo", "-x do it"]) {
+    it(`keeps ${JSON.stringify(text.slice(0, 14))} as the prompt, off the command line`, () => {
+      const args = ["-p", text, "--output-format", "json"];
+      expect(parseRunnerArgs(args).prompt).toBe(text);
+      expect(stripPromptValues(parseRunnerArgs(args).rest)).toEqual(["-p"]);
+    });
+  }
+  it("still treats a following flag as no prompt", () => {
+    expect(parseRunnerArgs(["-p", "--verbose"]).prompt).toBeNull();
+    expect(stripPromptValues(["-p", "--verbose"])).toEqual(["-p", "--verbose"]);
+  });
+  it("a bare -x value is the prompt", () => {
+    expect(parseRunnerArgs(["-p", "-x"]).prompt).toBe("-x");
+  });
+});
+
+describe("preEventFailure", () => {
+  it("reports claude's stderr when the start died before any turn", () => {
+    expect(preEventFailure(1, 0, "error: unknown option '--- shared ---'\n")).toContain("unknown option");
+  });
+  it("is silent on success, after turns, or with no stderr", () => {
+    expect(preEventFailure(0, 0, "x")).toBeNull();
+    expect(preEventFailure(1, 2, "x")).toBeNull();
+    expect(preEventFailure(1, 0, " \n")).toBeNull();
   });
 });
