@@ -8,7 +8,6 @@
  *   pai db schema <table> [--db sqlite|postgres]
  */
 
-import type { Command } from "commander";
 import { ok, warn, err, dim, bold, header, renderTable } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { migrateToPostgres, renderReport } from "../../storage/migrate-to-postgres.js";
@@ -85,10 +84,10 @@ function printResult(
 // pai db query
 // ---------------------------------------------------------------------------
 
-async function cmdQuery(
+export async function cmdQuery(
   sql: string,
   opts: CommonOpts
-): Promise<void> {
+): Promise<number> {
   const target: DbTarget = opts.db ?? "sqlite";
   console.log();
   console.log(
@@ -104,11 +103,11 @@ async function cmdQuery(
       await backend.close();
     }
     printResult(result, opts.json ?? false);
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
@@ -116,7 +115,7 @@ async function cmdQuery(
 // pai db tables
 // ---------------------------------------------------------------------------
 
-async function cmdTables(opts: CommonOpts): Promise<void> {
+export async function cmdTables(opts: CommonOpts): Promise<number> {
   const target: DbTarget = opts.db ?? "sqlite";
   console.log();
   console.log(header(`  Tables [${target}]`));
@@ -133,7 +132,7 @@ async function cmdTables(opts: CommonOpts): Promise<void> {
 
     if (opts.json) {
       console.log(JSON.stringify(tables, null, 2));
-      return;
+      return 0;
     }
 
     if (tables.length === 0) {
@@ -146,11 +145,11 @@ async function cmdTables(opts: CommonOpts): Promise<void> {
     console.log();
     console.log(dim(`  ${tables.length} table(s)`));
     console.log();
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
@@ -158,7 +157,7 @@ async function cmdTables(opts: CommonOpts): Promise<void> {
 // pai db schema
 // ---------------------------------------------------------------------------
 
-async function cmdSchema(table: string, opts: CommonOpts): Promise<void> {
+export async function cmdSchema(table: string, opts: CommonOpts): Promise<number> {
   const target: DbTarget = opts.db ?? "sqlite";
   console.log();
   console.log(header(`  Schema: ${table} [${target}]`));
@@ -172,59 +171,24 @@ async function cmdSchema(table: string, opts: CommonOpts): Promise<void> {
       await backend.close();
     }
     printResult(result, opts.json ?? false);
+    return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`  ${msg}`));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Commander registration
+// pai db migrate-to-postgres
 // ---------------------------------------------------------------------------
 
-export function registerDbCommands(dbCmd: Command): void {
-  dbCmd
-    .command("query <sql>")
-    .description("Run a SQL query against the selected database")
-    .option("--db <target>", "Database target: sqlite (default) or postgres", "sqlite")
-    .option("--json", "Output results as JSON array")
-    .action(async (sql: string, opts: CommonOpts) => {
-      await cmdQuery(sql, opts);
-    });
-
-  dbCmd
-    .command("tables")
-    .description("List all tables in the selected database")
-    .option("--db <target>", "Database target: sqlite (default) or postgres", "sqlite")
-    .option("--json", "Output as JSON array")
-    .action(async (opts: CommonOpts) => {
-      await cmdTables(opts);
-    });
-
-  dbCmd
-    .command("schema <table>")
-    .description("Show column schema for a table")
-    .option("--db <target>", "Database target: sqlite (default) or postgres", "sqlite")
-    .option("--json", "Output as JSON array")
-    .action(async (table: string, opts: CommonOpts) => {
-      await cmdSchema(table, opts);
-    });
-
-  dbCmd
-    .command("migrate-to-postgres")
-    .description("One-shot migration of kg_entities, registry tables, and memory/vault rows from SQLite to Postgres")
-    .option("--dry-run", "Preflight + counts only — no writes, no pg_dump")
-    .option("--skip-dump", "Skip the pg_dump rollback artefact (tests only)")
-    .option("--allow-running", "Skip the daemon-not-running refusal (tests only)")
-    .action(async (opts: { dryRun?: boolean; skipDump?: boolean; allowRunning?: boolean }) => {
-      const result = await migrateToPostgres({
-        dryRun: opts.dryRun,
-        skipDump: opts.skipDump,
-        allowRunning: opts.allowRunning,
-      });
-      console.log(renderReport(result));
-      if (!result.ok) process.exitCode = 1;
-    });
+export async function cmdMigrateToPostgres(opts: { dryRun?: boolean; skipDump?: boolean; allowRunning?: boolean }): Promise<number> {
+  const result = await migrateToPostgres({
+    dryRun: opts.dryRun,
+    skipDump: opts.skipDump,
+    allowRunning: opts.allowRunning,
+  });
+  console.log(renderReport(result));
+  return result.ok ? 0 : 1;
 }
