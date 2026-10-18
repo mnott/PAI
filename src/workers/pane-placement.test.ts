@@ -69,7 +69,7 @@ describe("openVerifiedPane placement", () => {
     await expect(open("w-tab", s)).resolves.toContain("new tab");
     expect(s.placed).toEqual(["tab"]);
     expect(panePlacement("w-tab")).toBe("tab");
-    expect(rebalanced).toBe(0); // empty registry: nothing to re-balance
+    expect(rebalanced).toBe(1); // re-balance tried before the fallback
     expect(vi.mocked(process.stderr.write).mock.calls.join("")).toContain("pane: opened in a new tab (window too crowded)");
   });
 
