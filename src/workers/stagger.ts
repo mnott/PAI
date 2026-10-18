@@ -8,7 +8,7 @@
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { alive, loadStatuses, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 
 export interface StaggerConfig {
   enabled: boolean;
@@ -76,7 +76,7 @@ export function warmupLimitSec(history: number[] | undefined, local: boolean, cf
 
 // --- the gate ---
 
-const isActive = (s: WorkerStatus) => s.state === "running" && alive(s.pid);
+const isActive = (s: WorkerStatus) => isLive(s, (w) => alive(w.pid));
 
 /**
  * The immediate predecessor: the latest-started live run on this provider

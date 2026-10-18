@@ -26,7 +26,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
-import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
@@ -129,6 +129,7 @@ export function psOutput(
 ): string {
   const c = makeColor(color);
   const term = env.ITERM_SESSION_ID ?? "";
+  reconcileStatuses(logDir);
   const statuses = loadStatuses(logDir);
   const scoped = showAll || !term ? statuses : statuses.filter((s) => workerInScope(s, term));
   const scopeLabel =
@@ -1248,6 +1249,7 @@ export function statusLineOutput(
   _claudeSession: string = "",
   now: Date = new Date()
 ): string {
+  reconcileStatuses(logDir, now);
   const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s));
   return renderStatusLine(statuses, now);
 }
