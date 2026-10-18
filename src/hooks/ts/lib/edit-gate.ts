@@ -163,19 +163,54 @@ function targetWritesCode(raw: string, vars: Map<string, string>): boolean {
   return !ext || VAR_CODE_PATH.test(ext[0]); // no literal extension: unknown, keep blocking
 }
 
+/** Replace heredoc bodies (<<EOF, <<'EOF', <<-EOF) with nothing: they are data, not commands. */
+function stripHeredocBodies(command: string): string {
+  const lines = command.split("\n");
+  const out: string[] = [];
+  let end: string | null = null;
+  let dash = false;
+  for (const line of lines) {
+    if (end !== null) {
+      if ((dash ? line.trimStart() : line) === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const h = /<<(-?)\s*(?:"([^"]+)"|'([^']+)'|\\?([A-Za-z_]\w*))/.exec(line);
+    if (h) {
+      dash = h[1] === "-";
+      end = h[2] ?? h[3] ?? h[4];
+    }
+  }
+  return out.join("\n");
+}
+
+/** Whether the last literal `cd <dir>` before `index` put the cwd in scratch space. */
+function cwdIsScratchAt(command: string, index: number): boolean {
+  let scratch = false;
+  for (const cd of command.slice(0, index).matchAll(/(?:^|[;&|\n]\s*)cd\s+("[^"$`]*"|'[^']*'|[^\s;&|$`()"']+)/g)) {
+    scratch = isScratch(cd[1].replace(/^["']|["']$/g, "").replace(/\/?$/, "/"));
+  }
+  return scratch;
+}
+
 function writesCodeTarget(command: string): boolean {
   const vars = simpleAssignments(command);
-  return [...command.matchAll(ANY_REDIRECT), ...command.matchAll(ANY_TEE)].some((m) => targetWritesCode(m[1], vars));
+  return [...command.matchAll(ANY_REDIRECT), ...command.matchAll(ANY_TEE)].some((m) => {
+    const t = m[1].replace(/^["']|["']$/g, "");
+    if (!t.startsWith("/") && !t.startsWith("$") && !t.startsWith("~") && cwdIsScratchAt(command, m.index ?? 0)) return false;
+    return targetWritesCode(m[1], vars);
+  });
 }
 
 const ORCHESTRATOR_BASH_PREFIX = "orchestrator mode: Bash may not write code files";
 
 /** Bash for an orchestrator worker: blocks in-place code writes, allows git mv/rm/merge and running tests. */
-export function decideOrchestratorBash(command: string): EditGateDecision {
+export function decideOrchestratorBash(rawCommand: string): EditGateDecision {
+  const command = stripHeredocBodies(rawCommand);
   const writesCode =
     (IN_PLACE.test(command) && !inPlaceTargetsAllNonCode(command)) ||
     writesCodeTarget(command) ||
-    scriptWritesRepoCode(command);
+    scriptWritesRepoCode(rawCommand);
   if (!writesCode) return { decision: "allow" };
   return {
     decision: "block",

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   isProseEdit,
@@ -155,5 +156,33 @@ describe("decideEditGate", () => {
 
   it("allows paths outside any git work tree", () => {
     expect(decideEditGate(ctx({ isGitWorkTree: false }))).toEqual({ decision: "allow" });
+  });
+});
+
+describe("decideOrchestratorBash heredocs", () => {
+  const body = "Edit src/cli/foo.ts then run sed -i s/a/b/ src/x.ts\nrun: echo hi > src/x.ts";
+  it.each([
+    [`cat > /tmp/spec.txt <<'EOF'\n${body}\nEOF`, "allow"],
+    [`cat > /tmp/spec.txt <<EOF\n${body}\nEOF`, "allow"],
+    [`cat > /tmp/spec.txt <<-EOF\n\t${body}\n\tEOF`, "allow"],
+    ["cat > src/x.ts <<'EOF'\nhello\nEOF", "block"],
+    ["cat > /tmp/a.txt <<'EOF'\nx\nEOF\ncat > src/x.ts <<'EOF'\ny\nEOF", "block"],
+    ["cd /tmp/d && cat > a.txt", "allow"],
+    ["cd /tmp/d && cat > a.ts", "allow"],
+    ["cd src && cat > a.ts", "block"],
+    ["cd /tmp/d && cd ../repo && cat > a.ts", "block"],
+  ])("command %j should be %s", (command, expected) => {
+    expect(decideOrchestratorBash(command).decision).toBe(expected);
+  });
+
+  it("allows the saved denied spec-writing command", () => {
+    const f = `${process.env.HOME}/ab-run3/specs-archive/denied-heredoc-c1u-u3.txt`;
+    let text: string;
+    try {
+      text = readFileSync(f, "utf8");
+    } catch {
+      return;
+    }
+    expect(decideOrchestratorBash(text).decision).toBe("allow");
   });
 });
