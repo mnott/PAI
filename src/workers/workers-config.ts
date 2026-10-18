@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Document, Scalar, parseDocument, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
@@ -45,7 +45,7 @@ export const WORKERS_YAML_FILENAME = "workers.yaml";
  * dir (~/.claude/pai by default) — this file is per-user state that can
  * carry API keys and must never be committed, same as the rest of PAI_HOME.
  */
-function defaultWorkersYamlPath(): string {
+export function defaultWorkersYamlPath(): string {
   return paiHomePath(WORKERS_YAML_FILENAME);
 }
 
@@ -500,6 +500,12 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
  *  with every other PAI YAML file via writeYamlFileAtomic; only the
  *  workers.yaml-specific validation (parseWorkersYamlDocument) lives here. */
 export function writeWorkersYamlText(yamlPath: string, text: string): void {
+  // A worker never writes the live file (2026-10-18: a worker's inline-keys run replaced every key_file).
+  if (process.env.PAI_WORKER === "1" && resolve(yamlPath) === resolve(defaultWorkersYamlPath())) {
+    throw new WorkersConfigError(
+      `refusing to write ${yamlPath}: workers never write live PAI config; set HOME=$(mktemp -d) or PAI_WORKERS_YAML=<copy> for state-changing checks`
+    );
+  }
   // Validate before committing anything to disk.
   const probe = parseDocument(text);
   if (probe.errors.length) {

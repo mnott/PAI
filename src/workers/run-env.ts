@@ -6,12 +6,14 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { loadConfig } from "../daemon/config.js";
 import { ROUTER_PORT } from "../router/router.js";
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
+import { workersYamlPath } from "./workers-config.js";
 
 /**
  * Headless workers run their Bash tool under bash: the operator's zsh aborts a whole command on an
@@ -83,6 +85,39 @@ const LOCAL_STREAM_IDLE_VARS = [
   "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS",
 ] as const;
 
+/** Parent of every per-worker config copy; outside ~/.claude/pai so the worker guard treats the copy as safe. */
+export const WORKER_CONFIG_COPY_ROOT = join(tmpdir(), "pai-worker-config");
+const COPY_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
+/**
+ * Point a worker at its own copy of workers.yaml (PAI_WORKERS_YAML, 0600) so a state-changing
+ * `pai worker config|providers|...` run from inside the worker cannot touch the live file
+ * (2026-10-18: a worker's `inline-keys` replaced every key_file). Provider reads still work off
+ * the copy. A caller-set PAI_WORKERS_YAML wins (children inherit the parent's copy); a missing
+ * live file or any I/O failure leaves the env alone. Stale copies are pruned here.
+ */
+export function pinWorkersYamlCopy(env: NodeJS.ProcessEnv, root: string = WORKER_CONFIG_COPY_ROOT): void {
+  if (env.PAI_WORKERS_YAML) return;
+  try {
+    const live = workersYamlPath();
+    if (!existsSync(live)) return;
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    for (const d of readdirSync(root)) {
+      const dp = join(root, d);
+      try {
+        if (Date.now() - statSync(dp).mtimeMs > COPY_MAX_AGE_MS) rmSync(dp, { recursive: true, force: true });
+      } catch { /* raced with another prune */ }
+    }
+    const dir = mkdtempSync(join(root, "w-"));
+    const copy = join(dir, "workers.yaml");
+    writeFileSync(copy, readFileSync(live), { mode: 0o600 });
+    chmodSync(copy, 0o600);
+    env.PAI_WORKERS_YAML = copy;
+  } catch {
+    /* no copy: the guard still denies the mutating verbs */
+  }
+}
+
 /**
  * Environment for a run through `provider`. Caller's env minus the Anthropic
  * key. `routerEnabled` routes the run through the local model router instead
@@ -106,6 +141,7 @@ export function buildRunEnv(
     // workers have no memory to recall; the auto-memory prompt only sends
     // them to read a MEMORY.md that does not exist
     env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+    pinWorkersYamlCopy(env);
   }
 
   // a child never inherits its spawner's orchestrator mode; only an explicit --orchestrate sets it
