@@ -318,6 +318,7 @@ export function renameSessionNote(notePath: string, meaningfulName: string): str
   const [, noteNumber, date] = match;
 
   const titleCaseName = meaningfulName
+    .replace(/[\/\\:\0]/g, ' ')
     .split(/[\s_-]+/)
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ')

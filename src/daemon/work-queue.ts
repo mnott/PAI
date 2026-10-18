@@ -56,6 +56,9 @@ export interface WorkItem {
   completedAt?: string;   // ISO timestamp
 }
 
+/** Thrown by a handler when a retry cannot help: markFailed() then fails the item at once. */
+export class NonRetryableError extends Error {}
+
 export interface WorkQueueStats {
   pending: number;
   processing: number;
@@ -296,13 +299,13 @@ export function markCompleted(id: string): void {
  * If attempts < maxAttempts, schedules a retry with exponential backoff.
  * Otherwise, leaves status as 'failed'.
  */
-export function markFailed(id: string, errorMsg: string): void {
+export function markFailed(id: string, errorMsg: string, retryable = true): void {
   const item = _queue.find((i) => i.id === id);
   if (!item) return;
 
   item.error = errorMsg;
 
-  if (item.attempts < item.maxAttempts) {
+  if (retryable && item.attempts < item.maxAttempts) {
     const backoffMs = BACKOFF_MS[item.attempts - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1];
     item.status = "pending";
     item.nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
@@ -313,7 +316,9 @@ export function markFailed(id: string, errorMsg: string): void {
   } else {
     item.status = "failed";
     process.stderr.write(
-      `[work-queue] Item ${id} exhausted retries (${item.maxAttempts} attempts): ${errorMsg}\n`
+      retryable
+        ? `[work-queue] Item ${id} exhausted retries (${item.maxAttempts} attempts): ${errorMsg}\n`
+        : `[work-queue] Item ${id} failed, not retryable: ${errorMsg}\n`
     );
   }
 
@@ -409,4 +414,33 @@ export function cleanup(): void {
 
   _dirty = removed > 0;
   saveIfDirty();
+}
+
+// ---------------------------------------------------------------------------
+// Coalescing
+// ---------------------------------------------------------------------------
+
+/**
+ * Enqueue unless an item of this type is already queued or running, or one
+ * started/finished within `windowMs`. Repeat triggers collapse into the one
+ * already queued or recently run. Returns the new item, or null when coalesced.
+ */
+export function enqueueCoalesced(
+  params: Parameters<typeof enqueue>[0],
+  windowMs: number,
+  now = Date.now()
+): WorkItem | null {
+  if (hasPendingOrProcessingOfType(params.type)) return null;
+  const recent = _queue.some((i) => {
+    if (i.type !== params.type || i.status === "failed") return false;
+    const at = Date.parse(i.completedAt ?? i.createdAt);
+    return now - at < windowMs;
+  });
+  return recent ? null : enqueue(params);
+}
+
+/** Drop every in-memory item. Tests only. */
+export function resetQueueForTests(): void {
+  _queue = [];
+  _dirty = false;
 }

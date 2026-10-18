@@ -29,6 +29,7 @@ import {
   spawnSummarizer,
   contentToText,
 } from "./session-summary-worker.js";
+import { NonRetryableError } from "./work-queue.js";
 import { buildContextHandoverPrompt } from "./templates/context-handover-prompt.js";
 import {
   readContextHandoverCache,
@@ -52,9 +53,10 @@ export interface ContextHandoverPayload {
   urgent?: boolean;
 }
 
-/** How much of the tail of the transcript to feed the summarizer. Generous —
- *  this runs at most twice per session, not on every tool call. */
-const MAX_TURN_CHARS = 150_000;
+/** How much of the tail of the transcript to feed the summarizer. Sized so the prompt stays
+ *  well inside the sonnet budget (120 s): 150k raw chars gave 80k+ char prompts
+ *  that timed out. */
+const MAX_TURN_CHARS = 40_000;
 
 /** Max turns to include (a hard floor even if MAX_TURN_CHARS is not hit). */
 const MAX_TURNS = 120;
@@ -176,7 +178,7 @@ export async function handleContextHandover(payload: ContextHandoverPayload): Pr
   if (!summary || !summary.trim()) {
     // No cache write on this path — an existing cache from an earlier
     // successful run is left untouched rather than clobbered with nothing.
-    throw new Error(`[context-handover] sonnet produced no output (session=${sessionId})`);
+    throw new NonRetryableError(`[context-handover] sonnet produced no output (session=${sessionId}) — not retried here; the trigger re-fires on its own cadence`);
   }
 
   writeContextHandoverCache({

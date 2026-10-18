@@ -26,6 +26,7 @@ import {
 } from "./state.js";
 import { runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
+import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
 import { notifyNewWork } from "../../daemon/work-queue-worker.js";
 import { getBackendOutage } from "../../storage/outage.js";
@@ -481,6 +482,13 @@ export async function handleRequest(
 
       if (!p.type) {
         sendResponse(socket, { id, ok: false, error: "work_queue_enqueue: type is required" });
+        socket.end();
+        return;
+      }
+
+      if (p.type === "registry-scan") {
+        const queued = triggerRegistryScan(p.payload?.cwd);
+        sendResponse(socket, { id, ok: true, result: queued ? { id: queued.id, status: queued.status } : { coalesced: true } });
         socket.end();
         return;
       }

@@ -420,7 +420,7 @@ function enqueueRegistryScan(): Promise<void> {
         params: {
           type: 'registry-scan',
           priority: 5,
-          payload: {},
+          payload: { cwd: process.cwd() },
         },
       }) + '\n';
       client.write(msg);
