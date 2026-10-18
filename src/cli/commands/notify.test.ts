@@ -37,4 +37,20 @@ describe("pai notify", () => {
     // This will fail due to no daemon, so it exits 1
     expect(r.code).toBe(1);
   });
+  it("pai notify set options enable and disable are repeatable", () => {
+    const setCommand = notifyCommand.subcommands?.find(c => c.name === "set");
+    expect(setCommand).toBeDefined();
+    if (setCommand && setCommand.options) {
+      const enableOption = setCommand.options.find(o => o.name === "enable");
+      const disableOption = setCommand.options.find(o => o.name === "disable");
+      expect(enableOption).toBeDefined();
+      expect(disableOption).toBeDefined();
+      if (enableOption) {
+        expect(enableOption.repeatable).toBe(true);
+      }
+      if (disableOption) {
+        expect(disableOption.repeatable).toBe(true);
+      }
+    }
+  });
 });
