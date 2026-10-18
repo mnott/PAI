@@ -277,7 +277,7 @@ export function pad(str: string, width: number): string {
 /**
  * Strip ANSI escape sequences to measure visible string length.
  */
-function stripAnsi(str: string): string {
+export function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
   return str.replace(/\x1B\[[0-9;]*m/g, "");
 }
