@@ -105,7 +105,7 @@ import {
 } from "./routing.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
-import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, resolveHostSession } from "./pane.js";
+import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -1350,7 +1350,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     a.panePrepared = { verified };
     const status = loadStatus(a.logDir, wid);
     if (status) {
-      if (verified) status.pane = { opened: true };
+      if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
       else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
       saveStatus(a.logDir, status);
     } else if (!verified) {
@@ -1735,7 +1735,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
   // above when the gate applies; best effort otherwise.
-  if (paneVerified) status.pane = { opened: true };
+  if (paneVerified) status.pane = { opened: true, placement: panePlacement(wid) };
   else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   if (headless && !a.gated) await runGates(a, wid, status);
@@ -2325,7 +2325,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  if (paneVerified) status.pane = { opened: true };
+  if (paneVerified) status.pane = { opened: true, placement: panePlacement(wid) };
   else void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
