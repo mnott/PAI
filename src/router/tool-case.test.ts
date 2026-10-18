@@ -83,7 +83,7 @@ describe("tool-case", () => {
     });
     it("fixJsonReply converts content[]", () => {
       const body = JSON.stringify({ content: [{ type: "tool_use", name: "Q", id: "x", input: { a: "1" } }] });
-      expect(JSON.parse(fixJsonReply(body, declared, () => {})).content[0]).toEqual({ type: "text", text: "Q\na=1" });
+      expect(JSON.parse(fixJsonReply(body, declared, () => {})).content[0]).toEqual({ type: "text", text: "Q\n1" });
     });
   });
 });
