@@ -20,16 +20,12 @@ pai task add "Fix the login bug" --owner my-app
 Show which projects can receive tasks, and create missing ones
 
 ```
-pai task projects [MORE...] [options]
+pai task projects [options]
 ```
 
 Show which projects can receive tasks, and create missing ones.
 
 Show which sessions can be given work from the tracker, and create the missing projects
-
-| Argument | Required | Description |
-|---|---|---|
-| `MORE...` | no | More values for the list option above |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
