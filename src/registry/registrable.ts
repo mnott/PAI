@@ -24,7 +24,7 @@
  * Found by the AIBroker session while we were dividing up the dead-path work.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
@@ -155,4 +155,34 @@ export async function pruneWorktreeProjects(
     }
   }
   return removed;
+}
+
+export interface UnregistrableReport {
+  /** Registry rows examined. */
+  total: number;
+  /** Rows whose root_path matches the registration filter. */
+  matching: number;
+  /** Matching rows whose path no longer exists on disk. */
+  matchingMissing: number;
+  byReason: Record<string, number>;
+  sample: string[];
+}
+
+/** Dry run of pruneWorktreeProjects: counts the rows the filter matches, deletes nothing. */
+export async function reportUnregistrable(
+  backend: RegistryBackend,
+  worktreesRoot: string | undefined = workerWorktreesRoot(),
+  sampleSize = 5
+): Promise<UnregistrableReport> {
+  const rows = await backend.listProjects({});
+  const report: UnregistrableReport = { total: rows.length, matching: 0, matchingMissing: 0, byReason: {}, sample: [] };
+  for (const p of rows) {
+    const why = unregistrableReason(p.root_path, worktreesRoot);
+    if (!why) continue;
+    report.matching++;
+    if (!existsSync(p.root_path)) report.matchingMissing++;
+    report.byReason[why.replace(/ of .*/, "")] = (report.byReason[why.replace(/ of .*/, "")] ?? 0) + 1;
+    if (report.sample.length < sampleSize) report.sample.push(p.root_path);
+  }
+  return report;
 }
