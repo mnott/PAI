@@ -107,7 +107,7 @@ export async function projectCdCmd(identifier: string): Promise<number> {
   return 1;
 }
 
-export async function projectAddCmd(rawPath: string, opts: { slug?: string; type?: string; displayName?: string }): Promise<number> {
+export async function projectAddCmd(rawPath: string, opts: { slug?: string; type?: string; displayName?: string; trust?: boolean }): Promise<number> {
   await cmdAdd(rawPath, opts);
   return 0;
 }

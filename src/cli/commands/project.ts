@@ -69,10 +69,10 @@ export const projectSubcommands: CommandDef[] = [
   summary: "Register a folder as a project",
   description: "Register a folder as a project.\n\nRegister a project directory in the PAI registry",
   args: [{ name: "PATH", summary: "Folder path", required: true }],
-  options: [{ name: "slug", type: "string", value: "SLUG", summary: "Override auto-generated slug" }, { name: "type", type: "string", value: "TYPE", summary: "Project type: local | central | obsidian-linked | external" }, { name: "display-name", type: "string", value: "NAME", summary: "Human-readable display name" }],
+  options: [{ name: "slug", type: "string", value: "SLUG", summary: "Override auto-generated slug" }, { name: "type", type: "string", value: "TYPE", summary: "Project type: local | central | obsidian-linked | external" }, { name: "display-name", type: "string", value: "NAME", summary: "Human-readable display name" }, { name: "no-trust", type: "boolean", default: false, summary: "Do not mark the folder trusted in Claude Code (~/.claude.json)" }],
   examples: ["pai project add ~/code/my-app","pai project add ~/code/my-app --slug my-app --display-name \"My App\""],
   seeAlso: ["pai project info","pai project cd"],
-  run: (ctx) => projectAddCmd(ctx.args.PATH as string, { slug: ctx.opts.slug as string | undefined, type: ctx.opts.type as string | undefined, displayName: ctx.opts["display-name"] as string | undefined }),
+  run: (ctx) => projectAddCmd(ctx.args.PATH as string, { slug: ctx.opts.slug as string | undefined, type: ctx.opts.type as string | undefined, displayName: ctx.opts["display-name"] as string | undefined, trust: ctx.opts["no-trust"] !== true }),
 },
 {
   name: "info",
