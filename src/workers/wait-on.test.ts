@@ -38,10 +38,10 @@ describe("waitOn", () => {
     expect(f.out).toEqual(["pid 42 gone, exit code 7", "l2", "l3"]);
   });
 
-  it("returns 3 at --max and caps at 115 s", async () => {
+  it("returns 3 at --max and caps at 590 s", async () => {
     const f = fake({});
     expect(await waitOn({ pid: 42, maxSecs: 1000 }, f.deps)).toBe(3);
-    expect(f.out.at(-1)).toMatch(/still running after 11[45]s/);
+    expect(f.out.at(-1)).toMatch(/still running after 59[01]s/);
   });
 
   it("prints a heartbeat about every 20 s", async () => {

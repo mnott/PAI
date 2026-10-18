@@ -703,12 +703,12 @@ const waitOnCommand: CommandDef = {
   name: "wait-on",
   summary: "Wait for a background job to finish",
   description:
-    "Waits at most --max seconds (default 110, limit 115) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.\n" +
+    "Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.\n" +
     "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.",
   args: [{ name: "PID", required: true, summary: "Process id of the job" }],
   options: [
     { name: "log", type: "string", value: "FILE", summary: "Log file whose last lines are printed on return; FILE.rc holds the exit code" },
-    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 115)" },
+    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" },
     { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
   ],
   examples: ["pai worker wait-on 12345", "pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60"],
@@ -735,11 +735,11 @@ const waitCommand: CommandDef = {
   name: "wait",
   summary: "Wait for child workers; returns when any finishes or --max elapses",
   description:
-    "Prints one JSON status line per worker id and returns within --max seconds (default 100, limit 115) as soon as ANY of them finishes. Exit 0: all done. Exit 1: a finished worker failed. Exit 3: some still running, call again with the unfinished ids.\n" +
+    "Prints one JSON status line per worker id and returns within --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) as soon as ANY of them finishes. Exit 0: all done. Exit 1: a finished worker failed. Exit 3: some still running, call again with the unfinished ids.\n" +
     "Use this instead of sleeping and re-checking `pai worker ps`. --timeout keeps the old behaviour: wait for ALL, exit 1 on timeout.",
   args: [{ name: "IDS", required: true, variadic: true, summary: "One or more worker ids" }],
   options: [
-    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" },
+    { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" },
     { name: "timeout", type: "number", value: "SECS", summary: "Wait for ALL workers, give up after this many seconds (exit 1)" },
   ],
   examples: ["pai worker wait w-20260101-abc", "pai worker wait w-20260101-abc w-20260101-def --max 60"],
@@ -756,9 +756,9 @@ const waitUrlCommand: CommandDef = {
   name: "wait-url",
   summary: "Wait for a server to answer HTTP",
   description:
-    "Polls the URL with backoff for at most --max seconds (default 100, limit 115). Exit 0: it answered 2xx-4xx. Exit 3: not yet, call again.",
+    "Polls the URL with backoff for at most --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically). Exit 0: it answered 2xx-4xx. Exit 3: not yet, call again.",
   args: [{ name: "URL", required: true, summary: "e.g. http://127.0.0.1:8016/v1/models" }],
-  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" }],
+  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" }],
   examples: ["pai worker wait-url http://127.0.0.1:8016/v1/models", "pai worker wait-url http://127.0.0.1:8016/v1/models --max 60"],
   seeAlso: ["pai worker wait", "pai worker wait-on", "pai worker wait-file"],
   run: (ctx) => guard("pai worker wait-url <url>", () => waitUrl({ url: String(ctx.args.URL), maxSecs: num(ctx.opts.max) }, { ...realProbeDeps, out })),
@@ -768,9 +768,9 @@ const waitFileCommand: CommandDef = {
   name: "wait-file",
   summary: "Wait for files to appear",
   description:
-    "Waits at most --max seconds (default 100, limit 115) until every path exists; prints one line per path. Exit 0: all exist. Exit 3: some missing, call again.",
+    "Waits at most --max seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) until every path exists; prints one line per path. Exit 0: all exist. Exit 3: some missing, call again.",
   args: [{ name: "PATHS", required: true, variadic: true, summary: "One or more file paths" }],
-  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 115)" }],
+  options: [{ name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 100, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" }],
   examples: ["pai worker wait-file /tmp/job.rc", "pai worker wait-file /tmp/a.rc /tmp/b.rc --max 60"],
   seeAlso: ["pai worker wait", "pai worker wait-on", "pai worker wait-url"],
   run: (ctx) =>

@@ -113,7 +113,7 @@ export async function waitWorkers(
 }
 
 export const WAIT_MAX_DEFAULT_SECS = 100;
-export const WAIT_MAX_CAP_SECS = 115;
+export const WAIT_MAX_CAP_SECS = 590;
 
 /**
  * The `pai worker wait` verb: one JSON status line per id. With --max (default
