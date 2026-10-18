@@ -1,26 +1,26 @@
 /** `pai audit ...`: where tokens (and money) go. */
 
-import { OPT, type ArgDef, type CommandDef, type OptDef } from "../define.js";
+import { OPT, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { auditFilesCmd, auditHooksCmd, auditSessionCmd, auditSpawnCmd, auditDaemonCmd, auditEnvCmd, auditScheduleCmd, auditSkillsCmd, auditSubagentsCmd, auditMcpCmd, auditLadderCmd, auditTokensCmd } from "../lib/audit.js";
 
 const json: OptDef = { ...OPT.json, summary: "Print JSON instead of a table" };
-const a = (def: Omit<CommandDef, "run">, run: (ctx: any) => Promise<number> | number) =>
+const a = (def: Omit<CommandDef, "run">, run: (ctx: RunContext) => Promise<number> | number) =>
   // `--json` is read from the `tokens` node by the implementation; it is added to every report command here.
   ({ ...def, options: [...(def.options ?? []), json], run });
 
 const t = (name: string, summary: string, description: string, extra: Partial<CommandDef> = {}) =>
   a({ name, summary, description, examples: [`pai audit tokens ${name}`, `pai audit tokens ${name} --json`], seeAlso: ["pai audit tokens"], ...extra }, (ctx) => {
-    if (name === "files") return auditFilesCmd(ctx.args.PATHS ?? [], { json: ctx.opts.json === true });
+    if (name === "files") return auditFilesCmd(ctx.args.PATHS as string[] | undefined ?? [], { json: ctx.opts.json === true });
     if (name === "hooks") return auditHooksCmd({ json: ctx.opts.json === true });
-    if (name === "session") return auditSessionCmd(ctx.args.PATH, { json: ctx.opts.json === true, ctxThreshold: ctx.opts["ctx-threshold"], history: ctx.opts.history, turn: ctx.opts.turn });
-    if (name === "spawn") return auditSpawnCmd({ json: ctx.opts.json === true, n: ctx.opts.n, detail: ctx.opts.detail === true });
+    if (name === "session") return auditSessionCmd(ctx.args.PATH as string | undefined, { json: ctx.opts.json === true, ctxThreshold: ctx.opts["ctx-threshold"] as string | undefined, history: ctx.opts.history as string | boolean | undefined, turn: ctx.opts.turn as string | undefined });
+    if (name === "spawn") return auditSpawnCmd({ json: ctx.opts.json === true, n: ctx.opts.n as string | undefined, detail: ctx.opts.detail === true });
     if (name === "daemon") return auditDaemonCmd({ json: ctx.opts.json === true });
     if (name === "env") return auditEnvCmd({ json: ctx.opts.json === true });
     if (name === "schedule") return auditScheduleCmd({ json: ctx.opts.json === true });
-    if (name === "skills") return auditSkillsCmd({ json: ctx.opts.json === true, top: ctx.opts.top });
+    if (name === "skills") return auditSkillsCmd({ json: ctx.opts.json === true, top: ctx.opts.top as string | undefined });
     if (name === "subagents") return auditSubagentsCmd({ json: ctx.opts.json === true });
     if (name === "mcp") return auditMcpCmd({ json: ctx.opts.json === true, connect: ctx.opts.connect === true });
-    if (name === "ladder") return auditLadderCmd({ json: ctx.opts.json === true, live: ctx.opts.live === true, model: ctx.opts.model, mcpConfig: ctx.opts["mcp-config"] });
+    if (name === "ladder") return auditLadderCmd({ json: ctx.opts.json === true, live: ctx.opts.live === true, model: ctx.opts.model as string | undefined, mcpConfig: ctx.opts["mcp-config"] as string | undefined });
     return 0;
   });
 
@@ -41,7 +41,7 @@ export const auditCommand: CommandDef = {
         options: [{ name: "record", type: "string", value: "DIR", summary: "Also write a dated, numbered Markdown and JSON snapshot into DIR" }],
         examples: ["pai audit tokens", "pai audit tokens --json", "pai audit tokens --record ./audits"],
         seeAlso: ["pai audit tokens mcp"],
-      }, (ctx) => auditTokensCmd({ json: ctx.opts.json === true, record: ctx.opts.record })),
+      }, (ctx) => auditTokensCmd({ json: ctx.opts.json === true, record: ctx.opts.record as string | undefined })),
       subcommands: [
         t("files", "Token count per memory file", "Counts tokens of the CLAUDE.md chain, core skill, rule files and auto-memory, or of the files you name.", {
           args: [{ name: "PATHS", variadic: true, summary: "Files to count (default: the standard memory set)" } as ArgDef],
