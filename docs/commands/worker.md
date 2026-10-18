@@ -515,14 +515,18 @@ See also: `pai worker discard`, `pai worker pending`
 Stop a running worker
 
 ```
-pai worker kill ID
+pai worker kill ID [options]
 ```
 
-Sends SIGTERM to the worker; it saves its final state and exits. A worker whose process id has been reused by something else is marked lost and nothing is signalled.
+Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | yes | Worker id (see `pai worker ps`) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--only` | flag | — | Kill only this worker, leave its children running |
 
 ```sh
 pai worker kill w-20260101-abc
