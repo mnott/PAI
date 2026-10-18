@@ -6,7 +6,6 @@
  * stats   — Show observation statistics
  */
 
-import type { Command } from "commander";
 import { createConnection } from "net";
 import { ok, warn, err, dim, bold, header } from "./utils.js";
 import chalk from "chalk";
@@ -117,12 +116,12 @@ interface ObservationStats {
 // Command: pai observation list
 // ---------------------------------------------------------------------------
 
-async function cmdList(opts: {
+export async function observationListCmd(opts: {
   project?: string;
   type?: string;
   session?: string;
   limit?: string;
-}): Promise<void> {
+}): Promise<number> {
   const limit = parseInt(opts.limit ?? "20", 10);
 
   const params: Record<string, unknown> = { limit };
@@ -137,7 +136,7 @@ async function cmdList(opts: {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 
   console.log();
@@ -154,7 +153,7 @@ async function cmdList(opts: {
   if (!observations || observations.length === 0) {
     console.log(warn("  No observations found."));
     console.log();
-    return;
+    return 0;
   }
 
   // Column widths
@@ -197,16 +196,17 @@ async function cmdList(opts: {
   console.log();
   console.log(dim(`  ${observations.length} observation(s)`));
   console.log();
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
 // Command: pai observation search <query>
 // ---------------------------------------------------------------------------
 
-async function cmdSearch(
+export async function observationSearchCmd(
   query: string,
   opts: { project?: string; type?: string; limit?: string }
-): Promise<void> {
+): Promise<number> {
   const limit = parseInt(opts.limit ?? "20", 10);
 
   const params: Record<string, unknown> = { query, limit };
@@ -221,7 +221,7 @@ async function cmdSearch(
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 
   // Client-side text filter (observation_query doesn't support text search)
@@ -242,7 +242,7 @@ async function cmdSearch(
   if (!observations || observations.length === 0) {
     console.log(warn(`  No observations matching "${query}".`));
     console.log();
-    return;
+    return 0;
   }
 
   for (let i = 0; i < observations.length; i++) {
@@ -266,13 +266,14 @@ async function cmdSearch(
 
   console.log(dim(`  ${observations.length} result(s)`));
   console.log();
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
 // Command: pai observation stats
 // ---------------------------------------------------------------------------
 
-async function cmdStats(): Promise<void> {
+export async function observationStatsCmd(): Promise<number> {
   let stats: ObservationStats;
   try {
     stats = (await ipcCall("observation_stats", {})) as ObservationStats;
@@ -280,7 +281,7 @@ async function cmdStats(): Promise<void> {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 
   console.log();
@@ -329,59 +330,5 @@ async function cmdStats(): Promise<void> {
     console.log(warn("  No observation data yet."));
     console.log();
   }
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerObservationCommands(parent: Command): void {
-  // pai observation list
-  parent
-    .command("list")
-    .description("List recent observations")
-    .option("--project <slug>", "Filter by project slug")
-    .option("--type <type>", "Filter by type (decision, bugfix, feature, refactor, discovery, change)")
-    .option("--session <id>", "Filter by session ID")
-    .option("--limit <n>", "Maximum results", "20")
-    .action(async (opts: { project?: string; type?: string; session?: string; limit?: string }) => {
-      try {
-        await cmdList(opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
-
-  // pai observation search <query>
-  parent
-    .command("search <query>")
-    .description("Search observations by title or narrative text")
-    .option("--project <slug>", "Filter by project slug")
-    .option("--type <type>", "Filter by type")
-    .option("--limit <n>", "Maximum results", "20")
-    .action(async (query: string, opts: { project?: string; type?: string; limit?: string }) => {
-      try {
-        await cmdSearch(query, opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
-
-  // pai observation stats
-  parent
-    .command("stats")
-    .description("Show observation statistics: totals, by type, by project")
-    .action(async () => {
-      try {
-        await cmdStats();
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }
