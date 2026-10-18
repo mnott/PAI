@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRouter } from "./router.js";
+import type { WorkerProvider } from "../workers/config.js";
 import {
   aggregate,
   BustDetector,
@@ -235,5 +236,65 @@ describe("gap + session grouping", () => {
     );
     expect(out.map((g) => [g.session, g.name, g.requests, g.busts])).toEqual([["s2", null, 1, 0], ["s1", "worker one", 2, 1]]);
     expect(out[1]!.hitRatio).toBeCloseTo(0.9);
+  });
+});
+
+describe("local provider SSE", () => {
+  // vllm-mlx style: message_start reports input_tokens 0, so the router estimates the input from the request body.
+  const LOCAL_SSE =
+    [
+      'event: message_start\ndata: {"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 0, "output_tokens": 0}}}',
+      'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}}',
+      'event: content_block_delta\ndata: {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " world"}}',
+      'event: message_delta\ndata: {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 2}}',
+      'event: message_stop\ndata: {"type": "message_stop"}',
+    ].join("\n\n") + "\n\n";
+
+  it("records output tokens, an estimated input and timings without altering the stream", async () => {
+    const up = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(LOCAL_SSE.slice(0, 100));
+        setTimeout(() => res.end(LOCAL_SSE.slice(100)), 20);
+      });
+    });
+    await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
+    const rows: UsageRow[] = [];
+    const provider = {
+      enabled: true,
+      protocol: "anthropic",
+      baseUrl: `http://127.0.0.1:${(up.address() as AddressInfo).port}`,
+      keyFile: null,
+      models: { default: "qwen-test" },
+      env: {},
+    } as unknown as WorkerProvider;
+    const router = createRouter(
+      () => ({ vllm: provider }),
+      "http://127.0.0.1:1",
+      () => {},
+      (r) => rows.push(r)
+    );
+    await new Promise<void>((r) => router.listen(0, "127.0.0.1", r));
+    const port = (router.address() as AddressInfo).port;
+    const payload = JSON.stringify({ model: "qwen-test", messages: [{ role: "user", content: "x".repeat(400) }] });
+    const text = await new Promise<string>((resolve, reject) => {
+      const rq = http.request(
+        { host: "127.0.0.1", port, path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "vllm" } },
+        (res) => {
+          let t = "";
+          res.on("data", (c) => (t += c));
+          res.on("end", () => resolve(t));
+        }
+      );
+      rq.on("error", reject);
+      rq.end(payload);
+    });
+    expect(text).toBe(LOCAL_SSE);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ provider: "vllm", status: 200, output_tokens: 2, input_estimated: true });
+    expect(rows[0]!.input_tokens).toBeGreaterThan(0);
+    router.close();
+    up.close();
   });
 });

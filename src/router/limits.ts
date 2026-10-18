@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
+import { writeRate, percentile } from "./speed.js";
 
 export interface LimitWindow {
   name: string;
@@ -42,6 +43,8 @@ export interface ProviderLimits {
   served?: string[];
   /** average output tokens per second over the last hour */
   tokensPerSec?: number;
+  /** p50 decode tokens/s over the last hour, from the per-row decodeMs (the Speed table write rate) */
+  decodeTokPerSec?: number;
   /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
   prefixCache?: PrefixCacheStats;
   /** age of `prefixCache` when it is the last good reading kept over a failed poll; absent = fresh */
@@ -494,6 +497,7 @@ export async function localLimits(
     ...(served ? { served } : {}),
     ...(prefixCache ? { prefixCache } : {}),
     ...tokensPerSec(rows, name, now),
+    ...decodeTokPerSec(rows, name, now),
     fetchedAt: now,
   };
 }
@@ -565,6 +569,18 @@ export function tokensPerSec(rows: UsageRow[], provider: string, now: number): {
     ms += r.ms;
   }
   return ms ? { tokensPerSec: Math.round((out / (ms / 1000)) * 10) / 10 } : {};
+}
+
+/** p50 decode tokens/s over the last hour (slow-path requests only). */
+export function decodeTokPerSec(rows: UsageRow[], provider: string, now: number): { decodeTokPerSec?: number } {
+  const rates: number[] = [];
+  for (const r of rows) {
+    if (r.provider !== provider || Date.parse(r.ts) < now - 3_600_000 || r.status !== 200 || r.decodeMs === undefined) continue;
+    const rate = writeRate(r);
+    if (rate !== null) rates.push(rate);
+  }
+  if (!rates.length) return {};
+  return { decodeTokPerSec: Math.round(percentile(rates, 0.5)! * 10) / 10 };
 }
 
 function isLocalUrl(u: string): boolean {
