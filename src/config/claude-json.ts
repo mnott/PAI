@@ -23,8 +23,11 @@ import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unli
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const CLAUDE_JSON_PATH = join(homedir(), ".claude.json");
-const BACKUP_PATH = `${CLAUDE_JSON_PATH}.bak-pai`;
+/** Resolved at call time so a changed HOME (tests) is honoured. */
+export function claudeJsonPath(): string {
+  return join(homedir(), ".claude.json");
+}
+
 
 /**
  * Read ~/.claude.json.
@@ -35,14 +38,14 @@ const BACKUP_PATH = `${CLAUDE_JSON_PATH}.bak-pai`;
  * next write.
  */
 export function readClaudeJson(): Record<string, unknown> {
-  if (!existsSync(CLAUDE_JSON_PATH)) return {};
+  if (!existsSync(claudeJsonPath())) return {};
 
   let raw: string;
   try {
-    raw = readFileSync(CLAUDE_JSON_PATH, "utf8");
+    raw = readFileSync(claudeJsonPath(), "utf8");
   } catch (e) {
     throw new Error(
-      `Could not read ${CLAUDE_JSON_PATH}: ${e instanceof Error ? e.message : String(e)}\n` +
+      `Could not read ${claudeJsonPath()}: ${e instanceof Error ? e.message : String(e)}\n` +
       `Refusing to continue — writing now would replace your MCP registrations with PAI's alone.`
     );
   }
@@ -51,7 +54,7 @@ export function readClaudeJson(): Record<string, unknown> {
     return JSON.parse(raw) as Record<string, unknown>;
   } catch (e) {
     throw new Error(
-      `${CLAUDE_JSON_PATH} is not valid JSON: ${e instanceof Error ? e.message : String(e)}\n` +
+      `${claudeJsonPath()} is not valid JSON: ${e instanceof Error ? e.message : String(e)}\n` +
       `Refusing to continue — overwriting it would destroy every MCP server registration it holds.\n` +
       `Fix the file, or move it aside and let Claude Code recreate it, then re-run this command.`
     );
@@ -68,31 +71,35 @@ export function readClaudeJson(): Record<string, unknown> {
 export function writeClaudeJson(data: Record<string, unknown>): void {
   const serialized = JSON.stringify(data, null, 2) + "\n";
 
-  if (existsSync(CLAUDE_JSON_PATH)) {
+  if (existsSync(claudeJsonPath())) {
     try {
-      copyFileSync(CLAUDE_JSON_PATH, BACKUP_PATH);
+      copyFileSync(claudeJsonPath(), backupPath());
     } catch (e) {
       throw new Error(
-        `Could not back up ${CLAUDE_JSON_PATH} to ${BACKUP_PATH}: ${e instanceof Error ? e.message : String(e)}\n` +
+        `Could not back up ${claudeJsonPath()} to ${backupPath()}: ${e instanceof Error ? e.message : String(e)}\n` +
         `Refusing to write without a backup.`
       );
     }
   }
 
-  const tmp = `${CLAUDE_JSON_PATH}.tmp-pai-${process.pid}`;
+  const tmp = `${claudeJsonPath()}.tmp-pai-${process.pid}`;
   try {
     writeFileSync(tmp, serialized, "utf8");
-    renameSync(tmp, CLAUDE_JSON_PATH);
+    renameSync(tmp, claudeJsonPath());
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best effort */ }
     throw new Error(
-      `Failed to write ${CLAUDE_JSON_PATH}: ${e instanceof Error ? e.message : String(e)}\n` +
-      `The original is unchanged${existsSync(BACKUP_PATH) ? `; a backup is at ${BACKUP_PATH}` : ""}.`
+      `Failed to write ${claudeJsonPath()}: ${e instanceof Error ? e.message : String(e)}\n` +
+      `The original is unchanged${existsSync(backupPath()) ? `; a backup is at ${backupPath()}` : ""}.`
     );
   }
 }
 
+function backupPath(): string {
+  return `${claudeJsonPath()}.bak-pai`;
+}
+
 /** Where the pre-write backup is kept, for messages to the user. */
 export function claudeJsonBackupPath(): string {
-  return BACKUP_PATH;
+  return backupPath();
 }
