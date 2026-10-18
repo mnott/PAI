@@ -37,7 +37,7 @@
  * restarted on the next provider in routing order (WORKER-REROUTE ledger line).
  */
 
-import { recordToolError } from "./tool-errors.js";
+import { grantedToolNames, recordToolError } from "./tool-errors.js";
 import { editHintFor } from "./edit-assist.js";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -1972,6 +1972,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
                 tool: toolUses.get(block.tool_use_id ?? "")?.name ?? "?",
                 text: toolResultText(block.content),
                 input: toolUses.get(block.tool_use_id ?? "")?.input,
+                granted: headless ? grantedToolNames(toolsFlag.slice(1), parsed.allowedTools) : undefined,
               });
             }
             const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;

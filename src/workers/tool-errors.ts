@@ -28,6 +28,8 @@ export interface ToolErrorRecord {
   raw: string;
   /** What the tool was asked to do: path, pattern or command head. */
   input?: string;
+  /** Built-in tool names the run was started with (--tools / --allowedTools); absent when unknown. */
+  granted?: string[];
 }
 
 export const TOOL_ERRORS_FILE = "tool-errors.jsonl";
@@ -67,6 +69,31 @@ function wrongCaseTool(raw: string): string | null {
   const name = raw.match(/No such tool available:?\s*(\S+)/i)?.[1]?.replace(/[.,;:"'`]+$/, "");
   if (!name || CASED_TOOLS.includes(name)) return null;
   return CASED_TOOLS.find((t) => t.toLowerCase() === name.toLowerCase()) ? name : null;
+}
+
+/** Tool name X of "No such tool available: X", else null. */
+function missingToolName(raw: string): string | null {
+  return raw.match(/No such tool available:?\s*(\S+)/i)?.[1]?.replace(/[.,;:"'`]+$/, "") ?? null;
+}
+
+/** Built-in tool names of --tools / --allowedTools values (patterns and mcp__ entries dropped); [] when none. */
+export function grantedToolNames(...lists: string[][]): string[] {
+  const out: string[] = [];
+  for (const entry of lists.flat()) {
+    for (const raw of entry.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (raw.startsWith("mcp__")) continue;
+      const name = raw.replace(/\(.*$/, "");
+      if (!out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+}
+
+/** The tool was missing but this run never granted it: the model reached outside its grant. */
+function ungrantedTool(r: ToolErrorRecord): boolean {
+  const name = missingToolName(r.raw);
+  if (!name || name.startsWith("mcp__") || !r.granted?.length) return false;
+  return !r.granted.some((g) => g.toLowerCase() === name.toLowerCase());
 }
 
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
@@ -161,6 +188,7 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
   { test: (r) => /^empty-response/i.test(r.raw), c: { cls: "model", hint: "empty first reply — model stopped at once (seen with short spec prompts); one automatic relaunch already ran" } },
   { test: (r) => /Working directory .* was deleted/i.test(r.raw), c: { cls: "harness", hint: "worker cwd deleted" } },
   { test: (r) => API_AUTH_EVIDENCE.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
+  { test: ungrantedTool, c: { cls: "model", hint: "used a tool it was not granted", loopAt: 5 } },
   { test: (r) => /No such tool available/i.test(r.raw), c: { cls: "harness", hint: "tool missing in the worker" } },
   { test: (r) => LOCAL_5XX_EVIDENCE.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
 ];
@@ -203,7 +231,7 @@ export function clipRaw(text: string): string {
 
 export function recordToolError(
   logDir: string,
-  rec: { worker: string; provider: string; label: string; tool: string; text: string; input?: unknown },
+  rec: { worker: string; provider: string; label: string; tool: string; text: string; input?: unknown; granted?: string[] },
   now = Date.now()
 ): void {
   try {
@@ -219,6 +247,7 @@ export function recordToolError(
     };
     const input = summarizeToolInput(rec.input);
     if (input) line.input = input;
+    if (rec.granted?.length) line.granted = rec.granted;
     appendFileSync(toolErrorsPath(logDir), JSON.stringify(line) + "\n", "utf8");
   } catch {
     // supervision data must never break a run
