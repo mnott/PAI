@@ -5,6 +5,7 @@ import type { CommandDef, OptDef } from "../define.js";
 import { bridged } from "../lib/bridge.js";
 import { registerZettelCommands } from "./zettel/index.js";
 import { zettelExploreCmd } from "./zettel/explore.js";
+import { zettelHealthCmd } from "./zettel/health.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
@@ -79,7 +80,7 @@ export const zettelCommand: CommandDef = {
       examples: ["pai zettel themes --vault-project-id 3", "pai zettel themes --vault-project-id 3 --days 7"],
       seeAlso: ["pai zettel health"],
     }),
-    z(["health"], {
+    {
       name: "health",
       summary: "Check the vault for dead links and orphans",
       description: "Structural audit: dead links, orphan notes, disconnected groups and weakly connected notes.",
@@ -91,7 +92,13 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ["pai zettel health", "pai zettel health --scope recent --days 7", "pai zettel health --include dead_links,orphans"],
       seeAlso: ["pai zettel themes"],
-    }),
+      run: (ctx) => zettelHealthCmd({
+        scope: ctx.opts.scope as string | undefined,
+        project: ctx.opts.project as string | undefined,
+        days: ctx.opts.days as number | undefined,
+        include: ctx.opts.include as string | undefined,
+      }),
+    },
     z(["suggest"], {
       name: "suggest",
       summary: "Suggest new links for a note",
