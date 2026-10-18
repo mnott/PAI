@@ -6,6 +6,7 @@
  * open    — open vault in Obsidian app (macOS)
  */
 
+import type { Command } from "commander";
 import { execFileSync } from "node:child_process";
 import { ok, warn, err, dim, bold, header } from "./utils.js";
 import {
@@ -85,10 +86,10 @@ export function saveVaultPath(vaultPath: string): void {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-export async function obsidianSyncCmd(
+async function cmdSync(
   registry: RegistryBackend,
   opts: { vault?: string; quiet?: boolean }
-): Promise<number> {
+): Promise<void> {
   const vaultPath = getVaultPath(opts.vault);
   const q = opts.quiet ?? false;
 
@@ -150,14 +151,9 @@ export async function obsidianSyncCmd(
     console.log(ok(`  Done. Vault ready at: ${vaultPath}`));
     console.log();
   }
-
-  return 0;
 }
 
-export async function obsidianStatusCmd(
-  registry: RegistryBackend,
-  opts: { vault?: string }
-): Promise<number> {
+async function cmdStatus(registry: RegistryBackend, opts: { vault?: string }): Promise<void> {
   const vaultPath = getVaultPath(opts.vault);
   const report = await checkHealth(vaultPath, registry);
 
@@ -169,7 +165,7 @@ export async function obsidianStatusCmd(
   if (!existsSync(vaultPath)) {
     console.log(warn("  Vault directory does not exist. Run: pai obsidian sync"));
     console.log();
-    return 0;
+    return;
   }
 
   // Summary line
@@ -226,11 +222,9 @@ export async function obsidianStatusCmd(
     console.log(ok("  Vault is healthy."));
     console.log();
   }
-
-  return 0;
 }
 
-export function obsidianOpenCmd(opts: { vault?: string }): number {
+function cmdOpen(opts: { vault?: string }): void {
   const vaultPath = getVaultPath(opts.vault);
   // Derive vault name from last path component (Obsidian uses folder name as vault name)
   const parts = vaultPath.split("/").filter(Boolean);
@@ -240,7 +234,7 @@ export function obsidianOpenCmd(opts: { vault?: string }): number {
     console.error(err(`Vault not found at: ${vaultPath}`));
     console.error(dim("  Run: pai obsidian sync"));
     process.exitCode = 1;
-    return 1;
+    return;
   }
 
   const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
@@ -252,8 +246,40 @@ export function obsidianOpenCmd(opts: { vault?: string }): number {
     console.error(err(`  Failed to open Obsidian: ${e}`));
     console.error(dim("  Ensure Obsidian is installed and the vault is registered in Obsidian."));
     process.exitCode = 1;
-    return 1;
+    return;
   }
+}
 
-  return 0;
+// ---------------------------------------------------------------------------
+// Commander registration
+// ---------------------------------------------------------------------------
+
+export function registerObsidianCommands(obsidianCmd: Command): void {
+  // pai obsidian sync
+  obsidianCmd
+    .command("sync")
+    .description("Sync project Notes/ dirs into vault, generate _index.md and topic pages")
+    .option("--vault <path>", "Override vault path (default: ~/.pai/obsidian-vault)")
+    .option("--quiet", "Minimal output — suitable for cron/hook use")
+    .action(async (opts: { vault?: string; quiet?: boolean }) => {
+      await cmdSync(await getRegistryBackend(), opts);
+    });
+
+  // pai obsidian status
+  obsidianCmd
+    .command("status")
+    .description("Show vault health: healthy, broken, orphaned, and missing symlinks")
+    .option("--vault <path>", "Override vault path")
+    .action(async (opts: { vault?: string }) => {
+      await cmdStatus(await getRegistryBackend(), opts);
+    });
+
+  // pai obsidian open
+  obsidianCmd
+    .command("open")
+    .description("Open the vault in Obsidian (macOS)")
+    .option("--vault <path>", "Override vault path")
+    .action((opts: { vault?: string }) => {
+      cmdOpen(opts);
+    });
 }
