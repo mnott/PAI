@@ -26,7 +26,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
-import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
@@ -408,16 +408,16 @@ interface FollowHandle {
 
 /**
  * The follow exit decision for one worker: it is over once its result event
- * was rendered, or once its status left "running" while its pid is gone — a
- * worker killed without writing a result still ends. A status never read
+ * was rendered, or once its status reached a terminal state — pooled
+ * runs keep their pid alive after the status says done, so the pid is no
+ * evidence; a worker killed without writing a result still ends. A status never read
  * (undefined) means "not over": follow keeps waiting for the first event.
  */
 export function workerEnded(
   resultRendered: boolean,
-  state: WorkerStatus["state"] | undefined,
-  pidAlive: boolean
+  state: WorkerStatus["state"] | undefined
 ): boolean {
-  return resultRendered || (state !== undefined && state !== "running" && !pidAlive);
+  return resultRendered || isTerminal(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,9 +1050,9 @@ export async function followWorkers(
     }
   }
 
-  /** Ended per the status file; a pid only counts while it still is the worker's (pid reuse). */
+  /** Ended per the status file. */
   function statusEnded(rendered: boolean, st: WorkerStatus): boolean {
-    return workerEnded(rendered, st.state, st.state !== "running" && ownsPid(st));
+    return workerEnded(rendered, st.state);
   }
 
   /** Freeze the worker's clock and print the one final "ended" line. */
