@@ -112,9 +112,27 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   return false;
 }
 
+/** An HTTP status only counts next to API/auth wording, never as a bare number in tool output. */
+const API_AUTH_EVIDENCE = new RegExp(
+  [
+    "Failed to authenticate",
+    "API Error",
+    "\\b(?:status|HTTP|error|code)[ :=]+(?:401|403|429|5\\d\\d)\\b",
+    "\\b(?:401|403)\\s+(?:Unauthorized|Forbidden)\\b",
+    "\\b429\\s+Too Many Requests\\b",
+    "authentication_error|permission_error|rate_limit_error|overloaded_error|api_error",
+    "invalid x-api-key|invalid api key|OAuth token",
+  ].join("|"),
+  "i"
+);
+
+/** A 5xx status in a request context (returned/status/HTTP/error or its reason phrase). */
+const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\d.]+)?|error|code)[ :=]+5\d\d\b|\b5\d\d\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)/i;
+
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
+  { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
   // The sleep-poll gate is a model error and must win over the generic guard rule below.
   { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
@@ -141,9 +159,9 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
   },
   { test: (r) => /^empty-response/i.test(r.raw), c: { cls: "model", hint: "empty first reply — model stopped at once (seen with short spec prompts); one automatic relaunch already ran" } },
   { test: (r) => /Working directory .* was deleted/i.test(r.raw), c: { cls: "harness", hint: "worker cwd deleted" } },
-  { test: (r) => /Failed to authenticate|API Error|\b(401|500)\b/.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
+  { test: (r) => API_AUTH_EVIDENCE.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
   { test: (r) => /No such tool available/i.test(r.raw), c: { cls: "harness", hint: "tool missing in the worker" } },
-  { test: (r) => /\b5\d\d\b/.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
+  { test: (r) => LOCAL_5XX_EVIDENCE.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
 ];
 
 export function classifyToolError(r: ToolErrorRecord): Classification {
