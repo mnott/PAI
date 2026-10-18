@@ -14,7 +14,7 @@
  * `--allowedTools` has no Codex equivalent and is dropped (ledgered).
  */
 
-import { execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
 
@@ -199,4 +199,9 @@ export function codexInstalled(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Spawn helper shared by run and test; caller wires stdout. */
+export function spawnCodex(args: string[], env: NodeJS.ProcessEnv, cwd: string) {
+  return spawn("codex", args, { env, cwd, stdio: ["ignore", "pipe", "inherit"] });
 }

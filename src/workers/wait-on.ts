@@ -9,7 +9,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { loadStatus, pidAlive, saveStatus } from "./status.js";
+import { loadStatus, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
 export const WAIT_DEFAULT_SECS = 110;
@@ -60,9 +60,13 @@ function isZombie(pid: number): boolean {
 
 export const realDeps: WaitOnDeps = {
   probe(pid) {
-    // kill(0) succeeds on a zombie (exited, parent has not reaped it); that job is finished
-    if (pidAlive(pid)) return isZombie(pid) ? "zombie" : "alive";
-    return pidAlive(pid, { epermAlive: true }) ? "foreign" : "gone";
+    try {
+      process.kill(pid, 0);
+      // kill(0) succeeds on a zombie (exited, parent has not reaped it); that job is finished
+      return isZombie(pid) ? "zombie" : "alive";
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === "EPERM" ? "foreign" : "gone";
+    }
   },
   startTime(pid) {
     try {

@@ -260,3 +260,11 @@ export function obsidianOpenCmd(
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Legacy registration (to be removed)
+// ---------------------------------------------------------------------------
+
+// This is kept for compatibility but will be removed in a later refactor
+export function registerObsidianCommands(): void {
+  // This is intentionally empty - all commands are now standalone
+}

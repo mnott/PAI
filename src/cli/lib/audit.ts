@@ -40,7 +40,7 @@
 import { homedir } from "node:os";
 import { mkdirSync, readdirSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { header, ok, warn, err, dim, bold, renderTable, stripAnsi } from "./utils.js";
+import { header, ok, warn, err, dim, bold, renderTable } from "./utils.js";
 import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
 import { auditHooks, type HooksReport } from "../../audit/hooks.js";
@@ -570,6 +570,12 @@ async function gatherCombined(): Promise<CombinedData> {
   const findings = buildFindings({ files, hooks, session, daemon, env, skills, subagents, mcp, ctxThreshold });
 
   return { encoding: TOKEN_ENCODING, findings, files, hooks, session, spawn, daemon, env, schedule, skills, subagents, mcp };
+}
+
+/** Strip ANSI escape sequences (chalk colour codes) from captured console output. */
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 /** Run `fn`, capturing everything it sends through `console.log` as plain text. */

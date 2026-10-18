@@ -38,7 +38,6 @@ import {
   contextWindowFromModelId,
   stripModelVariant,
 } from "../../../utils/model-window.js";
-import { inputSideTokens } from "../../../workers/run.js";
 import { readWorkersSection } from "../../../workers/config.js";
 
 export { DEFAULT_CONTEXT_WINDOW };
@@ -141,7 +140,11 @@ interface UsageEntry {
  * exists to not repeat — see the PreCompact header fix in the same change).
  */
 function usageTotal(usage: UsageEntry): number {
-  return inputSideTokens(usage);
+  return (
+    (usage.input_tokens || 0) +
+    (usage.cache_read_input_tokens || 0) +
+    (usage.cache_creation_input_tokens || 0)
+  );
 }
 
 /**

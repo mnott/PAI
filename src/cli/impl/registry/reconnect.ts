@@ -21,6 +21,7 @@ import {
   claudeProjectsDir,
   type RegistryProjectRow,
 } from "../../../registry/moved.js";
+import { legacyDbDisplayPaths } from "../../../storage/sqlite/legacy-migration.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import { encodeDir } from "../../lib/utils.js";
 import { dim, ok, warn } from "../../lib/utils.js";
@@ -91,3 +92,6 @@ export async function cmdReconnect(opts: { execute?: boolean }): Promise<void> {
   }
   console.log();
 }
+
+/** Path to the registry, for callers that want to back it up first. */
+export const REGISTRY_PATH = legacyDbDisplayPaths().registryDb;
