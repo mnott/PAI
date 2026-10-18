@@ -4,6 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
+import { CliError } from "../define.js";
 import {
   registryStatsCmd,
   registryRebuildCmd,
@@ -88,7 +89,10 @@ const registryLookupCommand: CommandDef = {
   options: [{ name: "path", type: "string", value: "PATH", summary: "Filesystem path to look up" }],
   examples: ["pai registry lookup --path ~/code/my-app","pai registry lookup --path ."],
   seeAlso: ["pai registry reconnect"],
-  run: (ctx) => registryLookupCmd(ctx.opts.path as string),
+  run: (ctx) => {
+    if (ctx.opts.path === undefined) throw new CliError("missing required option --path", "pai help registry lookup", 2);
+    return registryLookupCmd(ctx.opts.path as string);
+  },
 };
 
 export const registrySubcommands: CommandDef[] = [

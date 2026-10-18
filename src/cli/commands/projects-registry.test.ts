@@ -30,6 +30,16 @@ describe("pai registry", () => {
     const r = await runPai(["registry","lookup","--path","/nonexistent/path"]);
     expect(r.code).toBe(1);
   });
+  it("pai registry lookup without --path exits 2", async () => {
+    const r = await runPai(["registry", "lookup"]);
+    expect(r.code).toBe(2);
+    expect(r.out + r.err).toContain("missing required option --path");
+  });
+  it("pai registry lookup without --path exits 2", async () => {
+    const r = await runPai(["registry", "lookup"]);
+    expect(r.code).toBe(2);
+    expect(r.out + r.err).toContain("missing required option --path");
+  });
   it("pai registry scan --show-dirs exits 0", async () => {
     const r = await runPai(["registry","scan","--show-dirs"]);
     expect(r.code).toBe(0);
