@@ -72,6 +72,18 @@ const NATIVE_STRIP_VARS = [
 const LOCAL_API_TIMEOUT_MS = "1800000";
 
 /**
+ * Idle watchdogs Claude Code's client keeps on the response stream, both
+ * `Math.max(env || 0, 300000)` — 300 s floor. The local server emits no bytes
+ * while it generates a tool call's arguments, so a long tool call looks idle
+ * and is dropped mid-generation, then retried from scratch (A/B run 1: a
+ * ~6600-token Write at ~22 tok/s died at ~300 s; unit u2 lost 28 min).
+ */
+const LOCAL_STREAM_IDLE_VARS = [
+  "CLAUDE_STREAM_IDLE_TIMEOUT_MS",
+  "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS",
+] as const;
+
+/**
  * Environment for a run through `provider`. Caller's env minus the Anthropic
  * key. `routerEnabled` routes the run through the local model router instead
  * of the provider's own URL (the openai-protocol proxy route always wins);
@@ -142,9 +154,15 @@ export function buildRunEnv(
   env.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolveModelCapability(provider, "fast");
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.models.default;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
-  // Claude Code's client timeout (API_TIMEOUT_MS, default 60000) drops a long local
-  // generation (6605 tokens in 305 s at ~22 tok/s) and retries from scratch.
-  if (isLoopbackProvider(provider)) env.API_TIMEOUT_MS = LOCAL_API_TIMEOUT_MS;
+  // Long local generations die in Claude Code's client: the stream idle
+  // watchdogs above cut a request after 300 s without bytes (a tool call's
+  // arguments generate silently), and API_TIMEOUT_MS — whose default in the
+  // installed binary is 600000, not 60000 — would cut a 30-min request at
+  // 10 min. All three go to 30 min for loopback providers.
+  if (isLoopbackProvider(provider)) {
+    env.API_TIMEOUT_MS = LOCAL_API_TIMEOUT_MS;
+    for (const k of LOCAL_STREAM_IDLE_VARS) env[k] = LOCAL_API_TIMEOUT_MS;
+  }
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   // The billing header Claude Code puts first in the system prompt changes on

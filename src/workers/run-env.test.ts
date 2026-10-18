@@ -236,16 +236,33 @@ describe("local-provider worker prompt overhead", () => {
 
 describe("buildRunEnv client timeout", () => {
   const local = (): WorkerProvider => ({ ...provider, baseUrl: "http://127.0.0.1:8034" });
-  it("loopback provider gets a 30 min API_TIMEOUT_MS", () => {
-    expect(buildRunEnv({ ...local(), env: {} }, true, undefined, "local30").API_TIMEOUT_MS).toBe("1800000");
+  // the request timeout plus Claude Code's two stream idle watchdogs (300 s
+  // floor each): all three must clear a long silent local tool-call generation
+  const TIMEOUT_VARS = [
+    "API_TIMEOUT_MS",
+    "CLAUDE_STREAM_IDLE_TIMEOUT_MS",
+    "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS",
+  ];
+  it("loopback provider gets all three timeouts at 30 min", () => {
+    const env = buildRunEnv({ ...local(), env: {} }, true, undefined, "local30");
+    for (const k of TIMEOUT_VARS) expect(env[k], k).toBe("1800000");
   });
-  it("provider env wins", () => {
-    expect(buildRunEnv({ ...local(), env: { API_TIMEOUT_MS: "5" } }, true, undefined, "local30").API_TIMEOUT_MS).toBe("5");
+  it("provider env wins over all three", () => {
+    const env = buildRunEnv(
+      { ...local(), env: { API_TIMEOUT_MS: "5", CLAUDE_STREAM_IDLE_TIMEOUT_MS: "6", CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: "7" } },
+      true,
+      undefined,
+      "local30"
+    );
+    expect(env.API_TIMEOUT_MS).toBe("5");
+    expect(env.CLAUDE_STREAM_IDLE_TIMEOUT_MS).toBe("6");
+    expect(env.CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS).toBe("7");
   });
   it("remote provider is untouched", () => {
     const saved = process.env.API_TIMEOUT_MS;
     delete process.env.API_TIMEOUT_MS;
-    expect(buildRunEnv(provider, true, undefined, "x").API_TIMEOUT_MS).toBeUndefined();
+    const env = buildRunEnv(provider, true, undefined, "x");
+    for (const k of TIMEOUT_VARS) expect(env[k], k).toBeUndefined();
     if (saved !== undefined) process.env.API_TIMEOUT_MS = saved;
   });
 });
