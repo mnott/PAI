@@ -9,7 +9,6 @@
  * logs       — Tail the daemon log file
  */
 
-import type { Command } from "commander";
 import {
   existsSync,
   readFileSync,
@@ -176,7 +175,7 @@ export function ensureLinger(
 // Command implementations
 // ---------------------------------------------------------------------------
 
-async function cmdStatus(): Promise<void> {
+async function cmdStatus(): Promise<number> {
   const config = loadConfig();
   const client = new PaiClient(config.socketPath);
 
@@ -232,12 +231,13 @@ async function cmdStatus(): Promise<void> {
     console.log(dim("    Start with: pai daemon serve"));
     console.log(dim("    Or install as service: pai daemon install"));
     console.log();
-    process.exitCode = 1;
+    return 1;
   }
+  return 0;
 }
 
-function cmdRestart(): void {
-  if (!serviceManagerAllowed("pai daemon restart")) return;
+function cmdRestart(): number {
+  if (!serviceManagerAllowed("pai daemon restart")) return 0;
   if (process.platform === "linux") {
     const before = resolveDaemonPid();
     const result = spawnSync("systemctl", ["--user", "restart", SYSTEMD_UNIT_NAME], {
@@ -247,17 +247,16 @@ function cmdRestart(): void {
       console.log(ok(`Restarted daemon pid ${before ?? "?"} -> ${resolveDaemonPid() ?? "?"}`));
     } else {
       console.error(err(`systemctl restart failed: ${(result.stderr || "").trim()}`));
-      process.exitCode = 1;
+      return 1;
     }
-    return;
+    return 0;
   }
 
   if (process.platform !== "darwin") {
     console.error(
       err(`Unsupported platform: ${process.platform}. Daemon restart supports macOS (launchd) and Linux (systemd user) only.`)
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   // kickstart -k kills and restarts the launchd job; the old PID comes from launchd, never a pattern
@@ -270,14 +269,15 @@ function cmdRestart(): void {
     );
     if (kick.status !== 0) {
       console.log(dim("Not managed by launchd. Run: pai daemon serve"));
-      return;
+      return 0;
     }
     console.log(ok(`Restarted daemon pid ${before ?? "?"} -> ${resolveDaemonPid() ?? "?"}`));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(err(`restart error: ${msg}`));
-    process.exitCode = 1;
+    return 1;
   }
+  return 0;
 }
 
 function installServiceDarwin(daemonBin: string): boolean {
@@ -292,7 +292,6 @@ function installServiceDarwin(daemonBin: string): boolean {
     console.log(ok(`  Wrote launchd plist: ${PLIST_PATH}`));
   } catch (e) {
     console.error(err(`  Failed to write plist: ${e}`));
-    process.exitCode = 1;
     return false;
   }
 
@@ -327,7 +326,6 @@ function installServiceLinux(daemonBin: string): boolean {
     console.log(ok(`  Wrote systemd unit: ${SYSTEMD_UNIT_PATH}`));
   } catch (e) {
     console.error(err(`  Failed to write systemd unit: ${e}`));
-    process.exitCode = 1;
     return false;
   }
 
@@ -347,7 +345,7 @@ function installServiceLinux(daemonBin: string): boolean {
   return true;
 }
 
-function cmdInstall(): void {
+function cmdInstall(): number {
   const daemonBin = getDaemonBinPath();
   const shimBin = getShimBinPath();
 
@@ -356,15 +354,14 @@ function cmdInstall(): void {
   console.log();
 
   if (process.platform === "darwin") {
-    if (!installServiceDarwin(daemonBin)) return;
+    if (!installServiceDarwin(daemonBin)) return 1;
   } else if (process.platform === "linux") {
-    if (!installServiceLinux(daemonBin)) return;
+    if (!installServiceLinux(daemonBin)) return 1;
   } else {
     console.error(
       err(`  Unsupported platform: ${process.platform}. Daemon install supports macOS (launchd) and Linux (systemd user) only.`)
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   // 3. Update ~/.claude.json to use the shim
@@ -400,8 +397,7 @@ function cmdInstall(): void {
       console.log(ok("  Updated ~/.claude.json to use daemon shim."));
     } catch (e) {
       console.error(err(`  Failed to write ~/.claude.json: ${e}`));
-      process.exitCode = 1;
-      return;
+      return 1;
     }
   }
 
@@ -424,6 +420,7 @@ function cmdInstall(): void {
   console.log();
   console.log(dim("  Restart Claude Code to activate the daemon-backed PAI tools."));
   console.log();
+  return 0;
 }
 
 function uninstallServiceDarwin(): void {
@@ -468,7 +465,7 @@ function uninstallServiceLinux(): void {
   }
 }
 
-function cmdUninstall(): void {
+function cmdUninstall(): number {
   console.log();
   console.log(bold("  PAI Daemon Uninstall"));
   console.log();
@@ -481,8 +478,7 @@ function cmdUninstall(): void {
     console.error(
       err(`  Unsupported platform: ${process.platform}. Daemon uninstall supports macOS (launchd) and Linux (systemd user) only.`)
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   // Revert ~/.claude.json to legacy direct MCP
@@ -509,9 +505,10 @@ function cmdUninstall(): void {
   console.log();
   console.log(dim("  Restart Claude Code to deactivate daemon-backed tools."));
   console.log();
+  return 0;
 }
 
-async function cmdMigrate(connectionString?: string): Promise<void> {
+async function cmdMigrate(connectionString?: string): Promise<number> {
   console.log();
   console.log(bold("  PAI Daemon Migrate"));
   console.log();
@@ -534,11 +531,12 @@ async function cmdMigrate(connectionString?: string): Promise<void> {
 
   if (result.status !== 0) {
     console.error(err("  Migration failed. Check output above."));
-    process.exitCode = result.status ?? 1;
+    return result.status ?? 1;
   }
+  return 0;
 }
 
-function cmdKeepalive(): void {
+function cmdKeepalive(): number {
   const config = loadConfig().sessions.cacheKeepalive;
 
   console.log();
@@ -577,15 +575,16 @@ function cmdKeepalive(): void {
     console.log(dim(`    ${line}`));
   }
   console.log();
+  return 0;
 }
 
-function cmdLogs(opts: { lines?: string; follow?: boolean }): void {
+function cmdLogs(opts: { lines?: string; follow?: boolean }): number {
   const lines = opts.lines ?? "50";
 
   if (!existsSync(DAEMON_LOG)) {
     console.log(warn(`No daemon log found at ${DAEMON_LOG}.`));
     console.log(dim("The daemon may not have run yet."));
-    return;
+    return 0;
   }
 
   if (opts.follow) {
@@ -601,83 +600,47 @@ function cmdLogs(opts: { lines?: string; follow?: boolean }): void {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(err(`Could not read log: ${msg}`));
-      process.exitCode = 1;
+      return 1;
     }
   }
+  return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
+export async function daemonServeCmd(): Promise<number> {
+  const { serve } = await import("../../daemon/daemon.js");
+  const { loadConfig: lc, ensureConfigDir } = await import(
+    "../../daemon/config.js"
+  );
+  ensureConfigDir();
+  const config = lc();
+  await serve(config);
+  return 0;
+}
 
-export function registerDaemonCommands(daemonCmd: Command): void {
-  daemonCmd
-    .command("serve")
-    .description("Start the PAI daemon in the foreground")
-    .action(async () => {
-      const { serve } = await import("../../daemon/daemon.js");
-      const { loadConfig: lc, ensureConfigDir } = await import(
-        "../../daemon/config.js"
-      );
-      ensureConfigDir();
-      const config = lc();
-      await serve(config);
-    });
+export function daemonMigrateCmd(opts: { connectionString?: string }): Promise<number> {
+  return cmdMigrate(opts.connectionString);
+}
 
-  daemonCmd
-    .command("migrate")
-    .description("Migrate federation data from SQLite to PostgreSQL")
-    .option(
-      "--connection-string <url>",
-      "Postgres connection string (default: from config or postgresql://pai:pai@localhost:5432/pai)"
-    )
-    .action(async (opts: { connectionString?: string }) => {
-      await cmdMigrate(opts.connectionString);
-    });
+export function daemonStatusCmd(): Promise<number> {
+  return cmdStatus();
+}
 
-  daemonCmd
-    .command("status")
-    .description("Query the running daemon status")
-    .action(async () => {
-      await cmdStatus();
-    });
+export function daemonRestartCmd(): number {
+  return cmdRestart();
+}
 
-  daemonCmd
-    .command("restart")
-    .description("Restart the running daemon (launchd on macOS, systemd on Linux)")
-    .action(() => {
-      cmdRestart();
-    });
+export function daemonInstallCmd(): number {
+  return cmdInstall();
+}
 
-  daemonCmd
-    .command("install")
-    .description(
-      "Install daemon as a service (launchd/systemd) and update ~/.claude.json to use the shim"
-    )
-    .action(() => {
-      cmdInstall();
-    });
+export function daemonUninstallCmd(): number {
+  return cmdUninstall();
+}
 
-  daemonCmd
-    .command("uninstall")
-    .description("Remove the daemon service (launchd/systemd) and revert to direct MCP")
-    .action(() => {
-      cmdUninstall();
-    });
+export function daemonKeepaliveCmd(): number {
+  return cmdKeepalive();
+}
 
-  daemonCmd
-    .command("keepalive")
-    .description("Show interactive-session cache keepalive config, per-session beat counters, and recent ledger lines")
-    .action(() => {
-      cmdKeepalive();
-    });
-
-  daemonCmd
-    .command("logs")
-    .description(`Tail the daemon log (${DAEMON_LOG})`)
-    .option("-n, --lines <n>", "Number of lines to show", "50")
-    .option("-f, --follow", "Follow log output (like tail -f)")
-    .action((opts: { lines?: string; follow?: boolean }) => {
-      cmdLogs(opts);
-    });
+export function daemonLogsCmd(opts: { lines?: string; follow?: boolean }): number {
+  return cmdLogs(opts);
 }

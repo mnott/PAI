@@ -13,7 +13,6 @@
  * refused while a worker is RUNNING.
  */
 
-import type { Command } from "commander";
 import { existsSync, renameSync, statSync, readdirSync, readFileSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -173,361 +172,286 @@ export function migrateObsidianVaultPathConfig(dryRun: boolean): MigrateObsidian
   return { status: "rewritten", from: current, to: newPath };
 }
 
-export function registerConfigCommands(configCmd: Command): void {
-  configCmd
-    .command("path")
-    .description("Print the PAI_HOME namespace dir and each resolved per-user file")
-    .action(() => {
-      console.log(bold("PAI_HOME: ") + paiHomeDir());
-      console.log(`  config.json / config.yaml: ${paiConfigFilePath()} / ${paiConfigYamlFilePath()}`);
-      console.log(`  workers.yaml:             ${workersYamlPath()}`);
-      console.log(`  whisper-rules.md:         ${whisperRulesPath()}`);
-      console.log(`  advisor-mode.json:        ${advisorModePath()}`);
-      console.log(`  session-state/:           ${sessionStateDir()}`);
-      console.log(`  session-scan-cache.json:  ${scanCacheFilePath()}`);
-      console.log(`  queries/:                 ${queriesDirPath()}`);
-      console.log(`  summary-cooldowns.json, work-queue.json, kg-backfill-state.json:`);
-      console.log(`                            all under PAI_HOME`);
-      console.log(`  voices.json / voices.yaml: ${voicesJsonPath()} / ${voicesYamlPath()}`);
-      console.log(`  federation database (orphan): under PAI_HOME`);
-      console.log(`  logs/workers/:            ${paiHomePath("logs", "workers")} (pass --logs to move)`);
-      console.log(`  History/:                 ${paiHomePath("History")} (pass --history to move)`);
-      console.log(`  agent-sessions.json, session-routing.json, History/security/security-events.jsonl:`);
-      console.log(`                            all under PAI_HOME (pass --history to move)`);
-      console.log(`  registry database:        ${legacyDbDisplayPaths().registryDb}`);
-      console.log(`  federation database:      ${legacyDbDisplayPaths().federationDb}`);
-      console.log(`  backups/:                 ${backupsDirPath()}`);
-      console.log(`  obsidian-vault/:          ${defaultVaultPath()}`);
-      console.log(`  scheduler-state.json:     ${schedulerStatePath}`);
-      console.log(`  identity.txt:             ${paiHomePath("identity.txt")} (L0 wake-up identity, optional)`);
-      console.log(`  registry-scan.json:       ${paiHomePath("registry-scan.json")}`);
-      console.log(`  agents/:                  ${paiHomePath("agents")} (~/.claude/agents symlinks here after migrate)`);
-      console.log(`  commands/:                ${paiHomePath("commands")} (~/.claude/commands symlinks here after migrate)`);
-    });
+export function configPathCmd(): number {
+  console.log(bold("PAI_HOME: ") + paiHomeDir());
+  console.log(`  config.json / config.yaml: ${paiConfigFilePath()} / ${paiConfigYamlFilePath()}`);
+  console.log(`  workers.yaml:             ${workersYamlPath()}`);
+  console.log(`  whisper-rules.md:         ${whisperRulesPath()}`);
+  console.log(`  advisor-mode.json:        ${advisorModePath()}`);
+  console.log(`  session-state/:           ${sessionStateDir()}`);
+  console.log(`  session-scan-cache.json:  ${scanCacheFilePath()}`);
+  console.log(`  queries/:                 ${queriesDirPath()}`);
+  console.log(`  summary-cooldowns.json, work-queue.json, kg-backfill-state.json:`);
+  console.log(`                            all under PAI_HOME`);
+  console.log(`  voices.json / voices.yaml: ${voicesJsonPath()} / ${voicesYamlPath()}`);
+  console.log(`  federation database (orphan): under PAI_HOME`);
+  console.log(`  logs/workers/:            ${paiHomePath("logs", "workers")} (pass --logs to move)`);
+  console.log(`  History/:                 ${paiHomePath("History")} (pass --history to move)`);
+  console.log(`  agent-sessions.json, session-routing.json, History/security/security-events.jsonl:`);
+  console.log(`                            all under PAI_HOME (pass --history to move)`);
+  console.log(`  registry database:        ${legacyDbDisplayPaths().registryDb}`);
+  console.log(`  federation database:      ${legacyDbDisplayPaths().federationDb}`);
+  console.log(`  backups/:                 ${backupsDirPath()}`);
+  console.log(`  obsidian-vault/:          ${defaultVaultPath()}`);
+  console.log(`  scheduler-state.json:     ${schedulerStatePath}`);
+  console.log(`  identity.txt:             ${paiHomePath("identity.txt")} (L0 wake-up identity, optional)`);
+  console.log(`  registry-scan.json:       ${paiHomePath("registry-scan.json")}`);
+  console.log(`  agents/:                  ${paiHomePath("agents")} (~/.claude/agents symlinks here after migrate)`);
+  console.log(`  commands/:                ${paiHomePath("commands")} (~/.claude/commands symlinks here after migrate)`);
+  return 0;
+}
 
-  configCmd
-    .command("yaml")
-    .description(
-      "Convert config.json → config.yaml (and voices.json → voices.yaml), with a short\n" +
-        "      # comment above every top-level section and any \"_comment\"/\"_...Note\" JSON-\n" +
-        "      workaround key re-attached as a real comment. Verifies the generated YAML\n" +
-        "      re-parses to the exact same data before writing anything; the JSON is then\n" +
-        "      renamed to <name>.migrated-<YYYY-MM-DD> (never deleted). Every writer keeps\n" +
-        "      working unmodified afterwards — see docs/config.md."
-    )
-    .option("--dry-run", "Print the plan without writing anything")
-    .option("--force", "Regenerate config.yaml (or voices.yaml) even if it already exists")
-    .action((opts: { dryRun?: boolean; force?: boolean }) => {
-      let hadError = false;
-      const run = (label: string, fn: () => ReturnType<typeof migrateMainConfigToYaml>) => {
-        try {
-          const r = fn();
-          if (r.dryRun) {
-            console.log(dim(`  ${label}: would write ${r.yamlPath}`));
-          } else {
-            console.log(ok(`  ${label}: `) + `${r.backupPath} → ${r.yamlPath}`);
-          }
-        } catch (e) {
-          hadError = true;
-          console.error(err(`  ${label}: `) + (e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e)));
-        }
-      };
-      run("config.yaml", () => migrateMainConfigToYaml(paiConfigFilePath(), { dryRun: opts.dryRun, force: opts.force }));
-      run("voices.yaml", () => migrateVoicesToYaml({ dryRun: opts.dryRun, force: opts.force }));
-      if (hadError) process.exitCode = 1;
-    });
-
-  configCmd
-    .command("list")
-    .description("Print the main PAI config as YAML (secrets masked). Defaults to what the file explicitly sets.")
-    .option("--all", "Include every default value, not just what the file sets")
-    .option("--json", "Print JSON instead of YAML")
-    .action((opts: { all?: boolean; json?: boolean }) => {
-      const r = listConfigOp({ all: opts.all });
-      console.log(opts.json ? JSON.stringify(r.data, null, 2) : r.yaml.trimEnd());
-    });
-
-  configCmd
-    .command("get <path>")
-    .description(
-      "Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON."
-    )
-    .option("--json", "Print an object/array value as JSON instead of YAML")
-    .action((path: string, opts: { json?: boolean }) => {
-      try {
-        const r = getConfigValueOp(path);
-        if (!r.found) {
-          console.error(err(`Not set: ${path}`));
-          process.exitCode = 1;
-          return;
-        }
-        console.log(formatConfigGetOutput(r.value, { json: opts.json }));
-      } catch (e) {
-        console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
-        process.exitCode = 1;
-      }
-    });
-
-  configCmd
-    .command("set <path> <value>")
-    .description(
-      "Set one config value (dotted path). Value parsing: true/false, null, numbers,\n" +
-        "      [...] / {...} as JSON, else a string. Creates config.yaml (from config.json,\n" +
-        "      if any) on first use, then writes comment-preserving."
-    )
-    .option("--force", "Set an unknown top-level key, or a value of a different type than the default")
-    .action((path: string, value: string, opts: { force?: boolean }) => {
-      try {
-        const r = setConfigValueOp(path, value, { force: opts.force });
-        if (r.yamlCreated) console.log(dim(`  created ${r.yamlPath}`));
-        console.log(ok(`Set ${path} = `) + (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value)));
-      } catch (e) {
-        console.error(err((e instanceof MainConfigOpsError || e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e))));
-        process.exitCode = 1;
-      }
-    });
-
-  configCmd
-    .command("unset <path>")
-    .description("Remove one config value (dotted path), reverting it to the built-in default")
-    .action((path: string) => {
-      try {
-        const r = unsetConfigValueOp(path);
-        console.log(r.existed ? ok(`Unset ${path}`) : dim(`  ${path} was not set`));
-      } catch (e) {
-        console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
-        process.exitCode = 1;
-      }
-    });
-
-  configCmd
-    .command("migrate")
-    .description(
-      "Move config.json, workers.yaml, whisper-rules.md, advisor-mode.json, session-state/,\n" +
-        "session-scan-cache.json, queries/, summary-cooldowns.json, work-queue.json,\n" +
-        "kg-backfill-state.json, voices.json, the orphaned legacy federation database,\n" +
-        "the legacy registry database, the legacy live federation database, ~/.pai/backups/,\n" +
-        "~/.pai/obsidian-vault/, ~/.pai/scheduler-state.json, and ~/.claude/agents/,\n" +
-        "~/.claude/commands/ into PAI_HOME.\n" +
-        "The registry and federation databases each get an extra WAL checkpoint and PRAGMA\n" +
-        "integrity_check (sqlite3 CLI, if present) on top of the byte-identical copy.\n" +
-        "backups/ is copied and sha256-verified file-by-file into\n" +
-        "backups/legacy-pai-backups/ rather than merged in place. agents/ and commands/ each\n" +
-        "get a symlink left at the old ~/.claude path once their content has moved, so\n" +
-        "Claude Code still finds them at its fixed harness paths.\n" +
-        "Each file is copied, verified byte-identical, then the old file is renamed to\n" +
-        "<name>.migrated-<YYYYMMDD> (never deleted); directories move their contents, then\n" +
-        "the emptied old directory is renamed the same way. Idempotent — entries already at\n" +
-        "the new location, or with nothing old to migrate, are skipped."
-    )
-    .option("--dry-run", "Print the plan without writing anything")
-    .option(
-      "--logs",
-      "Also move ~/.claude/logs/workers into PAI_HOME: an atomic rename plus a\n" +
-        "      symlink left at the old path, so any worker still writing there\n" +
-        "      keeps landing in the new directory (falls back to copy+verify\n" +
-        "      across volumes, refusing while a worker is RUNNING — see\n" +
-        "      `pai worker ps` — only in that fallback case)"
-    )
-    .option(
-      "--history",
-      "Also move ~/.claude/History/, agent-sessions.json, session-routing.json\n" +
-        "      and history/security/security-events.jsonl into PAI_HOME. These are\n" +
-        "      written by hooks on EVERY session's every turn, not just spawned\n" +
-        "      workers — refuses while any worker other than the interactive\n" +
-        "      session is RUNNING (see `pai worker ps`), but that guard cannot see\n" +
-        "      OTHER interactive `claude` sessions on this machine. Confirm none\n" +
-        "      are active (`ps aux | grep claude`, `aibroker sessions list`) before\n" +
-        "      passing this flag."
-    )
-    .action((opts: { dryRun?: boolean; logs?: boolean; history?: boolean }) => {
-      const dryRun = !!opts.dryRun;
-      let hadError = false;
-
-      const report = (label: string, fn: () => MigrateFileResult) => {
-        try {
-          const r = fn();
-          if (r.fromPath === null) {
-            console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toPath})`));
-          } else if (r.dryRun) {
-            console.log(dim(`  ${label}: would move ${r.fromPath} → ${r.toPath}`));
-          } else {
-            console.log(ok(`  ${label}: `) + `${r.fromPath} → ${r.toPath}` + (r.note ? dim(` (${r.note})`) : ""));
-          }
-        } catch (e) {
-          hadError = true;
-          console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
-        }
-      };
-
-      const reportDir = (label: string, fn: () => MigrateDirResult) => {
-        try {
-          const r = fn();
-          if (r.fromDir === null) {
-            console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
-          } else if (r.dryRun) {
-            console.log(dim(`  ${label}: would move ${r.movedCount ?? 0} entrie(s) from ${r.fromDir} → ${r.toDir}`));
-          } else {
-            console.log(
-              ok(`  ${label}: `) +
-                `${r.movedCount ?? 0} entrie(s) ${r.fromDir} → ${r.toDir}` +
-                (r.note ? dim(` (${r.note})`) : "")
-            );
-          }
-        } catch (e) {
-          hadError = true;
-          console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
-        }
-      };
-
-      report("config.json", () => migrateConfigFile({ dryRun }));
-      report("workers.yaml", () => relocateWorkersYaml({ dryRun }));
-      report("whisper-rules.md", () => migrateWhisperRules({ dryRun }));
-      report("advisor-mode.json", () => migrateAdvisorMode({ dryRun }));
-      reportDir("session-state/", () => migrateSessionStateDir({ dryRun }));
-      report("session-scan-cache.json", () => migrateSessionScanCache({ dryRun }));
-      reportDir("queries/", () => migrateQueriesDir({ dryRun }));
-      report("summary-cooldowns.json", () => migrateSummaryCooldowns({ dryRun }));
-      report("work-queue.json", () => migrateWorkQueue({ dryRun }));
-      report("kg-backfill-state.json", () => migrateKgBackfillState({ dryRun }));
-      report("voices.json", () => migrateVoicesJson({ dryRun }));
-      report("federation database (orphan)", () => migrateFederationDbOrphan(dryRun));
-      report("registry database", () => migrateRegistryDbFile(dryRun));
-      report("federation database (live)", () => migrateFederationDbFile(dryRun));
-      reportDir("obsidian-vault/", () => migrateObsidianVaultDir({ dryRun }));
-      try {
-        const r = migrateObsidianVaultPathConfig(dryRun);
-        const label = "obsidian-vault path in config.json";
-        switch (r.status) {
-          case "not-set":
-            console.log(dim(`  ${label}: not set`));
-            break;
-          case "already-new":
-            console.log(dim(`  ${label}: already at new location`));
-            break;
-          case "custom":
-            console.log(dim(`  ${label}: custom, left alone`));
-            break;
-          case "would-rewrite":
-            console.log(dim(`  ${label}: would rewrite ${r.from} → ${r.to}`));
-            break;
-          case "rewritten":
-            console.log(ok(`  ${label}: `) + `${r.from} → ${r.to}`);
-            break;
-        }
-      } catch (e) {
-        hadError = true;
-        console.error(err("  obsidian-vault path in config.json: ") + (e instanceof Error ? e.message : String(e)));
-      }
-      report("scheduler-state.json", () => migrateSchedulerState({ dryRun }));
-      report("identity.txt", () => migrateIdentityFile({ dryRun }));
-      report("registry-scan.json", () => migrateScanConfig({ dryRun }));
-
-      try {
-        const r = migrateBackupsLegacy(dryRun);
-        if (r.fromDir === null) {
-          console.log(dim(`  backups/legacy-pai-backups/: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
-        } else if (r.dryRun) {
-          console.log(dim(`  backups/legacy-pai-backups/: would copy+verify ${r.fromDir} → ${r.toDir}`));
-        } else {
-          console.log(
-            ok(`  backups/legacy-pai-backups/: `) +
-              `${r.filesVerified ?? 0} file(s) verified, ${r.fromDir} → ${r.toDir}` +
-              (r.note ? dim(` (${r.note})`) : "")
-          );
-        }
-      } catch (e) {
-        hadError = true;
-        console.error(err(`  backups/legacy-pai-backups/: `) + (e instanceof Error ? e.message : String(e)));
-      }
-
-      const reportContentDir = (label: string, fn: () => MigrateContentDirResult) => {
-        try {
-          const r = fn();
-          if (r.fromDir === null) {
-            console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
-          } else if (r.dryRun) {
-            console.log(dim(`  ${label}: would move ${r.movedCount ?? 0} entrie(s) from ${r.fromDir} → ${r.toDir}, then symlink`));
-          } else {
-            const symlinkPart = r.symlinked
-              ? ", adapter symlink created"
-              : ` — NOT symlinked (${r.symlinkNote ?? "see note"})`;
-            console.log(
-              ok(`  ${label}: `) +
-                `${r.movedCount ?? 0} entrie(s) ${r.fromDir} → ${r.toDir}${symlinkPart}` +
-                (r.note ? dim(` (${r.note})`) : "")
-            );
-          }
-        } catch (e) {
-          hadError = true;
-          console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
-        }
-      };
-      reportContentDir("agents/", () => migrateAgentsDir({ dryRun }));
-      reportContentDir("commands/", () => migrateCommandsDir({ dryRun }));
-
-      if (opts.logs) {
-        try {
-          const { workers } = readWorkersSection();
-          const oldLogDir = expandHome(workers.logDir);
-          const newLogDir = paiHomePath("logs", "workers");
-          const r = migrateWorkerLogs(oldLogDir, newLogDir, { dryRun });
-          if (r.fromPath === null) {
-            console.log(dim(`  logs/workers: ${r.note ?? "nothing to migrate"} (${r.toPath})`));
-          } else if (r.dryRun) {
-            console.log(dim(`  logs/workers: would move ${r.fromPath} → ${r.toPath}`));
-          } else {
-            console.log(
-              ok(`  logs/workers: `) +
-                `${r.filesMoved ?? 0} file(s) ${r.fromPath} → ${r.toPath}` +
-                (r.note ? dim(` (${r.note})`) : "")
-            );
-          }
-        } catch (e) {
-          hadError = true;
-          const msg = e instanceof WorkerLogsMigrationError ? e.message : String(e instanceof Error ? e.message : e);
-          console.error(err("  logs/workers: ") + msg);
-        }
+export function configYamlCmd(opts: { dryRun?: boolean; force?: boolean }): number {
+  let hadError = false;
+  const run = (label: string, fn: () => ReturnType<typeof migrateMainConfigToYaml>) => {
+    try {
+      const r = fn();
+      if (r.dryRun) {
+        console.log(dim(`  ${label}: would write ${r.yamlPath}`));
       } else {
-        console.log(dim(`  logs/workers: pass --logs to move it (skipped by default — actively written by running workers)`));
+        console.log(ok(`  ${label}: `) + `${r.backupPath} → ${r.yamlPath}`);
       }
+    } catch (e) {
+      hadError = true;
+      console.error(err(`  ${label}: `) + (e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e)));
+    }
+  };
+  run("config.yaml", () => migrateMainConfigToYaml(paiConfigFilePath(), { dryRun: opts.dryRun, force: opts.force }));
+  run("voices.yaml", () => migrateVoicesToYaml({ dryRun: opts.dryRun, force: opts.force }));
+  return hadError ? 1 : 0;
+}
 
-      if (opts.history) {
-        try {
-          const { workers } = readWorkersSection();
-          const active = activeSpawnedWorkerCount(expandHome(workers.logDir));
-          if (active > 0 && !dryRun) {
-            throw new Error(
-              `${active} worker(s) other than the interactive session are RUNNING (see \`pai worker ps\`) — ` +
-                `History/ etc. are written by every session's hooks, wait for them to finish and confirm no ` +
-                `other interactive \`claude\` session is active, then retry`
-            );
-          }
-          reportDir("History/", () => migrateHistoryDir({ dryRun }));
-          report("agent-sessions.json", () => migrateAgentSessions({ dryRun }));
-          report("session-routing.json", () => migrateSessionRouting({ dryRun }));
-          report("History/security/security-events.jsonl", () => migrateSecurityEvents({ dryRun }));
-        } catch (e) {
-          hadError = true;
-          console.error(err("  History/ etc.: ") + (e instanceof Error ? e.message : String(e)));
-        }
+export function configListCmd(opts: { all?: boolean; json?: boolean }): number {
+  const r = listConfigOp({ all: opts.all });
+  console.log(opts.json ? JSON.stringify(r.data, null, 2) : r.yaml.trimEnd());
+  return 0;
+}
+
+export function configGetCmd(path: string, opts: { json?: boolean }): number {
+  try {
+    const r = getConfigValueOp(path);
+    if (!r.found) {
+      console.error(err(`Not set: ${path}`));
+      return 1;
+    }
+    console.log(formatConfigGetOutput(r.value, { json: opts.json }));
+  } catch (e) {
+    console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
+    return 1;
+  }
+  return 0;
+}
+
+export function configSetCmd(path: string, value: string, opts: { force?: boolean }): number {
+  try {
+    const r = setConfigValueOp(path, value, { force: opts.force });
+    if (r.yamlCreated) console.log(dim(`  created ${r.yamlPath}`));
+    console.log(ok(`Set ${path} = `) + (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value)));
+  } catch (e) {
+    console.error(err((e instanceof MainConfigOpsError || e instanceof MainConfigError ? e.message : String(e instanceof Error ? e.message : e))));
+    return 1;
+  }
+  return 0;
+}
+
+export function configUnsetCmd(path: string): number {
+  try {
+    const r = unsetConfigValueOp(path);
+    console.log(r.existed ? ok(`Unset ${path}`) : dim(`  ${path} was not set`));
+  } catch (e) {
+    console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
+    return 1;
+  }
+  return 0;
+}
+
+export function configMigrateCmd(opts: { dryRun?: boolean; logs?: boolean; history?: boolean }): number {
+  const dryRun = !!opts.dryRun;
+  let hadError = false;
+
+  const report = (label: string, fn: () => MigrateFileResult) => {
+    try {
+      const r = fn();
+      if (r.fromPath === null) {
+        console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toPath})`));
+      } else if (r.dryRun) {
+        console.log(dim(`  ${label}: would move ${r.fromPath} → ${r.toPath}`));
+      } else {
+        console.log(ok(`  ${label}: `) + `${r.fromPath} → ${r.toPath}` + (r.note ? dim(` (${r.note})`) : ""));
+      }
+    } catch (e) {
+      hadError = true;
+      console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const reportDir = (label: string, fn: () => MigrateDirResult) => {
+    try {
+      const r = fn();
+      if (r.fromDir === null) {
+        console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
+      } else if (r.dryRun) {
+        console.log(dim(`  ${label}: would move ${r.movedCount ?? 0} entrie(s) from ${r.fromDir} → ${r.toDir}`));
       } else {
         console.log(
-          dim(`  History/, agent-sessions.json, session-routing.json, security-events.jsonl: pass --history to move (skipped by default — actively written by hooks on every session)`)
+          ok(`  ${label}: `) +
+            `${r.movedCount ?? 0} entrie(s) ${r.fromDir} → ${r.toDir}` +
+            (r.note ? dim(` (${r.note})`) : "")
         );
       }
+    } catch (e) {
+      hadError = true;
+      console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
+    }
+  };
 
-      report(".last-housekeeping", () => migrateLastHousekeeping({ dryRun }));
+  report("config.json", () => migrateConfigFile({ dryRun }));
+  report("workers.yaml", () => relocateWorkersYaml({ dryRun }));
+  report("whisper-rules.md", () => migrateWhisperRules({ dryRun }));
+  report("advisor-mode.json", () => migrateAdvisorMode({ dryRun }));
+  reportDir("session-state/", () => migrateSessionStateDir({ dryRun }));
+  report("session-scan-cache.json", () => migrateSessionScanCache({ dryRun }));
+  reportDir("queries/", () => migrateQueriesDir({ dryRun }));
+  report("summary-cooldowns.json", () => migrateSummaryCooldowns({ dryRun }));
+  report("work-queue.json", () => migrateWorkQueue({ dryRun }));
+  report("kg-backfill-state.json", () => migrateKgBackfillState({ dryRun }));
+  report("voices.json", () => migrateVoicesJson({ dryRun }));
+  report("federation database (orphan)", () => migrateFederationDbOrphan(dryRun));
+  report("registry database", () => migrateRegistryDbFile(dryRun));
+  report("federation database (live)", () => migrateFederationDbFile(dryRun));
+  reportDir("obsidian-vault/", () => migrateObsidianVaultDir({ dryRun }));
+  try {
+    const r = migrateObsidianVaultPathConfig(dryRun);
+    const label = "obsidian-vault path in config.json";
+    switch (r.status) {
+      case "not-set":
+        console.log(dim(`  ${label}: not set`));
+        break;
+      case "already-new":
+        console.log(dim(`  ${label}: already at new location`));
+        break;
+      case "custom":
+        console.log(dim(`  ${label}: custom, left alone`));
+        break;
+      case "would-rewrite":
+        console.log(dim(`  ${label}: would rewrite ${r.from} → ${r.to}`));
+        break;
+      case "rewritten":
+        console.log(ok(`  ${label}: `) + `${r.from} → ${r.to}`);
+        break;
+    }
+  } catch (e) {
+    hadError = true;
+    console.error(err("  obsidian-vault path in config.json: ") + (e instanceof Error ? e.message : String(e)));
+  }
+  report("scheduler-state.json", () => migrateSchedulerState({ dryRun }));
+  report("identity.txt", () => migrateIdentityFile({ dryRun }));
+  report("registry-scan.json", () => migrateScanConfig({ dryRun }));
 
-      try {
-        const r = migrateSessionStopLock({ dryRun });
-        const line = `  .session-stop.lock: ${r.note}`;
-        console.log(r.status === "moved" && !dryRun ? ok(line) : dim(line));
-      } catch (e) {
-        hadError = true;
-        console.error(err("  .session-stop.lock: ") + (e instanceof Error ? e.message : String(e)));
+  try {
+    const r = migrateBackupsLegacy(dryRun);
+    if (r.fromDir === null) {
+      console.log(dim(`  backups/legacy-pai-backups/: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
+    } else if (r.dryRun) {
+      console.log(dim(`  backups/legacy-pai-backups/: would copy+verify ${r.fromDir} → ${r.toDir}`));
+    } else {
+      console.log(
+        ok(`  backups/legacy-pai-backups/: `) +
+          `${r.filesVerified ?? 0} file(s) verified, ${r.fromDir} → ${r.toDir}` +
+          (r.note ? dim(` (${r.note})`) : "")
+      );
+    }
+  } catch (e) {
+    hadError = true;
+    console.error(err(`  backups/legacy-pai-backups/: `) + (e instanceof Error ? e.message : String(e)));
+  }
+
+  const reportContentDir = (label: string, fn: () => MigrateContentDirResult) => {
+    try {
+      const r = fn();
+      if (r.fromDir === null) {
+        console.log(dim(`  ${label}: ${r.note ?? "nothing to migrate"} (${r.toDir})`));
+      } else if (r.dryRun) {
+        console.log(dim(`  ${label}: would move ${r.movedCount ?? 0} entrie(s) from ${r.fromDir} → ${r.toDir}, then symlink`));
+      } else {
+        const symlinkPart = r.symlinked
+          ? ", adapter symlink created"
+          : ` — NOT symlinked (${r.symlinkNote ?? "see note"})`;
+        console.log(
+          ok(`  ${label}: `) +
+            `${r.movedCount ?? 0} entrie(s) ${r.fromDir} → ${r.toDir}${symlinkPart}` +
+            (r.note ? dim(` (${r.note})`) : "")
+        );
       }
+    } catch (e) {
+      hadError = true;
+      console.error(err(`  ${label}: `) + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+  reportContentDir("agents/", () => migrateAgentsDir({ dryRun }));
+  reportContentDir("commands/", () => migrateCommandsDir({ dryRun }));
 
-      if (hadError) process.exitCode = 1;
-    });
+  if (opts.logs) {
+    try {
+      const { workers } = readWorkersSection();
+      const oldLogDir = expandHome(workers.logDir);
+      const newLogDir = paiHomePath("logs", "workers");
+      const r = migrateWorkerLogs(oldLogDir, newLogDir, { dryRun });
+      if (r.fromPath === null) {
+        console.log(dim(`  logs/workers: ${r.note ?? "nothing to migrate"} (${r.toPath})`));
+      } else if (r.dryRun) {
+        console.log(dim(`  logs/workers: would move ${r.fromPath} → ${r.toPath}`));
+      } else {
+        console.log(
+          ok(`  logs/workers: `) +
+            `${r.filesMoved ?? 0} file(s) ${r.fromPath} → ${r.toPath}` +
+            (r.note ? dim(` (${r.note})`) : "")
+        );
+      }
+    } catch (e) {
+      hadError = true;
+      const msg = e instanceof WorkerLogsMigrationError ? e.message : String(e instanceof Error ? e.message : e);
+      console.error(err("  logs/workers: ") + msg);
+    }
+  } else {
+    console.log(dim(`  logs/workers: pass --logs to move it (skipped by default — actively written by running workers)`));
+  }
+
+  if (opts.history) {
+    try {
+      const { workers } = readWorkersSection();
+      const active = activeSpawnedWorkerCount(expandHome(workers.logDir));
+      if (active > 0 && !dryRun) {
+        throw new Error(
+          `${active} worker(s) other than the interactive session are RUNNING (see \`pai worker ps\`) — ` +
+            `History/ etc. are written by every session's hooks, wait for them to finish and confirm no ` +
+            `other interactive \`claude\` session is active, then retry`
+        );
+      }
+      reportDir("History/", () => migrateHistoryDir({ dryRun }));
+      report("agent-sessions.json", () => migrateAgentSessions({ dryRun }));
+      report("session-routing.json", () => migrateSessionRouting({ dryRun }));
+      report("History/security/security-events.jsonl", () => migrateSecurityEvents({ dryRun }));
+    } catch (e) {
+      hadError = true;
+      console.error(err("  History/ etc.: ") + (e instanceof Error ? e.message : String(e)));
+    }
+  } else {
+    console.log(
+      dim(`  History/, agent-sessions.json, session-routing.json, security-events.jsonl: pass --history to move (skipped by default — actively written by hooks on every session)`)
+    );
+  }
+
+  report(".last-housekeeping", () => migrateLastHousekeeping({ dryRun }));
+
+  try {
+    const r = migrateSessionStopLock({ dryRun });
+    const line = `  .session-stop.lock: ${r.note}`;
+    console.log(r.status === "moved" && !dryRun ? ok(line) : dim(line));
+  } catch (e) {
+    hadError = true;
+    console.error(err("  .session-stop.lock: ") + (e instanceof Error ? e.message : String(e)));
+  }
+
+  return hadError ? 1 : 0;
 }
