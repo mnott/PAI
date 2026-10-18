@@ -2,8 +2,7 @@
 
 import type { Command } from "commander";
 import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
-import { bridged } from "../lib/bridge.js";
-import { registerBackendCommands } from "./memory/backend.js";
+import { memoryBackendDetectCmd, memoryBackendUseCmd, memoryBackendProvisionCmd, memoryReembedCmd } from "./memory/backend.js";
 import { memoryEmbedCmd } from "./memory/embed.js";
 import { memoryIndexCmd } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
@@ -13,8 +12,6 @@ import { memoryStatusCmd, memorySettingsCmd } from "./memory/stats.js";
 
 const background: OptDef = { name: "background", type: "boolean", summary: "Run at low priority so the computer stays responsive" };
 const projectSlug = { name: "PROJECT", summary: "Project name as shown by `pai project list`" };
-
-const m = (register: (c: Command) => void, path: string[], def: Omit<CommandDef, "run">) => bridged(register, "memory", path, def);
 
 export const memoryIndexCommand: CommandDef = {
   name: "index",
@@ -120,14 +117,16 @@ export const memorySourcesCommand: CommandDef = {
   run: (ctx) => memorySourcesCmd({ limit: ctx.opts.limit as number | undefined }),
 };
 
-const backendDetect = m(registerBackendCommands, ["backend", "detect"], {
+export const memoryBackendDetectCommand: CommandDef = {
   name: "detect",
   summary: "Check which embedding backends work here",
   description: "Probes the available embedding backends (ollama, then transformers-cpu) and recommends the fastest.",
   examples: ["pai memory backend detect", "pai memory backend use ollama"],
   seeAlso: ["pai memory backend use"],
-});
-const backendUse = m(registerBackendCommands, ["backend", "use"], {
+  run: () => memoryBackendDetectCmd(),
+};
+
+export const memoryBackendUseCommand: CommandDef = {
   name: "use",
   summary: "Choose the embedding backend",
   description: "Writes the backend to the config. It does not touch the index; an index that already holds vectors from another backend needs `pai memory reembed`.",
@@ -135,15 +134,20 @@ const backendUse = m(registerBackendCommands, ["backend", "use"], {
   options: [{ name: "model", type: "string", value: "NAME", summary: "Model name on that backend" }],
   examples: ["pai memory backend use ollama", "pai memory backend use transformers-cpu-q8 --model my-model"],
   seeAlso: ["pai memory backend detect", "pai memory reembed"],
-});
-const backendProvision = m(registerBackendCommands, ["backend", "provision"], {
+  run: (ctx) => memoryBackendUseCmd(ctx.args.ID as string, {
+    model: ctx.opts.model as string | undefined,
+  }),
+};
+
+export const memoryBackendProvisionCommand: CommandDef = {
   name: "provision",
   summary: "Download and set up a backend's model",
   description: "Only ollama needs this: it downloads the embedding model file and registers it with ollama.",
   args: [{ name: "BACKEND", required: true, summary: "Backend to set up (only: ollama)" }],
   examples: ["pai memory backend provision ollama", "pai memory backend use ollama"],
   seeAlso: ["pai memory backend use"],
-});
+  run: (ctx) => memoryBackendProvisionCmd(ctx.args.BACKEND as string),
+};
 
 export const memoryBackendCommand: CommandDef = {
   name: "backend",
@@ -151,10 +155,10 @@ export const memoryBackendCommand: CommandDef = {
   description: "An index is bound to the backend that embedded it. Pick a backend here; switching an existing index also needs `pai memory reembed`.",
   examples: ["pai memory backend detect", "pai memory backend use ollama"],
   seeAlso: ["pai memory reembed"],
-  subcommands: [backendDetect, backendUse, backendProvision],
+  subcommands: [memoryBackendDetectCommand, memoryBackendUseCommand, memoryBackendProvisionCommand],
 };
 
-export const memoryReembedCommand = m(registerBackendCommands, ["reembed"], {
+export const memoryReembedCommand: CommandDef = {
   name: "reembed",
   summary: "Switch the index to another embedding backend",
   description:
@@ -166,7 +170,11 @@ export const memoryReembedCommand = m(registerBackendCommands, ["reembed"], {
   ],
   examples: ["pai memory reembed", "pai memory reembed --backend ollama --yes"],
   seeAlso: ["pai memory embed", "pai memory backend use"],
-});
+  run: (ctx) => memoryReembedCmd({
+    backend: ctx.opts.backend as string | undefined,
+    yes: ctx.opts.yes === true,
+  }),
+};
 
 const memoryPassCommand: CommandDef = {
   name: "pass",
