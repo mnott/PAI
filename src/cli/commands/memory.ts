@@ -1,6 +1,5 @@
 /** `pai memory ...`: search and index what was written down. */
 
-import type { Command } from "commander";
 import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
 import { memoryBackendDetectCmd, memoryBackendUseCmd, memoryBackendProvisionCmd, memoryReembedCmd } from "./memory/backend.js";
 import { memoryEmbedCmd } from "./memory/embed.js";
