@@ -556,6 +556,7 @@ export function renderTable(
       )
     );
     lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
+    if (s.note) lines.push(treeLine(`${q}${c("dim", `note: ${s.note.replace(/\s+/g, " ").slice(0, 100)}`)}`, chain, last));
     lines.push(
       treeLine(
         s.waitingOn

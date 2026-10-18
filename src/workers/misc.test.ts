@@ -13,7 +13,8 @@ import { relPath, unifiedDiffLines, makeColor } from "./render.js";
 import { appendLedger, parseLedgerLine, ledgerSummary } from "./ledger.js";
 import { resultFromOutput } from "./run.js";
 import { statusPath, eventsPath, ledgerPath } from "./paths.js";
-import { loadStatuses, saveStatus, setWorkerLabel, statusTmpPath, type WorkerStatus } from "./status.js";
+import { renderTable } from "./render.js";
+import { loadStatuses, nowStamp, saveStatus, setWorkerLabel, setWorkerNote, statusTmpPath, type WorkerStatus } from "./status.js";
 
 describe("tabKey", () => {
   it("extracts w<n>t<n> and ignores pane suffixes", () => {
@@ -202,6 +203,34 @@ describe("setWorkerLabel / saveStatus label merge", () => {
     setWorkerLabel(dir, id, "brand new goal");
     const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
     expect(back.label).toBe("brand new goal");
+  });
+});
+
+describe("setWorkerNote", () => {
+  const base = (id: string): WorkerStatus =>
+    ({
+      id, pid: process.pid, label: "bench: original", cwd: "/repo", term: "", provider: "anthropic", model: "m",
+      state: "running", started: "2026-10-18 13:00:00", updated: "2026-10-18 13:00:00", turns: 1, tools: 1, last: "x", rc: null, secs: null,
+    }) as WorkerStatus;
+
+  it("records the note, leaves the label, survives the worker's own write", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-note-"));
+    const id = "20261018-130000-1";
+    const status = base(id);
+    saveStatus(dir, status);
+    setWorkerNote(dir, id, "FYI: server stopped");
+    saveStatus(dir, status);
+    const back = JSON.parse(readFileSync(statusPath(dir, id), "utf8")) as WorkerStatus;
+    expect(back.label).toBe("bench: original");
+    expect(back.note).toBe("FYI: server stopped");
+  });
+
+  it("ps shows the label as task and the note on its own line", () => {
+    const st = { ...base("20261018-130000-2"), started: nowStamp(), note: "FYI: server stopped" };
+    const out = renderTable((_k: string, t: string) => t, [st], "", new Date());
+    expect(out).toContain("task: bench: original");
+    expect(out).toContain("note: FYI: server stopped");
+    expect(out).not.toContain("task: FYI");
   });
 });
 

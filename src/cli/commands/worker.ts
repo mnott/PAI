@@ -18,7 +18,7 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
-import { loadStatus, setWorkerLabel } from "../../workers/status.js";
+import { loadStatus, setWorkerNote } from "../../workers/status.js";
 import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
@@ -519,14 +519,14 @@ const sayCommand: CommandDef = {
     { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
     { name: "TEXT", required: true, summary: "The message" },
   ],
-  options: [{ name: "goal", type: "string", value: "TEXT", summary: "Rename the worker's goal in ps and its pane before sending" }],
+  options: [{ name: "goal", type: "string", value: "TEXT", summary: "Record a goal note shown in ps (the label stays) before sending" }],
   examples: ["pai worker say w-20260101-abc 'Also cover the empty case'", "pai worker say w-20260101-abc 'Go on' --goal 'finish the export'"],
   seeAlso: ["pai worker goal", "pai worker resume"],
   run: (ctx) =>
     guard("pai worker ps", async () => {
       const dir = logDir();
       const goal = str(ctx.opts.goal);
-      if (goal !== undefined) setWorkerLabel(dir, ctx.args.ID as string, goal);
+      if (goal !== undefined) setWorkerNote(dir, ctx.args.ID as string, goal);
       await sayToWorker(dir, ctx.args.ID as string, ctx.args.TEXT as string);
       out("ok");
     }),
@@ -534,17 +534,17 @@ const sayCommand: CommandDef = {
 
 const goalCommand: CommandDef = {
   name: "goal",
-  summary: "Rename what a running worker is working on",
-  description: "Changes the label shown in ps and the worker's pane, without sending it a message. Prints ok.",
+  summary: "Leave a goal note on a running worker",
+  description: "Records a note shown under the worker's task in ps; the label is not changed and no message is sent. Prints ok.",
   args: [
     { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
-    { name: "TEXT", required: true, summary: "The new label" },
+    { name: "TEXT", required: true, summary: "The note" },
   ],
   examples: ["pai worker goal w-20260101-abc 'fix the retry loop'", "pai worker goal w-20260101-abc 'review the export tests'"],
   seeAlso: ["pai worker say", "pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", () => {
-      setWorkerLabel(logDir(), ctx.args.ID as string, ctx.args.TEXT as string);
+      setWorkerNote(logDir(), ctx.args.ID as string, ctx.args.TEXT as string);
       out("ok");
     }),
 };
