@@ -15,8 +15,7 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { usageContextTokens } from "../workers/run.js";
-import type { UsageBlock } from "../utils/input-side-tokens.js";
+import { usageContextTokens, type UsageBlock } from "../workers/run.js";
 import { ensureNoMcpConfig } from "../workers/paths.js";
 
 export const PROBE_PROMPT = "Reply with exactly the single word OK and nothing else. Do not use any tool.";

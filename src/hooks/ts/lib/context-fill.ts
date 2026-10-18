@@ -38,7 +38,7 @@ import {
   contextWindowFromModelId,
   stripModelVariant,
 } from "../../../utils/model-window.js";
-import { inputSideTokens } from "../../../utils/input-side-tokens.js";
+import { inputSideTokens } from "../../../workers/run.js";
 import { readWorkersSection } from "../../../workers/config.js";
 
 export { DEFAULT_CONTEXT_WINDOW };

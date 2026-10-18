@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { loadStatuses, type WorkerStatus } from "./status.js";
 import { isLocalProvider } from "./policy.js";
-import type { UsageBlock } from "../utils/input-side-tokens.js";
+import type { UsageBlock } from "./run.js";
 
 export interface CacheCreationSplit {
   ephemeral_5m_input_tokens?: number;

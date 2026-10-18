@@ -51,8 +51,8 @@ import {
   usageContextUsed,
   DEFAULT_WORKER_TOOLS,
   type StreamEvent,
+  type UsageBlock,
 } from "./run.js";
-import type { UsageBlock } from "../utils/input-side-tokens.js";
 import { ensureSlotWorktree, prepareSlot, releaseSlot, slotPath, slotServesRepo, type SlotPrep } from "./slots.js";
 import { commitsSince, salvageNotes, salvageOnExit, worktreeSystemPrompt } from "./worktree.js";
 import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedPaths, type BashRun } from "./report.js";
