@@ -546,17 +546,23 @@ const handoffCommand: CommandDef = {
 const mergeCommand: CommandDef = {
   name: "merge",
   summary: "Merge a worker's branch into your checkout",
-  description: "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch.",
+  description:
+    "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. With --verify the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker pending`)" }],
   options: [
     { name: "no-commit", type: "boolean", summary: "Apply the changes uncommitted; keep branch and worktree" },
     { name: "patch", type: "boolean", summary: "Same as --no-commit" },
+    { name: "verify", type: "string", value: "CMD", summary: "Run CMD after the merge; revert the merge when it fails" },
   ],
-  examples: ["pai worker merge w-20260101-abc", "pai worker merge w-20260101-abc --no-commit"],
+  examples: [
+    "pai worker merge w-20260101-abc",
+    "pai worker merge w-20260101-abc --no-commit",
+    'pai worker merge 20261018-0301-1 --verify "npx tsc --noEmit"',
+  ],
   seeAlso: ["pai worker verify", "pai worker pending", "pai worker discard"],
   run: (ctx) =>
     guard("pai worker pending", () => {
-      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch") }));
+      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify: str(ctx.opts.verify) }));
     }),
 };
 
