@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
@@ -46,32 +46,6 @@ export function probeRouter(port = ROUTER_PORT, timeoutMs = 2000): Promise<boole
     sock.once("connect", () => done(true));
     sock.once("error", () => done(false));
   });
-}
-
-/**
- * True when the running router predates the current build: the pid file is
- * written when the router starts, so an entry file newer than it means the
- * router still serves old code.
- */
-export function routerIsStale(cliEntry: string): boolean {
-  try {
-    return statSync(cliEntry).mtimeMs > statSync(ROUTER_PID_FILE).mtimeMs;
-  } catch {
-    return false;
-  }
-}
-
-/** SIGTERM the router and wait (up to ~3s) until it is gone so the port is free. */
-export async function stopRouter(): Promise<void> {
-  const pid = routerRunningPid();
-  if (!pid) return;
-  process.kill(pid, "SIGTERM");
-  for (let i = 0; i < 30 && routerRunningPid(); i++) await new Promise((r) => setTimeout(r, 100));
-  try {
-    unlinkSync(ROUTER_PID_FILE);
-  } catch {
-    /* already gone */
-  }
 }
 
 export interface RouterTickDeps {

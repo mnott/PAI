@@ -46,7 +46,6 @@ import type { ParsedRunnerArgs } from "./args.js";
 import { inputSideTokens, type StreamEvent, type UsageBlock } from "./run.js";
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
-import { workersLogDir } from "./paths.js";
 
 // ---------------------------------------------------------------------------
 // Config-facing helpers
@@ -315,15 +314,6 @@ export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibl
   return null;
 }
 
-/**
- * The pool host's cwd: a neutral directory no spec should depend on. The
- * workers logDir keeps slots out of every repo; the boundary line tells the
- * model where it runs so absolute-path specs stay correct.
- */
-export function poolSlotCwd(config: WorkersConfig): string {
-  return workersLogDir(config);
-}
-
 // ---------------------------------------------------------------------------
 // The task boundary — one delimiter per pooled turn
 // ---------------------------------------------------------------------------
@@ -466,13 +456,6 @@ export function poolHostAlive(port: number, timeoutMs = 500): Promise<boolean> {
 // createPoolHost deps hook — the same code path the detached process runs)
 // ---------------------------------------------------------------------------
 
-export interface PooledRunResult {
-  rc: number;
-  resultEvent: StreamEvent | null;
-  report: WorkerReport | null;
-  status: WorkerStatus;
-}
-
 /** Spawning surface of a slot process; injectable so tests run a fake claude. */
 export interface SlotProcess {
   pid: number;
@@ -484,15 +467,6 @@ export interface SlotProcess {
 
 /** How the host obtains a slot process; the real impl spawns `claude`. */
 export type SlotSpawner = (argv: string[], cwd: string, env: NodeJS.ProcessEnv) => SlotProcess;
-
-export interface PoolHostDeps {
-  spawner: SlotSpawner;
-  /** Slot env builder — buildRunEnv in production. */
-  envFor: (providerName: string, provider: WorkerProvider) => NodeJS.ProcessEnv;
-  /** Argv head of the claude binary — claudeCommand in production. */
-  cmdHead: (env: NodeJS.ProcessEnv, caveman: boolean) => string[];
-  now: () => Date;
-}
 
 /** Hash of the identity a slot is pinned to: provider, model and its cwd. */
 export function slotKey(provider: string, model: string, cwd: string): string {
@@ -541,10 +515,6 @@ export function warmOrCold(share: number | null | undefined): "warm" | "cold" | 
   return share == null ? null : share >= 0.8 ? "warm" : "cold";
 }
 
-export function shortSlotKey(key: string): string {
-  return key.replaceAll("\u0000", "/");
-}
-
 /**
  * Decide which idle slot serves a task, or whether a new slot may spawn.
  * Pure over the slot list so tests can drive it directly.
@@ -586,15 +556,6 @@ export function slotIdleFor(s: PoolSlotRecord, nowMs: number): number {
 export function slotShouldReap(s: PoolSlotRecord, nowMs: number, idleSecs: number): boolean {
   if (idleSecs <= 0 || s.busyWith) return false;
   return slotIdleFor(s, nowMs) >= idleSecs;
-}
-
-/** Input the host needs to execute one pooled task. Rebuilt per task. */
-export interface PoolHostTask extends PoolTaskRequest {
-  providerObj: WorkerProvider;
-  noBrowser: boolean;
-  proxyUrl?: string;
-  contract: string | null;
-  addendum: string | null;
 }
 
 /**

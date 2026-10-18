@@ -275,9 +275,6 @@ export interface WorkersPoolConfig {
   native: boolean;
 }
 
-/** Cost/quality tier of a provider's model, 1 (cheapest) … 5 (most expensive). */
-export type CostTier = 1 | 2 | 3 | 4 | 5;
-
 /** The tier aliases the CLI and daemon tables understand — class proxies, not
  *  Anthropic model names: any provider's model maps onto one of these. */
 export type ModelTier = "haiku" | "sonnet" | "opus";
@@ -1316,16 +1313,6 @@ export function resolveProviderKey(p: WorkerProvider): string | null {
   const token = content.trim();
   if (!token) throw new WorkersConfigError(`key file is empty: ${keyPath}`);
   return token;
-}
-
-/** True when the provider's token resolves (inline key or readable, non-empty
- *  key file). Presence only: the value is never returned. */
-export function hasProviderKey(p: WorkerProvider): boolean {
-  try {
-    return !!resolveProviderKey(p);
-  } catch {
-    return false;
-  }
 }
 
 /** `key: ****` + last 4 chars — never the full value. Used everywhere a
