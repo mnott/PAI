@@ -1,4 +1,4 @@
-/** Registry command implementation without Commander dependencies. */
+/** Registry command implementation without a parser dependency. */
 
 import { ok, warn, err, dim, bold, fmtDate } from "../../lib/utils.js";
 import { homedir } from "node:os";

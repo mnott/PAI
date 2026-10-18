@@ -1,6 +1,6 @@
 /**
  * PAI setup wizard — main entry point.
- * Orchestrates all setup steps in order and registers the Commander command.
+ * Orchestrates all setup steps in order and runs them.
  */
 
 import chalk from "chalk";

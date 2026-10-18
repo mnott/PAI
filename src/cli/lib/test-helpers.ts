@@ -3,7 +3,6 @@
 import type { CommandDef } from "../define.js";
 import { GROUPS } from "../registry.js";
 import { defaultIo, runCli, type Io } from "../run.js";
-import { rawSource } from "./legacy.js";
 
 /** Every command (and subcommand) has a one-line summary, 2+ examples and a description. */
 export function helpProblems(def: CommandDef, path = def.name): string[] {
@@ -24,14 +23,11 @@ export async function runPai(argv: string[]): Promise<{ code: number; out: strin
   const errLog = console.error;
   console.log = (...a: unknown[]) => void (out += a.join(" ") + "\n");
   console.error = (...a: unknown[]) => void (err += a.join(" ") + "\n");
-  const prev = rawSource.argv;
-  rawSource.argv = () => argv;
   try {
     const code = await runCli(GROUPS, argv, io);
     return { code, out, err };
   } finally {
     console.log = log;
     console.error = errLog;
-    rawSource.argv = prev;
   }
 }

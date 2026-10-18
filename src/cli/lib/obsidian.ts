@@ -261,7 +261,7 @@ export function obsidianOpenCmd(
 }
 
 // ---------------------------------------------------------------------------
-// Commander registration (to be removed)
+// Legacy registration (to be removed)
 // ---------------------------------------------------------------------------
 
 // This is kept for compatibility but will be removed in a later refactor

@@ -695,8 +695,8 @@ async function cmdCombined(opts: { json?: boolean; record?: string }): Promise<v
 
 /**
  * `--json` is declared once, on `tokensCmd` itself, and read back from there
- * in every subcommand action below — not redeclared per subcommand. Commander
- * resolves an option to whichever command in the chain first declares it, so
+ * in every subcommand action below — not redeclared per subcommand. The parser
+ * resolved an option to whichever command in the chain first declares it, so
  * a child command that *also* declares `--json` never sees the flag: it gets
  * consumed by the parent before the child's own `opts()` is populated, and
  * `--json` on `pai audit tokens files` silently produced the table output.
