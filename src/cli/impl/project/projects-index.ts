@@ -38,7 +38,7 @@ import { getRegistryBackend } from "../../../storage/factory.js";
 export { cmdGo };
 
 // New functions for converted commands
-export async function projectListCmd(opts: { all?: boolean; n?: string }): Promise<number> {
+export async function projectListCmd(opts: { all?: boolean; workers?: boolean; n?: string }): Promise<number> {
   const { cmdMain } = await import("../../lib/main-resolver.js");
   await cmdMain(undefined, undefined, opts);
   return 0;

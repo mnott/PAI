@@ -31,7 +31,6 @@ import {
 } from "../lib/session-scan.js";
 import { legacy } from "../lib/legacy.js";
 import { cmdRename } from "./session/commands.js";
-import { workerSessionFilter } from "../lib/worker-sessions.js";
 import { getProviderOrNative } from "../../workers/config.js";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +97,7 @@ export async function collectRows(opts: { project?: string; all?: boolean; worke
   return rows;
 }
 
-export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
+export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean; limit?: number }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
   let workers: WorkersConfig | null = null;
   try {
     workers = readWorkersSection().workers;
@@ -106,18 +105,16 @@ export async function collectView(opts: { project?: string; all?: boolean; worke
     /* provider column falls back to what the model name says */
   }
   const [scanned, live] = await Promise.all([
-    scanSessions({ limit: opts.all ? 1000 : opts.workers ? 25 : 150, filter: opts.all ? "all" : "named" }),
+    scanSessions({ limit: opts.limit ?? (opts.all ? 1000 : opts.workers ? 25 : 150), filter: opts.all ? "all" : "named", workers: opts.workers }),
     fetchLiveSessions().catch(() => []),
   ]);
   const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
   const needle = opts.project?.toLowerCase();
   const budget = workers ? await readBudget(workers) : {};
-  const workerFilter = opts.workers ? null : workerSessionFilter();
   const rows = scanned
-    .filter((s) => !workerFilter?.isWorker(s))
     .filter((s) => !needle || projectOf(s).toLowerCase().includes(needle) || s.decodedPath.toLowerCase().includes(needle))
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, opts.all ? 1000 : 25)
+    .slice(0, opts.limit ?? (opts.all ? 1000 : 25))
     .map((s) => {
       const origin = originOf(s, workers);
       return {

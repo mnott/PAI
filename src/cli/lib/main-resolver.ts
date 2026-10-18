@@ -377,6 +377,7 @@ export interface MainResolverOpts {
   dryRun?: boolean;  // --dry-run: show what would happen
   n?: string;        // --n <count>: max candidates for history search
   all?: boolean;     // --all: show cold / 0-session / archived projects too
+  workers?: boolean; // --workers (with --all): include headless worker sessions
   resume?: boolean;  // --resume: reopen the newest transcript instead of starting fresh
 }
 
@@ -406,7 +407,7 @@ export async function cmdMain(
   const livePromise = !query
     ? fetchLiveSessions().catch(() => [] as Awaited<ReturnType<typeof fetchLiveSessions>>)
     : Promise.resolve([]);
-  const allSessions = await scanSessions({ limit: 500, filter: "named" });
+  const allSessions = await scanSessions({ limit: 500, filter: "named", workers: showAll && opts.workers === true });
   const registeredProjects = await getRegisteredProjects(showAll);
 
   // -----------------------------------------------------------------------
