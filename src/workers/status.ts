@@ -437,6 +437,11 @@ export function ownsPid(status: Pick<WorkerStatus, "pid" | "started">): boolean 
   }
 }
 
+/** Any state a worker never leaves on its own: everything but "running". */
+export function isTerminal(state: WorkerStatus["state"] | undefined): boolean {
+  return state !== undefined && state !== "running";
+}
+
 /** Whether a status is both marked "running" and still owns its recorded pid. */
 export function isLive(
   status: Pick<WorkerStatus, "pid" | "started" | "state">,

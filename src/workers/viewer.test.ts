@@ -34,26 +34,26 @@ const color = makeColor(true);
 
 describe("workerEnded", () => {
   it("ends once the result event was rendered, whatever the status says", () => {
-    expect(workerEnded(true, "running", true)).toBe(true);
-    expect(workerEnded(true, undefined, true)).toBe(true);
-    expect(workerEnded(true, "done", false)).toBe(true);
+    expect(workerEnded(true, "running")).toBe(true);
+    expect(workerEnded(true, undefined)).toBe(true);
+    expect(workerEnded(true, "done")).toBe(true);
   });
 
-  it("ends when the status left running and the pid is gone (killed without a result)", () => {
-    expect(workerEnded(false, "done", false)).toBe(true);
-    expect(workerEnded(false, "failed", false)).toBe(true);
-    expect(workerEnded(false, "killed", false)).toBe(true);
-    expect(workerEnded(false, "lost", false)).toBe(true);
+  it("ends once the status is terminal (killed without a result)", () => {
+    expect(workerEnded(false, "done")).toBe(true);
+    expect(workerEnded(false, "failed")).toBe(true);
+    expect(workerEnded(false, "killed")).toBe(true);
+    expect(workerEnded(false, "lost")).toBe(true);
   });
 
-  it("keeps following while the worker runs, or its pid lives on", () => {
-    expect(workerEnded(false, "running", true)).toBe(false);
-    expect(workerEnded(false, "done", true)).toBe(false); // zombie status, live pid
+  it("keeps following while the worker runs", () => {
+    expect(workerEnded(false, "running")).toBe(false);
+    expect(workerEnded(false, "timeout" as never)).toBe(true);
   });
 
   it("keeps following when no status was ever read", () => {
-    expect(workerEnded(false, undefined, false)).toBe(false);
-    expect(workerEnded(false, undefined, true)).toBe(false);
+    expect(workerEnded(false, undefined)).toBe(false);
+    expect(workerEnded(false, undefined)).toBe(false);
   });
 });
 
@@ -596,6 +596,28 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     input.write("/quit\n");
     await done;
   }, 8000);
+
+  for (const end of ["done", "failed"] as const) {
+    it(`exits once the status flips to ${end}, even with a live pid, and not before`, async () => {
+      const { dir, id } = chatFixture("running");
+      const sp = join(dir, `${id}.status`);
+      const st = JSON.parse(readFileSync(sp, "utf8"));
+      writeFileSync(sp, JSON.stringify({ ...st, pid: process.pid, started: nowStamp() }));
+      let finished = false;
+      const done = followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, {
+        stdin: new PassThrough(),
+        stdout: { write: () => true, rows: 24, columns: 80 },
+        spawnResume: () => ({ on: () => undefined }),
+      }).then(() => {
+        finished = true;
+      });
+      await sleep(1800);
+      expect(finished).toBe(false);
+      writeFileSync(sp, JSON.stringify({ ...st, pid: process.pid, started: nowStamp(), state: end }));
+      await Promise.race([done, sleep(4000)]);
+      expect(finished).toBe(true);
+    }, 12000);
+  }
 
   it("an empty prompt lets the countdown close the pane", async () => {
     const { dir, id } = chatFixture();
