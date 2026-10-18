@@ -35,6 +35,7 @@ import {
   projectPinsCmd,
   projectToolsCmd
 } from "../impl/project/projects-index.js";
+import { CliError } from "../define.js";
 
 export const projectSubcommands: CommandDef[] = [
 {
@@ -156,7 +157,7 @@ export const projectSubcommands: CommandDef[] = [
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "TAGS", summary: "Comma-separated tags", required: true, variadic: true }],
   examples: ["pai project tag my-app web,client","pai project info my-app"],
   seeAlso: ["pai project alias","pai project here"],
-  run: (ctx) => projectTagCmd(ctx.args.SLUG as string, ctx.multi?.TAGS as string[] || []),
+  run: (ctx) => projectTagCmd(ctx.args.SLUG as string, (ctx.args.TAGS as string[] | undefined) ?? []),
 },
 {
   name: "alias",
@@ -222,7 +223,11 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "from-session", type: "string", value: "PATH", summary: "Path to the session note markdown file" }, { name: "to", type: "string", value: "PATH", summary: "Directory path for the new project (must not exist)" }, { name: "name", type: "string", value: "NAME", summary: "Display name for the new project (derived from filename if omitted)" }],
   examples: ["pai project promote --from-session ./Notes/0001-idea.md --name idea","pai project promote --from-session ./Notes/0001-idea.md --to ~/code/idea"],
   seeAlso: ["pai project go","pai project consolidate"],
-  run: (ctx) => projectPromoteCmd({ fromSession: ctx.opts["from-session"] as string | undefined, to: ctx.opts.to as string | undefined, name: ctx.opts.name as string | undefined }),
+  run: (ctx) => {
+    if (ctx.opts["from-session"] === undefined) throw new CliError("missing required option --from-session", "pai help project promote", 2);
+    if (ctx.opts.to === undefined) throw new CliError("missing required option --to", "pai help project promote", 2);
+    return projectPromoteCmd({ fromSession: ctx.opts["from-session"] as string, to: ctx.opts.to as string, name: ctx.opts.name as string | undefined });
+  },
 },
 {
   name: "go",
@@ -266,10 +271,10 @@ export const projectSubcommands: CommandDef[] = [
   summary: "Show or change how sessions of a project start",
   description: "Show or change how sessions of a project start.\n\nView or modify session launch config for a project.\nUse --options to discover available keys and presets.",
   args: [{ name: "IDENTIFIER", summary: "Project name, short name, number or part of its path" }, { name: "MORE", summary: "More values for the list option above", variadic: true }],
-  options: [{ name: "set", type: "string", value: "KEY=VALUE", summary: "Set config values (repeatable) (several values allowed)" }, { name: "unset", type: "string", value: "KEY", summary: "Remove config keys (repeatable, use env.KEY for env vars) (several values allowed)" }, { name: "preset", type: "string", value: "NAME", summary: "Apply a permission preset: full | trusted | default" }, { name: "defaults", type: "boolean", summary: "Manage global session defaults instead of a project" }, { name: "options", type: "boolean", summary: "List available config keys and presets" }, { name: "json", type: "boolean", summary: "Output JSON" }, { name: "reset", type: "boolean", summary: "Reset config to empty (inherit global defaults)" }],
+  options: [{ name: "set", type: "string", value: "KEY=VALUE", summary: "Set config values (repeatable) (several values allowed)", repeatable: true }, { name: "unset", type: "string", value: "KEY", summary: "Remove config keys (repeatable, use env.KEY for env vars) (several values allowed)", repeatable: true }, { name: "preset", type: "string", value: "NAME", summary: "Apply a permission preset: full | trusted | default" }, { name: "defaults", type: "boolean", summary: "Manage global session defaults instead of a project" }, { name: "options", type: "boolean", summary: "List available config keys and presets" }, { name: "json", type: "boolean", summary: "Output JSON" }, { name: "reset", type: "boolean", summary: "Reset config to empty (inherit global defaults)" }],
   examples: ["pai project config my-app","pai project config my-app --options"],
   seeAlso: ["pai project mcp","pai project names"],
-  run: (ctx) => projectConfigCmd(ctx.args.IDENTIFIER as string | undefined, { set: ctx.multi?.set as string[] || [], unset: ctx.multi?.unset as string[] || [], preset: ctx.opts.preset as string | undefined, defaults: ctx.opts.defaults === true, options: ctx.opts.options === true, json: ctx.opts.json === true, reset: ctx.opts.reset === true }),
+  run: (ctx) => projectConfigCmd(ctx.args.IDENTIFIER as string | undefined, { set: (ctx.multi?.set ?? []) as string[], unset: (ctx.multi?.unset ?? []) as string[], preset: ctx.opts.preset as string | undefined, defaults: ctx.opts.defaults === true, options: ctx.opts.options === true, json: ctx.opts.json === true, reset: ctx.opts.reset === true }),
 },
 {
   name: "mcp",
@@ -279,7 +284,7 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "set", type: "string", value: "NAMES", summary: "Set the pin (comma-separated server or set names)" }, { name: "clear", type: "boolean", summary: "Unset — all MCP servers load again" }],
   examples: ["pai project mcp","pai project mcp --set pai"],
   seeAlso: ["pai project pins","pai project config"],
-  run: (ctx) => projectMcpCmd(ctx.multi?.NAMES as string[] || [], { clear: ctx.opts.clear === true, set: ctx.opts.set as string | undefined }),
+  run: (ctx) => projectMcpCmd((ctx.args.NAMES as string[] | undefined) ?? [], { clear: ctx.opts.clear === true, set: ctx.opts.set as string | undefined }),
 },
 {
   name: "pins",
@@ -297,7 +302,7 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "set", type: "string", value: "NAMES", summary: "Set the pin (comma-separated tool names)" }, { name: "clear", type: "boolean", summary: "Unset — all built-in tools load again" }],
   examples: ["pai project tools","pai project tools --set Read,Bash"],
   seeAlso: ["pai project pins"],
-  run: (ctx) => projectToolsCmd(ctx.multi?.NAMES as string[] || [], { clear: ctx.opts.clear === true, set: ctx.opts.set as string | undefined }),
+  run: (ctx) => projectToolsCmd((ctx.args.NAMES as string[] | undefined) ?? [], { clear: ctx.opts.clear === true, set: ctx.opts.set as string | undefined }),
 },
 ];
 
