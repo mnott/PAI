@@ -792,3 +792,44 @@ describe("merge.verify", () => {
     expect(() => readMergeVerify(p)).toThrow(/merge: must be a mapping/);
   });
 });
+
+describe("provider router key in workers.yaml", () => {
+  function setup() {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText());
+    const { raw, workers } = readWorkersSection(jsonPath);
+    const name = Object.keys(workers.providers).find((n) => n !== "anthropic")!;
+    return { jsonPath, yamlPath, raw, workers, name };
+  }
+
+  it("absent key leaves router undefined", () => {
+    const { workers, name } = setup();
+    expect(workers.providers[name].router).toBeUndefined();
+  });
+
+  it("router: false is read from yaml and kept by a round-trip write", () => {
+    const { jsonPath, yamlPath, raw, workers, name } = setup();
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace(new RegExp(`^(  ${name}:\\n)`, "m"), "$1    router: false\n"));
+    const read = readWorkersSection(jsonPath);
+    expect(read.workers.providers[name].router).toBe(false);
+    writeWorkersSection(read.raw, read.workers, jsonPath);
+    expect(readWorkersSection(jsonPath).workers.providers[name].router).toBe(false);
+    void raw; void workers;
+  });
+
+  it("writing router: false on a provider persists it to yaml", () => {
+    const { jsonPath, yamlPath, raw, workers, name } = setup();
+    workers.providers[name].router = false;
+    writeWorkersSection(raw, workers, jsonPath);
+    expect(readFileSync(yamlPath, "utf8")).toMatch(/router: false/);
+    expect(readWorkersSection(jsonPath).workers.providers[name].router).toBe(false);
+  });
+
+  it("rejects a non-boolean router", () => {
+    const { jsonPath, yamlPath, name } = setup();
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace(new RegExp(`^(  ${name}:\\n)`, "m"), "$1    router: nope\n"));
+    expect(() => readWorkersSection(jsonPath)).toThrow(/router/);
+  });
+});

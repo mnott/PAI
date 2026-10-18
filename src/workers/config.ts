@@ -640,6 +640,9 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
   const baseUrl = str(p.baseUrl);
   // openai providers reach the model through the PAI proxy; their baseUrl is
   // the proxy URL, filled in by the runner — only anthropic needs one here.
+  if (p.router !== undefined && typeof p.router !== "boolean") {
+    bad(`.providers.${name}.router`, "must be true or false");
+  }
   if (!baseUrl && protocol !== "openai") bad(`.providers.${name}.baseUrl`, "is required");
 
   const keyFile =
