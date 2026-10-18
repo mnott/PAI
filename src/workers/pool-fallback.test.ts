@@ -1,9 +1,15 @@
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tryPoolRun } from "./run.js";
 import { ledgerPath } from "./paths.js";
+
+// the follow pane is opened before the pool post; keep these tests off the real terminal
+vi.mock("./pane.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane.js")>();
+  return { ...actual, openVerifiedPane: vi.fn().mockResolvedValue("here"), openPaneForWorker: vi.fn(), resolveHostSession: vi.fn().mockResolvedValue({ term: "t" }) };
+});
 
 const args = (logDir: string, pool: boolean, over: Record<string, unknown> = {}) =>
   ({

@@ -2,9 +2,15 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { gateStart, tryPoolRun } from "./run.js";
 import { loadStatuses, nowStamp, saveStatus } from "./status.js";
+
+// the follow pane is opened before the pool post; keep these tests off the real terminal
+vi.mock("./pane.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane.js")>();
+  return { ...actual, openVerifiedPane: vi.fn().mockResolvedValue("here"), openPaneForWorker: vi.fn(), resolveHostSession: vi.fn().mockResolvedValue({ term: "t" }) };
+});
 
 const servers: Server[] = [];
 afterEach(async () => {

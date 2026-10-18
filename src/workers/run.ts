@@ -79,6 +79,7 @@ import { slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
 import {
   type WorkerStatus,
   newWorkerId,
+  loadStatus,
   saveStatus,
   describeTool,
   nowStamp,
@@ -1297,6 +1298,8 @@ export interface ExecuteArgs {
   noBrowser: boolean;
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
+  /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */
+  panePrepared?: { verified: boolean };
 }
 
 /**
@@ -1339,6 +1342,21 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     return null;
   }
   const wid = a.id ?? newWorkerId();
+  // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this
+  if (!a.panePrepared) {
+    const term = (await resolveHostSession()).term;
+    const ledger = ledgerPath(a.logDir);
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
+    a.panePrepared = { verified };
+    const status = loadStatus(a.logDir, wid);
+    if (status) {
+      if (verified) status.pane = { opened: true };
+      else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
+      saveStatus(a.logDir, status);
+    } else if (!verified) {
+      await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger);
+    }
+  }
   const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
@@ -1496,7 +1514,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
-  const paneVerified = headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
+  const paneVerified = a.panePrepared
+    ? a.panePrepared.verified
+    : headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
   const session = resolveSession(term);
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
@@ -1716,7 +1736,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
   // above when the gate applies; best effort otherwise.
   if (paneVerified) status.pane = { opened: true };
-  else if (headless) void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   if (headless && !a.gated) await runGates(a, wid, status);
 
