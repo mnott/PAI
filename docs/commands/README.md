@@ -92,7 +92,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai daemon keepalive` | Show session keepalive settings and recent activity |
 | `pai daemon logs` | Show the end of the daemon log |
 | `pai daemon migrate` | Copy federation data from SQLite to PostgreSQL |
-| `pai daemon quiet` | Pause background maintenance for benchmark or overnight runs |
 | `pai daemon restart` | Restart the daemon |
 | `pai daemon serve` | Run the daemon in the foreground |
 | `pai daemon status` | Show whether the daemon is running |
