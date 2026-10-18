@@ -2,6 +2,7 @@
 
 import { OPT, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { auditFilesCmd, auditHooksCmd, auditSessionCmd, auditSpawnCmd, auditDaemonCmd, auditEnvCmd, auditScheduleCmd, auditSkillsCmd, auditSubagentsCmd, auditMcpCmd, auditLadderCmd, auditTokensCmd } from "../lib/audit.js";
+import { priceTableText, renderUsage, transcriptUsage, usageJson } from "../../workers/usage.js";
 
 const json: OptDef = { ...OPT.json, summary: "Print JSON instead of a table" };
 const a = (def: Omit<CommandDef, "run">, run: (ctx: RunContext) => Promise<number> | number) =>
@@ -75,6 +76,21 @@ export const auditCommand: CommandDef = {
         t("mcp", "MCP servers: configured, pinned, loaded, used", "Compares what is configured, what is pinned, what a live session loaded and what was used in the last 30 days.", {
           options: [{ name: "connect", type: "boolean", summary: "Actually connect to every stdio server to count its tools (has side effects)" }],
           examples: ["pai audit tokens mcp", "pai audit tokens mcp --connect"],
+        }),
+        a({
+          name: "usage",
+          summary: "Exact token totals per model for one session transcript",
+          description:
+            "Sums a Claude Code session transcript's assistant usage (each message id once, its final usage) per model. This is the tier-0 side of the A/B comparison: the top orchestrator session; its workers are `pai worker usage`.\n\n" +
+            priceTableText(),
+          args: [{ name: "TRANSCRIPT", required: true, summary: "Session transcript .jsonl" }],
+          examples: ["pai audit tokens usage ~/.claude/projects/-my-proj/SESSION.jsonl", "pai audit tokens usage ./session.jsonl --json"],
+          seeAlso: ["pai worker usage", "pai audit tokens session"],
+        }, (ctx) => {
+          const file = ctx.args.TRANSCRIPT as string;
+          const rep = transcriptUsage(file);
+          console.log(ctx.opts.json === true ? JSON.stringify(usageJson(rep), null, 2) : renderUsage(rep, { workers: false }));
+          return 0;
         }),
         t("ladder", "LIVE: first-turn context per configuration step", "Starts real headless claude calls at growing configurations and measures the first-turn context. Refuses without --live because it costs money.", {
           options: [

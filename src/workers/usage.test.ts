@@ -1,0 +1,90 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { priceTableText, renderUsage, sumUsage, transcriptUsage, usageJson, workerUsage } from "./usage.js";
+
+const dirs: string[] = [];
+const tmp = () => {
+  const d = mkdtempSync(join(tmpdir(), "pai-usage-"));
+  dirs.push(d);
+  return d;
+};
+afterEach(() => {
+  while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
+});
+
+const asst = (id: string, model: string, usage: object) => JSON.stringify({ type: "assistant", message: { id, model, usage } });
+const jl = (...l: string[]) => l.join("\n") + "\n";
+
+function status(dir: string, id: string, provider: string, model: string, label: string, started: string) {
+  writeFileSync(join(dir, `${id}.status`), JSON.stringify({ id, provider, model, label, started, state: "done" }));
+}
+
+describe("sumUsage", () => {
+  it("counts a repeated message id once with its final usage and splits cache writes", () => {
+    const text = jl(
+      asst("m1", "claude-sonnet-5-5", { input_tokens: 2, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 30, cache_creation: { ephemeral_5m_input_tokens: 10, ephemeral_1h_input_tokens: 20 } }),
+      asst("m1", "claude-sonnet-5-5", { input_tokens: 2, output_tokens: 40, cache_read_input_tokens: 100, cache_creation_input_tokens: 30, cache_creation: { ephemeral_5m_input_tokens: 10, ephemeral_1h_input_tokens: 20 } }),
+      asst("m2", "claude-sonnet-5-5", { input_tokens: 1, output_tokens: 7, cache_creation_input_tokens: 50 }),
+      JSON.stringify({ type: "result", total_cost_usd: 0.25 })
+    );
+    const r = sumUsage(text);
+    expect(r.costUsd).toBe(0.25);
+    expect(r.byModel.get("claude-sonnet-5-5")).toEqual({ input: 3, cacheRead: 100, cacheWrite5m: 60, cacheWrite1h: 20, output: 47 });
+  });
+});
+
+describe("workerUsage", () => {
+  it("groups cloud and local workers, filters by label and time", () => {
+    const dir = tmp();
+    status(dir, "w1", "anthropic", "claude-sonnet-5-5", "armB one", "2026-10-18 06:00:00");
+    writeFileSync(
+      join(dir, "w1.jsonl"),
+      jl(asst("a", "claude-sonnet-5-5", { input_tokens: 10, output_tokens: 4, cache_creation_input_tokens: 8, cache_creation: { ephemeral_5m_input_tokens: 3, ephemeral_1h_input_tokens: 5 } }), asst("a", "claude-sonnet-5-5", { input_tokens: 10, output_tokens: 4, cache_creation_input_tokens: 8, cache_creation: { ephemeral_5m_input_tokens: 3, ephemeral_1h_input_tokens: 5 } }), JSON.stringify({ type: "result", total_cost_usd: 0.5 }))
+    );
+    status(dir, "w2", "anthropic", "claude-sonnet-5-5", "armB two", "2026-10-18 06:30:00");
+    writeFileSync(join(dir, "w2.jsonl"), jl(asst("b", "claude-sonnet-5-5", { input_tokens: 1, output_tokens: 1 }), JSON.stringify({ type: "result", total_cost_usd: 0.1 })));
+    status(dir, "w3", "lmstudio", "qwen", "armA one", "2026-10-18 06:10:00");
+    writeFileSync(join(dir, "w3.jsonl"), jl(asst("c", "qwen", { input_tokens: 100, output_tokens: 9, cache_read_input_tokens: 7 }), JSON.stringify({ type: "result", total_cost_usd: 0 })));
+    const urls = { anthropic: "https://api.anthropic.com", lmstudio: "http://127.0.0.1:1234" };
+
+    const all = workerUsage(dir, {}, urls);
+    expect(all.rows.map((r) => [r.provider, r.local, r.workers])).toEqual([["anthropic", false, 2], ["lmstudio", true, 1]]);
+    expect(all.cloud.tally).toEqual({ input: 11, cacheRead: 0, cacheWrite5m: 3, cacheWrite1h: 5, output: 5 });
+    expect(all.cloud.costUsd).toBeCloseTo(0.6);
+    expect(all.local.tally.input).toBe(100);
+    expect(all.local.costUsd).toBeNull();
+    const text = renderUsage(all, { workers: true });
+    expect(text).toContain("CACHE WRITE 5m");
+    expect(text).toContain("lmstudio (local)");
+    expect(text).toContain("TOTAL local");
+    expect((usageJson(all) as { rows: unknown[] }).rows).toHaveLength(2);
+
+    const b = workerUsage(dir, { labelPrefix: "armB", since: new Date("2026-10-18T06:15:00") }, urls);
+    expect(b.rows).toHaveLength(1);
+    expect(b.cloud.workers).toBe(1);
+    expect(b.cloud.tally.input).toBe(1);
+  });
+});
+
+describe("transcriptUsage", () => {
+  it("sums two models and prices them from the table", () => {
+    const dir = tmp();
+    const f = join(dir, "t.jsonl");
+    writeFileSync(
+      f,
+      jl(
+        asst("x", "claude-opus-5-5", { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_input_tokens: 1_000_000, cache_creation: { ephemeral_5m_input_tokens: 1_000_000, ephemeral_1h_input_tokens: 1_000_000 } }),
+        asst("y", "claude-haiku-4-5-20251001", { input_tokens: 2_000_000, output_tokens: 0 })
+      )
+    );
+    const r = transcriptUsage(f);
+    expect(r.rows.map((x) => x.model)).toEqual(["claude-haiku-4-5-20251001", "claude-opus-5-5"]);
+    // opus: 5 + 25 + 0.5 + 6.25 + 10 = 46.75 ; haiku: 2
+    expect(r.rows[1].costUsd).toBeCloseTo(46.75);
+    expect(r.rows[0].costUsd).toBeCloseTo(2);
+    expect(r.cloud.costUsd).toBeCloseTo(48.75);
+    expect(priceTableText()).toContain("sonnet");
+  });
+});
