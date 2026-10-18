@@ -153,3 +153,34 @@ describe("transcriptUsage", () => {
     expect(priceTableText()).toContain("sonnet");
   });
 });
+
+describe("sumRunUsage cache split", () => {
+  const mu = (create: number, out: number) => ({ inputTokens: 1, outputTokens: out, cacheReadInputTokens: 5, cacheCreationInputTokens: create });
+  const res = (usage: object, modelUsage: object) => JSON.stringify({ type: "result", usage, modelUsage }) + "\n";
+
+  it("single model: totals from result.usage with the 1h split", () => {
+    const r = sumRunUsage(res({ input_tokens: 2, cache_read_input_tokens: 5, output_tokens: 900, cache_creation_input_tokens: 100, cache_creation: { ephemeral_1h_input_tokens: 100, ephemeral_5m_input_tokens: 0 } }, { "claude-sonnet-5-5": mu(100, 10) }));
+    expect(r.byModel.get("claude-sonnet-5-5")).toEqual({ input: 2, cacheRead: 5, cacheWrite5m: 0, cacheWrite1h: 100, output: 900 });
+  });
+
+  it("several models: split proportionally with exact sums", () => {
+    const r = sumRunUsage(res({ output_tokens: 3, cache_creation: { ephemeral_1h_input_tokens: 70, ephemeral_5m_input_tokens: 30 } }, { a: mu(33, 1), b: mu(33, 1), c: mu(34, 1) }));
+    const ts = [...r.byModel.values()];
+    expect(ts.reduce((n, t) => n + t.cacheWrite1h, 0)).toBe(70);
+    expect(ts.reduce((n, t) => n + t.cacheWrite5m, 0)).toBe(30);
+    for (const [k, c] of [["a", 33], ["b", 33], ["c", 34]] as const) {
+      const t = r.byModel.get(k)!;
+      expect(t.cacheWrite1h + t.cacheWrite5m).toBe(c);
+    }
+  });
+
+  it("local result with output only is unchanged", () => {
+    const r = sumRunUsage(res({ output_tokens: 50 }, { q: { inputTokens: 0, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } }));
+    expect(r.byModel.get("q")).toEqual({ input: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, output: 50 });
+  });
+
+  it("no result event: per-turn sum", () => {
+    const r = sumRunUsage(jl(asst("m1", "x", { input_tokens: 1, output_tokens: 7 })));
+    expect(r.byModel.get("x")?.output).toBe(7);
+  });
+});
