@@ -6,7 +6,6 @@
  * open    — open vault in Obsidian app (macOS)
  */
 
-import type { Command } from "commander";
 import { execFileSync } from "node:child_process";
 import { ok, warn, err, dim, bold, header } from "./utils.js";
 import {
@@ -86,10 +85,10 @@ export function saveVaultPath(vaultPath: string): void {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-async function cmdSync(
-  registry: RegistryBackend,
+export async function obsidianSyncCmd(
   opts: { vault?: string; quiet?: boolean }
-): Promise<void> {
+): Promise<number> {
+  const registry = await getRegistryBackend();
   const vaultPath = getVaultPath(opts.vault);
   const q = opts.quiet ?? false;
 
@@ -151,9 +150,14 @@ async function cmdSync(
     console.log(ok(`  Done. Vault ready at: ${vaultPath}`));
     console.log();
   }
+
+  return 0;
 }
 
-async function cmdStatus(registry: RegistryBackend, opts: { vault?: string }): Promise<void> {
+export async function obsidianStatusCmd(
+  opts: { vault?: string }
+): Promise<number> {
+  const registry = await getRegistryBackend();
   const vaultPath = getVaultPath(opts.vault);
   const report = await checkHealth(vaultPath, registry);
 
@@ -165,7 +169,7 @@ async function cmdStatus(registry: RegistryBackend, opts: { vault?: string }): P
   if (!existsSync(vaultPath)) {
     console.log(warn("  Vault directory does not exist. Run: pai obsidian sync"));
     console.log();
-    return;
+    return 0;
   }
 
   // Summary line
@@ -222,9 +226,13 @@ async function cmdStatus(registry: RegistryBackend, opts: { vault?: string }): P
     console.log(ok("  Vault is healthy."));
     console.log();
   }
+
+  return 0;
 }
 
-function cmdOpen(opts: { vault?: string }): void {
+export function obsidianOpenCmd(
+  opts: { vault?: string }
+): number {
   const vaultPath = getVaultPath(opts.vault);
   // Derive vault name from last path component (Obsidian uses folder name as vault name)
   const parts = vaultPath.split("/").filter(Boolean);
@@ -234,7 +242,7 @@ function cmdOpen(opts: { vault?: string }): void {
     console.error(err(`Vault not found at: ${vaultPath}`));
     console.error(dim("  Run: pai obsidian sync"));
     process.exitCode = 1;
-    return;
+    return 1;
   }
 
   const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
@@ -246,40 +254,17 @@ function cmdOpen(opts: { vault?: string }): void {
     console.error(err(`  Failed to open Obsidian: ${e}`));
     console.error(dim("  Ensure Obsidian is installed and the vault is registered in Obsidian."));
     process.exitCode = 1;
-    return;
+    return 1;
   }
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
-// Commander registration
+// Commander registration (to be removed)
 // ---------------------------------------------------------------------------
 
-export function registerObsidianCommands(obsidianCmd: Command): void {
-  // pai obsidian sync
-  obsidianCmd
-    .command("sync")
-    .description("Sync project Notes/ dirs into vault, generate _index.md and topic pages")
-    .option("--vault <path>", "Override vault path (default: ~/.pai/obsidian-vault)")
-    .option("--quiet", "Minimal output — suitable for cron/hook use")
-    .action(async (opts: { vault?: string; quiet?: boolean }) => {
-      await cmdSync(await getRegistryBackend(), opts);
-    });
-
-  // pai obsidian status
-  obsidianCmd
-    .command("status")
-    .description("Show vault health: healthy, broken, orphaned, and missing symlinks")
-    .option("--vault <path>", "Override vault path")
-    .action(async (opts: { vault?: string }) => {
-      await cmdStatus(await getRegistryBackend(), opts);
-    });
-
-  // pai obsidian open
-  obsidianCmd
-    .command("open")
-    .description("Open the vault in Obsidian (macOS)")
-    .option("--vault <path>", "Override vault path")
-    .action((opts: { vault?: string }) => {
-      cmdOpen(opts);
-    });
+// This is kept for compatibility but will be removed in a later refactor
+export function registerObsidianCommands(): void {
+  // This is intentionally empty - all commands are now standalone
 }
