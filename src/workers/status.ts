@@ -437,7 +437,21 @@ export function alive(pid: number | null | undefined): boolean {
  * status file's own `started` stamp; a reused pid almost never starts within
  * 120s of the original, so a wider drift means "different process".
  */
-export function ownsPid(status: Pick<WorkerStatus, "pid" | "started">): boolean {
+export type OwnerFields = Pick<WorkerStatus, "pid" | "started"> & { id?: string };
+
+/**
+ * Process creation time encoded in a worker id (`YYYYMMDD-HHMMSS-<pid>`), only
+ * when the id's pid is the recorded pid. `started` is rewritten when a queued
+ * worker acquires its provider slot, so it can be minutes after the process
+ * began; the id is minted at spawn and never changes.
+ */
+export function spawnTimeOf(status: OwnerFields): number | undefined {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(\d+)(?:-\d+)?$/.exec(status.id ?? "");
+  if (!m || Number(m[7]) !== status.pid) return undefined;
+  return new Date(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!).getTime();
+}
+
+export function ownsPid(status: OwnerFields): boolean {
   if (status.pid <= 0 || !alive(status.pid)) return false;
   try {
     const out = execFileSync("ps", ["-o", "lstart=", "-p", String(status.pid)], {
@@ -445,7 +459,7 @@ export function ownsPid(status: Pick<WorkerStatus, "pid" | "started">): boolean 
       env: { ...process.env, LC_ALL: "C" },
     }).trim();
     const psStart = Date.parse(out);
-    const started = Date.parse(status.started.replace(" ", "T"));
+    const started = spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
     if (Number.isNaN(psStart) || Number.isNaN(started)) return alive(status.pid);
     return Math.abs(psStart - started) <= 120_000;
   } catch {
@@ -462,8 +476,8 @@ export function isTerminal(state: WorkerStatus["state"] | undefined): boolean {
 
 /** Whether a status is both marked "running" and still owns its recorded pid. */
 export function isLive(
-  status: Pick<WorkerStatus, "pid" | "started" | "state">,
-  owns: (s: Pick<WorkerStatus, "pid" | "started">) => boolean = ownsPid
+  status: OwnerFields & Pick<WorkerStatus, "state">,
+  owns: (s: OwnerFields) => boolean = ownsPid
 ): boolean {
   return status.state === "running" && owns(status);
 }
@@ -482,7 +496,7 @@ export function reconcileStatuses(
   logDir: string,
   now: Date = new Date(),
   graceMs: number = LOST_GRACE_MS,
-  owns: (s: Pick<WorkerStatus, "pid" | "started">) => boolean = ownsPid
+  owns: (s: OwnerFields) => boolean = ownsPid
 ): string[] {
   const lost: string[] = [];
   for (const s of loadStatuses(logDir)) {

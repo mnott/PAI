@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,5 +81,17 @@ describe("dead pid is lost without waiting for the grace", () => {
     const got = loadStatus(dir, "i")!;
     expect(got.state).toBe("failed");
     expect(got.last).toContain("spawn claude ENOENT");
+  });
+});
+
+describe("reconcileStatuses with a queued-then-started worker (real ownsPid)", () => {
+  it("does not mark it lost when slot-acquired started is later than process start", () => {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
+    const t = new Date(out.trim());
+    const p = (n: number) => String(n).padStart(2, "0");
+    const id = `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}-${process.pid}`;
+    saveStatus(dir, { ...mk(id, process.pid), started: nowStamp(new Date(t.getTime() + 5 * 60_000)), updated: nowStamp(T0) }, T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 120_000)).toEqual([]);
+    expect(loadStatus(dir, id)?.state).toBe("running");
   });
 });
