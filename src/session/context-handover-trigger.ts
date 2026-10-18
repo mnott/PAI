@@ -63,6 +63,9 @@ const PENDING_TIMEOUT_MS = 5 * 60 * 1000;
 /** A confirmed handover older than this is regenerated while fill stays at/above refresh. */
 const REARM_AGE_MS = 30 * 60 * 1000;
 
+/** A confirmed handover is also regenerated once used tokens have grown by more than this share of the window since it was generated. */
+const REARM_GROWTH_FRACTION = 0.1;
+
 /** Both thresholds confirmed — nothing left to check for the rest of the session. */
 const ALL_THRESHOLDS: ThresholdName[] = ["warmup", "refresh"];
 
@@ -84,7 +87,9 @@ const ALL_THRESHOLDS: ThresholdName[] = ["warmup", "refresh"];
  */
 export interface HandoverTriggerState {
   confirmed: ThresholdName[];
-  pending: { thresholds: ThresholdName[]; enqueuedAt: string } | null;
+  pending: { thresholds: ThresholdName[]; enqueuedAt: string; usedTokens?: number } | null;
+  /** Used tokens when the confirmed handover was generated (its pending.usedTokens); absent in older files. */
+  confirmedTokens?: number;
 }
 
 export function triggerStatePath(sessionId: string): string {
@@ -101,6 +106,7 @@ export function loadTriggerState(sessionId: string): HandoverTriggerState {
       pending: raw.pending && Array.isArray(raw.pending.thresholds) && typeof raw.pending.enqueuedAt === "string"
         ? raw.pending
         : null,
+      ...(typeof raw.confirmedTokens === "number" ? { confirmedTokens: raw.confirmedTokens } : {}),
     };
   } catch {
     return { confirmed: [], pending: null };
@@ -279,11 +285,17 @@ export async function checkAndEnqueueContextHandover(
     // cache written hours before compaction (observed 2026-10-12: one from
     // 17h earlier was injected) misses everything since. Re-arm once the
     // confirmed cache is older than REARM_AGE_MS and fill is still at or
-    // above the refresh threshold.
+    // above the refresh threshold. Also re-arm when used tokens grew by more
+    // than REARM_GROWTH_FRACTION of the window since the cache was generated.
     const cache = deps.readCache(input.sessionId);
-    if (cache && deps.now() - Date.parse(cache.generatedAt) < REARM_AGE_MS) return NOTHING;
+    const fresh = cache !== null && deps.now() - Date.parse(cache.generatedAt) < REARM_AGE_MS;
+    if (fresh && state.confirmedTokens === undefined) return NOTHING;
     const reading = deps.getReading(input);
     if (reading.status !== "ok" || reading.usedTokens === null) return NOTHING;
+    const grown =
+      state.confirmedTokens !== undefined &&
+      reading.usedTokens - state.confirmedTokens > REARM_GROWTH_FRACTION * reading.windowSize;
+    if (fresh && !grown) return NOTHING;
     const t = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: tmpdir() });
     if (reading.usedTokens < t.refreshTokens) return NOTHING;
     state = { confirmed: [], pending: null };
@@ -309,7 +321,11 @@ export async function checkAndEnqueueContextHandover(
 
     if (cacheIsFromThisAttempt) {
       const newlyConfirmed = state.pending.thresholds.filter((t) => !state.confirmed.includes(t));
-      state = { confirmed: [...state.confirmed, ...newlyConfirmed], pending: null };
+      state = {
+        confirmed: [...state.confirmed, ...newlyConfirmed],
+        pending: null,
+        ...(state.pending.usedTokens !== undefined ? { confirmedTokens: state.pending.usedTokens } : {}),
+      };
       deps.saveState(input.sessionId, state);
       confirmedThisCheck = newlyConfirmed;
       console.error(
@@ -370,7 +386,7 @@ export async function checkAndEnqueueContextHandover(
     return { attempted: [], confirmed: confirmedThisCheck };
   }
 
-  state = { ...state, pending: { thresholds: newlyCrossed, enqueuedAt: new Date(deps.now()).toISOString() } };
+  state = { ...state, pending: { thresholds: newlyCrossed, enqueuedAt: new Date(deps.now()).toISOString(), usedTokens: reading.usedTokens } };
   deps.saveState(input.sessionId, state);
   console.error(
     `[context-handover-trigger] session ${input.sessionId}: enqueued [${newlyCrossed.join(", ")}] ` +

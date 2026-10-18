@@ -245,6 +245,54 @@ describe("re-arm after confirmation", () => {
   });
 });
 
+describe("re-arm on token growth", () => {
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const cacheAt = (generatedAt: string): ContextHandoverCache => ({
+    sessionId: "s", cwd: "/p", threshold: "refresh", generatedAt, model: "sonnet", summary: "h",
+  });
+  const confirmedAt = (confirmedTokens: number): HandoverTriggerState => ({
+    confirmed: ["warmup", "refresh"], pending: null, confirmedTokens,
+  });
+  const i = { sessionId: "s", cwd: "/p" };
+
+  it("5 min old, 2% growth: nothing", async () => {
+    const { deps, enqueued } = makeDeps({
+      state: confirmedAt(800_000), cache: cacheAt("2026-10-12T11:55:00Z"), now, getReading: () => readingAt(820_000),
+    });
+    await checkAndEnqueueContextHandover(i, deps);
+    expect(enqueued.length).toBe(0);
+  });
+
+  it("5 min old, 12% growth: re-armed, enqueued once even on a repeat check", async () => {
+    const { deps, enqueued } = makeDeps({
+      state: confirmedAt(700_000), cache: cacheAt("2026-10-12T11:55:00Z"), now, getReading: () => readingAt(820_000),
+    });
+    await checkAndEnqueueContextHandover(i, deps);
+    await checkAndEnqueueContextHandover(i, deps);
+    expect(enqueued.length).toBe(1);
+  });
+
+  it("31 min old, no growth: re-armed", async () => {
+    const { deps, enqueued } = makeDeps({
+      state: confirmedAt(820_000), cache: cacheAt("2026-10-12T11:29:00Z"), now, getReading: () => readingAt(820_000),
+    });
+    await checkAndEnqueueContextHandover(i, deps);
+    expect(enqueued.length).toBe(1);
+  });
+
+  it("pending job outstanding: no second enqueue", async () => {
+    const { deps, enqueued } = makeDeps({
+      state: {
+        confirmed: [], confirmedTokens: 700_000,
+        pending: { thresholds: ["warmup", "refresh"], enqueuedAt: "2026-10-12T11:59:00Z", usedTokens: 820_000 },
+      },
+      cache: cacheAt("2026-10-12T11:55:00Z"), now, getReading: () => readingAt(990_000),
+    });
+    await checkAndEnqueueContextHandover(i, deps);
+    expect(enqueued.length).toBe(0);
+  });
+});
+
 describe("resetHandoverTriggerState — compaction reset (the one-handover-per-session-life bug)", () => {
   it("clears a fully-confirmed marker so a POST-RESET threshold crossing enqueues a NEW handover", async () => {
     const sessionId = "compaction-reset-repro-session";
