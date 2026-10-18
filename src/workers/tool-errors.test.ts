@@ -188,6 +188,18 @@ describe("classification", () => {
     const [g] = detectToolErrors(three("API Error: 500 oops"), NOW, {});
     expect(toolErrorText(g)).toMatch(/^\[harness\] .*— fix at the owner\. harness → stop runs it spoils/);
   });
+  it("a bare 401/429/500 in ordinary tool output is not harness", () => {
+    const sample = "Exit code 1 verify 401 / 1223 verify 451 / 1223 ls: /tmp/strata-x: No such file or directory";
+    expect(classifyToolError(rec("w1", NOW, sample, "Bash")).cls).toBe("model");
+    for (const raw of ["progress 401 of 1223", "processed 429 files", "wrote 500 lines to localhost:8080 log"]) {
+      expect(classifyToolError(rec("w1", NOW, raw, "Bash")).cls).not.toBe("harness");
+    }
+  });
+  it("real API/auth evidence stays harness", () => {
+    for (const raw of ["401 Unauthorized", "API Error: 429 rate_limit_error", "overloaded_error: Overloaded", "invalid x-api-key", "OAuth token has expired", "request failed with status 401", "authentication_error"]) {
+      expect(classifyToolError(rec("w1", NOW, raw, "Bash")).cls).toBe("harness");
+    }
+  });
   it("hook error on an existing path outside cwd is harness", () => {
     const raw = "PreToolUse:Read hook error: Your working directory is /w/x. Path /tmp is outside";
     expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
