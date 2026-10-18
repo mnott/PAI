@@ -197,6 +197,27 @@ function run(argv) {
     return "opened";
 }`;
 
+// Fallback placements when a split would be too small: the follow command in a
+// new tab of the host's window, or in a new window. argv: host session id,
+// follow command, profile name ("" = default). Return the new session id.
+const NEW_PLACE_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var kind = argv[0], followCmd = argv[2], profileName = argv[3];
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[1]);
+    if (!f) return "notfound";
+    var opts = { command: followCmd };
+    var w = f.w;
+    if (kind === "tab") {
+        if (profileName === "") w.createTabWithDefaultProfile(opts);
+        else w.createTabWithProfile(profileName, opts);
+    } else {
+        w = profileName === "" ? app.createWindowWithDefaultProfile(opts) : app.createWindowWithProfile(profileName, opts);
+    }
+    return w.currentTab().currentSession().id();
+}`;
+
 // ---------------------------------------------------------------------------
 // osascript / ps / defaults helpers
 // ---------------------------------------------------------------------------
@@ -1126,13 +1147,14 @@ function run(argv) {
     var p = findSession(app, argv[1]);
     if (!p) return JSON.stringify({ fail: "pane session " + argv[1] + " is gone (closed right after opening)" });
     function ids(ss) { return ss.map(function (o) { return o.id(); }); }
-    if (h.w.id() !== p.w.id()) return JSON.stringify({ fail: "pane is in window " + p.w.id() + ", host in window " + h.w.id() });
-    if (ids(h.all).indexOf(argv[1]) < 0) return JSON.stringify({ fail: "pane is not in the host's tab" });
-    var tabs = h.w.tabs();
+    var where = argv[2] || "split";
+    if (where !== "window" && h.w.id() !== p.w.id()) return JSON.stringify({ fail: "pane is in window " + p.w.id() + ", host in window " + h.w.id() });
+    if (where === "split" && ids(h.all).indexOf(argv[1]) < 0) return JSON.stringify({ fail: "pane is not in the host's tab" });
+    var tabs = p.w.tabs();
     var tabIdx = 0;
-    for (var i = 0; i < tabs.length; i++) if (ids(tabs[i].sessions()).indexOf(argv[0]) >= 0) tabIdx = i + 1;
-    var selected = ids(h.w.currentTab().sessions()).indexOf(argv[1]) >= 0;
-    var b = h.w.bounds();
+    for (var i = 0; i < tabs.length; i++) if (ids(tabs[i].sessions()).indexOf(argv[1]) >= 0) tabIdx = i + 1;
+    var selected = ids(p.w.currentTab().sessions()).indexOf(argv[1]) >= 0;
+    var b = p.w.bounds();
     // On screen: the frame intersects a display (NSScreen is bottom-left origin, iTerm top-left).
     ObjC.import("AppKit");
     var scr = $.NSScreen.screens, top = scr.objectAtIndex(0).frame.size.height, onScreen = false;
@@ -1143,11 +1165,21 @@ function run(argv) {
     var hidden = false;
     try { hidden = Application("System Events").processes.byName("iTerm2").visible() === false; } catch (e) {}
     return JSON.stringify({
-        window: h.w.id(), bounds: [b.x, b.y, b.width, b.height], tab: tabIdx + "/" + tabs.length,
-        selectedTab: selected, onScreen: onScreen, hidden: hidden, miniaturized: h.w.miniaturized(),
+        window: p.w.id(), bounds: [b.x, b.y, b.width, b.height], tab: tabIdx + "/" + tabs.length,
+        selectedTab: selected, onScreen: onScreen, hidden: hidden, miniaturized: p.w.miniaturized(),
         rows: p.s.rows(), cols: p.s.columns(), tty: p.s.tty(), hostRows: h.s.rows(), hostCols: h.s.columns()
     });
 }`;
+
+/** Where a follow pane sits: split of the host's tab, a new tab of its window, or a new window. */
+export type PanePlacement = "split" | "tab" | "window";
+
+const placements = new Map<string, PanePlacement>();
+
+/** The placement openVerifiedPane used for a worker in this process, for the status record. */
+export function panePlacement(wid: string): PanePlacement | undefined {
+  return placements.get(wid);
+}
 
 const MIN_PANE_ROWS = 8;
 const MIN_PANE_COLS = 40;
@@ -1174,11 +1206,12 @@ export async function verifyPane(
   run: (script: string, args: string[]) => Promise<{ stdout: string; stderr: string }> = osascript,
   running: (tty: string, wid: string) => boolean = followRunsOn,
   tries = 25,
-  pollMs = 300
+  pollMs = 300,
+  placement: PanePlacement = "split"
 ): Promise<string> {
   let last = "";
   for (let i = 0; i < tries; i++) {
-    const p = await run(VERIFY_PANE_SCRIPT, [hostUid, paneUid]);
+    const p = await run(VERIFY_PANE_SCRIPT, [hostUid, paneUid, placement]);
     let r: Record<string, unknown>;
     try {
       r = JSON.parse(p.stdout.trim()) as Record<string, unknown>;
@@ -1203,6 +1236,13 @@ export async function verifyPane(
   throw new Error(`pane verification failed: \`worker follow ${wid}\` is not running in the pane (${last})`);
 }
 
+/** Test seams of openVerifiedPane: the real iTerm-touching steps. */
+export interface PaneSeam {
+  split?: typeof openPaneForWorker;
+  verify?: typeof verifyPane;
+  place?: typeof openPlaced;
+}
+
 /**
  * Open the worker's pane and prove the operator can see it, or throw the
  * reason (the pane just opened is closed again). Needs a live iTerm2 host
@@ -1214,8 +1254,13 @@ export async function openVerifiedPane(
   config: WorkersConfig,
   wid: string,
   term: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  ops: PaneOps = realPaneOps,
+  seam: PaneSeam = {}
 ): Promise<string> {
+  const split = seam.split ?? openPaneForWorker;
+  const verify = seam.verify ?? verifyPane;
+  const place = seam.place ?? openPlaced;
   if (env.TMUX) {
     const r = await openPaneForWorker(logDir, config, wid, term);
     if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
@@ -1227,10 +1272,54 @@ export async function openVerifiedPane(
   if (envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
   }
-  const r = await openPaneForWorker(logDir, config, wid, term);
+  const r = await split(logDir, config, wid, term);
   if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
   try {
-    return `${await verifyPane(hostUid, r.session, wid)} (iTerm session ${r.session})`;
+    const where = await verify(hostUid, r.session, wid);
+    placements.set(wid, "split");
+    return `${where} (iTerm session ${r.session})`;
+  } catch (e) {
+    await closePaneForWorker(logDir, wid, ops).catch(() => false);
+    if (!/pane too small/.test((e as Error).message)) throw e;
+    // no room in this window is not "no visible pane possible": try a new tab, then a new window
+    await ops.rebalanceIterm?.(loadRegistry(logDir).map((x) => x.session)).catch(() => undefined);
+    for (const kind of ["tab", "window"] as const) {
+      try {
+        const where = await place(logDir, config, wid, term, hostUid, kind);
+        process.stderr.write(`[pai worker] pane: opened in a new ${kind} (${kind === "tab" ? "window too crowded" : "no room for a tab"})\n`);
+        placements.set(wid, kind);
+        return where;
+      } catch {
+        // next placement; the original too-small error is what the gate reports
+      }
+    }
+    throw e;
+  }
+}
+
+/** Open the follow pane in a new tab / window, register it and verify it, closing it again on failure. */
+export async function openPlaced(
+  logDir: string,
+  config: WorkersConfig,
+  wid: string,
+  term: string,
+  hostUid: string,
+  kind: "tab" | "window"
+): Promise<string> {
+  const profile = await followProfile(config.pane.fontSize);
+  const p = await osascript(NEW_PLACE_SCRIPT, [kind, hostUid, followCommand(wid), profile]);
+  const id = p.stdout.trim();
+  if (!id || id === "notfound" || id === "notrunning") {
+    throw new Error(`pane verification failed: new ${kind}: ${(p.stderr || id || "no output").slice(0, 200)}`);
+  }
+  saveEntry(logDir, {
+    session: id,
+    worker: wid,
+    opened: new Date().toISOString().replace("T", " ").slice(0, 19),
+    scope: scopeKey(term),
+  });
+  try {
+    return `${await verifyPane(hostUid, id, wid, osascript, followRunsOn, 25, 300, kind)} (iTerm session ${id}, new ${kind})`;
   } catch (e) {
     await closePaneForWorker(logDir, wid).catch(() => false);
     throw e;
