@@ -1,24 +1,22 @@
 /** zettel surprise: find semantically similar but graph-distant notes. */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
+import { CliError } from "../../define.js";
 
-async function cmdSurprise(
+export async function zettelSurpriseCmd(
   note: string,
-  opts: { vaultProjectId?: string; limit?: string; minSimilarity?: string; minDistance?: string }
-): Promise<void> {
-  if (!opts.vaultProjectId) {
-    console.error(err("  --vault-project-id is required"));
-    process.exitCode = 1;
-    return;
+  opts: { vaultProjectId?: string | number; limit?: number; minSimilarity?: number; minDistance?: number }
+): Promise<number> {
+  if (opts.vaultProjectId === undefined) {
+    throw new CliError("--vault-project-id is required", "pai help zettel surprise", 1);
   }
 
-  const vaultProjectId = parseInt(opts.vaultProjectId, 10);
-  const limit = parseInt(opts.limit ?? "10", 10);
-  const minSimilarity = parseFloat(opts.minSimilarity ?? "0.3");
-  const minGraphDistance = parseInt(opts.minDistance ?? "3", 10);
+  const vaultProjectId = Number(opts.vaultProjectId);
+  const limit = opts.limit ?? 10;
+  const minSimilarity = opts.minSimilarity ?? 0.3;
+  const minGraphDistance = opts.minDistance ?? 3;
 
   const { zettelSurprise } = await import("../../../zettelkasten/index.js");
   const backend = await getFedBackend();
@@ -39,7 +37,7 @@ async function cmdSurprise(
   if (results.length === 0) {
     console.log(warn("  No surprising connections found. Try lowering --min-similarity or --min-distance."));
     console.log();
-    return;
+    return 0;
   }
 
   console.log();
@@ -58,23 +56,6 @@ async function cmdSurprise(
     }
     console.log();
   }
-}
 
-export function registerSurpriseCommand(parent: Command): void {
-  parent
-    .command("surprise <note>")
-    .description("Find semantically similar but graph-distant notes (surprising connections)")
-    .requiredOption("--vault-project-id <n>", "Project ID for the vault in the federation DB")
-    .option("--limit <n>", "Maximum results", "10")
-    .option("--min-similarity <f>", "Minimum cosine similarity (0–1)", "0.3")
-    .option("--min-distance <n>", "Minimum graph distance", "3")
-    .action(async (note: string, opts: { vaultProjectId?: string; limit?: string; minSimilarity?: string; minDistance?: string }) => {
-      try {
-        await cmdSurprise(note, opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }
