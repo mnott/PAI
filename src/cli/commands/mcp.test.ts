@@ -21,6 +21,7 @@ describe("pai mcp", () => {
   it("pai mcp status exits 0", async () => {
     const r = await runPai(["mcp","status"]);
     expect(r.code).toBe(0);
+    if (!existsSync(join(process.cwd(), "dist"))) expect(r.out + r.err).toContain("Binary NOT found");
   });
   it("pai mcp install extra exits 2", async () => {
     const r = await runPai(["mcp","install","extra"]);
