@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { git, mergeWorker, scanDiffForStub } from "./worktree.js";
+import { git, mergeWorker } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-stubscan-test-"));
@@ -56,27 +56,5 @@ describe("merge stub scan", () => {
   it("passes a clean src change", () => {
     task("s4", "src/s4.ts", "export const y = 2;\n");
     expect(mergeWorker(logDir, "s4")).toContain("branch deleted");
-  });
-});
-
-describe("merge stub scan test-file exemption", () => {
-  it("merges cleanly when the only stub text is in a test file", () => {
-    task("s5", "src/z.test.ts", "const fixture = \"TODO: implement\";\n");
-    expect(mergeWorker(logDir, "s5")).toContain("branch deleted");
-  });
-});
-
-describe("scanDiffForStub test-file exemption", () => {
-  const diff = (f: string) =>
-    `+++ b/${f}\n@@ -0,0 +1 @@\n+throw new Error("not implemented");\n`;
-
-  it("catches a stub in src/x.ts", () => {
-    expect(scanDiffForStub(diff("src/x.ts"))).toBe("src/x.ts:1");
-  });
-  it("ignores src/x.test.ts", () => {
-    expect(scanDiffForStub(diff("src/x.test.ts"))).toBeNull();
-  });
-  it("ignores src/__tests__/y.ts", () => {
-    expect(scanDiffForStub(diff("src/__tests__/y.ts"))).toBeNull();
   });
 });

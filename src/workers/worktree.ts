@@ -1089,22 +1089,14 @@ export const STUB_PATTERN = /TODO: [Ii]mplement|Promise\.resolve\(0\)\s*\/\/\s*T
 
 /** First `file:line` that the merge (oldHead..HEAD) adds under src/ matching STUB_PATTERN, or null. */
 export function findAddedStub(cwd: string, oldHead: string): string | null {
-  return scanDiffForStub(git(cwd, ["diff", "-U0", "--no-color", oldHead, "HEAD", "--", "src/"]));
-}
-
-/** Test files may carry the stub pattern as a fixture (they test the scan itself). */
-export function isTestPath(file: string): boolean {
-  return /\.(test|spec)\./.test(file) || /(^|\/)(__tests__|tests?)\//.test(file);
-}
-
-export function scanDiffForStub(diff: string): string | null {
+  const diff = git(cwd, ["diff", "-U0", "--no-color", oldHead, "HEAD", "--", "src/"]);
   let file = "";
   let line = 0;
   for (const l of diff.split("\n")) {
     if (l.startsWith("+++ ")) file = l.slice(4).replace(/^b\//, "");
     else if (l.startsWith("@@")) line = parseInt(/\+(\d+)/.exec(l)?.[1] ?? "0", 10);
     else if (l.startsWith("+")) {
-      if (!isTestPath(file) && STUB_PATTERN.test(l)) return `${file}:${line}`;
+      if (STUB_PATTERN.test(l)) return `${file}:${line}`;
       line++;
     }
   }
