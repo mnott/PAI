@@ -122,6 +122,12 @@ export async function projectMergeCmd(from: string, into: string, opts: { execut
   return 0;
 }
 
+export async function projectListCmd(opts: { all?: boolean; n?: string | number }): Promise<number> {
+  const { cmdMain } = await import("../../lib/main-resolver.js");
+  await cmdMain(undefined, undefined, { all: opts.all, n: opts.n === undefined ? "20" : String(opts.n) });
+  return 0;
+}
+
 export function registerProjectsCommands(projectsCmd: Command): void {
   // pai projects (bare) — show the unified deduped listing, same as `pai`.
   // The old project-only listing is still available as `pai projects list-raw`.
@@ -134,8 +140,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .option("--all", "Show all entries including cold / zero-session / archived projects")
     .option("-n, --n <count>", "Max rows to show", "20")
     .action(async (opts: { all?: boolean; n?: string }) => {
-      const { cmdMain } = await import("../../lib/main-resolver.js");
-      await cmdMain(undefined, undefined, opts);
+      process.exitCode = await projectListCmd(opts);
     });
 
   // Raw legacy project listing (registry rows only, with slug + path)
