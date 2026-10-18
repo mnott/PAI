@@ -18,6 +18,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { WorkerProvider } from "./config.js";
+
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
   "terminal_guard.py",
@@ -52,18 +54,39 @@ const PROVIDER_KEYS = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_
 
 type HookGroup = { matcher?: string; hooks?: Array<{ command?: string }> };
 
+/**
+ * Settings env outranks the process env, so the user's global tuning for the
+ * first-party API must not shadow a non-anthropic provider: its own output
+ * cap wins (none set: the user's is dropped), the first-party-base-url flag
+ * goes, and thinking is switched off (no `thinking`, no effort in the request)
+ * unless the provider asks for it.
+ */
+function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider): void {
+  const cap = provider.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+  if (cap !== undefined) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = cap;
+  else delete e.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+  delete e._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL;
+  if (!provider.thinking) {
+    e.CLAUDE_CODE_DISABLE_THINKING = "1";
+    e.CLAUDE_CODE_EFFORT_LEVEL = "unset";
+  }
+}
+
 /** The user settings reduced to env, permissions and the guard hooks. */
 export function slimSettings(
   user: Record<string, unknown>,
   procEnv: NodeJS.ProcessEnv = {},
+  provider?: WorkerProvider,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of ["env", "permissions", "model"]) if (user[k] !== undefined) out[k] = user[k];
   // Settings env overrides the process env, so a provider's endpoint and token
   // (set by the spawner) must not be shadowed by the user's own.
-  if (out.env && typeof out.env === "object") {
-    const e = { ...(out.env as Record<string, unknown>) };
+  const nonNative = provider !== undefined && !provider.native;
+  if ((out.env && typeof out.env === "object") || nonNative) {
+    const e = { ...((out.env ?? {}) as Record<string, unknown>) };
     for (const k of PROVIDER_KEYS) if (procEnv[k]) delete e[k];
+    if (provider && nonNative) applyProviderEnv(e, provider);
     out.env = e;
   }
   const hooks: Record<string, HookGroup[]> = {};
@@ -89,6 +112,7 @@ export function slimProfileArgs(
   rest: string[],
   env: NodeJS.ProcessEnv = process.env,
   userSettingsPath = join(homedir(), ".claude", "settings.json"),
+  provider?: WorkerProvider,
 ): string[] {
   if (env.PAI_WORKER_FULL_PROFILE === "1") return [];
   if (rest.some((a) => a === "--settings" || a.startsWith("--settings=") || a.startsWith("--setting-sources"))) return [];
@@ -101,6 +125,6 @@ export function slimProfileArgs(
   }
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${wid}.settings.json`);
-  writeFileSync(path, JSON.stringify(slimSettings(user, env), null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(slimSettings(user, env, provider), null, 2) + "\n", "utf8");
   return ["--setting-sources", "project,local", "--settings", path];
 }

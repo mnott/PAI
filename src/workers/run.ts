@@ -1652,7 +1652,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const claudeCmd = claudeCommand(env, config.caveman);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
-  const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env) : [];
+  const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env, undefined, target.provider) : [];
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...slimArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");

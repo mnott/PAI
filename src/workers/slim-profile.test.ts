@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 import { slimProfileArgs, slimSettings } from "./slim-profile.js";
 
 const USER = {
@@ -57,5 +58,47 @@ describe("slimSettings provider env", () => {
 describe("slimSettings attribution", () => {
   it("switches commit and PR attribution off", () => {
     expect((slimSettings({}) as any).attribution).toEqual({ commit: "", pr: "" });
+  });
+});
+
+describe("slimSettings non-anthropic provider", () => {
+  const user = {
+    env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000", _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1", A: "1" },
+  };
+  const local = (extra: Partial<WorkerProvider> = {}): WorkerProvider => ({
+    enabled: true,
+    protocol: "anthropic",
+    baseUrl: "http://127.0.0.1:1",
+    keyFile: null,
+    models: { default: "m" },
+    env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192" },
+    ...extra,
+  });
+
+  it("takes the provider's output cap, drops the first-party flag, disables thinking", () => {
+    const s = slimSettings(user, {}, local()) as any;
+    expect(s.env).toEqual({
+      A: "1",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192",
+      CLAUDE_CODE_DISABLE_THINKING: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: "unset",
+    });
+  });
+
+  it("drops the user's cap when the provider sets none, and works without a user env", () => {
+    expect((slimSettings(user, {}, local({ env: {} })) as any).env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBeUndefined();
+    expect((slimSettings({}, {}, local()) as any).env.CLAUDE_CODE_DISABLE_THINKING).toBe("1");
+  });
+
+  it("leaves thinking alone with thinking: on", () => {
+    const e = (slimSettings(user, {}, local({ thinking: true })) as any).env;
+    expect(e.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
+    expect(e.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    expect(e.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("8192");
+  });
+
+  it("anthropic (native or no provider) is unchanged", () => {
+    expect((slimSettings(user) as any).env).toEqual(user.env);
+    expect((slimSettings(user, {}, nativeAnthropicProvider()) as any).env).toEqual(user.env);
   });
 });
