@@ -7,7 +7,7 @@
  * to Claude Code, not to us.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +57,8 @@ function writeFixtures(): void {
 }
 
 beforeEach(() => {
+  // a worker running the suite inherits PAI_WORKER*; the active provider must come from the fixture
+  for (const k of ["PAI_WORKER", "PAI_WORKER_PROVIDER", "PAI_SESSION_PROVIDER", "PAI_WORKER_AUTOPANE", "PAI_WORKER_ALLOW_HIDDEN"]) vi.stubEnv(k, undefined);
   dir = mkdtempSync(join(tmpdir(), "pai-fallback-"));
   settingsPath = join(dir, "settings.json");
   configPath = join(dir, "config.json");
@@ -68,6 +70,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
 });
 
