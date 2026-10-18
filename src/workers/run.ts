@@ -139,6 +139,7 @@ import { recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
 import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
+import { killTree } from "./kill-tree.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
@@ -995,6 +996,8 @@ export function fireDeadline(logDir: string, status: WorkerStatus, ledger: strin
   status.last = `deadline reached after ${limit.minutes} min`;
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes });
+  // the deadline stops the run's own process; its sub-workers go with it
+  void killTree(logDir, status.id, { skipRoot: true }).catch(() => undefined);
 }
 
 /** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */

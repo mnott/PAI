@@ -18,8 +18,8 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
-import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../workers/status.js";
-import { callerDescription, requestKill } from "../../workers/endreason.js";
+import { loadStatus, setWorkerLabel } from "../../workers/status.js";
+import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
@@ -710,8 +710,9 @@ const gcCommand: CommandDef = {
 const killCommand: CommandDef = {
   name: "kill",
   summary: "Stop a running worker",
-  description: "Sends SIGTERM to the worker; it saves its final state and exits. A worker whose process id has been reused by something else is marked lost and nothing is signalled.",
+  description: "Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
+  options: [{ name: "only", type: "boolean", summary: "Kill only this worker, leave its children running" }],
   examples: ["pai worker kill w-20260101-abc", "pai worker ps   (find the id first)"],
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
@@ -722,33 +723,7 @@ const killCommand: CommandDef = {
       if (!status) throw new Error(`no worker named "${id}"`);
       if (status.state !== "running") throw new Error(`worker ${id} is not running (state: ${status.state})`);
       if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
-      if (!ownsPid(status)) {
-        status.state = "lost";
-        status.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
-        status.rc = null;
-        saveStatus(dir, status);
-        out(`worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`);
-        return;
-      }
-      try {
-        requestKill(dir, ledgerPath(dir), id);
-        process.kill(status.pid, "SIGTERM");
-        // The run's own SIGTERM handler writes the terminal status; only write ours if it never did.
-        const selfReported = await waitForTerminalStatus(dir, id);
-        if (!selfReported) {
-          const latest = loadStatus(dir, id) ?? status;
-          latest.state = "killed";
-          latest.rc = latest.rc ?? 143;
-          latest.last = latest.last || "killed by signal SIGTERM";
-          latest.endReason = "pai-worker-kill";
-          latest.endBy = callerDescription();
-          saveStatus(dir, latest);
-        }
-        out(`sent SIGTERM to worker ${id} (pid ${status.pid})`);
-      } catch (e) {
-        if (msgOf(e).includes("ESRCH")) throw new Error(`process ${status.pid} not found (already exited?)`);
-        throw e;
-      }
+      for (const line of await killTree(dir, id, { only: ctx.opts.only === true })) out(line);
     }),
 };
 
