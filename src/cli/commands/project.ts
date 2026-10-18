@@ -4,37 +4,37 @@
  */
 
 import type { CommandDef } from "../define.js";
+import { legacyRunner } from "../lib/legacy.js";
 import { registerProjectsCommands } from "../impl/project/projects-index.js";
-import { projectListRawCmd, projectCdCmd, projectAddCmd, projectInfoCmd, projectArchiveCmd, projectMergeCmd } from "../impl/project/projects-index.js";
+
+const L = legacyRunner("project", registerProjectsCommands);
 
 export const projectSubcommands: CommandDef[] = [
-{
+L({
   name: "list",
   summary: "Show your projects and sessions in one list",
   description: "Show your projects and sessions in one list.\n\nShow the unified deduped listing (same as `pai`).\nUse --all to include cold / zero-session / archived projects.",
   options: [{ name: "all", type: "boolean", summary: "Show all entries including cold / zero-session / archived projects" }, { name: "n", short: "n", type: "string", value: "COUNT", summary: "Max rows to show" }],
   examples: ["pai project list","pai project list --all"],
   seeAlso: ["pai project list-raw"],
-},
-{
+}),
+L({
   name: "list-raw",
   summary: "Plain table of every registered project",
   description: "Plain table of every registered project.\n\nRaw registry listing with slug, path, status, last_active columns",
   options: [{ name: "all", type: "boolean", summary: "Include archived projects (default: active only)" }, { name: "status", type: "string", value: "STATUS", summary: "Filter by status: active | archived" }, { name: "tag", type: "string", value: "TAG", summary: "Filter by tag" }, { name: "type", type: "string", value: "TYPE", summary: "Filter by type" }],
   examples: ["pai project list-raw","pai project list-raw --status active --type project"],
   seeAlso: ["pai project cd","pai project list"],
-  run: (ctx) => projectListRawCmd({ all: ctx.opts.all as boolean | undefined, status: ctx.opts.status as string | undefined, tag: ctx.opts.tag as string | undefined, type: ctx.opts.type as string | undefined }),
-},
-{
+}),
+L({
   name: "cd",
   summary: "Print how to change into a project's folder",
   description: "Print how to change into a project's folder.\n\ncd to a project directory. Short form: pai cd <name>\n(The shell wrapper handles the actual cd; pure output here.)\nAuto-detects moved projects when the registered path no longer exists.",
   args: [{ name: "IDENTIFIER", summary: "Project name, short name, number or part of its path", required: true }],
   examples: ["pai project cd my-app","pai project cd 2"],
   seeAlso: ["pai project add","pai project list-raw"],
-  run: (ctx) => projectCdCmd(ctx.args.IDENTIFIER as string),
-},
-{
+}),
+L({
   name: "add",
   summary: "Register a folder as a project",
   description: "Register a folder as a project.\n\nRegister a project directory in the PAI registry",
@@ -42,27 +42,24 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "slug", type: "string", value: "SLUG", summary: "Override auto-generated slug" }, { name: "type", type: "string", value: "TYPE", summary: "Project type: local | central | obsidian-linked | external" }, { name: "display-name", type: "string", value: "NAME", summary: "Human-readable display name" }],
   examples: ["pai project add ~/code/my-app","pai project add ~/code/my-app --slug my-app --display-name \"My App\""],
   seeAlso: ["pai project info","pai project cd"],
-  run: (ctx) => projectAddCmd(ctx.args.PATH as string, { slug: ctx.opts.slug as string | undefined, type: ctx.opts.type as string | undefined, displayName: ctx.opts["display-name"] as string | undefined }),
-},
-{
+}),
+L({
   name: "info",
   summary: "Show everything known about one project",
   description: "Show everything known about one project.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }],
   examples: ["pai project info my-app","pai project info my-app"],
   seeAlso: ["pai project archive","pai project add"],
-  run: (ctx) => projectInfoCmd(ctx.args.SLUG as string),
-},
-{
+}),
+L({
   name: "archive",
   summary: "Hide a project you no longer work on",
   description: "Hide a project you no longer work on.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }],
   examples: ["pai project archive old-app","pai project list-raw --status archived"],
   seeAlso: ["pai project merge","pai project info"],
-  run: (ctx) => projectArchiveCmd(ctx.args.SLUG as string),
-},
-{
+}),
+L({
   name: "merge",
   summary: "Fold a duplicate project into another (preview unless --execute)",
   description: "Fold a duplicate project into another (preview unless --execute).\n\nFold a duplicate project into another: move its sessions (renumbered), repoint its tags, aliases, compaction records and links, keep the old slug as an alias, then delete the row. Preview unless --execute is given.",
@@ -70,9 +67,8 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "execute", type: "boolean", summary: "Actually perform the merge" }],
   examples: ["pai project merge old-app my-app","pai project merge old-app my-app --execute"],
   seeAlso: ["pai project unregister","pai project archive"],
-  run: (ctx) => projectMergeCmd(ctx.args.FROM as string, ctx.args.INTO as string, { execute: ctx.opts.execute as boolean | undefined }),
-},
-{
+}),
+L({
   name: "unregister",
   summary: "Remove a project that should never have been registered",
   description: "Remove a project that should never have been registered.\n\nRemove a project row entirely, for paths that should never have been registered (worktrees, temp dirs). Refuses when the row holds sessions — merge those first. Preview unless --execute is given. The directory itself is never touched.",
@@ -80,36 +76,32 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "execute", type: "boolean", summary: "Actually remove the row" }, { name: "force", type: "boolean", summary: "Remove even though sessions would be deleted with it" }],
   examples: ["pai project unregister stray-dir","pai project unregister stray-dir --execute"],
   seeAlso: ["pai project unarchive","pai project merge"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement unregister command
-},
-{
+}),
+L({
   name: "unarchive",
   summary: "Bring an archived project back",
   description: "Bring an archived project back.\n\nRestore an archived project to active status",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }],
   examples: ["pai project unarchive old-app","pai project info old-app"],
   seeAlso: ["pai project move","pai project unregister"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement unarchive command
-},
-{
+}),
+L({
   name: "move",
   summary: "Record that a project's folder has a new location",
   description: "Record that a project's folder has a new location.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "NEW_PATH", summary: "The new folder path", required: true }],
   examples: ["pai project move my-app ~/code/new/my-app","pai project info my-app"],
   seeAlso: ["pai project rebind","pai project unarchive"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement move command
-},
-{
+}),
+L({
   name: "rebind",
   summary: "Point a project at a new folder after you moved it",
   description: "Point a project at a new folder after you moved it.\n\nManually update the root_path for a project (for when auto-detect found multiple matches).\nValidates the new path exists and is a directory, then updates the registry.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "NEW_PATH", summary: "The new folder path", required: true }],
   examples: ["pai project rebind my-app ~/code/new/my-app","pai project health"],
   seeAlso: ["pai project here","pai project move"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement rebind command
-},
-{
+}),
+L({
   name: "here",
   summary: "Declare the current folder to be this project",
   description: "Declare the current folder to be this project.\n\nDeclare that the CURRENT directory is this project — no slug, no path.\nRepoints an existing project of that name, or creates it. Stores the\ncanonical (realpath) location, so a symlinked parent cannot register the\nsame directory twice.",
@@ -117,27 +109,24 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "dry-run", type: "boolean", summary: "Show what would change without writing" }],
   examples: ["pai project here my-app","pai project here my-app --dry-run"],
   seeAlso: ["pai project tag","pai project rebind"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement here command
-},
-{
+}),
+L({
   name: "tag",
   summary: "Add tags to a project",
   description: "Add tags to a project.\n\nAdd one or more tags to a project",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "TAGS", summary: "Comma-separated tags", required: true, variadic: true }],
   examples: ["pai project tag my-app web,client","pai project info my-app"],
   seeAlso: ["pai project alias","pai project here"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement tag command
-},
-{
+}),
+L({
   name: "alias",
   summary: "Give a project a second name that also finds it",
   description: "Give a project a second name that also finds it.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "ALIAS", summary: "The second name", required: true }],
   examples: ["pai project alias my-app app","pai project info my-app"],
   seeAlso: ["pai project edit","pai project tag"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement alias command
-},
-{
+}),
+L({
   name: "edit",
   summary: "Change a project's display name or type",
   description: "Change a project's display name or type.",
@@ -145,9 +134,8 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "display-name", type: "string", value: "NAME", summary: "New display name" }, { name: "type", type: "string", value: "TYPE", summary: "New type" }],
   examples: ["pai project edit my-app --display-name \"My App\"","pai project edit my-app --type client"],
   seeAlso: ["pai project detect","pai project alias"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement edit command
-},
-{
+}),
+L({
   name: "detect",
   summary: "Find which registered project a folder belongs to",
   description: "Find which registered project a folder belongs to.\n\nDetect which registered project the given path (or CWD) belongs to",
@@ -155,27 +143,24 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "json", type: "boolean", summary: "Output raw JSON instead of human-readable text" }],
   examples: ["pai project detect","pai project detect ~/code/my-app --json"],
   seeAlso: ["pai project health","pai project edit"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement detect command
-},
-{
+}),
+L({
   name: "health",
   summary: "Check that every project's folder still exists",
   description: "Check that every project's folder still exists.\n\nAudit all registered projects: check which paths still exist, find moved/dead projects",
   options: [{ name: "fix", type: "boolean", summary: "Auto-remediate where possible" }, { name: "json", type: "boolean", summary: "Output raw JSON report" }, { name: "status", type: "string", value: "CATEGORY", summary: "Filter output to: active | stale | dead" }],
   examples: ["pai project health","pai project health --json"],
   seeAlso: ["pai project init","pai project detect"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement health command
-},
-{
+}),
+L({
   name: "init",
   summary: "Set up this git project for PAI workers",
   description: "Set up this git project for PAI workers.\n\nSet up this git project for PAI workers: .pai/project.yaml (sink from the origin) and a starter .pai/worker.md, then run the project checks",
   options: [{ name: "anchor", type: "string", value: "N", summary: "Forge anchor issue number (sink forge)" }, { name: "marker", type: "string", value: "TEXT", summary: "Marker text that must occur in the anchor body" }, { name: "force", type: "boolean", summary: "Overwrite existing files (old copies kept as .bak)" }, { name: "dry-run", type: "boolean", summary: "Print what would be written; write nothing" }],
   examples: ["pai project init --dry-run","pai project init --force"],
   seeAlso: ["pai project consolidate","pai project health"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement init command
-},
-{
+}),
+L({
   name: "consolidate",
   summary: "Gather scattered notes folders into the project's own Notes",
   description: "Gather scattered notes folders into the project's own Notes.\n\nConsolidate scattered ~/.claude/projects/.../Notes/ directories for a project into its canonical Notes/ location",
@@ -183,27 +168,24 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "yes", type: "boolean", summary: "Perform consolidation without confirmation prompt" }, { name: "dry-run", type: "boolean", summary: "Preview what would be moved without making changes" }],
   examples: ["pai project consolidate my-app --dry-run","pai project consolidate my-app --yes"],
   seeAlso: ["pai project promote","pai project init"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement consolidate command
-},
-{
+}),
+L({
   name: "promote",
   summary: "Turn a session note into a new standalone project",
   description: "Turn a session note into a new standalone project.",
   options: [{ name: "from-session", type: "string", value: "PATH", summary: "Path to the session note markdown file" }, { name: "to", type: "string", value: "PATH", summary: "Directory path for the new project (must not exist)" }, { name: "name", type: "string", value: "NAME", summary: "Display name for the new project (derived from filename if omitted)" }],
   examples: ["pai project promote --from-session ./Notes/0001-idea.md --name idea","pai project promote --from-session ./Notes/0001-idea.md --to ~/code/idea"],
   seeAlso: ["pai project go","pai project consolidate"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement promote command
-},
-{
+}),
+L({
   name: "go",
   summary: "Print the folder of a project (for shell scripts)",
   description: "Print the folder of a project (for shell scripts).\n\nPrint the root path for a project by slug, partial name, or fuzzy match.\nDesigned for shell integration: cd $(pai projects go <query>)",
   args: [{ name: "QUERY", summary: "Name or part of a name", required: true }],
   examples: ["pai project go my-app","cd \"$(pai project go my-app)\""],
   seeAlso: ["pai project name","pai project promote"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement go command
-},
-{
+}),
+L({
   name: "name",
   summary: "Give a project a short name for quick access",
   description: "Give a project a short name for quick access.",
@@ -211,27 +193,24 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "permission", type: "string", value: "LEVEL", summary: "Permission level: full | trusted | default" }],
   examples: ["pai project name my-app app","pai project name my-app app --permission auto"],
   seeAlso: ["pai project unname","pai project go"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement name command
-},
-{
+}),
+L({
   name: "unname",
   summary: "Remove a project's short name",
   description: "Remove a project's short name.",
   args: [{ name: "SHORTNAME", summary: "The short name", required: true }],
   examples: ["pai project unname app","pai project names"],
   seeAlso: ["pai project names","pai project name"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement unname command
-},
-{
+}),
+L({
   name: "names",
   summary: "List the projects that have a short name",
   description: "List the projects that have a short name.\n\nList named projects (your curated shortlist)",
   options: [{ name: "json", type: "boolean", summary: "Output JSON for AIBroker consumption" }, { name: "all", type: "boolean", summary: "Include ALL active registered projects, not just the named shortlist" }],
   examples: ["pai project names","pai project names --json"],
   seeAlso: ["pai project config","pai project unname"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement names command
-},
-{
+}),
+L({
   name: "config",
   summary: "Show or change how sessions of a project start",
   description: "Show or change how sessions of a project start.\n\nView or modify session launch config for a project.\nUse --options to discover available keys and presets.",
@@ -239,9 +218,8 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "set", type: "string", value: "KEY=VALUE", summary: "Set config values (repeatable) (several values allowed)" }, { name: "unset", type: "string", value: "KEY", summary: "Remove config keys (repeatable, use env.KEY for env vars) (several values allowed)" }, { name: "preset", type: "string", value: "NAME", summary: "Apply a permission preset: full | trusted | default" }, { name: "defaults", type: "boolean", summary: "Manage global session defaults instead of a project" }, { name: "options", type: "boolean", summary: "List available config keys and presets" }, { name: "json", type: "boolean", summary: "Output JSON" }, { name: "reset", type: "boolean", summary: "Reset config to empty (inherit global defaults)" }],
   examples: ["pai project config my-app","pai project config my-app --options"],
   seeAlso: ["pai project mcp","pai project names"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement config command
-},
-{
+}),
+L({
   name: "mcp",
   summary: "Show or set the MCP servers a project's session loads",
   description: "Show or set the MCP servers a project's session loads.\n\nView or set the MCP servers this project's interactive supervisor session\nloads (run from inside the project, like `pai projects here`).\nNo args: print the current value. --set <names> (comma-separated): set it,\nvalidated against ~/.claude.json's mcpServers. --clear: unset (all\nservers load — today's default). Positional names are an error.",
@@ -249,17 +227,15 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "set", type: "string", value: "NAMES", summary: "Set the pin (comma-separated server or set names)" }, { name: "clear", type: "boolean", summary: "Unset — all MCP servers load again" }],
   examples: ["pai project mcp","pai project mcp --set pai"],
   seeAlso: ["pai project pins","pai project config"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement mcp command
-},
-{
+}),
+L({
   name: "pins",
   summary: "List the MCP/tool pins of the current project",
   description: "List the MCP/tool pins of the current project.\n\nPrint one line per active MCP/tools pin for the current directory's project (nothing when unpinned)",
   examples: ["pai project pins","pai project mcp"],
   seeAlso: ["pai project tools","pai project mcp"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement pins command
-},
-{
+}),
+L({
   name: "tools",
   summary: "Show or set the built-in tools a project's session loads",
   description: "Show or set the built-in tools a project's session loads.\n\nView or set the built-in tool schemas this project's interactive\nsupervisor session loads (run from inside the project, like `pai projects\nhere`). No args: print the current value. --set <names> (comma-separated):\nset it. --clear: unset (all tools load — today's default). Positional\nnames are an error.",
@@ -267,8 +243,7 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "set", type: "string", value: "NAMES", summary: "Set the pin (comma-separated tool names)" }, { name: "clear", type: "boolean", summary: "Unset — all built-in tools load again" }],
   examples: ["pai project tools","pai project tools --set Read,Bash"],
   seeAlso: ["pai project pins"],
-  run: (ctx) => Promise.resolve(0) // TODO: Implement tools command
-},
+}),
 ];
 
 export const projectCommand: CommandDef = {
