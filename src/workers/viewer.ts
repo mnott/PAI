@@ -137,7 +137,7 @@ export function psOutput(
 ): string {
   const c = makeColor(color);
   const term = env.ITERM_SESSION_ID ?? "";
-  reconcileStatuses(logDir);
+  reconcileStatuses(logDir, new Date(), 0);
   const statuses = loadStatuses(logDir);
   const scoped = showAll || !term ? statuses : statuses.filter((s) => workerInScope(s, term));
   const scopeLabel =
@@ -1257,7 +1257,7 @@ export function statusLineOutput(
   claudeSession: string = "",
   now: Date = new Date()
 ): string {
-  reconcileStatuses(logDir, now);
+  reconcileStatuses(logDir, now, 0);
   const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s));
   if (!term && !claudeSession) return renderStatusLine(statuses, now);
 

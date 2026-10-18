@@ -63,8 +63,6 @@ export function decideOrchestratorEdit(filePath: string): EditGateDecision {
 
 const CODE_EXT = "(?:ts|tsx|js|jsx|mjs|cjs|json|py|go|rs|java|c|cc|cpp|h|sh|css|html|yml|yaml|toml)";
 const IN_PLACE = /\bsed\s+(?:-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z0-9]*i/;
-const REDIRECT = new RegExp(`(?<![>&\\d])>>?\\s*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
-const TEE = new RegExp(`\\btee\\s+(?:-[a-z]+\\s+)*(\\S+\\.${CODE_EXT})(?=\\s|$|[;&|)])`, "g");
 
 const isScratch = (p: string): boolean => /^(?:\/private)?\/tmp\//.test(p) || isOrchestratorScratch(p);
 
@@ -135,13 +133,48 @@ function inPlaceTargetsAllNonCode(command: string): boolean {
   return true;
 }
 
+const ANY_REDIRECT = /(?<![>&\d])>>?\s*([^\s;&|)]+)/g;
+const ANY_TEE = /\btee\s+(?:-[a-z]+\s+)*([^\s;&|)]+)/g;
+const HAS_VAR = /[$`]/;
+/** Code extensions for a variable target: json is data there (a spec or result file), not source. */
+const VAR_CODE_PATH = new RegExp(`\\.(?!json$)${CODE_EXT}$`, "i");
+
+/** Simple same-command assignments (`D=/tmp/x`) with a literal value, later ones winning. */
+function simpleAssignments(command: string): Map<string, string> {
+  const vars = new Map<string, string>();
+  for (const m of command.matchAll(/(?:^|[;&|(\s])([A-Za-z_]\w*)=(?:"([^"$`]*)"|'([^']*)'|([^\s;&|$`()"']+))(?=\s|;|&|\||$)/g)) {
+    vars.set(m[1], m[2] ?? m[3] ?? m[4]);
+  }
+  return vars;
+}
+
+function resolveVars(target: string, vars: Map<string, string>): string {
+  return target.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars.get(a ?? b) ?? whole);
+}
+
+/** Whether a redirect/tee target is a code write; unresolved variables fall back to the literal suffix. */
+function targetWritesCode(raw: string, vars: Map<string, string>): boolean {
+  const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
+  if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
+  if (!HAS_VAR.test(t)) return CODE_PATH.test(t) && !isScratch(t);
+  if (isScratch(t)) return false;
+  const tail = t.slice(t.lastIndexOf("$")).replace(/^\$(?:\{\w+\}|\w+)/, "");
+  const ext = /\.[A-Za-z0-9]+$/.exec(tail);
+  return !ext || VAR_CODE_PATH.test(ext[0]); // no literal extension: unknown, keep blocking
+}
+
+function writesCodeTarget(command: string): boolean {
+  const vars = simpleAssignments(command);
+  return [...command.matchAll(ANY_REDIRECT), ...command.matchAll(ANY_TEE)].some((m) => targetWritesCode(m[1], vars));
+}
+
 const ORCHESTRATOR_BASH_PREFIX = "orchestrator mode: Bash may not write code files";
 
 /** Bash for an orchestrator worker: blocks in-place code writes, allows git mv/rm/merge and running tests. */
 export function decideOrchestratorBash(command: string): EditGateDecision {
   const writesCode =
     (IN_PLACE.test(command) && !inPlaceTargetsAllNonCode(command)) ||
-    [...command.matchAll(REDIRECT), ...command.matchAll(TEE)].some((m) => !isScratch(m[1])) ||
+    writesCodeTarget(command) ||
     scriptWritesRepoCode(command);
   if (!writesCode) return { decision: "allow" };
   return {
