@@ -191,11 +191,47 @@ export function isLiveConfig(p: string, home: string): boolean {
   return dirname(p) === `${home}/.claude/pai` && /\.(ya?ml|json)$/.test(p);
 }
 
+const LIVE_CONFIG_REASON = "workers never write live PAI config; set HOME=$(mktemp -d) or PAI_WORKERS_YAML=<copy> for state-changing checks (tests use temp-dir copies)";
+
+const CONFIG_VERBS = "inline-keys|add|update|remove|enable|disable|use|set";
+
+/** True when a path value (env assignment or inherited) points outside the live ~/.claude/pai dir. */
+function outsideLivePai(v: string | undefined, home: string): boolean {
+  if (!v) return false;
+  const p = v.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?/, home);
+  if (!p.startsWith("/")) return false;
+  return p !== `${home}/.claude/pai` && !p.startsWith(`${home}/.claude/pai/`);
+}
+
+/**
+ * A segment running a state-changing `pai worker config|providers|classes|setup` verb
+ * (any entry point, e.g. `node <x>/dist/cli/index.mjs worker config inline-keys`) against the live
+ * config. Safe when PAI_WORKERS_YAML (inherited or assigned in the segment) is outside ~/.claude/pai,
+ * or HOME is reassigned in the segment; `--dry-run` writes nothing.
+ */
+function configMutationReason(words: string[], env: Record<string, string | undefined>, home: string): string | null {
+  const i = words.findIndex((w, k) => w === "worker" && k + 1 < words.length);
+  if (i < 0) return null;
+  const [area, verb] = [words[i + 1], words[i + 2]];
+  const mutating =
+    (area === "setup") ||
+    ((area === "config" || area === "providers" || area === "classes") && !!verb && new RegExp(`^(${CONFIG_VERBS})$`).test(verb));
+  if (!mutating || words.includes("--dry-run")) return null;
+  const assigned = (name: string): string | undefined => {
+    for (const w of words.slice(0, i)) if (w.startsWith(`${name}=`)) return w.slice(name.length + 1);
+    return undefined;
+  };
+  if (outsideLivePai(assigned("PAI_WORKERS_YAML") ?? env.PAI_WORKERS_YAML, home)) return null;
+  const h = assigned("HOME");
+  if (h && h !== "$HOME" && h !== home) return null;
+  return LIVE_CONFIG_REASON;
+}
+
 const isTodo = (p: string): boolean => p === "Notes/TODO.md" || p.endsWith("/Notes/TODO.md");
 
 function protectedPathReason(p: string, home: string): string | null {
   if (isTodo(p)) return "Notes/TODO.md is the orchestrator's: report what should change in your result instead";
-  if (isLiveConfig(p, home)) return "live PAI/Claude config must not be written: tests use temp-dir copies";
+  if (isLiveConfig(p, home)) return LIVE_CONFIG_REASON;
   return null;
 }
 
@@ -485,6 +521,8 @@ export function decideWorkerGuard(
     const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
     if (d.decision === "allow" && typeof ti.command === "string") {
       const cmd = ti.command as string;
+      const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
+      if (cfg) return deny(cfg);
       const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false));
       if (why) return deny(why);
       if (isLocalWorker(env)) {
