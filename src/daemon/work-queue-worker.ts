@@ -25,7 +25,7 @@ import {
   markFailed,
   cleanup,
   getStats,
-  hasPendingOrProcessingOfType,
+  NonRetryableError,
   type WorkItem,
 } from "./work-queue.js";
 
@@ -45,6 +45,7 @@ import {
 } from "./topic-detect-worker.js";
 
 // Registry scan — called from handleRegistryScan()
+import { triggerRegistryScan } from "./registry-scan-trigger.js";
 import { performScan } from "../cli/impl/registry/scan.js";
 import { registryBackend } from "./daemon/state.js";
 
@@ -174,7 +175,7 @@ async function processNextItem(): Promise<void> {
     process.stderr.write(`[work-queue-worker] Completed ${item.type} (id=${item.id}).\n`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    markFailed(item.id, msg);
+    markFailed(item.id, msg, !(e instanceof NonRetryableError));
   }
 }
 
@@ -349,21 +350,10 @@ async function handleRegistryScan(): Promise<void> {
 }
 
 /**
- * Enqueue a registry-scan work item — debounced.
- * If a registry-scan item is already pending or processing, skip enqueue.
+ * Enqueue a registry-scan work item — coalesced (see registry-scan-trigger.ts).
  */
 export function enqueueRegistryScan(): void {
-  // Debounce: skip if already queued or processing
-  if (hasPendingOrProcessingOfType("registry-scan")) {
-    process.stderr.write("[work-queue-worker] Registry scan already pending/processing — skipping duplicate enqueue.\n");
-    return;
-  }
-
-  enqueue({
-    type: "registry-scan",
-    priority: 5, // lowest priority — runs after session-end, session-summary
-    payload: {},
-  });
+  triggerRegistryScan();
 }
 
 // ---------------------------------------------------------------------------
