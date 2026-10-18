@@ -38,6 +38,90 @@ import { getRegistryBackend } from "../../../storage/factory.js";
 
 export { cmdGo };
 
+// --- New commands functions ---
+export async function projectListRawCmd(opts: { all?: boolean; status?: string; tag?: string; type?: string }): Promise<number> {
+  await cmdList(opts);
+  return 0;
+}
+
+export async function projectCdCmd(identifier: string): Promise<number> {
+  const project = await resolveIdentifier(identifier);
+  if (!project) {
+    console.error(`Project not found: ${identifier}`);
+    return 1;
+  }
+
+  if (existsSync(project.root_path)) {
+    process.stdout.write(project.root_path + "\n");
+    return 0;
+  }
+
+  // Path missing — search for moved location
+  process.stderr.write(
+    warn(`Path not found: ${project.root_path}\n`) +
+    dim("  Searching for moved location...\n")
+  );
+
+  const result = findMovedPath(project.root_path);
+
+  if (result.found) {
+    const newPath = result.found;
+    const newEncoded = encodeDir(newPath);
+    const ts = now();
+    const backend = await getRegistryBackend();
+    await backend.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
+    process.stderr.write(
+      ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
+      dim(`  → ${newPath}\n`) +
+      ok("Registry updated.\n")
+    );
+    process.stdout.write(newPath + "\n");
+    return 0;
+  }
+
+  if (result.ambiguous) {
+    process.stderr.write(
+      warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
+    );
+    for (const candidate of result.ambiguous) {
+      process.stderr.write(dim(`  ${candidate}\n`));
+    }
+    process.stderr.write(
+      dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
+    );
+    return 1;
+  }
+
+  process.stderr.write(
+    err(
+      `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
+      `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
+    ) +
+    dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
+  );
+  return 1;
+}
+
+export async function projectAddCmd(rawPath: string, opts: { slug?: string; type?: string; displayName?: string }): Promise<number> {
+  await cmdAdd(rawPath, opts);
+  return 0;
+}
+
+export async function projectInfoCmd(slug: string): Promise<number> {
+  await cmdInfo(slug);
+  return 0;
+}
+
+export async function projectArchiveCmd(slug: string): Promise<number> {
+  await cmdArchive(slug);
+  return 0;
+}
+
+export async function projectMergeCmd(from: string, into: string, opts: { execute?: boolean }): Promise<number> {
+  await cmdMerge(from, into, opts);
+  return 0;
+}
+
 export function registerProjectsCommands(projectsCmd: Command): void {
   // pai projects (bare) — show the unified deduped listing, same as `pai`.
   // The old project-only listing is still available as `pai projects list-raw`.
@@ -63,7 +147,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .option("--tag <tag>", "Filter by tag")
     .option("--type <type>", "Filter by type")
     .action(async (opts: { all?: boolean; status?: string; tag?: string; type?: string }) => {
-      await cmdList(opts);
+      process.exitCode = await projectListRawCmd(opts);
     });
 
   // pai projects cd <identifier>
@@ -75,63 +159,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
         "Auto-detects moved projects when the registered path no longer exists."
     )
     .action(async (identifier: string) => {
-      const project = await resolveIdentifier(identifier);
-      if (!project) {
-        console.error(`Project not found: ${identifier}`);
-        process.exitCode = 1;
-        return;
-      }
-
-      if (existsSync(project.root_path)) {
-        process.stdout.write(project.root_path + "\n");
-        return;
-      }
-
-      // Path missing — search for moved location
-      process.stderr.write(
-        warn(`Path not found: ${project.root_path}\n`) +
-        dim("  Searching for moved location...\n")
-      );
-
-      const result = findMovedPath(project.root_path);
-
-      if (result.found) {
-        const newPath = result.found;
-        const newEncoded = encodeDir(newPath);
-        const ts = now();
-        const backend = await getRegistryBackend();
-        await backend.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
-        process.stderr.write(
-          ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
-          dim(`  → ${newPath}\n`) +
-          ok("Registry updated.\n")
-        );
-        process.stdout.write(newPath + "\n");
-        return;
-      }
-
-      if (result.ambiguous) {
-        process.stderr.write(
-          warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
-        );
-        for (const candidate of result.ambiguous) {
-          process.stderr.write(dim(`  ${candidate}\n`));
-        }
-        process.stderr.write(
-          dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      process.stderr.write(
-        err(
-          `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
-          `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
-        ) +
-        dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
-      );
-      process.exitCode = 1;
+      process.exitCode = await projectCdCmd(identifier);
     });
 
   // pai projects add <path>
@@ -146,7 +174,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
         rawPath: string,
         opts: { slug?: string; type?: string; displayName?: string }
       ) => {
-        await cmdAdd(rawPath, opts);
+        process.exitCode = await projectAddCmd(rawPath, opts);
       }
     );
 
@@ -155,7 +183,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .command("info <slug>")
     .description("Show full details for a project")
     .action(async (slug: string) => {
-      await cmdInfo(slug);
+      process.exitCode = await projectInfoCmd(slug);
     });
 
   // pai projects archive <slug>
@@ -163,7 +191,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     .command("archive <slug>")
     .description("Archive a project")
     .action(async (slug: string) => {
-      await cmdArchive(slug);
+      process.exitCode = await projectArchiveCmd(slug);
     });
 
   // pai projects merge <from> <into> [--execute]
@@ -180,7 +208,7 @@ export function registerProjectsCommands(projectsCmd: Command): void {
     )
     .option("--execute", "Actually perform the merge")
     .action(async (from: string, into: string, opts: { execute?: boolean }) => {
-      await cmdMerge(from, into, opts);
+      process.exitCode = await projectMergeCmd(from, into, opts);
     });
 
   // pai projects unregister <slug> [--execute] [--force]
