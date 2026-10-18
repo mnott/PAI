@@ -7,7 +7,7 @@ import { registerBackendCommands } from "./memory/backend.js";
 import { registerEmbedCommand } from "./memory/embed.js";
 import { registerIndexCommand } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
-import { registerSearchCommand } from "./memory/search.js";
+import { memorySearchCmd } from "./memory/search.js";
 import { memorySourcesCmd } from "./memory/sources-cmd.js";
 import { registerStatsCommands } from "./memory/stats.js";
 
@@ -46,7 +46,7 @@ export const memoryEmbedCommand = m(registerEmbedCommand, ["embed"], {
   seeAlso: ["pai memory index", "pai memory backend detect"],
 });
 
-export const memorySearchCommand = m(registerSearchCommand, ["search"], {
+export const memorySearchCommand: CommandDef = {
   name: "search",
   summary: "Search what the memory index knows",
   description:
@@ -63,7 +63,15 @@ export const memorySearchCommand = m(registerSearchCommand, ["search"], {
   ],
   examples: ['pai memory search "release checklist"', 'pai memory search "retry loop" --project my-project --mode hybrid', 'pai memory search deploy --no-rerank --limit 5'],
   seeAlso: ["pai memory settings", "pai find"],
-});
+  run: (ctx) => memorySearchCmd(ctx.args.QUERY as string, {
+    project: ctx.opts.project as string | undefined,
+    source: ctx.opts.source as string | undefined,
+    limit: ctx.opts.limit as string | undefined,
+    mode: ctx.opts.mode as string | undefined,
+    rerank: ctx.opts["no-rerank"] === true ? false : true,
+    recency: ctx.opts.recency as string | undefined,
+  }),
+};
 
 export const memoryStatusCommand = m(registerStatsCommands, ["status"], {
   name: "status",
