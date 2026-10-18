@@ -87,7 +87,8 @@ export async function registryScanCmd(opts: {
   addDir?: string;
   removeDir?: string;
   showDirs?: boolean;
-  quick?: boolean
+  quick?: boolean;
+  filterReport?: boolean;
 }): Promise<number> {
   if (opts.showDirs) {
     const config = loadScanConfig();
@@ -135,6 +136,16 @@ export async function registryScanCmd(opts: {
     } else {
       console.log(warn(`Not found in config: ${display}`));
     }
+    return 0;
+  }
+  if (opts.filterReport) {
+    const { reportUnregistrable } = await import("../../../registry/registrable.js");
+    const r = await reportUnregistrable(await getRegistryBackend());
+    console.log(`Registry rows: ${r.total}`);
+    console.log(`  matching the registration filter: ${r.matching} (${r.matchingMissing} with a missing path)`);
+    for (const [why, n] of Object.entries(r.byReason)) console.log(`    ${n}  ${why}`);
+    for (const p of r.sample) console.log(dim(`    e.g. ${p}`));
+    console.log(dim("  Dry run: nothing deleted. Cleanup is a separate, operator-approved step."));
     return 0;
   }
   if (!opts.addDir && !opts.removeDir) {
