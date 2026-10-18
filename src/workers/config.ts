@@ -643,6 +643,9 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
   if (p.router !== undefined && typeof p.router !== "boolean") {
     bad(`.providers.${name}.router`, "must be true or false");
   }
+  if (p.contract !== undefined && typeof p.contract !== "string") {
+    bad(`.providers.${name}.contract`, "must be a string path");
+  }
   if (!baseUrl && protocol !== "openai") bad(`.providers.${name}.baseUrl`, "is required");
 
   const keyFile =

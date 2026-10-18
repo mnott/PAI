@@ -125,6 +125,7 @@ function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> 
   if (y.env !== undefined) raw.env = y.env;
   if (y.note !== undefined) raw.note = y.note;
   if (y.router !== undefined) raw.router = y.router;
+  if (y.contract !== undefined) raw.contract = y.contract;
   if (y.quota_probe !== undefined) raw.quotaProbe = y.quota_probe;
   if (y.quota_skip_at !== undefined) raw.quotaSkipAt = y.quota_skip_at;
   if (y.context_window !== undefined) raw.contextWindow = y.context_window;
@@ -151,6 +152,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.env && Object.keys(p.env).length) y.env = { ...p.env };
   if (p.note) y.note = p.note;
   if (p.router === false) y.router = false;
+  if (p.contract) y.contract = p.contract;
   if (p.quotaProbe) y.quota_probe = p.quotaProbe;
   if (p.quotaSkipAt !== undefined) y.quota_skip_at = p.quotaSkipAt;
   if (p.contextWindow !== undefined) y.context_window = p.contextWindow;
