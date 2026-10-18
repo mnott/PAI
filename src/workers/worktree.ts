@@ -142,6 +142,24 @@ export function isPaiBookkeepingPath(path: string): boolean {
 }
 
 /**
+ * Keep the PAI scratch dir out of git for good: add `.pai-scratch/` to the
+ * repository's info/exclude (shared by all its worktrees; idempotent), so the
+ * snapshot, status and salvage never see an orchestrator's scratch files.
+ */
+export function ensureScratchExcluded(cwd: string): void {
+  try {
+    const rel = git(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+    const file = isAbsolute(rel) ? rel : resolve(cwd, rel);
+    const cur = existsSync(file) ? readFileSync(file, "utf8") : "";
+    if (cur.split("\n").some((l) => l.trim() === ".pai-scratch/")) return;
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${cur}${cur === "" || cur.endsWith("\n") ? "" : "\n"}.pai-scratch/\n`, "utf8");
+  } catch {
+    /* best effort: the snapshot still works, just may carry scratch */
+  }
+}
+
+/**
  * Commit `cwd`'s current index + working tree (including untracked files) as
  * a floating commit on top of HEAD, without touching the real index, working
  * tree or HEAD: a temporary `GIT_INDEX_FILE` collects the snapshot, `git
@@ -184,6 +202,7 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const dir = worktreePath(logDir, id);
   const branch = worktreeBranch(id);
   const head = git(cwd, ["rev-parse", "HEAD"]);
+  ensureScratchExcluded(cwd);
   const all = dirtyPaths(cwd);
   const bookkeeping = all.filter(isPaiBookkeepingPath);
   const dirty = all.length > bookkeeping.length;
