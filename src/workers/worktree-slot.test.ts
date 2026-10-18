@@ -109,7 +109,7 @@ describe("slot worktrees", () => {
     const old = new Date(Date.now() - 3 * 24 * 3_600_000);
     utimesSync(statusPath(logDir, "s5"), old, old);
     const dry = gcWorktrees(logDir, 24, true).filter((r) => r.id === "s5");
-    expect(dry).toEqual([{ id: "s5", archive: "refs/pai-archive/s5", knowledge: expect.anything() }]);
+    expect(dry).toEqual([{ id: "s5", archive: "refs/pai-archive/s5" }]);
     expect(git(repo, ["rev-parse", "--verify", "worker/s5"])).toBeTruthy();
     const res = gcWorktrees(logDir, 24).filter((r) => r.id === "s5");
     expect(res).toEqual([{ id: "s5", archive: "refs/pai-archive/s5", adopted: head }]);
