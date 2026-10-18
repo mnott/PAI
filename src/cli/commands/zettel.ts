@@ -1,15 +1,18 @@
 /** `pai zettel ...`: ask questions of a linked-notes vault. */
 
+import type { Command } from "commander";
 import type { CommandDef, OptDef } from "../define.js";
+import { bridged } from "../lib/bridge.js";
+import { registerZettelCommands } from "./zettel/index.js";
 import { zettelExploreCmd } from "./zettel/explore.js";
 import { zettelHealthCmd } from "./zettel/health.js";
 import { zettelSurpriseCmd } from "./zettel/surprise.js";
 import { zettelConverseCmd } from "./zettel/converse.js";
 import { zettelThemesCmd } from "./zettel/themes.js";
-import { zettelSuggestCmd } from "./zettel/suggest.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
+const z = (path: string[], def: Omit<CommandDef, "run">) => bridged(registerZettelCommands, "zettel", path, def);
 const NOTE = { name: "NOTE", required: true, summary: "Note path or title" };
 
 export const zettelCommand: CommandDef = {
@@ -117,7 +120,7 @@ export const zettelCommand: CommandDef = {
         include: ctx.opts.include as string | undefined,
       }),
     },
-    {
+    z(["suggest"], {
       name: "suggest",
       summary: "Suggest new links for a note",
       description: "Proposes notes the given note should probably link to.",
@@ -129,11 +132,6 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ["pai zettel suggest my-note --vault-project-id 3", "pai zettel suggest my-note --vault-project-id 3 --limit 10"],
       seeAlso: ["pai zettel explore"],
-      run: (ctx) => zettelSuggestCmd(ctx.args.NOTE as string, {
-        vaultProjectId: ctx.opts["vault-project-id"] as string | number | undefined,
-        limit: ctx.opts.limit as number | undefined,
-        excludeLinked: ctx.opts["no-exclude-linked"] !== true,
-      }),
-    },
+    }),
   ],
 };

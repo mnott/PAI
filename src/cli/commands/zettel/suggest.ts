@@ -1,21 +1,23 @@
 /** zettel suggest: suggest new wikilink connections for a note. */
 
+import type { Command } from "commander";
 import chalk from "chalk";
 import { warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
-import { CliError } from "../../define.js";
 
-export async function zettelSuggestCmd(
+async function cmdSuggest(
   note: string,
-  opts: { vaultProjectId?: string | number; limit?: number; excludeLinked?: boolean }
-): Promise<number> {
-  if (opts.vaultProjectId === undefined) {
-    throw new CliError("--vault-project-id is required", "pai help zettel suggest", 1);
+  opts: { vaultProjectId?: string; limit?: string; excludeLinked?: boolean }
+): Promise<void> {
+  if (!opts.vaultProjectId) {
+    console.error(err("  --vault-project-id is required"));
+    process.exitCode = 1;
+    return;
   }
 
-  const vaultProjectId = Number(opts.vaultProjectId);
-  const limit = opts.limit ?? 5;
-  const excludeLinked = opts.excludeLinked !== true;
+  const vaultProjectId = parseInt(opts.vaultProjectId, 10);
+  const limit = parseInt(opts.limit ?? "5", 10);
+  const excludeLinked = opts.excludeLinked !== false;
 
   const { zettelSuggest } = await import("../../../zettelkasten/index.js");
   const backend = await getFedBackend();
@@ -35,7 +37,7 @@ export async function zettelSuggestCmd(
   if (suggestions.length === 0) {
     console.log(warn("  No suggestions found. The note may be well-connected already."));
     console.log();
-    return 0;
+    return;
   }
 
   console.log();
@@ -51,6 +53,22 @@ export async function zettelSuggestCmd(
     console.log(`      ${dim("Wikilink:")} ${chalk.cyan(s.suggestedWikilink)}`);
     console.log();
   }
+}
 
-  return 0;
+export function registerSuggestCommand(parent: Command): void {
+  parent
+    .command("suggest <note>")
+    .description("Suggest new wikilink connections for a note")
+    .requiredOption("--vault-project-id <n>", "Project ID for the vault in the federation DB")
+    .option("--limit <n>", "Maximum suggestions", "5")
+    .option("--no-exclude-linked", "Include notes already linked from this one")
+    .action(async (note: string, opts: { vaultProjectId?: string; limit?: string; excludeLinked?: boolean }) => {
+      try {
+        await cmdSuggest(note, opts);
+      } catch (e) {
+        console.error(err(`  Error: ${e}`));
+        process.exitCode = 1;
+        return;
+      }
+    });
 }
