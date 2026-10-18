@@ -355,7 +355,7 @@ describe("renderEvent", () => {
   });
 });
 
-describe("statusLineOutput machine count", () => {
+describe("statusLineOutput session scope", () => {
   const logDir = mkdtempSync(join(tmpdir(), "pai-statusline-"));
   const base = {
     pid: process.pid, // alive, so the row actually renders
@@ -377,29 +377,33 @@ describe("statusLineOutput machine count", () => {
   } as WorkerStatus;
   const now = new Date("2026-09-17T10:00:45");
 
-  it("StatuslineMatchesPaneCount: counts workers of every session, machine-wide", () => {
+  it("each session's bar counts its own workers and flags the rest as elsewhere", () => {
     saveStatus(logDir, { ...base, id: "20260917-100000-1" });
-    // this session's Bash-spawned worker AND another session's pane worker:
-    // the bar shows one number for the machine, the same the panes show
-    saveStatus(logDir, {
-      ...base,
-      id: "20260917-100001-2",
-      term: "w11t0p0:AAAA-BBBB",
-      spawnerSession: null,
-      session: { id: "AAAA-BBBB", name: "OtherSession" },
-    });
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now)).toMatch(
-      /▶2 · prov/
-    );
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2 · prov/);
+    saveStatus(logDir, { ...base, id: "20260917-100001-2", spawnerSession: "claude-sess-2" });
+    const one = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now);
+    const two = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now);
+    expect(one).toMatch(/^▶1 · prov · oldest 45s .*\(\+1 elsewhere\)/);
+    expect(two).toMatch(/^▶1 · prov · oldest 45s .*\(\+1 elsewhere\)/);
+  });
+  it("a child of my worker counts as mine", () => {
+    saveStatus(logDir, { ...base, id: "20260917-100004-5", spawnerSession: null, parent: "20260917-100000-1" });
+    const one = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now);
+    expect(one).toMatch(/^▶2 \(1 nested\) · prov ×2/);
+    expect(one).toContain("(+1 elsewhere)");
+  });
+  it("no session identity keeps the machine-wide count", () => {
+    expect(statusLineOutput(logDir, "", "/nowhere", "", now)).toBe("▶3 (1 nested) · prov ×3 · oldest 45s");
   });
   it("the terminal's own chat pane is never counted as a worker", () => {
     saveStatus(logDir, { ...base, id: "20260917-100002-3", origin: "chat", label: "unlabeled", turns: 0 });
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2/);
+    expect(statusLineOutput(logDir, "", "/nowhere", "", now)).toMatch(/^▶3/);
   });
   it("an ended worker leaves the count", () => {
     saveStatus(logDir, { ...base, id: "20260917-100003-4", state: "done", rc: 0, secs: 3 });
-    expect(statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "", now)).toMatch(/▶2/);
+    expect(statusLineOutput(logDir, "", "/nowhere", "", now)).toMatch(/^▶3/);
+  });
+  it("no workers anywhere: empty output", () => {
+    expect(statusLineOutput(mkdtempSync(join(tmpdir(), "pai-statusline-")), "w1t0p0:X", "/", "s", now)).toBe("");
   });
 });
 
