@@ -16,8 +16,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, extname, resolve } from "node:path";
 import { type GateDecision } from "./render-decision.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
@@ -25,6 +25,7 @@ import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 import { dropHeredocBodies } from "./heredoc.js";
+import { isScratchRootFile } from "./worker-scratch-name.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
 
 export interface WorkerGuardInput {
@@ -412,12 +413,23 @@ function isTracked(file: string): boolean {
 
 const lineCount = (s: string): number => (s === "" ? 0 : s.split("\n").length - (s.endsWith("\n") ? 1 : 0));
 
+function repoExts(root: string): Set<string> {
+  let files: string[];
+  try {
+    files = execFileSync("git", ["-C", root, "ls-files"], { encoding: "utf8", timeout: 5_000 }).split("\n");
+  } catch {
+    files = readdirSync(root);
+  }
+  return new Set(files.map((f) => extname(f).toLowerCase()).filter(Boolean));
+}
+
 function localEditReason(tool: string, p: string, content: unknown, root: string | null): string | null {
   if (!existsSync(p)) {
-    return root && dirname(p) === root ? `${p} would be a new file in the repo root; put scratch in $TMPDIR or a per-run mktemp dir` : null;
+    return root && dirname(p) === root && isScratchRootFile(basename(p), repoExts(root))
+      ? `${p} would be a new scratch file in the repo root; put scratch in $TMPDIR or a per-run mktemp dir`
+      : null;
   }
   if (tool !== "Write" || typeof content !== "string") return null;
-  if (lineCount(content) > 300) return "build large files from several Edit calls (local generation speed and client timeout)";
   if (!isTracked(p)) return null;
   const old = lineCount(readFileSync(p, "utf8"));
   const now = lineCount(content);
