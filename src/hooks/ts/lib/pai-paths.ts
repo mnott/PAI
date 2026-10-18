@@ -230,3 +230,16 @@ export function sessionRoutingPath(): string {
 export function migrateSessionRouting(opts: { dryRun?: boolean } = {}): MigrateFileResult {
   return migratePaiFile(paiHomePath('session-routing.json'), [oldSessionRoutingPath()], opts);
 }
+
+/**
+ * Helper to get history file path with date-based organization
+ */
+export function getHistoryFilePath(subdir: string, filename: string): string {
+  const now = new Date();
+  const tz = process.env.TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localDate = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, '0');
+
+  return join(historyDir(), subdir, `${year}-${month}`, filename);
+}

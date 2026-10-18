@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { isLive, loadStatuses } from "./status.js";
 import { statusPath } from "./paths.js";
 import { git, uncommittedPaths } from "./worktree.js";
-import { fmtAge } from "../utils/fmt-age.js";
 
 export interface PendingResult {
   id: string;
@@ -34,6 +33,11 @@ function toplevel(dir: string): string | null {
   } catch {
     return null;
   }
+}
+
+function fmtAge(ms: number): string {
+  const h = Math.floor(ms / 3_600_000);
+  return h >= 48 ? `${Math.floor(h / 24)}d` : h >= 1 ? `${h}h` : `${Math.floor(ms / 60_000)}m`;
 }
 
 /** Finished workers with unmerged work; `repoRoot` limits to one repo, else every repo. */
@@ -65,7 +69,7 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
     } catch {
       // status vanished mid-scan: age unknown, keep the entry
     }
-    out.push({ id: st.id, label: st.label, repo, ageMs, age: fmtAge(ageMs, { dayAfterHours: 48 }), commits, dirty });
+    out.push({ id: st.id, label: st.label, repo, ageMs, age: fmtAge(ageMs), commits, dirty });
   }
   return out;
 }

@@ -10,6 +10,7 @@
 
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { aibrokerSocketPath } from "../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
@@ -353,4 +354,21 @@ export function buildRevealScript(uniqueId: string): string {
   end repeat
   return "not-found"
 end tell`;
+}
+
+export function revealItermSession(itermSessionId: string): { ok: boolean; error?: string } {
+  if (process.platform !== "darwin") return { ok: false, error: "iTerm2 is macOS only" };
+  const id = itermUniqueId(itermSessionId);
+  if (!id) return { ok: false, error: "no iTerm session id on record" };
+  const script = buildRevealScript(id);
+  try {
+    const r = spawnSync("osascript", ["-e", script], { encoding: "utf8" });
+    if (r.status !== 0) {
+      return { ok: false, error: (r.stderr || "osascript failed").trim() };
+    }
+    if ((r.stdout ?? "").trim() === "ok") return { ok: true };
+    return { ok: false, error: "That session is no longer open in iTerm." };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }

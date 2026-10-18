@@ -112,6 +112,25 @@ export function findExistingEncodedDir(absolutePath: string): string | null {
   return null;
 }
 
+/**
+ * Decode a Claude encoded-dir back to an approximate absolute path.
+ *
+ * NOTE: This decode is best-effort only — the encoding is lossy (space, dot,
+ * literal hyphen, and path-separator all collapse to `-`).  Prefer reading
+ * original_path from session-registry.json via buildEncodedDirMap() in
+ * src/registry/migrate.ts for authoritative decoding.
+ *
+ *   "-Users-foo-my-project"  →  "/Users/foo/my-project"
+ */
+export function decodeDir(encodedDir: string): string {
+  if (!encodedDir) return "/";
+  // Try filesystem-walking decode first (handles spaces, dots, hyphens correctly)
+  const smart = smartDecodeDir(encodedDir);
+  if (smart) return smart;
+  // Fallback: treat every `-` as `/` (wrong for paths with spaces/dots/hyphens)
+  return encodedDir.replace(/-/g, "/");
+}
+
 /** Directory listings (name + encoded form) reused across a batch of decodes. */
 export type DirListings = Map<string, { name: string; enc: string; encLower: string }[]>;
 
@@ -258,7 +277,7 @@ export function pad(str: string, width: number): string {
 /**
  * Strip ANSI escape sequences to measure visible string length.
  */
-export function stripAnsi(str: string): string {
+function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
   return str.replace(/\x1B\[[0-9;]*m/g, "");
 }
