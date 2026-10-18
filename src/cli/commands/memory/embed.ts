@@ -1,11 +1,11 @@
 /** Memory embed command: generate embeddings for un-embedded chunks. */
 
-import type { Command } from "commander";
 import type { StorageBackend } from "../../../storage/interface.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { dim, bold, ok, err } from "../../lib/utils.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
+import { CliError } from "../../define.js";
 
 // ---------------------------------------------------------------------------
 // Shared embed runner (used by both index --embed and embed sub-command)
@@ -68,39 +68,32 @@ export async function runEmbed(
 }
 
 // ---------------------------------------------------------------------------
-// Commander registration
+// New command function
 // ---------------------------------------------------------------------------
 
-export function registerEmbedCommand(memoryCmd: Command): void {
-  memoryCmd
-    .command("embed [project-slug]")
-    .description("Generate embeddings for un-embedded chunks (Phase 2.5)")
-    .option("--batch-size <n>", "Chunks to embed per batch", "50")
-    .option("--background", "Run at background priority (taskpolicy -b + nice)")
-    .action(async (projectSlug: string | undefined, opts: { batchSize?: string; background?: boolean }) => {
-      if (opts.background) reexecBackground();
-      let backend: StorageBackend;
-      try {
-        backend = await getStorageBackend();
-      } catch (e) {
-        console.error(err(`Failed to open storage backend: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
+export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { batchSize?: number; background?: boolean }): Promise<number> {
+  if (opts.background) reexecBackground();
+  let backend: StorageBackend;
+  try {
+    backend = await getStorageBackend();
+  } catch (e) {
+    console.error(err(`Failed to open storage backend: ${e}`));
+    return 1;
+  }
 
-      if (projectSlug) {
-        const registry = await getRegistryBackend();
-        const project = await registry.getProjectBySlug(projectSlug);
+  if (projectSlug) {
+    const registry = await getRegistryBackend();
+    const project = await registry.getProjectBySlug(projectSlug);
 
-        if (!project) {
-          console.error(err(`Project not found: ${projectSlug}`));
-          process.exitCode = 1;
-          return;
-        }
+    if (!project) {
+      console.error(err(`Project not found: ${projectSlug}`));
+      return 1;
+    }
 
-        await runEmbed(backend, project.id, project.slug, parseInt(opts.batchSize ?? "50", 10));
-      } else {
-        await runEmbed(backend, undefined, undefined, parseInt(opts.batchSize ?? "50", 10));
-      }
-    });
+    await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 50);
+  } else {
+    await runEmbed(backend, undefined, undefined, opts.batchSize ?? 50);
+  }
+
+  return 0;
 }

@@ -4,7 +4,7 @@ import type { Command } from "commander";
 import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
 import { bridged } from "../lib/bridge.js";
 import { registerBackendCommands } from "./memory/backend.js";
-import { registerEmbedCommand } from "./memory/embed.js";
+import { memoryEmbedCmd } from "./memory/embed.js";
 import { registerIndexCommand } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { memorySearchCmd } from "./memory/search.js";
@@ -33,18 +33,22 @@ export const memoryIndexCommand = m(registerIndexCommand, ["index"], {
   seeAlso: ["pai memory embed", "pai memory status"],
 });
 
-export const memoryEmbedCommand = m(registerEmbedCommand, ["embed"], {
+export const memoryEmbedCommand: CommandDef = {
   name: "embed",
   summary: "Compute meaning vectors for indexed text that has none yet",
   description: "Semantic and hybrid search need a vector per text chunk. This fills in the missing ones, in batches; safe to stop and re-run.",
   args: [{ ...projectSlug, summary: "Only this project (default: all)" }],
   options: [
     { name: "batch-size", type: "number", value: "N", default: 50, summary: "Chunks to compute per batch" },
-    background,
+    { ...background },
   ],
   examples: ["pai memory embed", "pai memory embed my-project --batch-size 20", "pai memory embed --background"],
   seeAlso: ["pai memory index", "pai memory backend detect"],
-});
+  run: (ctx) => memoryEmbedCmd(ctx.args.PROJECT as string | undefined, {
+    batchSize: ctx.opts["batch-size"] as number | undefined,
+    background: ctx.opts.background === true,
+  }),
+};
 
 export const memorySearchCommand: CommandDef = {
   name: "search",
