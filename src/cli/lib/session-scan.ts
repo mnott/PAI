@@ -50,6 +50,7 @@ import { homedir } from "node:os";
 import { smartDecodeDir, type DirListings } from "./utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 import { fmtAge as fmtAgeMs } from "../../utils/fmt-age.js";
+import { workerSessionFilter } from "./worker-sessions.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -427,6 +428,12 @@ export interface ScanOptions {
    * Kept for backwards compatibility with callers that predate the filter field.
    */
   resumableOnly?: boolean;
+  /**
+   * Include headless worker sessions (cwd under the workers log dir, or a
+   * transcript a worker status file names). Default false: workers are not
+   * operator sessions and never belong in a session list, picker or name lookup.
+   */
+  workers?: boolean;
 }
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
@@ -804,10 +811,13 @@ export async function scanSessions(
     }
   }
 
-  results.sort((a, b) => b.mtime - a.mtime);
+  // The one place worker sessions are removed, so every view sharing this scan agrees.
+  const isWorker = opts.workers ? () => false : workerSessionFilter().isWorker;
+  const kept = results.filter((s) => !isWorker(s));
+  kept.sort((a, b) => b.mtime - a.mtime);
   // This walk covered every file, so this is the one flush allowed to prune.
   flushScanCache(true);
-  return results.slice(0, limit);
+  return kept.slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -863,6 +873,7 @@ function scanFilesystemForUuidPrefix(prefix: string): ScannedSession[] {
 
   const prefixLower = prefix.toLowerCase();
   const matches: ScannedSession[] = [];
+  const isWorker = workerSessionFilter().isWorker;
 
   let encodedDirs: string[];
   try {
@@ -891,6 +902,7 @@ function scanFilesystemForUuidPrefix(prefix: string): ScannedSession[] {
       const uuid = file.slice(0, -6);
       if (!UUID_RE.test(uuid)) continue;
       if (!uuid.toLowerCase().startsWith(prefixLower)) continue;
+      if (isWorker({ uuid, encodedDir })) continue;
 
       const topLevelPath = join(projectDir, file);
       const topInfo = parseTopLevel(topLevelPath);

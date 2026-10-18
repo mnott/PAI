@@ -165,7 +165,7 @@ describe("worker sessions are recognised", () => {
     expect([...readWorkerSessionIds(dir)]).toEqual(["uuid-worker"]);
     const f = workerSessionFilter(dir);
     expect(f.isWorker({ uuid: "uuid-worker", decodedPath: "/p/app" })).toBe(true);
-    expect(f.isWorker({ uuid: "other", decodedPath: "/home/u/.claude/pai/logs/workers/worktrees/2026-1" })).toBe(true);
+    expect(f.isWorker({ uuid: "other", decodedPath: join(dir, "worktrees", "2026-1") })).toBe(true);
     expect(f.isWorker({ uuid: "other", decodedPath: "/p/app" })).toBe(false);
   });
   it("a missing log directory hides nothing", () => {

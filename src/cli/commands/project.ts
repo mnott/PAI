@@ -41,10 +41,10 @@ export const projectSubcommands: CommandDef[] = [
   name: "list",
   summary: "Show your projects and sessions in one list",
   description: "Show your projects and sessions in one list.\n\nShow the unified deduped listing (same as `pai`).\nUse --all to include cold / zero-session / archived projects.",
-  options: [{ name: "all", type: "boolean", summary: "Show all entries including cold / zero-session / archived projects" }, { name: "n", short: "n", type: "string", value: "COUNT", summary: "Max rows to show" }],
-  examples: ["pai project list","pai project list --all"],
+  options: [{ name: "all", type: "boolean", summary: "Show all entries including cold / zero-session / archived projects" }, { name: "workers", type: "boolean", summary: "With --all: also show headless worker sessions" }, { name: "n", short: "n", type: "string", value: "COUNT", summary: "Max rows to show" }],
+  examples: ["pai project list","pai project list --all","pai project list --all --workers"],
   seeAlso: ["pai project list-raw"],
-  run: (ctx) => projectListCmd({ all: ctx.opts.all === true, n: ctx.opts.n as string | undefined }),
+  run: (ctx) => projectListCmd({ all: ctx.opts.all === true, workers: ctx.opts.workers === true, n: ctx.opts.n as string | undefined }),
 },
 {
   name: "list-raw",

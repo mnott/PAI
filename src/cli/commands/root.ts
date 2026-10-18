@@ -298,7 +298,7 @@ export async function runRoot(
     return startSession({ workers, setup, name: basename(process.cwd()) || "session", cwd: process.cwd(), dryRun: args.dryRun, term });
   }
 
-  const { rows } = await collectView({});
+  const { rows } = await collectView(args.name ? { limit: 500 } : {});
   if (rows.length === 0) {
     out("No sessions yet.");
     out(st.dim("Start one in this folder with: pai new"));

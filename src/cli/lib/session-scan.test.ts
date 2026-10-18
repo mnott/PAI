@@ -163,3 +163,60 @@ describe("the parse cache", () => {
     );
   });
 });
+
+describe("scanSessions leaves worker sessions out", () => {
+  const WORKER_SESSION = "44444444-4444-4444-8444-444444444444";
+  const NO_WORKTREE_SESSION = "55555555-5555-4555-8555-555555555555";
+  const NUMERIC_SESSION = "66666666-6666-4666-8666-666666666666";
+
+  async function seed() {
+    const { readWorkersSection } = await import("../../workers/config.js");
+    const { workersLogDir } = await import("../../workers/paths.js");
+    const logDir = workersLogDir(readWorkersSection().workers);
+    const enc = (p: string) => p.replace(/[^a-zA-Z0-9]/g, "-");
+    const workerDir = join(home, ".claude", "projects", enc(join(logDir, "worktrees", "17866")));
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, `${WORKER_SESSION}.jsonl`), SYSTEM_LINE + USER_LINE);
+    // --no-worktree worker: ordinary cwd, known only through its status file
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, "w-1.status"), JSON.stringify({ id: "w-1", claudeSession: NO_WORKTREE_SESSION }));
+    writeFileSync(join(projectDir(), `${NO_WORKTREE_SESSION}.jsonl`), SYSTEM_LINE + USER_LINE);
+    // a real project whose directory is called "17866"
+    const real = join(home, ".claude", "projects", enc("/Users/someone/dev/17866"));
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(real, `${NUMERIC_SESSION}.jsonl`), SYSTEM_LINE + USER_LINE);
+  }
+
+  async function uuids(opts: { filter: "named" | "all"; workers?: boolean }) {
+    const { scanSessions } = await import("./session-scan.js");
+    return (await scanSessions({ limit: 100, ...opts })).map((s) => s.uuid);
+  }
+
+  it("excludes worker sessions by default and with --all", async () => {
+    await seed();
+    for (const filter of ["named", "all"] as const) {
+      const got = await uuids({ filter });
+      expect(got).not.toContain(WORKER_SESSION);
+      expect(got).not.toContain(NO_WORKTREE_SESSION);
+    }
+  });
+
+  it("includes them with workers: true", async () => {
+    await seed();
+    const got = await uuids({ filter: "all", workers: true });
+    expect(got).toContain(WORKER_SESSION);
+    expect(got).toContain(NO_WORKTREE_SESSION);
+  });
+
+  it("keeps a normal project with a numeric-looking name", async () => {
+    await seed();
+    expect(await uuids({ filter: "named" })).toContain(NUMERIC_SESSION);
+  });
+
+  it("lets real projects fill the cut", async () => {
+    await seed();
+    const { scanSessions } = await import("./session-scan.js");
+    const got = (await scanSessions({ limit: 1, filter: "named" })).map((s) => s.uuid);
+    expect(got).toEqual([NUMERIC_SESSION]);
+  });
+});
