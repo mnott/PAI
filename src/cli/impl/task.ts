@@ -7,7 +7,6 @@
  * See docs/task-bus.md.
  */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { chmodSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -20,7 +19,7 @@ import { dispatchAll } from "../../tasks/dispatch.js";
 import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js";
 import { tick, releaseClaim, loadState, saveState, STATE_FILE } from "../../tasks/poller.js";
 import { installSchedule, uninstallSchedule, scheduleStatus, DEFAULT_INTERVAL_SECS } from "../../tasks/schedule-install.js";
-import type { DispatchResult, Task, TaskProvider } from "../../tasks/types.js";
+import type { DispatchResult, Task, TaskProvider, TaskPriority } from "../../tasks/types.js";
 import { writeArchive } from "../../tasks/archive.js";
 import {
   readSessionManifest,
@@ -241,424 +240,422 @@ function printResults(results: DispatchResult[]): void {
 // Commands
 // ---------------------------------------------------------------------------
 
-export function registerTaskCommands(taskCmd: Command): void {
-  taskCmd
-    .command("projects")
-    .description("Show which sessions can be given work from the tracker, and create the missing projects")
-    .option("--create <names...>", "Create tracker projects for these session names")
-    .option("--create-all", "Create a project for every session that has none")
-    .action(async (opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
+export async function projectsCommand(opts: { create?: string[]; createAll?: boolean }): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
 
-      if (!provider.listSubProjects || !provider.findOrCreateSubProject) {
-        console.log();
-        console.log(
-          chalk.yellow(`  ${provider.providerId} does not address work by sub-project.`)
-        );
-        console.log(dim("  Session-scoped inboxes need a tracker with nested projects."));
-        console.log();
-        return;
+  if (!provider.listSubProjects || !provider.findOrCreateSubProject) {
+    console.log();
+    console.log(
+      chalk.yellow(`  ${provider.providerId} does not address work by sub-project.`)
+    );
+    console.log(dim("  Session-scoped inboxes need a tracker with nested projects."));
+    console.log();
+    return 1;
+  }
+
+  const [sessions, projects] = await Promise.all([
+    readSessionManifest(),
+    provider.listSubProjects(),
+  ]);
+
+  const rows = reconcile(sessions, projects);
+
+  const wanted = opts.createAll
+    ? rows.filter((r) => r.state === "session-only").map((r) => r.name)
+    : (opts.create ?? []);
+
+  if (wanted.length > 0) {
+    const addressable = new Set(
+      rows.filter((r) => r.state === "session-only").map((r) => normalizeName(r.name))
+    );
+    console.log();
+    for (const name of wanted) {
+      // Refuse to create a project for a session nobody has: it would look
+      // addressable and never be picked up, which is the failure this
+      // command exists to surface.
+      if (!addressable.has(normalizeName(name))) {
+        console.log(chalk.yellow(`  skipped  ${name}`) + dim(" — no such session, or it already has a project"));
+        continue;
       }
-
-      const [sessions, projects] = await Promise.all([
-        readSessionManifest(),
-        provider.listSubProjects(),
-      ]);
-
-      const rows = reconcile(sessions, projects);
-
-      const wanted = opts.createAll
-        ? rows.filter((r) => r.state === "session-only").map((r) => r.name)
-        : ((opts.create as string[] | undefined) ?? []);
-
-      if (wanted.length > 0) {
-        const addressable = new Set(
-          rows.filter((r) => r.state === "session-only").map((r) => normalizeName(r.name))
-        );
-        console.log();
-        for (const name of wanted) {
-          // Refuse to create a project for a session nobody has: it would look
-          // addressable and never be picked up, which is the failure this
-          // command exists to surface.
-          if (!addressable.has(normalizeName(name))) {
-            console.log(chalk.yellow(`  skipped  ${name}`) + dim(" — no such session, or it already has a project"));
-            continue;
-          }
-          const { id, created } = await provider.findOrCreateSubProject(name);
-          console.log(
-            (created ? chalk.green("  created  ") : dim("  exists   ")) + name + dim(`  ${id}`)
-          );
-
-          // A project alone does not route. Ownership resolves by matching the
-          // container name against a curated alias, and a session's display
-          // name is rarely its PAI slug — "SL" is `seriousletter`, "Home" is
-          // `owner`. Creating the project and stopping produced something
-          // that looked addressable and silently was not, twice, before this
-          // was wired in. The alias is not a separate step a user should have
-          // to know about; it is what makes the project mean anything.
-          const row = rows.find((r) => normalizeName(r.name) === normalizeName(name));
-          const note = await ensureAlias(name, row?.directory);
-          if (note) console.log(dim(`           ${note}`));
-        }
-        console.log();
-        return;
-      }
-
-      printProjectMapping(rows, sessions.length === 0);
-    });
-
-  taskCmd
-    .command("list")
-    .description("List open tasks on the bus")
-    .option("--owner <project>", "Only tasks owned by this PAI project")
-    .option("--due <date>", "Only tasks due on or before this ISO date")
-    .option("--today", "Shorthand for --due <today>")
-    .option("--routed", "Hide tasks with no resolved owner")
-    .option("--limit <n>", "Maximum tasks to show", (v) => Number.parseInt(v, 10))
-    .action(async (opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
-
-      const tasks = await provider.listOpen({
-        owner: opts.owner,
-        dueBefore: opts.today ? todayIso() : opts.due,
-        includeUnrouted: !opts.routed,
-        limit: opts.limit,
-      });
-      printTasks(tasks);
-    });
-
-  taskCmd
-    .command("add <title>")
-    .description("File a task onto the bus")
-    .option("--owner <project>", "PAI project that owns this (adds a pai: label)")
-    .option("--body <text>", "Full procedure and reasoning — not just a restatement of the title")
-    .option("--due <when>", "Due date: ISO, natural language, or a recurrence (\"every monday at 9\")")
-    .option("--priority <p>", "p1 (highest) … p4 (default)")
-    .option("--url <url>", "Reference — prefer a hook:// URL over a file path")
-    .option("--into <sub-project>", "File into this sub-project under the bus root, creating it if absent")
-    .action(async (title, opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
-
-      // A title alone is not actionable months later. Warn rather than block:
-      // refusing the write would just push people to file nothing at all.
-      if (!opts.body) {
-        console.log(dim("  No --body given. Add the procedure and reasoning so this"));
-        console.log(dim("  is still actionable months from now, by you alone."));
-      }
-
-      const created = await provider.add({
-        title,
-        body: opts.body ?? "",
-        owner: opts.owner ?? null,
-        due: opts.due,
-        priority: opts.priority,
-        sourceUrl: opts.url,
-        into: opts.into,
-      });
-
-      console.log(chalk.green(`  Filed: ${created.title}`));
-      console.log(`    ${renderOwner(created)} ${dim("· " + created.id)}`);
-    });
-
-  taskCmd
-    .command("dispatch")
-    .description("Hand open tasks to the PAI sessions that own them")
-    .option("--owner <project>", "Only dispatch tasks for this project")
-    .option("--today", "Only tasks due today or overdue")
-    .option("--dry-run", "Report what would happen without contacting any session")
-    .option("--no-spawn", "Never launch a session; skip owners that are not running")
-    .action(async (opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
-
-      const config = loadConfig();
-      const tasks = await provider.listOpen({
-        owner: opts.owner,
-        dueBefore: opts.today ? todayIso() : undefined,
-        includeUnrouted: true,
-      });
-
-      if (tasks.length === 0) {
-        console.log(dim("  Nothing to dispatch."));
-        return;
-      }
-
-      // A dry run must never contact a session, so skip detection entirely
-      // rather than detecting and then declining to use it.
-      const transport = opts.dryRun
-        ? null
-        : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
-
-      if (!opts.dryRun && !transport) {
-        console.log(dim("  No aibroker CLI with `dispatch` found — reporting ownership only."));
-      }
-
-      const results = await dispatchAll(tasks, {
-        transport,
-        autoDispatch: opts.dryRun ? false : (config.tasks?.autoDispatch ?? false),
-        spawnIfAbsent: opts.spawn !== false,
-        dryRun: Boolean(opts.dryRun),
-      });
-
-      printResults(results);
-    });
-
-  taskCmd
-    .command("poll")
-    .description("One scheduler tick: dispatch what is due, check what is running, report")
-    .option("--dry-run", "Show what would happen without touching anything")
-    .action(async (opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
-
-      const config = loadConfig();
-      const transport = opts.dryRun ? null : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
-      const prober = opts.dryRun ? null : await detectProber();
-
-      const report = await tick({
-        provider: provider as TodoistProvider,
-        transport,
-        prober,
-        autoDispatch: config.tasks?.autoDispatch ?? false,
-        dryRun: Boolean(opts.dryRun),
-      });
-
-      if (report.decisions.length === 0) {
-        console.log(dim("  Nothing due, nothing running."));
-        return;
-      }
-
-      const mark: Record<string, string> = {
-        dispatch: chalk.green("→"),
-        triggered: chalk.green("▶"),
-        complete: chalk.green("✓"),
-        running: dim("·"),
-        probe: chalk.yellow("?"),
-        orphaned: chalk.yellow("!"),
-        abandoned: chalk.red("\u2a2f"),
-        skip: dim("–"),
-        wait: dim(" "),
-      };
-
-      console.log();
-      for (const { decision, note } of report.decisions) {
-        console.log(`  ${mark[decision.action] ?? " "} ${decision.task.title}`);
-        if (note) console.log(`      ${dim(note)}`);
-      }
-      console.log();
+      const { id, created } = await provider.findOrCreateSubProject(name);
       console.log(
-        dim(
-          `  ${report.dispatched} dispatched, ${report.completed} completed, ` +
-          `${report.probed} probed, ${report.stuck} stuck`
-        )
+        (created ? chalk.green("  created  ") : dim("  exists   ")) + name + dim(`  ${id}`)
       );
-      console.log();
-    });
 
-  const scheduleCmd = taskCmd
-    .command("schedule")
-    .description("Install, remove or inspect the launchd agent that ticks the scheduler");
+      // A project alone does not route. Ownership resolves by matching the
+      // container name against a curated alias, and a session's display
+      // name is rarely its PAI slug — "SL" is `seriousletter`, "Home" is
+      // `owner`. Creating the project and stopping produced something
+      // that looked addressable and silently was not, twice, before this
+      // was wired in. The alias is not a separate step a user should have
+      // to know about; it is what makes the project mean anything.
+      const row = rows.find((r) => normalizeName(r.name) === normalizeName(name));
+      const note = await ensureAlias(name, row?.directory);
+      if (note) console.log(dim(`           ${note}`));
+    }
+    console.log();
+    return 0;
+  }
 
-  scheduleCmd
-    .command("install")
-    .description("Install the scheduler tick (default: every 15 minutes)")
-    .option("--interval <secs>", "Seconds between ticks", (v) => Number.parseInt(v, 10))
-    .action((opts) => {
-      const r = installSchedule(opts.interval || DEFAULT_INTERVAL_SECS);
-      console.log(r.loaded ? chalk.green(`  ${r.message}`) : chalk.yellow(`  ${r.message}`));
-      console.log(dim(`  ${r.plistPath}`));
-      console.log(dim(`  The schedule itself lives in Todoist — this only sets how often PAI looks.`));
-    });
+  printProjectMapping(rows, sessions.length === 0);
+  return 0;
+}
 
-  scheduleCmd
-    .command("uninstall")
-    .description("Remove the scheduler agent")
-    .action(() => console.log(chalk.green(`  ${uninstallSchedule()}`)));
+export async function listCommand(opts: {
+  owner?: string;
+  due?: string;
+  today?: boolean;
+  routed?: boolean;
+  limit?: number
+}): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
 
-  scheduleCmd
-    .command("status")
-    .description("Show whether the scheduler agent is installed and loaded")
-    .action(() => {
-      const s = scheduleStatus();
-      console.log();
-      console.log(`  ${s.installed ? chalk.green("installed") : dim("not installed")}` +
-        `  ${s.installed ? (s.running ? chalk.green("· loaded") : chalk.yellow("· not loaded")) : ""}`);
-      console.log(dim(`  ${s.detail}`));
-      console.log();
-    });
+  const tasks = await provider.listOpen({
+    owner: opts.owner,
+    dueBefore: opts.today ? todayIso() : opts.due,
+    includeUnrouted: !opts.routed,
+    limit: opts.limit,
+  });
+  printTasks(tasks);
+  return 0;
+}
 
-  taskCmd
-    .command("config")
-    .description("View or change task bus settings without running the full setup wizard")
-    .option("--token", "Prompt for the Todoist API token (input is hidden)")
-    .option("--from-env", "Adopt the token from TODOIST_API_KEY in the environment")
-    .option("--project <id>", "Tracker project ID that roots the bus (an ID, never a name)")
-    .option("--findings <id>", "Section ID for the findings inbox")
-    .option("--timeout <secs>", "Seconds a single dispatch may take", (v) => Number.parseInt(v, 10))
-    .option("--auto-dispatch <bool>", "Hand tasks to owning sessions automatically (true/false)")
-    .option("--disable", "Turn the task bus off without discarding its settings")
-    .action(async (opts) => {
-      const raw = readConfigRaw();
-      const tasks = (raw.tasks ?? {}) as RawTasks;
-      tasks.providers ??= {};
-      tasks.providers.todoist ??= {};
-      const todoist = tasks.providers.todoist;
+export async function addCommand(
+  title: string,
+  opts: {
+    owner?: string;
+    body?: string;
+    due?: string;
+    priority?: string;
+    url?: string;
+    into?: string
+  }
+): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
 
-      const noChanges =
-        !opts.token && !opts.fromEnv && !opts.project && !opts.findings &&
-        opts.timeout === undefined && opts.autoDispatch === undefined && !opts.disable;
+  // A title alone is not actionable months later. Warn rather than block:
+  // refusing the write would just push people to file nothing at all.
+  if (!opts.body) {
+    console.log(dim("  No --body given. Add the procedure and reasoning so this"));
+    console.log(dim("  is still actionable months from now, by you alone."));
+  }
 
-      if (noChanges) {
-        console.log();
-        console.log(`  ${bold("Task bus")}      ${tasks.enabled ? chalk.green("enabled") : dim("disabled")}`);
-        console.log(`  ${bold("Token")}         ${redact(todoist.apiKey)}${
-          !todoist.apiKey && process.env.TODOIST_API_KEY ? dim("  (TODOIST_API_KEY is set in this shell)") : ""
-        }`);
-        console.log(`  ${bold("Root project")}  ${todoist.rootProjectId ?? dim("(not set)")}`);
-        console.log(`  ${bold("Findings")}      ${todoist.findingsSectionId ?? dim("(not set)")}`);
-        console.log(`  ${bold("Auto-dispatch")} ${tasks.autoDispatch ? chalk.green("on") : dim("off")}`);
-        console.log(`  ${bold("Timeout")}       ${tasks.dispatchTimeoutSecs ?? dim("default (180s)")}`);
-        console.log();
-        console.log(dim(`  ${CONFIG_FILE}`));
-        console.log();
-        return;
-      }
+  const created = await provider.add({
+    title,
+    body: opts.body ?? "",
+    owner: opts.owner ?? null,
+    due: opts.due,
+    priority: opts.priority as TaskPriority | undefined,
+    sourceUrl: opts.url,
+    into: opts.into,
+  });
 
-      if (opts.token && opts.fromEnv) {
-        console.error(chalk.yellow("  Use either --token or --from-env, not both."));
-        process.exitCode = 1;
-        return;
-      }
+  console.log(chalk.green(`  Filed: ${created.title}`));
+  console.log(`    ${renderOwner(created)} ${dim("· " + created.id)}`);
+  return 0;
+}
 
-      if (opts.fromEnv) {
-        const envToken = process.env.TODOIST_API_KEY?.trim();
-        if (!envToken) {
-          console.error(chalk.yellow("  TODOIST_API_KEY is not set in this environment."));
-          process.exitCode = 1;
-          return;
-        }
-        todoist.apiKey = envToken;
-        todoist.enabled = true;
-        tasks.enabled = true;
-      }
+export async function dispatchCommand(opts: {
+  owner?: string;
+  today?: boolean;
+  dryRun?: boolean;
+  noSpawn?: boolean
+}): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
 
-      if (opts.token) {
-        const entered = await promptSecret("  Todoist API token (hidden): ");
-        if (!entered) {
-          console.error(chalk.yellow("  No token entered. Nothing changed."));
-          process.exitCode = 1;
-          return;
-        }
-        todoist.apiKey = entered;
-        todoist.enabled = true;
-        tasks.enabled = true;
-      }
+  const config = loadConfig();
+  const tasks = await provider.listOpen({
+    owner: opts.owner,
+    dueBefore: opts.today ? todayIso() : undefined,
+    includeUnrouted: true,
+  });
 
-      if (opts.project) { todoist.rootProjectId = opts.project; tasks.enabled = true; }
-      if (opts.findings) todoist.findingsSectionId = opts.findings;
-      if (opts.timeout !== undefined) tasks.dispatchTimeoutSecs = opts.timeout;
-      if (opts.autoDispatch !== undefined) tasks.autoDispatch = opts.autoDispatch === "true";
-      if (opts.disable) tasks.enabled = false;
+  if (tasks.length === 0) {
+    console.log(dim("  Nothing to dispatch."));
+    return 0;
+  }
 
-      raw.tasks = tasks;
-      writeConfigRaw(raw);
+  // A dry run must never contact a session, so skip detection entirely
+  // rather than detecting and then declining to use it.
+  const transport = opts.dryRun
+    ? null
+    : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
 
-      // The file now holds a credential. Narrow it before saying anything else,
-      // so a crash between write and chmod cannot leave it world-readable.
-      try {
-        chmodSync(CONFIG_FILE, 0o600);
-      } catch {
-        console.log(chalk.yellow(`  Could not restrict permissions on ${CONFIG_FILE} — check them by hand.`));
-      }
+  if (!opts.dryRun && !transport) {
+    console.log(dim("  No aibroker CLI with `dispatch` found — reporting ownership only."));
+  }
 
-      console.log(chalk.green("  Saved."));
-      if (todoist.apiKey && !todoist.rootProjectId) {
-        console.log(dim("  No root project set yet — run `pai task config --project <id>`."));
-      }
-    });
+  const results = await dispatchAll(tasks, {
+    transport,
+    autoDispatch: opts.dryRun ? false : (config.tasks?.autoDispatch ?? false),
+    spawnIfAbsent: opts.noSpawn !== true,
+    dryRun: Boolean(opts.dryRun),
+  });
 
-  taskCmd
-    .command("archive <id>")
-    .description("Save a task's discussion into the owning project's notes, without completing it")
-    .option("--quiet", "Print nothing (for hook and webhook callers)")
-    .option("--no-notify", "Do not tell the owning session where the file landed")
-    .action(async (id, opts: { quiet?: boolean; notify?: boolean }) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
-      // Notifies by default: this command is the path something OUTSIDE the
-      // session took — a checkbox ticked in the tracker — so the session has no
-      // idea it happened. `task done` deliberately does not notify, because
-      // there the session is the one that just did it.
-      const saved = await cmdArchiveTask(provider, id, {
-        quiet: opts.quiet,
-        notify: opts.notify !== false,
-      });
-      // Non-zero on failure so a webhook caller can tell nothing was saved
-      // rather than assuming success — the whole point is not losing content.
-      if (!saved) process.exitCode = 1;
-    });
+  printResults(results);
+  return 0;
+}
 
-  taskCmd
-    .command("done <id>")
-    .description("Mark a task complete on the tracker, keeping its discussion")
-    .option("--no-archive", "Complete without saving the comment thread")
-    .action(async (id, opts) => {
-      const provider = await buildProvider();
-      if (!provider) return reportUnconfigured();
+export async function pollCommand(opts: { dryRun?: boolean }): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
 
-      // Archive BEFORE completing. A completed task is harder to read back on
-      // some providers, and losing the thread is the failure this exists to
-      // prevent — so the copy is taken while the task is unambiguously there.
-      let archived: { path: string; written: boolean; commentCount: number } | null = null;
-      if (opts.archive !== false) {
-        archived = await archiveTaskThread(provider, id);
-      }
+  const config = loadConfig();
+  const transport = opts.dryRun ? null : await detectAiBroker(undefined, config.tasks?.dispatchTimeoutSecs);
+  const prober = opts.dryRun ? null : await detectProber();
 
-      await provider.complete(id);
-      console.log(chalk.green(`  Completed ${id}.`));
+  const report = await tick({
+    provider: provider as TodoistProvider,
+    transport,
+    prober,
+    autoDispatch: config.tasks?.autoDispatch ?? false,
+    dryRun: Boolean(opts.dryRun),
+  });
 
-      // Release the claim left behind by whichever run finished this task.
-      // For a recurring task, `complete` above only advanced the due date to
-      // the next occurrence — the `pai-running` label, the progress-marker
-      // comment, and this poller's transient run state (`startedAt` /
-      // `claimSeenAt` / `failedProbes`) all outlive it unless something
-      // clears them. Left alone, the next occurrence looks already claimed,
-      // and the scheduler classifies it as overrunning and starts probing a
-      // session that finished hours ago.
-      //
-      // Best-effort throughout: closing the task above is the action that
-      // has to succeed, and this cleanup must never turn a completed task
-      // into a failed command.
-      try {
-        const task = await provider.getTask(id);
-        if (task) {
-          const state = loadState(STATE_FILE);
-          await releaseClaim(task, provider, state);
-          // Record the due date this advanced to, the same way `tick()`
-          // records it every cycle. Without this, the next `pai task poll`
-          // has no way to tell this advance apart from a human dragging the
-          // task forward by hand — both look like "due moved exactly one
-          // recurrence period, unclaimed" — and would dispatch the task a
-          // second time for a run that just finished.
-          if (task.due) state.lastSeenDue[id] = task.due;
-          saveState(state, STATE_FILE);
-        }
-      } catch {
-        // Cleanup is best-effort — see comment above.
-      }
+  if (report.decisions.length === 0) {
+    console.log(dim("  Nothing due, nothing running."));
+    return 0;
+  }
 
-      if (archived) {
-        const what = `${archived.commentCount} comment${archived.commentCount === 1 ? "" : "s"}`;
-        console.log(
-          archived.written
-            ? dim(`  Discussion saved (${what}) → ${archived.path}`)
-            : dim(`  Discussion already saved (${what}), unchanged.`)
-        );
-      }
-    });
+  const mark: Record<string, string> = {
+    dispatch: chalk.green("→"),
+    triggered: chalk.green("▶"),
+    complete: chalk.green("✓"),
+    running: dim("·"),
+    probe: chalk.yellow("?"),
+    orphaned: chalk.yellow("!"),
+    abandoned: chalk.red("⨯"),
+    skip: dim("–"),
+    wait: dim(" "),
+  };
+
+  console.log();
+  for (const { decision, note } of report.decisions) {
+    console.log(`  ${mark[decision.action] ?? " "} ${decision.task.title}`);
+    if (note) console.log(`      ${dim(note)}`);
+  }
+  console.log();
+  console.log(
+    dim(
+      `  ${report.dispatched} dispatched, ${report.completed} completed, ` +
+      `${report.probed} probed, ${report.stuck} stuck`
+    )
+  );
+  console.log();
+  return 0;
+}
+
+export function scheduleInstallCommand(opts: { interval?: number }): number {
+  const r = installSchedule(opts.interval || DEFAULT_INTERVAL_SECS);
+  console.log(r.loaded ? chalk.green(`  ${r.message}`) : chalk.yellow(`  ${r.message}`));
+  console.log(dim(`  ${r.plistPath}`));
+  console.log(dim(`  The schedule itself lives in Todoist — this only sets how often PAI looks.`));
+  return 0;
+}
+
+export function scheduleUninstallCommand(): number {
+  console.log(chalk.green(`  ${uninstallSchedule()}`));
+  return 0;
+}
+
+export function scheduleStatusCommand(): number {
+  const s = scheduleStatus();
+  console.log();
+  console.log(`  ${s.installed ? chalk.green("installed") : dim("not installed")}` +
+    `  ${s.installed ? (s.running ? chalk.green("· loaded") : chalk.yellow("· not loaded")) : ""}`);
+  console.log(dim(`  ${s.detail}`));
+  console.log();
+  return 0;
+}
+
+export async function configCommand(opts: {
+  token?: boolean;
+  fromEnv?: boolean;
+  project?: string;
+  findings?: string;
+  timeout?: number;
+  autoDispatch?: string;
+  disable?: boolean
+}): Promise<number> {
+  const raw = readConfigRaw();
+  const tasks = (raw.tasks ?? {}) as RawTasks;
+  tasks.providers ??= {};
+  tasks.providers.todoist ??= {};
+  const todoist = tasks.providers.todoist;
+
+  const noChanges =
+    !opts.token && !opts.fromEnv && !opts.project && !opts.findings &&
+    opts.timeout === undefined && opts.autoDispatch === undefined && !opts.disable;
+
+  if (noChanges) {
+    console.log();
+    console.log(`  ${bold("Task bus")}      ${tasks.enabled ? chalk.green("enabled") : dim("disabled")}`);
+    console.log(`  ${bold("Token")}         ${redact(todoist.apiKey)}${
+      !todoist.apiKey && process.env.TODOIST_API_KEY ? dim("  (TODOIST_API_KEY is set in this shell)") : ""
+    }`);
+    console.log(`  ${bold("Root project")}  ${todoist.rootProjectId ?? dim("(not set)")}`);
+    console.log(`  ${bold("Findings")}      ${todoist.findingsSectionId ?? dim("(not set)")}`);
+    console.log(`  ${bold("Auto-dispatch")} ${tasks.autoDispatch ? chalk.green("on") : dim("off")}`);
+    console.log(`  ${bold("Timeout")}       ${tasks.dispatchTimeoutSecs ?? dim("default (180s)")}`);
+    console.log();
+    console.log(dim(`  ${CONFIG_FILE}`));
+    console.log();
+    return 0;
+  }
+
+  if (opts.token && opts.fromEnv) {
+    console.error(chalk.yellow("  Use either --token or --from-env, not both."));
+    return 1;
+  }
+
+  if (opts.fromEnv) {
+    const envToken = process.env.TODOIST_API_KEY?.trim();
+    if (!envToken) {
+      console.error(chalk.yellow("  TODOIST_API_KEY is not set in this environment."));
+      return 1;
+    }
+    todoist.apiKey = envToken;
+    todoist.enabled = true;
+    tasks.enabled = true;
+  }
+
+  if (opts.token) {
+    const entered = await promptSecret("  Todoist API token (hidden): ");
+    if (!entered) {
+      console.error(chalk.yellow("  No token entered. Nothing changed."));
+      return 1;
+    }
+    todoist.apiKey = entered;
+    todoist.enabled = true;
+    tasks.enabled = true;
+  }
+
+  if (opts.project) { todoist.rootProjectId = opts.project; tasks.enabled = true; }
+  if (opts.findings) todoist.findingsSectionId = opts.findings;
+  if (opts.timeout !== undefined) tasks.dispatchTimeoutSecs = opts.timeout;
+  if (opts.autoDispatch !== undefined) tasks.autoDispatch = opts.autoDispatch === "true";
+  if (opts.disable) tasks.enabled = false;
+
+  raw.tasks = tasks;
+  writeConfigRaw(raw);
+
+  // The file now holds a credential. Narrow it before saying anything else,
+  // so a crash between write and chmod cannot leave it world-readable.
+  try {
+    chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    console.log(chalk.yellow(`  Could not restrict permissions on ${CONFIG_FILE} — check them by hand.`));
+  }
+
+  console.log(chalk.green("  Saved."));
+  if (todoist.apiKey && !todoist.rootProjectId) {
+    console.log(dim("  No root project set yet — run `pai task config --project <id>`."));
+  }
+  return 0;
+}
+
+export async function archiveCommand(
+  id: string,
+  opts: { quiet?: boolean; notify?: boolean }
+): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
+  // Notifies by default: this command is the path something OUTSIDE the
+  // session took — a checkbox ticked in the tracker — so the session has no
+  // idea it happened. `task done` deliberately does not notify, because
+  // there the session is the one that just did it.
+  const saved = await cmdArchiveTask(provider, id, {
+    quiet: opts.quiet,
+    notify: opts.notify !== false,
+  });
+  // Non-zero on failure so a webhook caller can tell nothing was saved
+  // rather than assuming success — the whole point is not losing content.
+  if (!saved) return 1;
+  return 0;
+}
+
+export async function doneCommand(
+  id: string,
+  opts: { archive?: boolean }
+): Promise<number> {
+  const provider = await buildProvider();
+  if (!provider) {
+    reportUnconfigured();
+    return 1;
+  }
+
+  // Archive BEFORE completing. A completed task is harder to read back on
+  // some providers, and losing the thread is the failure this exists to
+  // prevent — so the copy is taken while the task is unambiguously there.
+  let archived: { path: string; written: boolean; commentCount: number } | null = null;
+  if (opts.archive !== false) {
+    archived = await archiveTaskThread(provider, id);
+  }
+
+  await provider.complete(id);
+  console.log(chalk.green(`  Completed ${id}.`));
+
+  // Release the claim left behind by whichever run finished this task.
+  // For a recurring task, `complete` above only advanced the due date to
+  // the next occurrence — the `pai-running` label, the progress-marker
+  // comment, and this poller's transient run state (`startedAt` /
+  // `claimSeenAt` / `failedProbes`) all outlive it unless something
+  // clears them. Left alone, the next occurrence looks already claimed,
+  // and the scheduler classifies it as overrunning and starts probing a
+  // session that finished hours ago.
+  //
+  // Best-effort throughout: closing the task above is the action that
+  // has to succeed, and this cleanup must never turn a completed task
+  // into a failed command.
+  try {
+    const task = await provider.getTask(id);
+    if (task) {
+      const state = loadState(STATE_FILE);
+      await releaseClaim(task, provider, state);
+      // Record the due date this advanced to, the same way `tick()`
+      // records it every cycle. Without this, the next `pai task poll`
+      // has no way to tell this advance apart from a human dragging the
+      // task forward by hand — both look like "due moved exactly one
+      // recurrence period, unclaimed" — and would dispatch the task a
+      // second time for a run that just finished.
+      if (task.due) state.lastSeenDue[id] = task.due;
+      saveState(state, STATE_FILE);
+    }
+  } catch {
+    // Cleanup is best-effort — see comment above.
+  }
+
+  if (archived) {
+    const what = `${archived.commentCount} comment${archived.commentCount === 1 ? "" : "s"}`;
+    console.log(
+      archived.written
+        ? dim(`  Discussion saved (${what}) → ${archived.path}`)
+        : dim(`  Discussion already saved (${what}), unchanged.`)
+    );
+  }
+  return 0;
 }
 
 /**
