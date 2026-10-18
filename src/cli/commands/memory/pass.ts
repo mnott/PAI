@@ -36,14 +36,11 @@ export async function memoryPassCmd(name: string, opts: { sleep?: string | numbe
     const sleepMs = typeof sleepValue === 'string' ? parseInt(sleepValue, 10) : sleepValue;
     const result = await runPass(name as PassName, sleepMs);
     process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
-    process.exitCode = 0;
     return 0;
   } catch (e) {
     process.stdout.write(
       JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) + "\n",
     );
-    process.exitCode = 1;
     return 1;
   }
-  process.exit();
 }

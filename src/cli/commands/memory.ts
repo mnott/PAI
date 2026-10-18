@@ -154,7 +154,7 @@ const memoryPassCommand: CommandDef = {
   args: [{ name: "NAME", required: true, summary: "index, embed or noop" }],
   options: [{ name: "sleep", type: "number", value: "MS", default: 0, summary: "noop pass only: sleep this many milliseconds" }],
   examples: ["pai memory pass noop --sleep 10", "pai memory pass index"],
-  run: async (ctx) => memoryPassCmd(ctx.args.NAME as string, { sleep: ctx.opts["sleep"] }),
+  run: (ctx) => memoryPassCmd(ctx.args.NAME as string, { sleep: ctx.opts.sleep as number | undefined }),
 };
 
 export const memoryCommand: CommandDef = {
