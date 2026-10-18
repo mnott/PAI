@@ -14,11 +14,21 @@ import { whisperConfirmMarkerPath } from "../lib/whisper-confirm.js";
 describe("user-prompt/whisper-rules entrypoint", () => {
   const ENTRYPOINT = "src/hooks/ts/user-prompt/whisper-rules.ts";
 
-  function runHook(stdin: string): string {
+  // The hook reads PAI_WORKER / PAI_WORKER_PROVIDER; a local worker running
+  // this suite would otherwise leak them into every subprocess.
+  function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+    const base: NodeJS.ProcessEnv = { ...process.env };
+    delete base.PAI_WORKER;
+    delete base.PAI_WORKER_PROVIDER;
+    return { ...base, ...extra };
+  }
+
+  function runHook(stdin: string, extra: Record<string, string> = {}): string {
     return execFileSync("bun", [ENTRYPOINT], {
       input: stdin,
       encoding: "utf8",
       timeout: 15_000,
+      env: cleanEnv(extra),
     });
   }
 
@@ -52,6 +62,14 @@ describe("user-prompt/whisper-rules entrypoint", () => {
     expect(stdout).toContain("CURRENT LOCAL TIME");
   });
 
+  it("gives a local worker the reduced block without the time line", () => {
+    const stdout = runHook(JSON.stringify({ prompt: "please fix the login bug" }), {
+      PAI_WORKER: "1",
+      PAI_WORKER_PROVIDER: "some-local",
+    });
+    expect(stdout).not.toContain("CURRENT LOCAL TIME");
+  });
+
   describe("cache-keepalive beat prompt", () => {
     const dirs: string[] = [];
 
@@ -64,7 +82,7 @@ describe("user-prompt/whisper-rules entrypoint", () => {
       dirs.push(dir);
       const file = join(dir, "config.json");
       writeFileSync(file, JSON.stringify(config), "utf8");
-      return { ...process.env, PAI_CONFIG_FILE: file };
+      return cleanEnv({ PAI_CONFIG_FILE: file });
     }
 
     it("replies with only the minimal tool-free instruction, bypassing rules/advisor", () => {
@@ -150,14 +168,11 @@ describe("user-prompt/whisper-rules entrypoint", () => {
 
     function run(sessionId: string, env: Record<string, string> = {}): string {
       usedSessions.push(sessionId);
-      const base: NodeJS.ProcessEnv = { ...process.env, PAI_HOME: home };
-      delete base.PAI_WORKER;
-      delete base.PAI_WORKER_PROVIDER;
       return execFileSync("bun", [ENTRYPOINT], {
         input: JSON.stringify({ session_id: sessionId, prompt: "do the task" }),
         encoding: "utf8",
         timeout: 15_000,
-        env: { ...base, ...env },
+        env: cleanEnv({ PAI_HOME: home, ...env }),
       });
     }
 
