@@ -26,15 +26,13 @@ function streamDrained(stream: NodeJS.WriteStream): Promise<void> {
   // handed to the OS. If it's already 0, there is nothing to wait for.
   if (!stream.writableLength) return Promise.resolve();
   return new Promise((resolve) => {
-    stream.once("drain", () => resolve());
-    // Belt-and-braces: also resolve on the next tick after a short poll,
-    // in case `drain` was already emitted before we attached the listener
-    // (rare, but writableLength can hit 0 without a fresh `drain` event on
-    // some platforms/versions).
-    const check = () => {
-      if (!stream.writableLength) resolve();
-    };
-    setImmediate(check);
+    // "drain" only follows a write() that returned false, so buffered data
+    // below the highWaterMark never emits it. An empty write's callback runs
+    // once every earlier write has been flushed, and keeps the event loop
+    // alive until then. A closed or broken pipe must not hang the wait.
+    stream.once("error", () => resolve());
+    stream.once("close", () => resolve());
+    stream.write("", () => resolve());
   });
 }
 
