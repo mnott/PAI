@@ -7,7 +7,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import pg from "pg";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -62,7 +62,9 @@ describe("process-wide storage accessors", () => {
   });
 });
 
-describe("process-wide storage accessors: child process exit", () => {
+const HAS_BUN = spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!HAS_BUN)("process-wide storage accessors: child process exit", () => {
   function scratchTargets(): { scratchUrl: string; adminUrl: string; dbName: string } {
     const base = loadConfig().postgres?.connectionString;
     if (!base) {

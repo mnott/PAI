@@ -9,12 +9,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { daemonLogPath } from "../runtime-paths.js";
 
-const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
+const PLIST_PATH = () => join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
 
 /** StandardErrorPath from the launchd plist, falling back to the runtime default. */
 export function resolveDaemonLogPath(): string {
-  if (existsSync(PLIST_PATH)) {
-    const plist = readFileSync(PLIST_PATH, "utf8");
+  if (existsSync(PLIST_PATH())) {
+    const plist = readFileSync(PLIST_PATH(), "utf8");
     const match = plist.match(/<key>StandardErrorPath<\/key>\s*<string>([^<]+)<\/string>/);
     if (match) return match[1];
   }
