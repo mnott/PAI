@@ -5,7 +5,7 @@
 
 import type { CommandDef } from "../define.js";
 import { registerProjectsCommands } from "../impl/project/projects-index.js";
-import { projectListRawCmd, projectCdCmd, projectAddCmd, projectInfoCmd, projectArchiveCmd, projectMergeCmd, projectListCmd } from "../impl/project/projects-index.js";
+import { projectListRawCmd, projectCdCmd, projectAddCmd, projectInfoCmd, projectArchiveCmd, projectMergeCmd } from "../impl/project/projects-index.js";
 
 export const projectSubcommands: CommandDef[] = [
 {
@@ -15,7 +15,6 @@ export const projectSubcommands: CommandDef[] = [
   options: [{ name: "all", type: "boolean", summary: "Show all entries including cold / zero-session / archived projects" }, { name: "n", short: "n", type: "string", value: "COUNT", summary: "Max rows to show" }],
   examples: ["pai project list","pai project list --all"],
   seeAlso: ["pai project list-raw"],
-  run: (ctx) => projectListCmd({ all: ctx.opts.all === true, n: ctx.opts.n as string | number | undefined }),
 },
 {
   name: "list-raw",

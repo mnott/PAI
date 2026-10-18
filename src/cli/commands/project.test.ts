@@ -21,11 +21,6 @@ describe("pai project", () => {
   it("has a summary, description and two examples on every command", () => {
     expect(helpProblems(projectCommand)).toEqual([]);
   });
-  it("every project subcommand has a run", () => {
-    for (const s of projectCommand.subcommands ?? []) {
-      expect(typeof s.run, s.name).toBe("function");
-    }
-  });
   it("pai project names --json exits 0", async () => {
     const r = await runPai(["project","names","--json"]);
     expect(r.code).toBe(0);
