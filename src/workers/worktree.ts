@@ -755,7 +755,8 @@ function mergeSnapshotWorker(
   logDir: string,
   id: string,
   st: WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">>,
-  noCommit = false
+  noCommit = false,
+  verify?: string
 ): string {
   const snapshot = st.worktreeBase!;
   const branch = st.branch!;
@@ -799,7 +800,19 @@ function mergeSnapshotWorker(
       );
     }
   }
-  if (noCommit) return noCommitNextSteps(id, branch, worktreeDir, changedPaths);
+  const revert = (): string => {
+    execFileSync("git", ["-C", st.cwd, "apply", "-R", "--binary"], {
+      input: diff,
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return `the applied diff of ${branch}`;
+  };
+  const gate = gateLines(st.cwd, verify, revert, () =>
+    scanDiffForStub(git(st.cwd, ["diff", "-U0", "--no-color", snapshot, branch, "--", "src/"]))
+  );
+  if (noCommit) return withGate(gate, noCommitNextSteps(id, branch, worktreeDir, changedPaths));
   for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
   removeWorktree(st.cwd, worktreeDir, true);
   try {
@@ -821,7 +834,7 @@ function mergeSnapshotWorker(
   if (salvage.skipped.length) {
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
-  return notes.length ? `${base}; ${notes.join("; ")}` : base;
+  return withGate(gate, notes.length ? `${base}; ${notes.join("; ")}` : base);
 }
 
 function noCommitNextSteps(id: string, branch: string, worktreeDir: string, paths: string[]): string {
@@ -972,7 +985,7 @@ export function adoptDetachedHead(dir: string, branch: string): string | null {
 export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean; verify?: string } = {}): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
-  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit);
+  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify);
   const adopted = adoptDetachedHead(st.worktreeDir!, st.branch!);
   if (adopted) console.log(`worker ${id}: adopted detached HEAD ${adopted.slice(0, 7)} into ${st.branch}`);
   // salvage first: only a commit can carry uncommitted work through the merge
@@ -1020,7 +1033,12 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
           : ` — ${(e as Error).message}. The worktree ${st.worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`);
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
   }
-  const verifyLine = [opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "", stubScan(st.cwd, oldHead)].filter(Boolean).join("\n");
+  const verifyLine = gateLines(
+    st.cwd,
+    opts.verify,
+    () => revertMerge(st.cwd, oldHead),
+    () => findAddedStub(st.cwd, oldHead)
+  );
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
@@ -1057,7 +1075,30 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
-  return verifyLine ? `${verifyLine}\n${merged}` : merged;
+  return withGate(verifyLine, merged);
+}
+
+const withGate = (gate: string, msg: string): string => (gate ? `${gate}\n${msg}` : msg);
+
+/**
+ * The one gate both merge kinds run after the change is in the checkout: the
+ * --verify command (when given), then the stub scan. A failure calls `revert`
+ * (which undoes exactly what the merge applied and returns what it reverted)
+ * and throws; branch and worktree stay so the work can be fixed and re-merged.
+ */
+function gateLines(cwd: string, verify: string | undefined, revert: () => string, findStub: () => string | null): string {
+  const lines: string[] = [];
+  if (verify) {
+    const env = { ...process.env };
+    delete env.PAI_WORKER;
+    delete env.PAI_WORKER_ORCHESTRATOR;
+    const r = spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" });
+    if (r.status !== 0) throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${revert()}; the worker branch is kept`);
+    lines.push(`verify passed: ${verify}`);
+  }
+  const hit = findStub();
+  if (hit) throw new Error(`stub scan failed: ${hit}: reverted ${revert()}; the worker branch is kept`);
+  return lines.join("\n");
 }
 
 /**
@@ -1067,13 +1108,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
  * work can be fixed and re-merged.
  */
 export function runVerify(cwd: string, cmd: string, oldHead: string): string {
-  const env = { ...process.env };
-  delete env.PAI_WORKER;
-  delete env.PAI_WORKER_ORCHESTRATOR;
-  const r = spawnSync("sh", ["-c", cmd], { cwd, env, stdio: "inherit" });
-  if (r.status === 0) return `verify passed: ${cmd}`;
-  const head = revertMerge(cwd, oldHead);
-  throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${head}; the worker branch is kept`);
+  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null);
 }
 
 /** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
@@ -1089,7 +1124,10 @@ export const STUB_PATTERN = /TODO: [Ii]mplement|Promise\.resolve\(0\)\s*\/\/\s*T
 
 /** First `file:line` that the merge (oldHead..HEAD) adds under src/ matching STUB_PATTERN, or null. */
 export function findAddedStub(cwd: string, oldHead: string): string | null {
-  const diff = git(cwd, ["diff", "-U0", "--no-color", oldHead, "HEAD", "--", "src/"]);
+  return scanDiffForStub(git(cwd, ["diff", "-U0", "--no-color", oldHead, "HEAD", "--", "src/"]));
+}
+
+function scanDiffForStub(diff: string): string | null {
   let file = "";
   let line = 0;
   for (const l of diff.split("\n")) {
@@ -1105,10 +1143,7 @@ export function findAddedStub(cwd: string, oldHead: string): string | null {
 
 /** Built-in stub scan after a merge: a hit reverts it exactly like a failed verify. */
 export function stubScan(cwd: string, oldHead: string): string {
-  const hit = findAddedStub(cwd, oldHead);
-  if (!hit) return "";
-  const head = revertMerge(cwd, oldHead);
-  throw new Error(`stub scan failed: ${hit}: reverted ${head}; the worker branch is kept`);
+  return gateLines(cwd, undefined, () => revertMerge(cwd, oldHead), () => findAddedStub(cwd, oldHead));
 }
 
 /** `pai worker discard <id>`: drop worktree and branch after salvaging what they carry. */
