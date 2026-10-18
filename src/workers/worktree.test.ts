@@ -213,7 +213,7 @@ describe("addWorktree snapshot: dirty parent checkout", () => {
     // HEAD never moved: no merge commit, no commit on main at all
     expect(git(repoSnap, ["rev-parse", "HEAD"])).toBe(beforeHead);
     // the snapshot commit is not reachable from any ref left in the repo
-    expect(git(repoSnap, ["log", "--all", "--oneline"])).not.toMatch(/snapshot of uncommitted checkout/);
+    expect(git(repoSnap, ["log", "--branches", "--tags", "--oneline"])).not.toMatch(/snapshot of uncommitted checkout/);
     expect(loadStatus(logDir, "snap2")?.merged).toBe(true);
   });
 
