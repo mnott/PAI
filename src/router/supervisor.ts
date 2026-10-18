@@ -8,6 +8,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unl
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
+import { pidAlive } from "../workers/status.js";
 import { ROUTER_PORT } from "./router.js";
 
 export const ROUTER_PID_FILE = join(homedir(), ".claude", "pai", "router.pid");
@@ -17,12 +18,7 @@ export function routerRunningPid(): number | null {
   if (!existsSync(ROUTER_PID_FILE)) return null;
   const pid = parseInt(readFileSync(ROUTER_PID_FILE, "utf8"), 10);
   if (!pid) return null;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null;
-  }
+  return pidAlive(pid) ? pid : null;
 }
 
 /** Spawn `<cli> router run` detached, logging to the router log. Returns the child pid. */
