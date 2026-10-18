@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import type { CommandDef, OptDef } from "../define.js";
 import { bridged } from "../lib/bridge.js";
 import { registerZettelCommands } from "./zettel/index.js";
+import { zettelExploreCmd } from "./zettel/explore.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
@@ -19,7 +20,7 @@ export const zettelCommand: CommandDef = {
   examples: ["pai zettel health", "pai zettel explore my-note --depth 2", "pai zettel themes --vault-project-id 3"],
   seeAlso: ["pai obsidian", "pai memory search"],
   subcommands: [
-    z(["explore"], {
+    {
       name: "explore",
       summary: "Follow link chains from a note",
       description: "Starting at a note, walks the links outward and prints what it reaches.",
@@ -31,7 +32,12 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ["pai zettel explore my-note", "pai zettel explore my-note --depth 2 --direction forward"],
       seeAlso: ["pai zettel suggest"],
-    }),
+      run: (ctx) => zettelExploreCmd(ctx.args.NOTE as string, {
+        depth: ctx.opts.depth === undefined ? undefined : Number(ctx.opts.depth),
+        direction: ctx.opts.direction === undefined ? undefined : String(ctx.opts.direction),
+        mode: ctx.opts.mode === undefined ? undefined : String(ctx.opts.mode),
+      }),
+    },
     z(["surprise"], {
       name: "surprise",
       summary: "Find notes that are alike in meaning but far apart in links",
