@@ -339,6 +339,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
+| `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker install` | Set up the Agent hook and command shims |
 | `pai worker kill` | Stop a running worker |
 | `pai worker local` | Switch which local model server runs |

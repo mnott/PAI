@@ -386,6 +386,32 @@ pai worker handoff '{"kind":"blocker","text":"Tests need a database","data":{"ta
 
 See also: `pai worker say`
 
+### pai worker help
+
+From inside a worker: ask a stronger model to do one sub-task (budgeted)
+
+```
+pai worker help [options]
+```
+
+Runs a bounded sub-worker (class implement, in place, 20 minutes at most) on a stronger provider and prints its report and the files it changed. Each orchestrated unit gets a small budget of help calls (default 2, PAI_HELP_BUDGET); past it the verb exits 4 and you report the blocker instead. Every call is recorded in help-ledger.jsonl; --report lists them.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--task TEXT` | string | — | The one-paragraph sub-task |
+| `--provider NAME` | string | — | Provider to ask (default anthropic) |
+| `--model NAME` | string | — | Model to ask (default sonnet) |
+| `--files A,B` | string | — | Files the sub-task concerns, comma-separated |
+| `--report` | flag | — | List the recorded help calls instead of asking |
+| `--scope ID` | string | — | With --report: only this unit |
+
+```sh
+pai worker help --task 'Rewrite the retry loop in src/net.ts to back off exponentially' --files src/net.ts
+pai worker help --report --scope 20261018-0301-1
+```
+
+See also: `pai worker handoff`, `pai worker usage`
+
 ### pai worker merge
 
 Merge a worker's branch into your checkout
@@ -1472,6 +1498,7 @@ See also: `pai worker providers`
 | `pai worker say` | Send a message to a running worker |
 | `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
+| `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker merge` | Merge a worker's branch into your checkout |
 | `pai worker verify` | Check that a worker's changes are already in your checkout |
 | `pai worker pending` | Finished workers whose work is not merged yet |
