@@ -17,6 +17,7 @@ import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
+import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus } from "../../workers/status.js";
 import { callerDescription, requestKill } from "../../workers/endreason.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -294,6 +295,37 @@ const psCommand: CommandDef = {
       const pending = pendingResults(dir, process.cwd()).length;
       if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
       out(psOutput(dir, flag(ctx, "all")));
+    }),
+};
+
+const usageCommand: CommandDef = {
+  name: "usage",
+  summary: "Token totals per provider and model for a set of workers",
+  description:
+    "Sums the exact tokens of the selected workers (each assistant message counted once) per provider and model: input, cache read, cache write 5m and 1h, output, plus the reported cost. Local providers are marked and carry no cost. " +
+    "This is the worker side of the A/B comparison; the top session's side is `pai audit tokens usage`.",
+  options: [
+    { name: "label", type: "string", value: "PREFIX", summary: "Only workers whose label starts with PREFIX" },
+    { name: "since", type: "string", value: "WHEN", summary: "Only workers started at or after WHEN (ISO time, or 1h / 30m)" },
+    { name: "until", type: "string", value: "WHEN", summary: "Only workers started at or before WHEN (ISO time, or 1h / 30m)" },
+    OPT.json,
+  ],
+  examples: ["pai worker usage --since 2h", "pai worker usage --label armA --since 2026-10-18T06:00:00 --json"],
+  seeAlso: ["pai audit tokens usage", "pai worker ps"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      const { workers } = readWorkersSection();
+      const baseUrls = Object.fromEntries(Object.entries(workers.providers).map(([k, v]) => [k, v.baseUrl]));
+      const rep = workerUsage(
+        logDir(),
+        {
+          labelPrefix: str(ctx.opts.label),
+          since: str(ctx.opts.since) ? parseWhen(str(ctx.opts.since)!) : undefined,
+          until: str(ctx.opts.until) ? parseWhen(str(ctx.opts.until)!) : undefined,
+        },
+        baseUrls
+      );
+      out(flag(ctx, "json") ? JSON.stringify(usageJson(rep), null, 2) : renderUsage(rep, { workers: true }));
     }),
 };
 
@@ -898,6 +930,7 @@ export const workerCommand: CommandDef = {
     runCommand,
     resumeCommand,
     psCommand,
+    usageCommand,
     followCommand,
     replayCommand,
     watchCommand,
