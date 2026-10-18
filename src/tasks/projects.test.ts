@@ -3,14 +3,14 @@ import { reconcile, normalizeName, type SessionEntry, type ProjectEntry } from "
 
 const sessions: SessionEntry[] = [
   { name: "PAI", directory: "/dev/PAI" },
-  { name: "Jobs Alpha", directory: "/Personal" },
+  { name: "Jobs Alpha", directory: "/Job Search" },
   { name: "Whazaa", directory: "/dev/Whazaa" },
 ];
 
 const projects: ProjectEntry[] = [
   { id: "p1", name: "PAI" },
   { id: "p2", name: "Jobs Alpha" },
-  { id: "p3", name: "SampleTool" },
+  { id: "p3", name: "Clickr" },
 ];
 
 describe("normalizeName", () => {
@@ -39,7 +39,7 @@ describe("reconcile", () => {
   it("keeps a project whose session is not running, rather than calling it an error", () => {
     // Tasks filed here queue until the session next launches. That is the
     // feature, not a fault, so it must read differently from an unmapped one.
-    expect(byName("SampleTool").state).toBe("project-only");
+    expect(byName("Clickr").state).toBe("project-only");
   });
 
   it("groups actionable rows together instead of scattering them", () => {

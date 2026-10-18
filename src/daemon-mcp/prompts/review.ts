@@ -20,7 +20,7 @@ Session notes are at ~/.claude/projects/*/Notes/NNNN - YYYY-MM-DD - Description.
 
     git log --after="YYYY-MM-DD" --before="YYYY-MM-DD" --oneline --all
 
-Run this in ~/dev/PAI/ and any other project directory found in session notes.
+Run this in ~/dev/ai/PAI/ and any other project directory found in session notes.
 
 **Step 3: Check completed TODO items.**
 
@@ -28,7 +28,7 @@ Search for \`[x]\` items in Notes/TODO.md files of active projects.
 
 **Step 4: Check journal entries.**
 
-    find \${PAI_DIR}/Journal/ -name "YYYY-MM-DD*" 2>/dev/null
+    find ~/Daten/Cloud/Development/ai/PAI/Journal/ -name "YYYY-MM-DD*" 2>/dev/null
 
 **Step 5 (ONLY AFTER 1-4): External sources.**
 

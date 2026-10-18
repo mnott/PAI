@@ -29,7 +29,7 @@ describe("matchesOnly", () => {
   });
 
   it("ignores case", () => {
-    // The registry already holds `SampleTool`/`sampletool` and `Northwind`/`Northwind`
+    // The registry already holds `Clickr`/`clickr` and `Northwind`/`Northwind`
     // pairs, so case-sensitivity here would silently miss half of them.
     expect(matchesOnly(session(), "home")).toBe(true);
     expect(matchesOnly(session({ name: "PAI" }), "pai")).toBe(true);

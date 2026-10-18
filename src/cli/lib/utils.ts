@@ -58,7 +58,7 @@ export function slugFromPath(projectPath: string): string {
  *   "/Users/foo/my-project"        →  "-Users-foo-my-project"
  *   "/Users/foo/04 - Ablage"       →  "-Users-foo-04---Ablage"
  *   "/Users/foo/.ssh"              →  "-Users-foo--ssh"
- *   "/Users/foo/Client-System.de"     →  "-Users-foo-Client-System-de"
+ *   "/Users/foo/MDF-System.de"     →  "-Users-foo-MDF-System-de"
  *
  * NOTE: For `project add`, prefer {@link findExistingEncodedDir} to look up
  * whether Claude Code has already created a directory for this path — that
@@ -144,9 +144,9 @@ export type DirListings = Map<string, { name: string; enc: string; encLower: str
  * each candidate, and greedily match the longest one against the remaining
  * encoded string.  This correctly resolves e.g.:
  *
- *   "-Users-foo-09---Personal"  →  "/Users/foo/09 - Personal"
- *   "-Users-foo-87---Archive"  →  "/Users/foo/87 - Archive"
- *   "-Users-foo-Client-System-de"    →  "/Users/foo/Client-System.de"
+ *   "-Users-foo-09---Job-Search"  →  "/Users/foo/09 - Job Search"
+ *   "-Users-foo-87---DevonThink"  →  "/Users/foo/87 - DevonThink"
+ *   "-Users-foo-MDF-System-de"    →  "/Users/foo/MDF-System.de"
  *
  * Returns `null` if the path cannot be resolved against the filesystem.
  *

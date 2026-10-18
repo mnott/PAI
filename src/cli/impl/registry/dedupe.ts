@@ -8,7 +8,7 @@
  * `projects.root_path` is UNIQUE, so two spellings of the same directory
  * register as two projects. On a machine with symlinked path prefixes
  * (`~/dev -> Cloud/Development`, say) the same repo is reachable as
- * `~/dev/PAI` and `~/Cloud/Development/PAI`, and the scanner
+ * `~/dev/ai/PAI` and `~/Daten/Cloud/Development/ai/PAI`, and the scanner
  * registers both. Every session then lands under whichever spelling the shell
  * happened to be using, so history splits: one row accumulates 95 sessions and
  * the other has none, while both claim to be the same project.
@@ -354,7 +354,7 @@ async function mergeGroup(backend: RegistryBackend, group: MergeGroup): Promise<
  * Rewrite any remaining root_path that is not already its canonical form.
  *
  * Merging fixes the rows that already split. This stops the rest from
- * splitting later: a project registered only as `~/dev/PAILot` still has a
+ * splitting later: a project registered only as `~/dev/ai/PAILot` still has a
  * non-canonical path, so the first session started from the other spelling
  * would create a second row and the whole problem recurs.
  *

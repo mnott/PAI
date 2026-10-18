@@ -71,8 +71,8 @@ a sub-project under it, named after the session:
 Claude 🤖              ← rootProjectId
 ├── PAI
 ├── AIBroker
-├── Personal (own)
-└── Personal (assisting)
+├── Job Search (own)
+└── Job Search (assisting)
 ```
 
 Ownership is the sub-project a task sits in. Filing from a phone is then one

@@ -555,10 +555,10 @@ The planner's prompt carries the prompt rules that make plans executable:
 domain-specific instructions only (real files, real commands), constraints
 over step lists, explicit quantity ranges, no checkbox style.
 
-### SampleTool controls (desktop set)
+### Clickr controls (desktop set)
 
-The default `mcpSets` ship one set: `desktop = ["sampletool"]`. A worker launched
-`--mcp desktop` receives the sampletool MCP server — screen control for GUI work
+The default `mcpSets` ship one set: `desktop = ["clickr"]`. A worker launched
+`--mcp desktop` receives the clickr MCP server — screen control for GUI work
 — and follows the same control handover as a session:
 
 ```
@@ -566,7 +566,7 @@ pai worker controls <id> you    # hand control of the desktop to the worker
 pai worker controls <id> me     # take it back
 ```
 
-`controls` runs the `sampletool controls you|me` CLI and the worker's screenshot
+`controls` runs the `clickr controls you|me` CLI and the worker's screenshot
 and input tools honour it. Control starts with the operator: a worker cannot
 drive the desktop until it is handed over.
 

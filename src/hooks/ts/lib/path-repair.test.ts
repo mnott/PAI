@@ -60,9 +60,9 @@ describe("repairPath", () => {
   });
 
   describe("suffix rule", () => {
-    const C = "/private/tmp/ab-arms/sample-arm-041742";
-    const REL = "Sources/Documents/Pages/SampleView.swift";
-    const invented = `/Users/dev/git/SampleApp/${REL}`;
+    const C = "/private/tmp/ab-arms/save-model-ref-ornith-precise-041742";
+    const REL = "Sources/Documents/Pages/ThreeDAppearance.swift";
+    const invented = `/Users/dev/git/3DPDF/${REL}`;
 
     it("repairs an invented absolute path to the cwd file", () => {
       const r = repairPath(read(invented, C), W, fs(`${C}/${REL}`));
@@ -76,7 +76,7 @@ describe("repairPath", () => {
     });
 
     it("leaves a one-component suffix untouched", () => {
-      expect(repairPath(read("/Users/dev/git/SampleView.swift", C), W, fs(`${C}/SampleView.swift`))).toBeNull();
+      expect(repairPath(read("/Users/dev/git/ThreeDAppearance.swift", C), W, fs(`${C}/ThreeDAppearance.swift`))).toBeNull();
     });
 
     it("leaves an existing path untouched", () => {
@@ -84,7 +84,7 @@ describe("repairPath", () => {
     });
 
     it("invented prefix with the arm name, target missing under cwd: untouched", () => {
-      const p = `/tmp/tmp_9074/ab-arms/sample-arm-041742/Tests/DocumentTests/MinimalPDF.swift`;
+      const p = `/tmp/tmp_9074/ab-arms/save-model-ref-ornith-precise-041742/Tests/DocumentTests/MinimalPDF.swift`;
       expect(repairPath(read(p, C), W, fs(`${C}/Tests/Support/MinimalPDF.swift`))).toBeNull();
       expect(repairPath(read(p.replace("DocumentTests", "Support"), C), W, fs(`${C}/Tests/Support/MinimalPDF.swift`))?.new).toBe(`${C}/Tests/Support/MinimalPDF.swift`);
     });
@@ -233,7 +233,7 @@ describe("armGuardReason", () => {
 });
 
 describe("truncated cwd folder name", () => {
-  const C = "/private/tmp/ab-arms/turn-picture-mark-sample-134500";
+  const C = "/private/tmp/ab-arms/turn-picture-mark-ornith-spec-134500";
   const T = "/private/tmp/ab-arms/turn-picture-mark";
   const F = `${C}/Sources/Marks/MarkCarry.swift`;
   const bash = (command: string) => ({ tool_name: "Bash", cwd: C, tool_input: { command } });
@@ -308,10 +308,10 @@ describe("dropped middle segment of the cwd", () => {
   it("ExistingRulesStillPass: near-miss, truncated name and suffix rule as before", () => {
     expect(repairPath(read(TYPO), W, fs(GOOD))?.new).toBe(GOOD);
     const T = "/private/tmp/ab-arms/turn-picture-mark";
-    const TC = "/private/tmp/ab-arms/turn-picture-mark-sample-134500";
+    const TC = "/private/tmp/ab-arms/turn-picture-mark-ornith-spec-134500";
     const TF = `${TC}/Sources/Marks/MarkCarry.swift`;
     expect(repairPath(read(`${T}/Sources/Marks/MarkCarry.swift`, TC), W, fs(TF))?.new).toBe(TF);
-    expect(repairPath(read("/Users/dev/git/SampleApp/Sources/Documents/Pages/SampleView.swift", "/private/tmp/ab-arms/sample-arm-041742"), W, fs("/private/tmp/ab-arms/sample-arm-041742/Sources/Documents/Pages/SampleView.swift"))?.new).toBe("/private/tmp/ab-arms/sample-arm-041742/Sources/Documents/Pages/SampleView.swift");
+    expect(repairPath(read("/Users/dev/git/3DPDF/Sources/Documents/Pages/ThreeDAppearance.swift", "/private/tmp/ab-arms/save-model-ref-ornith-precise-041742"), W, fs("/private/tmp/ab-arms/save-model-ref-ornith-precise-041742/Sources/Documents/Pages/ThreeDAppearance.swift"))?.new).toBe("/private/tmp/ab-arms/save-model-ref-ornith-precise-041742/Sources/Documents/Pages/ThreeDAppearance.swift");
   });
 
   it("Edit with a dropped segment denies naming the exact repaired path", () => {

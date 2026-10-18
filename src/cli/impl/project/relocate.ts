@@ -60,14 +60,14 @@ function isHidden(name: string): boolean {
  * cannot see it, because the digits survive normalisation: "webseiten" against
  * "20webseiten".
  *
- * Found because `Client.md` links to `Infrastructure/20 - Webseiten` while the
- * registry has a dead entry for plain `Infrastructure/Webseiten`. The note files
+ * Found because `MDF.md` links to `Infrastruktur/20 - Webseiten` while the
+ * registry has a dead entry for plain `Infrastruktur/Webseiten`. The note files
  * knew where it went.
  *
  * Deliberately NOT a general suffix match, and the reason is worth spelling out
  * because "why not just match on the suffix" is the obvious next question.
  *
- * `Client/Infrastructure/` is wall-to-wall numbered: `00 - Migration Analysis`,
+ * `MDF/Infrastruktur/` is wall-to-wall numbered: `00 - Migration Analysis`,
  * `01 - Base Setup`, `02 - Storage Setup`, `03 - Network Setup`, and so on. A
  * suffix rule on a wanted `Setup` hits eight of them at once — so the uniqueness
  * rule below would veto it, and the danger would never show itself. The one that
@@ -226,8 +226,8 @@ function suggestByBasename(rootPath: string): string | undefined {
  *
  * `otherRoots` is every OTHER registered project's root path, and it is what
  * stops a repair from becoming a duplicate. Caught by the AIBroker session on the
- * first version of this: `~/PAI` was "recovered" to `~/dev/PAI`, which is a
- * second spelling of `~/Cloud/Development/PAI` — a path an ACTIVE project
+ * first version of this: `~/PAI` was "recovered" to `~/dev/ai/PAI`, which is a
+ * second spelling of `~/Daten/Cloud/Development/ai/PAI` — a path an ACTIVE project
  * already owns. Two registry entries for one directory is the exact mess that was
  * merged out of this registry earlier the same day.
  *

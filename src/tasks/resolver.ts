@@ -142,8 +142,8 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // `pai:` labels there is no principled winner, only whichever the code
   // happens to see first.
   //
-  // Labels also survive a move. On 2026-08-02 a task was moved from SampleTool to
-  // AIBroker in the tracker UI and a comment on it was delivered to SampleTool,
+  // Labels also survive a move. On 2026-08-02 a task was moved from Clickr to
+  // AIBroker in the tracker UI and a comment on it was delivered to Clickr,
   // because a label from its old home outranked the project it now sat in. The
   // user had not seen the label and had not used labels in months. A field
   // nobody is looking at should not outrank the one they just changed

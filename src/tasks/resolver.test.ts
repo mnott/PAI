@@ -8,16 +8,16 @@ import type { AliasMap } from "./resolver.js";
  */
 const ALIASES: AliasMap = new Map([
   ["broker", { alias: "broker", rootPath: "/dev/ai/AIBroker" }],
-  ["sampletool", { alias: "sampletool", rootPath: "/dev/ai/sampletool" }],
+  ["clickr", { alias: "clickr", rootPath: "/dev/ai/clickr" }],
   // Keys are normalize()d: non-alphanumeric runs become hyphens, so the
   // container "Jobs Alpha" and the label "pai:jobs alpha" both land here.
-  ["jobs-alpha", { alias: "jobs-alpha", rootPath: "/Personal" }],
+  ["jobs-alpha", { alias: "jobs-alpha", rootPath: "/Job Search" }],
 ]) as AliasMap;
 
 describe("resolveOwner — the project decides", () => {
   /**
-   * Reported 2026-08-02: a task was moved from SampleTool to AIBroker in the
-   * tracker UI and a comment on it was delivered to SampleTool, because a label
+   * Reported 2026-08-02: a task was moved from Clickr to AIBroker in the
+   * tracker UI and a comment on it was delivered to Clickr, because a label
    * from its old home outranked the project it now sat in. The user had not
    * seen the label and had not used labels in months.
    *
@@ -27,7 +27,7 @@ describe("resolveOwner — the project decides", () => {
    */
   it("follows the container even when a stale label names somewhere else", () => {
     const owner = resolveOwner(
-      { labels: ["pai:sampletool"], container: "broker" },
+      { labels: ["pai:clickr"], container: "broker" },
       ALIASES
     );
     expect(owner.project).toBe("broker");
@@ -35,8 +35,8 @@ describe("resolveOwner — the project decides", () => {
   });
 
   it("ignores a bare label that names a different project", () => {
-    // The exact shape of the live bug: label `sampletool`, project AIBroker.
-    const owner = resolveOwner({ labels: ["sampletool"], container: "broker" }, ALIASES);
+    // The exact shape of the live bug: label `clickr`, project AIBroker.
+    const owner = resolveOwner({ labels: ["clickr"], container: "broker" }, ALIASES);
     expect(owner.project).toBe("broker");
   });
 
@@ -106,10 +106,10 @@ describe("the bare `pai` marker", () => {
 
   it("never outranks an explicit pai:<name> label", () => {
     const owner = resolveOwner(
-      { labels: ["pai", "pai:sampletool"], container: null, defaultOwner: "broker" },
+      { labels: ["pai", "pai:clickr"], container: null, defaultOwner: "broker" },
       ALIASES
     );
-    expect(owner.project).toBe("sampletool");
+    expect(owner.project).toBe("clickr");
   });
 
   it("leaves the task unrouted when no default is configured", () => {
@@ -122,7 +122,7 @@ describe("the bare `pai` marker", () => {
 
 describe("ownerLabel", () => {
   it("reads the first pai: label and ignores others", () => {
-    expect(ownerLabel(["urgent", "pai:broker", "pai:sampletool"])).toBe("broker");
+    expect(ownerLabel(["urgent", "pai:broker", "pai:clickr"])).toBe("broker");
   });
 
   it("ignores a bare pai, which names no owner", () => {
