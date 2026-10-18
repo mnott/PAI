@@ -29,6 +29,8 @@
 // Types
 // ---------------------------------------------------------------------------
 
+import { renderDecision } from "./render-decision.js";
+
 export interface GateHookInput {
   session_id?: string;
   transcript_path?: string;
@@ -197,13 +199,7 @@ export function buildStaleHandleCorrection(toolName: string): string {
 function correctDecision(toolName: string, reason: string, narrative: string): GateDecision {
   return {
     action: "correct",
-    output: JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: reason,
-      },
-    }),
+    output: renderDecision({ decision: "deny", reason }),
     observation: {
       type: "decision",
       title: `MCP deferred-tool gate corrected: ${toolName}`,

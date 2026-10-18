@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { decideSleepPollGate, renderDecision, type SleepPollGateInput } from "./sleep-poll-gate.js";
+import { decideSleepPollGate, type SleepPollGateInput } from "./sleep-poll-gate.js";
+import { renderDecision } from "./render-decision.js";
 
 function decisionOf(input: SleepPollGateInput, env: Record<string, string | undefined> = {}) {
   return JSON.parse(renderDecision(decideSleepPollGate(input, env))).hookSpecificOutput;

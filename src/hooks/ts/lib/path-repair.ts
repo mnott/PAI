@@ -14,6 +14,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
+import { renderDecision } from "./render-decision.js";
 
 export const MAX_DISTANCE = 3;
 
@@ -347,9 +348,7 @@ function denyBash(input: PathRepairInput, env: NodeJS.ProcessEnv): string | null
 }
 
 export function renderDeny(reason: string): string {
-  return JSON.stringify({
-    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
-  });
+  return renderDecision({ decision: "deny", reason });
 }
 
 /** Root holding running A/B arms; overridable so tests never touch the real one. */

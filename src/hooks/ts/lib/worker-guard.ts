@@ -18,7 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { type GateDecision } from "./sleep-poll-gate.js";
+import { type GateDecision } from "./render-decision.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
@@ -229,7 +229,7 @@ function gitSub(args: string[]): { sub: string; rest: string[] } | null {
 }
 
 const PATTERN_KILL = new Set(["pkill", "killall"]);
-export const PATTERN_KILL_PREFIX = "pattern-based process kill blocked";
+const PATTERN_KILL_PREFIX = "pattern-based process kill blocked";
 const PATTERN_KILL_REASON =
   PATTERN_KILL_PREFIX + ": kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
   "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";

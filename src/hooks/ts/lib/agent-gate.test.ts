@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   decideAgentGate,
-  renderDecision,
   shortLabel,
   SUBAGENT_TOOL_NAMES,
   BYPASS_ENV,
   type AgentGateInput,
 } from "./agent-gate.js";
+import { renderDecision } from "./render-decision.js";
 
 /**
  * A real PreToolUse payload shape: taken from an actual in-process subagent

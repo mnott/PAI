@@ -1,3 +1,4 @@
+import { GUARD_MARKER } from "./render-decision.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,7 +90,7 @@ describe("renderToolDenial", () => {
     const output = renderToolDenial(denial);
     const parsed = JSON.parse(output);
     expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe(denial);
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe(GUARD_MARKER + denial);
   });
 });
 

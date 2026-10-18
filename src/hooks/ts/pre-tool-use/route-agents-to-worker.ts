@@ -23,10 +23,10 @@ import { workersLogDir, ledgerPath } from "../../../workers/paths.js";
 import { appendLedger } from "../../../workers/ledger.js";
 import {
   decideAgentGate,
-  renderDecision,
   shortLabel,
   type AgentGateInput,
 } from "../lib/agent-gate.js";
+import { renderDecision } from "../lib/render-decision.js";
 
 /**
  * What to print when the hook cannot read or parse its own input. This hook is

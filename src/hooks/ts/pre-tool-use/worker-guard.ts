@@ -19,7 +19,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { renderDecision } from "../lib/sleep-poll-gate.js";
+import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     const command = (input.tool_input as { command?: unknown } | undefined)?.command;
     const d = typeof command === "string" ? decideOrchestratorBash(command) : { decision: "allow" as const };
     if (d.decision === "block") {
-      process.stdout.write(JSON.stringify({ decision: "block", reason: d.reason }) + "\n");
+      process.stdout.write(renderDecision({ decision: "deny", reason: d.reason }) + "\n");
       return;
     }
   }

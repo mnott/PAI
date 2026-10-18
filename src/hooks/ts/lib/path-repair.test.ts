@@ -319,7 +319,7 @@ describe("dropped middle segment of the cwd", () => {
     expect(r.new).toBe(C);
     const out = JSON.parse(renderRepair(r, "Edit")).hookSpecificOutput;
     expect(out.permissionDecision).toBe("deny");
-    expect(out.permissionDecisionReason).toBe(`Wrong path. Use exactly: ${C}`);
+    expect(out.permissionDecisionReason).toBe(`PAI guard: Wrong path. Use exactly: ${C}`);
   });
 });
 
@@ -365,7 +365,7 @@ describe("renderRepair", () => {
     for (const tool of ["Edit", "MultiEdit", "Write", "NotebookEdit"]) {
       const out = JSON.parse(renderRepair(r, tool)).hookSpecificOutput;
       expect(out.permissionDecision).toBe("deny");
-      expect(out.permissionDecisionReason).toBe(`Wrong path. Use exactly: ${GOOD}`);
+      expect(out.permissionDecisionReason).toBe(`PAI guard: Wrong path. Use exactly: ${GOOD}`);
       expect(out.updatedInput).toBeUndefined();
     }
   });

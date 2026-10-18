@@ -20,6 +20,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { renderDecision } from "../lib/render-decision.js";
 import { decideEditGate, decideOrchestratorEdit, type EditGateContext } from "../lib/edit-gate.js";
 
 function isUnder(p: string, prefix: string): boolean {
@@ -55,7 +56,7 @@ function allow(): void {
 }
 
 function block(reason: string): void {
-  process.stdout.write(JSON.stringify({ decision: "block", reason }) + "\n");
+  process.stdout.write(renderDecision({ decision: "deny", reason }) + "\n");
   process.exit(0);
 }
 

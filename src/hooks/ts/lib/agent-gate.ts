@@ -94,19 +94,3 @@ export function decideAgentGate(
     ledger: "DENIED-ANTHROPIC-AGENT",
   };
 }
-
-/** Render a decision as the JSON the harness reads on the hook's stdout. */
-export function renderDecision(d: GateDecision): string {
-  if (d.decision === "allow") {
-    return JSON.stringify({
-      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
-    });
-  }
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: d.reason,
-    },
-  });
-}
