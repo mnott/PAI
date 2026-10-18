@@ -398,6 +398,7 @@ describe("tick delivery", () => {
       now: NOW,
       isAlive: () => true,
       statuses,
+      pushPolicy: "all",
       ...(push ? { push: async () => push() } : {}),
     });
 
@@ -712,7 +713,7 @@ describe("running-worker tool-error pushes", () => {
     );
 
   const tickWith = async (statuses: WorkerStatus[], push: () => Promise<boolean> = async () => true) =>
-    runSupervisionTick(dir, { now: NOW, isAlive: () => true, statuses, push });
+    runSupervisionTick(dir, { now: NOW, isAlive: () => true, statuses, push, pushPolicy: "all" });
 
   const MISSING = "File does not exist. Note: your current working directory is /w/x";
 
@@ -747,6 +748,40 @@ describe("running-worker tool-error pushes", () => {
     expect(r.events[0].text).toMatch(/^\[harness\]/);
     // distinct claim ids: both signatures can land in one tick
     expect(r.events[0].id).not.toContain("undefined");
+  });
+
+  describe("push policy harness (default)", () => {
+    const tickH = (statuses: WorkerStatus[]) =>
+      runSupervisionTick(dir, { now: NOW, isAlive: () => true, statuses, push: async () => true, pushPolicy: "harness" });
+
+    it("a model-class error is recorded, not pushed", async () => {
+      record(MISSING);
+      const r = await tickH([fake({ id: "w-run", state: "running" })]);
+      expect(r.events).toHaveLength(0);
+    });
+
+    it("a harness-class error still pushes", async () => {
+      record("API Error: 401 Failed to authenticate");
+      const r = await tickH([fake({ id: "w-run", state: "running" })]);
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0].text).toMatch(/^\[harness\]/);
+    });
+
+    it("thrashing is not pushed, a stall is", async () => {
+      expect(await tickH([fake({ id: "w-run", consecFails: 9 })])).toMatchObject({ events: [] });
+      const r = await tickH([fake({ id: "w-run2", updatedMinsAgo: 15 })]);
+      expect(r.events.map((e) => e.kind)).toEqual(["stalled"]);
+    });
+
+    it("the end-of-run notice carries one tool-error summary line", async () => {
+      record(MISSING);
+      record(MISSING, "w-run", NOW.getTime() - 900);
+      await tickH([fake({ id: "w-run", state: "running" })]);
+      const r = await tickH([fake({ id: "w-run", state: "done", rc: 0 })]);
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0].kind).toBe("finished");
+      expect(r.events[0].text).toMatch(/finished rc=0 .*\| tool errors: 2 model; top: .* x\d/);
+    });
   });
 
   it("nothing is pushed after the run ends — the result report carries the counts", async () => {

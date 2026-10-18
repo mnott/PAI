@@ -247,3 +247,48 @@ describe("loop-watch", () => {
     expect(result).toEqual([]);
   });
 });
+describe("echo loop", () => {
+  const bash = (i: number, command: string) => use(`e${i}`, "Bash", { command });
+  const echoes = (n: number, mk: (i: number) => string = (i) => `echo "step ${i}"`) => Array.from({ length: n }, (_, i) => bash(i, mk(i)));
+  const st = [{ id: "w1", state: "running", pid: 9, provider: "anthropic" }] as unknown as WorkerStatus[];
+  const run = (events: unknown[]) => {
+    const deps = { readEvents: vi.fn().mockResolvedValue(events), say: vi.fn(), kill: vi.fn() };
+    return checkLoops("/tmp", st, {}, deps).then((f) => ({ f, deps }));
+  };
+
+  it("12 echo-only turns without an edit warn as a loop", async () => {
+    const { f, deps } = await run(echoes(12));
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ action: "warn", loop: { kind: "echo", by: "turns", count: 12 } });
+    expect(deps.kill).not.toHaveBeenCalled();
+  });
+
+  it("24 turns hit the kill policy", async () => {
+    const { f, deps } = await run(echoes(24));
+    expect(f[0].action).toBe("stop");
+    expect(deps.kill).toHaveBeenCalledWith(9);
+  });
+
+  it("11 turns, or an Edit in the run, is not a loop", async () => {
+    expect((await run(echoes(11))).f).toEqual([]);
+    expect((await run([...echoes(11), use("ed", "Edit", { file_path: "a" }), ...echoes(11)])).f).toEqual([]);
+  });
+
+  it("a real Bash command or a Read breaks the run", async () => {
+    expect((await run([...echoes(11), bash(99, "npx tsc --noEmit"), ...echoes(5)])).f).toEqual([]);
+    expect((await run([...echoes(6), use("r", "Read", { file_path: "a" }), ...echoes(6)])).f).toEqual([]);
+  });
+
+  it("a redirect that writes a file is not trivial", async () => {
+    expect((await run(echoes(14, (i) => `echo hi > f${i}.txt`))).f).toEqual([]);
+  });
+
+  it("the same success string 3 times flags it even in few turns (digits ignored)", async () => {
+    const { f } = await run(echoes(3, (i) => `echo "✅ TASK COMPLETE (check ${i})"`));
+    expect(f[0]).toMatchObject({ action: "warn", loop: { kind: "echo", by: "string", count: 3 } });
+  });
+
+  it("two different success lines are fine", async () => {
+    expect((await run([bash(1, 'echo "SUCCESS a"'), bash(2, 'echo "COMPLETE b"')])).f).toEqual([]);
+  });
+});

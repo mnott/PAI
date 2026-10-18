@@ -377,13 +377,18 @@ export function detectRunningWorkerErrors(
   running: readonly RunningWorkerRef[],
   records: readonly ToolErrorRecord[],
   sent: Record<string, Record<string, number>>,
-  now: number
+  now: number,
+  harnessOnly = false
 ): RunningErrorPush[] {
   const sessions = new Map(running.map((r) => [r.id, r.session] as const));
   const byWorker = new Map<string, Map<string, ToolErrorRecord[]>>();
   const benign = new Map<string, number>();
   for (const r of records) {
     if (!sessions.has(r.worker)) continue;
+    if (harnessOnly && classifyToolError(r).cls !== "harness") {
+      if (classifyToolError(r).cls === "benign") benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1);
+      continue; // recorded, summarised at the end of the run, not pushed
+    }
     if (classifyToolError(r).cls === "benign") {
       benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1); // recorded and counted, never pushed
       continue;
@@ -402,6 +407,26 @@ export function detectRunningWorkerErrors(
     }
   }
   return out;
+}
+
+/**
+ * One line for a unit's end-of-run notice: counts by class and the most
+ * frequent signature ("tool errors: 12 model, 3 benign; top: tsc TS2307 x4").
+ * Empty string when the worker recorded none.
+ */
+export function toolErrorSummary(records: readonly ToolErrorRecord[], worker: string): string {
+  const mine = records.filter((r) => r.worker === worker);
+  if (!mine.length) return "";
+  const byCls = new Map<ErrorClass, number>();
+  const bySig = new Map<string, number>();
+  for (const r of mine) {
+    const c = classifyToolError(r).cls;
+    byCls.set(c, (byCls.get(c) ?? 0) + 1);
+    bySig.set(r.signature, (bySig.get(r.signature) ?? 0) + 1);
+  }
+  const counts = (["harness", "model", "unknown", "benign"] as const).filter((c) => byCls.has(c)).map((c) => `${byCls.get(c)} ${c}`);
+  const [sig, n] = [...bySig.entries()].sort((a, b) => b[1] - a[1])[0];
+  return `tool errors: ${counts.join(", ")}; top: ${sig.slice(0, 80)} x${n}`;
 }
 
 /** "30m", "2h", "1d" → ms; null when unparsable. */

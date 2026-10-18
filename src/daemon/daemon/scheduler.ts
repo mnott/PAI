@@ -508,7 +508,7 @@ export function startWorkerSupervisor(): void {
     if (!ticking) {
       ticking = true;
     runSupervisionTick(workersLogDir(readWorkersSection().workers), {
-      stallMs: stallMinutesFromEnv() * 60_000,
+      ...(process.env.PAI_WORKER_STALL_MINUTES ? { stallMs: stallMinutesFromEnv() * 60_000 } : {}),
       thrashFails: thrashFailsFromEnv(),
     })
       .then((r) => {

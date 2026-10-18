@@ -411,3 +411,16 @@ describe("cacheKeepaliveSecs knob", () => {
   });
 });
 
+
+describe("workers.supervision.push", () => {
+  it("defaults to harness with a 10 minute stall", async () => {
+    const { parseWorkersConfig } = await import("./config.js");
+    expect(parseWorkersConfig({}).supervision).toMatchObject({ push: "harness", stallMinutes: 10 });
+  });
+  it("accepts all and a custom stall, rejects garbage", async () => {
+    const { parseWorkersConfig } = await import("./config.js");
+    expect(parseWorkersConfig({ supervision: { push: "all", stallMinutes: 5 } }).supervision).toMatchObject({ push: "all", stallMinutes: 5 });
+    expect(() => parseWorkersConfig({ supervision: { push: "some" } })).toThrow(/supervision\.push/);
+    expect(() => parseWorkersConfig({ supervision: { stallMinutes: 0 } })).toThrow(/stallMinutes/);
+  });
+});

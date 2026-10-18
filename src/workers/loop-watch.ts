@@ -9,9 +9,11 @@
 
 import { eventsPath } from "./paths.js";
 import { WorkerStatus } from "./status.js";
-import { detectRepeatLoop, loopAction, type RepeatLoop } from "./repeat-loop.js";
+import { detectEchoLoop, detectRepeatLoop, echoLoopAction, loopAction, type RepeatLoop } from "./repeat-loop.js";
 
 export const LOOP_NOTE = "you have repeated the same failing call 3 times; the file already contains this text or your old_string is wrong: re-read the file region or move on";
+
+export const ECHO_NOTE = "you are only echoing success and editing nothing: the task is done or it is not; make the edit, or end the run with your R report";
 
 export interface LoopFinding {
   worker: string;
@@ -68,10 +70,10 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
     try {
       const events = await readEvents(logDir, status.id);
-      const loop = detectRepeatLoop(events);
+      const loop = detectRepeatLoop(events) ?? detectEchoLoop(events);
       if (!loop) continue;
 
-      const action = loopAction(loop.count);
+      const action = loop.kind === "echo" ? echoLoopAction(loop) : loopAction(loop.count);
       if (action === "none") continue;
 
       const local = status.provider !== "anthropic";
@@ -81,7 +83,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
       if (action === "warn" && local) {
         try {
-          await say(logDir, status.id, LOOP_NOTE);
+          await say(logDir, status.id, loop.kind === "echo" ? ECHO_NOTE : LOOP_NOTE);
         } catch {
           // errors swallowed
         }

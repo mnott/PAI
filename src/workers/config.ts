@@ -245,6 +245,14 @@ export interface WorkersRoutingConfig {
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
 export interface WorkersSupervisionConfig {
   pointer: boolean;
+  /**
+   * Which alerts reach the orchestrating session. "harness" (default): harness-class
+   * tool errors, loop detections and stalls; the rest is recorded and summarised once
+   * when the unit ends. "all": every first-occurrence tool error, thrashing and sleeping too.
+   */
+  push: "harness" | "all";
+  /** Minutes without a tool call before a running unit counts as stalled (default 10). */
+  stallMinutes: number;
 }
 
 /** Sub-worker caps: how deep the worker tree may grow, how wide per parent. */
@@ -551,7 +559,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
     tree: { ...DEFAULT_TREE },
-    supervision: { pointer: false },
+    supervision: { pointer: false, push: "harness", stallMinutes: 10 },
     pool: { ...DEFAULT_POOL },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
@@ -995,14 +1003,22 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
-  let supervision: WorkersSupervisionConfig = { pointer: false };
+  let supervision: WorkersSupervisionConfig = { pointer: false, push: "harness", stallMinutes: 10 };
   if (w.supervision !== undefined) {
     if (typeof w.supervision !== "object" || w.supervision === null || Array.isArray(w.supervision)) {
       bad(".supervision", "must be an object");
     }
     const sv = w.supervision as Record<string, unknown>;
     if (sv.pointer !== undefined && typeof sv.pointer !== "boolean") bad(".supervision.pointer", "must be a boolean");
-    supervision = { pointer: sv.pointer === true };
+    if (sv.push !== undefined && sv.push !== "harness" && sv.push !== "all") bad(".supervision.push", 'must be "harness" or "all"');
+    if (sv.stallMinutes !== undefined && !(typeof sv.stallMinutes === "number" && Number.isFinite(sv.stallMinutes) && sv.stallMinutes > 0)) {
+      bad(".supervision.stallMinutes", "must be a positive number");
+    }
+    supervision = {
+      pointer: sv.pointer === true,
+      push: sv.push === "all" ? "all" : "harness",
+      stallMinutes: typeof sv.stallMinutes === "number" ? sv.stallMinutes : 10,
+    };
   }
 
   let tree = { ...DEFAULT_TREE };
