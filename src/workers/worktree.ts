@@ -970,7 +970,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
         `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
     );
   }
-  const verifyLine = opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "";
+  const verifyLine = [opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "", stubScan(st.cwd, oldHead)].filter(Boolean).join("\n");
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
@@ -1022,10 +1022,43 @@ export function runVerify(cwd: string, cmd: string, oldHead: string): string {
   delete env.PAI_WORKER_ORCHESTRATOR;
   const r = spawnSync("sh", ["-c", cmd], { cwd, env, stdio: "inherit" });
   if (r.status === 0) return `verify passed: ${cmd}`;
+  const head = revertMerge(cwd, oldHead);
+  throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${head}; the worker branch is kept`);
+}
+
+/** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
+function revertMerge(cwd: string, oldHead: string): string {
   const head = git(cwd, ["rev-parse", "HEAD"]);
   const isMergeCommit = git(cwd, ["rev-list", "--parents", "-n", "1", "HEAD"]).split(" ").length > 2;
   git(cwd, isMergeCommit ? ["revert", "-m", "1", "--no-edit", head] : ["revert", "--no-edit", `${oldHead}..HEAD`]);
-  throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${head}; the worker branch is kept`);
+  return head;
+}
+
+/** Lines a merge may not add under src/: placeholders that pass tsc and tests but do nothing. */
+export const STUB_PATTERN = /TODO: [Ii]mplement|Promise\.resolve\(0\)\s*\/\/\s*TODO|throw new Error\(["']not implemented/;
+
+/** First `file:line` that the merge (oldHead..HEAD) adds under src/ matching STUB_PATTERN, or null. */
+export function findAddedStub(cwd: string, oldHead: string): string | null {
+  const diff = git(cwd, ["diff", "-U0", "--no-color", oldHead, "HEAD", "--", "src/"]);
+  let file = "";
+  let line = 0;
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ ")) file = l.slice(4).replace(/^b\//, "");
+    else if (l.startsWith("@@")) line = parseInt(/\+(\d+)/.exec(l)?.[1] ?? "0", 10);
+    else if (l.startsWith("+")) {
+      if (STUB_PATTERN.test(l)) return `${file}:${line}`;
+      line++;
+    }
+  }
+  return null;
+}
+
+/** Built-in stub scan after a merge: a hit reverts it exactly like a failed verify. */
+export function stubScan(cwd: string, oldHead: string): string {
+  const hit = findAddedStub(cwd, oldHead);
+  if (!hit) return "";
+  const head = revertMerge(cwd, oldHead);
+  throw new Error(`stub scan failed: ${hit}: reverted ${head}; the worker branch is kept`);
 }
 
 /** `pai worker discard <id>`: drop worktree and branch after salvaging what they carry. */

@@ -313,6 +313,8 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     mcpSets = parseMcpSetsValue(undefined, "mcp_sets");
   }
 
+  mergeVerifyOf(r, (m) => withLine(doc, ["merge", "verify"], yamlPath, new WorkersConfigError(m)));
+
   const active = r.active === undefined || r.active === null ? null : String(r.active);
   if (active !== null && active !== ANTHROPIC_NATIVE && active !== "auto" && !providers[active]) {
     withLine(
@@ -326,6 +328,26 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
   }
 
   return { active, providers, classes, capabilities, mcpSets, nativeModels };
+}
+
+/** The `merge.verify` command of a parsed workers.yaml root (undefined when unset); `fail` is called with the message when the key is malformed. */
+function mergeVerifyOf(root: Record<string, unknown>, fail: (msg: string) => never): string | undefined {
+  const m = root.merge;
+  if (m === undefined || m === null) return undefined;
+  if (typeof m !== "object" || Array.isArray(m)) return fail("merge: must be a mapping");
+  const v = (m as Record<string, unknown>).verify;
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || !v.trim()) return fail("merge.verify: must be a non-empty string (a shell command)");
+  return v;
+}
+
+/** The default `pai worker merge` gate from workers.yaml `merge.verify`; undefined when the file or key is absent. */
+export function readMergeVerify(yamlPath: string = workersYamlPath()): string | undefined {
+  const loaded = readWorkersYaml(yamlPath);
+  if (!loaded) return undefined;
+  return mergeVerifyOf((loaded.doc.toJS() ?? {}) as Record<string, unknown>, (m) => {
+    throw new WorkersConfigError(`${yamlPath}: ${m}`);
+  });
 }
 
 /** Read + parse workers.yaml. Returns null if the file does not exist. */

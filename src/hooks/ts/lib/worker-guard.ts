@@ -23,7 +23,7 @@ import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
-import { forceAddReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
+import { forceAddReason, maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 import { dropHeredocBodies } from "./heredoc.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
 
@@ -456,7 +456,7 @@ export function decideWorkerGuard(
     const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
     if (d.decision === "allow" && typeof ti.command === "string") {
       const cmd = ti.command as string;
-      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false));
+      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false));
       if (why) return deny(why);
       if (isLocalWorker(env)) {
         const why2 = localRmReason(parseCommand(cmd), ctx().cwd);

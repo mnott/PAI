@@ -22,6 +22,7 @@ import { loadStatus, ownsPid, saveStatus, setWorkerLabel, waitForTerminalStatus 
 import { callerDescription, requestKill } from "../../workers/endreason.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
+import { readMergeVerify } from "../../workers/workers-config.js";
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -581,12 +582,13 @@ const mergeCommand: CommandDef = {
   name: "merge",
   summary: "Merge a worker's branch into your checkout",
   description:
-    "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. With --verify the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1.",
+    "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error(\"not implemented` revert the merge the same way.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker pending`)" }],
   options: [
     { name: "no-commit", type: "boolean", summary: "Apply the changes uncommitted; keep branch and worktree" },
     { name: "patch", type: "boolean", summary: "Same as --no-commit" },
-    { name: "verify", type: "string", value: "CMD", summary: "Run CMD after the merge; revert the merge when it fails" },
+    { name: "verify", type: "string", value: "CMD", summary: "Run CMD after the merge; revert the merge when it fails (default: workers.yaml merge.verify)" },
+    { name: "no-verify", type: "boolean", summary: "Skip the configured merge.verify default (prints a warning)" },
   ],
   examples: [
     "pai worker merge w-20260101-abc",
@@ -596,7 +598,14 @@ const mergeCommand: CommandDef = {
   seeAlso: ["pai worker verify", "pai worker pending", "pai worker discard"],
   run: (ctx) =>
     guard("pai worker pending", () => {
-      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify: str(ctx.opts.verify) }));
+      let verify = str(ctx.opts.verify);
+      if (verify === undefined) {
+        const configured = readMergeVerify();
+        if (flag(ctx, "no-verify")) {
+          if (configured) out(`warning: --no-verify skips the configured merge.verify gate (${configured})`);
+        } else verify = configured;
+      }
+      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify }));
     }),
 };
 

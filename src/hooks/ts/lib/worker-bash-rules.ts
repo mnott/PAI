@@ -5,6 +5,7 @@
  * These functions are called after prefix stripping but before other processing.
  */
 import { parseCommand } from "./worker-guard.js";
+import { dropHeredocBodies } from "./heredoc.js";
 
 /** Guard reason texts; tool-errors.ts builds its guard-redirect rule from these. */
 const NODE_ON_TS_PREFIX = "node cannot load TypeScript source";
@@ -223,4 +224,21 @@ export function gitAddPaths(command: string): string[] {
     }
   }
   return paths;
+}
+
+export const MASKED_PROOF_REASON = "proof command with a masked result (`> /dev/null`, `||`, `; true`): run it bare and read the output";
+
+const PROOF_COMMAND = /(?:^|\s)(?:(?:npx|pnpm exec|\.\/node_modules\/\.bin\/)\s*)?(?:tsc|vitest)(?:\s|$)|\bnpm\s+(?:run\s+)?test\b|\bpai\s+worker\s+merge\b[^|;&\n]*--verify\b/;
+
+/** Reason when a tsc/vitest/npm test/`pai worker merge --verify` segment hides its result: output to /dev/null, followed by `||`, or followed by a bare `true`/`:`. Heredoc bodies are ignored. */
+export function maskedProofReason(command: string): string | null {
+  const parts = dropHeredocBodies(command).split(/(\|\||&&|;|\n|\|)/);
+  for (let i = 0; i < parts.length; i += 2) {
+    if (!PROOF_COMMAND.test(parts[i])) continue;
+    if (/(?:^|[\s\d&])>>?\s*\/dev\/null/.test(parts[i])) return MASKED_PROOF_REASON;
+    const delim = parts[i + 1];
+    if (delim === "||") return MASKED_PROOF_REASON;
+    if (delim === ";" && /^\s*(?:true|:)\s*$/.test(parts[i + 2] ?? "")) return MASKED_PROOF_REASON;
+  }
+  return null;
 }

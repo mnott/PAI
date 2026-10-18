@@ -145,6 +145,14 @@ init` writes on a machine with no workers.yaml yet.
 - **`mcp_sets.<name>`** — named MCP server lists; `--mcp <name>` and a
   class's `mcp` field expand these.
 
+- **`merge.verify`** (optional string) — shell command `pai worker merge`
+  runs on the merged tree as if `--verify` were given, e.g.
+  `merge: {verify: "npx tsc --noEmit && npx vitest run"}`. An explicit
+  `--verify CMD` overrides it; `--no-verify` skips it and prints a warning.
+  A built-in stub scan (added `src/` lines matching `TODO: implement`,
+  `Promise.resolve(0) // TODO`, `throw new Error("not implemented`) runs after
+  every merge and reverts it like a failed verify.
+
 ### Optional advanced provider fields
 
 Not in the starter, but read when present (same names `pai worker providers

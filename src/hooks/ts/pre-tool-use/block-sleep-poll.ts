@@ -10,6 +10,9 @@
  * enforcement, prose alone does not stop it (observed 2026-09-29: sessions and
  * workers kept running `sleep 590` waits on a background job anyway).
  *
+ * It also hosts the main-session git gate (lib/main-session-git-gate): no git
+ * mutation in slot worktrees, no ad-hoc worktree/worker-branch removal.
+ *
  * This file is only I/O: read stdin, ask lib/sleep-poll-gate for the
  * decision, print it. The decision itself lives in lib/sleep-poll-gate.ts and
  * is tested there.
@@ -17,6 +20,7 @@
 
 import { decideSleepPollGate, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
 import { renderDecision } from "../lib/render-decision.js";
+import { mainSessionBashReason } from "../lib/main-session-git-gate.js";
 import { raiseWaitTimeout } from "../lib/wait-timeout.js";
 
 function allow(): void {
@@ -44,6 +48,11 @@ async function main(): Promise<void> {
     return allow();
   }
 
+  const command = input.tool_input?.command;
+  if (process.env.PAI_WORKER !== "1" && typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
+    const why = mainSessionBashReason(command, (input as { cwd?: string }).cwd ?? process.cwd());
+    if (why) return deny(why);
+  }
   const decision = decideSleepPollGate(input, process.env);
   if (decision.decision === "deny") return deny(decision.reason);
   // the worker guard hook does this for workers; interactive sessions get it here

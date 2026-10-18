@@ -20,6 +20,7 @@ import {
   relocateWorkersYaml,
   inlineWorkersYamlKeys,
   readWorkersYaml,
+  readMergeVerify,
   writeWorkersYamlText,
   initWorkersYaml,
   migrateWorkersToYaml,
@@ -773,5 +774,21 @@ describe("relocating workers.yaml from an old default location", () => {
     expect(needsWorkersYamlRelocation()).toBe(false);
     const r = relocateWorkersYaml();
     expect(r.fromPath).toBeNull();
+  });
+});
+
+describe("merge.verify", () => {
+  it("reads the string, undefined when unset, and rejects a non-string", () => {
+    const d = newDir();
+    const p = join(d, "workers.yaml");
+    expect(readMergeVerify(p)).toBeUndefined();
+    writeFileSync(p, "merge:\n  verify: npx tsc --noEmit\n", "utf8");
+    expect(readMergeVerify(p)).toBe("npx tsc --noEmit");
+    writeFileSync(p, "providers: {}\n", "utf8");
+    expect(readMergeVerify(p)).toBeUndefined();
+    writeFileSync(p, "merge:\n  verify: 42\n", "utf8");
+    expect(() => readMergeVerify(p)).toThrow(/merge\.verify: must be a non-empty string/);
+    writeFileSync(p, "merge: nope\n", "utf8");
+    expect(() => readMergeVerify(p)).toThrow(/merge: must be a mapping/);
   });
 });
