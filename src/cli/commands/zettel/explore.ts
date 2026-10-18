@@ -1,15 +1,14 @@
 /** zettel explore: follow link chains from a starting note. */
 
-import type { Command } from "commander";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header } from "../../lib/utils.js";
 import { getFedBackend, shortPath } from "./utils.js";
 
-async function cmdExplore(
+export async function zettelExploreCmd(
   note: string,
-  opts: { depth?: string; direction?: string; mode?: string }
-): Promise<void> {
-  const depth = parseInt(opts.depth ?? "3", 10);
+  opts: { depth?: number; direction?: string; mode?: string }
+): Promise<number> {
+  const depth = opts.depth ?? 3;
   const direction = (opts.direction ?? "both") as "forward" | "backward" | "both";
   const mode = (opts.mode ?? "all") as "sequential" | "associative" | "all";
 
@@ -27,7 +26,7 @@ async function cmdExplore(
   if (result.nodes.length === 0) {
     console.log(warn("  No connected notes found. Check that the note path exists in the vault index."));
     console.log();
-    return;
+    return 0;
   }
 
   console.log(`  ${chalk.cyan("●")} ${bold(shortPath(result.root))}  ${dim("(root)")}`);
@@ -68,22 +67,11 @@ async function cmdExplore(
     console.log(warn("  Max depth reached — use --depth to explore further"));
   }
   console.log();
+
+  return 0;
 }
 
-export function registerExploreCommand(parent: Command): void {
-  parent
-    .command("explore <note>")
-    .description("Follow link chains from a starting note")
-    .option("--depth <n>", "Maximum traversal depth (1-10)", "3")
-    .option("--direction <d>", "Link direction: forward | backward | both", "both")
-    .option("--mode <m>", "Edge mode: sequential | associative | all", "all")
-    .action(async (note: string, opts: { depth?: string; direction?: string; mode?: string }) => {
-      try {
-        await cmdExplore(note, opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+export function registerExploreCommand(parent: import("commander").Command): void {
+  // This function is kept for backward compatibility but will not be used
+  // as the command is now directly defined in zettel.ts
 }
