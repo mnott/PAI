@@ -1234,22 +1234,39 @@ function sleep(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * The status bar's worker line, counted MACHINE-WIDE: every live spawned
- * worker on the host, whoever launched it. The bar used to count only this
- * terminal's scope while panes of other sessions were visible on the same
- * screen — two truths, one screen (2026-10-17). With every run pane-gated,
- * the machine's live count IS the pane count, so the bar shows it; `term`,
- * `cwd` and `claudeSession` stay in the signature (callers keep passing them)
- * but no longer filter the count.
+ * The status bar's worker line for THIS session's pool: workers its claude
+ * session (or, failing that, its terminal) spawned, plus their descendants
+ * (ownership as supervision's ownershipKey / scope's workerInScope define it).
+ * Other sessions' live workers show as a dim `(+M elsewhere)` suffix. With no
+ * session identity at all (no `term`, no `claudeSession`) the bar keeps the
+ * machine-wide count.
  */
 export function statusLineOutput(
   logDir: string,
-  _term: string,
+  term: string,
   _cwd: string,
-  _claudeSession: string = "",
+  claudeSession: string = "",
   now: Date = new Date()
 ): string {
   reconcileStatuses(logDir, now);
   const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s));
-  return renderStatusLine(statuses, now);
+  if (!term && !claudeSession) return renderStatusLine(statuses, now);
+
+  const byId = new Map(statuses.map((s) => [s.id, s]));
+  const ownsRoot = (s: WorkerStatus): boolean =>
+    (!!claudeSession && s.spawnerSession === claudeSession) || (!!term && workerInScope(s, term));
+  const isMine = (s: WorkerStatus): boolean => {
+    const seen = new Set<string>();
+    for (let w: WorkerStatus | undefined = s; w && !seen.has(w.id); w = w.parent ? byId.get(w.parent) : undefined) {
+      if (ownsRoot(w)) return true;
+      seen.add(w.id);
+    }
+    return false;
+  };
+  const mine = statuses.filter(isMine);
+  const elsewhere = statuses.filter((s) => !isMine(s) && isLive(s)).length;
+  const line = renderStatusLine(mine, now);
+  if (!elsewhere) return line;
+  const suffix = makeColor(true)("dim", `(+${elsewhere} elsewhere)`);
+  return line ? `${line} ${suffix}` : suffix;
 }
