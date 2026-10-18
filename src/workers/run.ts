@@ -324,10 +324,15 @@ export function usageContextTokens(u: UsageBlock | undefined): number | null {
   return t > 0 ? t : null;
 }
 
-/** Current context fill of one assistant turn: input + cache read + cache creation (no output). */
+/** Input-side tokens of one usage block: input + cache read + cache creation (no output). */
+export function inputSideTokens(u: UsageBlock): number {
+  return (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+}
+
+/** Current context fill of one assistant turn: the input side, no output. */
 export function usageContextUsed(u: UsageBlock | undefined): number | null {
   if (!u) return null;
-  const t = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+  const t = inputSideTokens(u);
   return t > 0 ? t : null;
 }
 

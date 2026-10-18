@@ -49,6 +49,7 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { smartDecodeDir, type DirListings } from "./utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
+import { fmtAge as fmtAgeMs } from "../../utils/fmt-age.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -833,15 +834,7 @@ function realpathSyncSafe(p: string): string | null {
 // ---------------------------------------------------------------------------
 
 export function fmtAge(mtime: number): string {
-  const diffMs = Date.now() - mtime;
-  const diffMin = Math.floor(diffMs / 60_000);
-  const diffHr = Math.floor(diffMs / 3_600_000);
-  const diffDay = Math.floor(diffMs / 86_400_000);
-
-  if (diffMin < 60) return `${diffMin}m`;
-  if (diffHr < 24) return `${diffHr}h`;
-  if (diffDay < 30) return `${diffDay}d`;
-  return `${Math.floor(diffDay / 30)}mo`;
+  return fmtAgeMs(Date.now() - mtime, { dayAfterHours: 24, months: true });
 }
 
 // ---------------------------------------------------------------------------

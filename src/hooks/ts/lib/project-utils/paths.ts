@@ -217,13 +217,6 @@ export function archiveSessionFilesToSessionsDir(
   return archivedCount;
 }
 
-/**
- * @deprecated Renamed to `archiveSessionFilesToSessionsDir`, which is what it
- * now does. Kept so an out-of-tree caller fails loudly at the type level rather
- * than silently keeping the old destructive name for a non-destructive action.
- */
-export const moveSessionFilesToSessionsDir = archiveSessionFilesToSessionsDir;
-
 // ---------------------------------------------------------------------------
 // CLAUDE.md / TODO.md discovery
 // ---------------------------------------------------------------------------
