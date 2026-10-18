@@ -9,7 +9,7 @@ import { memoryIndexCmd } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { memorySearchCmd } from "./memory/search.js";
 import { memorySourcesCmd } from "./memory/sources-cmd.js";
-import { registerStatsCommands } from "./memory/stats.js";
+import { memoryStatusCmd, memorySettingsCmd } from "./memory/stats.js";
 
 const background: OptDef = { name: "background", type: "boolean", summary: "Run at low priority so the computer stays responsive" };
 const projectSlug = { name: "PROJECT", summary: "Project name as shown by `pai project list`" };
@@ -83,16 +83,17 @@ export const memorySearchCommand: CommandDef = {
   }),
 };
 
-export const memoryStatusCommand = m(registerStatsCommands, ["status"], {
+export const memoryStatusCommand: CommandDef = {
   name: "status",
   summary: "How much the memory index holds",
   description: "Shows the storage backend and the number of indexed files and chunks. For live counts per project use `pai daemon status`.",
   args: [{ ...projectSlug, summary: "Show this project only" }],
   examples: ["pai memory status", "pai memory status my-project"],
   seeAlso: ["pai memory sources", "pai daemon status"],
-});
+  run: (ctx) => memoryStatusCmd(ctx.args.PROJECT as string | undefined),
+};
 
-export const memorySettingsCommand = m(registerStatsCommands, ["settings"], {
+export const memorySettingsCommand: CommandDef = {
   name: "settings",
   summary: "Show or change the search settings",
   description:
@@ -104,7 +105,8 @@ export const memorySettingsCommand = m(registerStatsCommands, ["settings"], {
   ],
   examples: ["pai memory settings", "pai memory settings mode", "pai memory settings mode hybrid"],
   seeAlso: ["pai config path"],
-});
+  run: (ctx) => memorySettingsCmd(ctx.args.KEY as string | undefined, ctx.args.VALUE as string | undefined),
+};
 
 export const memorySourcesCommand: CommandDef = {
   name: "sources",
