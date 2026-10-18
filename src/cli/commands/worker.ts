@@ -23,7 +23,7 @@ import { callerDescription, requestKill } from "../../workers/endreason.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
-import { discardWorker, gcWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
@@ -295,6 +295,8 @@ const psCommand: CommandDef = {
       const dir = logDir();
       const pending = pendingResults(dir, process.cwd()).length;
       if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
+      const left = leftoverWorktrees(dir);
+      if (left) out(`worktrees: ${left} finished, not merged; pai worker gc --dry-run`);
       out(psOutput(dir, flag(ctx, "all")));
     }),
 };
@@ -672,22 +674,35 @@ const discardCommand: CommandDef = {
 const gcCommand: CommandDef = {
   name: "gc",
   summary: "Archive leftover worker worktrees",
-  description: "Moves old finished workers' worktrees into refs/pai-archive/ID. Files git ignores are not kept.",
+  description: "Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like; not node_modules, dist, coverage, logs) are copied into the main checkout; a worktree that cannot be salvaged is kept. --dry-run prints what each worktree carries.",
   options: [
     { name: "older-than", type: "string", value: "HOURS", default: "24", summary: "Minimum age of a finished worker, in hours" },
-    { ...OPT.dryRun, summary: "Print what would be archived, change nothing" },
+    { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
+    { ...OPT.dryRun, summary: "Print what would be archived and what each worktree carries, change nothing" },
   ],
-  examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72"],
+  examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished"],
   seeAlso: ["pai worker discard", "pai worker pending"],
   run: (ctx) =>
     guard("pai worker gc --dry-run", () => {
       const raw = str(ctx.opts["older-than"]) ?? "24";
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
-      const res = gcWorktrees(logDir(), hours, ctx.dryRun);
+      const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true);
       const verb = ctx.dryRun ? "would archive" : "archived";
-      for (const r of res) out(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
-      out(`${res.filter((r) => r.archive).length} ${ctx.dryRun ? "would be archived" : "archived"}`);
+      for (const r of res) {
+        out(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
+        if (ctx.dryRun && r.knowledge) {
+          const k = formatKnowledge(r.knowledge);
+          for (const l of k.length ? k : ["carries nothing"]) out(`  ${l}`);
+        }
+      }
+      const done = res.filter((r) => r.archive);
+      const kept = res.filter((r) => r.skipped);
+      const files = done.reduce((n, r) => n + (r.salvaged?.filter((l) => l.startsWith("salvaged ")).length ?? 0), 0);
+      out(
+        `${done.length} ${ctx.dryRun ? "would be archived" : "archived"}, salvaged ${files} file(s), kept ${kept.length}` +
+          (kept.length ? ` (${kept.map((r) => `${r.id}: ${r.skipped}`).join("; ")})` : "")
+      );
     }),
 };
 

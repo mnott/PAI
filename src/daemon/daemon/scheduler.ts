@@ -14,6 +14,7 @@ import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
+import { runWorktreeGcDaily } from "../worktree-gc.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -214,6 +215,7 @@ export function startIndexScheduler(): void {
       .then(() => runVaultIndex())
       .then(() => (withEmbed ? runEmbed() : undefined))
       .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
+      .then(() => (withEmbed ? runWorktreeGcDaily() : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });
