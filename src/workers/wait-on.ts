@@ -13,7 +13,7 @@ import { loadStatus, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
 export const WAIT_DEFAULT_SECS = 110;
-export const WAIT_CAP_SECS = 115;
+export const WAIT_CAP_SECS = 590;
 const POLL_MS = 2000;
 const HEARTBEAT_MS = 20_000;
 /** Slack between the first observation and a process start time (ps lstart has 1 s resolution). */
@@ -156,6 +156,6 @@ export const WAIT_RECIPE =
 
 /** One line naming the bounded wait for each thing a worker can wait on; quoted by the contract and the tier-2 advice. */
 export const WAIT_VERBS =
-  "Waiting never needs sleep; use the verb for what you wait on (each returns within 110 s, exit 0 = ready, 3 = not yet, call again): " +
+  "Waiting never needs sleep; use the verb for what you wait on (each returns within 110 s by default, --max up to 590, exit 0 = ready, 3 = not yet, call again): " +
   "child workers `pai worker wait <id...> [--max 100]` (returns when ANY finishes, one status line per id; drop finished ids on the next call); " +
   "a detached job `pai worker wait-on <pid> [--log f]`; a server `pai worker wait-url <url>`; files `pai worker wait-file <path...>`.";

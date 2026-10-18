@@ -25,6 +25,7 @@ import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 import { dropHeredocBodies } from "./heredoc.js";
+import { raiseWaitTimeout } from "./wait-timeout.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
@@ -461,6 +462,10 @@ export function decideWorkerGuard(
         const why2 = localRmReason(parseCommand(cmd), ctx().cwd);
         if (why2) return deny(why2);
       }
+    }
+    if (d.decision === "allow") {
+      const raised = raiseWaitTimeout(ti);
+      if (raised) return { decision: "allow", updatedInput: raised };
     }
     // A too-long tool timeout alone is clamped, not refused: models re-issued the same call and burned turns on denials.
     if (d.decision === "allow" && typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {

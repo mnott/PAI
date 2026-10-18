@@ -17,6 +17,7 @@
 
 import { decideSleepPollGate, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
 import { renderDecision } from "../lib/render-decision.js";
+import { raiseWaitTimeout } from "../lib/wait-timeout.js";
 
 function allow(): void {
   process.exit(0);
@@ -45,6 +46,11 @@ async function main(): Promise<void> {
 
   const decision = decideSleepPollGate(input, process.env);
   if (decision.decision === "deny") return deny(decision.reason);
+  // the worker guard hook does this for workers; interactive sessions get it here
+  if (process.env.PAI_WORKER !== "1") {
+    const raised = raiseWaitTimeout(input.tool_input);
+    if (raised) process.stdout.write(renderDecision({ decision: "allow", updatedInput: raised }) + "\n");
+  }
   return allow();
 }
 

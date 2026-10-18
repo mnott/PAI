@@ -2,7 +2,7 @@
  * wait-probes.ts — bounded waits for a server to answer and for files to appear:
  * `pai worker wait-url <url>` and `pai worker wait-file <path...>`. Siblings of
  * wait-on (a pid) and wait (child workers); each returns within --max seconds
- * (default 100, limit 115) so the caller loops a few times instead of sleeping.
+ * (default 100, limit 590) so the caller loops a few times instead of sleeping.
  *
  * Exit codes: 0 ready, 3 not yet at --max, 2 unusable arguments.
  */
@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 
 export const PROBE_DEFAULT_SECS = 100;
-export const PROBE_CAP_SECS = 115;
+export const PROBE_CAP_SECS = 590;
 
 export interface ProbeDeps {
   now: () => number;

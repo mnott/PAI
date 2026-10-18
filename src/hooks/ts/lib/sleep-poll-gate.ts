@@ -79,7 +79,7 @@ function filePaths(command: string): string | null {
 export function denyReason(secs: number, isWorker: boolean, command = ""): string {
   const lead = `sleep ${secs}s blocked: do not sleep-poll (a single sleep up to ${SLEEP_ALLOWED_SECS}s is fine). `;
   if (isWorker) {
-    const hint = waitHint(command, " --max 100");
+    const hint = waitHint(command, " --max 590");
     if (hint) return lead + `Seen: ${hint}. run_in_background is denied here.`;
     return lead + `${WAIT_VERBS} For a long job of your own, run it detached: ${WAIT_RECIPE}. run_in_background is denied here.`;
   }
