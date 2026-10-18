@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { decideSleepPollGate, type SleepPollGateInput } from "./sleep-poll-gate.js";
 import { renderDecision } from "./render-decision.js";
+import { totalSleepSecs } from "../../../workers/status.js";
 
 function decisionOf(input: SleepPollGateInput, env: Record<string, string | undefined> = {}) {
   return JSON.parse(renderDecision(decideSleepPollGate(input, env))).hookSpecificOutput;
@@ -67,6 +68,13 @@ describe("sleep-poll gate", () => {
     for (const cmd of ["sleep 30; sleep 20", "sleep 60", "sleep 30 && sleep 30", "sleep 45", "for i in 1 2; do sleep 20; done", "for i in {1..3}; do sleep 10; done", "while kill -0 123 2>/dev/null; do sleep 15; done"]) {
       expect(decisionOf(bash(cmd)).permissionDecision, cmd).toBe("allow");
     }
+  });
+
+  it("a launcher loop reading a file counts its per-iteration sleep once", () => {
+    const launcher = "while IFS='|' read -r a b c; do nohup sh -c \"echo $a $b $c\" > /tmp/$a.log 2>&1 & sleep 3; done < /tmp/jobs.txt";
+    expect(totalSleepSecs(launcher)).toBe(3);
+    expect(decisionOf(bash(launcher)).permissionDecision).toBe("allow");
+    expect(totalSleepSecs("while true; do sleep 3; done")).toBe(63);
   });
 
   it("worker: run_in_background is denied with foreground advice; interactive keeps it", () => {
