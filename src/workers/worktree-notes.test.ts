@@ -83,12 +83,12 @@ describe("Notes salvage", () => {
     expect(lines.filter((l) => l.startsWith("salvaged"))).toEqual([]);
   });
 
-  it("discard lists the Notes files that will be lost", () => {
+  it("discard salvages the Notes files before removing the worktree", () => {
     const { repo, logDir } = setup("discard");
     worker(logDir, repo, "n4", { "x.md": "gone\n" });
     const lines = capture();
     discardWorker(logDir, "n4");
     expect(lines.some((l) => l.includes("Notes/x.md"))).toBe(true);
-    expect(existsSync(join(repo, "Notes", "x.md"))).toBe(false);
+    expect(readFileSync(join(repo, "Notes", "x.md"), "utf8")).toBe("gone\n");
   });
 });

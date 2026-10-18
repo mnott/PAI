@@ -329,16 +329,48 @@ export function salvageOnExit(
   }
 }
 
+/** Build and dependency output that is never knowledge; extend this list as needed. */
+export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache"];
+const KNOWLEDGE_IGNORE_SUFFIXES = [".log"];
+
+function isBuildOutput(rel: string): boolean {
+  const parts = rel.split("/").filter(Boolean);
+  if (parts.some((p) => KNOWLEDGE_IGNORE_NAMES.includes(p))) return true;
+  return KNOWLEDGE_IGNORE_SUFFIXES.some((x) => parts[parts.length - 1]?.endsWith(x));
+}
+
 /**
- * Copy the worktree's untracked Notes/ files into the original checkout before
- * the worktree is removed (Notes/ is gitignored, so nothing else carries them).
- * Never overwrites: a name that exists with different content gets
- * `<name>.<id>.md`; identical content is skipped. Returns one line per file.
+ * Gitignored files in the worktree that may carry knowledge (Notes/ and kin):
+ * everything `git status --ignored` lists as `!!`, minus build output.
  */
-export function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
+export function ignoredKnowledge(wtDir: string): string[] {
+  try {
+    return git(wtDir, ["status", "--porcelain", "--ignored", "--untracked-files=all", "-z"])
+      .split("\0")
+      .filter((l) => l.startsWith("!! "))
+      .map((l) => l.slice(3))
+      .filter((p) => !p.endsWith("/") && !isBuildOutput(p));
+  } catch {
+    return [];
+  }
+}
+
+export interface SalvageIgnoredResult {
+  lines: string[];
+  failed: string[];
+}
+
+/**
+ * Copy the worktree's ignored knowledge files into the original checkout before
+ * the worktree is removed (nothing else carries them).
+ * Never overwrites: a name that exists with different content gets
+ * `<name>.<id>.md`; identical content is skipped. One line per file.
+ */
+export function salvageIgnored(cwd: string, wtDir: string, id: string): SalvageIgnoredResult {
   const lines: string[] = [];
-  if (!existsSync(wtDir)) return lines;
-  for (const rel of untrackedNotes(wtDir)) {
+  const failed: string[] = [];
+  if (!existsSync(wtDir)) return { lines, failed };
+  for (const rel of ignoredKnowledge(wtDir)) {
     try {
       const src = join(wtDir, rel);
       if (!lstatSync(src).isFile()) continue;
@@ -357,21 +389,120 @@ export function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, data);
     } catch {
-      // best effort: never block a removal on a note copy
+      lines.pop();
+      failed.push(rel);
     }
   }
-  return lines;
+  return { lines, failed };
 }
 
-/** Untracked, gitignored files under the worktree's Notes/ (repo-relative). */
-function untrackedNotes(wtDir: string): string[] {
+/** `salvageIgnored` for the merge path: best effort, returns the lines only. */
+export function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
+  return salvageIgnored(cwd, wtDir, id).lines;
+}
+
+/** What a worker worktree carries that nothing else does. */
+export interface Knowledge {
+  /** commits not in main by patch content */
+  commits: string[];
+  /** uncommitted tracked or untracked paths */
+  dirty: string[];
+  /** gitignored knowledge files */
+  ignored: string[];
+  /** written or edited per the transcript, neither committed nor present */
+  missing: string[];
+}
+
+/** Files the transcript says the worker wrote or edited inside `dir` (absolute paths). */
+export function transcriptWrites(logDir: string, id: string, dir: string): string[] {
+  const out = new Set<string>();
+  let raw = "";
   try {
-    return git(wtDir, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "Notes"])
-      .split("\0")
-      .filter(Boolean);
+    raw = readFileSync(join(logDir, `${id}.jsonl`), "utf8");
   } catch {
     return [];
   }
+  const roots = [resolve(dir)];
+  try {
+    roots.push(realpathSync(dir));
+  } catch {
+    // dir gone
+  }
+  for (const line of raw.split("\n")) {
+    if (!line.includes("tool_use")) continue;
+    try {
+      const ev = JSON.parse(line) as { message?: { content?: unknown } };
+      const content = ev.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const b of content as { type?: string; name?: string; input?: { file_path?: string } }[]) {
+        if (b?.type !== "tool_use" || !["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(b.name ?? "")) continue;
+        const fp = b.input?.file_path;
+        if (typeof fp !== "string") continue;
+        const abs = resolve(fp);
+        if (roots.some((r) => abs.startsWith(r + sep))) out.add(abs);
+      }
+    } catch {
+      // not json
+    }
+  }
+  return [...out];
+}
+
+/** Main-branch ref to compare worker commits against. */
+function mainRef(dir: string): string {
+  for (const ref of ["main", "master"]) {
+    try {
+      git(dir, ["rev-parse", "--verify", "-q", `refs/heads/${ref}`]);
+      return ref;
+    } catch {
+      // try next
+    }
+  }
+  return "HEAD";
+}
+
+/**
+ * What the worktree carries: unmerged commits (git cherry "+"), uncommitted
+ * changes, ignored knowledge files, and files the transcript says the worker
+ * wrote that are neither committed nor present any more.
+ */
+export function worktreeKnowledge(logDir: string, id: string, dir: string, base?: string): Knowledge {
+  const k: Knowledge = { commits: [], dirty: [], ignored: [], missing: [] };
+  try {
+    k.commits = git(dir, ["cherry", base ?? mainRef(dir), "HEAD"])
+      .split("\n")
+      .filter((l) => l.startsWith("+ "))
+      .map((l) => l.slice(2));
+  } catch {
+    // no comparable base
+  }
+  try {
+    k.dirty = uncommittedPaths(dir);
+  } catch {
+    // not a worktree
+  }
+  k.ignored = ignoredKnowledge(dir);
+  const root = resolve(dir);
+  for (const abs of transcriptWrites(logDir, id, dir)) {
+    if (existsSync(abs)) continue;
+    const rel = abs.startsWith(root + sep) ? abs.slice(root.length + 1) : abs;
+    try {
+      git(dir, ["cat-file", "-e", `HEAD:${rel}`]);
+    } catch {
+      k.missing.push(rel);
+    }
+  }
+  return k;
+}
+
+/** One-line-per-category report of a knowledge check. */
+export function formatKnowledge(k: Knowledge): string[] {
+  const out: string[] = [];
+  if (k.commits.length) out.push(`${k.commits.length} commit(s) not in main`);
+  if (k.dirty.length) out.push(`${k.dirty.length} uncommitted: ${k.dirty.slice(0, 5).join(", ")}`);
+  if (k.ignored.length) out.push(`${k.ignored.length} ignored knowledge file(s): ${k.ignored.slice(0, 5).join(", ")}`);
+  if (k.missing.length) out.push(`written but missing: ${k.missing.join(", ")}`);
+  return out;
 }
 
 /** Remove a worktree directory from git's books and the filesystem. */
@@ -897,7 +1028,7 @@ export function runVerify(cwd: string, cmd: string, oldHead: string): string {
   throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${head}; the worker branch is kept`);
 }
 
-/** `pai worker discard <id>`: drop worktree and branch, keep nothing. */
+/** `pai worker discard <id>`: drop worktree and branch after salvaging what they carry. */
 export function discardWorker(logDir: string, id: string): string {
   const st = mustHaveBranch(logDir, id);
   if (isSlotWorktree(st.worktreeDir!)) {
@@ -917,15 +1048,16 @@ export function discardWorker(logDir: string, id: string): string {
     }
     return `discarded worker ${id}: slot worktree kept, branch ${st.branch} deleted`;
   }
-  const lost = untrackedNotes(st.worktreeDir!);
-  for (const f of lost) console.log(`will be lost: ${f} (worker ${id})`);
-  removeWorktree(st.cwd, st.worktreeDir!, true);
-  let branchGone = false;
-  try {
-    git(st.cwd, ["branch", "-D", st.branch!]);
-    branchGone = true;
-  } catch {
-    branchGone = false;
+  let archived: { archive?: string } = {};
+  if (existsSync(st.worktreeDir!)) {
+    archived = archiveWorktree(logDir, id, st.worktreeDir!, st.branch!);
+  } else {
+    removeWorktree(st.cwd, st.worktreeDir!, true);
+    try {
+      git(st.cwd, ["branch", "-D", st.branch!]);
+    } catch {
+      // already gone
+    }
   }
   const s = {
     ...st,
@@ -938,7 +1070,7 @@ export function discardWorker(logDir: string, id: string): string {
   };
   saveStatus(logDir, s);
   invalidatePendingCache(logDir, st.cwd);
-  return `discarded worker ${id}: worktree removed${branchGone ? `, branch ${st.branch} deleted` : ""}`;
+  return `discarded worker ${id}: worktree removed, branch ${st.branch} deleted${archived.archive ? `, state kept in ${archived.archive}` : ""}`;
 }
 
 function mustHaveBranch(logDir: string, id: string): WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">> {
@@ -994,6 +1126,76 @@ export interface GcEntry {
   /** archive ref, or the reason the worktree was skipped. */
   archive?: string;
   skipped?: string;
+  knowledge?: Knowledge;
+  /** one line per file copied into the main checkout */
+  salvaged?: string[];
+}
+
+export interface ArchiveResult {
+  archive: string;
+  knowledge: Knowledge;
+  salvaged: string[];
+}
+
+/**
+ * The one removal path (gc, discard): check what the worktree carries, archive
+ * commits and uncommitted state under refs/pai-archive/<id>, copy ignored
+ * knowledge files into the main checkout, then remove worktree and branch.
+ * Throws, with the worktree untouched, when anything cannot be salvaged.
+ */
+export function archiveWorktree(logDir: string, id: string, dir: string, branch: string): ArchiveResult {
+  const target = `refs/pai-archive/${id}`;
+  // The shared object store and refs live in the main repo; the recorded cwd
+  // may be another worker's worktree that gc already removed.
+  let repo: string;
+  try {
+    const raw = git(dir, ["rev-parse", "--git-common-dir"]);
+    repo = isAbsolute(raw) ? raw : resolve(dir, raw);
+  } catch {
+    throw new Error("not a git worktree");
+  }
+  const checkout = basename(repo) === ".git" ? dirname(repo) : repo;
+  const knowledge = worktreeKnowledge(logDir, id, dir);
+  const label = `archive: leftover state of worker ${id}`;
+  if (uncommittedPaths(dir).length) {
+    // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
+    const res = salvageUncommitted(dir, label);
+    if (res.committed.length) git(dir, ["commit", "--amend", "-q", "-m", label]);
+    if (res.skipped.length && uncommittedPaths(dir).some((p) => existsSync(join(dir, p)) && !symlinkEscapesWorktree(dir, p))) {
+      throw new Error("uncommitted paths remain");
+    }
+  }
+  let hasBranch = true;
+  try {
+    git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]);
+  } catch {
+    hasBranch = false;
+  }
+  const tip = git(dir, ["rev-parse", "HEAD"]);
+  // never drop a branch whose tip the archive ref would not keep reachable
+  if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${branch}`, tip]);
+  const salvage = salvageIgnored(checkout, dir, id);
+  if (salvage.failed.length) throw new Error(`cannot salvage ${salvage.failed.join(", ")}`);
+  git(repo, ["update-ref", target, tip]);
+  const notes = [...salvage.lines];
+  if (knowledge.commits.length || knowledge.dirty.length) {
+    notes.push(`archived ${knowledge.commits.length} commit(s), ${knowledge.dirty.length} uncommitted file(s) of worker ${id} in ${target}`);
+  }
+  for (const m of knowledge.missing) notes.push(`written but missing: ${m} (worker ${id}; see its transcript)`);
+  for (const l of notes) console.log(l);
+  git(repo, ["worktree", "remove", "--force", dir]);
+  if (hasBranch) git(repo, ["branch", "-D", branch]);
+  return { archive: target, knowledge, salvaged: salvage.lines };
+}
+
+/** Finished workers whose worktree is still on disk (not merged, not discarded, not archived). */
+export function leftoverWorktrees(logDir: string): number {
+  let n = 0;
+  for (const st of loadStatuses(logDir)) {
+    const tree = ownedTree(st);
+    if (tree && existsSync(tree.dir) && !isLive(st) && !isSlotWorktree(tree.dir)) n++;
+  }
+  return n;
 }
 
 const GC_STAMP = "gc-last";
@@ -1039,7 +1241,8 @@ export function gcWorktrees(
   logDir: string,
   olderThanHours = 24,
   dryRun = false,
-  now = Date.now()
+  now = Date.now(),
+  report = false
 ): GcEntry[] {
   const cutoff = now - olderThanHours * 3_600_000;
   const out: GcEntry[] = [];
@@ -1053,43 +1256,12 @@ export function gcWorktrees(
       if (!dryRun) appendLedger(ledgerPath(logDir), "WORKER-GC-SKIP", { id, reason: "busy", pid: String(pid) });
       return void out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
     }
-    if (dryRun) return void out.push({ id, archive: target });
+    if (dryRun) return void out.push(report ? { id, archive: target, knowledge: worktreeKnowledge(logDir, id, dir) } : { id, archive: target });
     try {
-      // The shared object store and refs live in the main repo; the recorded cwd
-      // may be another worker's worktree that gc already removed.
-      let repo: string;
-      try {
-        const raw = git(dir, ["rev-parse", "--git-common-dir"]);
-        repo = isAbsolute(raw) ? raw : resolve(dir, raw);
-      } catch {
-        throw new Error("not a git worktree");
-      }
-      const label = `archive: leftover state of worker ${id}`;
-      if (uncommittedPaths(dir).length) {
-        // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
-        const res = salvageUncommitted(dir, label);
-        if (res.committed.length) git(dir, ["commit", "--amend", "-q", "-m", label]);
-        if (res.skipped.length && uncommittedPaths(dir).some((p) => !symlinkEscapesWorktree(dir, p))) {
-          throw new Error("uncommitted paths remain");
-        }
-      }
-      const src = branch;
-      let hasBranch = true;
-      try {
-        git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${src}`]);
-      } catch {
-        hasBranch = false;
-      }
-      const tip = git(dir, ["rev-parse", "HEAD"]);
-      // never drop a branch whose tip the archive ref would not keep reachable
-      if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${src}`, tip]);
-      git(repo, ["update-ref", target, tip]);
-      for (const l of salvageNotes(repo, dir, id)) console.log(l);
-      git(repo, ["worktree", "remove", "--force", dir]);
-      if (hasBranch) git(repo, ["branch", "-D", src]);
+      const res = archiveWorktree(logDir, id, dir, branch);
       if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
       appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
-      out.push({ id, archive: target });
+      out.push(res.salvaged.length ? { id, archive: target, salvaged: res.salvaged } : { id, archive: target });
     } catch (e) {
       out.push({ id, skipped: (e as Error).message.split("\n")[0] });
     }
