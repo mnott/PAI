@@ -76,6 +76,8 @@ export interface PathRepair {
   updatedInput: Record<string, unknown>;
   /** The corrected file does not exist yet (only its folder does): the call cannot succeed, so it is denied. */
   missing?: boolean;
+  /** Write of a new file whose parent is repaired: the rewrite applies (nothing to validate against), no deny. */
+  create?: boolean;
 }
 
 /** macOS: /tmp, /var, /etc are symlinks into /private. */
@@ -190,7 +192,15 @@ export function repairPath(
   if (!isAbsolute(value)) return null;
 
   const fixed = repairValue(value, cwd, spec.mustExist, exists);
-  if (fixed) return { old: value, new: fixed, updatedInput: { ...input.tool_input, [spec.key]: fixed } };
+  if (fixed) {
+    const updatedInput = { ...input.tool_input, [spec.key]: fixed };
+    if (input.tool_name === "Write" && !exists(fixed)) {
+      const root = cwd.replace(/\/+$/, "");
+      const parent = dirname(fixed);
+      return parent === root || parent.startsWith(`${root}/`) ? { old: value, new: fixed, updatedInput, create: true } : null;
+    }
+    return { old: value, new: fixed, updatedInput };
+  }
   // Read/Edit of a file that is not there yet (the unit has not created it): the folder repairs the prefix, the call is denied with the exact path.
   const folder = spec.mustExist && FILE_TOOLS.has(input.tool_name!) ? repairValue(value, cwd, false, exists) : null;
   return folder ? { old: value, new: folder, updatedInput: { ...input.tool_input, [spec.key]: folder }, missing: true } : null;
@@ -242,8 +252,13 @@ function repairBash(input: PathRepairInput, cwd: string, exists: (p: string) => 
 const DENY_REPAIR_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
 export function renderRepair(r: PathRepair, tool?: string): string {
+  if (r.create) return allowRepair(r);
   if (r.missing) return renderDeny(`Wrong path. Use exactly: ${r.new} (it does not exist yet)`);
   if (tool && DENY_REPAIR_TOOLS.has(tool)) return renderDeny(`Wrong path. Use exactly: ${r.new}`);
+  return allowRepair(r);
+}
+
+function allowRepair(r: PathRepair): string {
   const msg = `path repaired: ${r.old} → ${r.new}`;
   const context = `${msg}. ${r.old} does not exist; use exactly ${r.new} in every later Edit, Write and Read.`;
   return JSON.stringify({
