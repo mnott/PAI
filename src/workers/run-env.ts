@@ -68,6 +68,9 @@ const NATIVE_STRIP_VARS = [
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
 ] as const;
 
+/** 30 min: above max_output_tokens at the slowest observed local rate. */
+const LOCAL_API_TIMEOUT_MS = "1800000";
+
 /**
  * Environment for a run through `provider`. Caller's env minus the Anthropic
  * key. `routerEnabled` routes the run through the local model router instead
@@ -139,6 +142,9 @@ export function buildRunEnv(
   env.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolveModelCapability(provider, "fast");
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.models.default;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.models.default;
+  // Claude Code's client timeout (API_TIMEOUT_MS, default 60000) drops a long local
+  // generation (6605 tokens in 305 s at ~22 tok/s) and retries from scratch.
+  if (isLoopbackProvider(provider)) env.API_TIMEOUT_MS = LOCAL_API_TIMEOUT_MS;
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   // The billing header Claude Code puts first in the system prompt changes on

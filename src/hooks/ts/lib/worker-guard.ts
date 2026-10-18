@@ -401,7 +401,9 @@ function localEditReason(tool: string, p: string, content: unknown, root: string
   if (!existsSync(p)) {
     return root && dirname(p) === root ? `${p} would be a new file in the repo root; put scratch in $TMPDIR or a per-run mktemp dir` : null;
   }
-  if (tool !== "Write" || typeof content !== "string" || !isTracked(p)) return null;
+  if (tool !== "Write" || typeof content !== "string") return null;
+  if (lineCount(content) > 300) return "build large files from several Edit calls (local generation speed and client timeout)";
+  if (!isTracked(p)) return null;
   const old = lineCount(readFileSync(p, "utf8"));
   const now = lineCount(content);
   return old - now > 40 && now < old / 2 ? `rewrite would delete ${old - now} of ${old} lines; use Edit for the change` : null;
