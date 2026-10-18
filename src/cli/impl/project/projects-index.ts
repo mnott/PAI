@@ -549,11 +549,11 @@ export async function projectConsolidateCmd(identifier: string, opts: { yes?: bo
   return 0;
 }
 
-export async function projectPromoteCmd(opts: { fromSession?: string; to?: string; name?: string }): Promise<number> {
+export async function projectPromoteCmd(opts: { fromSession: string; to: string; name?: string }): Promise<number> {
   // Ensure required fields are present (they are required in the function signature)
   const promoteOpts = {
-    fromSession: opts.fromSession ?? "",
-    to: opts.to ?? "",
+    fromSession: opts.fromSession,
+    to: opts.to,
     name: opts.name
   };
   await cmdPromote(promoteOpts);
