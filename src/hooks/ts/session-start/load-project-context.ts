@@ -216,7 +216,7 @@ async function main() {
 
   // 2. Find or create Notes directory
   // Priority:
-  //   1. Active session routing (pai route <project>) → routed Obsidian path
+  //   1. Active session routing (active_session in session-routing.json) → routed Obsidian path
   //   2. Local Notes/ in cwd → use it (git-trackable, e.g. symlink to Obsidian)
   //   3. Central ~/.claude/projects/.../Notes/ → fallback
   const routedPath = getRoutedNotesPath();
@@ -229,7 +229,7 @@ async function main() {
       mkdirSync(routedPath, { recursive: true });
       console.error(`Created routed Notes: ${routedPath}`);
     } else {
-      console.error(`Notes directory: ${routedPath} (routed via pai route)`);
+      console.error(`Notes directory: ${routedPath} (routed via session-routing.json)`);
     }
     notesDir = routedPath;
   } else {
@@ -483,11 +483,11 @@ PROJECT CONTEXT LOADED
 
 Project: ${projectName}
 Working Directory: ${cwd}
-${notesDir ? `Notes Directory: ${notesDir}${routedPath ? ' (routed via pai route)' : ''}` : 'Notes: disabled (no local Notes/ directory)'}
+${notesDir ? `Notes Directory: ${notesDir}${routedPath ? ' (routed via session-routing.json)' : ''}` : 'Notes: disabled (no local Notes/ directory)'}
 ${hasTodo ? `TODO: ${todoPath}` : 'TODO: not found'}
 ${claudeMdPaths.length > 0 ? `CLAUDE.md: ${claudeMdPaths.join(', ')}` : 'No CLAUDE.md found'}
 ${activeNotePath ? `Active Note: ${basename(activeNotePath)}` : ''}
-${routedPath ? `\nNote Routing: ACTIVE (pai route is set - notes go to Obsidian vault)` : ''}
+${routedPath ? `\nNote Routing: ACTIVE (session-routing.json is set - notes go to Obsidian vault)` : ''}
 ${paiProjectBlock ? `\n${paiProjectBlock}` : ''}
 </system-reminder>
 `;
