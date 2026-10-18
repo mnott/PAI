@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { realDeps, waitOn } from "./wait-on.js";
 import { realProbeDeps, waitFile, waitUrl } from "./wait-probes.js";
 import { runWait } from "./wait.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -97,7 +97,7 @@ describe("wait-on: a zombie is a finished job", () => {
 
 describe("wait (child workers)", () => {
   const status = (id: string, state: WorkerStatus["state"]): WorkerStatus =>
-    ({ id, label: id, state, rc: state === "done" ? 0 : null, secs: 1, last: "", started: "" }) as unknown as WorkerStatus;
+    ({ id, pid: process.pid, label: id, state, rc: state === "done" ? 0 : null, secs: 1, last: "", started: nowStamp() }) as unknown as WorkerStatus;
 
   it("returns as soon as ANY finishes (exit 3, a line per id); all done exits 0", async () => {
     const dir = tmp();
