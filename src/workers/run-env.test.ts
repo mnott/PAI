@@ -234,6 +234,22 @@ describe("local-provider worker prompt overhead", () => {
   });
 });
 
+describe("buildRunEnv client timeout", () => {
+  const local = (): WorkerProvider => ({ ...provider, baseUrl: "http://127.0.0.1:8034" });
+  it("loopback provider gets a 30 min API_TIMEOUT_MS", () => {
+    expect(buildRunEnv({ ...local(), env: {} }, true, undefined, "local30").API_TIMEOUT_MS).toBe("1800000");
+  });
+  it("provider env wins", () => {
+    expect(buildRunEnv({ ...local(), env: { API_TIMEOUT_MS: "5" } }, true, undefined, "local30").API_TIMEOUT_MS).toBe("5");
+  });
+  it("remote provider is untouched", () => {
+    const saved = process.env.API_TIMEOUT_MS;
+    delete process.env.API_TIMEOUT_MS;
+    expect(buildRunEnv(provider, true, undefined, "x").API_TIMEOUT_MS).toBeUndefined();
+    if (saved !== undefined) process.env.API_TIMEOUT_MS = saved;
+  });
+});
+
 describe("routeLoopbackViaRouter", () => {
   const local = (extra: Partial<WorkerProvider> = {}): WorkerProvider => ({
     ...provider,
