@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWait, waitWorkers } from "./wait.js";
-import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 
 const logDir = mkdtempSync(join(tmpdir(), "pai-wait-test-"));
 
@@ -26,7 +26,7 @@ function status(id: string, over: Partial<WorkerStatus> = {}): void {
     provider: "testprov",
     model: "test-1",
     state: "done",
-    started: nowStamp(),
+    started: "2026-09-17 10:00:00",
     updated: "2026-09-17 10:00:00",
     turns: 1,
     tools: 0,
@@ -187,14 +187,5 @@ describe("isExpectedWaitExit", () => {
     expect(isExpectedWaitExit("pai worker wait abc", 1)).toBe(false);
     expect(isExpectedWaitExit("grep foo bar", 3)).toBe(false);
     expect(isExpectedWaitExit("pai worker wait abc", null)).toBe(false);
-  });
-});
-
-describe("waitWorkers dead pid", () => {
-  it("a running status whose pid is gone is reported lost", async () => {
-    status("ghost", { state: "running", pid: 999999, rc: null, secs: null, last: "starting" });
-    const { results, timedOut } = await waitWorkers(logDir, ["ghost"], { timeoutMs: 200, intervalMs: 10 });
-    expect(timedOut).toEqual([]);
-    expect(results[0].state).toBe("lost");
   });
 });

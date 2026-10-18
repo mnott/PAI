@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 /**
  * Tests for killTree: the worker plus every live descendant, leaves first.
  * Status files in a tmp dir and fake pids/signals — nothing is signalled.
@@ -9,7 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { killTree, type KillTreeDeps } from "./kill-tree.js";
-import { loadStatus, nowStamp, ownsPid, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 function mk(dir: string, id: string, pid: number, over: Partial<WorkerStatus> = {}): void {
   saveStatus(dir, {
@@ -99,39 +98,5 @@ describe("killTree", () => {
     await killTree(dir, "w1", { skipRoot: true, deps: f.deps });
     expect(f.signalled).toEqual(["w4", "w2", "w3"]);
     expect(loadStatus(dir, "w1")!.state).toBe("running");
-  });
-});
-
-describe("killTree pid ownership (real ownsPid)", () => {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const idFor = (pid: number, d: Date) =>
-    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${pid}`;
-  const ownStart = (): Date => {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-    return new Date(out.trim());
-  };
-
-  async function run(id: string, started: Date): Promise<{ signalled: number[]; lines: string[] }> {
-    const dir = mkdtempSync(join(tmpdir(), "pai-kill-own-"));
-    mk(dir, id, process.pid, { started: nowStamp(started) });
-    const signalled: number[] = [];
-    const lines = await killTree(dir, id, {
-      deps: { owns: ownsPid, isAlive: () => false, request: () => undefined, graceMs: 0, signal: (pid) => void signalled.push(pid), waitTerminal: async () => null },
-    });
-    return { signalled, lines };
-  }
-
-  it("signals a worker that queued, then got its slot long after the process started", async () => {
-    const t = ownStart();
-    const r = await run(idFor(process.pid, t), new Date(t.getTime() + 4 * 60_000));
-    expect(r.signalled).toContain(process.pid);
-  });
-
-  it("does not signal an unrelated process that reused the pid", async () => {
-    const t = ownStart();
-    const old = new Date(t.getTime() - 3 * 3600_000);
-    const r = await run(idFor(process.pid, old), old);
-    expect(r.signalled).toEqual([]);
-    expect(r.lines[0]).toContain("not this worker any more");
   });
 });

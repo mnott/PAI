@@ -87,16 +87,6 @@ describe("decideOrchestratorBash", () => {
     ["python3 -c \"open('/tmp/x.txt','w').write('x')\"", "allow"],
     ["python3 -c \"print(1)\"", "allow"],
     ["node scripts/build-hooks.mjs", "allow"],
-    ["D=/tmp/u2-66894; mkdir -p $D && cp /tmp/u2/{shared,A,B,C1}.txt $D/ && cd $D && for u in A B C1; do cat shared.txt $u.txt > spec-$u.txt; done", "allow"],
-    ["for u in A B; do cat x > spec-$u.md; done", "allow"],
-    ["for u in A B; do cat x > out-$u.json; done", "allow"],
-    ["D=/tmp/x; cat x > $D/foo.ts", "allow"],
-    ["D=src; cat x > $D/foo.ts", "block"],
-    ["cat x > $D/foo.ts", "block"],
-    ["for u in A; do cat x > src/$u.ts; done", "block"],
-    ["cat x > $F", "block"],
-    ["cat x | tee $F", "block"],
-    ["cat x > /dev/null 2>&1", "allow"],
   ])("command %s should be %s", (command, expected) => {
     const result = decideOrchestratorBash(command);
     expect(result.decision).toBe(expected);

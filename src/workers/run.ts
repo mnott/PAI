@@ -81,7 +81,6 @@ import {
   newWorkerId,
   loadStatus,
   saveStatus,
-  markStartFailed,
   describeTool,
   nowStamp,
   parseSleepSecs,
@@ -1756,19 +1755,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true, placement: panePlacement(wid) };
   else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
-  let proc: ReturnType<typeof spawn>;
-  try {
-    if (headless && !a.gated) await runGates(a, wid, status);
-    proc = spawn(cmd[0], cmd.slice(1), {
-      env,
-      cwd: worktree?.dir ?? cwd,
-      stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
-    });
-  } catch (e) {
-    markStartFailed(logDir, status, e);
-    throw e;
-  }
+  if (headless && !a.gated) await runGates(a, wid, status);
+
   const t0 = Date.now();
+  const proc = spawn(cmd[0], cmd.slice(1), {
+    env,
+    cwd: worktree?.dir ?? cwd,
+    stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
+  });
   // claude's stderr: passed through, and the tail kept for a start that dies before any model event
   let stderrTail = "";
   proc.stderr?.on("data", (d: Buffer) => {
@@ -2007,10 +2001,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   }
 
   const rc = await new Promise<number>((resolve, reject) => {
-    proc.on("error", (e) => {
-      markStartFailed(logDir, status, e);
-      reject(e);
-    });
+    proc.on("error", reject);
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
   if (eventsFd !== null) closeSync(eventsFd);
