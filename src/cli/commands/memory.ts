@@ -88,22 +88,16 @@ export const memorySettingsCommand = m(registerStatsCommands, ["settings"], {
   seeAlso: ["pai config path"],
 });
 
-export const memorySourcesCommand = {
+export const memorySourcesCommand: CommandDef = {
   name: "sources",
   summary: "Where the indexed content comes from",
   description:
     "Shows what the indexer has taken in: composition by source, which roots content enters from, the heaviest single files, " +
     "and how many chunks are rewritten per day (which tells a finite backlog from a treadmill).",
-  options: [{ name: "limit", type: "number", value: "N", default: 8, summary: "Rows per section" } as const],
+  options: [{ name: "limit", type: "number", value: "N", default: 8, summary: "Rows per section" }],
   examples: ["pai memory sources", "pai memory sources --limit 20"],
   seeAlso: ["pai memory status"],
-  run: async (ctx: any) => {
-    const limit = ctx.opts.limit !== undefined ? ctx.opts.limit : 8;
-    if (typeof limit !== 'number') {
-      throw new CliError("Option --limit must be a number", "pai help memory sources", 2);
-    }
-    return await memorySourcesCmd(ctx.args, { limit });
-  },
+  run: (ctx) => memorySourcesCmd({ limit: ctx.opts.limit as number | undefined }),
 };
 
 const backendDetect = m(registerBackendCommands, ["backend", "detect"], {
