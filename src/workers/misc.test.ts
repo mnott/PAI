@@ -14,6 +14,7 @@ import { appendLedger, parseLedgerLine, ledgerSummary } from "./ledger.js";
 import { resultFromOutput } from "./run.js";
 import { statusPath, eventsPath, ledgerPath } from "./paths.js";
 import { renderTable } from "./render.js";
+import { noteContext, takePendingNotes } from "./note-delivery.js";
 import { loadStatuses, nowStamp, saveStatus, setWorkerLabel, setWorkerNote, statusTmpPath, type WorkerStatus } from "./status.js";
 
 describe("tabKey", () => {
@@ -231,6 +232,52 @@ describe("setWorkerNote", () => {
     expect(out).toContain("task: bench: original");
     expect(out).toContain("note: FYI: server stopped");
     expect(out).not.toContain("task: FYI");
+  });
+});
+
+describe("note delivery", () => {
+  const base = (id: string): WorkerStatus =>
+    ({
+      id, pid: process.pid, label: "task", cwd: "/repo", term: "", provider: "anthropic", model: "m",
+      state: "running", started: nowStamp(), updated: nowStamp(), turns: 1, tools: 1, last: "x", rc: null, secs: null,
+    }) as WorkerStatus;
+
+  it("delivers two successive notes once each, even across the worker's own writes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-notedel-"));
+    const id = "20261018-140000-1";
+    const status = base(id);
+    saveStatus(dir, status);
+    setWorkerNote(dir, id, "first");
+    saveStatus(dir, status);
+    expect(takePendingNotes(dir, id)).toEqual(["first"]);
+    expect(takePendingNotes(dir, id)).toBeNull();
+    saveStatus(dir, status);
+    setWorkerNote(dir, id, "second");
+    saveStatus(dir, status);
+    expect(takePendingNotes(dir, id)).toEqual(["second"]);
+    expect(takePendingNotes(dir, id)).toBeNull();
+  });
+
+  it("delivers notes sent between two tool calls together", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-notedel-"));
+    const id = "20261018-140000-2";
+    saveStatus(dir, base(id));
+    setWorkerNote(dir, id, "a");
+    setWorkerNote(dir, id, "b");
+    const notes = takePendingNotes(dir, id)!;
+    expect(notes).toEqual(["a", "b"]);
+    expect(noteContext(notes)).toContain("b");
+  });
+
+  it("ps shows pending, then the delivery time", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-notedel-"));
+    const id = "20261018-140000-3";
+    saveStatus(dir, base(id));
+    setWorkerNote(dir, id, "look at X");
+    const color = (_k: string, t: string) => t;
+    expect(renderTable(color, [loadStatuses(dir)[0]], "", new Date())).toContain("note: look at X [note pending]");
+    takePendingNotes(dir, id, new Date(2026, 9, 18, 14, 5, 9));
+    expect(renderTable(color, [loadStatuses(dir)[0]], "", new Date())).toContain("note: look at X [note delivered 14:05]");
   });
 });
 

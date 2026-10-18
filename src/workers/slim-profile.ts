@@ -16,7 +16,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { WorkerProvider } from "./config.js";
 
@@ -50,9 +51,23 @@ export const WORKER_BRIEF = [
   "- End with the report format given in the system prompt.",
 ].join("\n");
 
+/**
+ * The built PostToolUse hook that delivers `pai worker goal` notes: next to
+ * this CLI's own dist/hooks (so a build under test delivers with its own
+ * hook), else the installed one. null when neither exists.
+ */
+export function noteHookPath(from: string = fileURLToPath(import.meta.url), home: string = homedir()): string | null {
+  for (let dir = dirname(from), i = 0; i < 6; i++, dir = dirname(dir)) {
+    const p = join(dir, "hooks", "worker-note.mjs");
+    if (existsSync(p)) return p;
+  }
+  const installed = join(home, ".claude", "Hooks", "worker-note.mjs");
+  return existsSync(installed) ? installed : null;
+}
+
 const PROVIDER_KEYS = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
-type HookGroup = { matcher?: string; hooks?: Array<{ command?: string }> };
+type HookGroup = { matcher?: string; hooks?: Array<{ type?: string; command?: string }> };
 
 /**
  * Settings env outranks the process env, so the user's global tuning for the
@@ -77,6 +92,7 @@ export function slimSettings(
   user: Record<string, unknown>,
   procEnv: NodeJS.ProcessEnv = {},
   provider?: WorkerProvider,
+  noteHook?: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of ["env", "permissions", "model"]) if (user[k] !== undefined) out[k] = user[k];
@@ -96,10 +112,17 @@ export function slimSettings(
       .filter((g) => g.hooks.length > 0);
     if (kept.length) hooks[event] = kept;
   }
+  // Not a user hook: the worker's own channel for `pai worker goal` notes, for every provider.
+  if (noteHook) (hooks.PostToolUse ??= []).push({ matcher: "*", hooks: [{ type: "command", command: noteHook }] });
   out.hooks = hooks;
   // Empty strings switch off Claude Code's Co-Authored-By / "Generated with" lines.
   out.attribution = { commit: "", pr: "" };
   return out;
+}
+
+function noteHookCommand(logDir: string): string | undefined {
+  const hook = noteHookPath();
+  return hook ? `node "${hook}" "${logDir}"` : undefined;
 }
 
 /**
@@ -125,6 +148,6 @@ export function slimProfileArgs(
   }
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${wid}.settings.json`);
-  writeFileSync(path, JSON.stringify(slimSettings(user, env, provider), null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(slimSettings(user, env, provider, noteHookCommand(logDir)), null, 2) + "\n", "utf8");
   return ["--setting-sources", "project,local", "--settings", path];
 }

@@ -37,6 +37,10 @@ export interface WorkerStatus {
   label: string;
   /** Latest `pai worker goal` / `say --goal` note to the worker; never replaces the label. */
   note?: string;
+  /** Notes not yet handed to the worker; the PostToolUse hook drains them (note-delivery.ts). */
+  notePending?: string[];
+  /** When the last pending notes reached the worker (nowStamp). */
+  noteDeliveredAt?: string;
   cwd: string;
   /** iTerm session id of the launching terminal ("" outside iTerm). */
   term: string;
@@ -294,20 +298,23 @@ export function statusTmpPath(logDir: string, id: string): string {
 const firstWrittenLabel = new Map<string, string>();
 
 /** Write status atomically (temp + rename) and stamp `updated`. */
-export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new Date()): void {
+export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new Date(), external = false): void {
   status.updated = nowStamp(d);
   const path = statusPath(logDir, status.id);
   const baseline = firstWrittenLabel.get(status.id);
   if (baseline === undefined) {
     firstWrittenLabel.set(status.id, status.label);
   }
-  const onDisk = baseline === undefined ? undefined : loadStatus(logDir, status.id);
+  // `external`: a one-shot writer of another process (goal, the note hook) whose copy is the fresh load, so nothing on disk may override it.
+  const onDisk = baseline === undefined || external ? undefined : loadStatus(logDir, status.id);
   if (onDisk) {
     if (status.label === baseline && onDisk.label !== status.label) status.label = onDisk.label;
     // Set by another process (`pai worker controls`); a true flag is never dropped by a stale in-memory copy.
     if (onDisk.controlsHeld) status.controlsHeld = true;
     // Written by `pai worker goal` (another process); the runner's copy never sets it.
     if (onDisk.note !== undefined) status.note = onDisk.note;
+    if (onDisk.notePending !== undefined) status.notePending = onDisk.notePending;
+    if (onDisk.noteDeliveredAt !== undefined) status.noteDeliveredAt = onDisk.noteDeliveredAt;
     // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
     if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
     // Recorded by `pai issue claim` (another process).
@@ -360,7 +367,8 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   const status = loadStatus(logDir, id);
   if (!status) throw new Error(`no worker named "${id}"`);
   status.note = note;
-  saveStatus(logDir, status);
+  status.notePending = [...(status.notePending ?? []), note];
+  saveStatus(logDir, status, new Date(), true);
   return status;
 }
 
