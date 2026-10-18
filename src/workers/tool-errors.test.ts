@@ -89,7 +89,7 @@ describe("supervision tick", () => {
       }
       const pushed: string[] = [];
       const push = async (_d: string, _t: unknown, ev: { text: string }) => (pushed.push(ev.text), true);
-      const opts = { now, isAlive: () => true, statuses: [st], stallMs: 1e12, push };
+      const opts = { now, isAlive: () => true, statuses: [st], stallMs: 1e12, push, pushPolicy: "all" as const };
       const r1 = await runSupervisionTick(dir, opts);
       expect(r1.events.filter((e) => e.kind === "toolerror")).toHaveLength(1);
       expect(pushed[0]).toMatch(/^\[unknown\] Read\|File does not exist.*<P> ×3 in 20261016-000000-1 — sample: /);

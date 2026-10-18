@@ -61,6 +61,8 @@ import { itermForClaudeSession, itermUuid } from "./scope.js";
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
 import {
   detectRunningWorkerErrors,
+  toolErrorSummary,
+  classifyToolError,
   benignNote,
   detectToolErrors,
   readToolErrors,
@@ -521,6 +523,8 @@ export interface TickOptions {
   pointer?: Parameters<typeof pointUndrained>[4];
   /** Injectable for tests. */
   loops?: LoopDeps;
+  /** Overrides workers.supervision.push; default read from the workers config. */
+  pushPolicy?: "harness" | "all";
 }
 
 export interface TickResult {
@@ -544,15 +548,17 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   let state = loaded.state;
   if (loaded.fresh) state = baselineState(statuses);
 
+  const policy = opts.pushPolicy ?? pushPolicyFromConfig();
+  const harnessOnly = policy === "harness";
   const pending = filterUndelivered(
     detectSupervisionEvents(statuses, {
-      stallMs: opts.stallMs ?? DEFAULT_STALL_MINUTES * 60_000,
+      stallMs: opts.stallMs ?? stallMinutesFromConfig() * 60_000,
       thrashFails: opts.thrashFails ?? thrashFailsFromEnv(),
       now,
       ...(opts.isAlive ? { isAlive: opts.isAlive } : {}),
     }),
     state
-  );
+  ).filter((e) => !(harnessOnly && (e.kind === "thrashing" || e.kind === "sleeping")));
 
   // Systematic tool errors, two routes. While a worker is RUNNING and its
   // spawner is resolvable, every signature's first occurrence goes to that
@@ -577,7 +583,8 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       .map((s) => ({ id: s.id, session: ownershipKey(s)! })),
     records,
     runningSent,
-    now.getTime()
+    now.getTime(),
+    harnessOnly
   )) {
     const owner = byId.get(p.worker);
     if (!owner) continue;
@@ -593,7 +600,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       text: toolErrorText(p.group) + benignNote(p.benign),
     });
   }
-  for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker)), now.getTime(), sent)) {
+  for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker) && (!harnessOnly || classifyToolError(r).cls === "harness")), now.getTime(), sent)) {
     const owner = [...g.workers].reverse().map((w) => byId.get(w)).find((s) => s && ownershipKey(s));
     if (!owner) continue;
     pending.push({
@@ -607,6 +614,13 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       stalledMin: null,
       text: toolErrorText(g),
     });
+  }
+
+  // one line per ended unit: what its tool errors were, instead of an alert each
+  for (const ev of pending) {
+    if (ev.kind !== "finished" && ev.kind !== "failed") continue;
+    const line = toolErrorSummary(records, ev.worker);
+    if (line) ev.text += ` | ${line}`;
   }
 
   const loopSent = (state.loopSent ??= {});
@@ -624,7 +638,12 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       rc: null,
       stalledMin: null,
       text:
-        `worker ${owner.id} ${owner.label} looping: ${f.loop.count}x identical failing ${f.loop.name} call` +
+        `worker ${owner.id} ${owner.label} looping: ` +
+        (f.loop.kind === "echo"
+          ? f.loop.by === "string"
+            ? `success string echoed ${f.loop.count}x, no edit`
+            : `${f.loop.count} turns of echo/cat/ls only, no edit`
+          : `${f.loop.count}x identical failing ${f.loop.name} call`) +
         (f.action === "stop" ? " - run stopped, diff kept" : f.local ? " - correction injected" : "") +
         ` - see pai worker replay ${owner.id}`,
     });
@@ -756,6 +775,24 @@ function pointerText(n: number): string {
  * type nothing and retry on the next check.
  */
 let pointerRunning = false;
+
+/** workers.supervision.stallMinutes; any config trouble counts as the default. */
+function stallMinutesFromConfig(): number {
+  try {
+    return readWorkersSection().workers.supervision.stallMinutes;
+  } catch {
+    return DEFAULT_STALL_MINUTES;
+  }
+}
+
+/** workers.supervision.push; any config trouble counts as the default, "harness". */
+function pushPolicyFromConfig(): "harness" | "all" {
+  try {
+    return readWorkersSection().workers.supervision.push === "all" ? "all" : "harness";
+  } catch {
+    return "harness";
+  }
+}
 
 /** workers.supervision.pointer; any config trouble counts as off. */
 function pointerEnabled(): boolean {
