@@ -8,7 +8,6 @@
  *   index   — Trigger an immediate index run via IPC
  */
 
-import { Command } from "commander";
 import { loadConfig, ensureConfigDir } from "./config.js";
 import { serve } from "./daemon.js";
 import { PaiClient } from "./ipc-client.js";
@@ -16,74 +15,57 @@ import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
 
-const program = new Command();
+const USAGE = `Usage: pai-daemon <command>
 
-program
-  .name("pai-daemon")
-  .description("PAI Daemon — background service for PAI Knowledge OS")
-  .version("0.1.0");
+PAI Daemon — background service for PAI Knowledge OS
 
-// ---------------------------------------------------------------------------
-// serve
-// ---------------------------------------------------------------------------
+Commands:
+  serve    Start the PAI daemon in the foreground
+  status   Query the running daemon status
+  index    Trigger an immediate index run in the running daemon
+`;
 
-program
-  .command("serve")
-  .description("Start the PAI daemon in the foreground")
-  .action(async () => {
-    ensureConfigDir();
-    const config = loadConfig();
-    await serve(config);
-  });
+const cmd = process.argv[2];
 
-// ---------------------------------------------------------------------------
-// status
-// ---------------------------------------------------------------------------
+if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  console.log(USAGE);
+  process.exit(0);
+}
 
-program
-  .command("status")
-  .description("Query the running daemon status")
-  .action(async () => {
-    const config = loadConfig();
-    const client = new PaiClient(config.socketPath);
+if (cmd === "--version" || cmd === "-V") {
+  console.log("0.1.0");
+  process.exit(0);
+}
 
-    try {
-      const status = await client.status();
-      console.log(JSON.stringify(status, null, 2));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
+if (cmd === "serve") {
+  ensureConfigDir();
+  const config = loadConfig();
+  await serve(config);
+} else if (cmd === "status") {
+  const config = loadConfig();
+  const client = new PaiClient(config.socketPath);
 
-// ---------------------------------------------------------------------------
-// index
-// ---------------------------------------------------------------------------
+  try {
+    const status = await client.status();
+    console.log(JSON.stringify(status, null, 2));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  }
+} else if (cmd === "index") {
+  const config = loadConfig();
+  const client = new PaiClient(config.socketPath);
 
-program
-  .command("index")
-  .description("Trigger an immediate index run in the running daemon")
-  .action(async () => {
-    const config = loadConfig();
-    const client = new PaiClient(config.socketPath);
-
-    try {
-      await client.triggerIndex();
-      console.log("Index triggered. Check daemon logs for progress.");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-// ---------------------------------------------------------------------------
-// Parse
-// ---------------------------------------------------------------------------
-
-program.parse(process.argv);
-
-if (process.argv.length <= 2) {
-  program.help();
+  try {
+    await client.triggerIndex();
+    console.log("Index triggered. Check daemon logs for progress.");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  }
+} else {
+  console.error(`pai-daemon: unknown command "${cmd}"\n${USAGE}`);
+  process.exit(2);
 }
