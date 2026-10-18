@@ -1,10 +1,8 @@
 /** `pai memory ...`: search and index what was written down. */
 
-import type { Command } from "commander";
 import { OPT, type CommandDef, type OptDef, CliError } from "../define.js";
-import { bridged } from "../lib/bridge.js";
 import { registerBackendCommands } from "./memory/backend.js";
-import { registerEmbedCommand } from "./memory/embed.js";
+import { memoryEmbedCmd } from "./memory/embed.js";
 import { registerIndexCommand } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { memorySearchCmd } from "./memory/search.js";
@@ -13,8 +11,6 @@ import { registerStatsCommands } from "./memory/stats.js";
 
 const background: OptDef = { name: "background", type: "boolean", summary: "Run at low priority so the computer stays responsive" };
 const projectSlug = { name: "PROJECT", summary: "Project name as shown by `pai project list`" };
-
-const m = (register: (c: Command) => void, path: string[], def: Omit<CommandDef, "run">) => bridged(register, "memory", path, def);
 
 export const memoryIndexCommand = m(registerIndexCommand, ["index"], {
   name: "index",
@@ -33,7 +29,7 @@ export const memoryIndexCommand = m(registerIndexCommand, ["index"], {
   seeAlso: ["pai memory embed", "pai memory status"],
 });
 
-export const memoryEmbedCommand = m(registerEmbedCommand, ["embed"], {
+export const memoryEmbedCommand: CommandDef = {
   name: "embed",
   summary: "Compute meaning vectors for indexed text that has none yet",
   description: "Semantic and hybrid search need a vector per text chunk. This fills in the missing ones, in batches; safe to stop and re-run.",
@@ -44,7 +40,11 @@ export const memoryEmbedCommand = m(registerEmbedCommand, ["embed"], {
   ],
   examples: ["pai memory embed", "pai memory embed my-project --batch-size 20", "pai memory embed --background"],
   seeAlso: ["pai memory index", "pai memory backend detect"],
-});
+  run: (ctx) => memoryEmbedCmd(ctx.args["project-slug"] as string | undefined, {
+    batchSize: ctx.opts["batch-size"] as string | undefined,
+    background: ctx.opts.background === true,
+  }),
+};
 
 export const memorySearchCommand: CommandDef = {
   name: "search",
