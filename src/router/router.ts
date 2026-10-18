@@ -10,6 +10,7 @@
  * Bodies and keys are never logged.
  */
 
+import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import {
@@ -278,9 +279,27 @@ export function prepare(
     }
     headers.authorization = `Bearer ${token ?? "local"}`;
   }
+  if (process.env.PAI_ROUTER_DEBUG_PREFIX) {
+    const h = prefixBlockHashes(out);
+    if (h) process.stderr.write(`router prefix ${res.model} ${JSON.stringify(h)}\n`);
+  }
   const buf = Buffer.from(JSON.stringify(out));
   headers["content-length"] = String(buf.length);
   return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model };
+}
+
+const blockHash = (v: unknown): string =>
+  createHash("sha256").update(JSON.stringify(v ?? null)).digest("hex").slice(0, 12);
+
+/**
+ * Per-block hashes of a conversation's first request (one message), so two
+ * runs' prefixes can be diffed block by block. Null for later requests.
+ * Enabled by PAI_ROUTER_DEBUG_PREFIX.
+ */
+export function prefixBlockHashes(body: Record<string, unknown>): { system: string; tools: string; user: string } | null {
+  const msgs = body.messages;
+  if (!Array.isArray(msgs) || msgs.length !== 1) return null;
+  return { system: blockHash(body.system), tools: blockHash(body.tools), user: blockHash((msgs[0] as { content?: unknown }).content) };
 }
 
 const MODELS_PATH = /^\/v1\/models(?:\/([^/?]+))?(\?.*)?$/;

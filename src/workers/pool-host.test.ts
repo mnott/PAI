@@ -393,6 +393,30 @@ describe("pooled task lifecycle", () => {
     expect(h.cwds[0]).not.toBe(repo);
     expect(h.slots[0]!.fedTexts.length).toBe(1);
     expect(h.slots[1]!.fedTexts.length).toBe(1);
+    // unmarked spec: nothing moved to the system prompt, worker id/branch trail the spec
+    const t = h.slots[0]!.fedTexts[0]!;
+    expect(h.argvs[0]!.join(" ")).not.toContain("SHARED-RULES");
+    expect(t.indexOf("worker id wt1")).toBeGreaterThan(t.indexOf("NEW TASK"));
+  });
+
+  it("a marked shared preamble rides in the slot system prompt; the user turn keeps the unit part", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    const repo = mkdtempSync(join(tmpdir(), "pai-pool-wt-repo-"));
+    git(repo, ["init", "-q"]);
+    git(repo, ["config", "user.email", "test@example.invalid"]);
+    git(repo, ["config", "user.name", "worker test"]);
+    writeFileSync(join(repo, "base.txt"), "base\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "init"]);
+    h.script([[assistantUsage(usage1), resultEvt(R_PLAIN_1)]]);
+    const prompt = "--- shared ---\nSHARED-RULES keep it small\n--- unit ---\nUNIT-GOAL fix x";
+    await h.host.runTask(task({ id: "wt9", provider: "loopprov", cwd: repo, worktree: true, prompt }));
+    expect(h.argvs[0]!.join(" ")).toContain("SHARED-RULES keep it small");
+    const t = h.slots[0]!.fedTexts[0]!;
+    expect(t).toContain("UNIT-GOAL fix x");
+    expect(t).not.toContain("SHARED-RULES");
+    expect(t.indexOf("UNIT-GOAL")).toBeLessThan(t.indexOf("worker id wt9"));
   });
 });
 

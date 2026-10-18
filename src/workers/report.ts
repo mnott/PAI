@@ -161,7 +161,8 @@ function fullContractPrompt(format: "ag2" | "json"): string {
 export const ORCHESTRATOR_CONTRACT =
   "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
   "Write each unit spec to a file under /tmp, start it with `pai worker run --provider local30x8 --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge. " +
-  "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them with `npx vitest run --dir .pai-scratch`.";
+  "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them with `npx vitest run --dir .pai-scratch`. " +
+  "When several unit specs share rules, the AG2 report format or a Do-not list, write that block once at the top of each spec between a line `--- shared ---` and a line `--- unit ---` (byte-identical across the specs), then the unit's own goal after the second marker: the pool puts the shared block into the slot's cached system prompt.";
 
 /**
  * The system prompt appended to every headless run, chosen by task class and
