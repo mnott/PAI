@@ -62,6 +62,8 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
   ["checkout sha detaches", bash("git checkout 890d64d"), wtCtx(), "commit on your branch"],
   ["checkout --detach", bash("git checkout --detach"), wtCtx(), "commit on your branch"],
   ["switch --detach", bash("git switch --detach main"), wtCtx(), "commit on your branch"],
+  ["checkout HEAD~1", bash("git checkout HEAD~1"), wtCtx(), "commit on your branch"],
+  ["switch --detach bare", bash("git switch --detach"), wtCtx(), "commit on your branch"],
   ["TODO.md via redirect", bash("echo x >> Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
   ["TODO.md via tee", bash("echo x | tee Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
   ["TODO.md via sed -i", bash("sed -i '' s/a/b/ Notes/TODO.md"), wtCtx(), "Notes/TODO.md"],
@@ -87,6 +89,8 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
 ];
 
 const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
+  ["commit -qam with ; and - in the message", bash(`git commit -qam "fix(workers): prompt values starting with - stay prompts; pre-event start failures record claude stderr"`), wtCtx()],
+  ["commit message naming checkout", bash(`git commit -m "checkout HEAD~1"`), wtCtx()],
   ["checkout -b new branch", bash("git checkout -b feat HEAD~1"), wtCtx()],
   ["checkout a file from a rev", bash("git checkout HEAD -- src/a.ts"), wtCtx()],
   ["ln -s inside worktree", bash("ln -s ../node_modules/x lib/x"), wtCtx()],
