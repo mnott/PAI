@@ -965,25 +965,9 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   try {
     git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
-    let files = "";
-    let inProgress = false;
-    try {
-      inProgress = existsSync(resolve(st.cwd, git(st.cwd, ["rev-parse", "--git-path", "MERGE_HEAD"])));
-      if (inProgress) files = git(st.cwd, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean).join(", ");
-    } catch {
-      /* fall through to the generic message */
-    }
-    if (inProgress) {
-      git(st.cwd, ["merge", "--abort"]);
-      if (git(st.cwd, ["rev-parse", "HEAD"]) !== oldHead || git(st.cwd, ["status", "--porcelain", "--untracked-files=no"])) {
-        throw new Error(`worker ${id}: git merge --abort left ${st.cwd} not at ${oldHead}; inspect it before retrying`);
-      }
-    }
     throw new Error(
-      `worker ${id}: git refused the merge of ${st.branch}` +
-        (files
-          ? ` — conflict in ${files}: merge main into the worker branch in its kept worktree (${st.worktreeDir}), resolve, then re-run pai worker merge ${id}`
-          : ` — ${(e as Error).message}. The worktree ${st.worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`)
+      `worker ${id}: git refused the merge of ${st.branch} — ${(e as Error).message}. ` +
+        `The worktree ${st.worktreeDir} was kept: resolve the conflict, then re-run merge`
     );
   }
   const verifyLine = [opts.verify ? runVerify(st.cwd, opts.verify, oldHead) : "", stubScan(st.cwd, oldHead)].filter(Boolean).join("\n");
