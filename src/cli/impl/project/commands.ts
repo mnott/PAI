@@ -233,8 +233,6 @@ export function findMovedPath(registeredPath: string): { found?: string; ambiguo
     join(home, "Documents"),
     // Common cloud-storage root folders (Synology Drive, iCloud, etc.)
     join(home, "Cloud"),
-    join(home, "Daten", "Cloud"),
-    join(home, "Daten"),
     join(home, "Library", "Mobile Documents", "com~apple~CloudDocs"),  // iCloud Drive
     // The deepest ancestor of the registered path that still exists on disk
     ...(ancestorRoot ? [ancestorRoot] : []),

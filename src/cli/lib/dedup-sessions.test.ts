@@ -20,7 +20,7 @@ function disk(over: Partial<ScannedSession> & { uuid: string }): ScannedSession 
   return {
     shortId: over.uuid.slice(0, 8),
     encodedDir: "-Users-owner-Daten-Cloud-Development-apps-Northwind",
-    decodedPath: "/Users/owner/Daten/Cloud/Development/apps/Northwind",
+    decodedPath: "/Users/owner/Cloud/Development/apps/Northwind",
     topLevelPath: "",
     topLevelSystemLines: 0,
     topLevelSize: 0,

@@ -13,7 +13,7 @@ import { unregistrableReason } from "./registrable.js";
 describe("agent worktrees", () => {
   it("refuses a path inside .claude/worktrees", () => {
     const reason = unregistrableReason(
-      "/Users/x/Cloud/08 - Others/MDF/Infrastruktur/.claude/worktrees/cool-haibt"
+      "/Users/x/Cloud/08 - Others/Client/Infrastructure/.claude/worktrees/cool-haibt"
     );
     expect(reason).toBeDefined();
     expect(reason).toContain("worktree");
@@ -53,7 +53,7 @@ describe("temp directories", () => {
 describe("not over-reaching", () => {
   it("accepts a normal project path", () => {
     expect(
-      unregistrableReason("/Users/x/Daten/Cloud/Development/ai/PAI")
+      unregistrableReason("/Users/x/Cloud/Development/PAI")
     ).toBeUndefined();
   });
 
