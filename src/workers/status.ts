@@ -35,6 +35,8 @@ export interface WorkerStatus {
   id: string;
   pid: number;
   label: string;
+  /** Latest `pai worker goal` / `say --goal` note to the worker; never replaces the label. */
+  note?: string;
   cwd: string;
   /** iTerm session id of the launching terminal ("" outside iTerm). */
   term: string;
@@ -304,6 +306,8 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (status.label === baseline && onDisk.label !== status.label) status.label = onDisk.label;
     // Set by another process (`pai worker controls`); a true flag is never dropped by a stale in-memory copy.
     if (onDisk.controlsHeld) status.controlsHeld = true;
+    // Written by `pai worker goal` (another process); the runner's copy never sets it.
+    if (onDisk.note !== undefined) status.note = onDisk.note;
     // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
     if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
     // Recorded by `pai issue claim` (another process).
@@ -344,6 +348,18 @@ export function setWorkerLabel(logDir: string, id: string, label: string): Worke
   const status = loadStatus(logDir, id);
   if (!status) throw new Error(`no worker named "${id}"`);
   status.label = label;
+  saveStatus(logDir, status);
+  return status;
+}
+
+/**
+ * Record a note to a running worker (`pai worker goal`, `say --goal`). The
+ * label stays the worker's task; the note is shown beside it, never instead.
+ */
+export function setWorkerNote(logDir: string, id: string, note: string): WorkerStatus {
+  const status = loadStatus(logDir, id);
+  if (!status) throw new Error(`no worker named "${id}"`);
+  status.note = note;
   saveStatus(logDir, status);
   return status;
 }
