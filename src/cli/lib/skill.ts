@@ -7,7 +7,6 @@
  * (search / install / audit / trial) — see Notes/swarm/skills-self-educating.md.
  */
 
-import type { Command } from "commander";
 import { createConnection } from "net";
 import { warn, err, dim, bold, header } from "./utils.js";
 import chalk from "chalk";
@@ -97,15 +96,15 @@ interface SkillTelemetry {
 // Command: pai skill telemetry
 // ---------------------------------------------------------------------------
 
-async function cmdTelemetry(opts: {
+export async function skillTelemetryCmd(opts: {
   scope?: string;
   status?: string;
-  limit?: string;
+  limit?: number;
   json?: boolean;
-}): Promise<void> {
+}): Promise<number> {
   const params: Record<string, unknown> = {
     scope: opts.scope ?? "default",
-    limit: parseInt(opts.limit ?? "50", 10),
+    limit: opts.limit ?? 50,
   };
   if (opts.status) params.status = opts.status;
 
@@ -115,13 +114,12 @@ async function cmdTelemetry(opts: {
   } catch (e) {
     console.error(err(`  Failed to reach PAI daemon: ${e}`));
     console.error(dim("  Is the daemon running? Try: pai daemon status"));
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   if (opts.json) {
     console.log(JSON.stringify(rows ?? [], null, 2));
-    return;
+    return 0;
   }
 
   console.log();
@@ -133,7 +131,7 @@ async function cmdTelemetry(opts: {
     console.log(warn("  No skill telemetry yet."));
     console.log(dim("  Invoke a skill (e.g. /name) and it will be recorded."));
     console.log();
-    return;
+    return 0;
   }
 
   const NAME_W = 24;
@@ -167,27 +165,5 @@ async function cmdTelemetry(opts: {
   console.log();
   console.log(dim(`  ${rows.length} skill(s)`));
   console.log();
-}
-
-// ---------------------------------------------------------------------------
-// Commander registration
-// ---------------------------------------------------------------------------
-
-export function registerSkillCommands(parent: Command): void {
-  parent
-    .command("telemetry")
-    .description("Show skill-invocation telemetry (triggers, last used, projects)")
-    .option("--scope <scope>", "Governance scope", "default")
-    .option("--status <status>", "Filter by status: trial | active | archived")
-    .option("--limit <n>", "Maximum rows", "50")
-    .option("--json", "Output raw JSON")
-    .action(async (opts: { scope?: string; status?: string; limit?: string; json?: boolean }) => {
-      try {
-        await cmdTelemetry(opts);
-      } catch (e) {
-        console.error(err(`  Error: ${e}`));
-        process.exitCode = 1;
-        return;
-      }
-    });
+  return 0;
 }

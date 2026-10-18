@@ -1,9 +1,7 @@
 /** `pai skill ...`: how skills are used. */
 
-import type { Command } from "commander";
 import { OPT, type CommandDef } from "../define.js";
-import { bridged } from "../lib/bridge.js";
-import { registerSkillCommands } from "../lib/skill.js";
+import { skillTelemetryCmd } from "../lib/skill.js";
 
 export const skillCommand: CommandDef = {
   name: "skill",
@@ -12,7 +10,7 @@ export const skillCommand: CommandDef = {
   examples: ["pai skill telemetry", "pai skill telemetry --status active --json"],
   seeAlso: ["pai audit skills"],
   subcommands: [
-    bridged(registerSkillCommands, "skill", ["telemetry"], {
+    {
       name: "telemetry",
       summary: "Which skills were used, when, and where",
       description: "Lists skills with their trigger counts, last use and projects. Output with --json is the raw data.",
@@ -24,6 +22,12 @@ export const skillCommand: CommandDef = {
       ],
       examples: ["pai skill telemetry", "pai skill telemetry --status trial --limit 10", "pai skill telemetry --json"],
       seeAlso: ["pai audit skills"],
-    }),
+      run: (ctx) => skillTelemetryCmd({
+        scope: ctx.opts.scope as string | undefined,
+        status: ctx.opts.status as string | undefined,
+        limit: ctx.opts.limit as number | undefined,
+        json: ctx.opts.json === true,
+      }),
+    },
   ],
 };
