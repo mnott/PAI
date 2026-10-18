@@ -1,12 +1,8 @@
 /** `pai memory sources` — what the indexer has taken in. */
 
 import { err, dim } from "../../lib/utils.js";
-import { CliError } from "../../define.js";
 
-export async function memorySourcesCmd(
-  args: { limit?: string },
-  opts: { limit?: number }
-): Promise<number> {
+export async function memorySourcesCmd(opts: { limit?: number }): Promise<number> {
   // Reads whichever backend is configured — unlike `memory status`, which
   // reads the SQLite federation file directly and therefore has nothing to
   // say when the live index lives in Postgres.
@@ -20,7 +16,6 @@ export async function memorySourcesCmd(
   } catch (e) {
     console.error(err(`Cannot reach the storage backend.`));
     console.error(dim(`  ${e instanceof Error ? e.message : String(e)}`));
-    process.exitCode = 1;
     return 1;
   }
 
