@@ -181,6 +181,14 @@ describe("classification", () => {
     const r = rec("w1", NOW, "PreToolUse:Bash hook error: tsc with a file argument ignores tsconfig.json; run npx tsc --noEmit", "Bash");
     expect(classifyToolError(r).cls).not.toBe("benign");
   });
+  it("No such tool: not in grant -> model, in grant -> harness, no grant -> harness", () => {
+    const raw = "No such tool available: Write. Write is disabled for this session";
+    const withGrant = (granted?: string[]) => ({ ...rec("w1", NOW, raw, "Write"), granted });
+    expect(classifyToolError(withGrant(["Read", "Grep", "Bash"]))).toMatchObject({ cls: "model", hint: "used a tool it was not granted" });
+    expect(classifyToolError(withGrant(["Read", "Write"])).cls).toBe("harness");
+    expect(classifyToolError(withGrant()).cls).toBe("harness");
+    expect(classifyToolError(withGrant([])).cls).toBe("harness");
+  });
   it("harness errors alert at the usual thresholds", () => {
     for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
       expect(classifyToolError(rec("w1", NOW, raw)).cls).toBe("harness");
