@@ -43,7 +43,8 @@ import { dirname, join } from "node:path";
 import { ANTHROPIC_NATIVE, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
-import { inputSideTokens, type StreamEvent, type UsageBlock } from "./run.js";
+import type { StreamEvent } from "./run.js";
+import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
 
