@@ -47,7 +47,8 @@ describe("decideOrchestratorEdit", () => {
     const result = decideOrchestratorEdit(filePath);
     expect(result.decision).toBe(expected);
     if (result.decision === "block") {
-      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+      expect(result.reason).not.toContain("local30x8");
+      expect(result.reason).toContain("pai worker run --provider <the local provider named in your brief> --class implement");
       expect(result.reason).toContain(filePath);
       expect(result.reason).toContain(".pai-scratch");
     }
@@ -62,6 +63,14 @@ describe("decideOrchestratorBash", () => {
     ["cat > src/a.ts", "block"],
     ["echo x >> lib/b.py", "block"],
     ["printf x | tee src/c.js", "block"],
+    ["cd /w/t/.pai-scratch; sed -i '' 's/^--- unit ---$/.../' u5.txt u5.unit shared.txt", "allow"],
+    ["cd .pai-scratch; sed -i '' 's/a/b/' *.txt", "allow"],
+    ["sed -i '' 's/a/b/' .pai-scratch/*.txt", "allow"],
+    ["sed -i 's/a/b/' src/foo.ts", "block"],
+    ["sed -i 's/a/b/' src/*", "block"],
+    ["sed -i 's/a/b/' $FILES", "block"],
+    ["perl -pi -e 's/a/b/' notes.md", "allow"],
+    ["sed -i 's/a/b/' notes.md src/x.ts", "block"],
     ["git mv src/a.ts src/b.ts", "allow"],
     ["git rm src/a.ts", "allow"],
     ["git merge worker/abc", "allow"],
@@ -83,7 +92,8 @@ describe("decideOrchestratorBash", () => {
     expect(result.decision).toBe(expected);
     if (result.decision === "block") {
       expect(result.reason).toContain("Bash may not write code files in place");
-      expect(result.reason).toContain("pai worker run --provider local30x8 --class implement");
+      expect(result.reason).not.toContain("local30x8");
+      expect(result.reason).toContain("pai worker run --provider <the local provider named in your brief> --class implement");
     }
   });
 });

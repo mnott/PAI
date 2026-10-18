@@ -50,7 +50,7 @@ describe("route-edits-to-worker", () => {
     const out = runHook(join(repo, "src/workers/run.ts"), { PAI_WORKER: "1", PAI_WORKER_ORCHESTRATOR: "1" });
     const parsed = JSON.parse(out);
     expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("pai worker run --provider local30x8 --class implement");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("pai worker run --provider <the local provider named in your brief> --class implement");
   });
 
   it("orchestrator worker: still allows Notes and /tmp specs", () => {
