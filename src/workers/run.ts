@@ -1217,6 +1217,12 @@ export async function requireVisiblePane(
   }
 }
 
+/** status.last for a claude start that died before any model event: its stderr, not a bare "starting". */
+export function preEventFailure(rc: number, turns: number, stderrTail: string): string | null {
+  if (rc === 0 || turns > 0 || !stderrTail.trim()) return null;
+  return "failed before any model event: " + shortText(stderrTail, 150);
+}
+
 /**
  * Follow pane, made observable on stderr (stdout stays pure JSON for
  * `--output-format json`): one line naming the outcome — opened, skipped
@@ -1755,7 +1761,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const proc = spawn(cmd[0], cmd.slice(1), {
     env,
     cwd: worktree?.dir ?? cwd,
-    stdio: headless ? ["pipe", "pipe", "inherit"] : "inherit",
+    stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
+  });
+  // claude's stderr: passed through, and the tail kept for a start that dies before any model event
+  let stderrTail = "";
+  proc.stderr?.on("data", (d: Buffer) => {
+    process.stderr.write(d);
+    stderrTail = (stderrTail + d.toString()).slice(-2000);
   });
 
   // --- stdin lifecycle (2i): prompt in, socket forwards, close 2 s after result
@@ -2000,6 +2012,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
+  else if (headless) status.last = preEventFailure(rc, status.turns, stderrTail) ?? status.last;
   if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
   if (empty) {
     status.last = "harness: empty-response (model returned nothing)";
