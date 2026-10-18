@@ -105,3 +105,25 @@ describe("longestSleepSecs", () => {
     expect(longestSleepSecs("")).toBeNull();
   });
 });
+
+describe("ownsPid with queued-then-started workers", () => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const idFor = (pid: number, d: Date) =>
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${pid}`;
+  const own = new Date(ownStartedStamp().replace(" ", "T"));
+
+  it("owns the pid when slot-acquired `started` is much later than process start", () => {
+    const late = nowStamp(new Date(own.getTime() + 10 * 60_000));
+    expect(ownsPid({ id: idFor(process.pid, own), pid: process.pid, started: late })).toBe(true);
+  });
+
+  it("does not own a reused pid: id time far from the live process start", () => {
+    const old = new Date(own.getTime() - 3 * 3600_000);
+    expect(ownsPid({ id: idFor(process.pid, old), pid: process.pid, started: nowStamp(old) })).toBe(false);
+  });
+
+  it("an id naming a different pid is not trusted; falls back to started", () => {
+    const late = nowStamp(new Date(own.getTime() + 10 * 60_000));
+    expect(ownsPid({ id: idFor(1, own), pid: process.pid, started: late })).toBe(false);
+  });
+});
