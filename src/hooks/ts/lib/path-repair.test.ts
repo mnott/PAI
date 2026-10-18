@@ -369,6 +369,26 @@ describe("renderRepair", () => {
       expect(out.updatedInput).toBeUndefined();
     }
   });
+  it("Write of a new file at a mistyped path: rewrite applies, no deny", () => {
+    const w = { tool_name: "Write", cwd: CWD, tool_input: { file_path: TYPO, content: "x" } };
+    const wr = repairPath(w, W, fs(`${CWD}/Sources/Core/Text`))!;
+    expect(wr.create).toBe(true);
+    const out = JSON.parse(renderRepair(wr, "Write")).hookSpecificOutput;
+    expect(out.permissionDecision).toBe("allow");
+    expect(out.updatedInput).toEqual({ file_path: GOOD, content: "x" });
+  });
+  it("Write of a new file at the dropped-segment worktree path is repaired", () => {
+    const c = "/Users/dev/.claude/pai/logs/workers/worktrees/id1";
+    const w = { tool_name: "Write", cwd: c, tool_input: { file_path: "/Users/dev/.claude/pai/logs/worktrees/id1/src/cli/define.ts", content: "x" } };
+    const wr = repairPath(w, W, fs(`${c}/src/cli`))!;
+    expect(wr.new).toBe(`${c}/src/cli/define.ts`);
+    expect(JSON.parse(renderRepair(wr, "Write")).hookSpecificOutput.permissionDecision).toBe("allow");
+  });
+  it("Edit of a missing corrected file is still denied as not existing yet", () => {
+    const e = { tool_name: "Edit", cwd: CWD, tool_input: { file_path: TYPO } };
+    const er = repairPath(e, W, fs(`${CWD}/Sources/Core/Text`))!;
+    expect(JSON.parse(renderRepair(er, "Edit")).hookSpecificOutput.permissionDecisionReason).toBe(`PAI guard: Wrong path. Use exactly: ${GOOD} (it does not exist yet)`);
+  });
   it("Read keeps the silent rewrite", () => {
     const out = JSON.parse(renderRepair(r, "Read")).hookSpecificOutput;
     expect(out.permissionDecision).toBe("allow");
