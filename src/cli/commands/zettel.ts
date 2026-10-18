@@ -8,6 +8,7 @@ import { zettelExploreCmd } from "./zettel/explore.js";
 import { zettelHealthCmd } from "./zettel/health.js";
 import { zettelSurpriseCmd } from "./zettel/surprise.js";
 import { zettelConverseCmd } from "./zettel/converse.js";
+import { zettelThemesCmd } from "./zettel/themes.js";
 
 const vaultId: OptDef = { name: "vault-project-id", type: "string", value: "N", summary: "Required. Id of the vault's project (see `pai project list`)" };
 const limit = (n: number, what: string): OptDef => ({ name: "limit", type: "number", value: "N", default: n, summary: `Maximum ${what}` });
@@ -79,7 +80,7 @@ export const zettelCommand: CommandDef = {
         limit: ctx.opts.limit as number | undefined,
       }),
     },
-    z(["themes"], {
+    {
       name: "themes",
       summary: "Spot topics emerging in recent notes",
       description: "Clusters recently edited notes by similarity and names the groups.",
@@ -92,7 +93,14 @@ export const zettelCommand: CommandDef = {
       ],
       examples: ["pai zettel themes --vault-project-id 3", "pai zettel themes --vault-project-id 3 --days 7"],
       seeAlso: ["pai zettel health"],
-    }),
+      run: (ctx) => zettelThemesCmd({
+        vaultProjectId: ctx.opts["vault-project-id"] as string | number | undefined,
+        days: ctx.opts.days as number | undefined,
+        minSize: ctx.opts["min-size"] as number | undefined,
+        maxThemes: ctx.opts["max-themes"] as number | undefined,
+        threshold: ctx.opts.threshold as number | undefined,
+      }),
+    },
     {
       name: "health",
       summary: "Check the vault for dead links and orphans",
