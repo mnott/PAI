@@ -940,18 +940,30 @@ function tmuxSplit(cmd: string): void {
   }
 }
 
-/** Worker state straight from its status file (pane.ts cannot import status.ts: it imports us). */
-function workerEnded(logDir: string, wid: string): boolean {
+/**
+ * Worker state straight from its status file (pane.ts cannot import status.ts: it imports us).
+ * Ended = any state but "running", or "running" whose runner pid is gone (a ghost that died
+ * before it could write its end state). A missing/unreadable file or a status without a pid is never ended.
+ */
+export function workerEnded(logDir: string, wid: string): boolean {
   try {
-    const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string };
-    return !!st.state && st.state !== "running";
+    const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
+    if (!st.state) return false;
+    if (st.state !== "running") return true;
+    if (typeof st.pid !== "number" || st.pid <= 0) return false;
+    try {
+      process.kill(st.pid, 0);
+      return false;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code !== "EPERM";
+    }
   } catch {
     return false;
   }
 }
 
 /** The replacement rule: a new pane in a scope closes that scope's panes of ended workers. */
-async function closeEndedInScope(logDir: string, scope: string, ops: PaneOps = realPaneOps): Promise<void> {
+export async function closeEndedInScope(logDir: string, scope: string, ops: PaneOps = realPaneOps): Promise<void> {
   for (const e of loadRegistry(logDir, scope)) {
     if (!workerEnded(logDir, e.worker)) continue;
     await ops.closeIterm(e.session).catch(() => false);
@@ -1336,6 +1348,8 @@ export async function openPlaced(
   hostUid: string,
   kind: "tab" | "window"
 ): Promise<string> {
+  // a tab/window pane replaces the scope's ended panes exactly like a split does
+  await closeEndedInScope(logDir, scopeKey(term));
   const profile = await followProfile(config.pane.fontSize);
   const p = await osascript(NEW_PLACE_SCRIPT, [kind, hostUid, followCommand(wid), profile]);
   const id = p.stdout.trim();
