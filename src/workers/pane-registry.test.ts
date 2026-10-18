@@ -31,7 +31,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { closeEndedPanes, closeOwnPane, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
+import { closeEndedPanes, closeOwnPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { scopeKey } from "./scope.js";
 import type { WorkersConfig } from "./config.js";
@@ -178,5 +178,36 @@ describe("ended workers keep their pane until the next pane replaces it", () => 
     expect(await closeOwnPane({ ITERM_SESSION_ID: TERM }, ops)).toBe(true);
     expect(ops.closedIterm).toEqual(["D38D3E5D-19E8-4FE5-A78A-26E8E571FE27"]);
     expect(await closeOwnPane({}, ops)).toBe(false);
+  });
+});
+
+describe("sibling replacement", () => {
+  const put = (id: string, extra: Record<string, unknown>) =>
+    saveStatus(dir, { id, label: "x", cwd: dir, provider: "p", ...extra } as unknown as WorkerStatus);
+
+  it("siblings of one orchestrator share a scope whatever the caller's env says", () => {
+    const a = scopeKey("w9t1p0:FEE3A386-C5E3-4237-A661-F7CE44CF8602");
+    process.env.ITERM_SESSION_ID = "w2t0p0:AAAAAAAA-0000-0000-0000-000000000000";
+    expect(scopeKey("w9t1p0:FEE3A386-C5E3-4237-A661-F7CE44CF8602")).toBe(a);
+  });
+
+  it("done, failed, killed and lost count as ended", () => {
+    for (const state of ["done", "failed", "killed", "lost"]) {
+      put(`w-${state}`, { state, pid: process.pid });
+      expect(workerEnded(dir, `w-${state}`)).toBe(true);
+    }
+  });
+
+  it("running with a live pid, or without a pid, or unknown is not ended", () => {
+    put("w-live", { state: "running", pid: process.pid });
+    put("w-nopid", { state: "running" });
+    expect(workerEnded(dir, "w-live")).toBe(false);
+    expect(workerEnded(dir, "w-nopid")).toBe(false);
+    expect(workerEnded(dir, "w-missing")).toBe(false);
+  });
+
+  it("a ghost 'running' status whose pid is dead counts as ended", () => {
+    put("w-ghost", { state: "running", pid: 2 ** 22 + 12345 });
+    expect(workerEnded(dir, "w-ghost")).toBe(true);
   });
 });

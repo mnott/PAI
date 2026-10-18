@@ -101,7 +101,8 @@ export function workerInScope(worker: WorkerStatus, term: string): boolean {
 export function scopeKey(term: string): string {
   const session = resolveSession(term);
   if (session) return session.id;
-  return currentTabKey() || itermUuid(term);
+  // keyed by the term asked about, not the caller's env: siblings of one orchestrator share a scope
+  return tabKey(term) || currentTabKey() || itermUuid(term);
 }
 
 /** `[Name]` when the worker has an AIBroker session name, else "". */
