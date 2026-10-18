@@ -6,6 +6,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+## [0.67.1] - 2026-10-18
+
+### Fixed
+
+- **CLI exit with piped stdout:** `pai` could exit with code 13 ("unsettled top-level await") when its stdout was a pipe and output was still buffered below the high-water mark. Callers such as AIBroker's project launcher saw intermittent failures. The final flush now waits on a write callback and never hangs on a closed pipe.
+
 ## [0.67.0] - 2026-10-18
 
 ### Fixed
