@@ -1171,6 +1171,28 @@ function run(argv) {
     });
 }`;
 
+// Host session's tab selection and size, read before anything is opened.
+// JSON on stdout.
+const HOST_TAB_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return JSON.stringify({ fail: "iTerm2 is not running" });
+    var h = findSession(app, argv[0]);
+    if (!h) return JSON.stringify({ fail: "host session " + argv[0] + " is gone" });
+    var selected = h.w.currentTab().sessions().map(function (o) { return o.id(); }).indexOf(argv[0]) >= 0;
+    return JSON.stringify({ selectedTab: selected, rows: h.s.rows(), cols: h.s.columns() });
+}`;
+
+/** True unless the host session's tab is known not to be its window's selected tab. */
+async function hostTabSelected(hostUid: string): Promise<boolean> {
+  try {
+    const p = await osascript(HOST_TAB_SCRIPT, [hostUid]);
+    return (JSON.parse(p.stdout.trim()) as { selectedTab?: boolean }).selectedTab !== false;
+  } catch {
+    return true; // unreadable: split, and let verifyPane judge the result
+  }
+}
+
 /** Where a follow pane sits: split of the host's tab, a new tab of its window, or a new window. */
 export type PanePlacement = "split" | "tab" | "window";
 
@@ -1241,6 +1263,7 @@ export interface PaneSeam {
   split?: typeof openPaneForWorker;
   verify?: typeof verifyPane;
   place?: typeof openPlaced;
+  hostSelected?: (hostUid: string) => Promise<boolean>;
 }
 
 /**
@@ -1271,6 +1294,13 @@ export async function openVerifiedPane(
   if (!envUid) throw new Error("neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees");
   if (envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
+  }
+  // a split in a background tab is invisible: use a new window instead
+  if (!(await (seam.hostSelected ?? hostTabSelected)(hostUid))) {
+    const where = await place(logDir, config, wid, term, hostUid, "window");
+    process.stderr.write("[pai worker] pane: new window (host tab not selected)\n");
+    placements.set(wid, "window");
+    return where;
   }
   const r = await split(logDir, config, wid, term);
   if (!r.session) throw new Error(`pane verification failed: ${r.message}`);

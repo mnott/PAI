@@ -27,10 +27,11 @@ const ops: PaneOps = {
   },
 };
 
-function seam(opts: { split?: "ok" | "small"; tab?: "ok" | "fail"; window?: "ok" | "fail" }): PaneSeam & { placed: string[] } {
+function seam(opts: { split?: "ok" | "small"; tab?: "ok" | "fail"; window?: "ok" | "fail"; hostSelected?: boolean }): PaneSeam & { placed: string[] } {
   const placed: string[] = [];
   return {
     placed,
+    hostSelected: async () => opts.hostSelected !== false,
     split: async () => ({ message: "pane opened", session: "S1" }),
     verify: async () => {
       if (opts.split === "small") throw new Error(TOO_SMALL);
@@ -84,6 +85,21 @@ describe("openVerifiedPane placement", () => {
     const s = seam({ split: "small", tab: "fail", window: "fail" });
     await expect(open("w-none", s)).rejects.toThrow("pane too small, 26x14 < 40x8");
     expect(panePlacement("w-none")).toBeUndefined();
+  });
+
+  it("host tab not selected -> new window, no split", async () => {
+    const s = seam({ hostSelected: false });
+    s.split = vi.fn();
+    await expect(open("w-bg", s)).resolves.toContain("new window");
+    expect(s.split).not.toHaveBeenCalled();
+    expect(s.placed).toEqual(["window"]);
+    expect(panePlacement("w-bg")).toBe("window");
+    expect(vi.mocked(process.stderr.write).mock.calls.join("")).toContain("pane: new window (host tab not selected)");
+  });
+
+  it("host tab not selected and the window cannot be verified -> rejected", async () => {
+    const s = seam({ hostSelected: false, window: "fail" });
+    await expect(open("w-bg2", s)).rejects.toThrow("nope");
   });
 
   it("a non-size failure does not fall back", async () => {
