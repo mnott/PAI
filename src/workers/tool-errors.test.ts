@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
-import { recordToolError } from "./tool-errors.js";
+import { recordToolError, clipRaw } from "./tool-errors.js";
 import type { WorkerStatus } from "./status.js";
 import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord, isBenignBash } from "./tool-errors.js";
 
@@ -200,6 +200,20 @@ describe("classification", () => {
   it("everything else is unknown", () => {
     const [g] = detectToolErrors(three("weird failure"), NOW, {});
     expect(toolErrorText(g)).toMatch(/^\[unknown\] /);
+  });
+});
+
+describe("clipRaw", () => {
+  it("returns short texts unchanged", () => {
+    const short = "abc";
+    expect(clipRaw(short)).toBe(short);
+  });
+  it("truncates long texts keeping head and tail", () => {
+    const long = "x".repeat(400) + " ls: /tmp/x.rc: No such file or directory";
+    const result = clipRaw(long);
+    expect(result).toHaveLength(300);
+    expect(result.startsWith("xxx")).toBe(true);
+    expect(result.endsWith("No such file or directory")).toBe(true);
   });
 });
 
