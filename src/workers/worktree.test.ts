@@ -172,6 +172,35 @@ describe("addWorktree snapshot: dirty parent checkout", () => {
     discardWorker(logDir, "snap1");
   });
 
+  it("keeps .pai-scratch out of the snapshot, excludes it idempotently, and merges back with scratch present", () => {
+    resetRepoSnap();
+    mkdirSync(join(repoSnap, ".pai-scratch"), { recursive: true });
+    writeFileSync(join(repoSnap, ".pai-scratch", "spec.txt"), "scratch\n", "utf8");
+    writeFileSync(join(repoSnap, "base.txt"), "src change\n", "utf8");
+
+    const info = addWorktree(logDir, "snap-scr", repoSnap);
+    expect(info.snapshot).toBe(true);
+    expect(readFileSync(join(info.dir, "base.txt"), "utf8")).toBe("src change\n");
+    expect(git(repoSnap, ["ls-tree", "-r", "--name-only", info.base])).not.toMatch(/\.pai-scratch/);
+    expect(existsSync(join(info.dir, ".pai-scratch"))).toBe(false);
+
+    addWorktree(logDir, "snap-scr2", repoSnap).dir; // second creation: exclude stays single
+    const exclude = readFileSync(join(repoSnap, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n").filter((l) => l === ".pai-scratch/")).toHaveLength(1);
+
+    const st = status("snap-scr", { cwd: repoSnap });
+    recordWorktree(logDir, st, info, true);
+    writeFileSync(join(info.dir, "new.txt"), "n\n", "utf8");
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-q", "-m", "worker work"]);
+    expect(mergeWorker(logDir, "snap-scr")).toMatch(/applied worker snap-scr's changes/);
+    expect(readFileSync(join(repoSnap, ".pai-scratch", "spec.txt"), "utf8")).toBe("scratch\n");
+    expect(readFileSync(join(repoSnap, "new.txt"), "utf8")).toBe("n\n");
+
+    status("snap-scr2", { cwd: repoSnap, branch: "worker/snap-scr2", worktreeDir: worktreePath(logDir, "snap-scr2") });
+    discardWorker(logDir, "snap-scr2");
+  });
+
   it("takes the old, non-snapshot path on a clean checkout even in this repo", () => {
     resetRepoSnap();
     const info = addWorktree(logDir, "snap-clean", repoSnap);
