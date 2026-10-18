@@ -93,7 +93,7 @@ import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../
 import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
-import { loadStatus, loadStatuses, alive, setWorkerLabel } from "../workers/status.js";
+import { loadStatus, loadStatuses, isLive, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { deadlineLabel } from "../workers/deadline.js";
 import { endLabel } from "../workers/endreason.js";
 import { sayToWorker } from "../workers/operator.js";
@@ -924,7 +924,8 @@ async function startShim(): Promise<void> {
             ]
           : ["no runs recorded yet"];
         const logDir = workersLogDir(workers);
-        const running = loadStatuses(logDir).filter((w) => w.state === "running" && alive(w.pid));
+        reconcileStatuses(logDir);
+        const running = loadStatuses(logDir).filter((w) => isLive(w));
         const runningLines = running.length
           ? [
               "",

@@ -9,7 +9,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { alive, loadStatuses, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 
 export interface CapacityConfig {
   enabled: boolean;
@@ -99,7 +99,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     const queue = liveQueue(logDir, self.provider, isAlive);
     const queued = new Set(queue);
     const holding = load(logDir).filter(
-      (s) => s.id !== self.id && s.provider === self.provider && s.state === "running" && isAlive(s.pid) && !queued.has(s.id),
+      (s) => s.id !== self.id && s.provider === self.provider && isLive(s, (w) => isAlive(w.pid)) && !queued.has(s.id),
     ).length;
     const position = queue.indexOf(self.id) + 1;
     return { holding, position: position || queue.length + 1, queued: queue.length };
