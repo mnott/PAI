@@ -4,7 +4,6 @@
  * pass functions and reports one JSON line on stdout.
  */
 
-import type { Command } from "commander";
 import { embedChunksWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { reexecBackground, type PassName } from "../../../daemon/pass-priority.js";
@@ -30,22 +29,21 @@ async function runPass(name: PassName, sleepMs: number): Promise<unknown> {
   return { count };
 }
 
-export function registerPassCommand(memoryCmd: Command): void {
-  memoryCmd
-    .command("pass <name>", { hidden: true })
-    .option("--sleep <ms>", "noop pass: sleep this long", "0")
-    .action(async (name: PassName, opts: { sleep: string }) => {
-      reexecBackground();
-      try {
-        const result = await runPass(name, parseInt(opts.sleep, 10));
-        process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
-        process.exitCode = 0;
-      } catch (e) {
-        process.stdout.write(
-          JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) + "\n",
-        );
-        process.exitCode = 1;
-      }
-      process.exit();
-    });
+export async function memoryPassCmd(name: string, opts: { sleep?: string | number }): Promise<number> {
+  reexecBackground();
+  try {
+    const sleepValue = opts.sleep ?? 0;
+    const sleepMs = typeof sleepValue === 'string' ? parseInt(sleepValue, 10) : sleepValue;
+    const result = await runPass(name as PassName, sleepMs);
+    process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
+    process.exitCode = 0;
+    return 0;
+  } catch (e) {
+    process.stdout.write(
+      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) + "\n",
+    );
+    process.exitCode = 1;
+    return 1;
+  }
+  process.exit();
 }
