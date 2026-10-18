@@ -26,6 +26,9 @@ import {
 import { budgetCache, type BudgetReading } from "./budget.js";
 import { parseRunnerArgs } from "./args.js";
 
+// resolveTarget reads the spawning session from the environment; keep these runs hermetic
+for (const k of ["PAI_SESSION_PROVIDER", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "PAI_WORKER_ID"]) delete process.env[k];
+
 const dir = mkdtempSync(join(tmpdir(), "pai-workers-routing-"));
 
 function config(overrides: Record<string, unknown> = {}) {

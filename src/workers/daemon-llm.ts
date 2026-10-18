@@ -111,7 +111,7 @@ export async function planLlmSpawn(
     // containment config lives, on every path, provider or fallback
     config = workers;
     if (workers.enabled) {
-      const target = resolveTarget(workers, workersLogDir(workers), {});
+      const target = resolveTarget(workers, workersLogDir(workers), { sessionEnv: {} });
       provider = target.provider;
       providerName = target.providerName;
     }

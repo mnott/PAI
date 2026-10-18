@@ -112,6 +112,8 @@ export interface WorkerStatus {
   capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number };
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
+  /** "provider/model (session: launched on glm)" — how the provider was chosen; set at spawn. */
+  routeWhy?: string;
   /**
    * Why budget routing put this run on its provider instead of a fuller one
    * ahead of it ("glm: anthropic 96% until 08:02"); absent when no switch

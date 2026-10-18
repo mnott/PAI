@@ -45,6 +45,7 @@ import {
   type WorkerProvider,
 } from "../../workers/config.js";
 import { buildRunEnv, claudeCommand } from "../../workers/run-env.js";
+import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
 
@@ -517,6 +518,7 @@ function providerPlan(
   w: Pick<WorkersConfig, "caveman">
 ): ProviderResumePlan {
   const env = buildRunEnv(provider, false);
+  env[SESSION_PROVIDER_ENV] = name;
   return { provider: name, model, cmd: claudeCommand(env, w.caveman), env };
 }
 

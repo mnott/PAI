@@ -23,6 +23,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { buildRunEnv, pinnedSettingsArgs } from "./run-env.js";
+import { SESSION_PROVIDER_ENV } from "./session-provider.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 
 export class LaunchError extends WorkersConfigError {}
@@ -208,6 +209,8 @@ export async function buildLaunchPlan(
   // (scope.ts's parent-chain lookup). This IS a new session, not a worker.
   delete env.PAI_WORKER;
   delete env.PAI_WORKER_ID;
+  // the session's provider, read by worker routing (routing.ts resolveTarget)
+  env[SESSION_PROVIDER_ENV] = providerName;
   // One rule for every spawn: pinnedSettingsArgs decides the route (provider
   // URL + token, else the router when enabled, else api.anthropic.com).
   const pin = pinnedSettingsArgs(env);

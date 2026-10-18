@@ -52,6 +52,7 @@ import {
   budgetWall,
 } from "./budget.js";
 import { routingStatePath } from "./paths.js";
+import { detectSessionProvider } from "./session-provider.js";
 
 const QUOTA_SKIP_DEFAULT = 95;
 const PROBE_TIMEOUT_MS = 10_000;
@@ -187,7 +188,9 @@ export interface ResolvedTarget {
   /** MCP servers (or set names) from the class target, null when it sets none. */
   classMcp: string[] | null;
   /** How the provider was chosen — names the bypass rule for rerouting. */
-  via: "flag" | "class" | "active" | "auto";
+  via: "flag" | "class" | "session" | "active" | "auto";
+  /** Why this provider, for the run's one route line ("session: launched on glm"). */
+  routeWhy?: string;
   /**
    * One line on why budget routing moved the run off a higher-priority
    * provider ("glm: anthropic 96% until 08:02"); absent otherwise.
@@ -260,7 +263,14 @@ function exclusionReason(
 export function resolveTarget(
   config: WorkersConfig,
   logDir: string,
-  opts: { flagProvider?: string; className?: string } = {}
+  opts: {
+    flagProvider?: string;
+    className?: string;
+    /** Environment/home/cwd the session provider is read from (tests inject these). */
+    sessionEnv?: NodeJS.ProcessEnv;
+    home?: string;
+    cwd?: string;
+  } = {}
 ): ResolvedTarget {
   if (opts.flagProvider) {
     return {
@@ -269,6 +279,7 @@ export function resolveTarget(
       modelAlias: null,
       classMcp: null,
       via: "flag",
+      routeWhy: "flag: --provider",
     };
   }
 
@@ -277,26 +288,6 @@ export function resolveTarget(
   const cls =
     typeof clsTarget === "object" && clsTarget !== null ? clsTarget : undefined;
 
-  if (opts.className && clsTarget !== undefined && typeof clsTarget !== "object") {
-    const [name, alias] = clsTarget.split("/");
-    return {
-      providerName: name,
-      provider: mustBeRunnable(name, mustExist(config, name)),
-      modelAlias: alias ?? null,
-      classMcp: null,
-      via: "class",
-    };
-  }
-  if (opts.className && cls?.provider) {
-    const provider = mustBeRunnable(cls.provider, mustExist(config, cls.provider));
-    return {
-      providerName: cls.provider,
-      provider,
-      modelAlias: null,
-      classMcp: cls.mcp ?? null,
-      via: "class",
-    };
-  }
   if (opts.className && clsTarget === undefined) {
     // a standard class may simply be unconfigured (it then routes like a run
     // without a class); anything else is a typo and must not pass silently
@@ -309,6 +300,53 @@ export function resolveTarget(
     }
   }
 
+  // the session the run was spawned from: its provider, the model tier from
+  // the class (spotcheck/simple fast, the rest default) — the class map's
+  // provider is ignored. A walled (cooldown) session provider falls through
+  // to the configured routing below.
+  const session = detectSessionProvider(config, {
+    env: opts.sessionEnv,
+    home: opts.home,
+    cwd: opts.cwd,
+    logDir,
+  });
+  if (session) {
+    const p = getProviderOrNative(config, session.name);
+    if (p?.enabled && cooldownRemaining(readRoutingState(logDir), session.name) === 0) {
+      const capability = classModelCapability(opts.className);
+      return {
+        providerName: session.name,
+        provider: p,
+        modelAlias: capability === "fast" ? "fast" : "default",
+        classMcp: cls?.mcp ?? null,
+        via: "session",
+        routeWhy: `session: ${session.why}`,
+      };
+    }
+  }
+
+  if (opts.className && clsTarget !== undefined && typeof clsTarget !== "object") {
+    const [name, alias] = clsTarget.split("/");
+    return {
+      providerName: name,
+      provider: mustBeRunnable(name, mustExist(config, name)),
+      modelAlias: alias ?? null,
+      classMcp: null,
+      via: "class",
+      routeWhy: `class: ${opts.className}`,
+    };
+  }
+  if (opts.className && cls?.provider) {
+    const provider = mustBeRunnable(cls.provider, mustExist(config, cls.provider));
+    return {
+      providerName: cls.provider,
+      provider,
+      modelAlias: null,
+      classMcp: cls.mcp ?? null,
+      via: "class",
+      routeWhy: `class: ${opts.className}`,
+    };
+  }
   if (config.active !== "auto") {
     // nothing active and no class entry: the built-in provider, no config written
     const name = config.active ?? ANTHROPIC_NATIVE;
@@ -318,6 +356,7 @@ export function resolveTarget(
       modelAlias: null,
       classMcp: null,
       via: "active",
+      routeWhy: `config: active ${name}`,
     };
   }
 
@@ -355,6 +394,7 @@ export function resolveTarget(
       modelAlias: null,
       classMcp: cls?.mcp ?? null,
       via: "auto",
+      routeWhy: "config: active auto",
       ...(budgetSkipped ? { switchReason: `${name}: ${budgetSkipped}` } : {}),
     };
   }
