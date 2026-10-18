@@ -290,7 +290,7 @@ async**, matching `StorageBackend`, for one reason — `StorageBackend` already 
 choice for exactly the same problem (SQLite is sync, Postgres is not) and every caller of
 `StorageBackend` in this codebase is already `async`/`await`-shaped (MCP tool handlers are
 Promise-returning by SDK contract; daemon dispatcher and scheduler are already async; CLI
-commander actions in this codebase are already declared `async (opts) => {...}` even where
+command handlers in this codebase are already declared `async (opts) => {...}` even where
 they currently call sync registry functions inside — converting the inner call to `await`
 is a one-line change per call site, not a structural rewrite). The only category that isn't
 already async is the two shell hooks (§1c, addressed in §6) — everything else is already

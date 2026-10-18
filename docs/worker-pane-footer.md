@@ -32,8 +32,8 @@ pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log
 
 Repeat the second line until it exits 0.
 
-`wait-on` options: `--log <file>` (last lines printed on return; `<file>.rc` holds the exit code), `--max <secs>` (default 110, capped
-at 115), `--tail <n>` (log lines, default 20). Exit codes: `0` the pid is gone, `3` still
+`wait-on` options: `--log <file>` (last lines printed on return; `<file>.rc` holds the exit code), `--max <secs>` (default 110, limit 590,
+needs a raised Bash timeout, which the PAI hook sets), `--tail <n>` (log lines, default 20). Exit codes: `0` the pid is gone, `3` still
 running at `--max` (call again), `2` the pid never existed or is not yours. The recipe
 keeps the job's own exit code in `/tmp/job.rc`.
 
