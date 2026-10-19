@@ -67,3 +67,12 @@ describe("decideEndReason", () => {
     expect(callerDescription({ CLAUDE_CODE_SESSION_ID: "x" })).toBe("claude-session:x");
   });
 });
+
+describe("requestKill forced", () => {
+  it("logs forced=1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-endreason-f-"));
+    const ledger = join(dir, "ledger.log");
+    requestKill(dir, ledger, "w1", "op", true);
+    expect(readFileSync(ledger, "utf8")).toMatch(/WORKER-KILL id=w1 by=op .*forced=1/);
+  });
+});
