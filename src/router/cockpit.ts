@@ -13,6 +13,8 @@ import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, typ
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
+import { buildsDir, listBuildsSync } from "../builds/queue.js";
+import { buildSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory } from "../workers/model-inventory.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
@@ -450,12 +452,35 @@ function sessionGroup(s: WorkerStatus): string {
 }
 
 /** The /cockpit/queue payload: every provider with a live or waiting worker. */
+export interface CockpitBuilds {
+  slots: number;
+  running: Array<{ id: string; label: string; session: string; mode: string; ageSec: number }>;
+  waiting: Array<{ id: string; label: string; session: string; mode: string; waitedSec: number; position: number }>;
+}
+
+/** The machine-wide build queue, for its own block in the worker panel. */
+export function cockpitBuilds(now = Date.now()): CockpitBuilds {
+  let tickets: ReturnType<typeof listBuildsSync> = [];
+  try {
+    tickets = listBuildsSync(buildsDir());
+  } catch {
+    /* no build dir yet */
+  }
+  const sec = (t: number): number => Math.max(0, Math.floor((now - t) / 1000));
+  let pos = 0;
+  return {
+    slots: buildSlots(),
+    running: tickets.filter((t) => t.state === "running").map((t) => ({ id: t.id, label: t.label, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt) })),
+    waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ id: t.id, label: t.label, session: t.session, mode: t.mode, waitedSec: sec(t.enqueuedAt), position: ++pos })),
+  };
+}
+
 export function cockpitQueue(
   logDir: string,
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
-): { now: number; providers: QueueProvider[]; sessionMax: SessionLimits } {
+): { now: number; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -492,7 +517,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, providers: [...byProvider.values()], sessionMax };
+  return { now, providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now) };
 }
 
 /**

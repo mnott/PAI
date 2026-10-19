@@ -19,6 +19,7 @@ import {
   type WorkerStatus,
 } from "./status.js";
 import { ledgerPath } from "./paths.js";
+import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 
 export interface KillTreeDeps {
   signal: (pid: number, sig: NodeJS.Signals) => void;
@@ -72,6 +73,8 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps):
     return `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`;
   }
   d.request(logDir, ledgerPath(logDir), id);
+  // a worker holding the machine-wide build lock frees it and its build tree dies with it
+  await releaseBuildsOf(buildsDir(), id).catch(() => []);
   try {
     d.signal(status.pid, "SIGTERM");
   } catch (e) {

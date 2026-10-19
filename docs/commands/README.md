@@ -10,6 +10,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 |---|---|
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
+| [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
 | [`pai config`](config.md) | PAI settings: show, read, change |
@@ -80,6 +81,13 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens subagents` | Token cost of subagent definitions |
 | `pai audit tokens usage` | Exact token totals per model for one session transcript |
 | `pai backup` | Back up the registry, config and Postgres database |
+| `pai build` | One machine-wide build queue: run, lock, queue, next, doctor |
+| `pai build doctor` | Check the project's registered build doors |
+| `pai build lock` | Same lock as `run`, for a project's door script to call |
+| `pai build next` | Give a waiting build the next free slot |
+| `pai build queue` | Show the running and waiting builds |
+| `pai build run` | Run a build command under the machine-wide build queue |
+| `pai build watch` | Internal: kill a build tree when its gate process dies |
 | `pai cd` | Print a project's directory (the shell wrapper changes into it) |
 | `pai clear-names` | Wipe the stored tab names (recovery) |
 | `pai config` | PAI settings: show, read, change |
