@@ -13,7 +13,11 @@ import { eventsPath } from "./paths.js";
 import { loadStatuses } from "./status.js";
 import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
-import { appendRunLog, tail, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
+import { headlessAllowed, openVerifiedPane, resolveHostSession } from "./pane.js";
+import { readWorkersSection } from "./config.js";
+import { GATE_MARK } from "./worktree.js";
+import { PlanTracker, gatePhaseName } from "./plan-status.js";
+import { appendRunLog, tail, type GateEvent, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
 import { resolveRunnerProvider } from "./local-provider.js";
 
@@ -23,13 +27,19 @@ export interface Captured {
   err: string;
 }
 
-export function capture(cmd: string, args: string[], cwd: string, shell = false): Promise<Captured> {
+export function capture(cmd: string, args: string[], cwd: string, shell = false, onData?: (chunk: string) => void, env: NodeJS.ProcessEnv = process.env): Promise<Captured> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, shell });
+    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env, shell });
     let out = "";
     let err = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
+    child.stdout.on("data", (d) => {
+      out += d;
+      onData?.(String(d));
+    });
+    child.stderr.on("data", (d) => {
+      err += d;
+      onData?.(String(d));
+    });
     child.on("error", (e) => resolve({ code: 1, out, err: err + e.message }));
     child.on("close", (code) => resolve({ code, out, err }));
   });
@@ -75,6 +85,9 @@ export async function checkoutState(repo: string): Promise<CheckoutState> {
   const dirty = (await capture("git", ["status", "--porcelain"], repo)).out;
   return { head, dirty };
 }
+
+/** Tests the last successful gate counted, per repo: the denominator of the next run's progress. */
+export const lastTests = new Map<string, number>();
 
 /** HEADs the runner's own merges produced, per repo: a moved HEAD that is one of them is not a worker edit. */
 const mergedHeads = new Map<string, Set<string>>();
@@ -140,33 +153,145 @@ export async function launchWorker(req: Pick<StartRequest, "label" | "provider" 
   return { id: st.id, ok, failure, ...(st.loopStopped ? { loopStopped: true } : {}), tokens: workerTokens(logDir, st.id), worktreeDir: st.worktreeDir ?? undefined, report: text };
 }
 
+/**
+ * Reads the merge child's output as it arrives: gate marker lines become GateEvents (and leave the
+ * output), the rest is kept as a per-command tail; vitest's "(N tests)" lines turn into a
+ * "gate: tests 214/2600" progress when the denominator is known.
+ */
+export class GateParser {
+  private buf = "";
+  private lines: string[] = [];
+  private tests = 0;
+  private name = "";
+  /** Output of the merge without the marker lines. */
+  clean = "";
+  /** Tests counted over the whole gate. */
+  total = 0;
+
+  constructor(private on: (e: GateEvent) => void, private testTotal?: number, private phaseName: (cmd: string) => string = gatePhaseName) {}
+
+  feed(chunk: string): void {
+    this.buf += chunk;
+    let at: number;
+    while ((at = this.buf.indexOf("\n")) >= 0) {
+      this.line(this.buf.slice(0, at));
+      this.buf = this.buf.slice(at + 1);
+    }
+  }
+
+  end(): void {
+    if (this.buf) this.line(this.buf);
+    this.buf = "";
+  }
+
+  private line(l: string): void {
+    const m = l.indexOf(GATE_MARK);
+    if (m >= 0) {
+      try {
+        let e = JSON.parse(l.slice(m + GATE_MARK.length)) as GateEvent;
+        if (e.ev === "cmd-start") {
+          this.lines = [];
+          this.tests = 0;
+          this.name = this.phaseName(e.cmd);
+        }
+        if (e.ev === "cmd-end") {
+          this.total += this.tests;
+          e = { ...e, tail: tail(this.lines.join("\n"), e.ok ? 6 : 25) };
+        }
+        this.on(e);
+        return;
+      } catch {
+        /* not ours: keep as output */
+      }
+    }
+    this.clean += l + "\n";
+    this.lines.push(l);
+    if (this.lines.length > 200) this.lines.shift();
+    const t = /\((\d+) tests?\b/.exec(l);
+    if (t && this.name === "tests") {
+      this.tests += Number(t[1]);
+      this.on({ ev: "progress", text: `gate: tests ${this.tests}${this.testTotal ? `/${this.testTotal}` : ""}` });
+    }
+  }
+}
+
 /** Merge worker/<id> into `repo`'s checkout with `pai worker merge` (--verify when a gate is given); an empty branch is refused. */
-export async function mergeBranch(repo: string, id: string, gate: string): Promise<MergeOutcome> {
+export async function mergeBranch(repo: string, id: string, gate: string, onGate?: (e: GateEvent) => void, testTotal?: number): Promise<MergeOutcome> {
   const rev = async (...a: string[]) => (await capture("git", a, repo)).out.trim();
   const before = await rev("rev-parse", "HEAD");
   const ahead = await realCommitsAhead(repo, before, id);
   if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no non-empty commit beyond ${before.slice(0, 7)}` };
-  const r = await capture(pai(), ["worker", "merge", id, ...(gate ? ["--verify", gate] : [])], repo);
-  const output = r.out + r.err;
+  const parser = onGate ? new GateParser(onGate, testTotal) : null;
+  const r = await capture(pai(), ["worker", "merge", id, ...(gate ? ["--verify", gate] : [])], repo, false, parser ? (c) => parser.feed(c) : undefined, parser ? { ...process.env, PAI_GATE_EVENTS: "1" } : process.env);
+  parser?.end();
+  if (parser?.total) lastTests.set(repo, parser.total);
+  const output = parser ? parser.clean : r.out + r.err;
   if (r.code !== 0) return { ok: false, before, output };
   const head = await rev("rev-parse", "HEAD");
   if (head) mergedHeads.set(repo, (mergedHeads.get(repo) ?? new Set()).add(head));
   return { ok: true, commit: head || undefined, before, output };
 }
 
-export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): RunnerDeps {
+/**
+ * The plan's one pane (same placement rules as worker panes: split, else tab, else window; the host
+ * tab stays selected): `pai worker follow plan-<job>` streams the live log. A pane that cannot open is
+ * logged and the run goes on; its workers' own fail-closed gate still applies.
+ */
+export async function openPlanPane(logDir: string, tracker: PlanTracker, open: typeof openVerifiedPane = openVerifiedPane): Promise<boolean> {
+  if (headlessAllowed()) return false;
+  try {
+    const term = (await resolveHostSession()).term;
+    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term)}`);
+    return true;
+  } catch (e) {
+    tracker.log(`plan pane not opened: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, tracker?: PlanTracker): RunnerDeps {
   const dir = mkdtempSync(join(tmpdir(), "pai-plan-"));
   return {
     now: Date.now,
     log: (e) => appendRunLog(logPath, e),
+    ...(tracker
+      ? {
+          phase: (t: string, refine?: boolean) => (refine ? tracker.progress(t) : tracker.phase(t)),
+          progress: (merged: number, running: string[]) => {
+            tracker.merged(merged);
+            tracker.setRunning(running);
+          },
+          note: (l: string) => tracker.log(l),
+        }
+      : {}),
     async startWorker(req: StartRequest): Promise<WorkerOutcome> {
       const specFile = join(dir, `${req.part.id}-${req.attempt}.txt`);
       writeFileSync(specFile, req.spec, "utf8");
-      return launchWorker(req, specFile, plan.repo, logDir);
+      const t0 = Date.now() - 1000;
+      const watch = tracker
+        ? setInterval(() => {
+            const st = loadStatuses(logDir).find((s) => s.label === req.label && Date.parse(s.started) >= t0);
+            if (!st) return;
+            tracker.phase(`running ${req.part.id} (${st.id})`);
+            clearInterval(watch);
+          }, 1500)
+        : undefined;
+      try {
+        return await launchWorker(req, specFile, plan.repo, logDir);
+      } finally {
+        if (watch) clearInterval(watch);
+      }
     },
-    merge: (id: string, gate: string) => mergeBranch(plan.repo, id, gate),
+    merge: async (id: string, gate: string, onGate?: (e: GateEvent) => void) => {
+      const r = await mergeBranch(plan.repo, id, gate, onGate, tracker?.testTotal);
+      if (r.ok) tracker?.setTestTotal(lastTests.get(plan.repo) ?? 0);
+      return r;
+    },
     resolveLocal: resolveRunnerProvider,
-    stopActive: async () => void (await stopLaunchedWorkers(logDir)),
+    stopActive: async () => {
+      tracker?.end("stopped");
+      void (await stopLaunchedWorkers(logDir));
+    },
     async unitCheck(cmd: string) {
       const r = await capture(cmd, [], plan.repo, true);
       return { ok: r.code === 0, output: r.out + r.err };

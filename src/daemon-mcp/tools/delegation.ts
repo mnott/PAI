@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
+import { fmtElapsed, loadPlanStatus, planRunId } from "../../workers/plan-status.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
@@ -76,6 +77,8 @@ export interface DelegationDeps {
   /** Calling session: where the run's events are delivered. */
   origin(): RunOrigin | null;
   now(): number;
+  /** Worker log dir: where the plan runner's live phase entry is read from. */
+  logDir?(): string;
 }
 
 const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
@@ -140,6 +143,7 @@ export function realDelegationDeps(): DelegationDeps {
     target: (a) => resolveTarget(a),
     capOf: (name) => resolveCap(getProviderOrNative(readWorkersSection().workers, name)?.maxConcurrent, true) ?? 3,
     dirtyPaths,
+    logDir: () => workersLogDir(readWorkersSection().workers),
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
     accept: (store, settings, ids, repo) => acceptItems(store, settings, ids, realQueueDeps(workersLogDir(readWorkersSection().workers), repo)),
     branchDiff,
@@ -289,9 +293,12 @@ export async function planStatusText(args: { project: string; name: string }, de
     const escalations = log.filter((e) => e.event === "escalate").length;
     const held = readRunLock(planLockPath(path));
     const last = log[log.length - 1];
+    const dir = deps.logDir?.();
+    const ps = dir ? loadPlanStatus(dir, planRunId(plan.job)) : null;
     const lines = [
       `Plan "${args.name}": ${st.done.length} of ${total} parts done.`,
       ...(held && existsSync(planStopPath(path)) ? [`Stopping after ${st.running.join(", ") || "the current part"}.`] : []),
+      ...(held && ps ? [`Phase: ${ps.phase} (${fmtElapsed(deps.now() - ps.phaseSince)}); ${ps.parts.merged}/${ps.parts.total} merged${ps.running.length ? `; workers running: ${ps.running.join(", ")}` : ""}.`] : []),
       ...(held ? [`Running ${sinceText(held)}${last ? `; last event: ${last.event}${last.part ? ` ${last.part}` : last.unit ? ` ${last.unit}` : ""}` : ""}.`] : []),
       `Done: ${idList(st.done)}. Running: ${idList(st.running)}. Waiting: ${idList(st.waiting)}. Needs a decision: ${idList(st.needsDecision)}.`,
       `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations.`,

@@ -1104,6 +1104,32 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
 
 const withGate = (gate: string, msg: string): string => (gate ? `${gate}\n${msg}` : msg);
 
+/** Marker a timed gate writes to stderr; the plan runner (plan-deps.ts) reads these lines and strips them. */
+export const GATE_MARK = "\u0001pai-gate ";
+
+/** The commands of a `a && b && c` gate; one command when it holds quoting, pipes, `;` or `||` that a plain split would break. */
+export function splitGate(verify: string): string[] {
+  if (/["'`|;()\\]/.test(verify)) return [verify];
+  return verify.split(/\s*&&\s*/).map((c) => c.trim()).filter(Boolean);
+}
+
+/** Run the gate one command at a time, reporting each start and end as marker lines; stops at the first failure. */
+function runGateTimed(cwd: string, verify: string, env: NodeJS.ProcessEnv): number | null {
+  const mark = (o: object): void => void process.stderr.write(`${GATE_MARK}${JSON.stringify(o)}\n`);
+  const cmds = splitGate(verify);
+  const t0 = Date.now();
+  mark({ ev: "gate-start", commands: cmds });
+  let status: number | null = 0;
+  for (let i = 0; i < cmds.length && status === 0; i++) {
+    mark({ ev: "cmd-start", i, cmd: cmds[i] });
+    const c0 = Date.now();
+    status = spawnSync("sh", ["-c", cmds[i]], { cwd, env, stdio: "inherit" }).status;
+    mark({ ev: "cmd-end", i, cmd: cmds[i], ms: Date.now() - c0, ok: status === 0 });
+  }
+  mark({ ev: "gate-end", ok: status === 0, ms: Date.now() - t0 });
+  return status;
+}
+
 /**
  * The one gate both merge kinds run after the change is in the checkout: the
  * --verify command (when given), then the stub scan. A failure calls `revert`
@@ -1121,8 +1147,8 @@ function gateLines(
     const env = { ...process.env };
     delete env.PAI_WORKER;
     delete env.PAI_WORKER_ORCHESTRATOR;
-    const r = spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" });
-    if (r.status !== 0) throw new Error(`verify failed (exit ${r.status ?? 1}): reverted ${revert()}; the worker branch is kept`);
+    const status = process.env.PAI_GATE_EVENTS === "1" ? runGateTimed(cwd, verify, env) : spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" }).status;
+    if (status !== 0) throw new Error(`verify failed (exit ${status ?? 1}): reverted ${revert()}; the worker branch is kept`);
     lines.push(`verify passed: ${verify}`);
   }
   const hit = findStub();

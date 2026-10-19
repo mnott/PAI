@@ -1,3 +1,4 @@
+import { PlanTracker } from "../../workers/plan-status.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,6 +131,18 @@ describe("plan_run / plan_status / plan_amend", () => {
       origin: { name: "sess-1" },
     });
     expect(existsSync(join(repo, ".pai/plans/job2/plan.yaml.session"))).toBe(false);
+  });
+  it("plan_status shows the runner's phase and how long it lasts", async () => {
+    await planSave({ project: "p", name: "job7", plan }, deps);
+    const path = join(repo, ".pai/plans/job7/plan.yaml");
+    writeFileSync(planLockPath(path), JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+    const logDir = mkdtempSync(join(tmpdir(), "pai-mcp-ph-"));
+    const tr = new PlanTracker(logDir, "job7", 2, 0, () => 1000);
+    tr.phase("gate: tests 214/2600");
+    const withDir = { ...deps, logDir: () => logDir, now: () => 46_000 };
+    const st = text(await planStatusText({ project: "p", name: "job7" }, withDir));
+    expect(st).toContain("Phase: gate: tests 214/2600 (45s); 0/2 merged.");
+    tr.end("done");
   });
   it("plan_status shows a live run and plan_run refuses a second start", async () => {
     await planSave({ project: "p", name: "job5", plan }, deps);

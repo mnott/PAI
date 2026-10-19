@@ -437,9 +437,10 @@ function renderQueue(q){
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
  setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
+ var pl=q.plans||[];
  var bq=q.builds,bhas=bq&&(bq.running.length||bq.waiting.length);
  var wt=q.worktrees?'<div class="dim">'+esc(q.worktrees)+'</div>':'';
- if(!ps.length&&!bhas){el.innerHTML='<span class="dim">nothing running or waiting</span>'+wt;return}
+ if(!ps.length&&!bhas&&!pl.length){el.innerHTML='<span class="dim">nothing running or waiting</span>'+wt;return}
  var BTN='<button data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
@@ -472,6 +473,7 @@ function renderQueue(q){
    out.unshift(block(P[1]+' ('+P[2]+' slot'+(P[2]===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
   });
  }
+ if(pl.length)out.unshift(block("plans",["plan","parts","phase","in phase","running","workers"],pl.map(function(p){return'<tr><td style="text-align:left">'+esc(p.job)+'</td><td style="text-align:right">'+p.merged+'/'+p.total+'</td><td style="text-align:left">'+esc(p.phase)+'</td><td style="text-align:right">'+qdur(p.phaseSec)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc((p.running||[]).join(", "))+'</td></tr>'})));
  el.innerHTML=out.join("")+wt;
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})

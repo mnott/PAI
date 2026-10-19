@@ -10,6 +10,7 @@
 
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { gatePhaseName } from "./plan-status.js";
 import { composeSpec, filesOverlap, type Plan, type PlanPart } from "./plan.js";
 
 export interface WorkerOutcome {
@@ -55,21 +56,36 @@ export interface MergeOutcome {
   output: string;
 }
 
+/** What the gate reports while `worker merge --verify` runs it, one command at a time. */
+export type GateEvent =
+  | { ev: "gate-start"; commands: string[] }
+  | { ev: "cmd-start"; i: number; cmd: string }
+  | { ev: "cmd-end"; i: number; cmd: string; ms: number; ok: boolean; tail?: string }
+  | { ev: "gate-end"; ok: boolean; ms: number }
+  /** Refinement of the current phase, e.g. "gate: tests 214/2600". */
+  | { ev: "progress"; text: string };
+
 export interface RunnerDeps {
   startWorker(req: StartRequest): Promise<WorkerOutcome>;
-  merge(workerId: string, gate: string): Promise<MergeOutcome>;
+  merge(workerId: string, gate: string, onGate?: (e: GateEvent) => void): Promise<MergeOutcome>;
   unitCheck(cmd: string): Promise<{ ok: boolean; output: string }>;
   now(): number;
   /** The provider a plan/queue value names: `local` becomes the running local server, any other name is returned unchanged. */
   resolveLocal(provider: string): Promise<string>;
   log(entry: RunLogEntry): void;
+  /** The runner's current phase ("merging p1", "gate: tsc"), shown by ps, the cockpit and plan_status. */
+  phase?(text: string, refine?: boolean): void;
+  /** Parts merged so far / workers running now, for the status entry. */
+  progress?(merged: number, running: string[]): void;
+  /** A line for the plan pane's live log. */
+  note?(line: string): void;
   /** Stop the workers this runner has started (SIGTERM/SIGINT path); resolves once they are told to end. */
   stopActive?(): Promise<void>;
 }
 
 export interface RunLogEntry {
   ts?: string;
-  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "escalate" | "needs-decision" | "unit-check";
+  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "gate-start" | "gate-end" | "escalate" | "needs-decision" | "unit-check";
   part?: string;
   unit?: string;
   worker?: string;
@@ -82,6 +98,10 @@ export interface RunLogEntry {
   commit?: string;
   tokens?: number | null;
   note?: string;
+  /** gate-start: the gate's commands; gate-end: each command's duration. */
+  commands?: Array<{ cmd: string; ms?: number; ok?: boolean }>;
+  /** gate-end: whole gate duration in ms. */
+  ms?: number;
 }
 
 export type PartState = "waiting" | "running" | "merged" | "needs-decision";
@@ -201,6 +221,8 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     return r;
   };
 
+  const progress = (): void => deps.progress?.([...state.values()].filter((v) => v === "merged").length, [...running.keys()]);
+
   const label = (p: PlanPart) => `${plan.job}: ${p.unit} ${p.id}`;
 
   const checkUnit = async (unitId: string): Promise<void> => {
@@ -211,7 +233,10 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       deps.log({ event: "unit-done", unit: unitId });
       return;
     }
-    const r = await exclusive(() => deps.unitCheck(unit.unitCheck!));
+    const r = await exclusive(() => {
+      deps.phase?.(`unit check ${unitId}`);
+      return deps.unitCheck(unit.unitCheck!);
+    });
     deps.log({ event: "unit-check", unit: unitId, ok: r.ok, note: r.ok ? undefined : tail(r.output, 10) });
     if (r.ok) deps.log({ event: "unit-done", unit: unitId });
     if (!r.ok) {
@@ -236,7 +261,9 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
         deps.log({ event: "escalate", part: p.id, unit: p.unit, attempt: i + 1, tier, note: tail(failure ?? "", 10) });
       }
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
+      deps.phase?.(`starting ${p.id}`);
       const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
+      deps.note?.(`${p.id} worker ${out.id || "-"} ${out.ok ? "finished ok" : "failed"}${out.ok ? "" : `: ${tail(out.failure ?? "", 4)}`}`);
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, ...(out.loopStopped ? { reason: "loop" } : {}), tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";
@@ -253,12 +280,34 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
         failure = out.failure || "the worker ended without a valid passing report";
         continue;
       }
-      let m = await exclusive(() => deps.merge(out.id, plan.gate));
+      const gateObserver = (): ((e: GateEvent) => void) => {
+        let cmds: Array<{ cmd: string; ms?: number; ok?: boolean }> = [];
+        return (e) => {
+          if (e.ev === "gate-start") {
+            cmds = e.commands.map((cmd) => ({ cmd }));
+            deps.log({ event: "gate-start", part: p.id, unit: p.unit, worker: out.id, gate: plan.gate, commands: cmds });
+          } else if (e.ev === "cmd-start") {
+            deps.phase?.(`gate: ${gatePhaseName(e.cmd)}`);
+            deps.note?.(`gate command ${e.i + 1}/${cmds.length || "?"}: ${e.cmd}`);
+          } else if (e.ev === "cmd-end") {
+            cmds[e.i] = { cmd: e.cmd, ms: e.ms, ok: e.ok };
+            deps.note?.(`gate command ${e.i + 1} ${e.ok ? "ok" : "FAILED"} in ${(e.ms / 1000).toFixed(1)}s${e.tail ? `\n${e.tail}` : ""}`);
+          } else if (e.ev === "gate-end") {
+            deps.log({ event: "gate-end", part: p.id, unit: p.unit, worker: out.id, ok: e.ok, ms: e.ms, commands: cmds });
+          } else deps.phase?.(e.text, true);
+        };
+      };
+      let m = await exclusive(() => {
+        deps.phase?.(`merging ${p.id}`);
+        return deps.merge(out.id, plan.gate, gateObserver());
+      });
       // a "merge" that moved nothing is not a merge: the worker never committed
       if (m.ok && (m.noCommit || !m.commit || m.commit === m.before)) m = { ...m, ok: false, noCommit: true };
       deps.log({ event: "merge", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, ok: m.ok, ...(m.noCommit ? { status: "no-commit" } : {}), gate: plan.gate, ...(m.noCommit ? {} : { commit: m.commit }), note: m.ok ? undefined : tail(m.output, 10) });
+      deps.note?.(`${p.id} ${m.ok ? "merged" : "merge failed"}${m.commit ? ` ${m.commit.slice(0, 7)}` : ""}${m.ok ? "" : `\n${tail(m.output, 8)}`}`);
       if (m.ok) {
         state.set(p.id, "merged");
+        progress();
         await checkUnit(p.unit);
         return;
       }
@@ -281,9 +330,11 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       const done = attemptPart(p).finally(() => {
         running.delete(p.id);
         active.delete(p.id);
+        progress();
       });
       running.set(p.id, { part: p, done });
       active.set(p.id, p);
+      progress();
     }
     if (running.size === 0) break;
     await Promise.race([...running.values()].map((r) => r.done));

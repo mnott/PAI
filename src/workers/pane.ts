@@ -1031,10 +1031,29 @@ function tmuxSplit(cmd: string): void {
  * a pid is never ended.
  */
 export function workerEnded(logDir: string, wid: string): boolean {
+  if (wid.startsWith("plan-")) return planEnded(logDir, wid);
   try {
     const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
     if (!st.state) return false;
     if (st.state !== "running" && st.state !== "queued") return true;
+    if (typeof st.pid !== "number" || st.pid <= 0) return false;
+    try {
+      process.kill(st.pid, 0);
+      return false;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code !== "EPERM";
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** A plan pane is over once its run wrote an end state or its runner pid is gone. */
+function planEnded(logDir: string, wid: string): boolean {
+  try {
+    const st = JSON.parse(readFileSync(join(logDir, `${wid}.planstatus`), "utf8")) as { state?: string; pid?: number };
+    if (!st.state) return false;
+    if (st.state !== "running") return true;
     if (typeof st.pid !== "number" || st.pid <= 0) return false;
     try {
       process.kill(st.pid, 0);

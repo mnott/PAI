@@ -27,6 +27,7 @@ import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
+import { followPlanLog, planLogTail } from "../../workers/plan-status.js";
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -395,6 +396,11 @@ const followCommand: CommandDef = {
       const ae = ctx.opts["auto-exit"];
       const autoExit = ae === undefined || ae === false ? 0 : ae === true ? workers.pane.autoExitSecs : Number(ae);
       const target = (ctx.args.ID as string | undefined) ?? null;
+      if (target?.startsWith("plan-")) {
+        if (!flag(ctx, "live") && (process.env.PAI_WORKER === "1" || !process.stdout.isTTY)) out(planLogTail(logDir(), target, num(ctx.opts.tail) ?? 40));
+        else await followPlanLog(logDir(), target, (t) => void process.stdout.write(t));
+        return;
+      }
       const tailText = followTailOutput(logDir(), target, {
         live: flag(ctx, "live"),
         autoExit: ae !== undefined && ae !== false,

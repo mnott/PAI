@@ -23,6 +23,15 @@ pai build run [--full] [--label L] [--kind build|test] -- <command...>
 
 The gate sets `PAI_BUILD_MODE=delta` (default) or `full` (`--full`) in the child's environment. It does not decide how to build deltas: project build scripts read the variable. Use `--full` only for a release or when asked.
 
+### Keeping deltas cheap with parallel workers
+
+Each worker has its own worktree, and a fresh worktree builds everything once. For Xcode, do not
+copy or APFS-clone a warm `DerivedData` into the new worktree: Xcode keys its intermediates by
+absolute path, so a clone at a different path still builds cold (measured: 262 s to clone, then 959
+cold compiles). What works is a small set of persistent build trees at fixed paths, one per build
+slot (`<target>-1` … `<target>-N`), each with its own lock: the door script syncs the worktree's
+sources into a free tree and builds there. Each tree is cold once, then only changed files compile.
+
 ## Seeing the queue
 
 - `pai build queue`, the blocks `builds (3 slots)` and `tests (2 slots)` in `pai worker ps` and in the cockpit worker panel.
