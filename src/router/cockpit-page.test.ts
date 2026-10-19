@@ -296,36 +296,37 @@ describe("cockpit Models tile", () => {
     ],
     duplicates: ["embedding runs on 2 runtimes: a + b"],
   };
-  it("default view: only in-use or loaded models, with runtime, kind, used by and loaded memory", () => {
+  it("one loaded + one idle + one stopped: one row plus the collapsed line", () => {
+    const h = modelsHtml({
+      runtimes: [
+        { name: "strata", status: "running", port: 8035, users: ["worker:x"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:x"] }] },
+        { name: "docker-model-runner", status: "idle", users: ["pai-embedding"], models: [{ model: "e5-base", kind: "embedding", loaded: false, sizeMb: 300, usedBy: [] }] },
+        { name: "ollama", status: "stopped", port: 11434, users: [], models: [] },
+      ],
+      duplicates: [],
+    });
+    const def = h.replace(/<details[\s\S]*?<\/details>/g, "");
+    expect(def).toBe("T[model,runtime,kind,used by,memory]flash-next|strata|coding|worker:x|48.8 GB");
+    const sum = h.match(/<summary>([\s\S]*?)<\/summary>/)![1];
+    expect(sum).toBe("not loaded: e5-base embedding (docker-model-runner) · stopped: ollama");
+    const det = h.match(/<details[\s\S]*?<\/details>/)![0];
+    expect(det).toContain("docker-model-runner|e5-base|embedding|pai-embedding|300 MB");
+    expect(det).toContain("ollama:11434");
+    expect(det).not.toMatch(/<details[^>]*\bopen\b/);
+  });
+  it("a declared consumer that is not loaded is folded, not a row; duplicates hint stays", () => {
     const h = modelsHtml(inv);
     const def = h.replace(/<details[\s\S]*?<\/details>/g, "");
-    expect(def).toContain("T[model,runtime,kind,used by,loaded (memory, or on disk)]");
     expect(def).toContain("flash-next|strata|coding|worker:flashnext-iq3|48.8 GB");
     expect(def).toContain("arctic|ollama|embedding|pai-embedding|600 MB");
-    // a declared consumer (models.consumers) counts as in use, shown "on disk"
-    expect(def).toContain('qwen3:8b|ollama|chat|paperfull-llm|<span class="dim">on disk</span>');
-    expect(def).not.toContain("llama2:7b");
-    expect(def).not.toContain("mistral:7b");
-  });
-  it("the rest folds into one line with the total on disk and expands to the full list with sizes", () => {
-    const h = modelsHtml(inv);
-    expect(h).toContain("2 other installed models, 7.7 GB on disk — not used by anything");
-    const det = h.match(/<details[\s\S]*?<\/details>/g)!.find((d) => d.includes("other installed"))!;
-    expect(det).toContain("ollama|llama2:7b|chat|3.7 GB");
-    expect(det).toContain("ollama|mistral:7b|chat|4.0 GB");
-    expect(h).toContain("<summary>");
-    expect(h).not.toMatch(/<details[^>]*\bopen\b/);
-  });
-  it("keeps the duplicates hint and the stopped-runtime fold", () => {
-    const h = modelsHtml(inv);
+    expect(def).not.toContain("qwen3:8b");
+    expect(h).toContain("not loaded: qwen3:8b chat (ollama), llama2:7b chat (ollama), mistral:7b chat (ollama) · stopped: coder");
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
-    expect(h).toContain("1 runtime stopped");
-    expect(h).toContain("coder:8034");
   });
   it("the tile sits after the worker panel, before System; the LOCAL tile keeps only the server summary", () => {
     const i = (s: string) => COCKPIT_HTML.indexOf(s);
-    expect(i("Models — in use")).toBeGreaterThan(i("Workers — running and waiting"));
-    expect(i("Models — in use")).toBeLessThan(i("<h2>System"));
+    expect(i("Models — loaded")).toBeGreaterThan(i("Workers — running and waiting"));
+    expect(i("Models — loaded")).toBeLessThan(i("<h2>System"));
     const rl = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}\n/)![0];
     expect(rl).toContain('$("local").innerHTML=lo');
     expect(rl).not.toContain("modelsHtml");
