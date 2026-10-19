@@ -119,7 +119,12 @@ export interface DashboardConfig {
 }
 
 export interface ObsidianConfig {
-  /** Master switch for all Obsidian work: vault sync (daemon, CLI) and the vault index pass. Default: false. */
+  /** Gates only the writing side (sync, master notes, symlinks). Default: false. */
+  enabled: boolean;
+}
+
+export interface VaultIndexConfig {
+  /** Read-only indexing of `vaultPath` for memory search. Independent of `obsidian.enabled`. Default: true. */
   enabled: boolean;
 }
 
@@ -208,8 +213,11 @@ export interface PaiDaemonConfig {
   /** Read-only memory status dashboard (src/daemon/dashboard.ts). */
   dashboard: DashboardConfig;
 
-  /** Obsidian integration switch (off by default). */
+  /** Obsidian sync switch (off by default). */
   obsidian: ObsidianConfig;
+
+  /** Vault index switch (on by default). */
+  vaultIndex: VaultIndexConfig;
 
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
@@ -321,6 +329,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
   dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
   obsidian: { enabled: false },
+  vaultIndex: { enabled: true },
   router: { enabled: false, bind: "loopback" },
   search: {
     mode: "keyword",

@@ -115,3 +115,30 @@ describe("background pass priority", () => {
     expect(passFailures.has("embed")).toBe(false);
   });
 });
+
+describe("vault index switches", () => {
+  const sw = vi.hoisted(() => ({ obsidian: true, vault: true }));
+  it("is gated by vaultIndex.enabled, not obsidian.enabled", async () => {
+    vi.resetModules();
+    vi.doMock("../../obsidian/enabled.js", () => ({
+      obsidianEnabled: () => sw.obsidian,
+      vaultIndexEnabled: () => sw.vault,
+    }));
+    const { runVaultIndex } = await import("./scheduler.js");
+    const state = await import("./state.js");
+    const lookup = vi.fn(async () => { throw new Error("reached"); });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    state.setRegistryBackend({ getProjectByRootPath: lookup } as unknown as RegistryBackend);
+    state.setDaemonConfig({ vaultPath: "/v" } as PaiDaemonConfig);
+
+    sw.obsidian = false; sw.vault = true;
+    await expect(runVaultIndex()).rejects.toThrow("reached");
+
+    lookup.mockClear();
+    sw.obsidian = true; sw.vault = false;
+    await runVaultIndex();
+    expect(lookup).not.toHaveBeenCalled();
+    vi.doUnmock("../../obsidian/enabled.js");
+    vi.restoreAllMocks();
+  });
+});

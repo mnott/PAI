@@ -30,7 +30,7 @@ import {
 } from "../../memory/embed-pass.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
-import { obsidianEnabled } from "../../obsidian/enabled.js";
+import { vaultIndexEnabled } from "../../obsidian/enabled.js";
 import { deferIfQuiet, type DeferredKind } from "../quiet.js";
 import { enqueueRegistryScan } from "../work-queue-worker.js";
 import { PassSpawnError, runPassChild, type PassName } from "../pass-priority.js";
@@ -172,7 +172,7 @@ export async function runIndex(): Promise<void> {
  * Skips if no vaultPath is configured, or if project index/embed is in progress.
  */
 export async function runVaultIndex(): Promise<void> {
-  if (!daemonConfig.vaultPath || !obsidianEnabled()) return;
+  if (!daemonConfig.vaultPath || !vaultIndexEnabled()) return;
 
   if (vaultIndexInProgress) {
     process.stderr.write("[pai-daemon] Vault index already in progress, skipping.\n");
