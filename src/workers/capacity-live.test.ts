@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseRunnerArgs } from "./args.js";
 import { readWorkersSection } from "./config.js";
 import { resolveTarget } from "./routing.js";
@@ -72,10 +72,15 @@ describe("capacity gate on the real config + argument path", () => {
       parsed,
     } as never;
 
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(((s: string) => (writes.push(String(s)), true)) as never);
     let passed = false;
     const gate = gateStart(a).then(() => (passed = true));
     await new Promise((r) => setTimeout(r, 1200));
     expect(passed).toBe(false);
+    spy.mockRestore();
+    expect(writes.join("")).toContain("queued:");
+    expect(loadStatuses(logDir).find((s) => s.id === "probe")?.runPid).toBe(process.pid);
     expect(loadStatuses(logDir).find((s) => s.id === "probe")?.capacity?.cap).toBe(1);
 
     saveStatus(logDir, { ...running("holder-a", "local30x8"), state: "done", rc: 0 });

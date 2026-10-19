@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { waitOn, statusMarker, realDeps, type WaitOnDeps } from "./wait-on.js";
+import { waitOn, statusMarker, statusQueue, realDeps, type WaitOnDeps } from "./wait-on.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import type { WaitingOn } from "./waiting.js";
 
@@ -170,5 +170,22 @@ describe("waitOn queued worker", () => {
     queued = false;
     expect(await waitOn({ pid: 42, log, maxSecs: 590, stallMinutes: 5, maxMinutes: 100 }, f.deps)).toBe(4);
     expect(killed).toEqual([42]);
+  });
+});
+
+describe("statusQueue", () => {
+  it("finds a queued status by the run client pid, not only status.pid", () => {
+    const d = mkdtempSync(join(tmpdir(), "waiton-q-"));
+    const s = {
+      id: "q1", pid: 111, runPid: 222, label: "x", cwd: "/", term: "", provider: "p", model: "m",
+      state: "running", started: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+      turns: 0, tools: 0, last: "", rc: null, secs: null,
+      capacity: { provider: "p", cap: 1, total: 2, position: 1, elapsedSec: 1 },
+    } as WorkerStatus;
+    saveStatus(d, s);
+    const q = statusQueue(d);
+    expect(q(222)?.queued).toBe(true);
+    expect(q(111)?.queued).toBe(true);
+    expect(q(333)).toBeNull();
   });
 });

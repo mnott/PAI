@@ -34,6 +34,8 @@ export interface WorkerSessionRef {
 export interface WorkerStatus {
   id: string;
   pid: number;
+  /** pid of the `pai worker run` client process; `pid` may differ (host/child pid). */
+  runPid?: number;
   label: string;
   /** Latest `pai worker goal` / `say --goal` note to the worker; never replaces the label. */
   note?: string;
