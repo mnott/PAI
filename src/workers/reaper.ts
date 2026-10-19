@@ -12,7 +12,7 @@
  * a live `sh` until it is done, so it is not a ppid 1 candidate while it runs.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { sep } from "node:path";
 import { slotCurrentPath } from "./paths.js";
@@ -72,38 +72,32 @@ export function inWorkerTree(row: ProcRow, logDir: string): boolean {
   return roots.some((r) => (row.cwd !== "" && under(row.cwd, r)) || row.command.includes(r + sep));
 }
 
-/** Runs a command and returns stdout whatever the exit code (lsof exits 1 when any pid is unreadable). */
-export type Runner = (cmd: string, args: string[]) => string;
-
-const spawnRunner: Runner = (cmd, args) => {
-  const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 64 << 20 });
-  if (r.error) throw r.error;
-  return r.stdout ?? "";
-};
-
-export function realSnapshot(run: Runner = spawnRunner, uid: number = process.getuid?.() ?? -1): ProcRow[] {
+export function realSnapshot(): ProcRow[] {
   let out: string;
   try {
-    out = run("ps", ["-axo", "pid=,ppid=,uid=,pcpu=,etime=,command="]);
+    out = execFileSync("ps", ["-axo", "pid=,ppid=,pcpu=,etime=,command="], { encoding: "utf8", maxBuffer: 64 << 20 });
   } catch {
     return [];
   }
   const rows: ProcRow[] = [];
   for (const line of out.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(.*)$/.exec(line);
-    if (!m || m[2] !== "1" || Number(m[3]) !== uid) continue;
-    rows.push({ pid: Number(m[1]), ppid: 1, cpu: Number(m[4]), ageSecs: parseEtime(m[5]), command: m[6], cwd: "" });
+    const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m || m[2] !== "1") continue;
+    rows.push({ pid: Number(m[1]), ppid: 1, cpu: Number(m[3]), ageSecs: parseEtime(m[4]), command: m[5], cwd: "" });
   }
   if (rows.length === 0) return rows;
   try {
-    const l = run("lsof", ["-a", "-d", "cwd", "-Fpn", "-p", rows.map((r) => r.pid).join(",")]);
+    const l = execFileSync("lsof", ["-a", "-d", "cwd", "-Fpn", "-p", rows.map((r) => r.pid).join(",")], {
+      encoding: "utf8",
+      maxBuffer: 16 << 20,
+    });
     let cur: ProcRow | undefined;
     for (const f of l.split("\n")) {
       if (f.startsWith("p")) cur = rows.find((r) => r.pid === Number(f.slice(1)));
       else if (f.startsWith("n") && cur) cur.cwd = f.slice(1);
     }
   } catch {
-    /* lsof absent: fall back to the command line */
+    /* lsof absent or a process vanished: fall back to the command line */
   }
   return rows;
 }
