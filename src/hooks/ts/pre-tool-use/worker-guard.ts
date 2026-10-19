@@ -15,6 +15,7 @@
  * and through this entry.
  */
 
+import { currentWorkerId } from "../../../workers/worker-id.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -54,7 +55,7 @@ function buildContext(cwd: string): WorkerGuardContext {
       } catch {
         // unresolvable: isSharedCheckout fails closed
       }
-      return isSharedCheckout({ cwd, selfId: process.env.PAI_WORKER_ID, logDir });
+      return isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir });
     },
     testScript: () => {
       try {
@@ -70,7 +71,7 @@ function buildContext(cwd: string): WorkerGuardContext {
 
 /** Per-worker repeat window in <logDir>/loop-guard/<id>.json; true when this call is a loop repeat. */
 function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): boolean {
-  const id = env.PAI_WORKER_ID;
+  const id = currentWorkerId(env, env.PAI_WORKER_LOOP_DIR || undefined);
   if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return false;
   try {
     const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);

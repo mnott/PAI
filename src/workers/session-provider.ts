@@ -14,6 +14,7 @@
  * configured `active` provider.
  */
 
+import { currentWorkerId } from "./worker-id.js";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -83,8 +84,9 @@ export function lastAssistantModel(transcript: string): string | null {
 /** The spawning Claude session's id: env, a worker parent's status, or CLAUDE_PID's session file. */
 function spawnerClaudeSession(env: NodeJS.ProcessEnv, home: string, logDir?: string): string | null {
   if (env.CLAUDE_CODE_SESSION_ID) return env.CLAUDE_CODE_SESSION_ID;
-  if (logDir && env.PAI_WORKER_ID) {
-    const s = loadStatus(logDir, env.PAI_WORKER_ID)?.claudeSession;
+  const wid = logDir ? currentWorkerId(env, logDir) : undefined;
+  if (logDir && wid) {
+    const s = loadStatus(logDir, wid)?.claudeSession;
     if (s) return s;
   }
   const pid = Number(env.CLAUDE_PID);
