@@ -36,6 +36,39 @@ export interface LoopState {
   outs?: Array<string | null>;
   /** Denials per cluster head since the last edit. */
   denials?: Record<string, number>;
+  /** Runner invocations per action key since the last edit (see actionKey). */
+  runs?: Record<string, number>;
+}
+
+/** Runs of one action key without an edit at which the call is denied / the session stopped. */
+export const RUN_DENY_AT = 3;
+export const RUN_STOP_AT = 5;
+
+const RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(vitest|jest|pytest|tsdown|tsc|xcodebuild|npm (?:run )?test|npm run build|swift test|cargo test|go test|bun test)\b\s*(.*)$/;
+
+/**
+ * Action key of a Bash command: the test/build runner and its target files, with nohup, env prefixes,
+ * `timeout N`, redirections, backgrounding, pid files, waits and flags removed. Null when the command runs no runner.
+ */
+export function actionKey(command: string): string | null {
+  const bare = command.replace(/\d*>>?\s*&?[^\s;&|]+/g, " ").replace(/<\s*[^\s;&|]+/g, " ");
+  for (const raw of bare.split(/&&|\|\||[;|&\n]/)) {
+    let seg = raw.replace(/["']/g, "").trim();
+    for (;;) {
+      const next = seg
+        .replace(/^(?:[A-Za-z_]\w*=\S*\s+)/, "")
+        .replace(/^nohup\s+/, "")
+        .replace(/^(?:timeout|gtimeout)\s+(?:-\S+\s+)*\d+\w*\s+/, "")
+        .replace(/^cd\s+\S+\s*/, "");
+      if (next === seg) break;
+      seg = next;
+    }
+    const m = RUNNER.exec(seg);
+    if (!m) continue;
+    const args = m[2].split(/\s+/).filter((a) => a && !a.startsWith("-") && a !== "run" && a !== "test");
+    return [m[1], ...[...new Set(args)].sort()].join(" ");
+  }
+  return null;
 }
 
 export function emptyLoopState(): LoopState {
@@ -199,11 +232,30 @@ export interface LoopStep {
   key?: string;
   /** Similar attempts of this cluster including this one. */
   count?: number;
+  /** Deny message when it differs from loopDenyReason (the no-progress rule). */
+  reason?: string;
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (tool === "Bash") {
+    const cmd = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    const ak = typeof cmd === "string" ? actionKey(cmd) : null;
+    if (ak !== null) {
+      const n = (state.runs?.[ak] ?? 0) + 1;
+      state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n } };
+      if (n >= RUN_DENY_AT)
+        return {
+          state,
+          deny: true,
+          stop: n >= RUN_STOP_AT,
+          key: ak,
+          count: n,
+          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything; the result will not change. Read the failure, change code or the test, or report the blocker. ${SELF}`,
+        };
+    }
+  }
   const key = callKey(tool, input);
   if (key === null) return { state, deny: false };
   const idx = clusterOf(state.window, key);

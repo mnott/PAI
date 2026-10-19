@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -29,7 +29,7 @@ describe("loop guard", () => {
   });
   it("denies the 5th identical vitest run after a commit", () => {
     const t = "npx vitest run src/a.test.ts";
-    expect(feed([bash(t), bash("git commit -m x"), bash(t), bash(t), bash(t), bash(t)])).toEqual([5]);
+    expect(feed([bash(t), bash("git commit -m x"), bash(t), bash(t), bash(t), bash(t)])).toEqual([3, 4, 5]);
   });
   it("denies an alternating proof/check pattern", () => {
     const calls: Array<[string, string]> = [];
@@ -54,7 +54,7 @@ describe("loop guard", () => {
   });
   it("an edit resets the window", () => {
     const c = bash("npm test");
-    expect(feed([c, c, c, c, edit, c, c, c, c])).toEqual([]);
+    expect(feed([c, c, edit, c, c, edit, c, c])).toEqual([]);
   });
 });
 
@@ -68,8 +68,8 @@ describe("similarity of commands", () => {
     "npx vitest run src/cli/defs/launch.test.ts 2>&1",
     "npx vitest run --dir src/cli/defs src/cli/defs/launch.test.ts 2>&1",
   ];
-  it("the seven vitest flag variants are one cluster; the 5th is denied", () => {
-    expect(feed(variants.map(bash))).toEqual([4, 5, 6]);
+  it("the vitest flag variants share one action key; the 3rd run is denied", () => {
+    expect(feed(variants.map(bash))).toEqual([3, 4, 5]);
   });
   it("a different target with a different result is progress", () => {
     expect(feed(Array.from({ length: 8 }, (_, i) => bash(`npx vitest run src/f${i}.test.ts`)), (i) => `pass file ${i}`)).toEqual([]);
@@ -84,7 +84,7 @@ describe("similarity of commands", () => {
   });
   it("an edit resets the count", () => {
     const v = variants.map(bash);
-    expect(feed([...v.slice(0, 4), edit, ...v.slice(4)])).toEqual([]);
+    expect(feed([...v.slice(0, 2), edit, ...v.slice(2, 4), edit, ...v.slice(4, 6)])).toEqual([]);
   });
   it("a real edit-test cycle stays allowed", () => {
     const calls: Array<[string, string?]> = [];
@@ -302,5 +302,42 @@ describe("temp-path and repeated-result evasions", () => {
       expect(r.deny).toBe(false);
       s = recordLoopResult(r.state, "Bash", cmd, `line block ${String.fromCharCode(97 + i)} content`);
     }
+  });
+});
+
+describe("no-progress rule (action key)", () => {
+  const run1 = "nohup npx vitest run src/workers/capacity.test.ts > /tmp/vt-cap.log 2>&1 & echo $! > /tmp/vt-cap.pid";
+  const run2 = "nohup npx vitest run src/workers/capacity.test.ts > /tmp/vt-cap2.log 2>&1 & echo $! > /tmp/vt-cap2.pid; pai worker wait-on $(cat /tmp/vt-cap2.pid) --log /tmp/vt-cap2.log";
+  const run3 = "nohup npx vitest run src/workers/capacity.test.ts --reporter=dot --testTimeout=20000 > /tmp/vt-cap3.log 2>&1 & echo $! > /tmp/vt-cap3.pid";
+  const noise: Array<[string, string?]> = [bash("ps aux | grep vitest"), bash("sleep 30"), bash("pgrep -f vitest"), ["Read", undefined], bash("kill 4242"), bash("wc -l /tmp/vt-cap.log")];
+  it("normalises the incident commands to one key", () => {
+    expect(actionKey(run1)).toBe("vitest src/workers/capacity.test.ts");
+    expect(actionKey(run2)).toBe(actionKey(run1));
+    expect(actionKey(run3)).toBe(actionKey(run1));
+    expect(actionKey("ps aux | grep vitest")).toBeNull();
+    expect(actionKey("timeout 120 npm test")).toBe("npm test");
+    expect(actionKey("CI=1 npx tsc --noEmit")).toBe("tsc");
+  });
+  it("denies the third run of the incident sequence", () => {
+    const calls: Array<[string, string?]> = [bash(run1), noise[0], noise[1], bash(run2), noise[2], noise[4], noise[5], bash(run3)];
+    expect(feed(calls, (i) => `result ${i} pid ${1000 + i}`)).toEqual([7]);
+  });
+  it("stops at the fifth run", () => {
+    let s: LoopState = emptyLoopState();
+    const stops: boolean[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = stepLoopGuard(s, "Bash", `npx vitest run src/a.test.ts > /tmp/o${i}.log`);
+      s = r.state;
+      stops.push(!!r.stop);
+    }
+    expect(stops).toEqual([false, false, false, false, true]);
+  });
+  it("an edit resets and different targets are different keys", () => {
+    expect(feed([bash(run1), bash(run2), edit, bash(run3), bash(run1)])).toEqual([]);
+    const calls = ["a", "b", "c", "a", "b", "c"].map((n) => bash(`npx vitest run src/${n}.test.ts`));
+    expect(feed(calls, (i) => `r${i}`)).toEqual([]);
+  });
+  it("waits stay exempt", () => {
+    expect(feed(Array.from({ length: 8 }, () => bash("pai worker wait-on 123 --log /tmp/x.log")))).toEqual([]);
   });
 });
