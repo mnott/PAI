@@ -307,7 +307,7 @@ describe("part isolation", () => {
       tiers.push(`${r.attempt}:${r.tier}`);
       return { id: `w-${tiers.length}`, ok: false, loopStopped: true, failure: "loop-stopped" };
     };
-    await runPlan(p, { parallel: 1, escalate: "sonnet" }, h.deps);
+    await runPlan(p, { parallel: 1, escalate: true }, h.deps);
     expect(tiers.length).toBeGreaterThanOrEqual(2);
     expect(tiers.some((t) => t.endsWith(":sonnet"))).toBe(true);
   });
