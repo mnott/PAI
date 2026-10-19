@@ -21,7 +21,7 @@ import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
-import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
+import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, setupProfile, setupWorkersLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
@@ -136,7 +136,8 @@ export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "acti
   const workers = profile?.workers?.provider ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
   // the session's own default chat model (its profile) wins over whatever it last ran on
   const orch = profile?.chat ? { provider: profile.chat.provider, model: profile.chat.model } : row && row.provider !== "—" ? { provider: row.provider, model: row.model } : { provider: workers };
-  return { name: "Last time", orchestrator: orch, workers, kind: "last" };
+  const workersModel = profile?.workers?.provider === workers ? profile.workers.model : undefined;
+  return { name: "Last time", orchestrator: orch, workers, ...(workersModel ? { workersModel } : {}), kind: "last" };
 }
 
 /** The launch screen's rows, top to bottom; `sel` indexes them. */
@@ -192,7 +193,7 @@ export function setupsTable(
       st.dim(String(setups.indexOf(s) + 1)),
       st.bold(s.name),
       orchestratorLabel(cfg, s.orchestrator),
-      s.local ? `${s.workers} (local)` : workersLabel(cfg, s.workers),
+      setupWorkersLabel(cfg, s),
       healthText(st, status(s)),
     ],
     searchText: (s: Setup) => `${s.name} ${s.orchestrator.provider} ${s.workers}`,
@@ -262,7 +263,7 @@ export async function startSession(a: StartArgs): Promise<number> {
     throw e;
   }
   const orch = `${shortModel(harness.model)} (${harness.provider})`;
-  out(`Starting "${name}": orchestrator ${st.bold(orch)}, workers ${st.bold(workersLabel(workers, setup.workers))}`);
+  out(`Starting "${name}": orchestrator ${st.bold(orch)}, workers ${st.bold(setupWorkersLabel(workers, setup))}`);
   if (resume && resume.provider !== "—" && (resume.provider !== harness.provider || shortModel(resume.model) !== shortModel(harness.model))) {
     out(`Conversation history carries over to ${shortModel(harness.model)}.`);
   }
@@ -275,11 +276,7 @@ export async function startSession(a: StartArgs): Promise<number> {
     return 0;
   }
   // the choice becomes this session's profile (its default from now on); the global config is never written
-  const prev = getProfile(name);
-  updateProfile(name, {
-    chat: { provider: setup.orchestrator.provider, ...(setup.orchestrator.model ? { model: setup.orchestrator.model } : {}) },
-    workers: { provider: setup.workers, ...(prev?.workers?.provider === setup.workers && prev.workers.model ? { model: prev.workers.model } : {}) },
-  });
+  updateProfile(name, setupProfile(workers, setup));
   return execHarness(harness, workers);
 }
 
