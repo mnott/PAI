@@ -3,54 +3,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { mergeSettings, type HookEntry } from "../../../lib/settings-manager.js";
+import { mergeSettings } from "../../../lib/settings-manager.js";
 import { c, line, section, type Rl, prompt, promptYesNo } from "../utils.js";
-
-const WORKER_GUARD_OLD_MATCHERS = [
-  "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
-  "Bash|Edit|Write|MultiEdit|NotebookEdit",
-];
-
-/** Hook registrations setup merges into settings.json. */
-export const SETTINGS_HOOKS: HookEntry[] = [
-    { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/load-core-context.mjs" },
-    { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/load-project-context.mjs" },
-    { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/initialize-session.mjs" },
-    { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart" },
-    { hookType: "SessionStart", matcher: "compact", command: "${ADAPTER_DIR}/Hooks/post-compact-inject.mjs" },
-    { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/cleanup-session-files.mjs" },
-    { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/update-tab-titles.mjs" },
-    { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit" },
-    // Rolling checkpoint. The model is not invoked on /exit and never on
-    // Ctrl+C, so a handover written at exit time is impossible — it has to
-    // already exist. Rate-limited internally; safe on high-frequency events.
-    { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
-    { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
-    // Every tool: the loop guard inside counts Read/Grep/Glob repeats too.
-    { hookType: "PreToolUse", matcher: "*", oldMatchers: WORKER_GUARD_OLD_MATCHERS, command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
-    { hookType: "PreToolUse", matcher: "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep", command: "${ADAPTER_DIR}/Hooks/worker-path-repair.mjs" },
-    { hookType: "PreToolUse", matcher: "Edit|MultiEdit", command: "${ADAPTER_DIR}/Hooks/worker-edit-repair.mjs" },
-    // Dotted tool names (Glob.glob) die before any name-matched hook sees
-    // them, so this one must match every call and rewrite the name itself.
-    { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-tool-name-repair.mjs" },
-    { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse" },
-    { hookType: "PostToolUse", matcher: "TodoWrite", command: "${ADAPTER_DIR}/Hooks/sync-todo-to-md.mjs" },
-    { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse" },
-    { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-tool-output.mjs" },
-    { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
-    { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
-    { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
-    { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/stop-hook.mjs" },
-    { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type Stop" },
-    { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/pai-session-stop.sh" },
-    { hookType: "SubagentStop", command: "${ADAPTER_DIR}/Hooks/subagent-stop-hook.mjs" },
-    { hookType: "SubagentStop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SubagentStop" },
-    { hookType: "SessionEnd", command: "${ADAPTER_DIR}/Hooks/capture-session-summary.mjs" },
-    { hookType: "SessionEnd", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SessionEnd" },
-    { hookType: "PreCompact", command: "${ADAPTER_DIR}/Hooks/context-compression-hook.mjs" },
-    { hookType: "PreCompact", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreCompact" },
-    { hookType: "PreCompact", matcher: "", command: "${ADAPTER_DIR}/Hooks/pai-pre-compact.sh" },
-];
 
 export async function stepDaName(rl: Rl): Promise<string> {
   section("Step 8b: Assistant Name");
@@ -88,7 +42,44 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000",
       DA: daName,
     },
-    hooks: SETTINGS_HOOKS,
+    hooks: [
+      { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/load-core-context.mjs" },
+      { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/load-project-context.mjs" },
+      { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/initialize-session.mjs" },
+      { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart" },
+      { hookType: "SessionStart", matcher: "compact", command: "${ADAPTER_DIR}/Hooks/post-compact-inject.mjs" },
+      { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/cleanup-session-files.mjs" },
+      { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/update-tab-titles.mjs" },
+      { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit" },
+      // Rolling checkpoint. The model is not invoked on /exit and never on
+      // Ctrl+C, so a handover written at exit time is impossible — it has to
+      // already exist. Rate-limited internally; safe on high-frequency events.
+      { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
+      { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
+      { hookType: "PreToolUse", matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*", command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
+      { hookType: "PreToolUse", matcher: "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep", command: "${ADAPTER_DIR}/Hooks/worker-path-repair.mjs" },
+      { hookType: "PreToolUse", matcher: "Edit|MultiEdit", command: "${ADAPTER_DIR}/Hooks/worker-edit-repair.mjs" },
+      // Dotted tool names (Glob.glob) die before any name-matched hook sees
+      // them, so this one must match every call and rewrite the name itself.
+      { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-tool-name-repair.mjs" },
+      { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreToolUse" },
+      { hookType: "PostToolUse", matcher: "TodoWrite", command: "${ADAPTER_DIR}/Hooks/sync-todo-to-md.mjs" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PostToolUse" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/capture-tool-output.mjs" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
+      { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
+      { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/stop-hook.mjs" },
+      { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type Stop" },
+      { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/pai-session-stop.sh" },
+      { hookType: "SubagentStop", command: "${ADAPTER_DIR}/Hooks/subagent-stop-hook.mjs" },
+      { hookType: "SubagentStop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SubagentStop" },
+      { hookType: "SessionEnd", command: "${ADAPTER_DIR}/Hooks/capture-session-summary.mjs" },
+      { hookType: "SessionEnd", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SessionEnd" },
+      { hookType: "PreCompact", command: "${ADAPTER_DIR}/Hooks/context-compression-hook.mjs" },
+      { hookType: "PreCompact", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type PreCompact" },
+      { hookType: "PreCompact", matcher: "", command: "${ADAPTER_DIR}/Hooks/pai-pre-compact.sh" },
+    ],
     statusLine: {
       type: "command",
       command: "bash ${ADAPTER_DIR}/statusline-command.sh",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * worker-guard.ts — PreToolUse (every tool: the loop guard counts them all)
+ * worker-guard.ts — PreToolUse (Bash|Edit|Write|MultiEdit|NotebookEdit)
  *
  * Worker-only (PAI_WORKER=1) enforcement of the git/worktree rules every
  * worker spec used to repeat in prose and workers still broke: no symlinks
