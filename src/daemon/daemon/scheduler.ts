@@ -8,6 +8,7 @@ import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes, loadRegistry } from "../../workers/pane.js";
+import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
 import { loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
@@ -568,6 +569,22 @@ export function startWorkerSupervisor(): void {
       });
   }, PANE_REAP_TICK_MS);
   if (reapTimer.unref) reapTimer.unref();
+
+  const orphans: ReaperState = new Map();
+  const reaperDeps = realReaperDeps((l) => process.stderr.write(`[pai-daemon] ${l}\n`));
+  let orphanReaping = false;
+  const orphanTimer = setInterval(() => {
+    if (orphanReaping) return;
+    const { workers } = readWorkersSection();
+    if (!workers.reaper) return;
+    orphanReaping = true;
+    reapOrphansOnce(workersLogDir(workers), orphans, reaperDeps)
+      .catch(() => {})
+      .finally(() => {
+        orphanReaping = false;
+      });
+  }, REAP_TICK_MS);
+  if (orphanTimer.unref) orphanTimer.unref();
 
   process.stderr.write(
     `[pai-daemon] Worker supervisor: every ${Math.round(SUPERVISION_TICK_MS / 1000)}s\n`
