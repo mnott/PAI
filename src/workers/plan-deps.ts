@@ -128,12 +128,12 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
 }
 
 /** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
-export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string, planPane?: string): Promise<WorkerOutcome> {
+export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string, planPane?: string, planPart?: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
   const before = await checkoutState(repo);
   const mark = { label: req.label, t0 };
   launched.add(mark);
-  const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, planPane ? { ...process.env, PAI_PLAN_PANE: planPane } : process.env).finally(() => launched.delete(mark));
+  const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, planPane ? { ...process.env, PAI_PLAN_PANE: planPane, ...(planPart ? { PAI_PLAN_PART: planPart } : {}) } : process.env).finally(() => launched.delete(mark));
   const st = loadStatuses(logDir)
     .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
@@ -279,7 +279,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
           }, 1500)
         : undefined;
       try {
-        return await launchWorker(req, specFile, plan.repo, logDir, tracker?.hasPane ? tracker.id : undefined);
+        return await launchWorker(req, specFile, plan.repo, logDir, tracker?.hasPane ? tracker.id : undefined, req.part.id);
       } finally {
         if (watch) clearInterval(watch);
       }

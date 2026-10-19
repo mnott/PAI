@@ -1,13 +1,13 @@
 /** One pane per plan run, never a window; plan workers open none; the plan pane follows their transcripts. */
-import { mkdirSync, mkdtempSync, rmSync, appendFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openVerifiedPane, type PaneOps, type PaneSeam } from "./pane.js";
 import { openPlanPane, workerArgs } from "./plan-deps.js";
-import { PlanTracker } from "./plan-status.js";
+import { PlanTracker, planStatusFile } from "./plan-status.js";
 import { PlanFollower } from "./plan-follow.js";
-import { requireVisiblePane } from "./run.js";
+import { requireVisiblePane, buildRunEnv } from "./run.js";
 import { eventsPath } from "./paths.js";
 import type { WorkersConfig } from "./config.js";
 
@@ -89,11 +89,56 @@ describe("one pane per plan run", () => {
     }
   });
 
-  it("a plan's worker requests no pane of its own", async () => {
-    vi.stubEnv("PAI_PLAN_PANE", "plan-job-a");
-    vi.stubEnv("PAI_WORKER", "");
-    vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "");
-    await expect(requireVisiblePane(dir, config as never, "w-1", TERM, false, false, join(dir, "ledger"))).resolves.toBe(true);
+  describe("PAI_PLAN_PANE is accepted only when real", () => {
+    const call = () => requireVisiblePane(dir, config as never, "w-1", TERM, true, false, join(dir, "ledger"));
+    beforeEach(() => {
+      vi.stubEnv("PAI_WORKER", "");
+      vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "");
+      vi.stubEnv("PAI_PLAN_PANE", "plan-job-a");
+      vi.stubEnv("PAI_PLAN_PART", "p1");
+    });
+    const live = () => {
+      const t = new PlanTracker(dir, "job-a", 2, 0);
+      t.hasPane = true;
+      t.setRunning(["p1"]);
+      return t;
+    };
+
+    it("real plan worker: accepted", async () => {
+      live();
+      await expect(call()).resolves.toBe(true);
+    });
+    it("worker already listed by id: accepted", async () => {
+      const t = live();
+      t.setRunning([]);
+      t.setWorker("p1", "w-1");
+      vi.stubEnv("PAI_PLAN_PART", "");
+      await expect(call()).resolves.toBe(true);
+    });
+    it("no such plan: refused", async () => {
+      await expect(call()).rejects.toThrow(/no visible pane/);
+    });
+    it("dead runner: refused", async () => {
+      live();
+      const f = planStatusFile(dir, "plan-job-a");
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, "utf8")), pid: 2 ** 22 + 12345 }));
+      await expect(call()).rejects.toThrow(/no visible pane/);
+    });
+    it("plan without a pane: refused", async () => {
+      new PlanTracker(dir, "job-a", 2, 0).setRunning(["p1"]);
+      await expect(call()).rejects.toThrow(/no visible pane/);
+    });
+    it("worker not listed (other part): refused", async () => {
+      live();
+      vi.stubEnv("PAI_PLAN_PART", "p2");
+      await expect(call()).rejects.toThrow(/no visible pane/);
+    });
+    it("the model process env carries no PAI_PLAN_PANE", () => {
+      const provider = { native: true, models: { default: "m" }, env: {} } as never;
+      const e = buildRunEnv(provider, true);
+      expect(e.PAI_PLAN_PANE).toBeUndefined();
+      expect(e.PAI_PLAN_PART).toBeUndefined();
+    });
   });
   it("workerArgs unchanged", () => {
     expect(workerArgs({ label: "l", provider: "p", tier: "opus", priority: undefined } as never, "s", "r")).toContain("--worktree");

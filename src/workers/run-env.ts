@@ -146,6 +146,9 @@ export function buildRunEnv(
 
   // a child never inherits its spawner's orchestrator mode; only an explicit --orchestrate sets it
   delete env.PAI_WORKER_ORCHESTRATOR;
+  // the plan-pane exemption is for the `pai worker run` the plan runner spawned, never for the model process or its children
+  delete env.PAI_PLAN_PANE;
+  delete env.PAI_PLAN_PART;
   if (headless && orchestrate) env.PAI_WORKER_ORCHESTRATOR = "1";
 
   if (provider.native) {

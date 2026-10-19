@@ -30,6 +30,8 @@ export interface PlanRunStatus {
   running: string[];
   /** Worker id per part id, for every worker the run started: what the plan pane follows. */
   workers?: Record<string, string>;
+  /** True once the run's one pane is open: its workers open none of their own. */
+  hasPane?: boolean;
   /** Tests the plan gate counted last time: the denominator of "tests 214/2600". */
   testTotal?: number;
 }
@@ -63,6 +65,19 @@ export function loadPlanStatuses(logDir: string): PlanRunStatus[] {
     .sort()
     .map((n) => loadPlanStatus(logDir, n.slice(0, -".planstatus".length)))
     .filter((s): s is PlanRunStatus => !!s);
+}
+
+/**
+ * Is PAI_PLAN_PANE real? It names a plan run whose runner is alive, owns a pane, and is running
+ * the part this worker was started for (PAI_PLAN_PART) or already lists this worker id. A variable
+ * set by anything else (a shell, a plan worker's own child) is not accepted.
+ */
+export function planPaneAccepted(logDir: string, planId: string | undefined, part: string | undefined, wid: string): boolean {
+  if (!planId || !/^plan-[A-Za-z0-9._-]+$/.test(planId)) return false;
+  const s = loadPlanStatus(logDir, planId);
+  if (!s || s.state !== "running" || !s.hasPane || !pidAlive(s.pid)) return false;
+  if (Object.values(s.workers ?? {}).includes(wid)) return true;
+  return !!part && s.running.includes(part);
 }
 
 export function fmtElapsed(ms: number): string {
@@ -179,7 +194,14 @@ export class PlanTracker {
   }
 
   /** True once the run's one pane is open: its workers open none of their own. */
-  hasPane = false;
+  get hasPane(): boolean {
+    return this.status.hasPane === true;
+  }
+
+  set hasPane(v: boolean) {
+    this.status.hasPane = v;
+    this.save();
+  }
 
   setWorker(part: string, wid: string): void {
     this.status.workers = { ...this.status.workers, [part]: wid };

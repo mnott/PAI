@@ -34,6 +34,8 @@ export function buildCodexArgs(prompt: string, model: string | undefined): strin
 export function buildCodexEnv(provider: WorkerProvider): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
+  delete env.PAI_PLAN_PANE;
+  delete env.PAI_PLAN_PART;
   delete env.ANTHROPIC_BASE_URL;
   delete env.ANTHROPIC_AUTH_TOKEN;
   delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;

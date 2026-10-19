@@ -52,6 +52,7 @@ import {
   rmSync,
 } from "node:fs";
 import { statusPath } from "./paths.js";
+import { planPaneAccepted } from "./plan-status.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
@@ -1370,7 +1371,7 @@ export async function requireVisiblePane(
     process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
     return false;
   }
-  if (process.env.PAI_PLAN_PANE) {
+  if (planPaneAccepted(logDir, process.env.PAI_PLAN_PANE, process.env.PAI_PLAN_PART, wid)) {
     // a plan runner's worker: the plan's one pane is its visible pane
     process.stderr.write(`[pai worker] pane for ${wid}: plan pane ${process.env.PAI_PLAN_PANE}\n`);
     return true;
