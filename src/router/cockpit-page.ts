@@ -29,6 +29,7 @@ try{var T=localStorage.getItem("pai.cockpit.theme")||(matchMedia("(prefers-color
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
 header{flex-wrap:wrap;display:flex;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
 h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+.card.folded>div{display:none}.fold{background:none;border:0;padding:0 4px;color:var(--dim);cursor:pointer;font:inherit;line-height:1}.fold:hover{color:var(--acc)}.fold .chev{display:inline-block;width:12px}
 .tabs button{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:3px 12px;cursor:pointer;font:inherit}
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
@@ -65,8 +66,9 @@ svg text{fill:var(--dim);font-size:10px}
 <main>
 <section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
-<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 ${POOL_PANEL_HTML}
+<section class="card c12"><h2>Models — in use<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
+<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:8px">Power and GPU/CPU load<span class="tip" tabindex="0" aria-label="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis." data-tip="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis.">ⓘ</span></h2><div id="power"></div><div class="legend" id="plegend"></div></section>
@@ -94,6 +96,24 @@ function tot(t){return t.input+t.output+t.cacheWrite+t.cacheRead}
 function dur(ms){if(ms<=0)return"now";var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+"d "+h+"h":h?h+"h "+String(m).padStart(2,"0")+"m":m+"m "+String(s%60).padStart(2,"0")+"s"}
 function ago(iso){var s=(Date.now()-Date.parse(iso))/1000;return s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":s<172800?Math.round(s/3600)+"h":Math.round(s/86400)+"d"}
 function sev(p){return p>=90?"var(--bad)":p>=70?"var(--warn)":"var(--ok)"}
+/** Collapsible tiles: every card/panel can fold; the state is saved per tile id and restored on load. */
+var COLLAPSE_KEY="pai.cockpit.collapsed";
+function collapsedSet(){var s={};try{var r=localStorage.getItem(COLLAPSE_KEY);if(r)JSON.parse(r).forEach(function(k){s[k]=1})}catch(e){}return s}
+function saveCollapsed(s){try{var a=[];for(var k in s)if(s[k])a.push(k);localStorage.setItem(COLLAPSE_KEY,JSON.stringify(a))}catch(e){}}
+function applyCollapse(){
+ var cs=collapsedSet(),cards=document.querySelectorAll("main section.card");
+ for(var i=0;i<cards.length;i++)(function(c){
+  var h=c.querySelector("h2");if(!h)return;
+  if(!c.id)c.id="tile-"+i;
+  var b=h.querySelector("button.fold");
+  if(!b){b=document.createElement("button");b.type="button";b.className="fold";b.setAttribute("aria-expanded","true");h.insertBefore(b,h.firstChild)}
+  var col=!!cs[c.id];
+  c.classList.toggle("folded",col);b.setAttribute("aria-expanded",col?"false":"true");
+  b.innerHTML='<span class="chev">'+(col?"▸":"▾")+'</span>';
+  b.title=col?"expand":"collapse";b.setAttribute("aria-label",(col?"expand ":"collapse ")+h.textContent.trim());
+  if(!b.onclick)b.onclick=function(){var s2=collapsedSet();if(s2[c.id])delete s2[c.id];else s2[c.id]=1;saveCollapsed(s2);applyCollapse()};
+ })(cards[i]);
+}
 
 function gauge(l,w,age){
  var p=Math.max(0,Math.min(100,w.percent)),r=44,cx=60,cy=56,a=Math.PI*p/100;
@@ -115,19 +135,33 @@ function renderLimits(){
   c+=h;
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
- if(dn.length&&!mdl)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
- $("local").innerHTML=(lo+modelsHtml(mdl))||'<span class="dim">no local providers</span>';
+ if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var mdl=null;
+/** Models tile: only models in use or loaded by default; the rest fold into one line with their size on disk. */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
- var up=inv.runtimes.filter(function(r){return r.status==="running"}),dn=inv.runtimes.filter(function(r){return r.status!=="running"}),rows=[];
  function mem(m){return m==null?"-":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
- up.forEach(function(r){r.models.forEach(function(m){rows.push([esc(r.name),esc(m.model)+(m.loaded?"":' <span class="dim">(installed)</span>'),esc(m.kind),m.loaded?mem(m.memoryMb):"-",esc((m.usedBy.length?m.usedBy:r.models.length===1?r.users:[]).join(", ")||"-"),r.port==null?"-":r.port])});if(!r.models.length)rows.push([esc(r.name),"-","-","-",esc(r.users.join(", ")||"-"),r.port==null?"-":r.port])});
- var h=rows.length?table(["runtime","model","kind","memory","used by","port"],rows):"";
+ var inuse=[],other=[],gb=0;
+ inv.runtimes.forEach(function(r){
+  r.models.forEach(function(m){
+   var used=m.usedBy.length>0||(r.status==="running"&&r.models.length===1&&r.users.length>0);
+   if(used||m.loaded)inuse.push([esc(m.model),esc(r.name),esc(m.kind),esc((m.usedBy.length?m.usedBy:r.users).join(", ")||"-"),m.loaded?mem(m.memoryMb):'<span class="dim">on disk</span>']);
+   else{other.push([esc(r.name),esc(m.model),esc(m.kind),mem(m.sizeMb)]);gb+=m.sizeMb||0}
+  });
+ });
+ var h=inuse.length?table(["model","runtime","kind","used by","loaded (memory, or on disk)"],inuse):'<span class="dim">no model in use or loaded</span>';
+ if(other.length)h+='<details class="downs"><summary>'+other.length+' other installed model'+(other.length===1?'':'s')+', '+(gb/1024).toFixed(1)+' GB on disk — not used by anything</summary>'+table(["runtime","model","kind","size on disk"],other)+'</details>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
+ var dn=inv.runtimes.filter(function(r){return r.status!=="running"&&r.users.length});
  if(dn.length)h+='<details class="downs"><summary>'+dn.length+' runtime'+(dn.length===1?'':'s')+' stopped</summary>'+dn.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ")+'</details>';
  return h;
+}
+function renderModels(){
+ var el=$("modelspanel");if(!el)return;
+ el.innerHTML=mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>';
+ setTip($("modelstip"),mdl&&mdl.at?"Local model runtimes. In use = a worker provider, the PAI embedding backend or a declared consumer (config models.consumers). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
 }
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
@@ -455,7 +489,7 @@ function renderQueue(q){
  })(rs[k])}
 }
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
-function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits()}).catch(function(){})}
+function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits();renderModels()}).catch(function(){})}
 function loadLimits(){loadModels();fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
@@ -463,7 +497,7 @@ function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l
 $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="dark"?"light":"dark";setTheme(t);try{localStorage.setItem("pai.cockpit.theme",t)}catch(e){}};
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
-tabs();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
+tabs();applyCollapse();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;

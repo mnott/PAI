@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML } from "./cockpit-page.js";
+
+const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
 
 const stripTags = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "");
 
@@ -275,23 +277,144 @@ describe("cockpit workers panel", () => {
   });
 });
 
-describe("cockpit LOCAL models section", () => {
+describe("cockpit Models tile", () => {
   const modelsHtml = new Function("esc", "table", `${COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0]}; return modelsHtml;`)(
     (s: unknown) => String(s ?? ""),
     (h: string[], rows: unknown[][]) => `T[${h.join(",")}]${rows.map((r) => r.join("|")).join(";")}`
   ) as (inv: unknown) => string;
   const inv = {
+    at: "2026-10-19T18:00:00.000Z",
     runtimes: [
-      { name: "ollama", status: "running", port: 11434, users: ["pai-embedding"], models: [{ model: "arctic", kind: "embedding", loaded: true, memoryMb: 600, usedBy: ["pai-embedding"] }] },
-      { name: "coder", status: "stopped", port: 8034, users: [], models: [] },
+      { name: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:flashnext-iq3"] }] },
+      { name: "ollama", status: "running", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
+        { model: "arctic", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
+        { model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["paperfull-llm"] },
+        { model: "llama2:7b", kind: "chat", loaded: false, sizeMb: 3800, usedBy: [] },
+        { model: "mistral:7b", kind: "chat", loaded: false, sizeMb: 4100, usedBy: [] },
+      ] },
+      { name: "coder", status: "stopped", port: 8034, users: ["worker:coder"], models: [] },
     ],
     duplicates: ["embedding runs on 2 runtimes: a + b"],
   };
-  it("lists running runtimes with memory and users, collapses stopped, shows duplicates", () => {
+  it("default view: only in-use or loaded models, with runtime, kind, used by and loaded memory", () => {
     const h = modelsHtml(inv);
-    expect(h).toContain("ollama|arctic|embedding|600 MB|pai-embedding|11434");
+    const def = h.replace(/<details[\s\S]*?<\/details>/g, "");
+    expect(def).toContain("T[model,runtime,kind,used by,loaded (memory, or on disk)]");
+    expect(def).toContain("flash-next|strata|coding|worker:flashnext-iq3|48.8 GB");
+    expect(def).toContain("arctic|ollama|embedding|pai-embedding|600 MB");
+    // a declared consumer (models.consumers) counts as in use, shown "on disk"
+    expect(def).toContain('qwen3:8b|ollama|chat|paperfull-llm|<span class="dim">on disk</span>');
+    expect(def).not.toContain("llama2:7b");
+    expect(def).not.toContain("mistral:7b");
+  });
+  it("the rest folds into one line with the total on disk and expands to the full list with sizes", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain("2 other installed models, 7.7 GB on disk — not used by anything");
+    const det = h.match(/<details[\s\S]*?<\/details>/g)!.find((d) => d.includes("other installed"))!;
+    expect(det).toContain("ollama|llama2:7b|chat|3.7 GB");
+    expect(det).toContain("ollama|mistral:7b|chat|4.0 GB");
+    expect(h).toContain("<summary>");
+    expect(h).not.toMatch(/<details[^>]*\bopen\b/);
+  });
+  it("keeps the duplicates hint and the stopped-runtime fold", () => {
+    const h = modelsHtml(inv);
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
     expect(h).toContain("1 runtime stopped");
-    expect(h).not.toContain("<td>coder");
+    expect(h).toContain("coder:8034");
+  });
+  it("the tile sits after the worker panel, before System; the LOCAL tile keeps only the server summary", () => {
+    const i = (s: string) => COCKPIT_HTML.indexOf(s);
+    expect(i("Models — in use")).toBeGreaterThan(i("Workers — running and waiting"));
+    expect(i("Models — in use")).toBeLessThan(i("<h2>System"));
+    const rl = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}\n/)![0];
+    expect(rl).toContain('$("local").innerHTML=lo');
+    expect(rl).not.toContain("modelsHtml");
+  });
+});
+
+describe("cockpit collapsible tiles", () => {
+  const src = COCKPIT_HTML.match(/var COLLAPSE_KEY[\s\S]*?\n\}\n/)![0];
+  const store: Record<string, string> = {};
+  const localStorageStub = {
+    getItem: (k: string) => store[k] ?? null,
+    setItem: (k: string, v: string) => { store[k] = v; },
+  };
+  // a tiny DOM: sections with an h2; the fold button is created once and found on later passes
+  function makeDom(cards: Array<{ id: string; title: string }>) {
+    const nodes = cards.map((c) => {
+      const btn: { type: string; className: string; attrs: Record<string, string>; innerHTML: string; title: string; onclick: null | (() => void); setAttribute: (k: string, v: string) => void } = {
+        type: "", className: "", attrs: {}, innerHTML: "", title: "", onclick: null,
+        setAttribute(k, v) { this.attrs[k] = v; },
+      };
+      const h2 = {
+        textContent: c.title, firstChild: null,
+        querySelector: (s: string) => (s === "button.fold" ? btn : null),
+        insertBefore() { /* the page creates one; the stub hands back the card's own button */ },
+      };
+      const card = {
+        id: c.id,
+        classes: new Set<string>(),
+        querySelector: (s: string) => (s === "h2" ? h2 : null),
+        classList: { toggle(cl: string, on: boolean) { if (on) card.classes.add(cl); else card.classes.delete(cl); } },
+        h2, btn,
+      };
+      // the page's guard `if(!b.onclick)` must not skip the stub's handler
+      Object.defineProperty(btn, "onclick", { value: null, writable: true, configurable: true, enumerable: true });
+      return card;
+    });
+    const document = {
+      querySelectorAll: (sel: string) => (sel === "main section.card" ? nodes : []),
+      createElement: () => {
+        const b: { type: string; className: string; attrs: Record<string, string>; innerHTML: string; title: string; onclick: null | (() => void); setAttribute: (k: string, v: string) => void; closest: () => unknown } = {
+          type: "", className: "", attrs: {}, innerHTML: "", title: "", onclick: null,
+          setAttribute(k, v) { this.attrs[k] = v; },
+          closest: () => null,
+        };
+        return b;
+      },
+    };
+    return { nodes, document };
+  }
+  const run = (cards: Array<{ id: string; title: string }>) => {
+    const { nodes, document } = makeDom(cards);
+    const fn = new Function("localStorage", "document", `${src}\napplyCollapse();return {collapsedSet:collapsedSet,saveCollapsed:saveCollapsed,applyCollapse:applyCollapse};`);
+    return { api: fn(localStorageStub, document) as { collapsedSet: () => Record<string, number>; saveCollapsed: (s: Record<string, number>) => void; applyCollapse: () => void }, nodes };
+  };
+  beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
+
+  it("a click folds the tile and saves its id under pai.cockpit.collapsed", () => {
+    const { nodes } = run([{ id: "sys", title: "System" }, { id: "models", title: "Models" }]);
+    const btn = nodes[0].btn; // the created button is the card's own stub (closest → card)
+    expect(nodes[0].classes.has("folded")).toBe(false);
+    expect(btn.attrs["aria-expanded"]).toBe("true");
+    btn.onclick!();
+    expect(nodes[0].classes.has("folded")).toBe(true);
+    expect(nodes[1].classes.has("folded")).toBe(false);
+    expect(JSON.parse(store[COLLAPSE_KEY_TEST])).toEqual(["sys"]);
+    expect(btn.attrs["aria-expanded"]).toBe("false");
+  });
+
+  it("the saved set is restored on load: collapsed tiles come back folded, the rest open", () => {
+    store[COLLAPSE_KEY_TEST] = JSON.stringify(["models"]);
+    const { nodes } = run([{ id: "sys", title: "System" }, { id: "models", title: "Models" }]);
+    expect(nodes[0].classes.has("folded")).toBe(false);
+    expect(nodes[1].classes.has("folded")).toBe(true);
+  });
+
+  it("the functions survive a broken or absent saved value", () => {
+    store[COLLAPSE_KEY_TEST] = "{not json";
+    const { api } = run([{ id: "a", title: "A" }]);
+    expect(api.collapsedSet()).toEqual({});
+    api.saveCollapsed({ a: 1, b: 1 });
+    expect(JSON.parse(store[COLLAPSE_KEY_TEST])).toEqual(["a", "b"]);
+  });
+
+  it("auto-refresh never reopens a collapsed tile: render functions only set innerHTML", () => {
+    // the collapse state lives only in localStorage + the .folded class; the
+    // render* functions touch innerHTML of the tile's divs, never the class
+    const renders = COCKPIT_HTML.match(/function render[A-Za-z]+\(\)\{[\s\S]*?\n\}/g)!;
+    for (const r of renders) expect(r).not.toMatch(/classList|folded|applyCollapse/);
+    expect(COCKPIT_HTML).toContain("setInterval(function(){load();loadSystem()},5000)");
+    expect(COCKPIT_HTML).not.toMatch(/setInterval\([^)]*applyCollapse/);
   });
 });
