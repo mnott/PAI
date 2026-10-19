@@ -23,6 +23,8 @@ export interface QueueRunOptions {
   parallel: number;
   /** Take "cloud" items and run them on Sonnet instead of the pending ones. */
   escalate?: boolean;
+  /** Called after an item reached ready or needs-decision (the stored item). */
+  onEvent?: (kind: "ready" | "needs-decision", item: QueueItem) => void;
 }
 
 export interface QueueRunSummary {
@@ -97,10 +99,12 @@ export async function runQueue(store: QueueStore, settings: QueueSettings, opts:
       }
       move(store, item.id, "ready", { worker: out.id, diff, gate, proof, report: out.report, why: undefined });
       summary.ready.push(item.id);
+      opts.onEvent?.("ready", store.get(item.id) ?? item);
       return;
     }
     move(store, item.id, "needs-decision", { why: tail(failure ?? "", 10) });
     summary.needsDecision.push(item.id);
+    opts.onEvent?.("needs-decision", store.get(item.id) ?? item);
   };
 
   for (;;) {

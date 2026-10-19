@@ -60,7 +60,7 @@ export interface RunnerDeps {
 
 export interface RunLogEntry {
   ts?: string;
-  event: "run-start" | "run-end" | "part-start" | "part-end" | "merge" | "escalate" | "needs-decision" | "unit-check";
+  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "escalate" | "needs-decision" | "unit-check";
   part?: string;
   unit?: string;
   worker?: string;
@@ -147,9 +147,13 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
     const unit = plan.units.find((u) => u.id === unitId)!;
     if (checked.has(unitId) || !unit.parts.every((p) => state.get(p.id) === "merged")) return;
     checked.add(unitId);
-    if (!unit.unitCheck) return;
+    if (!unit.unitCheck) {
+      deps.log({ event: "unit-done", unit: unitId });
+      return;
+    }
     const r = await exclusive(() => deps.unitCheck(unit.unitCheck!));
     deps.log({ event: "unit-check", unit: unitId, ok: r.ok, note: r.ok ? undefined : tail(r.output, 10) });
+    if (r.ok) deps.log({ event: "unit-done", unit: unitId });
     if (!r.ok) {
       unitFailures.push(unitId);
       // parts that depend on a unit whose check failed wait for a decision

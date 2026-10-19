@@ -134,6 +134,10 @@ config. The router then opens a second listener on that address; the cockpit nee
 `~/.claude/pai/router-cockpit.token` (as `?token=`, a Bearer header, or the cookie the first token hit sets), and the `/v1`
 model route stays limited to loopback and the tailnet. A wildcard bind is refused.
 
+## How it looks to you
+
+You do not poll and you do not run commands. A plan or queue run is started detached by the session you are talking to; it keeps going if that session ends, and it speaks up in that conversation when something needs you: a part that failed twice (needs-decision), a run that is blocked, a failed unit check, a unit group finished (at most every 15 minutes), the run's end with its wall time, parts, escalations and cloud tokens, and, for queues, the ready items (at most every 10 minutes, in plain words). Blocked and finished runs also reach PAILot as one short sentence. The session answers you in plain words and asks for the decision it needs.
+
 ## What to expect
 
 On a 38-unit refactoring job (a CLI framework migration with about 900 new tests), a local 80B mixture-of-experts model

@@ -51,3 +51,12 @@ Without a `gate` no build or test runs at all; the queue never runs a full test 
 ## State file
 
 One JSON file per project under the PAI home, `queue/<project>-<hash>.json`; the repository never holds queue state. Worker branches stay as `worker/<id>` until accepted or `pai worker gc`.
+
+## Detached runs and events
+
+`pai queue run --detach` starts the drain as a detached process (registered under `<logDir>/runs/`, see [plan-runner.md](plan-runner.md)) and returns; it survives the starting session. A run with an originating session reports to it through AIBroker `send_to_session`, one AG2-style line plus a plain sentence (`S i=queue:<project> z=<kind> | ... — ...`):
+
+- `ready`: batched, at most one message per 10 minutes, listing the ready items in plain words; whatever the throttle held back is sent when the run ends.
+- `needs-decision`: at once, per item, with the failure tail.
+
+Nothing goes to PAILot from the queue. An unreachable AIBroker is logged and the run goes on.

@@ -8,7 +8,11 @@ import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
-import { dirtyPaths, realRunnerDeps } from "../../workers/plan-deps.js";
+import { dirtyPaths, pai, realRunnerDeps } from "../../workers/plan-deps.js";
+import { detachRun, PlanReporter } from "../../workers/run-events.js";
+import { detachedArgv, finishDetached, reportOrigin, runMessenger } from "../../workers/run-report-wiring.js";
+import { resolve } from "node:path";
+import type { RunLogEntry } from "../../workers/plan-runner.js";
 import { blockedMessage, planStatus, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
@@ -47,10 +51,11 @@ const runCmd: CommandDef = {
   options: [
     { name: "parallel", type: "number", value: "N", summary: "Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision" },
+    { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports its events back to it" },
     { name: "dry-run", type: "boolean", summary: "Print the schedule that would run; start nothing" },
     { name: "allow-dirty", type: "boolean", summary: "Run although the repo has uncommitted changes to files a part touches" },
   ],
-  examples: ["pai plan run plan.yaml", "pai plan run plan.yaml --dry-run", "pai plan run plan.yaml --parallel 2 --escalate sonnet"],
+  examples: ["pai plan run plan.yaml", "pai plan run plan.yaml --detach", "pai plan run plan.yaml --dry-run", "pai plan run plan.yaml --parallel 2 --escalate sonnet"],
   seeAlso: ["pai plan validate", "pai plan status", "pai worker merge"],
   run: async (ctx: RunContext) => {
     const path = String(ctx.args.PLAN);
@@ -69,7 +74,18 @@ const runCmd: CommandDef = {
       if (clash.length) throw new CliError(`${plan.repo} has uncommitted changes to files the plan touches: ${clash.join(", ")}. A run would clobber or mix them in.`, "commit or stash them, or pass --allow-dirty");
     }
     const logDir = workersLogDir(readWorkersSection().workers);
-    const s = await runPlan(plan, opts, realRunnerDeps(plan, logDir, log));
+    const origin = reportOrigin();
+    if (ctx.opts.detach === true) {
+      const rec = detachRun(logDir, "plan", plan.job, pai(), detachedArgv("plan", [resolve(path)], ctx.opts), process.cwd(), origin ?? {});
+      out(`detached: ${rec.id} (pid ${rec.pid}); progress in ${log}, output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);
+      return 0;
+    }
+    const reporter = origin ? new PlanReporter(plan.job, plan.units.flatMap((u) => u.parts).length, runMessenger(logDir), origin) : null;
+    const real = realRunnerDeps(plan, logDir, log);
+    const deps = reporter ? { ...real, log: (e: RunLogEntry) => { real.log(e); reporter.onLog(e); } } : real;
+    const s = await runPlan(plan, opts, deps);
+    await reporter?.flush();
+    finishDetached(logDir);
     out(`merged ${s.merged.length}/${plan.units.flatMap((u) => u.parts).length}; needs-decision: ${s.needsDecision.join(", ") || "none"}; blocked: ${s.blocked.join(", ") || "none"}; unit checks failed: ${s.unitFailures.join(", ") || "none"}; escalations: ${s.escalations}`);
     if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
     if (s.stuck) out(blockedMessage(s, path));

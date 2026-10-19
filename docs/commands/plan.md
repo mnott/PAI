@@ -34,11 +34,13 @@ Runs the parts of a plan on the local provider, no model in the loop: up to N pa
 |---|---|---|---|
 | `--parallel N` | number | — | Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent) |
 | `--escalate TIER` | string | — | After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision |
+| `--detach` | flag | — | Hand the run to a detached process that outlives this session and reports its events back to it |
 | `--dry-run` | flag | — | Print the schedule that would run; start nothing |
 | `--allow-dirty` | flag | — | Run although the repo has uncommitted changes to files a part touches |
 
 ```sh
 pai plan run plan.yaml
+pai plan run plan.yaml --detach
 pai plan run plan.yaml --dry-run
 pai plan run plan.yaml --parallel 2 --escalate sonnet
 ```

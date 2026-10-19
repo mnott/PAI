@@ -57,3 +57,14 @@ units:
 Every step is appended to `<plan>.run.jsonl`: `run-start`, `part-start`, `part-end` (worker id, attempt, tier, tokens from the worker's run log when available), `merge` (gate, commit), `escalate`, `needs-decision`, `unit-check`, `run-end`. Run the same plan again and merged parts and passed unit checks are skipped; needs-decision parts are tried again.
 
 The exit code is 0 only when every part merged and every unit check passed.
+
+## Detached runs and events
+
+`pai plan run PLAN --detach` hands the run to a detached process (the same command line without `--detach`) and returns at once; the run keeps going when the starting session ends. It is registered as `<logDir>/runs/plan-<job>-<stamp>.json` (pid, argv, originating session, output file `.out`). The originating session is `CLAUDE_CODE_SESSION_ID` / the iTerm2 session / `PAI_SESSION_NAME`, passed to the child as `PAI_RUN_ORIGIN`. The daemon checks the registry on its supervision tick: a run whose process is gone without having finished is reported once as `run-died`.
+
+A run (detached or not) that has an originating session reports back, so the operator never has to poll:
+
+- to the session, through AIBroker `send_to_session` (the session wakes and can talk to the operator): one line, `S i=plan:<job> z=<kind> | k=v ... — <plain sentence>`, kinds `needs-decision` (a part failed twice), `unit-check-failed`, `unit-done` (at most one message per 15 minutes; units finished in between are listed together) and `run-merged` / `run-blocked` / `run-failed` (wall time, parts merged, escalations, cloud tokens);
+- to PAILot (`pailot_send`, one plain sentence) for the run end only: finished, blocked or failed.
+
+If AIBroker is not reachable the failure is logged to stderr and the run continues. The run log gains a `unit-done` entry for every unit whose parts are merged (and, if it has one, whose check passed).
