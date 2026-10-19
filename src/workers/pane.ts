@@ -779,6 +779,24 @@ export interface HostDeps {
   itermIdOf?(pid: number): string;
   /** iTerm session uid the AIBroker registry records for a Claude session id, "" when none. */
   registryHost?(cid: string): string;
+  /** iTerm session uid the statusline recorded for a Claude session id (short or full) in session-claude-map.json, "" when none. */
+  mapHost?(cid: string): string;
+}
+
+/** Entries older than this are dropped by the statusline writer and ignored here. */
+export const SESSION_MAP_MAX_AGE_MS = 7 * 24 * 3600_000;
+
+/** The iTerm uid recorded for a Claude session id (prefix match for short ids), newest entry wins, "" when none or stale. */
+export function lookupSessionMap(mapPath: string, cid: string, now: number = Date.now()): string {
+  try {
+    const m = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, { uid?: unknown; ts?: unknown }>;
+    const hits = Object.entries(m)
+      .filter(([k, v]) => (k === cid || (cid.length >= 8 && k.startsWith(cid))) && typeof v?.uid === "string" && typeof v.ts === "number" && now - v.ts < SESSION_MAP_MAX_AGE_MS)
+      .sort((a, b) => (b[1].ts as number) - (a[1].ts as number));
+    return (hits[0]?.[1].uid as string | undefined) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export const realHostDeps: HostDeps = {
@@ -837,6 +855,9 @@ export const realHostDeps: HostDeps = {
     } catch {
       return "";
     }
+  },
+  mapHost(cid) {
+    return lookupSessionMap(paiHomePath("session-claude-map.json"), cid);
   },
   registryHost(cid) {
     try {
@@ -903,6 +924,7 @@ function claudeIdOf(cmd: string): string | undefined {
 /**
  * The one place that decides which iTerm session hosts this process; first hit
  * wins:
+ *  0. map: the statusline-recorded session-claude-map.json entry for the Claude session id, when live
  *  1. foreground: a session whose jobPid is CLAUDE_PID or an ancestor pid
  *  2. background (`claude attach <short>`): the Claude session id from env or an
  *     ancestor's command line, matched against each session's jobPid command;
@@ -932,13 +954,20 @@ export async function resolveHostSession(
   const jobPids = sessions.flatMap((s) => (s.jobPid ? [s.jobPid] : []));
   const cmds = deps.commandsOf([...new Set([...ancestors, ...jobPids])]);
 
+  const cid = env.CLAUDE_CODE_SESSION_ID || ancestors.map((p) => claudeIdOf(cmds.get(p) ?? "")).find(Boolean);
+  if (cid) {
+    const mapped = deps.mapHost?.(cid) ?? "";
+    const mapLive = mapped && sessions.find((s) => s.id === mapped);
+    if (mapLive) return found(mapLive, "map");
+    notes.push(mapped ? `map: entry for ${cid.slice(0, 8)} names ${mapped}, not a live session` : `map: no entry for ${cid.slice(0, 8)}`);
+  }
+
   const fg = new Set(ancestors);
   if (Number(env.CLAUDE_PID)) fg.add(Number(env.CLAUDE_PID));
   const byJob = sessions.find((s) => s.jobPid && fg.has(s.jobPid));
   if (byJob) return found(byJob, "foreground jobPid");
   notes.push(`foreground: no session jobPid is CLAUDE_PID ${env.CLAUDE_PID || "(unset)"} or an ancestor`);
 
-  const cid = env.CLAUDE_CODE_SESSION_ID || ancestors.map((p) => claudeIdOf(cmds.get(p) ?? "")).find(Boolean);
   if (cid) {
     const short = cid.slice(0, 8);
     const attach = new RegExp(`\\battach\\s+(${short}|${cid})\\b`, "i");

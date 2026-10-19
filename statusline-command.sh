@@ -91,6 +91,28 @@ model_name=$(echo "$input" | jq -r '.model.display_name // empty' 2>/dev/null)
 [ -n "$model_name" ] || model_name="?"
 model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // empty' 2>/dev/null)
 
+# Record which iTerm pane shows this Claude session: sessions under the Claude
+# background daemon have no ITERM_SESSION_ID of their own, but this command runs
+# in the viewer process (which has it) and the payload names the session. The
+# map is read by resolveHostSession (src/workers/pane.ts). Best effort: one jq
+# call, skipped when nothing changed in the last minute, never fails the render.
+if [ -n "${ITERM_SESSION_ID:-}" ]; then
+    _map_file="$pai_home_dir/session-claude-map.json"
+    _map_new=$(printf '%s' "$input" | jq -c --arg uid "${ITERM_SESSION_ID#*:}" --arg old "$(cat "$_map_file" 2>/dev/null)" '
+        (now * 1000 | floor) as $t
+        | (.session_id // empty) as $sid
+        | (try ($old | fromjson) catch {}) as $m0
+        | (if ($m0 | type) == "object" then $m0 else {} end) as $m
+        | if (($m[$sid].uid // "") == $uid and ($t - ($m[$sid].ts // 0)) < 60000) then empty
+          else ($m + {($sid): {uid: $uid, ts: $t}}) | with_entries(select((.value.ts // 0) > ($t - 604800000)))
+          end' 2>/dev/null) || _map_new=""
+    if [ -n "$_map_new" ]; then
+        mkdir -p "$pai_home_dir" 2>/dev/null
+        _map_tmp="$_map_file.$$.tmp"
+        { printf '%s\n' "$_map_new" > "$_map_tmp" && mv "$_map_tmp" "$_map_file"; } 2>/dev/null || rm -f "$_map_tmp" 2>/dev/null
+    fi
+fi
+
 # Claude Code version. The payload carries `.version` as a plain string, but a
 # caller that sends a partial payload (a test harness, an older client) left it
 # rendering the literal word "unknown" next to a version that `claude --version`

@@ -423,3 +423,27 @@ describe("1d pace budget", () => {
     expect(rFiveDaysLeft.usage).toContain("/ 14%");
   });
 });
+
+describe("session -> iTerm pane map", () => {
+  const UID = "88D76B26-0000-0000-0000-000000000001";
+
+  it("records session id -> iTerm uid, merges, and prunes entries older than 7 days", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-sl-map-"));
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, "session-claude-map.json"),
+      JSON.stringify({ stale: { uid: "OLD", ts: Date.now() - 8 * 86400_000 }, other: { uid: "KEEP", ts: Date.now() - 1000 } }),
+    );
+    run({ session_id: "sid-1", workspace: { current_dir: "/tmp" } }, { env: { PAI_HOME: home, ITERM_SESSION_ID: `w0t0p0:${UID}` } });
+    const m = JSON.parse(readFileSync(join(home, "session-claude-map.json"), "utf-8"));
+    expect(m["sid-1"].uid).toBe(UID);
+    expect(m.other.uid).toBe("KEEP");
+    expect(m.stale).toBeUndefined();
+  });
+
+  it("writes nothing without ITERM_SESSION_ID", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-sl-map-"));
+    run({ session_id: "sid-2" }, { env: { PAI_HOME: home } });
+    expect(existsSync(join(home, "session-claude-map.json"))).toBe(false);
+  });
+});

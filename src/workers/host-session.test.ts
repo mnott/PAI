@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ancestorTty, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ancestorTty, lookupSessionMap, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
 
 const LIVE = "88D76B26-0000-0000-0000-000000000001";
 const DEAD = "78C67D79-0000-0000-0000-000000000002";
@@ -134,5 +137,47 @@ describe("resolveHostSession: bg-pty-host without a jobPid match", () => {
   it("underBackgroundDaemon sees the bg-pty-host ancestor", () => {
     expect(underBackgroundDaemon(base({}), 75840)).toBe(true);
     expect(underBackgroundDaemon(deps(chain, [], {}), 500)).toBe(false);
+  });
+});
+
+describe("resolveHostSession via the statusline session map", () => {
+  const sid = FULL;
+  const bgDeps = (mapped: string, sessions: ItermSession[]): HostDeps => ({
+    ...deps(bgChain, sessions, bgCmds),
+    mapHost: (c) => (sid.startsWith(c) ? mapped : ""),
+  });
+
+  it("resolves a live mapped uid by CLAUDE_CODE_SESSION_ID", async () => {
+    const h = await resolveHostSession({ CLAUDE_CODE_SESSION_ID: sid }, bgDeps(LIVE, [{ id: LIVE, tty: "/dev/ttys001" }]), 75840);
+    expect(h).toMatchObject({ uid: LIVE, via: "map" });
+  });
+
+  it("resolves by the short id from the bg-pty-host command line", async () => {
+    const h = await resolveHostSession({}, bgDeps(LIVE, [{ id: LIVE, tty: "/dev/ttys001" }]), 75840);
+    expect(h).toMatchObject({ uid: LIVE, via: "map" });
+  });
+
+  it("ignores a dead mapped uid and falls back, naming the map", async () => {
+    const h = await resolveHostSession({ CLAUDE_CODE_SESSION_ID: sid }, bgDeps(DEAD, [{ id: LIVE, tty: "/dev/ttys011" }]), 75840);
+    expect(h.via).toBe("tty");
+  });
+
+  it("no entry: reason names the map", async () => {
+    const h = await resolveHostSession({ CLAUDE_CODE_SESSION_ID: sid }, bgDeps("", [{ id: LIVE, tty: "/dev/ttys099" }]), 75840);
+    expect(h.via).toBe("none");
+    expect(h.reason).toContain(`map: no entry for ${SHORT}`);
+  });
+});
+
+describe("lookupSessionMap", () => {
+  const dir = mkdtempSync(join(tmpdir(), "smap-"));
+  const p = join(dir, "session-claude-map.json");
+  const now = 1_800_000_000_000;
+  it("returns fresh entries (full or short id), ignores stale and missing", () => {
+    writeFileSync(p, JSON.stringify({ [FULL]: { uid: LIVE, ts: now - 1000 }, "ffffffff-0000": { uid: DEAD, ts: now - 8 * 24 * 3600_000 } }));
+    expect(lookupSessionMap(p, FULL, now)).toBe(LIVE);
+    expect(lookupSessionMap(p, SHORT, now)).toBe(LIVE);
+    expect(lookupSessionMap(p, "ffffffff-0000", now)).toBe("");
+    expect(lookupSessionMap(join(dir, "none.json"), FULL, now)).toBe("");
   });
 });
