@@ -29,6 +29,9 @@ export function resolveCap(maxConcurrent: number | undefined, local: boolean): n
   return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
 }
 
+/** Longest silence of the log while queued. */
+export const HEARTBEAT_MS = 60_000;
+
 const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.-]/g, "_"));
 
 /** Live queue entries of a provider, oldest first; dead entries are removed. */
@@ -123,6 +126,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     };
   };
   o.log?.(info().line);
+  let lastBeat = t0;
   try {
     o.onWait?.(info());
     for (let n = 0; ; n++) {
@@ -130,6 +134,11 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
+      // a quiet log looks hung to wait-on's stall rule
+      if (now() - lastBeat >= HEARTBEAT_MS) {
+        lastBeat = now();
+        o.log?.(`queued: still waiting, position ${c.position}, ${info().elapsedSec}s`);
+      }
     }
   } finally {
     rmSync(entry, { force: true });
