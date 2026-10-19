@@ -110,6 +110,8 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   embedIntervalSecs: "How often the daemon runs the embedding pass, in seconds.",
   embedOnStartup:
     "Run an embed pass 60s after daemon start. Off by default: with a large backlog it makes every restart a CPU storm.",
+  embedMaxMinutes: "Wall-clock budget of one embed pass in minutes (default 60); the backlog continues next cycle.",
+  embedMaxLoad: "Load average above which an embed pass yields (default 8). Also yields while a local-model worker runs.",
   passPriority: 'Priority of scheduled index/embed passes: "background" (default; low-priority child process) or "normal" (in-process).',
   maintenanceHour: "Local hour (0-23) to anchor the recurring index/embed cycle to, so maintenance runs in a fixed window.",
   quiet: "Quiet mode (`pai daemon quiet on|off`): defer maintenance jobs; { on, until? }.",

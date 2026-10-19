@@ -483,6 +483,11 @@ export class PostgresBackend implements StorageBackend {
     }
   }
 
+  async countUnembeddedChunks(): Promise<number> {
+    const r = await this.pool.query<{ n: string }>("SELECT COUNT(*) AS n FROM pai_chunks WHERE embedding IS NULL");
+    return Number(r.rows[0].n);
+  }
+
   async getUnembeddedChunkIds(
     projectId?: number,
     limit?: number,

@@ -10,7 +10,7 @@ vi.mock("../pass-priority.js", async (orig) => ({
 
 import { PassSpawnError } from "../pass-priority.js";
 import { PASS_RETRY_DELAYS_MS, runEmbed } from "./scheduler.js";
-import { passFailures, setStorageBackend, setRegistryBackend, setDaemonConfig } from "./state.js";
+import { lastEmbedPass, passFailures, setStorageBackend, setRegistryBackend, setDaemonConfig } from "./state.js";
 import type { StorageBackend } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { PaiDaemonConfig } from "../config.js";
@@ -85,9 +85,17 @@ describe("background pass priority", () => {
     passFailures.set("embed", { at: 1, error: "x", attempts: 1, gaveUp: false });
     child.mockResolvedValue({ count: 5 });
     await runEmbed();
-    expect(child).toHaveBeenCalledWith("embed");
+    expect(child).toHaveBeenCalledWith("embed", ["--max-minutes", "60", "--max-load", "8"]);
     expect(embed).not.toHaveBeenCalled();
     expect(passFailures.has("embed")).toBe(false);
+  });
+
+  it("config budget and load limit reach the child; the pass outcome is recorded", async () => {
+    setDaemonConfig({ passPriority: "background", embedMaxMinutes: 7, embedMaxLoad: 3 } as PaiDaemonConfig);
+    child.mockResolvedValue({ count: 5, outcome: "budget" });
+    await runEmbed();
+    expect(child).toHaveBeenCalledWith("embed", ["--max-minutes", "7", "--max-load", "3"]);
+    expect(lastEmbedPass).toMatchObject({ outcome: "budget", embedded: 5 });
   });
 
   it("child failure lands in passFailures", async () => {

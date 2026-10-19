@@ -9,6 +9,7 @@
  * logs       — Tail the daemon log file
  */
 
+import { formatEmbedStatus } from "../../memory/embed-pass.js";
 import {
   existsSync,
   readFileSync,
@@ -214,6 +215,9 @@ async function cmdStatus(): Promise<number> {
     );
     if (s["lastIndexTime"]) {
       console.log(dim(`    Last index:  ${s["lastIndexTime"]}`));
+    }
+    for (const line of formatEmbedStatus(s as Parameters<typeof formatEmbedStatus>[0])) {
+      console.log(dim(`    ${line}`));
     }
     if (s["db"]) {
       const db = s["db"] as Record<string, unknown>;

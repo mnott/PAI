@@ -206,6 +206,11 @@ export class SQLiteBackend implements StorageBackend {
     })();
   }
 
+  async countUnembeddedChunks(): Promise<number> {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM memory_chunks WHERE embedding IS NULL").get() as { n: number };
+    return row.n;
+  }
+
   async getUnembeddedChunkIds(
     projectId?: number,
     limit?: number,

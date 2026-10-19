@@ -5,6 +5,7 @@ import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.
 import { dim, bold, ok, err } from "../../lib/utils.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
+import { DEFAULT_EMBED_MAX_MINUTES } from "../../../memory/embed-pass.js";
 import { CliError } from "../../define.js";
 
 // ---------------------------------------------------------------------------
@@ -20,7 +21,9 @@ export async function runEmbed(
   projectSlug?: string,
   batchSize = 50,
   pageSize = DEFAULT_PAGE_SIZE,
-): Promise<void> {
+  /** Wall-clock budget in ms; undefined = unlimited. Checked between batches. */
+  maxMillis?: number,
+): Promise<{ done: number; budgetHit: boolean }> {
   const label = projectSlug ? `project ${projectSlug}` : "all projects";
   console.log(dim(`Generating embeddings for ${label} (this may take a while on first run)...`));
 
@@ -31,7 +34,7 @@ export async function runEmbed(
   if (!gate.ok) {
     console.error(err(gate.reason));
     process.exitCode = 1;
-    return;
+    return { done: 0, budgetHit: false };
   }
   const embedder = gate.backend;
 
@@ -41,6 +44,8 @@ export async function runEmbed(
     projectId !== undefined ? await backend.getProjectStats(projectId) : await backend.getStats();
 
   let done = 0;
+  let budgetHit = false;
+  const deadline = maxMillis === undefined ? Infinity : Date.now() + maxMillis;
   let after: { projectId: number; id: string } | null = null;
 
   while (true) {
@@ -48,6 +53,10 @@ export async function runEmbed(
     if (page.length === 0) break;
 
     for (let i = 0; i < page.length; i += batchSize) {
+      if (Date.now() >= deadline) {
+        budgetHit = true;
+        break;
+      }
       const batch = page.slice(i, i + batchSize);
       const vecs = await retryTransient(() => embedder.embed(batch.map((r) => r.text)));
       await Promise.all(
@@ -59,20 +68,28 @@ export async function runEmbed(
       process.stdout.write(`\r  ${done} / ~${totalEstimate} chunks embedded...`);
     }
 
+    if (budgetHit) break;
     const last = page[page.length - 1];
     after = { projectId: last.project_id, id: last.id };
   }
 
   process.stdout.write("\r");
-  console.log(ok(`Done.`) + `  ${bold(String(done))} chunks embedded`);
+  if (budgetHit) {
+    console.log(ok(`Time budget reached.`) + `  ${bold(String(done))} chunks embedded; run again to continue (or --all for no limit)`);
+  } else {
+    console.log(ok(`Done.`) + `  ${bold(String(done))} chunks embedded`);
+  }
+  return { done, budgetHit };
 }
 
 // ---------------------------------------------------------------------------
 // New command function
 // ---------------------------------------------------------------------------
 
-export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { batchSize?: number; background?: boolean }): Promise<number> {
-  if (opts.background) reexecBackground();
+export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { batchSize?: number; maxMinutes?: number; all?: boolean; background?: boolean }): Promise<number> {
+  // Always low priority: a hand-run pass over a big backlog must not slow the machine.
+  reexecBackground();
+  const maxMillis = opts.all ? undefined : (opts.maxMinutes ?? DEFAULT_EMBED_MAX_MINUTES) * 60_000;
   let backend: StorageBackend;
   try {
     backend = await getStorageBackend();
@@ -90,9 +107,9 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
       return 1;
     }
 
-    await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 50);
+    await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 25, undefined, maxMillis);
   } else {
-    await runEmbed(backend, undefined, undefined, opts.batchSize ?? 50);
+    await runEmbed(backend, undefined, undefined, opts.batchSize ?? 25, undefined, maxMillis);
   }
 
   return 0;

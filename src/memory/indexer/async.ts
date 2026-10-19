@@ -277,6 +277,12 @@ export interface EmbedPassOptions {
   maxChunks?: number;
   /** Stop the pass after this much wall-clock time, whichever bound hits first. */
   maxMillis?: number;
+  /** Chunks per embed call (default EMBED_BATCH_SIZE). */
+  batchSize?: number;
+  /** Checked between batches; a string stops the pass (yield) with that reason. */
+  shouldYield?: () => string | null;
+  /** Called once when the loop ends: "done" (backlog slice finished), "budget" or "yielded". */
+  onEnd?: (r: { outcome: "done" | "budget" | "yielded"; embedded: number; reason?: string }) => void;
 }
 
 /**
@@ -303,9 +309,22 @@ export async function embedChunksWithBackend(
   const maxChunks = options?.maxChunks ?? DEFAULT_MAX_CHUNKS_PER_PASS;
   const maxMillis = options?.maxMillis ?? DEFAULT_MAX_MILLIS_PER_PASS;
   const deadline = Date.now() + maxMillis;
+  const batchSize = options?.batchSize ?? EMBED_BATCH_SIZE;
+  let outcome: "done" | "budget" | "yielded" = "done";
+  let yieldReason: string | undefined;
+
+  const initialYield = options?.shouldYield?.() ?? null;
+  if (initialYield) {
+    process.stderr.write(`[pai-daemon] Embed pass yielded before start: ${initialYield}\n`);
+    options?.onEnd?.({ outcome: "yielded", embedded: 0, reason: initialYield });
+    return 0;
+  }
 
   const rows = await retryTransient(() => backend.getUnembeddedChunkIds(undefined, maxChunks));
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) {
+    options?.onEnd?.({ outcome: "done", embedded: 0 });
+    return 0;
+  }
 
   // The configured backend must match the one that produced the index's vectors
   // and be reachable. Otherwise pause: chunks stay NULL for a later pass, and
@@ -341,7 +360,7 @@ export async function embedChunksWithBackend(
   let currentProjectId = -1;
   let projectEmbedded = 0;
 
-  for (let i = 0; i < rows.length; i += EMBED_BATCH_SIZE) {
+  for (let i = 0; i < rows.length; i += batchSize) {
     // Check cancellation between every batch before touching the pool again
     if (shouldStop?.()) {
       process.stderr.write(
@@ -356,10 +375,21 @@ export async function embedChunksWithBackend(
       process.stderr.write(
         `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${maxMillis}ms budget spent); resuming next pass\n`
       );
+      outcome = "budget";
       break;
     }
 
-    const batch = rows.slice(i, i + EMBED_BATCH_SIZE);
+    const why = options?.shouldYield?.() ?? null;
+    if (why) {
+      process.stderr.write(
+        `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${why}); resuming next pass\n`
+      );
+      outcome = "yielded";
+      yieldReason = why;
+      break;
+    }
+
+    const batch = rows.slice(i, i + batchSize);
 
     // Keep IPC responsive: the forward pass below is synchronous inside the
     // model, so yield before entering it rather than between chunks.
@@ -415,6 +445,7 @@ export async function embedChunksWithBackend(
     );
   }
 
+  options?.onEnd?.({ outcome, embedded, ...(yieldReason ? { reason: yieldReason } : {}) });
   return embedded;
 }
 

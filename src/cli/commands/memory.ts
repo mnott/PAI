@@ -41,13 +41,17 @@ export const memoryEmbedCommand: CommandDef = {
   description: "Semantic and hybrid search need a vector per text chunk. This fills in the missing ones, in batches; safe to stop and re-run.",
   args: [{ ...projectSlug, summary: "Only this project (default: all)" }],
   options: [
-    { name: "batch-size", type: "number", value: "N", default: 50, summary: "Chunks to compute per batch" },
+    { name: "batch-size", type: "number", value: "N", default: 25, summary: "Chunks to compute per batch" },
+    { name: "max-minutes", type: "number", value: "N", default: 60, summary: "Stop cleanly after this many minutes; run again to continue" },
+    { name: "all", type: "boolean", summary: "No time budget: run until the whole backlog is embedded" },
     { ...background },
   ],
-  examples: ["pai memory embed", "pai memory embed my-project --batch-size 20", "pai memory embed --background"],
+  examples: ["pai memory embed", "pai memory embed my-project --batch-size 20", "pai memory embed --max-minutes 10", "pai memory embed --all"],
   seeAlso: ["pai memory index", "pai memory backend detect"],
   run: (ctx) => memoryEmbedCmd(ctx.args.PROJECT as string | undefined, {
     batchSize: ctx.opts["batch-size"] as number | undefined,
+    maxMinutes: ctx.opts["max-minutes"] as number | undefined,
+    all: ctx.opts.all === true,
     background: ctx.opts.background === true,
   }),
 };
@@ -180,9 +184,17 @@ const memoryPassCommand: CommandDef = {
   summary: "Internal: one background pass started by the daemon",
   description: "Used by the background service to run an index or embed pass at low priority and report one JSON line. Not meant to be typed.",
   args: [{ name: "NAME", required: true, summary: "index, embed or noop" }],
-  options: [{ name: "sleep", type: "number", value: "MS", default: 0, summary: "noop pass only: sleep this many milliseconds" }],
+  options: [
+    { name: "sleep", type: "number", value: "MS", default: 0, summary: "noop pass only: sleep this many milliseconds" },
+    { name: "max-minutes", type: "number", value: "N", summary: "embed pass only: time budget in minutes" },
+    { name: "max-load", type: "number", value: "N", summary: "embed pass only: yield above this load average" },
+  ],
   examples: ["pai memory pass noop --sleep 10", "pai memory pass index"],
-  run: (ctx) => memoryPassCmd(ctx.args.NAME as string, { sleep: ctx.opts.sleep as number | undefined }),
+  run: (ctx) => memoryPassCmd(ctx.args.NAME as string, {
+    sleep: ctx.opts.sleep as number | undefined,
+    maxMinutes: ctx.opts["max-minutes"] as number | undefined,
+    maxLoad: ctx.opts["max-load"] as number | undefined,
+  }),
 };
 
 export const memoryCommand: CommandDef = {
