@@ -9,6 +9,7 @@
  */
 
 import { deadlineLabel } from "./deadline.js";
+import { queuedText } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -214,10 +215,17 @@ export interface StatusRow {
   /** set while the run waits in the stagger gate for a cache warm-up. */
   warmup?: { elapsedSec: number; limitSec: number } | null;
   /** set while the run waits behind the provider cap (capacity gate). */
-  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number } | null;
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number } | null;
 }
 
 export { fmtElapsed };
+
+/** The queue wording of a waiting run: the full line when the gate recorded it, the older total/cap form otherwise. */
+function capacityText(cap: NonNullable<StatusRow["capacity"]>): string {
+  return cap.queued !== undefined && cap.sinceMs !== undefined
+    ? queuedText({ provider: cap.provider, position: cap.position, queued: cap.queued, behind: cap.behind, sinceMs: cap.sinceMs })
+    : `queued: ${cap.total} on ${cap.provider}, cap ${cap.cap} (position ${cap.position})`;
+}
 
 /**
  * The chat pane's status row (always visible while following):
@@ -236,7 +244,7 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
   if (s.state && s.state !== "running" && s.state !== "queued") {
     parts.push(s.state === "done" ? c("green", "✓ done") : c("red", "✗ failed"));
   } else if (s.capacity) {
-    parts.push(c("yellow", `queued: ${s.capacity.total} on ${s.capacity.provider}, cap ${s.capacity.cap} (position ${s.capacity.position})`));
+    parts.push(c("yellow", capacityText(s.capacity)));
   } else if (s.warmup) {
     parts.push(warmupText(s.warmup) as string);
   } else {
@@ -736,7 +744,7 @@ export function paneStatusRow(
   // the capacity queue first, then the stagger warm-up, then a wait-on job
   const cap = s.capacity;
   const head =
-    (cap ? `queued: ${cap.total} on ${cap.provider}, cap ${cap.cap} (position ${cap.position})` : null) ??
+    (cap ? capacityText(cap) : null) ??
     warmupText(s.warmup) ??
     (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
   return `${head} · ${tail}`;

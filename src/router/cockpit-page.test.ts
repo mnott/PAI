@@ -228,7 +228,7 @@ describe("cockpit workers panel", () => {
   it("renders waiting entries with buttons", () => {
     const html = render({ providers: [{ provider: "anthropic", cap: 1, running: [], waiting: [{ id: "w-2", label: "later", waitedSec: 30, position: 1 }] }] });
     expect(html).toContain("later");
-    expect(html).toContain('data-q="front"');
+    expect(html).toContain('data-q="next"');
     expect(html).toContain('data-q="up"');
   });
 

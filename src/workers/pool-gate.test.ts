@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gateStart, tryPoolRun } from "./run.js";
+import { openVerifiedPane } from "./pane.js";
 import { loadStatuses, nowStamp, saveStatus } from "./status.js";
 
 // the follow pane is opened before the pool post; keep these tests off the real terminal
@@ -83,7 +84,10 @@ describe("pooled runs pass the capacity gate", () => {
     const queued = loadStatuses(d).find((s) => s.id === "w-b");
     expect(queued?.capacity?.cap).toBe(1);
     expect(queued?.state).toBe("queued");
-    expect(queued?.last).toMatch(/^queued: /);
+    expect(queued?.last).toMatch(/^queued on loc: position 1 of 1, behind x — waiting since \d\d:\d\d$/);
+    // the pane was opened at spawn, while still queued, for the waiting worker too
+    expect(vi.mocked(openVerifiedPane).mock.calls.map((c) => c[2])).toContain("w-b");
+    expect(queued?.pane).toMatchObject({ opened: true });
     finish["w-a"]();
     expect(await pa).toBe(0);
     await vi_waitFor(() => posted.includes("w-b"));

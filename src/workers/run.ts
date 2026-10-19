@@ -49,7 +49,9 @@ import {
   writeFileSync,
   closeSync,
   writeSync,
+  rmSync,
 } from "node:fs";
+import { statusPath } from "./paths.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
@@ -109,7 +111,7 @@ import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
-import { capacityGate, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
+import { capacityGate, queuedText, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
   autoOrder,
@@ -1608,8 +1610,17 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
       if (w) {
         // parked at the cap: visible as "queued", never as a slot holder
         status.state = "queued";
-        status.capacity = { provider: w.provider, cap: w.cap, total: w.total, position: w.position, elapsedSec: w.elapsedSec };
-        status.last = w.line;
+        status.capacity = {
+          provider: w.provider,
+          cap: w.cap,
+          total: w.total,
+          position: w.position,
+          elapsedSec: w.elapsedSec,
+          queued: w.queued,
+          ...(w.behind ? { behind: w.behind } : {}),
+          sinceMs: w.sinceMs,
+        };
+        status.last = queuedText(w);
       } else {
         // slot granted: back to running, and `started` now counts from the grant
         // (spawnTimeOf documents the rewrite; wait-on's ceiling and ps ages use it)
@@ -1682,6 +1693,22 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     outputFormat: a.parsed.outputFormat,
     ...(sessionKey ? { sessionKey } : {}),
   };
+  saveStatus(a.logDir, status);
+  // the follow pane opens now, not after the queue: a run parked at a cap shows
+  // its place in line there (runGates onWait) and flips to the live view on the grant
+  const term = (await resolveHostSession()).term;
+  const ledger = ledgerPath(a.logDir);
+  let verified: boolean;
+  try {
+    verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
+  } catch (e) {
+    // a refusal leaves nothing in `pai worker ps`, as before the pane moved up
+    rmSync(statusPath(a.logDir, wid), { force: true });
+    throw e;
+  }
+  a.panePrepared = { verified };
+  if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
+  else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
   saveStatus(a.logDir, status);
   await runGates(a, wid, status);
   // a gate that never had to wait leaves the placeholder "running" with the

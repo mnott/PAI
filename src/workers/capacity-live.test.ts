@@ -8,6 +8,12 @@ import { resolveTarget } from "./routing.js";
 import { gateStart } from "./run.js";
 import { loadStatuses, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
+// gateStart opens the follow pane at spawn; keep these tests off the real terminal
+vi.mock("./pane.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane.js")>();
+  return { ...actual, openVerifiedPane: vi.fn().mockResolvedValue("here"), openPaneForWorker: vi.fn(), resolveHostSession: vi.fn().mockResolvedValue({ term: "t" }) };
+});
+
 const savedYaml = process.env.PAI_WORKERS_YAML;
 afterEach(() => {
   if (savedYaml === undefined) delete process.env.PAI_WORKERS_YAML;

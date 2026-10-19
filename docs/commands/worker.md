@@ -576,7 +576,7 @@ Show or reorder the workers waiting for a provider slot
 pai worker queue [VERB] [ID]
 ```
 
-No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). `queue front ID` moves a waiting worker to position 1, `queue up ID` one place up — pull-forward. Only the order of the waiting ones changes; a running worker is never interrupted. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
+No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -585,7 +585,7 @@ No arguments lists every worker parked behind a provider's concurrency cap, per 
 
 ```sh
 pai worker queue
-pai worker queue front 20261019-142851-84910
+pai worker queue next 20261019-142851-84910
 pai worker queue up 20261019-142851-84910
 ```
 

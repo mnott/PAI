@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, providerCap, queueRows, reorderQueue, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
+import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const DEAD = 999999;
@@ -266,5 +266,46 @@ describe("setFront / moveUp", () => {
     expect(liveQueue(dir, "p", yes)).toEqual(["w-002", "w-001", "w-003"]);
     writeFileSync(join(dir, "queue", "p", "w-004"), "100 front");
     expect(liveQueue(dir, "p", yes)).toEqual(["w-002", "w-001", "w-004", "w-003"]);
+  });
+});
+
+describe("waiting since", () => {
+  it("survives front/up/move: since is written at enqueue and kept", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-since-"));
+    dirs.push(logDir);
+    const qdir = join(logDir, "queue", "p");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "w-early"), `${process.pid} @1000`);
+    writeFileSync(join(qdir, "w-late"), `${process.pid} @2000`);
+    reorderQueue(logDir, "p", "w-late", "front");
+    reorderQueue(logDir, "p", "w-early", "up");
+    reorderQueueTo(logDir, "p", "w-late", 2);
+    const rows = queueRows(logDir);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.since]))).toEqual({ "w-early": 1000, "w-late": 2000 });
+  });
+
+  it("capacityGate stamps the entry with the time it started waiting", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-since2-"));
+    dirs.push(logDir);
+    const holder = { id: "holder", pid: process.pid, provider: "p", state: "running", started: nowStamp(), updated: nowStamp(), label: "the holder", cwd: "/", term: "", model: "m", turns: 0, tools: 0, last: "", rc: null, secs: null } as WorkerStatus;
+    let t = 5000;
+    const seen: Array<{ since: number | undefined; text: string }> = [];
+    await capacityGate({
+      logDir,
+      self: { id: "w", provider: "p", pid: process.pid },
+      cap: 1,
+      config: DEFAULT_CAPACITY,
+      now: () => t,
+      sleep: async () => {
+        t += 60_000;
+      },
+      load: () => (t > 70_000 ? [] : [holder]),
+      onWait: (w) => {
+        if (!w) return;
+        seen.push({ since: queueRows(logDir)[0]?.since, text: queuedText(w) });
+      },
+    });
+    expect(seen.every((s) => s.since === 5000)).toBe(true);
+    expect(seen[0].text).toMatch(/^queued on p: position 1 of 1, behind the holder — waiting since \d\d:\d\d$/);
   });
 });
