@@ -4,7 +4,7 @@
  * any repository of the operator's.
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, utimesSync, symlinkSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -68,6 +68,9 @@ function status(id: string, over: Partial<WorkerStatus> = {}): WorkerStatus {
   saveStatus(logDir, s);
   return s;
 }
+
+// Real git processes per test; the default 5 s timed out under a loaded full run.
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("isGitRepo / worktreeWanted", () => {
   it("knows a git repo from a plain dir", () => {

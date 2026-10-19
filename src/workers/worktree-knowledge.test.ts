@@ -44,6 +44,10 @@ function ignoredFiles(dir: string) {
   writeFileSync(join(dir, "run.log"), "log\n");
 }
 
+// Each test spawns many real git processes; under a loaded full run that
+// outlasts the default 5 s (observed timeouts), so give the file real headroom.
+vi.setConfig({ testTimeout: 30_000 });
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("worktree knowledge", () => {
