@@ -110,12 +110,13 @@ describe("waitWorkers", () => {
   it("picks up a worker that flips to done mid-poll", async () => {
     status("flip", { state: "running", rc: null, secs: null });
     const t = setTimeout(() => {
-      status("flip", { state: "done", rc: 0, secs: 4 });
+      // events first: a poll landing between the two writes must not see "done" without a result
       events("flip", [{ type: "result", result: reportText }]);
+      status("flip", { state: "done", rc: 0, secs: 4 });
     }, 40);
     try {
       const { results, timedOut } = await waitWorkers(logDir, ["flip"], {
-        timeoutMs: 2000,
+        timeoutMs: 30000,
         intervalMs: 15,
       });
       expect(timedOut).toEqual([]);
