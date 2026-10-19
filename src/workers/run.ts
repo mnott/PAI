@@ -1098,6 +1098,7 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
   const status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    runPid: process.pid,
     label,
     cwd,
     term,
@@ -1438,7 +1439,7 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
     config: config.capacity,
     disabled: a.noQueue,
     log: (line) => {
-      if (!a.quiet) process.stderr.write(`${line}\n`);
+      process.stderr.write(`${line}\n`);
     },
     onWait: (w) => {
       if (w) {
@@ -1486,6 +1487,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   const status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    runPid: process.pid,
     label: a.label,
     cwd: a.cwd ?? process.cwd(),
     term: "",
@@ -1694,6 +1696,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    runPid: process.pid,
     ...parentInfo(),
     label,
     cwd,
@@ -2304,6 +2307,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
+    runPid: process.pid,
     ...parentInfo(),
     label,
     cwd,
