@@ -19,7 +19,7 @@ import { isLocalProvider } from "../../workers/config.js";
 import { resolveTarget, withTarget, type Target, type TargetArgs, type TargetResolver } from "../../workers/target.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths } from "../../workers/plan-deps.js";
-import { planStatus, planStopPath, requestPlanStop, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
+import { idleText, planStatus, planStopPath, requestPlanStop, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
 import { again, loadSettings, move, queueStatePath, QueueStore, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
@@ -36,6 +36,7 @@ export interface PlanPartInput {
   proof?: string;
   depends_on?: string[];
   risky?: boolean;
+  overlap?: boolean;
 }
 
 export interface PlanUnitInput {
@@ -216,6 +217,7 @@ export async function planSave(args: { project: string; name: string; plan: Plan
           ...(p.proof ? { proof: p.proof } : {}),
           ...(p.depends_on?.length ? { depends_on: p.depends_on } : {}),
           ...(p.risky ? { risky: true } : {}),
+          ...(p.overlap ? { overlap: true } : {}),
         })),
       })),
     };
@@ -291,6 +293,7 @@ export async function planStatusText(args: { project: string; name: string }, de
     const secs = Math.round(st.wallMs / 1000);
     const total = plan.units.flatMap((u) => u.parts).length;
     const escalations = log.filter((e) => e.event === "escalate").length;
+    const idle = idleText(st.idleMs, st.wallMs, st.overlaps);
     const held = readRunLock(planLockPath(path));
     const last = log[log.length - 1];
     const dir = deps.logDir?.();
@@ -301,7 +304,7 @@ export async function planStatusText(args: { project: string; name: string }, de
       ...(held && ps ? [`Phase: ${ps.phase} (${fmtElapsed(deps.now() - ps.phaseSince)}); ${ps.parts.merged}/${ps.parts.total} merged${ps.running.length ? `; workers running: ${ps.running.join(", ")}` : ""}.`] : []),
       ...(held ? [`Running ${sinceText(held)}${last ? `; last event: ${last.event}${last.part ? ` ${last.part}` : last.unit ? ` ${last.unit}` : ""}` : ""}.`] : []),
       `Done: ${idList(st.done)}. Running: ${idList(st.running)}. Waiting: ${idList(st.waiting)}. Needs a decision: ${idList(st.needsDecision)}.`,
-      `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations.`,
+      `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations; ${idle}.`,
     ];
     for (const id of st.needsDecision) {
       const note = lastNote(log, id);

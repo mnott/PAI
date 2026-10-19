@@ -12,7 +12,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RunLogEntry } from "./plan-runner.js";
+import { idleText, type RunLogEntry } from "./plan-runner.js";
 import type { QueueItem } from "./queue.js";
 
 /** The session that started a run: where its events go. */
@@ -120,7 +120,10 @@ abstract class Reporter {
 /** Turns the plan runner's log entries into messages. Feed it every entry via `onLog`. */
 export class PlanReporter extends Reporter {
   private readonly start: number;
-  private tokens = 0;
+  private localTokens = 0;
+  private cloudTokens = 0;
+  private idleMs = 0;
+  private overlaps = 0;
   private escalations = 0;
   private merged = 0;
   private readonly nd: string[] = [];
@@ -137,7 +140,12 @@ export class PlanReporter extends Reporter {
   }
 
   onLog(e: RunLogEntry): void {
-    if (e.event === "part-end" && typeof e.tokens === "number") this.tokens += e.tokens;
+    if (e.event === "part-end" && typeof e.tokens === "number") {
+      if (e.tier === "sonnet") this.cloudTokens += e.tokens;
+      else this.localTokens += e.tokens;
+    }
+    if (e.event === "model-idle" && e.tier === "local" && typeof e.ms === "number") this.idleMs += e.ms;
+    if (e.event === "part-start" && e.overlap) this.overlaps++;
     if (e.event === "escalate") this.escalations++;
     if (e.event === "merge" && e.ok) this.merged++;
     if (e.event === "needs-decision" && e.part) {
@@ -164,15 +172,17 @@ export class PlanReporter extends Reporter {
 
   private runEnd(e: RunLogEntry): void {
     const outcome = e.ok ? "merged" : e.status === "blocked" ? "blocked" : "failed";
-    const wall = mins(this.now() - this.start);
-    const stats = { outcome, wall, merged: `${this.merged}/${this.totalParts}`, escalations: this.escalations, cloud_tokens: this.tokens };
+    const wallMs = this.now() - this.start;
+    const wall = mins(wallMs);
+    const idle = idleText(this.idleMs, wallMs, this.overlaps);
+    const stats = { outcome, wall, merged: `${this.merged}/${this.totalParts}`, escalations: this.escalations, local_tokens: this.localTokens, cloud_tokens: this.cloudTokens, idle: idle.replace(/^local model idle /, "") };
     const what =
       outcome === "merged"
         ? `${this.job} is done: all ${this.totalParts} parts merged in ${wall}.`
         : outcome === "blocked"
           ? `${this.job} is blocked after ${wall}: ${this.merged} of ${this.totalParts} parts merged, the rest wait on ${this.nd.join(", ") || "a failed check"}. It needs your decision.`
           : `${this.job} ended with failures after ${wall}: ${this.merged} of ${this.totalParts} parts merged${this.nd.length ? `, ${this.nd.join(", ")} need your decision` : ""}.`;
-    const extra = ` Escalations ${this.escalations}, ${fmtTok(this.tokens)} tokens.`;
+    const extra = ` Escalations ${this.escalations}, ${fmtTok(this.localTokens)} local tokens, ${fmtTok(this.cloudTokens)} cloud tokens; ${idle}.`;
     this.send(eventLine(this.id, "run-" + outcome, stats, what + extra), what);
   }
 }

@@ -31,7 +31,13 @@ units:
         spec: specs/p2.md
         depends_on: [p1]                   # part ids, also across units
         risky: true
+      - id: p3
+        spec: Add the formatter.
+        files: [src/fmt.ts]
+        overlap: true                      # independent of p2: starts when p2's worker ended, during its gate
 ```
+
+`overlap: true` (default false) is set by whoever writes the plan, for a part that does not depend (directly or through others) on the part before it. The local engine serves one worker at a time, so the runner would otherwise leave it idle while the previous part is gated and merged (about 20-35 s per part). With the flag, the part's worker starts as soon as the previous part's worker has ended; its worktree is cut from main as it is then, its merge waits until the previous part is through, and a conflict goes through the normal conflict handling. If the previous part fails its gate the overlapping part keeps running (`overlap-continue` event). Never more than `max_parallel` workers run on a provider; `validate` rejects `overlap` on a part that depends on the part before it.
 
 `validate` rejects missing fields, duplicate ids, unknown dependencies, cycles and spec paths that name no file. The same description lives in code as `PLAN_SCHEMA` (`src/workers/plan.ts`).
 
@@ -46,6 +52,10 @@ units:
 - Failure ladder: a failed gate or proof, a worker branch without a commit, or a worker that ends without a valid report, gets one local retry with the failure tail appended to the spec. A second failure marks the part `needs-decision`; parts that do not depend on it carry on. With `--escalate sonnet` one Sonnet implement worker runs for that part instead (counted in the summary). The runner never calls Opus.
 - `unit_check` runs in the repo after the unit's last part merged; a failure marks the unit needs-decision and holds every part that depends on one of its parts.
 
+## Idle accounting
+
+The run log carries `worker-start` / `worker-end` per worker and a computed `model-idle` event (`ms`, `provider`, `reason`: gate, merge, unit-check or waiting-for-dependency) between one worker's end and the next worker's start on the same provider. `run-end` carries `idleMs`, `wallMs`, `overlaps`. `pai plan status`, `plan_status`, the `pai worker ps` plan line and the run-end report show "local model idle <total> of <wall> (<pct>%)" and the overlap count; the report splits tokens into `local_tokens` and `cloud_tokens` (escalation workers).
+
 ## Exit codes
 
 - `0`: every part merged.
@@ -54,7 +64,7 @@ units:
 
 ## Run log and resume
 
-Every step is appended to `<plan>.run.jsonl`: `run-start`, `part-start`, `part-end` (worker id, attempt, tier, tokens from the worker's run log when available), `merge` (gate, commit), `escalate`, `needs-decision`, `unit-check`, `run-end`. Run the same plan again and merged parts and passed unit checks are skipped; needs-decision parts are tried again.
+Every step is appended to `<plan>.run.jsonl`: `run-start`, `part-start`, `worker-start`, `worker-end`, `model-idle`, `part-end` (worker id, attempt, tier, tokens from the worker's run log when available), `merge` (gate, commit), `escalate`, `needs-decision`, `unit-check`, `run-end`. Run the same plan again and merged parts and passed unit checks are skipped; needs-decision parts are tried again.
 
 The exit code is 0 only when every part merged and every unit check passed.
 

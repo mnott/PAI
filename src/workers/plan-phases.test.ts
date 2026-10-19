@@ -119,7 +119,7 @@ describe("plan rows in ps, cockpit and the live log", () => {
     t += 75_000;
     const sts = loadPlanStatuses(dir);
     const line = renderPlanLines(sts, t)[0];
-    expect(line).toBe("plan my job  1/4 merged  gate: tests 214/2600 (1m15s)  workers: b");
+    expect(line).toBe("plan my job  1/4 merged  gate: tests 214/2600 (1m15s)  workers: b  local model idle 0s of 1m15s (0%), 0 overlapped starts");
     const row = planRows(sts, t)[0];
     expect(row).toMatchObject({ job: "my job", phase: "gate: tests 214/2600", phaseSec: 75, merged: 1, total: 4, running: ["b"] });
     const ps = psOutput(dir, true, {}, false);

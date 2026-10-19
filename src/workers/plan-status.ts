@@ -34,6 +34,9 @@ export interface PlanRunStatus {
   hasPane?: boolean;
   /** Tests the plan gate counted last time: the denominator of "tests 214/2600". */
   testTotal?: number;
+  /** Local model idle ms between workers and overlapped part starts so far. */
+  idleMs?: number;
+  overlaps?: number;
 }
 
 export const planRunId = (job: string): string => `plan-${job.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "job"}`;
@@ -72,11 +75,17 @@ export function fmtElapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
 
+/** "local model idle 1m02s of 7m24s (14%), 2 overlapped starts". */
+export function idleLine(idleMs: number, wallMs: number, overlaps: number): string {
+  const pct = wallMs > 0 ? Math.round((idleMs / wallMs) * 100) : 0;
+  return `local model idle ${fmtElapsed(idleMs)} of ${fmtElapsed(wallMs)} (${pct}%), ${overlaps} overlapped ${overlaps === 1 ? "start" : "starts"}`;
+}
+
 /** ps lines of the running plans: one per plan, phase and how long it has lasted. */
 export function renderPlanLines(statuses: PlanRunStatus[], now = Date.now()): string[] {
   return statuses
     .filter((s) => s.state === "running")
-    .map((s) => `plan ${s.job}  ${s.parts.merged}/${s.parts.total} merged  ${s.phase} (${fmtElapsed(now - s.phaseSince)})${s.running.length ? `  workers: ${s.running.join(", ")}` : ""}`);
+    .map((s) => `plan ${s.job}  ${s.parts.merged}/${s.parts.total} merged  ${s.phase} (${fmtElapsed(now - s.phaseSince)})${s.running.length ? `  workers: ${s.running.join(", ")}` : ""}${s.idleMs !== undefined ? `  ${idleLine(s.idleMs, now - Date.parse(s.started.replace(" ", "T")), s.overlaps ?? 0)}` : ""}`);
 }
 
 /** Cockpit rows of the running plans. */
@@ -123,6 +132,8 @@ export class PlanTracker {
       phaseSince: now(),
       parts: { merged, total },
       running: [],
+      idleMs: 0,
+      overlaps: 0,
       ...(prev?.testTotal ? { testTotal: prev.testTotal } : {}),
     };
     mkdirSync(logDir, { recursive: true });
@@ -197,6 +208,18 @@ export class PlanTracker {
 
   merged(n: number): void {
     this.status.parts.merged = n;
+    this.save();
+  }
+
+  /** model-idle accounting from the run log: added to the status entry. */
+  addIdle(ms: number): void {
+    this.status.idleMs = (this.status.idleMs ?? 0) + ms;
+    this.save();
+  }
+
+  overlapped(): void {
+    this.status.overlaps = (this.status.overlaps ?? 0) + 1;
+    this.status.idleMs ??= 0;
     this.save();
   }
 

@@ -254,7 +254,11 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
   const dir = mkdtempSync(join(tmpdir(), "pai-plan-"));
   return {
     now: Date.now,
-    log: (e) => appendRunLog(logPath, e),
+    log: (e) => {
+      appendRunLog(logPath, e);
+      if (e.event === "model-idle" && e.tier === "local" && typeof e.ms === "number") tracker?.addIdle(e.ms);
+      if (e.event === "part-start" && e.overlap) tracker?.overlapped();
+    },
     ...(tracker
       ? {
           phase: (t: string, refine?: boolean) => (refine ? tracker.progress(t) : tracker.phase(t)),
