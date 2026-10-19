@@ -9,7 +9,7 @@ import { getProviderOrNative, readWorkersSection } from "../../workers/config.js
 import { workersLogDir } from "../../workers/paths.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths, realRunnerDeps } from "../../workers/plan-deps.js";
-import { planStatus, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
+import { blockedMessage, planStatus, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
 
@@ -42,7 +42,7 @@ const runCmd: CommandDef = {
   name: "run",
   summary: "Run a plan: local workers in parallel, merged with the plan's gate",
   description:
-    "Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`; a part whose worker branch holds no commit counts as no-commit, not merged, and goes down the failure ladder. The run is refused when the repo has uncommitted changes to files a part touches (--allow-dirty overrides). A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts.",
+    "Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`; a part whose worker branch holds no commit counts as no-commit, not merged, and goes down the failure ladder. The run is refused when the repo has uncommitted changes to files a part touches (--allow-dirty overrides). A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts. Exit codes: 0 all parts merged, 1 failures (needs-decision parts or failed unit checks) with everything else done, 3 blocked: nothing runs and every remaining part waits on a needs-decision item, so the run ends at once with a `blocked:` summary (run-end status blocked).",
   args: planArg,
   options: [
     { name: "parallel", type: "number", value: "N", summary: "Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent)" },
@@ -72,7 +72,8 @@ const runCmd: CommandDef = {
     const s = await runPlan(plan, opts, realRunnerDeps(plan, logDir, log));
     out(`merged ${s.merged.length}/${plan.units.flatMap((u) => u.parts).length}; needs-decision: ${s.needsDecision.join(", ") || "none"}; blocked: ${s.blocked.join(", ") || "none"}; unit checks failed: ${s.unitFailures.join(", ") || "none"}; escalations: ${s.escalations}`);
     if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
-    return s.needsDecision.length || s.blocked.length || s.unitFailures.length ? 1 : 0;
+    if (s.stuck) out(blockedMessage(s, path));
+    return runExitCode(s);
   },
 };
 

@@ -44,7 +44,13 @@ units:
 - Every composed spec ends with a fixed footer: work only with relative paths inside the current directory (the worker's own worktree), git add the files you changed, then commit on the current branch (an empty commit is not a commit) with the message `"<job>: <unit> <part>"`, report with R. Absolute paths into the repo in a spec, `files` or `proof` are rewritten to relative ones; `validate` warns about them. Workers run with `--cwd <repo> --worktree` passed explicitly (the caller's own mode is never inherited); a worker whose status shows no worktree stops its part with needs-decision, no retry. Part workers open a visible pane like any worker (no `--no-pane`; the pane policy stays). A spawn that fails before a worker exists (pane/gate/config refusal from `pai worker run`) is an environment error: the part goes to needs-decision at once with the message, no retry, and once the same refusal repeats the runner starts no further parts and prints the refusal once in the summary.
 - A merge counts only when the worker branch has at least one non-empty commit (checked before `pai worker merge` is called; otherwise no merge runs) and HEAD moved. Otherwise the log records `merge` with `ok: false, status: "no-commit"` and the part goes down the failure ladder (the retry spec says why).
 - Failure ladder: a failed gate or proof, a worker branch without a commit, or a worker that ends without a valid report, gets one local retry with the failure tail appended to the spec. A second failure marks the part `needs-decision`; parts that do not depend on it carry on. With `--escalate sonnet` one Sonnet implement worker runs for that part instead (counted in the summary). The runner never calls Opus.
-- `unit_check` runs in the repo after the unit's last part merged; a failure marks the unit needs-decision.
+- `unit_check` runs in the repo after the unit's last part merged; a failure marks the unit needs-decision and holds every part that depends on one of its parts.
+
+## Exit codes
+
+- `0`: every part merged.
+- `1`: failures (needs-decision parts or failed unit checks) with everything else done.
+- `3`: blocked. Nothing is running and no part can start (each remaining part is needs-decision or depends on one, or a unit_check failed and the rest depends on that unit). The run ends at once, prints `blocked: <n> parts wait on needs-decision items: <list>; fix and re-run `pai plan run <plan>` (merged parts are skipped)` and logs `run-end` with status `blocked`.
 
 ## Run log and resume
 
