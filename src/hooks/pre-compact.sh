@@ -40,10 +40,11 @@ fi
 "$PAI_OS" hooks-db pre-compact "$PROJECT_SLUG" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Sync Obsidian vault
+# Signal the daemon that the vault is stale (it syncs, throttled and at low priority)
 # ---------------------------------------------------------------------------
 
-"$PAI_OS" obsidian sync 2>/dev/null || true
+mkdir -p "${PAI_HOME:-$HOME/.claude/pai}" 2>/dev/null || true
+touch "${PAI_HOME:-$HOME/.claude/pai}/.obsidian-dirty" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Auto-checkpoint before context compression

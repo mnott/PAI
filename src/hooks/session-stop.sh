@@ -124,7 +124,7 @@ fi
 # message. Measured 2026-08-04, on this machine:
 #
 #     session cleanup --execute   17705 ms      <- machine-wide sweep
-#     obsidian sync                2813 ms      <- walks the vault
+#     obsidian sync                2813 ms      <- walks the vault (now the daemon's job)
 #     detect + slug + checkpoint + handover   ~300 ms total
 #     stop-hook.mjs (separate hook)            4324 ms
 #
@@ -174,12 +174,15 @@ housekeeping_due() {
   [ $((now - last)) -ge "$HOUSEKEEP_INTERVAL" ]
 }
 
+# Obsidian: the daemon syncs the vault (throttled, single-flight, low priority);
+# the hook only signals that something changed.
+touch "$PAI_HOME_DIR/.obsidian-dirty" 2>/dev/null || true
+
 if housekeeping_due; then
   # Stamp BEFORE running, not after: these take ~20s, and two turns finishing
   # close together would otherwise both pass the check and run concurrently.
   date +%s > "$HOUSEKEEP_STAMP" 2>/dev/null || true
 
-  "$PAI_OS" obsidian sync 2>/dev/null || true
   "$PAI_OS" session cleanup --execute 2>/dev/null || true
 fi
 

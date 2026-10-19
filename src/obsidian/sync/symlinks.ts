@@ -8,13 +8,13 @@ import {
   lstatSync,
   unlinkSync,
   readlinkSync,
-  writeFileSync,
   rmdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SyncStats } from "./types.js";
 import { worktreeReason } from "../../registry/registrable.js";
+import { writeIfChanged } from "./write-if-changed.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -258,7 +258,7 @@ export async function syncVault(vaultPath: string, registry: RegistryBackend): P
           "",
         ].join("\n");
         try {
-          writeFileSync(stubPath, content, "utf-8");
+          writeIfChanged(stubPath, content);
           stats.stubbed++;
         } catch (e) {
           stats.errors.push(`${project.slug} (archive stub): ${e}`);

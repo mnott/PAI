@@ -119,6 +119,7 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   embedding:
     'Embedding backend: backend ("transformers-cpu-q8" or "ollama-f16"), model, ollama.baseUrl. Switching needs `pai memory reembed`.',
   logLevel: "Daemon log level: debug, info, warn, or error.",
+  obsidian: "Obsidian integration: { enabled } (default false). When off, no vault sync and no vault index pass runs.",
   vaultPath: "Obsidian vault root path for zettelkasten indexing, if any.",
   vaultProjectId: "Registry project_id used for vault chunks in memory_chunks. Default: auto-detected.",
   notifications: "Notification subsystem configuration.",

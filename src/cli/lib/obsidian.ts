@@ -27,6 +27,7 @@ import { getRegistryBackend } from "../../storage/factory.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
+import { obsidianEnabled, OBSIDIAN_DISABLED_MESSAGE } from "../../obsidian/enabled.js";
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -88,6 +89,10 @@ export function saveVaultPath(vaultPath: string): void {
 export async function obsidianSyncCmd(
   opts: { vault?: string; quiet?: boolean }
 ): Promise<number> {
+  if (!obsidianEnabled()) {
+    console.error(OBSIDIAN_DISABLED_MESSAGE);
+    return 1;
+  }
   const registry = await getRegistryBackend();
   const vaultPath = getVaultPath(opts.vault);
   const q = opts.quiet ?? false;
