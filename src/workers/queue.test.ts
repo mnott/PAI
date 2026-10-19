@@ -88,6 +88,7 @@ function fakeDeps(over: Partial<QueueDeps> = {}, outcomes: Record<string, Array<
   const started: Array<{ id: string; spec: string; provider: string; tier: string }> = [];
   const calls: string[] = [];
   const deps: QueueDeps = {
+    resolveLocal: async (p) => p,
     async startWorker(req) {
       started.push({ id: req.itemId, spec: req.spec, provider: req.provider, tier: req.tier });
       const o = (outcomes[req.itemId] ?? [{ ok: true }]).shift() ?? { ok: true };

@@ -24,6 +24,7 @@ import {
   workersYamlPath,
 } from "../../workers/workers-config.js";
 import { testProvider } from "../../workers/run.js";
+import { probeLoopback } from "../../workers/local-provider.js";
 import {
   addProvider,
   classTargetText,
@@ -148,10 +149,11 @@ const PROVIDERS_HINT = "pai worker providers";
 const tagsHelp = `Capability tags, comma-separated (from: ${PROVIDER_TAGS.join(", ")})`;
 const costTierOpt: OptDef = { name: "cost-tier", type: "string", value: "1-5", summary: "Cost tier: 1 (cheapest) to 5 (most expensive; default 3)" };
 
-function printProviders(): void {
+async function printProviders(): Promise<void> {
   const { workers } = readWorkersSection();
+  const running = await probeLoopback(workers);
   out();
-  for (const line of describeProviders(workers)) out(`  ${line}`);
+  for (const line of describeProviders(workers, CONFIG_FILE, running)) out(`  ${line}`);
   out();
   out(dim(`  workers are ${workers.enabled ? "on" : "off"} — pai worker ${workers.enabled ? "off" : "on"}`));
   const legacyNotice = workersYamlLegacyNotice();
@@ -165,9 +167,9 @@ const providersListCommand: CommandDef = {
   description: "Shows every configured provider with its models, cost tier and state. This is also what `pai worker providers` prints on its own.",
   examples: ["pai worker providers list", "pai worker providers"],
   seeAlso: ["pai providers", "pai worker providers add"],
-  run() {
+  async run() {
     try {
-      printProviders();
+      await printProviders();
     } catch (e) {
       fail(e, "pai worker config check");
     }
@@ -205,7 +207,7 @@ const providersAddCommand: CommandDef = {
     "pai worker providers add local --protocol openai --upstream-url http://127.0.0.1:8080/v1 --model qwen",
   ],
   seeAlso: ["pai worker providers use", "pai worker providers list"],
-  run(ctx) {
+  async run(ctx) {
     try {
       const o = ctx.opts;
       const name = ctx.args.NAME as string;
@@ -245,7 +247,7 @@ const providersAddCommand: CommandDef = {
       const { workers } = readWorkersSection();
       out(ok(`provider ${name} added`));
       if (workers.active === name) out(`  active: ${name} — workers ${workers.enabled ? "on" : "off"}`);
-      for (const line of describeProviders(workers)) out(dim(`  ${line}`));
+      for (const line of describeProviders(workers, CONFIG_FILE, await probeLoopback(workers))) out(dim(`  ${line}`));
     } catch (e) {
       fail(e, PROVIDERS_HINT);
     }
@@ -263,7 +265,7 @@ const providersUpdateCommand: CommandDef = {
   ],
   examples: ["pai worker providers update glm --cost-tier 2", "pai worker providers update glm --tags long-context,reasoning"],
   seeAlso: ["pai worker providers list"],
-  run(ctx) {
+  async run(ctx) {
     try {
       const name = ctx.args.NAME as string;
       const hasTier = ctx.opts["cost-tier"] !== undefined;
@@ -274,7 +276,7 @@ const providersUpdateCommand: CommandDef = {
       updateProvider(name, { ...(costTier !== undefined ? { costTier } : {}), ...(tags !== undefined ? { tags } : {}) });
       out(ok(`provider ${name} updated`));
       const { workers } = readWorkersSection();
-      for (const line of describeProviders(workers)) out(dim(`  ${line}`));
+      for (const line of describeProviders(workers, CONFIG_FILE, await probeLoopback(workers))) out(dim(`  ${line}`));
     } catch (e) {
       fail(e, PROVIDERS_HINT);
     }

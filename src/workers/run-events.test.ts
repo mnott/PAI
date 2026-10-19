@@ -92,6 +92,7 @@ describe("PlanReporter", () => {
       merge: async () => ({ ok: true, commit: "c2", before: "c1", output: "" }),
       unitCheck: async () => ({ ok: true, output: "" }),
       now: () => 0,
+      resolveLocal: async (p) => p,
       log: (e) => r.onLog(e),
     };
     await runPlan(plan, { parallel: 1 }, deps);

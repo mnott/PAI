@@ -62,6 +62,7 @@ import {
   type WorkerProvider,
 } from "./config.js";
 import { buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
+import { resolveLocalProvider } from "./local-provider.js";
 import { probeRouter } from "../router/supervisor.js";
 import { detectCurrentModel } from "./launch.js";
 
@@ -214,6 +215,8 @@ export interface RunOptions {
   localOk?: boolean;
   /** --cloud: this run goes to the cloud under policy prefer-local/auto. */
   cloud?: boolean;
+  /** --local: run on the local model server PAI resolves (resolveLocalProvider); beats --provider. */
+  localFlag?: boolean;
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
   _route?: RouteInfo;
   _fallThroughOf?: string;
@@ -642,6 +645,14 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // Worker routing policy (policy.ts): picks local or cloud unless the caller named a provider.
   let route = opts._route;
   let providerFlag = opts.providerFlag;
+  // --local: PAI resolves the running local server itself (local-provider.ts);
+  // the resolved name wins over --provider — a provider literally named
+  // "local" is not the mechanism.
+  if (opts.localFlag) {
+    const res = await resolveLocalProvider(config, logDir);
+    providerFlag = res.name;
+    if (!opts.quiet) process.stderr.write(`pai worker: local provider ${res.name} (${res.why})\n`);
+  }
   if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
     const routed = await routeRun(config, logDir, opts);
     if (routed) {

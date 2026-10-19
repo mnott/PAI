@@ -14,6 +14,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), "plan-stop-"));
 function deps(log: RunLogEntry[], over: Partial<RunnerDeps> = {}): RunnerDeps {
   return {
     now: () => 0,
+    resolveLocal: async (p) => p,
     log: (e) => log.push(e),
     startWorker: async (r) => ({ id: `w-${r.part.id}`, ok: true, tokens: 1 }),
     merge: async (id) => ({ ok: true, commit: `sha-${id}`, before: "base", output: "" }),

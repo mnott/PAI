@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { capture, launchWorker, mergeBranch, realCommitsAhead, stopLaunchedWorkers } from "./plan-deps.js";
 import { parseNumstat } from "./queue.js";
 import type { QueueDeps } from "./queue-runner.js";
+import { resolveRunnerProvider } from "./local-provider.js";
 
 export function realQueueDeps(logDir: string, repo: string): QueueDeps {
   const dir = mkdtempSync(join(tmpdir(), "pai-queue-"));
@@ -30,6 +31,7 @@ export function realQueueDeps(logDir: string, repo: string): QueueDeps {
       return { ok: r.code === 0, output: r.out + r.err };
     },
     merge: mergeBranch,
+    resolveLocal: resolveRunnerProvider,
     stopActive: async () => void (await stopLaunchedWorkers(logDir)),
   };
 }

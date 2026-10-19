@@ -145,6 +145,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     kind: "run",
     run: {
       providerFlag: str(o.provider),
+      localFlag: o.local === true ? true : undefined,
       urgent: o.urgent === true ? true : undefined,
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
@@ -196,6 +197,7 @@ const runCommand: CommandDef = {
     { name: "agent", type: "string", value: "NAME", summary: "Run the agent definition ~/.claude/agents/NAME.md on a worker" },
     { ...OPT.model, summary: "Model for this run (default: the model set for the class)" },
     { name: "urgent", type: "boolean", summary: "Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`)" },
+    { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label shown in ps, follow and the status line" },
@@ -219,6 +221,7 @@ const runCommand: CommandDef = {
   examples: [
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
     "pai worker run --provider glm --spec /tmp/task.txt",
+    "pai worker run --local -p 'Summarize the changelog'",
     "pai worker run --chain draft,implement,review -p 'Add a --json flag to the export command'",
     "pai worker run --print-cmd --class spotcheck -p 'Say hi'",
   ],

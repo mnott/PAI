@@ -56,6 +56,8 @@ export interface RunnerDeps {
   merge(workerId: string, gate: string): Promise<MergeOutcome>;
   unitCheck(cmd: string): Promise<{ ok: boolean; output: string }>;
   now(): number;
+  /** The provider a plan/queue value names: `local` becomes the running local server, any other name is returned unchanged. */
+  resolveLocal(provider: string): Promise<string>;
   log(entry: RunLogEntry): void;
   /** Stop the workers this runner has started (SIGTERM/SIGINT path); resolves once they are told to end. */
   stopActive?(): Promise<void>;
@@ -162,6 +164,9 @@ export function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise
 }
 
 async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, active: Map<string, PlanPart>): Promise<RunSummary> {
+  // `provider: local` in a plan means resolveLocalProvider() at run start —
+  // the loopback server that answers, never a provider picked by name.
+  plan = { ...plan, provider: await deps.resolveLocal(plan.provider) };
   const parts = plan.units.flatMap((u) => u.parts);
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);

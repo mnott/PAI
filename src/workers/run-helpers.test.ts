@@ -502,6 +502,25 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
     expect(lines[0]).toMatch(/^anthropic {2}\[built-in, active\]/);
     expect(lines[1]).toBe("    default sonnet  fast haiku  image (none)");
   });
+
+  it("the providers listing marks loopback providers running / not running, remotes never", () => {
+    const workers = parseWorkersConfig({
+      active: "anthropic",
+      providers: {
+        strata: { enabled: true, baseUrl: "http://127.0.0.1:8035", models: { default: "m" } },
+        down: { enabled: true, baseUrl: "http://localhost:8001", models: { default: "m" } },
+        cloud: { enabled: true, baseUrl: "https://api.example.invalid", models: { default: "m" } },
+      },
+    });
+    const marked = describeProviders(workers, "/nowhere/config.json", { strata: true, down: false });
+    expect(marked.find((l) => l.startsWith("strata "))).toContain("[enabled, running]");
+    expect(marked.find((l) => l.startsWith("down "))).toContain("[enabled, not running]");
+    expect(marked.find((l) => l.startsWith("cloud "))).toBe("cloud  [enabled]  https://api.example.invalid");
+    // without the probe the listing is what it always was
+    expect(describeProviders(workers, "/nowhere/config.json").find((l) => l.startsWith("strata "))).toBe(
+      "strata  [enabled]  http://127.0.0.1:8035"
+    );
+  });
 });
 
 describe("adoptInitModel", () => {

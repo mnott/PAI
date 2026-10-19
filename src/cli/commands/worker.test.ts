@@ -121,6 +121,15 @@ describe("worker run: what is handed to the engine", () => {
       urgent: true, cloud: true, localOk: true, worktreeFlag: true, printCmd: true,
     });
   });
+  it("--local routes to the resolver, not to a provider name", () => {
+    const r = plan(["--local", "-p", "x"]);
+    if (r.kind !== "run") throw new Error("expected run");
+    expect(r.run.localFlag).toBe(true);
+    expect(r.run.providerFlag).toBeUndefined();
+    const plain = plan(["-p", "x"]);
+    if (plain.kind !== "run") throw new Error("expected run");
+    expect(plain.run.localFlag).toBeUndefined();
+  });
   it("the global --dry-run prints the command instead of starting (same as --print-cmd)", () => {
     const r = plan(["--dry-run", "-p", "x"]);
     if (r.kind !== "run") throw new Error("expected run");
