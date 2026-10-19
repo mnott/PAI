@@ -7,19 +7,19 @@
  * names a known tool (`Glob.glob` → `Glob`, `Bash.Bash` → `Bash`); anything
  * else passes untouched. Only I/O here; the rule lives in
  * lib/tool-name-repair.ts. Each repair is logged one line to
- * ~/.claude/pai/logs/workers/tool-repair.log. A no-op in interactive sessions.
+ * ~/.pai/logs/workers/tool-repair.log. A no-op in interactive sessions.
  * Denies the "R" tool call in workers. Also maps parameter aliases (path → file_path, cmd → command, regex → pattern) and answers invented tool names (Git) with a directive.
  */
 
 import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { join } from "node:path";
 import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial, inventedToolDirective, repairParams, renderParamRepair } from "../lib/tool-name-repair.js";
 
 function logRepair(tail: string): void {
   try {
-    const dir = join(homedir(), ".claude", "pai", "logs", "workers");
+    const dir = paiHomePath("logs", "workers");
     mkdirSync(dir, { recursive: true });
     appendFileSync(
       join(dir, "tool-repair.log"),

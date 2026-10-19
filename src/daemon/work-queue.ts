@@ -5,7 +5,7 @@
  * Items are processed sequentially to avoid concurrent writes to the same
  * session note. Failed items are retried with exponential backoff.
  *
- * Queue file: under PAI_HOME (~/.claude/pai/work-queue.json), falling back
+ * Queue file: under PAI_HOME (~/.pai/work-queue.json), falling back
  * to the pre-2026-09-19 ~/.config/pai/work-queue.json location.
  * Written atomically (write temp → rename) to prevent corruption.
  */

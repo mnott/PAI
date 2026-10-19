@@ -2,13 +2,13 @@
 
 One hand-editable file: which providers PAI can run workers on, the model
 each provider uses per role, and which provider every `--class` goes to.
-Before this, that lived inside `~/.claude/pai/config.json`'s `workers`
+Before this, that lived inside `~/.pai/config.json`'s `workers`
 section — JSON, unrelated to the rest of that file, and undocumented in
 place. Adding a provider meant reading code to find out what fields existed.
 
 ## Where it lives
 
-`~/.claude/pai/workers.yaml` — under the PAI_HOME namespace dir, beside
+`~/.pai/workers.yaml` — under the PAI_HOME namespace dir, beside
 PAI's other per-user files (`config.yaml`, `whisper-rules.md`,
 `advisor-mode.json`), so nothing PAI writes can collide with a file Claude
 Code itself introduces under `~/.claude`. Set `PAI_WORKERS_YAML=<path>` to
@@ -450,7 +450,7 @@ pai worker config inline-keys # move every key_file's contents inline as key: (q
 
 - **workers.yaml still at an old location** (`~/.claude/workers.yaml`, or
   older still `~/.config/pai/workers.yaml`): moved byte-for-byte to
-  `~/.claude/pai/workers.yaml` — no JSON involved, nothing transformed, and
+  `~/.pai/workers.yaml` — no JSON involved, nothing transformed, and
   the old file is renamed aside as `workers.yaml.migrated-<date>` rather
   than deleted.
 - **no workers.yaml yet**: reads the JSON `workers` section, writes
@@ -472,7 +472,7 @@ writing anything.
 ## Where PAI lives
 
 PAI is not a Claude Code plugin — it is a self-contained system that Claude
-Code happens to be the first harness for. `~/.claude/pai/` (`PAI_HOME`) is
+Code happens to be the first harness for. `~/.pai/` (`PAI_HOME`) is
 the single home for everything PAI owns: `config.yaml`, `workers.yaml`,
 `whisper-rules.md`, `advisor-mode.json`, `session-state/`, `queries/`,
 `logs/workers/` and the rest of PAI's per-user state and caches. `pai config

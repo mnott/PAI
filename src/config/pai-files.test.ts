@@ -64,8 +64,8 @@ describe("migrateWhisperRules / migrateAdvisorMode", () => {
     const rw = migrateWhisperRules();
     const ra = migrateAdvisorMode();
 
-    const newWhisper = join(dir, ".claude", "pai", "whisper-rules.md");
-    const newAdvisor = join(dir, ".claude", "pai", "advisor-mode.json");
+    const newWhisper = join(dir, ".pai", "whisper-rules.md");
+    const newAdvisor = join(dir, ".pai", "advisor-mode.json");
     expect(rw.toPath).toBe(newWhisper);
     expect(ra.toPath).toBe(newAdvisor);
     expect(readFileSync(newWhisper, "utf8")).toContain("rule one");

@@ -45,7 +45,7 @@ Todoist → Settings → Integrations → Developer → API token.
 
 ### 2. Configure
 
-In `~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`):
+In `~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`):
 
 ```jsonc
 {

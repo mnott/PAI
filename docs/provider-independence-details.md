@@ -22,7 +22,7 @@ off the Anthropic account.
 
 - **Add once.** "Add a worker provider named glm, base URL <url>, model
   <model>, here is the key: <token>" → `worker_providers` (add). The key is
-  parked in `~/.claude/pai/keys/<name>` (mode 0600); the config records only
+  parked in `~/.pai/keys/<name>` (mode 0600); the config records only
   the path. OpenAI-compatible endpoint? Say "upstream URL" — PAI routes it
   through its local translating proxy. The first provider added also turns
   worker routing on and seeds the nine classes (`addProvider`,
@@ -191,10 +191,10 @@ session, context intact; returns the new worker id. Not for running workers.
 
 ## Configure
 
-Providers, model roles and class routing live in `~/.claude/pai/workers.yaml`
+Providers, model roles and class routing live in `~/.pai/workers.yaml`
 (the primary, hand-editable mechanism — see **docs/workers-config.md**).
 Everything else worker-related still lives in the `workers` section of
-`~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`) (`readWorkersSection` / `writeWorkersSection`,
+`~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`) (`readWorkersSection` / `writeWorkersSection`,
 `src/workers/config.ts:619`); every sentence and tool above writes it
 atomically — no hand-editing.
 

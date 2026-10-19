@@ -43,8 +43,12 @@ fi
 # Signal the daemon that the vault is stale (it syncs, throttled and at low priority)
 # ---------------------------------------------------------------------------
 
-mkdir -p "${PAI_HOME:-$HOME/.claude/pai}" 2>/dev/null || true
-touch "${PAI_HOME:-$HOME/.claude/pai}/.obsidian-dirty" 2>/dev/null || true
+_pai_home="${PAI_HOME:-}"
+if [ -z "$_pai_home" ]; then
+    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then _pai_home="$HOME/.claude/pai"; else _pai_home="$HOME/.pai"; fi
+fi
+mkdir -p "$_pai_home" 2>/dev/null || true
+touch "$_pai_home/.obsidian-dirty" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Auto-checkpoint before context compression

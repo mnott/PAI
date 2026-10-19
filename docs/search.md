@@ -87,7 +87,7 @@ Recency boost is applied after cross-encoder reranking, so relevance is scored f
 
 ### Search Settings
 
-All search defaults are configurable via `~/.claude/pai/config.json` and can be viewed or changed from the command line.
+All search defaults are configurable via `~/.pai/config.json` and can be viewed or changed from the command line.
 
 ```bash
 # View all search settings
@@ -110,7 +110,7 @@ pai memory settings rerank false
 | `defaultLimit` | `10` | Default number of results |
 | `snippetLength` | `200` | Max characters per snippet in MCP results |
 
-Settings live in the `search` section of `~/.claude/pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
+Settings live in the `search` section of `~/.pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
 
 ### Using Search from Within Claude
 
@@ -154,7 +154,7 @@ You can ask Claude to adjust search behavior per-query:
 | `rerank` | boolean | Cross-encoder reranking (default: true from config) |
 | `recency_boost` | integer | Recency half-life in days (0 = off, default from config) |
 
-All parameters except `query` are optional. Omitted values fall back to your `~/.claude/pai/config.json` defaults.
+All parameters except `query` are optional. Omitted values fall back to your `~/.pai/config.json` defaults.
 
 **Changing defaults permanently:**
 
@@ -166,4 +166,4 @@ Tell Claude to change your search settings:
 "Change the recency boost to 60 days"
 ```
 
-Claude runs `pai memory settings <key> <value>` to update `~/.claude/pai/config.json`. Changes take effect on the next search — no restart needed.
+Claude runs `pai memory settings <key> <value>` to update `~/.pai/config.json`. Changes take effect on the next search — no restart needed.

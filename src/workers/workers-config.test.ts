@@ -713,7 +713,7 @@ describe("relocating workers.yaml from an old default location", () => {
     else process.env.PAI_HOME = savedPaiHome;
   });
 
-  it("moves ~/.claude/workers.yaml to ~/.claude/pai/workers.yaml, renaming the old file aside", () => {
+  it("moves ~/.claude/workers.yaml to ~/.pai/workers.yaml, renaming the old file aside", () => {
     const dir = newDir();
     delete process.env.PAI_WORKERS_YAML;
     delete process.env.PAI_HOME;
@@ -727,7 +727,7 @@ describe("relocating workers.yaml from an old default location", () => {
     expect(r.dryRun).toBe(false);
     expect(r.fromPath).toBe(oldPath);
 
-    const newPath = join(dir, ".claude", "pai", "workers.yaml");
+    const newPath = join(dir, ".pai", "workers.yaml");
     expect(r.toPath).toBe(newPath);
     expect(readFileSync(newPath, "utf8")).toBe(starterWorkersYamlText());
     expect(statSync(newPath).mode & 0o777).toBe(0o600);

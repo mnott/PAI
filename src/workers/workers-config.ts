@@ -42,7 +42,7 @@ export const WORKERS_YAML_FILENAME = "workers.yaml";
 
 /**
  * Where workers.yaml lives since 2026-09-19: under the PAI_HOME namespace
- * dir (~/.claude/pai by default) — this file is per-user state that can
+ * dir (~/.pai by default) — this file is per-user state that can
  * carry API keys and must never be committed, same as the rest of PAI_HOME.
  */
 export function defaultWorkersYamlPath(): string {

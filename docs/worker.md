@@ -60,14 +60,14 @@ main session (Anthropic)          workers (configured provider)
 ## Config
 
 Providers, model roles, class routing and MCP sets live in one hand-editable
-file, `~/.claude/pai/workers.yaml` (per-user state, kept 0600, never
+file, `~/.pai/workers.yaml` (per-user state, kept 0600, never
 committed — `PAI_WORKERS_YAML` overrides it, `PAI_HOME` moves the whole
 namespace) — see **docs/workers-config.md** for the full reference (the
 annotated example, how to add a provider, the load order, and
 `pai worker config migrate` for configs still on the old JSON shape or an
 old `workers.yaml` location). Everything else worker-related (pane, log
 dir, routing cooldown, cache-keepalive cadence, fallback) stays in
-`~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`)'s `workers` section.
+`~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`)'s `workers` section.
 
 Quick summary of workers.yaml:
 
@@ -125,7 +125,7 @@ pai worker providers add glm \
   --cost-tier 2 --tags code,long-context
 pai worker providers add oai \
   --upstream-url https://api.openai.com/v1 \
-  --key-file ~/.claude/pai/keys/oai --model gpt-5.2
+  --key-file ~/.pai/keys/oai --model gpt-5.2
 pai worker providers update glm --cost-tier 1   # tiers/tags change later
 ```
 
@@ -377,7 +377,7 @@ What `on` does:
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
 - Pins the top-level `model` key to the provider's default model.
 - Saves the replaced values under `workers.fallback.saved` in
-  `~/.claude/pai/config.yaml` (or `config.json` until you run `pai config yaml`) and writes a `FALLBACK-ACTIVE.md` note into the
+  `~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`) and writes a `FALLBACK-ACTIVE.md` note into the
   workers log dir telling running sessions what to do.
 
 Notes:
@@ -713,7 +713,7 @@ visible pane in the spawning session's window (a cross-session spawn attaches
 its pane to ITS session's window), or it is refused. The only ways to run
 hidden are the operator's: `PAI_WORKER_ALLOW_HIDDEN=1` in the operator's own
 shell (stripped from every spawned worker, so it never flows down through
-sessions), or the override file `~/.claude/pai/headless-ok`. A daemon — which
+sessions), or the override file `~/.pai/headless-ok`. A daemon — which
 has no window to attach a pane to — cannot start workers unless the operator
 granted one of those. `pai worker run --no-pane` is refused on the same terms.
 
@@ -786,7 +786,7 @@ worker or chain from chat, returns the id immediately), `worker_toggle`,
 worker: send a proposal/question/blocker up to its parent) — the same library
 the CLI calls.
 `worker_providers add` accepts a raw `key`, parks it in
-`~/.claude/pai/keys/<name>` (mode 0600) and stores only the path.
+`~/.pai/keys/<name>` (mode 0600) and stores only the path.
 
 ## Status line
 

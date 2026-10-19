@@ -56,7 +56,10 @@ pai_cache_dir="${PAI_CACHE_DIR:-/tmp/claude}"
 # PAI's per-user namespace dir — see src/config/pai-home.ts (paiHomeDir) for
 # the canonical (TypeScript) version of this same resolver; this script
 # can't import that module, so the new/old fallback logic is duplicated here.
-pai_home_dir="${PAI_HOME:-$HOME/.claude/pai}"
+pai_home_dir="${PAI_HOME:-}"
+if [ -z "$pai_home_dir" ]; then
+    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then pai_home_dir="$HOME/.claude/pai"; else pai_home_dir="$HOME/.pai"; fi
+fi
 
 # Resolve a PAI per-user file: the new PAI_HOME path if it exists, else the
 # first existing old candidate (args 2+), else the new path. Mirrors
@@ -116,11 +119,14 @@ fi
 # Any [...] suffix (e.g. the [1m] context marker) is stripped on both sides,
 # so a session on "glm-5.3[1m]" matches a configured "glm-5.3" and vice versa.
 # No config, no jq, unreadable JSON or no match => anthropic, silently.
-# PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts) first;
+# PAI_HOME (~/.pai by default — see src/config/pai-home.ts) first;
 # else fall back through the pre-2026-09-19 locations in the same order
 # paiConfigFilePath() in src/daemon/config.ts does, since a shell script
 # can't import that resolver.
-pai_home_dir="${PAI_HOME:-$HOME/.claude/pai}"
+pai_home_dir="${PAI_HOME:-}"
+if [ -z "$pai_home_dir" ]; then
+    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then pai_home_dir="$HOME/.claude/pai"; else pai_home_dir="$HOME/.pai"; fi
+fi
 pai_config="${PAI_CONFIG:-$pai_home_dir/config.json}"
 if [ ! -f "$pai_config" ]; then
     if [ -f "$HOME/.claude/pai.json" ]; then
@@ -568,7 +574,7 @@ usage_cache_max_age=300  # refuse to render from the fallback past this age
 usage_backoff_default=300  # seconds to leave the endpoint alone after a failed fetch
 # The router polls the same endpoint and records its 429 backoff here (epoch ms);
 # honour it, and our own, so the pollers do not add up.
-usage_gate="${pai_state_dir:-$HOME/.claude/pai/logs}/router-poll-gate.json"
+usage_gate="${pai_state_dir:-$pai_home_dir/logs}/router-poll-gate.json"
 _usage_backing_off() {
     local now until
     now=$(date +%s)
