@@ -3,7 +3,7 @@
  * follow the chain old -> new, never the superseded id.
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,6 +79,10 @@ function chain(oldId: string, nextId: string, file: string) {
   markResumed(logDir, oldId, nextId);
   return { info, next };
 }
+
+// Each test spawns many real git processes; under a loaded full run that
+// outlasts the default 5 s (observed timeouts), so give the file real headroom.
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("resume chain ownership", () => {
   it("moves the tree to the resuming id", () => {
