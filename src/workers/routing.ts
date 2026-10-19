@@ -314,6 +314,7 @@ export function resolveTarget(
     home: opts.home,
     cwd: opts.cwd,
     logDir,
+    side: "workers",
   });
   if (session) {
     const p = getProviderOrNative(config, session.name);
@@ -322,7 +323,8 @@ export function resolveTarget(
     const sessionTarget = (name: string, provider: WorkerProvider, routeWhy: string, switchReason?: string): ResolvedTarget => ({
       providerName: name,
       provider,
-      modelAlias: capability === "fast" ? "fast" : "default",
+      // an unnamed tier lets the provider's worker_model decide (resolveRunModel)
+      modelAlias: capability === "fast" ? "fast" : provider.workerModel === "fast" ? null : "default",
       classMcp: cls?.mcp ?? null,
       via: "session",
       routeWhy,
