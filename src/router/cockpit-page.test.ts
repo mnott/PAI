@@ -164,7 +164,7 @@ describe("cockpit favicon and dark mode", () => {
     expect(COCKPIT_HTML).toContain('matchMedia("(prefers-color-scheme: dark)").addEventListener("change"');
     expect(COCKPIT_HTML).toMatch(/if\(!s\)setTheme\(e\.matches\?"dark":"light"\)/);
     // the button's title/aria-label name the mode it switches to
-    expect(COCKPIT_HTML).toContain('b.title=b.getAttribute("aria-label")=t==="dark"?"Light mode":"Dark mode"');
+    expect(COCKPIT_HTML).toContain('l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)');
   });
 
   it("the dark palette lives under [data-theme=dark], not a media query", () => {
