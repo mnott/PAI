@@ -23,7 +23,7 @@
  */
 
 import { buildsDir, listBuildsSync, renderBuildQueue } from "../builds/queue.js";
-import { buildSlots } from "../builds/config.js";
+import { poolSlots } from "../builds/config.js";
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
@@ -187,7 +187,7 @@ export function psOutput(
   }
   try {
     const builds = listBuildsSync(buildsDir(env));
-    if (builds.length) parts.push(renderBuildQueue(builds, buildSlots(env)));
+    if (builds.length) parts.push(renderBuildQueue(builds, poolSlots(env)));
   } catch {
     /* the build queue is an extra block: never fail ps over it */
   }

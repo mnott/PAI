@@ -117,6 +117,20 @@ function stripPrefix(ws: string[]): string[] {
 
 const GRADLE_TASK = /^(build|test|assemble\w*|check|connected\w*|bundle\w*|install\w*|lint\w*)$/;
 
+export type BuildKind = "build" | "test";
+
+/** Which pool a heavy command belongs to: simulator/device test runs are "test", everything else "build". */
+function kindOf(ws: string[]): BuildKind {
+  let [c, ...a] = ws;
+  c = base(c);
+  if (c === "xcrun" && a.length) {
+    if (base(a[0]) === "simctl") return a.slice(1).some((x) => /^(test|launch|boot)$/.test(x)) ? "test" : "build";
+    c = base(a[0]);
+    a = a.slice(1);
+  }
+  return c === "xcodebuild" && a.some((x) => x === "test" || x === "test-without-building") ? "test" : "build";
+}
+
 /** Is this command (already stripped) a raw heavy builder? */
 function heavy(ws: string[]): string | null {
   if (!ws.length) return null;
@@ -145,7 +159,12 @@ function isDoor(ws: string[], cfg: BuildsConfig, cwd: string): boolean {
   return cfg.doors.some((d) => resolve(cfg.root, d) === abs);
 }
 
-function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth: number): string | null {
+interface Reason {
+  why: string;
+  kind: BuildKind;
+}
+
+function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth: number): Reason | null {
   const ws = stripPrefix(words(segment));
   if (!ws.length) return null;
   if (base(ws[0]) === "pai" && ws[1] === "build" && (ws[2] === "run" || ws[2] === "lock")) return null;
@@ -157,10 +176,10 @@ function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth
     if (at >= 0 && ws[at + 1]) return splitSegments(ws[at + 1]).map((s) => reasonFor(s, cfg, cwd, depth + 1)).find(Boolean) ?? null;
   }
   const h = heavy(ws);
-  if (h) return h;
+  if (h) return { why: h, kind: kindOf(ws) };
   for (const p of cfg?.patterns ?? []) {
     try {
-      if (new RegExp(p).test(ws.join(" "))) return `pattern ${p}`;
+      if (new RegExp(p).test(ws.join(" "))) return { why: `pattern ${p}`, kind: "build" };
     } catch {
       /* bad pattern in the project file: ignore it */
     }
@@ -171,8 +190,8 @@ function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth
 /** Deny message when `command` runs a raw heavy builder outside the queue, else null. */
 export function buildGateReason(command: string, cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): string | null {
   for (const seg of splitSegments(command)) {
-    const why = reasonFor(seg, cfg, cwd, 0);
-    if (why) return `${BUILD_DENY_MESSAGE(cfg?.doors[0])} (blocked: ${why})`;
+    const r = reasonFor(seg, cfg, cwd, 0);
+    if (r) return `${BUILD_DENY_MESSAGE(cfg?.doors[0])} (blocked: ${r.why}; kind ${r.kind}${r.kind === "test" ? ": use \`pai build run --kind test -- <cmd>\`" : ""})`;
   }
   return null;
 }

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runBuild } from "./gate.js";
-import { buildNext, enqueue, listBuilds, patchTicket, releaseBuildsOf } from "./queue.js";
+import { buildNext, enqueue, listBuilds, patchTicket, releaseBuildsOf, renderBuildQueue } from "./queue.js";
+import { poolSlots, slotsFor } from "./config.js";
+import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
+import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
 
 let dir: string;
 beforeEach(() => {
@@ -95,5 +98,99 @@ describe("build queue", () => {
     expect(await buildNext(dir, c.id)).toEqual([c.id, a.id, b.id]);
     expect(await releaseBuildsOf(dir, "w1", { kill: () => {} })).toEqual([b.id]);
     expect((await listBuilds(dir)).map((t) => t.id)).toEqual([c.id, a.id]);
+  });
+});
+
+const fakeSimctl = (booted: string[], log: string[]): Simctl => (args) => {
+  if (args[0] === "list") return JSON.stringify({ devices: { "iOS 18": booted.map((udid) => ({ udid, state: "Booted" })) } });
+  if (args[0] === "shutdown") {
+    log.push(args[1]);
+    const i = booted.indexOf(args[1]);
+    if (i >= 0) booted.splice(i, 1);
+    return "";
+  }
+  throw new Error("unexpected simctl call");
+};
+
+describe("test slots", () => {
+  it("reads builds.testSlots (default 2) apart from builds.slots", () => {
+    expect(poolSlots({}, () => ({}))).toEqual({ build: 1, test: 2 });
+    expect(poolSlots({}, () => ({ builds: { slots: 3, testSlots: 4 } }))).toEqual({ build: 3, test: 4 });
+    expect(slotsFor("test", { PAI_TEST_SLOTS: "5" }, () => ({}))).toBe(5);
+  });
+
+  it("a test job does not wait behind a build, and tests queue among themselves", async () => {
+    const b = runBuild({ ...base, dir, slots: 1, label: "B", command: ["sleep", "0.8"] });
+    await until(async () => (await listBuilds(dir)).length === 1);
+    const tests = ["T1", "T2", "T3"].map((label) => runBuild({ ...base, dir, kind: "test", slots: 2, label, command: ["sleep", "0.6"], simctl: fakeSimctl([], []) }));
+    await until(async () => (await listBuilds(dir)).length === 4);
+    const q = await listBuilds(dir);
+    expect(q.filter((t) => t.kind === "test" && t.state === "running")).toHaveLength(2);
+    expect(q.filter((t) => t.kind === "test" && t.state === "waiting")).toHaveLength(1);
+    expect(q.find((t) => t.label === "B")?.state).toBe("running");
+    const text = renderBuildQueue(q, { build: 3, test: 2 });
+    expect(text).toContain("builds (3 slots)");
+    expect(text).toContain("tests (2 slots)");
+    expect(await Promise.all([b, ...tests])).toEqual([0, 0, 0, 0]);
+  });
+
+  it("a build slot taken does not block a test and vice versa (slots=1 each)", async () => {
+    const t = runBuild({ ...base, dir, kind: "test", slots: 1, label: "T", command: ["sleep", "0.4"], simctl: fakeSimctl([], []) });
+    await until(async () => (await listBuilds(dir)).length === 1);
+    const b = runBuild({ ...base, dir, slots: 1, label: "B", command: ["sleep", "0.1"] });
+    await until(async () => (await listBuilds(dir)).length === 2);
+    expect((await listBuilds(dir)).every((x) => x.state === "running")).toBe(true);
+    await Promise.all([t, b]);
+  });
+
+  it("the guard classifies simulator and xcodebuild test runs as kind test", () => {
+    const none = null;
+    for (const c of ["xcrun simctl boot ABC", "xcrun simctl launch booted com.x", "xcodebuild test -scheme A", "xcodebuild test-without-building -scheme A"]) {
+      expect(buildGateReason(c, "/tmp", none), c).toContain("kind test");
+    }
+    for (const c of ["xcodebuild -scheme A build", "swift build", "cargo test", "xcrun simctl install booted a.app"]) {
+      expect(buildGateReason(c, "/tmp", none), c).toContain("kind build");
+    }
+  });
+});
+
+describe("simulator cleanup", () => {
+  it("lists booted simulators and shuts down only the ones added", () => {
+    const booted = ["A", "B"];
+    const log: string[] = [];
+    const sim = fakeSimctl(booted, log);
+    expect(bootedSimulators(sim)).toEqual(["A", "B"]);
+    booted.push("C");
+    expect(shutdownAdded(["A", "B"], sim)).toEqual(["C"]);
+    expect(log).toEqual(["C"]);
+    expect(bootedSimulators(() => { throw new Error("no xcrun"); })).toEqual([]);
+  });
+
+  it("a finished test job shuts down the simulator it booted, not the one already up", async () => {
+    const booted = ["KEEP"];
+    const log: string[] = [];
+    const sim = fakeSimctl(booted, log);
+    const code = await runBuild({ ...base, dir, kind: "test", slots: 1, command: ["sleep", "0.3"], simctl: sim });
+    expect(code).toBe(0);
+    expect(log).toEqual([]);
+    booted.length = 0;
+    const r = runBuild({ ...base, dir, kind: "test", slots: 1, command: ["sleep", "0.3"], simctl: sim });
+    await until(async () => (await listBuilds(dir)).some((t) => t.state === "running" && !!t.bootedBefore));
+    booted.push("NEW");
+    expect(await r).toBe(0);
+    expect(log).toEqual(["NEW"]);
+  });
+
+  it("a killed test job (caller gone) also shuts its simulators down", async () => {
+    const booted: string[] = [];
+    const log: string[] = [];
+    const sim = fakeSimctl(booted, log);
+    let gone = false;
+    const r = runBuild({ ...base, dir, kind: "test", slots: 1, command: ["sleep", "30"], simctl: sim, callerGone: () => gone });
+    await until(async () => (await listBuilds(dir)).some((t) => !!t.pgid && !!t.bootedBefore));
+    booted.push("ORPHAN");
+    gone = true;
+    expect(await r).toBe(129);
+    expect(log).toEqual(["ORPHAN"]);
   });
 });

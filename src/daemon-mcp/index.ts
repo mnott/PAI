@@ -22,7 +22,7 @@
  */
 
 import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
-import { buildSlots } from "../builds/config.js";
+import { poolSlots } from "../builds/config.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -1620,7 +1620,7 @@ async function startShim(): Promise<void> {
   server.tool(
     "build_queue",
     [
-      "The machine-wide build queue (builds.slots, default 1): heavy builds run one at a time, FIFO.",
+      "The machine-wide build queue: builds (builds.slots, default 1) and simulator/device test runs (builds.testSlots, default 2) are separate pools, FIFO.",
       "",
       "action=list (default) shows the running and waiting builds; action=next gives a",
       "waiting build (id) the next free slot. A running build is never interrupted.",
@@ -1637,7 +1637,7 @@ async function startShim(): Promise<void> {
           const order = await buildNext(dir, args.id);
           return workerText(`waiting order: ${order.join(", ") || "-"}`);
         }
-        return workerText(renderBuildQueue(await listBuilds(dir), buildSlots()));
+        return workerText(renderBuildQueue(await listBuilds(dir), poolSlots()));
       } catch (e) {
         return workerError(e);
       }

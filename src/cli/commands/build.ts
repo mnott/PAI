@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { renderBuildQueue, buildNext, buildsDir, listBuilds } from "../../builds/queue.js";
-import { buildSlots } from "../../builds/config.js";
+import { slotsFor, poolSlots } from "../../builds/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor } from "../../builds/doctor.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
@@ -21,12 +21,15 @@ function spawnWatcher(dir: string, id: string): void {
 
 async function gate(ctx: RunContext): Promise<number> {
   if (!ctx.rest.length) throw new CliError("no command given", "pai build run -- <command...>");
+  const kind = ctx.opts.kind === undefined ? "build" : ctx.opts.kind;
+  if (kind !== "build" && kind !== "test") throw new CliError(`unknown kind "${String(kind)}"`, "pai build run --kind build|test -- <command...>");
   return runBuild({
     dir: buildsDir(),
+    kind,
     command: ctx.rest,
     full: ctx.opts.full === true,
     label: typeof ctx.opts.label === "string" ? ctx.opts.label : undefined,
-    slots: buildSlots(),
+    slots: slotsFor(kind),
     spawnWatcher,
     handleSignals: true,
   });
@@ -37,13 +40,15 @@ const runCmd: CommandDef = {
   summary: "Run a build command under the machine-wide build queue",
   description:
     "Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. " +
-    "The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked.",
+    "The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. " +
+    "Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends.",
   options: [
     { name: "full", type: "boolean", summary: "Full build (PAI_BUILD_MODE=full): releases only, or when asked" },
     { name: "label", type: "string", value: "TEXT", summary: "Name shown in the queue (default: the command)" },
+    { name: "kind", type: "string", value: "build|test", summary: "Slot pool: build (default) or test for simulator/device test runs" },
   ],
   passthrough: true,
-  examples: ["pai build run -- xcodebuild -scheme App build", "pai build run --full --label release -- tools/build.sh"],
+  examples: ["pai build run -- xcodebuild -scheme App build", "pai build run --kind test -- xcodebuild -scheme App test", "pai build run --full --label release -- tools/build.sh"],
   seeAlso: ["pai build queue", "pai build lock"],
   run: gate,
 };
@@ -62,12 +67,12 @@ const lockCmd: CommandDef = {
 
 const queueCmd: CommandDef = {
   name: "queue",
-  summary: "Show the running and waiting builds",
-  description: "Lists the builds holding a slot and those waiting, in start order.",
+  summary: "Show the running and waiting builds and tests",
+  description: "Lists, per pool (builds, tests), the jobs holding a slot and those waiting, in start order.",
   examples: ["pai build queue"],
   seeAlso: ["pai build next"],
   run: async () => {
-    out(renderBuildQueue(await listBuilds(buildsDir()), buildSlots()));
+    out(renderBuildQueue(await listBuilds(buildsDir()), poolSlots()));
   },
 };
 
@@ -122,7 +127,7 @@ export const buildCommand: CommandDef = {
   name: "build",
   summary: "One machine-wide build queue: run, lock, queue, next, doctor",
   description:
-    "Heavy builds (xcodebuild, simulator tests, swift/gradle/cargo build or test) run one at a time machine-wide, FIFO, at low priority, deltas by default. " +
+    "Heavy builds (xcodebuild, swift/gradle/cargo build or test) run machine-wide through builds.slots slots, simulator/device test runs through their own builds.testSlots slots, FIFO, at low priority, deltas by default. " +
     "Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.",
   examples: ["pai build run -- xcodebuild -scheme App build", "pai build queue"],
   subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, watchCmd],

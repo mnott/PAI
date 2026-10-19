@@ -85,7 +85,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai build doctor` | Check the project's registered build doors |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
 | `pai build next` | Give a waiting build the next free slot |
-| `pai build queue` | Show the running and waiting builds |
+| `pai build queue` | Show the running and waiting builds and tests |
 | `pai build run` | Run a build command under the machine-wide build queue |
 | `pai build watch` | Internal: kill a build tree when its gate process dies |
 | `pai cd` | Print a project's directory (the shell wrapper changes into it) |
