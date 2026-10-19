@@ -12,7 +12,7 @@ import { finishDetached, reportOrigin, runMessenger, startDetached } from "../..
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { resolveCap } from "../../workers/capacity.js";
+import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
 import { localProviderForDelegation } from "../../workers/local-provider.js";
 import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueItem, type QueueSettings } from "../../workers/queue.js";
@@ -57,7 +57,7 @@ function providerOf(settings: QueueSettings): { name: string; cap: number } {
     const found = w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n));
     const name = settings.provider ?? found ?? "local";
     const p = name === "local" ? undefined : getProviderOrNative(w, name);
-    return { name, cap: resolveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) ?? 3 };
+    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) };
   } catch {
     return { name: settings.provider ?? "local", cap: 3 };
   }
@@ -117,7 +117,7 @@ const runCmd: CommandDef = {
       ctx.opts.local === true
         ? await localProviderForDelegation()
         : named
-          ? { name: named, cap: resolveCap(getProviderOrNative(readWorkersSection().workers, named)?.maxConcurrent, true) ?? 3 }
+          ? { name: named, cap: effectiveCap(getProviderOrNative(readWorkersSection().workers, named)?.maxConcurrent, true) }
           : providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
     const logDir = workersLogDir(readWorkersSection().workers);

@@ -16,7 +16,7 @@ import { finishDetached, reportOrigin, runMessenger, startDetached } from "../..
 import { resolve } from "node:path";
 import type { RunLogEntry } from "../../workers/plan-runner.js";
 import { blockedMessage, planStatus, planStopPath, requestPlanStop, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
-import { resolveCap } from "../../workers/capacity.js";
+import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -38,7 +38,7 @@ function parallelOf(plan: Plan, flag: unknown): number {
     // `provider: local` names no configured provider; its cap is the local default
     if (plan.provider === "local") return 3;
     const p = getProviderOrNative(readWorkersSection().workers, plan.provider);
-    return resolveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) ?? 3;
+    return effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true);
   } catch {
     return 3;
   }

@@ -34,7 +34,7 @@ import { isLoopbackProvider } from "./run-env.js";
 import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
-import { resolveCap } from "./capacity.js";
+import { effectiveCap } from "./capacity.js";
 import {
   LOCAL_STATUS_REFRESH_MS,
   readLocalStatus,
@@ -246,8 +246,8 @@ export async function resolvePlanProvider(
 
 /**
  * The provider a delegation tool's `local: true` runs on: the resolved one,
- * with its parallel cap (the provider's own maxConcurrent, 3 default on
- * loopback).
+ * with its parallel cap (the provider's own maxConcurrent, LOCAL_DEFAULT_CAP
+ * on loopback).
  */
 export async function localProviderForDelegation(
   opts: ResolveLocalOpts = {}
@@ -255,7 +255,7 @@ export async function localProviderForDelegation(
   const { workers } = readWorkersSection();
   const res = await resolveLocalProvider(workers, workersLogDir(workers), opts);
   const p = getProviderOrNative(workers, res.name);
-  return { name: res.name, cap: resolveCap(p?.maxConcurrent, true) ?? 3 };
+  return { name: res.name, cap: effectiveCap(p?.maxConcurrent, true) };
 }
 
 /** The real `resolveLocal` of the plan and queue runners: reads the workers config. */

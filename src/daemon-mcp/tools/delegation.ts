@@ -14,7 +14,7 @@ import { stringify as yamlStringify } from "yaml";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { fmtElapsed, loadPlanStatus, planRunId } from "../../workers/plan-status.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { resolveCap } from "../../workers/capacity.js";
+import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
 import { resolveTarget, withTarget, type Target, type TargetArgs, type TargetResolver } from "../../workers/target.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
@@ -124,7 +124,7 @@ export function localProvider(settings: QueueSettings): { name: string; cap: num
     };
     const name = settings.provider ?? (w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n))) ?? "local";
     const p = getProviderOrNative(w, name);
-    return { name, cap: resolveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) ?? 3 };
+    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) };
   } catch {
     return { name: settings.provider ?? "local", cap: 3 };
   }
@@ -141,7 +141,7 @@ export function realDelegationDeps(): DelegationDeps {
     },
     provider: localProvider,
     target: (a) => resolveTarget(a),
-    capOf: (name) => resolveCap(getProviderOrNative(readWorkersSection().workers, name)?.maxConcurrent, true) ?? 3,
+    capOf: (name) => effectiveCap(getProviderOrNative(readWorkersSection().workers, name)?.maxConcurrent, true),
     dirtyPaths,
     logDir: () => workersLogDir(readWorkersSection().workers),
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),

@@ -37,11 +37,11 @@ function harness(statuses: (ms: number) => WorkerStatus[], self: WorkerStatus, s
 }
 
 describe("provider cap is the model's default concurrency, independent of loopback", () => {
-  it("explicit cap wins on either side of loopback; loopback alone is not serial", () => {
+  it("explicit cap wins on either side of loopback; an unset local cap is serial (one engine, one request)", () => {
     expect(resolveCap(1, false)).toBe(1); // a cloud model can be serial
     expect(resolveCap(1, true)).toBe(1);
     expect(resolveCap(6, true)).toBe(6); // a parallel-capable local server
-    expect(resolveCap(undefined, true)).toBeGreaterThan(1);
+    expect(resolveCap(undefined, true)).toBe(1);
     expect(resolveCap(undefined, false)).toBeUndefined();
   });
 

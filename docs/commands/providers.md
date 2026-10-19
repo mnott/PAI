@@ -200,6 +200,29 @@ pai worker providers test glm
 
 See also: `pai worker providers list`
 
+### pai providers cap
+
+Show or set how many workers run in parallel on a provider
+
+```
+pai providers cap PROVIDER [N]
+```
+
+Without N, shows the provider's effective cap and where it comes from (config or default). N (>= 1) writes maxConcurrent to workers.yaml; `default` removes it again. Unset, a local provider runs one worker at a time and a cloud provider is uncapped.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PROVIDER` | yes | Provider name |
+| `N` | no | Parallel runs (>= 1), or `default` to unset |
+
+```sh
+pai worker providers cap local
+pai worker providers cap local 2
+pai worker providers cap local default
+```
+
+See also: `pai worker providers`, `pai worker queue`
+
 ## Subcommands
 
 | Command | Description |
@@ -211,6 +234,7 @@ See also: `pai worker providers list`
 | `pai providers enable` | Turn a provider on (also clears its cooldown) |
 | `pai providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai providers test` | Send one word through a provider to check it answers |
+| `pai providers cap` | Show or set how many workers run in parallel on a provider |
 
 ## See also
 

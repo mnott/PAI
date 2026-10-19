@@ -83,6 +83,7 @@ import {
   classTargetText,
   describeProviders,
   removeProvider,
+  setProviderCap,
   setClass,
   setProviderEnabled,
   setWorkersEnabled,
@@ -999,12 +1000,14 @@ async function startShim(): Promise<void> {
       "  straight to {base_url}/images/generations instead of spawning a process —",
       "  pair it with a worker_capability image preference to run it.",
       "action=update changes cost_tier / tags of an existing provider.",
+      "action=cap shows (no cap arg) or sets a provider's parallel cap (cap: integer >= 1, or \"default\" to unset),",
+      "  writes maxConcurrent to workers.yaml and answers the effective cap and its source.",
       "action=test runs a one-word pong probe through the provider",
       "  (reports 'codex not installed' when that engine's CLI is missing).",
     ].join("\n"),
     {
       action: z
-        .enum(["list", "add", "update", "remove", "use", "enable", "disable", "test"])
+        .enum(["list", "add", "update", "remove", "use", "enable", "disable", "test", "cap"])
         .optional()
         .describe("Default: list."),
       name: z.string().optional().describe("Provider name (required for every action but list)."),
@@ -1022,6 +1025,7 @@ async function startShim(): Promise<void> {
       quota_probe: z.string().optional().describe("URL whose JSON first number is the quota percent (add, optional)."),
       cost_tier: z.number().int().min(1).max(5).optional().describe("Cost tier 1 (cheapest) … 5 (most expensive). Default 3. (add, update)"),
       tags: z.array(z.enum(["code", "vision", "image-gen", "long-context", "fast", "reasoning"])).optional().describe("Capability tags (add, update)."),
+      cap: z.union([z.number().int().min(1), z.literal("default")]).optional().describe("Parallel cap (cap): integer >= 1, or \"default\" to unset. Omit to show."),
     },
     async (args) => {
       try {
@@ -1031,6 +1035,10 @@ async function startShim(): Promise<void> {
           return workerText(describeProviders(workers, CONFIG_FILE, await probeLoopback(workers)).join("\n"));
         }
         if (!args.name) return workerError(new Error("name is required for this action"));
+        if (action === "cap") {
+          const { effective } = setProviderCap(args.name, args.cap);
+          return workerText(`provider ${args.name}: ${effective}`);
+        }
         if (action === "update") {
           if (args.cost_tier === undefined && args.tags === undefined) {
             return workerError(new Error("update needs cost_tier and/or tags"));
