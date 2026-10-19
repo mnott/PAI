@@ -13,6 +13,8 @@ import {
   renderStatus,
   resumeState,
   runPlan,
+  blockedMessage,
+  runExitCode,
   type MergeOutcome,
   type RunLogEntry,
   type RunnerDeps,
@@ -157,6 +159,44 @@ describe("runPlan", () => {
     const s = await runPlan(p, { parallel: 2, merged, unitsChecked }, h2.deps);
     expect(h2.starts.map((x) => x.split("#")[0]).sort()).toEqual(["b", "e"]);
     expect(s.merged.sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+});
+
+describe("blocked runs", () => {
+  it("failing unit_check with all dependents: exit 3, blocked message, run-end blocked, independent parts ran first", async () => {
+    const p = parsePlan(
+      `job: j\nrepo: /r\ngate: gate\nprovider: local\nunits:
+  - id: u1
+    unit_check: check1
+    parts:
+      - {id: a, spec: A, files: [f1]}
+  - id: u2
+    parts:
+      - {id: i, spec: I, files: [f9]}
+      - {id: b, spec: B, files: [f2], depends_on: [a]}
+      - {id: c, spec: C, files: [f3], depends_on: [b]}
+`,
+      "/x",
+    );
+    const h = harness(p, () => true, undefined, false);
+    const s = await runPlan(p, { parallel: 2 }, h.deps);
+    expect(s.merged.sort()).toEqual(["a", "i"]);
+    expect(s.blocked).toEqual(["b", "c"]);
+    expect(s.stuck).toBe(true);
+    expect(runExitCode(s)).toBe(3);
+    expect(blockedMessage(s, "plan.yaml")).toBe("blocked: 2 parts wait on needs-decision items: unit u1; fix and re-run `pai plan run plan.yaml` (merged parts are skipped)");
+    const end = h.log.filter((e) => e.event === "run-end");
+    expect(end).toHaveLength(1);
+    expect(end[0].status).toBe("blocked");
+    expect(h.log.at(-1)?.event).toBe("run-end");
+  });
+  it("failures with nothing waiting exit 1, all merged exit 0", async () => {
+    const p = plan();
+    const bad = await runPlan(p, { parallel: 2 }, harness(p, (r) => r.part.id !== "d").deps);
+    expect(bad.stuck).toBe(false);
+    expect(runExitCode(bad)).toBe(1);
+    const ok = await runPlan(p, { parallel: 2 }, harness(p).deps);
+    expect(runExitCode(ok)).toBe(0);
   });
 });
 

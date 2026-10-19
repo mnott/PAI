@@ -81,6 +81,9 @@ export interface RunSummary {
   /** Waiting parts that can never start because a dependency needs a decision. */
   blocked: string[];
   unitFailures: string[];
+  /** Parts are waiting, nothing runs and nothing can start: `blockedOn` lists the needs-decision parts and failed units. */
+  stuck: boolean;
+  blockedOn: string[];
   escalations: number;
   /** The refusal that stopped scheduling (repeated identically), printed once. */
   spawnRefusal?: string;
@@ -123,6 +126,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);
   const unitFailures: string[] = [];
+  const failedParts = new Set<string>();
   let escalations = 0;
   const refusals = new Map<string, number>();
   let haltedBy: string | undefined;
@@ -146,6 +150,8 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
     deps.log({ event: "unit-check", unit: unitId, ok: r.ok, note: r.ok ? undefined : tail(r.output, 10) });
     if (!r.ok) {
       unitFailures.push(unitId);
+      // parts that depend on a unit whose check failed wait for a decision
+      for (const up of unit.parts) failedParts.add(up.id);
       deps.log({ event: "needs-decision", unit: unitId, note: `unit_check failed: ${tail(r.output, 10)}` });
     }
   };
@@ -203,7 +209,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
   for (const u of plan.units) await checkUnit(u.id);
   for (;;) {
     const busy = [...running.values()].map((r) => r.part);
-    for (const p of haltedBy ? [] : pickStartable(parts, state, busy, opts.parallel - running.size)) {
+    for (const p of haltedBy ? [] : pickStartable(parts.filter((p) => !p.dependsOn.some((d) => failedParts.has(d))), state, busy, opts.parallel - running.size)) {
       state.set(p.id, "running");
       const done = attemptPart(p).finally(() => running.delete(p.id));
       running.set(p.id, { part: p, done });
@@ -217,11 +223,23 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
     needsDecision: parts.filter((p) => state.get(p.id) === "needs-decision").map((p) => p.id),
     blocked: waiting,
     unitFailures,
+    stuck: !haltedBy && waiting.length > 0,
+    blockedOn: [...parts.filter((p) => state.get(p.id) === "needs-decision").map((p) => p.id), ...unitFailures.map((u) => `unit ${u}`)],
     escalations,
     ...(haltedBy ? { spawnRefusal: haltedBy } : {}),
   };
-  deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}` });
+  deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, ...(summary.stuck ? { status: "blocked" } : {}), note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}` });
   return summary;
+}
+
+/** Exit code of `pai plan run`: 0 all merged, 1 failures with everything else done, 3 blocked (parts left that cannot start). */
+export function runExitCode(s: RunSummary): number {
+  if (s.stuck) return 3;
+  return s.needsDecision.length || s.blocked.length || s.unitFailures.length ? 1 : 0;
+}
+
+export function blockedMessage(s: RunSummary, planPath: string): string {
+  return `blocked: ${s.blocked.length} parts wait on needs-decision items: ${s.blockedOn.join(", ") || "none"}; fix and re-run \`pai plan run ${planPath}\` (merged parts are skipped)`;
 }
 
 /** The schedule a run would execute, assuming every part succeeds: waves of at most `parallel` parts. */
