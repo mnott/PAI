@@ -135,3 +135,11 @@ describe("cockpit kept prefix-cache reading", () => {
     expect(COCKPIT_HTML).toContain("ageMark(s))");
   });
 });
+
+describe("cockpit page scripts", () => {
+  it("every inline <script> body compiles", () => {
+    const bodies = [...COCKPIT_HTML.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) expect(() => new Function(body)).not.toThrow();
+  });
+});

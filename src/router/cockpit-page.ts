@@ -380,7 +380,7 @@ function renderQueue(q){
   var run=p.running.map(function(r){return'<span class="chip" title="'+esc(r.label)+'">'+esc(r.id)+' · '+qdur(r.ageSec)+'</span>'}).join(" ")||'<span class="dim">none running</span>';
   var w=p.waiting.length?table(["pos","worker","label","waited","move"],p.waiting.map(function(x){
    return[x.position,'<span title="'+esc(x.id)+'">'+esc(x.id.slice(-15))+'</span>',esc(x.label),qdur(x.waitedSec),
-    '<button data-q="front" data-id="'+esc(x.id)+'" title="move to front">to front</button> <button data-q="up" data-id="'+esc(x.id)+'" title="move one place up">up</button>']}):'<span class="dim">nothing waiting</span>';
+    '<button data-q="front" data-id="'+esc(x.id)+'" title="move to front">to front</button> <button data-q="up" data-id="'+esc(x.id)+'" title="move one place up">up</button>']})):'<span class="dim">nothing waiting</span>';
   return'<div style="margin-bottom:8px"><div class="chips" style="margin-bottom:4px"><b>'+esc(p.provider)+(p.cap!=null?' (cap '+p.cap+')':'')+'</b> '+run+'</div>'+w+'</div>'
  }).join("");
  var bs=el.querySelectorAll("button[data-q]");
