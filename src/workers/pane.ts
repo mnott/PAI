@@ -71,13 +71,16 @@ export function dynamicProfilePath(): string {
 
 // Shared prelude: locate the window/tab/session with a given unique id.
 const FIND_SESSION = `function findSession(app, id) {
-    var ws = app.windows();
+    function arr(f) { try { return f() || []; } catch (e) { return []; } }
+    var ws = arr(function () { return app.windows(); });
     for (var i = 0; i < ws.length; i++) {
-        var ts = ws[i].tabs();
+        if (!ws[i]) continue;
+        var ts = arr(function () { return ws[i].tabs(); });
         for (var j = 0; j < ts.length; j++) {
-            var ss = ts[j].sessions();
+            if (!ts[j]) continue;
+            var ss = arr(function () { return ts[j].sessions(); });
             for (var k = 0; k < ss.length; k++) {
-                if (ss[k].id() === id) return { w: ws[i], t: ts[j], s: ss[k], all: ss };
+                try { if (ss[k] && ss[k].id() === id) return { w: ws[i], t: ts[j], s: ss[k], all: ss }; } catch (e) {}
             }
         }
     }
@@ -528,10 +531,14 @@ const LIST_SESSIONS_SCRIPT = `function run(argv) {
     var app = Application("iTerm2");
     if (!app.running()) return "";
     function get(s, k) { try { return String(s[k]()); } catch (e) { return ""; } }
+    function arr(f) { try { return f() || []; } catch (e) { return []; } }
     var out = "";
-    app.windows().forEach(function (w) {
-        w.tabs().forEach(function (t) {
-            t.sessions().forEach(function (s) {
+    arr(function () { return app.windows(); }).forEach(function (w) {
+        if (!w) return;
+        arr(function () { return w.tabs(); }).forEach(function (t) {
+            if (!t) return;
+            arr(function () { return t.sessions(); }).forEach(function (s) {
+                if (!s) return;
                 var id = get(s, "id");
                 function v(n) { try { return String(s.variable({ named: n })); } catch (e) { return ""; } }
                 if (id) out += id + "\\t" + get(s, "tty") + "\\t" + v("jobPid") + "\\t" + v("pid") + "\\t" + get(s, "name") + "\\n";
@@ -552,11 +559,17 @@ export interface ItermSession {
   name?: string;
 }
 
-/** Every open iTerm session. [] when iTerm is not running; rejects when the script fails. */
+/** Every open iTerm session. [] when iTerm is not running; rejects when the script fails twice. */
 export async function listItermSessions(
   run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascript
 ): Promise<ItermSession[]> {
-  const p = await run(LIST_SESSIONS_SCRIPT, []);
+  let p: { stdout: string };
+  try {
+    p = await run(LIST_SESSIONS_SCRIPT, []);
+  } catch {
+    await new Promise((r) => setTimeout(r, 300)); // a window may be mid-close; one retry
+    p = await run(LIST_SESSIONS_SCRIPT, []);
+  }
   return p.stdout
     .split("\n")
     .filter(Boolean)
@@ -766,7 +779,7 @@ export interface HostDeps {
   psOf(pid: number): [number, string] | null;
   /** Command line per pid, one batched ps call; pids ps does not know are absent. */
   commandsOf(pids: number[]): Map<number, string>;
-  /** Every open iTerm session. Empty when iTerm is not running or unreachable. */
+  /** Every open iTerm session. Empty when iTerm is not running; rejects when the listing fails. */
   listSessions(): Promise<ItermSession[]>;
 }
 
@@ -803,11 +816,7 @@ export const realHostDeps: HostDeps = {
   },
   async listSessions() {
     if (process.platform !== "darwin") return [];
-    try {
-      return await listItermSessions();
-    } catch {
-      return [];
-    }
+    return listItermSessions(); // rejects on failure: resolveHostSession reports why
   },
 };
 
@@ -869,11 +878,17 @@ export async function resolveHostSession(
   deps: HostDeps = realHostDeps,
   start: number = process.pid
 ): Promise<HostSession> {
-  const sessions = await deps.listSessions();
+  let sessions: ItermSession[] = [];
+  let listFail = "";
+  try {
+    sessions = await deps.listSessions();
+  } catch (e) {
+    listFail = `session listing failed: ${(e as Error).message?.trim().split("\n")[0] ?? e}`;
+  }
   const envTerm = env.ITERM_SESSION_ID ?? "";
   const envUid = itermUuid(envTerm);
   const found = (s: { id: string }, via: string): HostSession => ({ uid: s.id, term: s.id === envUid ? envTerm : s.id, via });
-  const notes: string[] = [];
+  const notes: string[] = listFail ? [listFail] : [];
 
   const ancestors = ancestorPids(deps, start);
   const jobPids = sessions.flatMap((s) => (s.jobPid ? [s.jobPid] : []));

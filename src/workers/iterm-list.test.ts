@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listItermSessions } from "./pane.js";
+import { listItermSessions, resolveHostSession, REBALANCE_SCRIPT } from "./pane.js";
 
 describe("listItermSessions", () => {
   it("keeps a session whose name could not be read", async () => {
@@ -18,5 +18,39 @@ describe("listItermSessions", () => {
         throw new Error("osascript failed");
       })
     ).rejects.toThrow("osascript failed");
+  });
+
+  it("retries once when the script fails, then returns the sessions", async () => {
+    let calls = 0;
+    const got = await listItermSessions(async () => {
+      if (++calls === 1) throw new Error("TypeError: null is not an object");
+      return { stdout: "A\t/dev/ttys001\t10\t11\tzsh\n" };
+    });
+    expect(calls).toBe(2);
+    expect(got.map((s) => s.id)).toEqual(["A"]);
+  });
+
+  it("guards every enumeration level against a closing window", async () => {
+    let script = "";
+    await listItermSessions(async (sc) => {
+      script = sc;
+      return { stdout: "" };
+    });
+    for (const src of [script, REBALANCE_SCRIPT]) {
+      expect(src).toContain("try { return f() || []; } catch");
+      expect(src).not.toMatch(/\bw\.tabs\(\)\.forEach|app\.windows\(\)\.forEach|=\s*ws\[i\]\.tabs\(\)/);
+    }
+  });
+
+  it("resolveHostSession reports the listing failure", async () => {
+    const r = await resolveHostSession({}, {
+      psOf: () => null,
+      commandsOf: () => new Map(),
+      listSessions: async () => {
+        throw new Error("osascript failed");
+      },
+    });
+    expect(r.uid).toBe("");
+    expect(r.reason).toContain("session listing failed: osascript failed");
   });
 });
