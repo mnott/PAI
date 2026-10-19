@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, appendFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,6 +161,26 @@ describe("the parse cache", () => {
     expect(running(after)?.topLevelSystemLines).toBe(
       (running(before)?.topLevelSystemLines ?? 0) + 1
     );
+  });
+});
+
+describe("the parse cache follows appended lines", () => {
+  const ID = "77777777-7777-4777-8777-777777777777";
+  it("counts lines appended after the cached parse without re-reading the old ones", async () => {
+    const file = join(projectDir(), `${ID}.jsonl`);
+    writeFileSync(file, SYSTEM_LINE + USER_LINE);
+    const before = (await scan("named")).find((s) => s.uuid === ID);
+    appendFileSync(file, SYSTEM_LINE);
+    const after = (await scan("named")).find((s) => s.uuid === ID);
+    expect(after?.topLevelSystemLines).toBe((before?.topLevelSystemLines ?? 0) + 1);
+  });
+  it("a named session in a nested sessions/ dir with an old mtime is still scanned", async () => {
+    const file = join(projectDir(), "sessions", `${ID}.jsonl`);
+    writeFileSync(file, '{"type":"custom-title","customTitle":"Jobs Example"}\n' + USER_LINE);
+    const old = new Date(Date.now() - 400 * 86_400_000);
+    utimesSync(file, old, old);
+    const found = (await scan("named")).find((s) => s.uuid === ID);
+    expect(found?.persistentName).toBe("Jobs Example");
   });
 });
 

@@ -52,6 +52,36 @@ export interface PickerOpts<T> {
   empty?: string;
   /** Called when the user presses Ctrl-G on a row */
   onCd?: (row: T) => void;
+  /** Terminal width in columns; when set, no line is ever longer than this. */
+  width?: () => number;
+  /** Columns for a given width (narrow terminals drop or shorten some); overrides headers and cells. */
+  layout?(width: number): { headers: string[]; cells(item: T): string[] };
+  /** Replacement items that arrive after the first paint; the table repaints in place. */
+  refresh?: Promise<T[]>;
+}
+
+// eslint-disable-next-line no-control-regex
+const SGR = /\u001b\[[0-9;]*m/g;
+
+/** Cut a (possibly coloured) line to `width` visible characters, ending in an ellipsis when cut. */
+export function clipLine(line: string, width: number): string {
+  if (line.replace(SGR, "").length <= width) return line;
+  let out = "";
+  let seen = 0;
+  let sawEsc = false;
+  for (let i = 0; i < line.length; ) {
+    const m = /^\u001b\[[0-9;]*m/.exec(line.slice(i, i + 24));
+    if (m) {
+      out += m[0];
+      i += m[0].length;
+      sawEsc = true;
+      continue;
+    }
+    if (seen >= width - 1) break;
+    out += line[i++];
+    seen++;
+  }
+  return out + "…" + (sawEsc ? "\u001b[0m" : "");
 }
 
 export function filterItems<T>(items: T[], filter: string, text: (i: T) => string): T[] {
@@ -71,7 +101,8 @@ export function pickerView<T>(state: PickerState, opts: PickerOpts<T>, st: Style
   if (page.length === 0) {
     lines.push(`  ${st.yellow(opts.empty ?? "nothing matches")}`);
   } else {
-    const table = renderTable(opts.headers, page.map(opts.cells), st).split("\n");
+    const lay = opts.layout?.(opts.width?.() ?? Infinity) ?? opts;
+    const table = renderTable(lay.headers, page.map(lay.cells), st).split("\n");
     lines.push(table[0], table[1]);
     page.forEach((_, i) => {
       const sel = start + i === state.cursor;
@@ -82,7 +113,8 @@ export function pickerView<T>(state: PickerState, opts: PickerOpts<T>, st: Style
   const cur = shown[state.cursor];
   const detail = cur && opts.detail ? opts.detail(cur) : "";
   lines.push("", detail ? `  ${detail}` : "", st.dim(opts.footer + " · Ctrl-G cd"));
-  return lines;
+  const width = opts.width?.();
+  return width ? lines.map((l) => clipLine(l, width)) : lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +140,8 @@ const HIDE = "\u001b[?25l";
 const SHOW = "\u001b[?25h";
 
 /** Resolves the chosen item, or null when cancelled. Always restores the terminal. */
-export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, output: TtyOut): Promise<T | null> {
+export function runPicker<T>(opts0: PickerOpts<T>, st: Style, input: TtyIn, output: TtyOut): Promise<T | null> {
+  const opts = { ...opts0 };
   return new Promise((resolve) => {
     let state: PickerState = { filter: opts.initialFilter ?? "", cursor: 0 };
     let drawn = 0;
@@ -117,7 +150,12 @@ export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, outpu
       output.write((drawn ? `\u001b[${drawn}A` : "") + "\r\u001b[J" + lines.join("\n") + "\n");
       drawn = lines.length;
     };
+    const onResize = () => draw();
+    const out = output as TtyOut & { on?(ev: "resize", fn: () => void): unknown; off?(ev: "resize", fn: () => void): unknown };
+    let done = false;
     const finish = (value: T | null) => {
+      done = true;
+      out.off?.("resize", onResize);
       input.off("keypress", onKey);
       input.off("end", onEnd);
       input.off("close", onEnd);
@@ -147,6 +185,15 @@ export function runPicker<T>(opts: PickerOpts<T>, st: Style, input: TtyIn, outpu
     input.resume();
     output.write(HIDE);
     draw();
+    out.on?.("resize", onResize);
+    opts.refresh?.then(
+      (items) => {
+        if (done) return;
+        opts.items = items;
+        draw();
+      },
+      () => undefined
+    );
     input.on("keypress", onKey);
     input.once("end", onEnd);
     input.once("close", onEnd);

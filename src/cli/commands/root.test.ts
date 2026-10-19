@@ -7,8 +7,8 @@ import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { providerHealth } from "../lib/health.js";
 import { allSetups, builtinSetups, findSetup, loadSaved, saveSetup, shortModel } from "../lib/setups.js";
-import { pickerKey, pickerView, readOneKey, type PickerState, type TtyIn } from "../lib/picker.js";
-import { ago, finishCd, launchKey, launchScreen, lastSetup, localState, matchRows, plainTable, setupsTable, truncate } from "./root.js";
+import { pickerKey, pickerView, readOneKey, runPicker, type PickerState, type TtyIn } from "../lib/picker.js";
+import { ago, finishCd, launchKey, launchScreen, lastSetup, localState, matchRows, pickerOpts, plainTable, setupsTable, truncate } from "./root.js";
 import { oneLine, type SessionRow } from "./session.js";
 
 const st = makeStyle(false);
@@ -230,5 +230,51 @@ describe("local setup rows", () => {
     const c = lcfg({ a: local(8000) });
     const saved = [{ name: "mine", orchestrator: { provider: "anthropic" }, workers: "a", kind: "saved" as const }];
     expect(allSetups(c, null, saved, new Set(), "a").map((s) => s.name)).toEqual(["mine", "anthropic only", "anthropic + local workers"]);
+  });
+});
+
+describe("picker layout", () => {
+  const long = "x".repeat(300);
+  const rows = [
+    row({ name: "A very long session name that goes on and on", project: "A very long session name that goes on and on", message: long, model: "claude-opus-5-5" }),
+    row({ name: "Jobs Example", project: "09 - Job Search", message: long, provider: "—", model: "—" }),
+  ];
+  for (const w of [60, 80, 105, 160]) {
+    it(`no line is longer than ${w} columns`, () => {
+      const o = pickerOpts(rows, st, undefined, () => w);
+      const lines = pickerView({ filter: "", cursor: 0 }, o, st);
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(w);
+      expect(lines.join("\n")).toContain("Jobs Example");
+    });
+  }
+  it("below 60 columns shows Name and Last active only", () => {
+    const o = pickerOpts(rows, st, undefined, () => 50);
+    const head = pickerView({ filter: "", cursor: 0 }, o, st).find((l) => l.includes("Last active")) ?? "";
+    expect(head).toContain("Name");
+    expect(head).not.toContain("Project");
+    expect(head).not.toContain("Last message");
+  });
+  it("narrow widths show the model only and drop Project when it repeats the name", () => {
+    const same = [row({ name: "web", project: "web" })];
+    const lines = pickerView({ filter: "", cursor: 0 }, pickerOpts(same, st, undefined, () => 80), st).join("\n");
+    expect(lines).not.toContain("Project");
+    expect(lines).not.toContain("(anthropic)");
+  });
+});
+
+describe("picker repaints in place", () => {
+  it("a refresh redraws over the first paint instead of appending a second table", async () => {
+    const input = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {}, pause() {} }) as unknown as TtyIn;
+    let buf = "";
+    const output = { write: (s: string) => (buf += s) };
+    const later = Promise.resolve([row({ name: "Fresh" })]);
+    const done = runPicker(pickerOpts([row({ name: "Stale" })], st, undefined, () => 100, later), st, input, output);
+    await later;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(buf).toContain("Fresh");
+    // second paint starts by moving the cursor back up over the first
+    expect(buf).toMatch(/\u001b\[\d+A\r\u001b\[J/);
+    (input as unknown as EventEmitter).emit("keypress", undefined, { name: "escape" });
+    expect(await done).toBeNull();
   });
 });
