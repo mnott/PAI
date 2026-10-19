@@ -13,7 +13,8 @@ import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
 import { fetchLiveSessions } from "../lib/aibroker-client.js";
 import { dryRunText, buildHarness, execHarness, type Harness } from "../lib/harness.js";
 import { probeResume, transcriptModelFor } from "../lib/launch.js";
-import { providerHealth, readBudget, type Health } from "../lib/health.js";
+import { providerHealth, readBudget, readBudgetSnapshot, saveBudgetSnapshot, type Health } from "../lib/health.js";
+import type { BudgetReading } from "../../workers/budget.js";
 import { renameSession } from "../lib/names.js";
 import {
   assertAvailable,
@@ -96,29 +97,59 @@ function originOf(s: ScannedSession, workers: WorkersConfig | null): SessionOrig
 }
 
 export async function collectRows(opts: { project?: string; all?: boolean; workers?: boolean }): Promise<SessionRow[]> {
-  const { rows } = await collectView(opts);
+  const { rows } = await collectView({ ...opts, fast: true, waitMs: LISTING_WAIT_MS });
   return rows;
 }
 
-export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean; limit?: number; offline?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
+/** How long a printed listing waits for live status and usage before showing what it has. */
+const LISTING_WAIT_MS = 400;
+
+export interface SessionView {
+  rows: SessionRow[];
+  workers: WorkersConfig | null;
+  /**
+   * Fast views only: fetch what the first paint skipped (live sessions, fresh
+   * budget readings) and return the rows rebuilt with it. Resolves to the
+   * same rows when there is nothing to add.
+   */
+  refresh(): Promise<SessionRow[]>;
+}
+
+export async function collectView(opts: {
+  project?: string;
+  all?: boolean;
+  workers?: boolean;
+  limit?: number;
+  offline?: boolean;
+  /** Build rows from the disk-cached budget and no live lookup; `refresh` fills those in. */
+  fast?: boolean;
+  /** With `fast`: wait this long for the refresh before returning the first-paint rows (listings that print once). */
+  waitMs?: number;
+  /** Beyond the newest `limit`, keep every session the operator named, so a filter finds it whatever its age. */
+  includeNamed?: boolean;
+}): Promise<SessionView> {
   let workers: WorkersConfig | null = null;
   try {
     workers = readWorkersSection().workers;
   } catch {
     /* provider column falls back to what the model name says */
   }
-  const [scanned, live] = await Promise.all([
-    scanSessions({ limit: opts.limit ?? (opts.all ? 1000 : opts.workers ? 25 : 150), filter: opts.all ? "all" : "named", workers: opts.workers }),
-    opts.offline ? Promise.resolve([]) : fetchLiveSessions().catch(() => []),
+  const limit = opts.limit ?? (opts.all ? 1000 : 25);
+  const scanLimit = opts.includeNamed ? 100000 : opts.limit ?? (opts.all ? 1000 : opts.workers ? 25 : 150);
+  const deferred = opts.fast && !opts.offline;
+  const [scanned, live0] = await Promise.all([
+    scanSessions({ limit: scanLimit, filter: opts.all ? "all" : "named", workers: opts.workers }),
+    opts.offline || deferred ? Promise.resolve([]) : fetchLiveSessions().catch(() => []),
   ]);
-  const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
   const needle = opts.project?.toLowerCase();
-  const budget = workers && !opts.offline ? await readBudget(workers) : {};
-  const rows = scanned
+  const picked = scanned
     .filter((s) => !needle || projectOf(s).toLowerCase().includes(needle) || s.decodedPath.toLowerCase().includes(needle))
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, opts.limit ?? (opts.all ? 1000 : 25))
-    .map((s) => {
+    .filter((s, i) => i < limit || (opts.includeNamed && !!s.persistentName));
+
+  const build = (live: Awaited<ReturnType<typeof fetchLiveSessions>>, budget: Record<string, BudgetReading | undefined>): SessionRow[] => {
+    const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
+    return picked.map((s) => {
       const origin = originOf(s, workers);
       return {
         id: s.shortId,
@@ -136,7 +167,27 @@ export async function collectView(opts: { project?: string; all?: boolean; worke
         health: origin && workers ? providerHealth(origin.provider, workers, budget) : ({ state: "ok", reason: "ok" } as Health),
       };
     });
-  return { rows, workers };
+  };
+
+  const budget0 = deferred ? readBudgetSnapshot() : workers && !opts.offline ? await readBudget(workers) : {};
+  const rows = build(live0, budget0);
+  const refresh = async (): Promise<SessionRow[]> => {
+    if (!deferred) return rows;
+    const [live, budget] = await Promise.all([
+      fetchLiveSessions().catch(() => []),
+      workers ? readBudget(workers) : Promise.resolve({}),
+    ]);
+    if (Object.keys(budget).length) saveBudgetSnapshot(budget);
+    return build(live, Object.keys(budget).length ? budget : budget0);
+  };
+  if (deferred && opts.waitMs) {
+    const settled = await Promise.race([
+      refresh().catch(() => null),
+      new Promise<null>((res) => setTimeout(() => res(null), opts.waitMs).unref()),
+    ]);
+    if (settled) return { rows: settled, workers, refresh: async () => settled };
+  }
+  return { rows, workers, refresh };
 }
 
 const statusColor = (st: Style, s: string) =>

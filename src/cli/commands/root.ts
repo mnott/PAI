@@ -77,17 +77,43 @@ export function lastOnLabel(st: Style, r: SessionRow): string {
   return r.health.state === "ok" ? t : r.health.state === "limit" ? st.red(t) : st.yellow(t);
 }
 
-export function pickerOpts(rows: SessionRow[], st: Style, initialFilter?: string) {
+/**
+ * Picker columns for a terminal `width`: everything but "Last message" has a
+ * fixed need, and the message gets what is left, so no row wraps. Narrow
+ * terminals shorten "Last used on" to the model, drop Project when it only
+ * repeats the name, and below 60 columns keep just Name and Last active.
+ */
+export function pickerLayout(rows: SessionRow[], st: Style, width: number) {
+  const fit = (n: number, f: (r: SessionRow) => number) => Math.min(n, Math.max(0, ...rows.map(f)));
+  const lastOn = (r: SessionRow) => (width < 100 ? (r.provider === "—" ? st.dim("unknown") : shortModel(r.model)) : lastOnLabel(st, r));
+  const lastOnLen = (r: SessionRow) => (width < 100 ? (r.provider === "—" ? 7 : shortModel(r.model).length) : r.provider === "—" ? 7 : `${shortModel(r.model)} (${r.provider})`.length);
+  const projectRedundant = rows.every((r) => r.project === r.name);
+  const cols: { head: string; cell(r: SessionRow, w: number): string; len(r: SessionRow): number; cap: number }[] = [
+    { head: "Name", cell: (r, w) => st.bold(truncate(r.name, w)), len: (r) => r.name.length, cap: width >= 130 ? 30 : 22 },
+    ...(width >= 60 && !(width < 110 && projectRedundant) ? [{ head: "Project", cell: (r: SessionRow, w: number) => truncate(r.project, w), len: (r: SessionRow) => r.project.length, cap: width >= 130 ? 20 : 14 }] : []),
+    { head: "Last active", cell: (r, _w) => ago(r.lastActiveMs), len: (r) => ago(r.lastActiveMs).length, cap: 12 },
+    ...(width >= 60 ? [{ head: "Last used on", cell: (r: SessionRow, w: number) => (r.provider === "—" || lastOnLen(r) <= w ? lastOn(r) : truncate(shortModel(r.model), w)), len: lastOnLen, cap: width >= 130 ? 40 : 22 }] : []),
+  ];
+  const widths = cols.map((c) => Math.max(c.head.length, fit(c.cap, c.len)));
+  // marker column + indent (4) and two spaces between columns
+  const used = 4 + widths.reduce((a, b) => a + b, 0) + 2 * widths.length;
+  const msgW = width - used - 1;
+  const withMsg = width >= 60 && msgW >= 12;
+  return {
+    headers: [...cols.map((c) => c.head), ...(withMsg ? ["Last message"] : [])],
+    cells: (r: SessionRow) => [...cols.map((c, i) => c.cell(r, widths[i])), ...(withMsg ? [st.dim(truncate(r.message || "—", Math.min(msgW, 60)))] : [])],
+  };
+}
+
+export function pickerOpts(rows: SessionRow[], st: Style, initialFilter?: string, width?: () => number, refresh?: Promise<SessionRow[]>) {
+  const w = width ?? (() => Infinity);
   return {
     headers: ["Name", "Project", "Last active", "Last used on", "Last message"],
     items: rows,
-    cells: (r: SessionRow) => [
-      st.bold(truncate(r.name, 30)),
-      truncate(r.project, 20),
-      ago(r.lastActiveMs),
-      lastOnLabel(st, r),
-      st.dim(truncate(r.message || "—", 40)),
-    ],
+    cells: (r: SessionRow) => pickerLayout([r], st, 160).cells(r),
+    layout: (cols: number) => pickerLayout(rows, st, Math.min(cols, 160)),
+    width: width && (() => w()),
+    refresh,
     searchText: (r: SessionRow) => `${r.name} ${r.project} ${r.provider} ${r.model} ${r.message} ${r.id}`,
     initialFilter,
     footer: "↑↓ move · type to filter · Enter open · Esc quit",
@@ -381,7 +407,11 @@ export async function runRoot(
     return startSession({ workers, setup, name: basename(process.cwd()) || "session", cwd: process.cwd(), dryRun: args.dryRun, term });
   }
 
-  const { rows } = await collectView(args.name ? { limit: 500 } : {});
+  const interactive = !args.name && term.isTTY;
+  // The picker paints from the scan alone; live status and provider usage
+  // (network) arrive afterwards through `refresh`.
+  const view = await collectView(args.name ? { limit: 500 } : interactive ? { fast: true, includeNamed: true } : { fast: true, waitMs: 400 });
+  const { rows } = view;
   if (rows.length === 0) {
     out("No sessions yet.");
     out(st.dim("Start one in this folder with: pai new"));
@@ -397,7 +427,8 @@ export async function runRoot(
       out(st.dim("Open one: pai <name>   ·   more commands: pai more"));
       return 0;
     }
-    picked = (await runPicker({ ...pickerOpts(rows, st), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
+    const cols = () => (term.output as { columns?: number }).columns || 100;
+    picked = (await runPicker({ ...pickerOpts(rows, st, undefined, cols, view.refresh()), onCd: (row) => cdDir = row.dir }, st, term.input, term.output)) ?? undefined;
     if (!picked) return cdDir !== undefined ? finishCd(cdDir, term) : CANCELLED;
   } else {
     const matches = matchRows(rows, args.name);

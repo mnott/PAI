@@ -115,6 +115,23 @@ export function findExistingEncodedDir(absolutePath: string): string | null {
 /** Directory listings (name + encoded form) reused across a batch of decodes. */
 export type DirListings = Map<string, { name: string; enc: string; encLower: string }[]>;
 
+type DirEntries = DirListings extends Map<string, infer E> ? E : never;
+const indexes = new WeakMap<DirEntries, Map<string, { name: string; enc: string }[]>>();
+
+function encIndex(entries: DirEntries): Map<string, { name: string; enc: string }[]> {
+  let idx = indexes.get(entries);
+  if (!idx) {
+    idx = new Map();
+    for (const { name, enc, encLower } of entries) {
+      const list = idx.get(encLower);
+      if (list) list.push({ name, enc });
+      else idx.set(encLower, [{ name, enc }]);
+    }
+    indexes.set(entries, idx);
+  }
+  return idx;
+}
+
 /**
  * Decode a Claude encoded-dir by walking the actual filesystem.
  *
@@ -157,18 +174,20 @@ export function smartDecodeDir(encoded: string, listings?: DirListings): string 
       listings?.set(current, entries);
     }
 
-    // Find entries matching the remaining string.
-    // Sort by encoded length descending so we prefer the longest (most specific) match.
-    // Use case-insensitive comparison because macOS (HFS+/APFS) is case-insensitive
-    // by default, and Claude Code may have encoded the dir with different casing
-    // than what currently exists on disk (e.g. directory was renamed TEKmidian → TEKMidian).
+    // Find entries matching the remaining string: an entry matches when its
+    // encoded form equals the remaining string or a `-`-terminated prefix of
+    // it, so look up each prefix in a per-directory index instead of scanning
+    // every entry (the dev root holds thousands).
+    // Case-insensitive because macOS (HFS+/APFS) is case-insensitive by
+    // default, and Claude Code may have encoded the dir with different casing
+    // than what currently exists on disk (e.g. TEKmidian → TEKMidian).
     const candidates: { name: string; enc: string }[] = [];
     const remainingLower = remaining.toLowerCase();
-    for (const { name, enc, encLower } of entries) {
-      // Must match at start of remaining, followed by `-` separator or end of string
-      if (remainingLower === encLower || remainingLower.startsWith(encLower + "-")) {
-        candidates.push({ name, enc });
-      }
+    const index = encIndex(entries);
+    for (let end = remainingLower.indexOf("-"); ; end = remainingLower.indexOf("-", end + 1)) {
+      const hits = index.get(end === -1 ? remainingLower : remainingLower.slice(0, end));
+      if (hits) candidates.push(...hits);
+      if (end === -1) break;
     }
 
     if (candidates.length === 0) return null; // No match found

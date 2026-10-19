@@ -39,6 +39,9 @@ import {
   readdirSync,
   statSync,
   readFileSync,
+  openSync,
+  readSync,
+  closeSync,
   existsSync,
   realpathSync,
   mkdirSync,
@@ -251,8 +254,8 @@ export function migrateSessionScanCache(opts: { dryRun?: boolean } = {}): Migrat
 
 interface ScanCacheFile {
   v: 2;
-  top: Record<string, { m: number; s: number; info: TopLevelInfo }>;
-  tr: Record<string, { m: number; s: number; info: TranscriptInfo }>;
+  top: Record<string, { m: number; s: number; o?: number; f?: string; info: TopLevelInfo }>;
+  tr: Record<string, { m: number; s: number; o?: number; f?: string; info: TranscriptInfo }>;
 }
 
 let scanCache: ScanCacheFile | null = null;
@@ -336,8 +339,8 @@ function parseTopLevel(filePath: string): TopLevelInfo {
     touchedTop.add(filePath);
     return hit.info;
   }
-  const info = parseTopLevelFile(filePath, st);
-  loadScanCache().top[filePath] = { m: st.mtimeMs, s: st.size, info };
+  const { info, offset, fp } = parseTopLevelFile(filePath, st, appendedSince(filePath, hit, st.size));
+  loadScanCache().top[filePath] = { m: st.mtimeMs, s: st.size, o: offset, f: fp, info };
   touchedTop.add(filePath);
   scanCacheDirty = true;
   return info;
@@ -345,22 +348,75 @@ function parseTopLevel(filePath: string): TopLevelInfo {
 
 function parseTopLevelFile(
   filePath: string,
-  st: { size: number; mtimeMs: number }
-): TopLevelInfo {
-  let systemLines = 0;
-  try {
-    const content = readFileSync(filePath, "utf8");
-    for (const line of content.split("\n")) {
+  st: { size: number; mtimeMs: number },
+  prev?: { o?: number; f?: string; info: TopLevelInfo }
+): { info: TopLevelInfo; offset: number; fp: string } {
+  let systemLines = prev?.info.systemLines ?? 0;
+  let offset = prev?.o ?? 0;
+  let fp = prev?.f ?? "";
+  const chunk = readCompleteLines(filePath, offset, st.size);
+  if (chunk) {
+    offset += chunk.length;
+    fp = chunk.fp;
+    for (const line of chunk.text.split("\n")) {
       const t = line.trim();
       if (!t) continue;
       if (t.includes('"type":"system"') || t.includes('"type": "system"')) {
         systemLines++;
       }
     }
-  } catch {
-    /* unreadable — size and mtime are still reported, as before */
   }
-  return { systemLines, size: st.size, mtime: st.mtimeMs };
+  return { info: { systemLines, size: st.size, mtime: st.mtimeMs }, offset, fp };
+}
+
+const FP_BYTES = 64;
+
+/**
+ * The cached entry when the file only grew since it was parsed: the bytes
+ * just before the parsed offset still match the fingerprint stored with it.
+ * A rewritten file (same path, different content) fails the check and is
+ * parsed from the start.
+ */
+function appendedSince<E extends { o?: number; f?: string; s: number }>(filePath: string, hit: E | undefined, size: number): E | undefined {
+  if (!hit || hit.o === undefined || hit.f === undefined || hit.s > size) return undefined;
+  if (hit.o === 0) return hit;
+  const want = Buffer.from(hit.f, "base64");
+  let fd: number | undefined;
+  try {
+    fd = openSync(filePath, "r");
+    const got = Buffer.alloc(want.length);
+    readSync(fd, got, 0, got.length, hit.o - want.length);
+    return got.equals(want) ? hit : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * Read the complete lines of a jsonl appended after `from`. Transcripts are
+ * append-only and the live ones grow constantly, so re-reading a whole
+ * multi-megabyte file for each new line is the scan's remaining cost; callers
+ * keep the byte offset they parsed to and only parse what was appended. A
+ * trailing partial line is left for the next run. Returns null when there is
+ * nothing new or the file is unreadable (size and mtime are still reported).
+ */
+function readCompleteLines(filePath: string, from: number, size: number): { text: string; length: number; fp: string } | null {
+  if (size <= from) return null;
+  let fd: number | undefined;
+  try {
+    fd = openSync(filePath, "r");
+    const buf = Buffer.allocUnsafe(size - from);
+    const n = readSync(fd, buf, 0, buf.length, from);
+    const end = buf.subarray(0, n).lastIndexOf(0x0a) + 1;
+    if (end === 0) return null;
+    return { text: buf.toString("utf8", 0, end), length: end, fp: buf.subarray(Math.max(0, end - FP_BYTES), end).toString("base64") };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -402,8 +458,8 @@ function parseTranscript(filePath: string): TranscriptInfo {
       touchedTr.add(filePath);
       return hit.info;
     }
-    const info = parseTranscriptFile(filePath, st.mtimeMs);
-    loadScanCache().tr[filePath] = { m: st.mtimeMs, s: st.size, info };
+    const { info, offset, fp } = parseTranscriptFile(filePath, st, appendedSince(filePath, hit, st.size));
+    loadScanCache().tr[filePath] = { m: st.mtimeMs, s: st.size, o: offset, f: fp, info };
     touchedTr.add(filePath);
     scanCacheDirty = true;
     return info;
@@ -412,21 +468,26 @@ function parseTranscript(filePath: string): TranscriptInfo {
   }
 }
 
-function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
-  let userLines = 0;
-  let lastUserPrompt = "";
-  let msgCount = 0;
-  let aiTitle: string | undefined;
-  let customTitle: string | undefined;
+function parseTranscriptFile(
+  filePath: string,
+  st: { size: number; mtimeMs: number },
+  prev?: { o?: number; f?: string; info: TranscriptInfo }
+): { info: TranscriptInfo; offset: number; fp: string } {
+  const mtime = st.mtimeMs;
+  let userLines = prev?.info.userLines ?? 0;
+  let lastUserPrompt = prev?.info.lastUserPrompt ?? "";
+  let msgCount = prev?.info.msgCount ?? 0;
+  let aiTitle: string | undefined = prev?.info.aiTitle;
+  let customTitle: string | undefined = prev?.info.customTitle;
+  let offset = prev?.o ?? 0;
 
-  let content: string;
-  try {
-    content = readFileSync(filePath, "utf8");
-  } catch {
-    return { userLines: 0, lastUserPrompt: "", msgCount: 0, mtime };
+  const chunk = readCompleteLines(filePath, offset, st.size);
+  if (!chunk) {
+    return { info: { userLines, lastUserPrompt, msgCount, aiTitle, customTitle, mtime }, offset, fp: prev?.f ?? "" };
   }
+  offset += chunk.length;
 
-  for (const line of content.split("\n")) {
+  for (const line of chunk.text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
     msgCount++;
@@ -472,7 +533,7 @@ function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
     if (text) lastUserPrompt = text.slice(0, 80).replace(/\n/g, " ");
   }
 
-  return { userLines, lastUserPrompt, msgCount, aiTitle, customTitle, mtime };
+  return { info: { userLines, lastUserPrompt, msgCount, aiTitle, customTitle, mtime }, offset, fp: chunk.fp };
 }
 
 // ---------------------------------------------------------------------------

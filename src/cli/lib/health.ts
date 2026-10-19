@@ -1,5 +1,7 @@
 /** Is a provider usable right now, and if not, the plain-words reason. */
 
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { paiHomePath } from "../../config/pai-home.js";
 import { ANTHROPIC_NATIVE, type WorkersConfig } from "../../workers/config.js";
 import { budgetExceeded, budgetSkipReason, budgetWall, type BudgetReading } from "../../workers/budget.js";
 
@@ -37,5 +39,32 @@ export async function readBudget(workers: WorkersConfig, ms = 1500): Promise<Rec
     ]);
   } catch {
     return {};
+  }
+}
+
+const SNAPSHOT_MAX_AGE_MS = 6 * 3600_000;
+
+/**
+ * Last budget readings a full lookup saved, for a first paint that must not
+ * wait on provider usage endpoints. Stale-by-design: callers refresh after.
+ */
+export function readBudgetSnapshot(now = Date.now()): Record<string, BudgetReading | undefined> {
+  try {
+    const raw = JSON.parse(readFileSync(paiHomePath("budget-snapshot.json"), "utf8")) as { at?: number; map?: Record<string, BudgetReading> };
+    if (typeof raw.at === "number" && now - raw.at < SNAPSHOT_MAX_AGE_MS && raw.map) return raw.map;
+  } catch {
+    /* none yet */
+  }
+  return {};
+}
+
+export function saveBudgetSnapshot(map: Record<string, BudgetReading | undefined>, now = Date.now()): void {
+  try {
+    mkdirSync(paiHomePath(), { recursive: true });
+    const target = paiHomePath("budget-snapshot.json");
+    writeFileSync(target + ".tmp", JSON.stringify({ at: now, map }));
+    renameSync(target + ".tmp", target);
+  } catch {
+    /* the next run just has no snapshot */
   }
 }
