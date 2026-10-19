@@ -28,7 +28,9 @@ import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
+import { loadPaneRunStatuses, renderPaneRunLines } from "./pane-run.js";
 import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
+import { readAudit } from "./pane-audit.js";
 import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
@@ -156,6 +158,11 @@ export function psOutput(
     // the runner of a plan has no worker of its own: its phase is a line under the plan's workers
     const plans = renderPlanLines(loadPlanStatuses(logDir));
     if (plans.length) parts.push(plans.join("\n"));
+    const panes = renderPaneRunLines(loadPaneRunStatuses(logDir));
+    if (panes.length) parts.push(["panes", ...panes.map((l) => "  " + l)].join("\n"));
+    // the daemon's pane audit: a running process without its pane in the starting tab is shown in red
+    const bad = readAudit(logDir).filter((a) => a.mark !== "ok");
+    if (bad.length) parts.push(bad.map((a) => c("red", `${a.mark}  ${a.kind} ${a.id}  ${a.why ?? ""}`)).join("\n"));
   } catch {
     /* an extra line: never fail ps over it */
   }

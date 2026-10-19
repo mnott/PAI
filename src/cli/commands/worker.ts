@@ -27,8 +27,10 @@ import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
-import { PlanFollower } from "../../workers/plan-follow.js";
-import { followPlanLog, planLogTail } from "../../workers/plan-status.js";
+import { followPaneRun, isPaneRunId, loadPaneRunStatus } from "../../workers/pane-run.js";
+import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
+import { loadRegistry } from "../../workers/pane.js";
+import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -328,12 +330,19 @@ const psCommand: CommandDef = {
   summary: "List this session's workers, running and finished",
   description:
     "Shows the workers started from this terminal. When other sessions have live workers too, a MACHINE section lists every live worker on this computer with the session that owns it.",
-  options: [{ name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" }],
-  examples: ["pai worker ps", "pai worker ps --all"],
+  options: [
+    { name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" },
+    { name: "panes", type: "boolean", summary: "List process -> pane -> tab for everything running, checked live" },
+  ],
+  examples: ["pai worker ps", "pai worker ps --all", "pai worker ps --panes"],
   seeAlso: ["pai worker follow", "pai worker pending", "pai worker kill"],
   run: (ctx) =>
-    guard("pai worker ps --all", () => {
+    guard("pai worker ps --all", async () => {
       const dir = logDir();
+      if (flag(ctx, "panes")) {
+        out(renderPaneAudit(auditPanes(runningProcs(dir), loadRegistry(dir), await listItermTabs())));
+        return;
+      }
       const pending = pendingResults(dir, process.cwd()).length;
       if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
       const left = leftoverWorktrees(dir);
@@ -397,11 +406,15 @@ const followCommand: CommandDef = {
       const ae = ctx.opts["auto-exit"];
       const autoExit = ae === undefined || ae === false ? 0 : ae === true ? workers.pane.autoExitSecs : Number(ae);
       const target = (ctx.args.ID as string | undefined) ?? null;
+      if (target && isPaneRunId(target)) {
+        if (!flag(ctx, "live") && !process.stdout.isTTY) out(readFileSync(loadPaneRunStatus(logDir(), target)?.log ?? "", "utf8").split("\n").slice(-(num(ctx.opts.tail) ?? 40)).join("\n"));
+        else await followPaneRun(logDir(), target, (t) => void process.stdout.write(t));
+        return;
+      }
       if (target?.startsWith("plan-")) {
         if (!flag(ctx, "live") && (process.env.PAI_WORKER === "1" || !process.stdout.isTTY)) out(planLogTail(logDir(), target, num(ctx.opts.tail) ?? 40));
         else {
-          const follower = new PlanFollower(logDir(), target);
-          await followPlanLog(logDir(), target, (t) => void process.stdout.write(t), () => false, 500, () => follower.poll());
+          await followPlanLog(logDir(), target, (t) => void process.stdout.write(t), () => planRunEnded(logDir(), target));
         }
         return;
       }

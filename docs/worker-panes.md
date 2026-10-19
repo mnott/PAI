@@ -47,3 +47,27 @@ pai worker pane --close-ended --dry-run   # list what would close
 | No pane at all | Check `pai project health` in the project: the `iTerm host session` line says why. |
 
 See also: [worker-pane-footer.md](worker-pane-footer.md).
+
+## Background commands: `pai pane run`
+
+Everything a session starts that does not run in its own pane runs in a pane. A shell command Claude Code backgrounds (a test suite, a build, a sample loop) goes through one command:
+
+```
+pai pane run --label tests -- npx vitest run
+```
+
+- **Placement** is a worker pane's: a split of the starting session's own tab, never a new window or tab, never a stolen focus; an ended PAI pane of the session is reused first.
+- **The pane** shows the command's live output, then its exit code, and leaves ten seconds later. The output is also written to `<PAI home>/logs/panes/<id>.log`.
+- **The caller blocks** until the command ends, prints the last 40 lines and exits with the command's exit code, so the harness's background-task notification still arrives. SIGTERM, SIGINT or SIGHUP to the caller (TaskStop) kill the command's whole process group.
+- **Listed** in `pai worker ps` and the cockpit worker panel under "panes" (label, cwd, running time, log path) while it runs.
+- A single word is run by `sh -c`; several words are exec'd as given. Without a usable pane the command still runs, with the reason on stderr.
+
+`pai build run` and `pai build lock` do this by themselves when called from an interactive session, so a build's queue wait and output are visible; inside a worker or an enclosing `pai pane run` they run directly.
+
+### The guard
+
+The PreToolUse Bash hook (interactive sessions only; workers already have a pane) denies a Bash call with `run_in_background: true` unless the command starts with `pai pane run`, `pai worker run`, `pai plan run`, `pai build run` or `pai build lock` (leading `cd` and env assignments are skipped). The denial reads: "Background commands run in a visible pane: `pai pane run --label <what> -- <command>`." Foreground calls are unaffected. The rule lives in `src/hooks/ts/lib/background-gate.ts`.
+
+## Pane audit
+
+Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.

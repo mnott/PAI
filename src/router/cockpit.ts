@@ -21,7 +21,9 @@ import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
 import { getProfile } from "../workers/session-profile-store.js";
+import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
 import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
+import { readAudit } from "../workers/pane-audit.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
@@ -484,7 +486,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
-): { now: number; plans: ReturnType<typeof planRows>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; worktrees: string } {
+): { now: number; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; worktrees: string } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -521,7 +523,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)) };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)) };
 }
 
 /**

@@ -1,0 +1,78 @@
+/** The pane auditor: injected iTerm listing, registry and processes; nothing touches iTerm. */
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
+import type { PaneEntry } from "./pane.js";
+import type { Messenger } from "./run-events.js";
+
+const H = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
+const P1 = "AAAAAAAA-0000-4000-8000-000000000001";
+const P2 = "BBBBBBBB-0000-4000-8000-000000000002";
+const entry = (worker: string, session: string, host = H): PaneEntry => ({ session, worker, opened: "x", host });
+const tabs = (o: Record<string, string>): TabMap => new Map(Object.entries(o));
+
+describe("auditPanes", () => {
+  const procs = [{ id: "w-1", kind: "worker" as const }];
+  it("pane in the starting tab: ok", () => {
+    expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }))[0].mark).toBe("ok");
+  });
+  it("no registry entry: NO PANE", () => {
+    expect(auditPanes(procs, [], tabs({ [H]: "1:2" }))[0].mark).toBe("NO PANE");
+  });
+  it("pane gone while the process runs: NO PANE", () => {
+    expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2" }))[0]).toMatchObject({ mark: "NO PANE" });
+  });
+  it("pane in another tab or window: WRONG TAB", () => {
+    expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "9:1" }))[0].mark).toBe("WRONG TAB");
+  });
+  it("host from the process when the entry has none", () => {
+    const e: PaneEntry = { session: P1, worker: "w-1", opened: "x" };
+    expect(auditPanes([{ ...procs[0], host: `w0t0p0:${H}` }], [e], tabs({ [H]: "1:2", [P1]: "3:3" }))[0].mark).toBe("WRONG TAB");
+  });
+});
+
+describe("listItermTabs", () => {
+  it("parses session -> window:tab", async () => {
+    const m = await listItermTabs(async () => ({ stdout: `${H}\t1:2\n${P1}\t1:2\n` }));
+    expect(m.get(P1)).toBe("1:2");
+  });
+});
+
+describe("auditTick", () => {
+  let dir: string;
+  const sent: string[] = [];
+  const msg: Messenger = { toSession: async (o, t) => (sent.push(`S:${o.iterm}:${t}`), true), toPailot: async (t) => (sent.push(`P:${t}`), true) };
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-audit-"));
+    sent.length = 0;
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const run = () =>
+    auditTick(dir, msg, {
+      tabs: async () => tabs({ [H]: "1:2", [P2]: "9:1" }),
+      procs: () => [
+        { id: "w-bad", kind: "worker" },
+        { id: "plan-x", kind: "plan" },
+      ],
+      registry: () => [entry("w-bad", P2), entry("plan-x", "CCCCCCCC-0000-4000-8000-000000000003")],
+    });
+
+  it("records, marks and reports each violation once", async () => {
+    const v = await run();
+    expect(v.map((x) => x.mark)).toEqual(["WRONG TAB", "NO PANE"]);
+    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-VIOLATION.*w-bad/);
+    expect(markOf(readAudit(dir), "w-bad")).toBe("WRONG TAB");
+    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(2);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(2);
+    await run();
+    expect(sent.length).toBe(4); // not repeated
+  });
+  it("unreadable iTerm: no verdict", async () => {
+    expect(await auditTick(dir, msg, { tabs: async () => Promise.reject(new Error("x")), procs: () => [] })).toEqual([]);
+  });
+  it("renders process -> pane -> tab", async () => {
+    expect(renderPaneAudit(await run())).toMatch(/WRONG TAB\s+worker w-bad\s+pane BBBBBBBB.*tab 9:1.*host tab 1:2/);
+  });
+});

@@ -18,7 +18,6 @@ import {
   PROFILE_NAME,
   SPLIT_SCRIPT,
   WINDOW_BOUNDS_SCRIPT,
-  NEW_PLACE_SCRIPT,
   REBALANCE_SCRIPT,
   VERIFY_PANE_SCRIPT,
   WORKER_SPLIT_SCRIPT,
@@ -317,7 +316,7 @@ describe("WORKER_SPLIT_SCRIPT split choice and re-balance", () => {
   });
 
   it("adds a column once stacking would drop a pane under the minimum height", () => {
-    expect(runSplit([166, 47], [[228, 14], [228, 14], [228, 14], [228, 14]]).log).toEqual(["V w0"]);
+    expect(runSplit([166, 47], [[228, 12], [228, 12], [228, 12], [228, 12]]).log).toEqual(["V w0"]);
   });
 
   it("re-balances stacked panes of one width to equal rows", () => {
@@ -349,14 +348,13 @@ describe("split scripts never leak keystrokes", () => {
 });
 
 describe("pane scripts never steal focus", () => {
-  const all = () => [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT, NEW_PLACE_SCRIPT, REBALANCE_SCRIPT, VERIFY_PANE_SCRIPT, WINDOW_BOUNDS_SCRIPT];
+  const all = () => [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT, REBALANCE_SCRIPT, VERIFY_PANE_SCRIPT, WINDOW_BOUNDS_SCRIPT];
 
   it("restores the previously active session after a split or new tab", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
       expect(script).toMatch(/prevSess\.select\(\)/);
       expect(script.indexOf("prevSess.select()")).toBeGreaterThan(script.lastIndexOf("command: followCmd"));
     }
-    expect(NEW_PLACE_SCRIPT).toMatch(/prevTab\.select\(\)/);
   });
 
   it("never activates, raises, or changes the frontmost app", () => {

@@ -128,12 +128,12 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
 }
 
 /** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
-export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string, planPane?: string, planPart?: string): Promise<WorkerOutcome> {
+export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
   const before = await checkoutState(repo);
   const mark = { label: req.label, t0 };
   launched.add(mark);
-  const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, planPane ? { ...process.env, PAI_PLAN_PANE: planPane, ...(planPart ? { PAI_PLAN_PART: planPart } : {}) } : process.env).finally(() => launched.delete(mark));
+  const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, process.env).finally(() => launched.delete(mark));
   const st = loadStatuses(logDir)
     .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
@@ -233,15 +233,15 @@ export async function mergeBranch(repo: string, id: string, gate: string, onGate
 }
 
 /**
- * The plan's one pane for its whole life (split, else tab; never a window): its workers open none, `follow` shows
- * their live transcripts in it: `pai worker follow plan-<job>` streams the live log. A pane that cannot open is
+ * The runner's own pane for its whole life (a split of the host tab, never a window): `pai worker follow plan-<job>`
+ * streams the runner's live log and exits when the run ends. Each worker opens its own pane. A pane that cannot open is
  * logged and the run goes on; its workers' own fail-closed gate still applies.
  */
 export async function openPlanPane(logDir: string, tracker: PlanTracker, open: typeof openVerifiedPane = openVerifiedPane, host: () => Promise<{ term: string }> = resolveHostSession): Promise<boolean> {
   if (headlessAllowed()) return false;
   try {
     const term = (await host()).term;
-    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term, process.env, realPaneOps, { noWindow: true })}`);
+    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term, process.env, realPaneOps)}`);
     tracker.hasPane = true;
     return true;
   } catch (e) {
@@ -279,7 +279,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
           }, 1500)
         : undefined;
       try {
-        return await launchWorker(req, specFile, plan.repo, logDir, tracker?.hasPane ? tracker.id : undefined, req.part.id);
+        return await launchWorker(req, specFile, plan.repo, logDir);
       } finally {
         if (watch) clearInterval(watch);
       }
