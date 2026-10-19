@@ -34,7 +34,7 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
-:root[data-theme=dark] .ic-sun{display:none}:root:not([data-theme=dark]) .ic-moon{display:none}
+:root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,1fr)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.tw{overflow-x:auto}
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
@@ -413,6 +413,7 @@ function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
 $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="dark"?"light":"dark";setTheme(t);try{localStorage.setItem("pai.cockpit.theme",t)}catch(e){}};
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
+setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 tabs();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
