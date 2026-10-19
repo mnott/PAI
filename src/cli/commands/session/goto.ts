@@ -118,12 +118,14 @@ export async function cmdGoto(
 
   // ---- 4. Build argv components ----
   const name = friendlyName ?? query;
+  // the session's own name (set with /Name) is never re-sent
+  const named = !!matchedSession.persistentName && matchedSession.persistentName === name;
 
   // ---- 5. Dry-run mode ----
   if (opts.dryRun) {
     if (resumableUuid) {
       const plan = providerResumePlan(resumableUuid, projectDir);
-      const argvResume = resumeArgvText(resumableUuid, name, plan);
+      const argvResume = resumeArgvText(resumableUuid, name, plan, named);
       const argvFresh = `claude --name "${name}" "${launchPrompt(name)}"`;
       console.log(
         "\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n"
@@ -160,5 +162,5 @@ export async function cmdGoto(
   // bug. `engine: "claude"` keeps goto's fresh paths exactly what they were —
   // plain claude, no worker routing — while the resume inherits the provider
   // the transcript actually ran on.
-  launchInDir(projectDir, name, { resumableUuid, engine: "claude" });
+  launchInDir(projectDir, name, { resumableUuid, engine: "claude", named });
 }

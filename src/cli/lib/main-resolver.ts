@@ -214,7 +214,7 @@ function launchSession(
   // config (provider when routing is on), a wanted resume stays claude because
   // its transcript is claude-format. Duplicating that dance here is also how
   // probeResume ended up fixed in one copy and not the others.
-  launchInDir(projectDir, name, { resumableUuid, dryRun });
+  launchInDir(projectDir, name, { resumableUuid, dryRun, named: !!session.persistentName && session.persistentName === name });
   return true;
 }
 

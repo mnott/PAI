@@ -23,6 +23,8 @@ export interface Setup {
   /** Provider the worker classes run on. */
   workers: string;
   kind: "last" | "builtin" | "saved";
+  /** The one "local workers" row: Workers column reads "<provider> (local)". */
+  local?: true;
 }
 
 export const setupsPath = () => paiHomePath("setups.json");
@@ -93,17 +95,29 @@ export async function downLocalProviders(cfg: Cfg, check: PortCheck = httpModels
 
 const PRIORITY = ["glm", "kimi"];
 
-/** Built-in setups from what is configured and enabled. */
-export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set()): Setup[] {
+/**
+ * Built-in setups from what is configured and enabled. Local (loopback)
+ * providers answering now collapse into ONE "anthropic + local workers" row on
+ * `resolved` (resolveLocalProvider's pick; the first running one when absent),
+ * plus one row per further running provider on a different server URL.
+ */
+export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), resolved?: string): Setup[] {
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
   const out: Setup[] = [{ name: "anthropic only", orchestrator: { provider: ANTHROPIC_NATIVE }, workers: ANTHROPIC_NATIVE, kind: "builtin" }];
   const names = [...PRIORITY, ...(cfg.active && cfg.active !== "auto" && !PRIORITY.includes(cfg.active) && cfg.active !== ANTHROPIC_NATIVE ? [cfg.active] : [])].filter(enabled);
-  for (const n of names) {
+  const remote = names.filter((n) => !isLoopbackProvider(cfg.providers[n]));
+  for (const n of remote) {
     out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
   }
-  // Enabled local (loopback) providers: workers only. A local orchestrator is not a default.
-  for (const [n, p] of Object.entries(cfg.providers)) {
-    if (p.enabled && !names.includes(n) && isLoopbackProvider(p) && !down.has(n)) {
+  // Running local (loopback) providers: workers only. A local orchestrator is not a default.
+  const up = Object.entries(cfg.providers).filter(([n, p]) => p.enabled && isLoopbackProvider(p) && !down.has(n));
+  if (up.length) {
+    const pick = up.find(([n]) => n === resolved) ?? up[0];
+    out.push({ name: "anthropic + local workers", orchestrator: { provider: ANTHROPIC_NATIVE }, workers: pick[0], kind: "builtin", local: true });
+    const urls = new Set([pick[1].baseUrl]);
+    for (const [n, p] of up) {
+      if (urls.has(p.baseUrl)) continue;
+      urls.add(p.baseUrl);
       out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
     }
   }
@@ -132,8 +146,8 @@ export function saveSetup(setup: Omit<Setup, "kind">, path = setupsPath()): void
 }
 
 /** "Last time" first (kept even if its provider is down), then saved, then built-in; setups on a down local provider are dropped; duplicates of Last time kept (they have names). */
-export function allSetups(cfg: Cfg, last: Setup | null, saved: Setup[], down: ReadonlySet<string> = new Set()): Setup[] {
-  return [...(last ? [last] : []), ...saved.filter((s) => !down.has(s.workers)), ...builtinSetups(cfg, down)];
+export function allSetups(cfg: Cfg, last: Setup | null, saved: Setup[], down: ReadonlySet<string> = new Set(), resolved?: string): Setup[] {
+  return [...(last ? [last] : []), ...saved.filter((s) => !down.has(s.workers)), ...builtinSetups(cfg, down, resolved)];
 }
 
 /** Find a setup by exact name (case-insensitive), else unique prefix. */

@@ -31,7 +31,8 @@ describe("local setups need a running server", () => {
   it("lists only up local providers", async () => {
     const down = await downLocalProviders(cfg, check);
     const names = allSetups(cfg, null, [], down).map((s) => s.name);
-    expect(names).toContain("anthropic + up workers");
+    expect(names).toContain("anthropic + local workers");
+    expect(allSetups(cfg, null, [], down, "up").find((s) => s.local)?.workers).toBe("up");
     expect(names).not.toContain("anthropic + dead workers");
   });
 
@@ -44,7 +45,7 @@ describe("local setups need a running server", () => {
   it("--with a down local setup says so; an up one resolves", async () => {
     const down = await downLocalProviders(cfg, check);
     await expect(resolveSetup(cfg, null, "anthropic + dead workers", down)).rejects.toThrow(/local provider dead is not running; start it with/);
-    await expect(resolveSetup(cfg, null, "anthropic + up workers", down)).resolves.toMatchObject({ workers: "up" });
+    await expect(resolveSetup(cfg, null, "anthropic + local workers", down)).resolves.toMatchObject({ workers: "up" });
   });
 });
 

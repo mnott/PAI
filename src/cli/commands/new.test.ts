@@ -23,8 +23,8 @@ const cfg = {
 
 describe("local worker setups", () => {
   const names = builtinSetups(cfg).map((s) => s.name);
-  it("adds 'anthropic + X workers' for an enabled loopback provider only", () => {
-    expect(names).toContain("anthropic + flashnext workers");
+  it("adds one 'anthropic + local workers' row for the running loopback provider only", () => {
+    expect(names).toContain("anthropic + local workers");
     expect(names).not.toContain("anthropic + local-off workers");
     expect(names).not.toContain("anthropic + remote workers");
   });
@@ -33,7 +33,7 @@ describe("local worker setups", () => {
     expect(names).toContain("glm only");
   });
   it("orchestrator is anthropic, workers the local provider", () => {
-    const s = builtinSetups(cfg).find((x) => x.name === "anthropic + flashnext workers")!;
+    const s = builtinSetups(cfg).find((x) => x.name === "anthropic + local workers")!;
     expect(s.orchestrator.provider).toBe("anthropic");
     expect(s.workers).toBe("flashnext");
   });
@@ -99,7 +99,7 @@ describe("pai new", () => {
   it("a local setup applies the session-scoped worker provider and leaves the global one alone", async () => {
     const written: string[] = [];
     const term = { input: {} as never, output: { write: (s: string) => (written.push(s), true) } as never, isTTY: false, st: makeStyle(false) };
-    const setup = builtinSetups(cfg).find((s) => s.name === "anthropic + flashnext workers")!;
+    const setup = builtinSetups(cfg).find((s) => s.name === "anthropic + local workers")!;
     const code = await startSession({ workers: { ...cfg, logDir: join(dir, "logs") } as never, setup, name: "app", cwd: dir, dryRun: true, term });
     const text = written.join("");
     expect(code).toBe(0);

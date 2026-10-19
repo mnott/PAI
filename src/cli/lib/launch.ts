@@ -638,8 +638,8 @@ export function resumeOfferBlock(
 
 /** Display form of the resume argv — shared by the dry-run paths so they
  *  cannot drift from what launchInDir actually spawns. */
-export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null): string {
-  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}" "${launchPrompt(name)}"`;
+export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null, named = false): string {
+  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}"${named ? "" : ` "${launchPrompt(name)}"`}`;
 }
 
 export interface LaunchOpts {
@@ -656,6 +656,8 @@ export interface LaunchOpts {
    *  that builds a provider's env and base URL. */
   provider?: string;
   model?: string;
+  /** The session already carries `name` (set with /Name): do not send /Name again. */
+  named?: boolean;
 }
 
 /** argv for `pai launch` carrying this launch's claude arguments. */
@@ -750,7 +752,9 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     return;
   }
 
-  const promptArg = launchPrompt(name);
+  // Only a resumed session can already carry its name; a fresh one always gets /Name.
+  const promptArgs = opts.named && opts.resumableUuid && !opts.forceFresh ? [] : [launchPrompt(name)];
+  const freshPromptArgs = [launchPrompt(name)];
 
   // A broken workers config must degrade to claude, never crash the picker.
   let workers: Pick<WorkersConfig, "enabled" | "active" | "providers" | "caveman"> = {
@@ -769,7 +773,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     const argv = providerLaunchArgv(
       opts.provider,
       opts.model,
-      [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, promptArg],
+      [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, ...promptArgs],
       opts.dryRun
     );
     const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: process.env });
@@ -806,7 +810,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       if (plan) {
         console.log(`  route:    ${plan.provider} (${plan.model})`);
       }
-      console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan))}`);
+      console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan, promptArgs.length === 0))}`);
       console.log(`  fallback: claude --name "${name}" "${launchPrompt(name)}"`);
     } else {
       console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
@@ -835,7 +839,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   }
 
   const fresh = () => {
-    const result = spawnSync("claude", ["--name", name, promptArg], {
+    const result = spawnSync("claude", ["--name", name, ...freshPromptArgs], {
       cwd,
       stdio: "inherit",
       env: process.env,
@@ -861,10 +865,10 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       const result = plan
         ? spawnSync(
             plan.cmd[0],
-            [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, promptArg],
+            [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs],
             { cwd, stdio: "inherit", env: plan.env }
           )
-        : spawnSync("claude", ["--resume", opts.resumableUuid!, "--name", name, promptArg], {
+        : spawnSync("claude", ["--resume", opts.resumableUuid!, "--name", name, ...promptArgs], {
             cwd,
             stdio: "inherit",
             env: process.env,

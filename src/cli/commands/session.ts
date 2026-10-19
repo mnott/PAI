@@ -81,6 +81,8 @@ export interface SessionRow {
   dir?: string;
   /** Can the provider it last ran on be used right now? */
   health: Health;
+  /** The session already carries this name (set with /Name), so starting it must not send /Name. */
+  named: boolean;
 }
 
 /** Last user text on one line, without the <tag> wrappers Claude Code adds to notifications. */
@@ -130,6 +132,7 @@ export async function collectView(opts: { project?: string; all?: boolean; worke
         status: liveIds.has(s.uuid) ? "live" : s.sessionStatus,
         message: oneLine(s.lastUserPrompt),
         dir: sessionDir(s),
+        named: !!s.persistentName && s.persistentName === nameOf(s),
         health: origin && workers ? providerHealth(origin.provider, workers, budget) : ({ state: "ok", reason: "ok" } as Health),
       };
     });

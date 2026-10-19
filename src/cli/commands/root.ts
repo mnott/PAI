@@ -11,6 +11,8 @@ import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
 import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
+import { resolveLocalProvider } from "../../workers/local-provider.js";
+import { workersLogDir } from "../../workers/paths.js";
 import { useProvider } from "../../workers/providers.js";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderTable, suggest, type Style } from "../help.js";
@@ -19,7 +21,7 @@ import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
-import { allSetups, downLocalProviders, findSetup, loadSaved, orchestratorLabel, shortModel, workersLabel, type Setup } from "../lib/setups.js";
+import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
@@ -108,16 +110,31 @@ export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "acti
   return { name: "Last time", orchestrator: orch, workers, kind: "last" };
 }
 
-export function launchScreen(row: SessionRow, last: Setup, cfg: Parameters<typeof workersLabel>[0], st: Style): string[] {
+/** The launch screen's rows, top to bottom; `sel` indexes them. */
+export type LaunchChoice = "continue" | "setup" | "fresh";
+const LAUNCH_CHOICES: LaunchChoice[] = ["continue", "setup", "fresh"];
+
+/** Pure: one keypress on the launch screen -> the marker moves, or a choice is made. */
+export function launchKey(sel: number, str: string | undefined, key: { name?: string }): { sel: number; choice?: LaunchChoice } | null {
+  if (key.name === "up" || str === "k") return { sel: Math.max(0, sel - 1) };
+  if (key.name === "down" || str === "j") return { sel: Math.min(LAUNCH_CHOICES.length - 1, sel + 1) };
+  if (key.name === "return" || key.name === "enter") return { sel, choice: LAUNCH_CHOICES[sel] };
+  if (str === "s") return { sel: 1, choice: "setup" };
+  if (str === "n") return { sel: 2, choice: "fresh" };
+  return null;
+}
+
+export function launchScreen(row: SessionRow, last: Setup, cfg: Parameters<typeof workersLabel>[0], st: Style, sel = 0): string[] {
+  const mark = (i: number) => (i === sel ? st.cyan(">") : " ");
   const state = row.health.state;
   const ran = `${lastOnLabel(st, row)} with workers on ${workersLabel(cfg, last.workers).replace(/ \(.*\)$/, "")}`;
   return [
     `${st.dim("Session      ")} "${row.name}"   ${st.dim("last active " + ago(row.lastActiveMs))}`,
     `${st.dim("Last message ")} "${truncate(row.message || "—", 60)}"`,
     `${st.dim("Last ran on  ")} ${ran}${state === "ok" ? "" : "  " + healthText(st, row.health)}`,
-    `${st.cyan(">")} ${st.bold("Enter")}  Continue exactly like last time`,
-    `  ${st.bold("s")}      Choose a different setup`,
-    `  ${st.bold("n")}      Start fresh (same name, new conversation)`,
+    `${mark(0)} ${st.bold("Enter")}  Continue exactly like last time`,
+    `${mark(1)} ${st.bold("s")}      Choose a different setup`,
+    `${mark(2)} ${st.bold("n")}      Start fresh (same name, new conversation)`,
   ];
 }
 
@@ -146,7 +163,7 @@ export function setupsTable(
       st.dim(String(setups.indexOf(s) + 1)),
       st.bold(s.name),
       orchestratorLabel(cfg, s.orchestrator),
-      workersLabel(cfg, s.workers),
+      s.local ? `${s.workers} (local)` : workersLabel(cfg, s.workers),
       healthText(st, status(s)),
     ],
     searchText: (s: Setup) => `${s.name} ${s.orchestrator.provider} ${s.workers}`,
@@ -212,6 +229,7 @@ export async function startSession(a: StartArgs): Promise<number> {
       cwd,
       resume: resume?.uuid,
       name,
+      named: !!resume?.named,
     });
   } catch (e) {
     if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {
@@ -243,22 +261,33 @@ export async function startSession(a: StartArgs): Promise<number> {
   return execHarness(harness, workers);
 }
 
+/** What the setup list needs about local servers: the ones not answering, and the one local workers run on. */
+export async function localState(workers: WorkersConfig, check: PortCheck = httpModelsCheck): Promise<{ down: Set<string>; resolved?: string }> {
+  const down = await downLocalProviders(workers, check);
+  try {
+    return { down, resolved: (await resolveLocalProvider(workers, workersLogDir(workers), { check })).name };
+  } catch {
+    return { down };
+  }
+}
+
 /** Setup lookup for `--with`: a setup on a local provider that is not running gets a clear error. */
 export async function resolveSetup(workers: WorkersConfig, last: Setup | null, query: string, down?: ReadonlySet<string>): Promise<Setup> {
-  const d = down ?? (await downLocalProviders(workers));
+  const ls = down ? { down, resolved: undefined } : await localState(workers);
+  const d = ls.down;
   const saved = loadSaved();
-  const setup = findSetup(allSetups(workers, last, saved, d), query);
+  const setup = findSetup(allSetups(workers, last, saved, d, ls.resolved), query);
   if (setup) return setup;
   const hidden = findSetup(allSetups(workers, last, saved), query);
   if (hidden && d.has(hidden.workers)) {
     throw new CliError(`local provider ${hidden.workers} is not running; start it with pai worker local`, "pai setups");
   }
-  throw unknownSetup(query, allSetups(workers, last, saved, d));
+  throw unknownSetup(query, allSetups(workers, last, saved, d, ls.resolved));
 }
 
 async function chooseSetup(term: Term, workers: WorkersConfig, last: Setup, budget: Parameters<typeof providerHealth>[2]): Promise<Setup | null> {
-  const down = await downLocalProviders(workers);
-  const setups = allSetups(workers, last, loadSaved(), down);
+  const { down, resolved } = await localState(workers);
+  const setups = allSetups(workers, last, loadSaved(), down, resolved);
   const o = setupsTable(setups, workers, budget, term.st, undefined, down);
   return runPicker({ ...o, title: "Choose a setup" }, term.st, term.input, term.output);
 }
@@ -281,24 +310,38 @@ async function openRow(row: SessionRow, workers: WorkersConfig, withName: string
     if (dryRun) return go(last, false);
     throw new CliError(`"${row.name}" needs a terminal to choose how to start`, `pai ${JSON.stringify(row.name)} --with "Last time"`);
   }
+  let sel = 0;
+  let drawn = 0; // lines of the screen still on display, erased when the marker moves
   for (;;) {
-    for (const l of launchScreen(row, last, workers, st)) out(l);
+    const lines = launchScreen(row, last, workers, st, sel);
+    if (drawn) term.output.write(`\u001b[${drawn}A\r\u001b[J`);
+    for (const l of lines) out(l);
+    drawn = lines.length;
     const k = await readOneKey(term.input);
+    if (!k) {
+      out("");
+      return CANCELLED;
+    }
+    const r = launchKey(sel, k.str, k.key);
+    if (r && !r.choice) {
+      sel = r.sel;
+      continue;
+    }
     out("");
-    if (!k) return CANCELLED;
-    if (k.key.name === "return" || k.key.name === "enter") {
+    drawn = 0;
+    if (r?.choice === "continue") {
       if (row.health.state !== "ok") {
         out(`${healthText(st, row.health)}. Press ${st.bold("s")} to choose a setup deliberately.`);
         continue;
       }
       return go(last, false);
     }
-    if (k.str === "n") return go(last, true);
-    if (k.str === "s") {
+    if (r?.choice === "fresh") return go(last, true);
+    if (r?.choice === "setup") {
       const chosen = await chooseSetup(term, workers, last, budget);
       return chosen ? go(chosen, false) : CANCELLED;
     }
-    out(st.dim("Press Enter, s or n (Esc to quit)."));
+    out(st.dim("Press Enter, s or n, or move with Up/Down (Esc to quit)."));
   }
 }
 
