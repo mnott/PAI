@@ -11,6 +11,7 @@
  * Denies the "R" tool call in workers. Also maps parameter aliases (path → file_path, cmd → command, regex → pattern) and answers invented tool names (Git) with a directive.
  */
 
+import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ function logRepair(tail: string): void {
     mkdirSync(dir, { recursive: true });
     appendFileSync(
       join(dir, "tool-repair.log"),
-      `${new Date().toISOString()}\tworker=${process.env.PAI_WORKER_ID ?? "-"}\t${tail}\n`,
+      `${new Date().toISOString()}\tworker=${currentWorkerId(process.env, dir) ?? "-"}\t${tail}\n`,
     );
   } catch {
     // logging must never block the decision

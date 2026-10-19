@@ -17,6 +17,7 @@
  * based on your threat model and environment.
  */
 
+import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
@@ -115,7 +116,7 @@ function privateClone(cwd: string): boolean {
   } catch {
     // unresolvable: isSharedCheckout fails closed
   }
-  return !isSharedCheckout({ cwd, selfId: process.env.PAI_WORKER_ID, logDir });
+  return !isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir });
 }
 
 function resolveWorktreesRoot(): string | null {

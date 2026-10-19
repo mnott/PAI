@@ -209,6 +209,7 @@ export async function buildLaunchPlan(
   // (scope.ts's parent-chain lookup). This IS a new session, not a worker.
   delete env.PAI_WORKER;
   delete env.PAI_WORKER_ID;
+  delete env.PAI_POOL_SLOT;
   // the session's provider, read by worker routing (routing.ts resolveTarget)
   env[SESSION_PROVIDER_ENV] = providerName;
   // One rule for every spawn: pinnedSettingsArgs decides the route (provider
