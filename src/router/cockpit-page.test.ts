@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COCKPIT_HTML } from "./cockpit-page.js";
+import { COCKPIT_FAVICON_SVG, COCKPIT_HTML } from "./cockpit-page.js";
 
 const stripTags = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "");
 
@@ -116,6 +116,62 @@ describe("cockpit system tiles: unused metrics", () => {
     const html = render([{ t: 1, n: 1 }], {});
     expect(html).toContain("<span>ANE load</span>");
     expect(html).not.toContain("hidden:");
+  });
+});
+
+describe("cockpit favicon and dark mode", () => {
+  it("inline SVG favicon: a data URI right after the title, decoding to the 64x64 fan-out icon", () => {
+    const link = COCKPIT_HTML.match(/<link rel="icon" type="image\/svg\+xml" href="(data:image\/svg\+xml,[^"]+)">/)![1];
+    const svg = decodeURIComponent(link.slice("data:image/svg+xml,".length));
+    expect(svg).toMatch(/^<svg[^>]*viewBox="0 0 64 64"/);
+    expect(svg).toContain('rx="14"');
+    expect(svg).toContain('fill="#3b6fe0"');
+    expect(svg).toContain('stroke="#fff"');
+    expect(svg).toContain('stroke-width="5"');
+    expect(svg).toContain("stroke-linecap=\"round\"");
+    expect(svg.match(/<circle/g)!.length).toBe(3);
+    expect(svg).toBe(COCKPIT_FAVICON_SVG);
+    // no raw characters that would break the URI in Safari/Chrome/Firefox
+    for (const ch of ['"', "<", ">", "#", " ", "'"]) expect(link).not.toContain(ch);
+    expect(COCKPIT_HTML).toMatch(/<title>PAI router cockpit<\/title>\n<link rel="icon"/);
+    expect(COCKPIT_HTML).toContain('<meta name="theme-color" content="#3b6fe0">');
+  });
+
+  it("the head script picks the theme before first paint: saved choice, else the system's", () => {
+    const head = COCKPIT_HTML.slice(0, COCKPIT_HTML.indexOf("</head>"));
+    const script = head.match(/<script>[\s\S]*?<\/script>/)![0];
+    expect(script).toContain('localStorage.getItem("pai.cockpit.theme")');
+    expect(script).toContain('matchMedia("(prefers-color-scheme: dark)")');
+    expect(script).toContain("document.documentElement.dataset.theme");
+    // before the stylesheet: the theme is set before the first paint
+    expect(head.indexOf("<script>")).toBeLessThan(head.indexOf("<style>"));
+  });
+
+  it("a round icon button in the header flips the theme; only a click is saved", () => {
+    expect(COCKPIT_HTML).toContain('<button id="theme" type="button" title="Dark mode" aria-label="Dark mode">');
+    const header = COCKPIT_HTML.match(/<header>[\s\S]*?<\/header>/)![0];
+    expect(header).toContain('id="theme"');
+    expect(header.indexOf('id="theme"')).toBeGreaterThan(header.indexOf('id="stamp"'));
+    expect(header).toContain('viewBox="0 0 24 24"');
+    expect(header).toContain('stroke="currentColor"');
+    expect(header).toContain('width="16"');
+    expect(header).toContain('class="ic-moon"');
+    expect(header).toContain('class="ic-sun"');
+    const js = COCKPIT_HTML.match(/\$\("theme"\)\.onclick=[\s\S]*?\}\);/)![0];
+    expect(js).toContain('localStorage.setItem("pai.cockpit.theme"');
+    expect(js).toContain('document.documentElement.dataset.theme==="dark"?"light":"dark"');
+    // while nothing is saved, system changes are followed live
+    expect(COCKPIT_HTML).toContain('matchMedia("(prefers-color-scheme: dark)").addEventListener("change"');
+    expect(COCKPIT_HTML).toMatch(/if\(!s\)setTheme\(e\.matches\?"dark":"light"\)/);
+    // the button's title/aria-label name the mode it switches to
+    expect(COCKPIT_HTML).toContain('b.title=b.getAttribute("aria-label")=t==="dark"?"Light mode":"Dark mode"');
+  });
+
+  it("the dark palette lives under [data-theme=dark], not a media query", () => {
+    expect(COCKPIT_HTML).toContain(":root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}");
+    expect(COCKPIT_HTML).not.toMatch(/@media\(prefers-color-scheme:dark\)/);
+    expect(COCKPIT_HTML).toContain(":root[data-theme=dark] .ic-sun{display:none}");
+    expect(COCKPIT_HTML).toContain(":root:not([data-theme=dark]) .ic-moon{display:none}");
   });
 });
 
