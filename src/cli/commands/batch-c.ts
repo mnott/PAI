@@ -1,6 +1,7 @@
 /** Projects, tasks, config and infrastructure commands, by the group of `pai more` they are listed under. */
 
 import type { CommandDef, GroupId } from "../define.js";
+import { buildCommand } from "./build.js";
 import { configCommand } from "./config.js";
 import { daemonCommand } from "./daemon.js";
 import { dbCommand } from "./db.js";
@@ -16,7 +17,7 @@ import { taskAliasCommand, taskCommand } from "./task.js";
 import { topicCommand } from "./topic.js";
 
 export const BATCH_C: Partial<Record<GroupId, CommandDef[]>> = {
-  workers: [planCommand, queueCommand],
+  workers: [planCommand, queueCommand, buildCommand],
   memory: [projectCommand, projectAliasCommand, registryCommand, taskCommand, taskAliasCommand, issueCommand, identityCommand, topicCommand],
   daemon: [daemonCommand, configCommand, mcpCommand, notifyCommand, dbCommand],
 };
