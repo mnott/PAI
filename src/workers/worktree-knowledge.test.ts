@@ -87,6 +87,23 @@ describe("worktree knowledge", () => {
     expect(readFileSync(join(repo, "Notes", "tier.md"), "utf8")).toBe("knowledge\n");
   });
 
+
+  it("discard archives branch and detached HEAD when HEAD is not a descendant", () => {
+    const { repo, logDir } = setup("detached");
+    const info = worker(logDir, repo, "k5");
+    writeFileSync(join(info.dir, "b.txt"), "b\n");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "on branch"]);
+    const branchTip = git(info.dir, ["rev-parse", "HEAD"]);
+    git(info.dir, ["checkout", "-q", "--detach", "main"]);
+    git(info.dir, ["commit", "-q", "--allow-empty", "-m", "elsewhere"]);
+    const headTip = git(info.dir, ["rev-parse", "HEAD"]);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    discardWorker(logDir, "k5");
+    expect(existsSync(info.dir)).toBe(false);
+    expect(git(repo, ["rev-parse", "refs/pai-archive/k5"])).toBe(headTip);
+    expect(git(repo, ["rev-parse", "refs/pai-archive/k5-branch"])).toBe(branchTip);
+  });
   it("keeps the worktree when salvage is impossible", () => {
     const { repo, logDir } = setup("fail");
     const info = worker(logDir, repo, "k4");
