@@ -19,6 +19,7 @@ import { NtfyProvider } from "./providers/ntfy.js";
 import { WhatsAppProvider } from "./providers/whatsapp.js";
 import { MacOsProvider } from "./providers/macos.js";
 import { CliProvider } from "./providers/cli.js";
+import { isTestRunner } from "../config/test-isolation.js";
 
 // ---------------------------------------------------------------------------
 // Provider registry (singletons — stateless, safe to reuse)
@@ -31,6 +32,19 @@ const PROVIDERS: Record<ChannelId, NotificationProvider> = {
   voice:     new WhatsAppProvider(), // Voice uses WhatsApp TTS; handled in WhatsAppProvider
   cli:       new CliProvider(),
 };
+
+/**
+ * Under a test runner the real providers are never called: routeNotification
+ * records the call here and reports nothing attempted — unless the test
+ * injected fake providers via setTestProviders().
+ */
+export const recordedNotifications: Array<{ payload: NotificationPayload; config: NotificationConfig }> = [];
+let injectedProviders: Partial<Record<ChannelId, NotificationProvider>> | null = null;
+
+/** Test hook: inject fake senders (pass null to remove). */
+export function setTestProviders(p: Partial<Record<ChannelId, NotificationProvider>> | null): void {
+  injectedProviders = p;
+}
 
 // ---------------------------------------------------------------------------
 // Channel resolution
@@ -103,6 +117,11 @@ export async function routeNotification(
   payload: NotificationPayload,
   config: NotificationConfig
 ): Promise<SendResult> {
+  if (isTestRunner() && !injectedProviders) {
+    recordedNotifications.push({ payload, config });
+    return { channelsAttempted: [], channelsSucceeded: [], channelsFailed: [], mode: config.mode };
+  }
+
   const channels = resolveChannels(config, payload.event);
 
   if (channels.length === 0) {
@@ -116,7 +135,7 @@ export async function routeNotification(
 
   const results = await Promise.allSettled(
     channels.map(async (ch) => {
-      const provider = PROVIDERS[ch];
+      const provider = injectedProviders?.[ch] ?? PROVIDERS[ch];
       const ok = await provider.send(payload, config);
       if (!ok) {
         process.stderr.write(

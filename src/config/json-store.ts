@@ -37,6 +37,7 @@ import {
   chmodSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { assertTestWriteAllowed } from "./test-isolation.js";
 
 /**
  * Read a JSON file, distinguishing "absent" from "damaged".
@@ -104,6 +105,7 @@ export function writeJsonAtomic(
   data: Record<string, unknown>,
   opts: { backup?: boolean; label?: string } = {}
 ): void {
+  assertTestWriteAllowed(path);
   const { backup = true, label = path } = opts;
   if (schemaDumpHits(data) >= 3) {
     throw new Error(
