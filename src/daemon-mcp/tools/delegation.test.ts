@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,8 +13,7 @@ import {
 
 let repo: string;
 let deps: DelegationDeps;
-const startPlan = vi.fn();
-const startQueue = vi.fn();
+const detach = vi.fn();
 const accept = vi.fn();
 
 const text = (r: { content: Array<{ text: string }> }) => r.content[0].text;
@@ -37,18 +36,16 @@ beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), "deleg-"));
   process.env.PAI_HOME = join(repo, "home");
   mkdirSync(join(repo, "home"), { recursive: true });
-  startPlan.mockReset().mockResolvedValue({});
-  startQueue.mockReset().mockResolvedValue({});
+  detach.mockReset().mockReturnValue({ id: "run-1", pid: 1 });
   accept.mockReset();
   deps = {
     resolveProject: async () => repo,
     provider: () => ({ name: "local", cap: 2 }),
     dirtyPaths: async () => [],
-    startPlan,
-    startQueue,
+    detach,
     accept,
     branchDiff: async () => "diff",
-    session: () => "sess-1",
+    origin: () => ({ name: "sess-1" }),
     now: () => Date.now(),
   };
 });
@@ -80,16 +77,19 @@ describe("plan_run / plan_status / plan_amend", () => {
     expect(r.isError).toBe(true);
     expect(text(r)).toContain("save it first");
   });
-  it("starts in the background, records the session, refuses a double start", async () => {
+  it("hands the run to the detached runner with the calling session", async () => {
     await planSave({ project: "p", name: "job2", plan }, deps);
-    let release!: () => void;
-    startPlan.mockReturnValue(new Promise<void>((res) => (release = res)));
     const r = await planRun({ project: "p", name: "job2", escalate: true }, deps);
     expect(text(r)).toContain("started in the background: 2 of 2 parts");
-    expect(startPlan.mock.calls[0][1]).toMatchObject({ parallel: 2, escalate: true });
-    expect(readFileSync(join(repo, ".pai/plans/job2/plan.yaml.session"), "utf8")).toBe("sess-1\n");
-    expect(text(await planRun({ project: "p", name: "job2" }, deps))).toContain("already running");
-    release();
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(detach.mock.calls[0][0]).toMatchObject({
+      kind: "plan",
+      label: "job2",
+      positional: [join(repo, ".pai/plans/job2/plan.yaml")],
+      opts: { parallel: 2, escalate: "sonnet" },
+      origin: { name: "sess-1" },
+    });
+    expect(existsSync(join(repo, ".pai/plans/job2/plan.yaml.session"))).toBe(false);
   });
   it("refuses a dirty checkout", async () => {
     await planSave({ project: "p", name: "job3", plan }, deps);
@@ -130,7 +130,7 @@ describe("queue_*", () => {
     await queueAdd({ project: "p", sentence: "one" }, deps);
     const r = await queueRun({ project: "p" }, deps);
     expect(text(r)).toContain("Started 1 item (q1)");
-    expect(startQueue).toHaveBeenCalled();
+    expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { parallel: 2 }, cwd: repo, origin: { name: "sess-1" } });
   });
   it("review lists ready items in words; reject/again/accept act on them", async () => {
     await queueAdd({ project: "p", sentence: "one" }, deps);

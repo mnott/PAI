@@ -3,7 +3,8 @@
  * and the argv a detached run is restarted with.
  */
 
-import { aibrokerMessenger, markRunDone, originFromEnv, type Messenger, type RunOrigin } from "./run-events.js";
+import { aibrokerMessenger, detachRun, markRunDone, originFromEnv, type DetachDeps, type Messenger, type RunOrigin, type RunRecord } from "./run-events.js";
+import { pai } from "./plan-deps.js";
 
 /** The origin worth reporting to: none when the caller is a bare shell with no session. */
 export function reportOrigin(env: NodeJS.ProcessEnv = process.env): RunOrigin | null {
@@ -29,4 +30,19 @@ export function detachedArgv(group: "plan" | "queue", positional: string[], opts
     if (v !== true) argv.push(String(v));
   }
   return argv;
+}
+
+export interface DetachRequest {
+  kind: "plan" | "queue";
+  label: string;
+  /** Positional args of the `run` command (the plan path for a plan). */
+  positional: string[];
+  opts: Record<string, unknown>;
+  cwd: string;
+  origin: RunOrigin | null;
+}
+
+/** The one place a plan/queue run is handed to a detached process; the CLI --detach and the MCP tools both call it. */
+export function startDetached(logDir: string, req: DetachRequest, deps?: DetachDeps): RunRecord {
+  return detachRun(logDir, req.kind, req.label, pai(), detachedArgv(req.kind, req.positional, req.opts), req.cwd, req.origin ?? {}, deps);
 }

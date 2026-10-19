@@ -7,8 +7,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pai } from "../../workers/plan-deps.js";
-import { detachRun, QueueReporter } from "../../workers/run-events.js";
-import { detachedArgv, finishDetached, reportOrigin, runMessenger } from "../../workers/run-report-wiring.js";
+import { QueueReporter } from "../../workers/run-events.js";
+import { finishDetached, reportOrigin, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -104,7 +104,7 @@ const runCmd: CommandDef = {
     const logDir = workersLogDir(readWorkersSection().workers);
     const origin = reportOrigin();
     if (ctx.opts.detach === true) {
-      const rec = detachRun(logDir, "queue", basename(repo), pai(), detachedArgv("queue", [], ctx.opts), repo, origin ?? {});
+      const rec = startDetached(logDir, { kind: "queue", label: basename(repo), positional: [], opts: ctx.opts, cwd: repo, origin });
       out(`detached: ${rec.id} (pid ${rec.pid}); output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);
       return 0;
     }

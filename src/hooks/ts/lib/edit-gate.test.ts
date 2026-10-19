@@ -138,10 +138,14 @@ describe("decideEditGate", () => {
   });
 
   it("blocks a code path inside a git work tree with the delegation message", () => {
-    const out = decideEditGate(ctx({}));
+    const out = decideEditGate(ctx({ filePath: "/repo/src/app.ts" }));
     expect(out.decision).toBe("block");
     const reason = (out as { reason: string }).reason;
-    expect(reason).toContain("Code changes are delegated. You decide the size");
+    expect(reason).toContain("Code changes are delegated");
+    expect(reason).toContain("You decide the size");
+    expect(reason).toContain("standing policy for the whole session");
+    expect(reason).toContain("/repo/src/app.ts");
+    expect(reason).toContain("any other code file is denied the same way");
     for (const tool of ["queue_add", "queue_run", "plan_save", "plan_run"]) expect(reason).toContain(tool);
     expect(reason).toContain("never ask the user to run commands");
     expect(reason).not.toContain("pai worker run");
