@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -372,5 +372,29 @@ describe("no-progress rule (action key)", () => {
   });
   it("waits stay exempt", () => {
     expect(feed(Array.from({ length: 8 }, () => bash("pai worker wait-on 123 --log /tmp/x.log")))).toEqual([]);
+  });
+  it("polling helper returning exit 3 still running is a wait, not a repeat", () => {
+    const cmd = "tools/build.sh --wait 100 -only-testing:AppTests/Foo";
+    let s: LoopState = emptyLoopState();
+    for (let i = 0; i < 12; i++) {
+      const r = stepLoopGuard(s, "Bash", cmd, null, 1000 + i * 100_000);
+      expect(r.deny).toBe(false);
+      s = recordLoopResult(s, "Bash", cmd, "Exit code 3\nstill running, call again", 1000 + i * 100_000);
+    }
+    // finished: back to normal accounting
+    s = recordLoopResult(stepLoopGuard(s, "Bash", cmd).state, "Bash", cmd, "done");
+    expect(s.waits).toEqual({});
+  });
+  it("polling is bounded by the wait cap", () => {
+    const cmd = "tools/build.sh --wait 100";
+    let s: LoopState = emptyLoopState();
+    s = recordLoopResult(stepLoopGuard(s, "Bash", cmd, null, 0).state, "Bash", cmd, { stdout: "still running", exitCode: 3 }, 0);
+    const r = stepLoopGuard(s, "Bash", cmd, null, WAIT_CAP_MS + 1);
+    expect(r.deny).toBe(true);
+    expect(r.reason).toContain("45 minutes");
+  });
+  it("exit 1 with the same output is still a repeat", () => {
+    const cmd = "tools/build.sh --wait 100";
+    expect(feed(Array.from({ length: 7 }, () => bash(cmd)), () => "Exit code 1\nstill running? no: build failed")).toEqual([4, 5, 6]);
   });
 });
