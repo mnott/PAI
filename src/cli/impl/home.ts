@@ -17,12 +17,12 @@ export function homePathCmd(): number {
 export function runningThings(): string[] {
   const out: string[] = [];
   const d = resolveDaemonPid();
-  if (d) out.push(`PAI daemon (pid ${d}) — run \`pai daemon stop\``);
+  if (d) out.push(`PAI daemon (pid ${d}) — run \`pai daemon uninstall\` (stops the service; \`pai daemon install\` after the move)`);
   const r = routerRunningPid();
   if (r) out.push(`PAI router (pid ${r}) — run \`pai router stop\``);
   for (const s of loadStatuses(paiHomePath("logs", "workers"))) {
     if (s.pid === process.pid || s.pid === process.ppid) continue;
-    if (isLive(s)) out.push(`worker ${s.id} (pid ${s.pid}) — wait for it or \`pai worker stop ${s.id}\``);
+    if (isLive(s)) out.push(`worker ${s.id} (pid ${s.pid}) — wait for it or \`pai worker kill ${s.id}\``);
   }
   return out;
 }
