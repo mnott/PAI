@@ -20,6 +20,7 @@ import {
   ANTHROPIC_NATIVE,
   WorkersConfigError,
   getProviderOrNative,
+  isLocalProvider,
   type WorkersConfig,
 } from "./config.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
@@ -131,16 +132,6 @@ export function chooseRoute(i: RouteInputs): RouteChoice {
   if (i.cloud) return cloud("--cloud");
   if (!i.local) return cloud(i.localWhy);
   return useLocal(`policy ${i.mode}`);
-}
-
-/** Does this provider's endpoint live on this machine? */
-export function isLocalProvider(baseUrl: string): boolean {
-  try {
-    const h = new URL(baseUrl).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
-  } catch {
-    return false;
-  }
 }
 
 /** One cheap models request; any answer below 500 (a 401 included) means the server is up. */

@@ -16,7 +16,7 @@ import { resolve } from "node:path";
 import type { RunLogEntry } from "../../workers/plan-runner.js";
 import { blockedMessage, planStatus, planStopPath, requestPlanStop, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
 import { resolveCap } from "../../workers/capacity.js";
-import { isLocalProvider } from "../../workers/policy.js";
+import { isLocalProvider } from "../../workers/config.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
 

@@ -80,12 +80,35 @@ describe("capacity gate on the real config + argument path", () => {
     expect(passed).toBe(false);
     spy.mockRestore();
     expect(writes.join("")).toContain("queued:");
-    expect(loadStatuses(logDir).find((s) => s.id === "probe")?.runPid).toBe(process.pid);
-    expect(loadStatuses(logDir).find((s) => s.id === "probe")?.capacity?.cap).toBe(1);
+    const waiting = loadStatuses(logDir).find((s) => s.id === "probe");
+    expect(waiting?.runPid).toBe(process.pid);
+    expect(waiting?.capacity?.cap).toBe(1);
+    // the waiting state is "queued", not "running"
+    expect(waiting?.state).toBe("queued");
 
     saveStatus(logDir, { ...running("holder-a", "local30x8"), state: "done", rc: 0 });
     saveStatus(logDir, { ...running("holder-b", "local30x8"), state: "done", rc: 0 });
     await gate;
     expect(passed).toBe(true);
+    // granted: back to "running", the capacity field gone, and `started`
+    // rewritten to the grant (ps age and wait-on's ceiling count from it)
+    const granted = loadStatuses(logDir).find((s) => s.id === "probe");
+    expect(granted?.state).toBe("running");
+    expect(granted?.capacity).toBeUndefined();
+    expect(Date.parse(granted!.started.replace(" ", "T"))).toBeGreaterThanOrEqual(
+      Date.parse(waiting!.started.replace(" ", "T"))
+    );
   }, 30_000);
+
+  it("a queued status with a dead pid is reconciled to lost", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-caplive-"));
+    const yamlPath = join(d, "workers.yaml");
+    writeFileSync(yamlPath, YAML);
+    process.env.PAI_WORKERS_YAML = yamlPath;
+    const logDir = join(d, "logs");
+    saveStatus(logDir, { ...running("dead-queue", "local30x8"), state: "queued", pid: 999999 });
+    const { reconcileStatuses } = await import("./status.js");
+    expect(reconcileStatuses(logDir, new Date(), 0)).toContain("dead-queue");
+    expect(loadStatuses(logDir).find((s) => s.id === "dead-queue")?.state).toBe("lost");
+  });
 });

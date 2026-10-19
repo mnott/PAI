@@ -45,6 +45,8 @@ function readJson(file: string): Record<string, unknown> | undefined {
 }
 
 function workerVerdict(s: Record<string, unknown>): string {
+  // a run parked at the capacity gate waits for a provider slot
+  if (s.state === "queued") return "queued (provider cap)";
   // a run held in the stagger gate is running, but waiting on a cache warm-up
   const w = s.warmup as { elapsedSec?: unknown; limitSec?: unknown } | undefined;
   if (s.state === "running" && w && typeof w.elapsedSec === "number" && typeof w.limitSec === "number") {

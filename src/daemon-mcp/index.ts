@@ -96,7 +96,9 @@ import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../
 import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
-import { loadStatus, loadStatuses, isLive, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
+import { ageOf, loadStatus, loadStatuses, isLive, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
+import { queueRows, reorderQueue } from "../workers/capacity.js";
+import { providerCaps } from "../cli/commands/worker.js";
 import { deadlineLabel } from "../workers/deadline.js";
 import { endLabel } from "../workers/endreason.js";
 import { sayToWorker } from "../workers/operator.js";
@@ -954,7 +956,7 @@ async function startShim(): Promise<void> {
             ]
           : [];
         const ended = loadStatuses(logDir)
-          .filter((w) => w.state !== "running" && w.endReason)
+          .filter((w) => w.state !== "running" && w.state !== "queued" && w.endReason)
           .slice(-5);
         if (ended.length)
           runningLines.push("", "recently ended:", ...ended.map((w) => `  ${w.id} ${w.state} · ${endLabel(w)}${w.endNote ? ` (${w.endNote})` : ""}`));
@@ -1510,6 +1512,54 @@ async function startShim(): Promise<void> {
   );
 
   server.tool(
+    "worker_queue",
+    [
+      "The provider capacity queue: workers waiting for a provider slot.",
+      "",
+      "action=list (default) shows the grant order per provider; action=front",
+      "moves a waiting worker to position 1, action=up one place up. Only the",
+      "order of the WAITING ones changes — a running worker is never interrupted.",
+    ].join("\n"),
+    {
+      action: z.enum(["list", "front", "up"]).optional().describe("list (default), front or up."),
+      id: z.string().optional().describe("Worker id to pull forward (with front/up)."),
+    },
+    async (args) => {
+      try {
+        const { workers } = readWorkersSection();
+        const logDir = workersLogDir(workers);
+        const action = args.action ?? "list";
+        if (action === "list") {
+          const rows = queueRows(logDir, providerCaps(workers));
+          if (!rows.length) return workerText("nothing waiting");
+          let prov = "";
+          const lines: string[] = [];
+          for (const r of rows) {
+            if (r.provider !== prov) {
+              prov = r.provider;
+              lines.push(`${prov}${r.cap !== undefined ? ` (cap ${r.cap})` : ""}:`);
+            }
+            const s = r.status;
+            lines.push(
+              `  ${r.position}. ${r.id}` +
+                (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${ageOf(s.updated)}` : "") +
+                `  position ${r.position} of ${r.queued}`
+            );
+          }
+          return workerText(lines.join("\n"));
+        }
+        if (!args.id) return workerError(new Error("id is required for front/up"));
+        const status = loadStatus(logDir, args.id);
+        if (!status) return workerError(new Error(`no worker named "${args.id}"`));
+        const order = reorderQueue(logDir, status.provider, args.id, action === "front" ? "front" : "up");
+        return workerText(`${args.id} is now position ${order.indexOf(args.id) + 1} of ${order.length} on ${status.provider}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
     "worker_replay",
     [
       "Replay the transcript of one worker: tool calls, short outputs, result.",
@@ -1575,7 +1625,7 @@ async function startShim(): Promise<void> {
         const logDir = workersLogDir(workers);
         const old = loadStatus(logDir, args.id);
         if (!old) return workerError(new Error(`no worker named "${args.id}"`));
-        if (old.state === "running") {
+        if (old.state === "running" || old.state === "queued") {
           return workerError(
             new Error(`worker ${args.id} is still running — send messages with worker_say`)
           );

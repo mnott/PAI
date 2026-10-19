@@ -566,6 +566,29 @@ pai worker ps   (find the id first)
 
 See also: `pai worker ps`
 
+### pai worker queue
+
+Show or reorder the workers waiting for a provider slot
+
+```
+pai worker queue [VERB] [ID]
+```
+
+No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). `queue front ID` moves a waiting worker to position 1, `queue up ID` one place up — pull-forward. Only the order of the waiting ones changes; a running worker is never interrupted. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
+
+| Argument | Required | Description |
+|---|---|---|
+| `VERB` | no | front or up (default: list the queue) |
+| `ID` | no | Worker id to pull forward (with front/up) |
+
+```sh
+pai worker queue
+pai worker queue front 20261019-142851-84910
+pai worker queue up 20261019-142851-84910
+```
+
+See also: `pai worker ps`, `pai worker kill`
+
 ### pai worker wait-on
 
 Wait for a background job to finish
@@ -1512,6 +1535,7 @@ See also: `pai worker providers`
 | `pai worker discard` | Throw away a worker's branch and worktree |
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker kill` | Stop a running worker |
+| `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker wait-on` | Wait for a background job to finish |
 | `pai worker wait-url` | Wait for a server to answer HTTP |
 | `pai worker wait-file` | Wait for files to appear |

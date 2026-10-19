@@ -124,7 +124,7 @@ export function checkOrphanedChildren(logDir: string, parent: string): string | 
   const statuses = loadStatuses(logDir);
   const live = runningChildren(statuses, parent);
   const abandoned = statuses.filter(
-    (s) => s.parent === parent && s.state === "running" && !isLive(s)
+    (s) => s.parent === parent && (s.state === "running" || s.state === "queued") && !isLive(s)
   );
   for (const child of abandoned) {
     saveStatus(logDir, { ...child, state: "failed", last: `parent ${parent} exited` });

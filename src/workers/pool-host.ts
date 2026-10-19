@@ -33,7 +33,7 @@ import { buildRunEnv, claudeCommand, isLoopbackProvider, loopbackRouterChoice } 
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
-import { nowStamp, saveStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
+import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
 import { poolSlotSettingsId, slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
 import {
@@ -644,7 +644,13 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     session.record.busyWith = wid;
     persist();
 
-    const started = now();
+    // The client passed the gates under this id before shipping the task; its
+    // placeholder status rewrote `started` when the capacity slot was granted.
+    // Keep that stamp — the deadline counts from the slot grant, not from the
+    // host's pickup.
+    const prior = loadStatus(logDir, wid);
+    const priorStart = prior ? Date.parse(prior.started.replace(" ", "T")) : NaN;
+    const started = Number.isFinite(priorStart) ? new Date(priorStart) : now();
     const t0 = started.getTime();
     const status: WorkerStatus = {
       id: wid,

@@ -8,7 +8,7 @@
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider } from "../../workers/config.js";
+import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { runWorker, type RunOptions } from "../../workers/run.js";
@@ -19,7 +19,8 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
-import { loadStatus, setWorkerNote } from "../../workers/status.js";
+import { ageOf, loadStatus, setWorkerNote } from "../../workers/status.js";
+import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
@@ -449,7 +450,7 @@ const paneCommand: CommandDef = {
           dir,
           (wid) => {
             const st = loadStatus(dir, wid);
-            return st !== null && st.state !== "running";
+            return st !== null && st.state !== "running" && st.state !== "queued";
           },
           ctx.dryRun
         );
@@ -801,7 +802,8 @@ const killCommand: CommandDef = {
       const dir = logDir();
       const status = loadStatus(dir, id);
       if (!status) throw new Error(`no worker named "${id}"`);
-      if (status.state !== "running") throw new Error(`worker ${id} is not running (state: ${status.state})`);
+      if (status.state !== "running" && status.state !== "queued")
+        throw new Error(`worker ${id} is not running (state: ${status.state})`);
       if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
       for (const line of await killTree(dir, id, { only: ctx.opts.only === true })) out(line);
     }),
@@ -997,6 +999,66 @@ const capabilityCommand: CommandDef = {
 };
 
 // ---------------------------------------------------------------------------
+// The provider capacity queue
+// ---------------------------------------------------------------------------
+
+/** Resolved cap per provider name, for the queue readers. */
+export function providerCaps(workers: WorkersConfig): Record<string, number | undefined> {
+  const out: Record<string, number | undefined> = {};
+  for (const name of Object.keys(workers.providers)) out[name] = providerCap(workers, name);
+  return out;
+}
+
+const queueCommand: CommandDef = {
+  name: "queue",
+  summary: "Show or reorder the workers waiting for a provider slot",
+  description:
+    "No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). " +
+    "`queue front ID` moves a waiting worker to position 1, `queue up ID` one place up — pull-forward. Only the order of the waiting ones changes; a running worker is never interrupted. " +
+    "The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.",
+  args: [
+    { name: "VERB", summary: "front or up (default: list the queue)" },
+    { name: "ID", summary: "Worker id to pull forward (with front/up)" },
+  ],
+  examples: ["pai worker queue", "pai worker queue front 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
+  seeAlso: ["pai worker ps", "pai worker kill"],
+  run: (ctx) =>
+    guard("pai worker queue", async () => {
+      const verb = (ctx.args.VERB as string | undefined) ?? "list";
+      const id = ctx.args.ID as string | undefined;
+      const dir = logDir();
+      const { workers } = readWorkersSection();
+      if (verb === "list") {
+        const rows = queueRows(dir, providerCaps(workers));
+        if (!rows.length) {
+          out("nothing waiting");
+          return;
+        }
+        let prov = "";
+        for (const r of rows) {
+          if (r.provider !== prov) {
+            prov = r.provider;
+            out(`${prov}${r.cap !== undefined ? ` (cap ${r.cap})` : ""}:`);
+          }
+          const s = r.status;
+          out(
+            `  ${r.position}. ${r.id}` +
+              (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${ageOf(s.updated)}` : "") +
+              `  position ${r.position} of ${r.queued}`
+          );
+        }
+        return;
+      }
+      if (!id) throw new Error(`usage: pai worker queue ${verb} <id>`);
+      const status = loadStatus(dir, id);
+      if (!status) throw new Error(`no worker named "${id}"`);
+      if (verb !== "front" && verb !== "up") throw new Error(`unknown queue verb "${verb}" (expected front or up)`);
+      const order = reorderQueue(dir, status.provider, id, verb);
+      out(`${id} is now position ${order.indexOf(id) + 1} of ${order.length} on ${status.provider}`);
+    }),
+};
+
+// ---------------------------------------------------------------------------
 // The group
 // ---------------------------------------------------------------------------
 
@@ -1030,6 +1092,7 @@ export const workerCommand: CommandDef = {
     discardCommand,
     gcCommand,
     killCommand,
+    queueCommand,
     waitOnCommand,
     waitUrlCommand,
     waitFileCommand,

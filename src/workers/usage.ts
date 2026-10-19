@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { loadStatuses, type WorkerStatus } from "./status.js";
-import { isLocalProvider } from "./policy.js";
+import { isLocalProvider } from "./config.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
 
 export interface CacheCreationSplit {

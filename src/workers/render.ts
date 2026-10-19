@@ -213,6 +213,8 @@ export interface StatusRow {
   state?: string | null;
   /** set while the run waits in the stagger gate for a cache warm-up. */
   warmup?: { elapsedSec: number; limitSec: number } | null;
+  /** set while the run waits behind the provider cap (capacity gate). */
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number } | null;
 }
 
 export { fmtElapsed };
@@ -231,8 +233,10 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
     parts.push(pct > 85 ? c("red", label) : pct > 70 ? c("yellow", label) : label);
   }
   parts.push(`turns ${s.turns}`, `tools ${s.tools}`, fmtElapsed(s.elapsed));
-  if (s.state && s.state !== "running") {
+  if (s.state && s.state !== "running" && s.state !== "queued") {
     parts.push(s.state === "done" ? c("green", "✓ done") : c("red", "✗ failed"));
+  } else if (s.capacity) {
+    parts.push(c("yellow", `queued: ${s.capacity.total} on ${s.capacity.provider}, cap ${s.capacity.cap} (position ${s.capacity.position})`));
   } else if (s.warmup) {
     parts.push(warmupText(s.warmup) as string);
   } else {
@@ -471,15 +475,28 @@ export function renderTable(
   workers: Pick<WorkersConfig, "providers" | "nativeModels"> = safeWorkers()
 ): string {
   const provTag = (s: WorkerStatus) => providerTag(s, workers);
+  const queued: WorkerStatus[] = [];
   const running: WorkerStatus[] = [];
   const done: WorkerStatus[] = [];
   for (const s of statuses) {
-    if (isLive(s)) running.push(s);
+    if (s.state === "queued" && isLive(s)) queued.push(s);
+    else if (isLive(s)) running.push(s);
     else {
       if (s.state === "running") s.state = "lost";
       done.push(s);
     }
   }
+  // QUEUED rows in grant order: each provider's waiters in the order the
+  // capacity gate grants them (the `capacity` field carries that position),
+  // providers grouped, then any queued status without a capacity field
+  const qKey = (s: WorkerStatus): [string, number] => [s.capacity?.provider ?? s.provider, s.capacity?.position ?? 1e9];
+  queued.sort((a, b) => {
+    const [pa, na] = qKey(a);
+    const [pb, nb] = qKey(b);
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    if (na !== nb) return na - nb;
+    return a.id < b.id ? -1 : 1;
+  });
   const isWorker = (id: string): boolean => statuses.some((s) => s.id === id);
   // a chain id (no status file) groups its stages under a header instead
   const chainOf = (s: WorkerStatus): string | null => (s.parent && !isWorker(s.parent) ? s.parent : null);
@@ -535,6 +552,22 @@ export function renderTable(
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
+  // the QUEUED section only exists while something waits: a table that never
+  // had a queue stays exactly the RUNNING/FINISHED table it always was
+  if (queued.length) {
+    lines.push(c("bold", `QUEUED (${queued.length})`));
+    for (const s of queued) {
+      const cap = s.capacity;
+      const pos = cap
+        ? `position ${cap.position} of ${cap.total}, cap ${cap.cap}`
+        : `waiting for a ${s.provider} slot`;
+      lines.push(
+        `  ${c("cyan", s.id)} ${provTag(s)} ${c("yellow", pos)}  waited ${elapsedOf(s.started, now)}`
+      );
+      lines.push(`      task: ${s.label}  ${basename(s.cwd)}`);
+    }
+    lines.push("");
+  }
   lines.push(c("bold", `RUNNING (${running.length})`));
   if (!running.length) lines.push("  none");
   for (let i = 0; i < running.length; i++) {
@@ -690,7 +723,7 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
  * than rendering a bare gap.
  */
 export function paneStatusRow(
-  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount" | "warmup">,
+  s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount" | "warmup" | "capacity">,
   now: Date = new Date(),
   columns: number | null = null
 ): string {
@@ -699,8 +732,13 @@ export function paneStatusRow(
   const elapsed = elapsedOf(s.started, now);
   const tail = [model, started ? `started ${started}` : "", elapsed, denialMark(s)].filter(Boolean).join(" · ");
   const budget = columns !== null ? Math.max(1, columns - tail.length - 3) : 40;
-  // a blocked worker's footer says what it waits on instead of its goal
-  const head = warmupText(s.warmup) ?? (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
+  // a blocked worker's footer says what it waits on instead of its goal:
+  // the capacity queue first, then the stagger warm-up, then a wait-on job
+  const cap = s.capacity;
+  const head =
+    (cap ? `queued: ${cap.total} on ${cap.provider}, cap ${cap.cap} (position ${cap.position})` : null) ??
+    warmupText(s.warmup) ??
+    (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
   return `${head} · ${tail}`;
 }
 
@@ -727,7 +765,7 @@ export function renderStatusLine(
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
   const running = mine.filter((s) => !isChatPane(s) && isLive(s));
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const doneToday = mine.filter((s) => s.state !== "running" && s.started.startsWith(today));
+  const doneToday = mine.filter((s) => s.state !== "running" && s.state !== "queued" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
   const tail = doneToday.length ? `   ✓${ok} ✗${bad} today` : "";

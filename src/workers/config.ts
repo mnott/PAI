@@ -600,6 +600,16 @@ export function defaultWorkersConfig(): WorkersConfig {
 
 export class WorkersConfigError extends Error {}
 
+/** Does this provider's endpoint live on this machine? */
+export function isLocalProvider(baseUrl: string): boolean {
+  try {
+    const h = new URL(baseUrl).hostname;
+    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 function bad(path: string, why: string): never {
   throw new WorkersConfigError(`workers${path}: ${why}`);
 }

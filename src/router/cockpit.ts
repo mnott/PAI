@@ -12,8 +12,10 @@ import { COCKPIT_HTML } from "./cockpit-page.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
-import { readWorkersSection } from "../workers/config.js";
+import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
+import { providerCap, queueRows, reorderQueue } from "../workers/capacity.js";
+import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
 
@@ -403,11 +405,78 @@ export function cachedPoolCarry(): () => PoolCarry | null {
   };
 }
 
+/** The whole request body as text. */
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (c) => {
+      data += c;
+      if (data.length > 64_000) {
+        reject(new Error("body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
 /**
- * Serve /cockpit, /cockpit/data, /cockpit/system and /cockpit/limits. Returns
- * false when the path is not a cockpit path. GET only; the router binds
- * 127.0.0.1 unless router.bind opens a second listener (then the cockpit is
- * token-gated, see src/router/cockpit-auth.ts).
+ * One provider's Queue panel row: the workers holding a slot on it and the
+ * ones waiting, in grant order. Reads the status files and the capacity queue
+ * (the same reader `pai worker ps`' QUEUED section uses).
+ */
+export interface QueueProvider {
+  provider: string;
+  cap?: number;
+  running: Array<{ id: string; label: string; ageSec: number }>;
+  waiting: Array<{ id: string; label: string; waitedSec: number; position: number }>;
+}
+
+/** The /cockpit/queue payload: every provider with a live or waiting worker. */
+export function cockpitQueue(
+  logDir: string,
+  workers: WorkersConfig,
+  now = Date.now(),
+  owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
+): { now: number; providers: QueueProvider[] } {
+  const caps: Record<string, number | undefined> = {};
+  for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
+  const byProvider = new Map<string, QueueProvider>();
+  const row = (provider: string): QueueProvider => {
+    let p = byProvider.get(provider);
+    if (!p) {
+      p = { provider, cap: caps[provider], running: [], waiting: [] };
+      byProvider.set(provider, p);
+    }
+    return p;
+  };
+  const waited = (s: WorkerStatus): number => {
+    const t = Date.parse((s.started ?? "").replace(" ", "T"));
+    return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
+  };
+  for (const s of loadStatuses(logDir)) {
+    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s) });
+  }
+  for (const r of queueRows(logDir, caps)) {
+    const s = r.status;
+    row(r.provider).waiting.push({
+      id: r.id,
+      label: s?.label ?? "",
+      waitedSec: s ? waited(s) : 0,
+      position: r.position,
+    });
+  }
+  return { now, providers: [...byProvider.values()] };
+}
+
+/**
+ * Serve /cockpit, /cockpit/data, /cockpit/system, /cockpit/pool,
+ * /cockpit/queue and the queue write actions. Returns false when the path is
+ * not a cockpit path. GET except the two POST queue endpoints
+ * (/cockpit/queue/front, /cockpit/queue/up); the router binds 127.0.0.1
+ * unless router.bind opens a second listener (then every cockpit route,
+ * writes included, is token-gated — see src/router/cockpit-auth.ts).
  */
 export function handleCockpit(
   req: http.IncomingMessage,
@@ -418,13 +487,33 @@ export function handleCockpit(
   system?: SystemMonitor,
   workerWindows: () => WorkerWindow[] = loadWorkerWindows,
   readPool: () => PoolCarry | null = cachedPoolCarry(),
-  readPoolPanel: typeof sharedPoolPanel = sharedPoolPanel): boolean {
+  readPoolPanel: typeof sharedPoolPanel = sharedPoolPanel,
+  queueLogDir: (workers: WorkersConfig) => string = workersLogDir): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
     res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
     res.end(body);
   };
+  if (req.method === "POST" && (url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up")) {
+    const body = readBody(req)
+      .then((raw) => JSON.parse(raw || "{}") as { id?: string })
+      .catch(() => ({} as { id?: string }));
+    body.then(({ id }) => {
+      if (!id || typeof id !== "string") return send(400, "application/json", JSON.stringify({ error: "id required" }));
+      try {
+        const { workers } = readWorkersSection();
+        const logDir = queueLogDir(workers);
+        const status = loadStatus(logDir, id);
+        if (!status) return send(404, "application/json", JSON.stringify({ error: `no worker named "${id}"` }));
+        const order = reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") ? "front" : "up");
+        send(200, "application/json", JSON.stringify({ id, provider: status.provider, order }));
+      } catch (e) {
+        send(409, "application/json", JSON.stringify({ error: (e as Error).message }));
+      }
+    });
+    return true;
+  }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
   if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", COCKPIT_HTML);
   else if (url.pathname === "/cockpit/data") {
@@ -445,6 +534,13 @@ export function handleCockpit(
     );
   } else if (url.pathname === "/cockpit/pool") {
     readPoolPanel().then((p) => send(200, "application/json", JSON.stringify(p)));
+  } else if (url.pathname === "/cockpit/queue") {
+    try {
+      const { workers } = readWorkersSection();
+      send(200, "application/json", JSON.stringify(cockpitQueue(queueLogDir(workers), workers)));
+    } catch (e) {
+      send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
+    }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then(
       (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l })),

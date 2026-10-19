@@ -59,10 +59,13 @@ export interface WaitOnDeps {
 /** A `queue` dep reading the worker status whose pid is the awaited one. */
 export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
   return (pid) => {
-    const s = loadStatuses(logDir).find((w) => (w.pid === pid || w.runPid === pid) && w.state === "running");
+    const s = loadStatuses(logDir).find(
+      (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued")
+    );
     if (!s) return null;
     const t = Date.parse(s.started);
-    return { queued: !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
+    // the state says it outright now; `capacity` stays for older status files
+    return { queued: s.state === "queued" || !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
   };
 }
 

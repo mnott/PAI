@@ -50,7 +50,7 @@ export function descendantsLeavesFirst(statuses: WorkerStatus[], id: string): Wo
       if (!s.parent || !level.includes(s.parent) || seen.has(s.id)) continue;
       seen.add(s.id);
       next.push(s.id);
-      if (s.state === "running") out.push({ s, depth });
+      if (s.state === "running" || s.state === "queued") out.push({ s, depth });
     }
     level = next;
   }
@@ -96,7 +96,7 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps):
   }
   if (!selfReported) {
     const latest = loadStatus(logDir, id) ?? recorded;
-    if (latest.state === "running") {
+    if (latest.state === "running" || latest.state === "queued") {
       latest.state = "killed";
       latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
       latest.last = latest.last || `killed by signal ${how}`;
