@@ -158,6 +158,35 @@ describe("runPlan", () => {
   });
 });
 
+describe("no-commit merges", () => {
+  it("a merge that moves nothing is logged no-commit, retried with the reason, then needs-decision", async () => {
+    const p = plan();
+    const specs: string[] = [];
+    const h = harness(p, (r) => (specs.push(r.spec), true));
+    const orig = h.deps.merge;
+    h.deps.merge = async (id, gate) => {
+      const m = await orig(id, gate);
+      return id.startsWith("w-a-") ? { ...m, ok: true, commit: "head0", before: "head0" } : m;
+    };
+    const s = await runPlan(p, { parallel: 2 }, h.deps);
+    expect(h.starts.filter((x) => x.startsWith("a#"))).toEqual(["a#1", "a#2"]);
+    const merges = h.log.filter((e) => e.event === "merge" && e.part === "a");
+    expect(merges.map((e) => [e.ok, e.status, e.commit])).toEqual([[false, "no-commit", undefined], [false, "no-commit", undefined]]);
+    expect(specs.some((t) => /no-commit: the worker branch has no commit/.test(t))).toBe(true);
+    expect(s.needsDecision).toEqual(["a"]);
+    expect(s.merged).not.toContain("a");
+    expect(resumeState(h.log).merged.has("a")).toBe(false);
+  });
+  it("a deps-reported noCommit also fails the part", async () => {
+    const p = plan();
+    const h = harness(p);
+    const orig = h.deps.merge;
+    h.deps.merge = async (id, gate) => (id === "w-d-1" ? { ok: false, noCommit: true, output: "no commit" } : orig(id, gate));
+    await runPlan(p, { parallel: 2 }, h.deps);
+    expect(h.log.find((e) => e.event === "merge" && e.part === "d")?.status).toBe("no-commit");
+  });
+});
+
 describe("dryRunSchedule and status", () => {
   it("waves honour dependencies, slots and files", () => {
     const waves = dryRunSchedule(plan(), { parallel: 2 }).map((w) => w.map((x) => x.id));

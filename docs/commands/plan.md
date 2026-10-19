@@ -24,7 +24,7 @@ Run a plan: local workers in parallel, merged with the plan's gate
 pai plan run PLAN [options]
 ```
 
-Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`. A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts.
+Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`; a part whose worker branch holds no commit counts as no-commit, not merged, and goes down the failure ladder. The run is refused when the repo has uncommitted changes to files a part touches (--allow-dirty overrides). A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -35,6 +35,7 @@ Runs the parts of a plan on the local provider, no model in the loop: up to N pa
 | `--parallel N` | number | — | Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent) |
 | `--escalate TIER` | string | — | After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision |
 | `--dry-run` | flag | — | Print the schedule that would run; start nothing |
+| `--allow-dirty` | flag | — | Run although the repo has uncommitted changes to files a part touches |
 
 ```sh
 pai plan run plan.yaml

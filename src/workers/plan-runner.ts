@@ -33,6 +33,10 @@ export interface StartRequest {
 export interface MergeOutcome {
   ok: boolean;
   commit?: string;
+  /** HEAD before the merge; a merge that leaves HEAD here changed nothing. */
+  before?: string;
+  /** The worker branch carried no commit, so nothing was merged. */
+  noCommit?: boolean;
   output: string;
 }
 
@@ -53,6 +57,8 @@ export interface RunLogEntry {
   attempt?: number;
   tier?: string;
   ok?: boolean;
+  /** "no-commit" when the worker branch held no commit; the merge counts as not done. */
+  status?: string;
   gate?: string;
   commit?: string;
   tokens?: number | null;
@@ -146,20 +152,24 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
         deps.log({ event: "escalate", part: p.id, unit: p.unit, attempt: i + 1, tier, note: tail(failure ?? "", 10) });
       }
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
-      const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure), provider, tier, attempt: i + 1 });
+      const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1 });
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
       if (!out.ok) {
         failure = out.failure || "the worker ended without a valid passing report";
         continue;
       }
-      const m = await exclusive(() => deps.merge(out.id, plan.gate));
-      deps.log({ event: "merge", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, ok: m.ok, gate: plan.gate, commit: m.commit, note: m.ok ? undefined : tail(m.output, 10) });
+      let m = await exclusive(() => deps.merge(out.id, plan.gate));
+      // a "merge" that moved nothing is not a merge: the worker never committed
+      if (m.ok && (m.noCommit || !m.commit || m.commit === m.before)) m = { ...m, ok: false, noCommit: true };
+      deps.log({ event: "merge", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, ok: m.ok, ...(m.noCommit ? { status: "no-commit" } : {}), gate: plan.gate, ...(m.noCommit ? {} : { commit: m.commit }), note: m.ok ? undefined : tail(m.output, 10) });
       if (m.ok) {
         state.set(p.id, "merged");
         await checkUnit(p.unit);
         return;
       }
-      failure = `gate failed (${plan.gate}):\n${tail(m.output)}`;
+      failure = m.noCommit
+        ? `no-commit: the worker branch has no commit, nothing was merged. Commit the change on the current branch (message "${label(p)}") and edit files only by relative path inside your worktree.${m.output.trim() ? `\n${tail(m.output, 10)}` : ""}`
+        : `gate failed (${plan.gate}):\n${tail(m.output)}`;
     }
     state.set(p.id, "needs-decision");
     deps.log({ event: "needs-decision", part: p.id, unit: p.unit, note: tail(failure ?? "", 10) });
