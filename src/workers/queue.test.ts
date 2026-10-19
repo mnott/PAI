@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// fake deps, no local server here: provider `local` reaches the spawn unchanged
+process.env.PAI_LOCAL_PROVIDER_RESOLVE = "off";
 import { again, canMove, classifySize, composeQueueSpec, move, parseNumstat, parseSettings, QueueStore, renderList, renderReview } from "./queue.js";
 import { acceptItems, runQueue, type QueueDeps } from "./queue-runner.js";
 

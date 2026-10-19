@@ -15,6 +15,7 @@ import { getProviderOrNative, readWorkersSection } from "../../workers/config.js
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
+import { localProviderForDelegation } from "../../workers/local-provider.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths } from "../../workers/plan-deps.js";
 import { planStatus, planStopPath, requestPlanStop, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
@@ -46,6 +47,8 @@ export interface PlanUnitInput {
 export interface PlanInput {
   gate: string;
   provider?: string;
+  /** true: the plan's provider is `local` — resolved to the running local server at run start. */
+  local?: boolean;
   max_parallel?: number;
   preamble?: string;
   units: PlanUnitInput[];
@@ -57,6 +60,11 @@ export interface DelegationDeps {
   resolveProject(project: string): Promise<string>;
   /** Default local provider name and its parallel cap. */
   provider(settings: QueueSettings): { name: string; cap: number };
+  /**
+   * The provider `local: true` runs on: resolveLocalProvider() — the loopback
+   * server that actually answers. Tests inject; the real deps resolve for real.
+   */
+  resolveLocal(): Promise<{ name: string; cap: number }>;
   dirtyPaths(repo: string): Promise<string[]>;
   /** Hand a plan/queue run to a detached process (same path as `pai plan|queue run --detach`). */
   detach(req: DetachRequest): RunRecord;
@@ -101,6 +109,7 @@ export function realDelegationDeps(): DelegationDeps {
       return row.root_path;
     },
     provider: localProvider,
+    resolveLocal: () => localProviderForDelegation(),
     dirtyPaths,
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
     accept: (store, settings, ids, repo) => acceptItems(store, settings, ids, realQueueDeps(workersLogDir(readWorkersSection().workers), repo)),
@@ -152,11 +161,14 @@ export async function planSave(args: { project: string; name: string; plan: Plan
     };
 
     const settings = loadSettings(repo);
+    // local: true → the plan's provider is `local`, resolved to the running
+    // local server at run start (never a provider picked by name)
+    const provider = input.local === true ? "local" : input.provider ?? deps.provider(settings).name;
     const doc: Record<string, unknown> = {
       job: name,
       repo: "../../..",
       gate: input.gate.trim(),
-      provider: input.provider ?? deps.provider(settings).name,
+      provider,
       ...(input.max_parallel ? { max_parallel: input.max_parallel } : {}),
       ...(input.preamble?.trim() ? { preamble: writePre("plan", input.preamble) } : {}),
       units: input.units.map((u) => ({
@@ -310,28 +322,28 @@ async function openQueue(project: string, deps: DelegationDeps): Promise<{ repo:
   return { repo, store: new QueueStore(queueStatePath(repo)), settings: loadSettings(repo) };
 }
 
-export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string }, deps: DelegationDeps): Promise<WorkerToolResult> {
+export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string; local?: boolean }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     if (!args.sentence?.trim()) return fail("sentence is empty; describe the change in one sentence");
     const image = args.image ? resolve(args.image) : undefined;
     if (image && !existsSync(image)) return fail(`No such image: ${image}`);
     const { repo, store } = await openQueue(args.project, deps);
     const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image });
-    return text(`Queued as ${it.id}. Call queue_run to start the pending items.`);
+    return text(`Queued as ${it.id}. Call queue_run to start the pending items${args.local === true ? " on the local server PAI resolves" : ""}.`);
   } catch (e) {
     return error(e);
   }
 }
 
-export async function queueRun(args: { project: string; escalate?: boolean }, deps: DelegationDeps): Promise<WorkerToolResult> {
+export async function queueRun(args: { project: string; escalate?: boolean; local?: boolean }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     const { repo, store, settings } = await openQueue(args.project, deps);
     const pending = store.list().filter((i) => i.state === (args.escalate ? "cloud" : "pending"));
     if (!pending.length) return text(args.escalate ? "No items are marked for the cloud." : "Nothing is pending.");
     const held = readRunLock(queueLockPath(store.path));
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
-    const prov = deps.provider(settings);
-    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { parallel: settings.maxParallel ?? prov.cap, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
+    const prov = args.local === true ? await deps.resolveLocal() : deps.provider(settings);
+    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
     return text(`Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`);
   } catch (e) {
     return error(e);

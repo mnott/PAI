@@ -11,6 +11,9 @@
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { composeSpec, filesOverlap, type Plan, type PlanPart } from "./plan.js";
+import { resolvePlanProvider } from "./local-provider.js";
+import { readWorkersSection } from "./config.js";
+import { workersLogDir } from "./paths.js";
 
 export interface WorkerOutcome {
   id: string;
@@ -162,6 +165,10 @@ export function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise
 }
 
 async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, active: Map<string, PlanPart>): Promise<RunSummary> {
+  // `provider: local` in a plan means resolveLocalProvider() at run start —
+  // the loopback server that answers, never a provider picked by name.
+  const { workers } = readWorkersSection();
+  plan = { ...plan, provider: await resolvePlanProvider(workers, workersLogDir(workers), plan.provider) };
   const parts = plan.units.flatMap((u) => u.parts);
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);

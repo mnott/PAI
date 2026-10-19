@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// fake deps, no local server here: `provider: local` reaches the spawn unchanged
+process.env.PAI_LOCAL_PROVIDER_RESOLVE = "off";
 import { parsePlan, type Plan } from "./plan.js";
 import { realCommitsAhead, checkoutProblem, workerArgs } from "./plan-deps.js";
 import {

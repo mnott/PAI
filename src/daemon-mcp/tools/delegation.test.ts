@@ -16,6 +16,7 @@ let repo: string;
 let deps: DelegationDeps;
 const detach = vi.fn();
 const accept = vi.fn();
+const resolveLocal = vi.fn();
 
 const text = (r: { content: Array<{ text: string }> }) => r.content[0].text;
 
@@ -39,9 +40,11 @@ beforeEach(() => {
   mkdirSync(join(repo, "home"), { recursive: true });
   detach.mockReset().mockReturnValue({ id: "run-1", pid: 1 });
   accept.mockReset();
+  resolveLocal.mockReset().mockResolvedValue({ name: "flashnext", cap: 3 });
   deps = {
     resolveProject: async () => repo,
     provider: () => ({ name: "local", cap: 2 }),
+    resolveLocal,
     dirtyPaths: async () => [],
     detach,
     accept,
@@ -69,6 +72,12 @@ describe("plan_save", () => {
     expect(text(await planSave({ project: "p", name: "../x", plan }, deps))).toContain("plan name");
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, gate: " " } }, deps))).toContain("needs a gate");
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, units: [] } }, deps))).toContain("at least one unit");
+  });
+  it("local: true stores the provider as `local`, resolved at run start, never a picked name", async () => {
+    const r = await planSave({ project: "p", name: "jobl", plan: { ...plan, provider: undefined, local: true } }, deps);
+    expect(r.isError).toBeUndefined();
+    expect(readFileSync(join(repo, ".pai/plans/jobl/plan.yaml"), "utf8")).toContain("provider: local");
+    expect(resolveLocal).not.toHaveBeenCalled();
   });
 });
 
@@ -157,7 +166,14 @@ describe("queue_*", () => {
     await queueAdd({ project: "p", sentence: "one" }, deps);
     const r = await queueRun({ project: "p" }, deps);
     expect(text(r)).toContain("Started 1 item (q1)");
-    expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { parallel: 2 }, cwd: repo, origin: { name: "sess-1" } });
+    expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { provider: "local", parallel: 2 }, cwd: repo, origin: { name: "sess-1" } });
+  });
+  it("queue_run local: true routes to the resolved local server", async () => {
+    await queueAdd({ project: "p", sentence: "one", local: true }, deps);
+    const r = await queueRun({ project: "p", local: true }, deps);
+    expect(text(r)).toContain("Started 1 item (q1)");
+    expect(resolveLocal).toHaveBeenCalledTimes(1);
+    expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { provider: "flashnext", parallel: 3 } });
   });
   it("review lists ready items in words; reject/again/accept act on them", async () => {
     await queueAdd({ project: "p", sentence: "one" }, deps);
@@ -199,5 +215,9 @@ describe("instructions", () => {
     for (const t of ["queue_add", "queue_run", "queue_review", "plan_save", "plan_run", "plan_status", "plan_amend"]) {
       expect(PAI_INSTRUCTIONS).toContain(t);
     }
+  });
+  it("a local worker means local: true, never a provider name", () => {
+    expect(PAI_INSTRUCTIONS).toContain("local: true");
+    expect(PAI_INSTRUCTIONS).toContain("never pick a local provider by name");
   });
 });

@@ -89,6 +89,8 @@ import {
   useProvider,
 } from "../workers/providers.js";
 import { testProvider, runWorker } from "../workers/run.js";
+import { probeLoopback } from "../workers/local-provider.js";
+import { CONFIG_FILE } from "../daemon/config.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
 import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
@@ -970,6 +972,9 @@ async function startShim(): Promise<void> {
       "Manage worker providers (list, add, update, remove, use, enable, disable, test).",
       "",
       "action=list (default) shows providers (with cost tier and tags), classes and routing.",
+      "Every loopback (local) provider is marked running or not running by a port",
+      "probe: an enabled provider that is not running is not usable — never pick a",
+      "local provider by name; pass local: true to the delegation tools instead.",
       "action=add needs name, model — and either key_file or key, plus:",
       "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
       "  through the local PAI proxy). A raw key is written to",
@@ -1006,7 +1011,8 @@ async function startShim(): Promise<void> {
       try {
         const action = args.action ?? "list";
         if (action === "list") {
-          return workerText(describeProviders(readWorkersSection().workers).join("\n"));
+          const { workers } = readWorkersSection();
+          return workerText(describeProviders(workers, CONFIG_FILE, await probeLoopback(workers)).join("\n"));
         }
         if (!args.name) return workerError(new Error("name is required for this action"));
         if (action === "update") {
@@ -1017,8 +1023,9 @@ async function startShim(): Promise<void> {
             ...(args.cost_tier !== undefined ? { costTier: args.cost_tier } : {}),
             ...(args.tags !== undefined ? { tags: args.tags } : {}),
           });
+          const { workers: updated } = readWorkersSection();
           return workerText(
-            [`provider ${args.name} updated`, ...describeProviders(readWorkersSection().workers)].join("\n")
+            [`provider ${args.name} updated`, ...describeProviders(updated, CONFIG_FILE, await probeLoopback(updated))].join("\n")
           );
         }
         if (action === "add") {
@@ -1044,7 +1051,7 @@ async function startShim(): Promise<void> {
             ...(args.tags?.length ? { tags: args.tags } : {}),
           });
           return workerText(
-            [`provider ${args.name} added; active: ${workers.active ?? "(none)"}; workers ${workers.enabled ? "on" : "off"}`, ...describeProviders(workers)].join("\n")
+            [`provider ${args.name} added; active: ${workers.active ?? "(none)"}; workers ${workers.enabled ? "on" : "off"}`, ...describeProviders(workers, CONFIG_FILE, await probeLoopback(workers))].join("\n")
           );
         }
         if (action === "remove") {
@@ -1332,13 +1339,16 @@ async function startShim(): Promise<void> {
       kind: z.enum(["proposal", "result", "question", "blocker"]).describe("What the handoff carries."),
       text: z.string().min(1).describe("The message body, one paragraph."),
       data: z.record(z.string(), z.unknown()).optional().describe("Structured payload (optional)."),
+      local: z.boolean().optional().describe("true with a proposal: the parent should run it on the local model server PAI resolves (carried in the payload; never name a local provider)."),
     },
     async (args) => {
       try {
         const h = await handoffFromInside(
           workersLogDir(readWorkersSection().workers),
           process.env,
-          args
+          // `local: true` rides up in the payload: the parent's delegation
+          // tools take it with the same meaning (resolveLocalProvider)
+          args.local === true ? { ...args, data: { ...(args.data ?? {}), local: true } } : args
         );
         return workerText(`ok → ${h.to} (${h.kind}); the parent sees it in its inbox`);
       } catch (e) {
@@ -1361,7 +1371,8 @@ async function startShim(): Promise<void> {
       name: planName,
       plan: z.object({
         gate: z.string().describe("Shell command that must pass on the merged tree."),
-        provider: z.string().optional().describe("Local provider; default: the active local one."),
+        provider: z.string().optional().describe("Provider name; default: the local server PAI resolves. Never pick a local provider by name — use local: true."),
+        local: z.boolean().optional().describe("true: run the parts on the local model server PAI resolves (the one that answers)."),
         max_parallel: z.number().int().min(1).optional(),
         preamble: z.string().optional().describe("Text prepended to every part spec."),
         units: z.array(z.object({
@@ -1408,13 +1419,23 @@ async function startShim(): Promise<void> {
   server.tool(
     "queue_add",
     "Queue one small change described in a sentence (plus likely files, optional screenshot). Use for small changes; then queue_run.",
-    { project, sentence: z.string().min(1), files: z.array(z.string()).optional(), image: z.string().optional() },
+    {
+      project,
+      sentence: z.string().min(1),
+      files: z.array(z.string()).optional(),
+      image: z.string().optional(),
+      local: z.boolean().optional().describe("true: the item runs on the local model server PAI resolves."),
+    },
     async (args) => queueAdd(args, delegation)
   );
   server.tool(
     "queue_run",
     "Start the pending queue items on the local provider in the background and return at once; nothing is merged.",
-    { project, escalate: z.boolean().optional().describe("Run the items marked cloud on Sonnet instead.") },
+    {
+      project,
+      escalate: z.boolean().optional().describe("Run the items marked cloud on Sonnet instead."),
+      local: z.boolean().optional().describe("true: run on the local model server PAI resolves (the one that answers); never pick a local provider by name."),
+    },
     async (args) => queueRun(args, delegation)
   );
   server.tool("queue_review", "Ready queue items with diff stat, gate result and proof path, in plain words.", { project }, async (args) => queueReview(args, delegation));

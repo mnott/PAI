@@ -39,6 +39,8 @@ import {
 import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
+import { isLoopbackProvider } from "./run-env.js";
+import { probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
 export interface AddProviderInput {
@@ -401,8 +403,18 @@ function classesForProvider(workers: WorkersConfig, name: string): string[] {
     .map(([cls]) => cls);
 }
 
-/** Human-readable provider listing (quota probe included when configured). */
-export function describeProviders(workers: WorkersConfig, configPath: string = CONFIG_FILE): string[] {
+/**
+ * Human-readable provider listing (quota probe included when configured).
+ * `running` marks each loopback provider "running" or "not running" — the
+ * port probe of local-provider.ts, done by the callers in parallel with a
+ * short timeout, so a model reading the list cannot mistake an
+ * enabled-but-down server for a usable one.
+ */
+export function describeProviders(
+  workers: WorkersConfig,
+  configPath: string = CONFIG_FILE,
+  running?: Record<string, boolean>
+): string[] {
   const lines: string[] = [];
   const nativeActive = workers.active === ANTHROPIC_NATIVE;
   const nativeDefault = !workers.active;
@@ -430,6 +442,7 @@ export function describeProviders(workers: WorkersConfig, configPath: string = C
     const quota = p.quotaProbe ? probeQuota(p) : null;
     const quotaNote = quota === null ? "" : `  quota ${quota}% (skip at ${quotaSkipThreshold(p)})`;
     const tierTags = [`tier ${providerCostTier(p)}`, ...(p.tags ?? [])].join(", ");
+    if (running && isLoopbackProvider(p)) flags.push(running[name] ? "running" : "not running");
     lines.push(`${name}  [${flags.join(", ")}]  ${p.baseUrl}`);
     lines.push(`    ${modelPrefsText(p)}${quotaNote}`);
     lines.push(`    ${tierTags}`);

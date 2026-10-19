@@ -19,7 +19,9 @@ Run project_detect at session start.
 Edit/Write on code files is denied in this session; you decide the size. A small change: queue_add (one
 sentence + files), queue_run, then queue_review and queue_accept / queue_reject / queue_again. A larger job:
 write the plan yourself, plan_save, plan_run, follow with plan_status, and at a needs-decision clarify with
-plan_amend and plan_run again. Report to the user in plain words; never ask the user to run commands.
+plan_amend and plan_run again. "A local worker" means local: true — never pick a local provider by name; PAI
+resolves the local model server that actually answers. Report to the user in plain words; never ask the user
+to run commands.
 
 ### Skills
 

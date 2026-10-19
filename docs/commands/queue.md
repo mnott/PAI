@@ -57,6 +57,8 @@ Runs each pending item as a worker in its own worktree branch, up to N at once. 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--project SLUG` | string | — | Project slug or folder (default: the git checkout of the current directory) |
+| `--local` | flag | — | Run on the local model server PAI resolves (the one that answers); never pick a local provider by name |
+| `--provider NAME` | string | — | Provider name (the detached runner passes what it resolved; the value local is resolved at run start) |
 | `--parallel N` | number | — | Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent) |
 | `--escalate TIER` | string | — | Run the cloud items on TIER (only sonnet) |
 | `--detach` | flag | — | Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it |

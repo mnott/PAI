@@ -49,6 +49,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--agent NAME` | string | — | Run the agent definition ~/.claude/agents/NAME.md on a worker |
 | `--model ID` | string | — | Model for this run (default: the model set for the class) |
 | `--urgent` | flag | — | Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`) |
+| `--local` | flag | — | Run on the local model server PAI resolves (the one that answers); never pick a local provider by name |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |
 | `--cloud` | flag | — | This run goes to the cloud under the prefer-local or auto policy |
 | `--label TEXT` | string | — | Short task label shown in ps, follow and the status line |
@@ -72,6 +73,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 ```sh
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
 pai worker run --provider glm --spec /tmp/task.txt
+pai worker run --local -p 'Summarize the changelog'
 pai worker run --chain draft,implement,review -p 'Add a --json flag to the export command'
 pai worker run --print-cmd --class spotcheck -p 'Say hi'
 ```

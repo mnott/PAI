@@ -14,6 +14,7 @@ import { getProviderOrNative, readWorkersSection } from "../../workers/config.js
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
+import { localProviderForDelegation } from "../../workers/local-provider.js";
 import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems, runQueue } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
@@ -40,7 +41,12 @@ async function open(ctx: RunContext): Promise<{ repo: string; store: QueueStore;
   return { repo, store: new QueueStore(queueStatePath(repo)), settings: loadSettings(repo) };
 }
 
-/** The settings' provider, else the active provider when local, else the first local one. */
+/**
+ * The settings' provider, else the active provider when local, else the first
+ * local one. A settings provider of `local` (or none found) stays the value
+ * `local`: the run resolves it to the server that answers (queue run's
+ * --local path / the plan runner's resolvePlanProvider), never a guess.
+ */
 function providerOf(settings: QueueSettings): { name: string; cap: number } {
   try {
     const w = readWorkersSection().workers;
@@ -48,8 +54,9 @@ function providerOf(settings: QueueSettings): { name: string; cap: number } {
       const p = getProviderOrNative(w, n);
       return p && isLocalProvider(p.baseUrl) ? p : undefined;
     };
-    const name = settings.provider ?? (w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n))) ?? "local";
-    const p = getProviderOrNative(w, name);
+    const found = w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n));
+    const name = settings.provider ?? found ?? "local";
+    const p = name === "local" ? undefined : getProviderOrNative(w, name);
     return { name, cap: resolveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) ?? 3 };
   } catch {
     return { name: settings.provider ?? "local", cap: 3 };
@@ -89,6 +96,8 @@ const runCmd: CommandDef = {
   description: "Runs each pending item as a worker in its own worktree branch, up to N at once. A finished item becomes ready (diff stat, gate result in the worktree, proof output, worker report), too-big when it exceeds max_files/max_lines, or after one local retry with the failure tail needs-decision. Merging is `pai queue accept`. The gate runs only if .pai/queue.yaml names one; no test suite otherwise. With --escalate sonnet, only items marked cloud (two failed `again` rounds) run, on one Sonnet worker each.",
   options: [
     projectOpt,
+    { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
+    { name: "provider", type: "string", value: "NAME", summary: "Provider name (the detached runner passes what it resolved; the value local is resolved at run start)" },
     { name: "parallel", type: "number", value: "N", summary: "Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only sonnet)" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
@@ -99,7 +108,15 @@ const runCmd: CommandDef = {
     const esc = ctx.opts.escalate;
     if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai queue run --escalate sonnet");
     const { repo, store, settings } = await open(ctx);
-    const prov = providerOf(settings);
+    // --local: PAI resolves the running local server itself (local-provider.ts);
+    // --provider names one (the detached runner passes what it already resolved)
+    const named = typeof ctx.opts.provider === "string" ? ctx.opts.provider : undefined;
+    const prov =
+      ctx.opts.local === true
+        ? await localProviderForDelegation()
+        : named
+          ? { name: named, cap: resolveCap(getProviderOrNative(readWorkersSection().workers, named)?.maxConcurrent, true) ?? 3 }
+          : providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
     const logDir = workersLogDir(readWorkersSection().workers);
     const origin = reportOrigin();
