@@ -206,6 +206,13 @@ describe("sibling replacement", () => {
     expect(workerEnded(dir, "w-missing")).toBe(false);
   });
 
+  it("queued with a live pid is not ended; with a dead pid it is", () => {
+    put("w-queued", { state: "queued", pid: process.pid });
+    expect(workerEnded(dir, "w-queued")).toBe(false);
+    put("w-queued-dead", { state: "queued", pid: 2 ** 22 + 23456 });
+    expect(workerEnded(dir, "w-queued-dead")).toBe(true);
+  });
+
   it("a ghost 'running' status whose pid is dead counts as ended", () => {
     put("w-ghost", { state: "running", pid: 2 ** 22 + 12345 });
     expect(workerEnded(dir, "w-ghost")).toBe(true);

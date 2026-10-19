@@ -48,6 +48,7 @@ describe("workerEnded", () => {
 
   it("keeps following while the worker runs", () => {
     expect(workerEnded(false, "running")).toBe(false);
+    expect(workerEnded(false, "queued")).toBe(false);
     expect(workerEnded(false, "timeout" as never)).toBe(true);
   });
 
@@ -839,6 +840,31 @@ describe("ps machine scope (no hidden workers)", () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-ps-own-"));
     saveStatus(dir, { ...base, id: "20260917-100002-3", term: mineTerm });
     expect(psOutput(dir, false, env, false)).not.toContain("scope: MACHINE");
+  });
+
+  it("QUEUED section above RUNNING, in grant order, with position and cap", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-ps-queued-"));
+    const queuedRow = {
+      ...base,
+      state: "queued",
+      capacity: { provider: "prov", cap: 1, total: 2, position: 2, elapsedSec: 40 },
+    } as WorkerStatus;
+    const head = { ...base, id: "20260917-100010-9", state: "queued", capacity: { provider: "prov", cap: 1, total: 2, position: 1, elapsedSec: 90 } } as WorkerStatus;
+    saveStatus(dir, { ...base, id: "20260917-100008-7" });
+    saveStatus(dir, { ...queuedRow, id: "20260917-100009-8" });
+    saveStatus(dir, head);
+    const out = psOutput(dir, true, env, false);
+    const qi = out.indexOf("QUEUED (2)");
+    const ri = out.indexOf("RUNNING (1)");
+    expect(qi).toBeGreaterThanOrEqual(0);
+    expect(ri).toBeGreaterThan(qi); // QUEUED above RUNNING
+    expect(out.indexOf("20260917-100010-9")).toBeLessThan(out.indexOf("20260917-100009-8")); // position order
+    expect(out).toContain("position 2 of 2, cap 1");
+    expect(out).toContain("task: cross-session task");
+    // a table with nothing waiting keeps the old shape
+    const plain = mkdtempSync(join(tmpdir(), "pai-ps-noqueue-"));
+    saveStatus(plain, { ...base, id: "20260917-100011-a" });
+    expect(psOutput(plain, true, env, false)).not.toContain("QUEUED");
   });
 
   it("chat panes are terminals, not workers: never in the machine count", () => {

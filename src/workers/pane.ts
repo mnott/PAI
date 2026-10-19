@@ -969,14 +969,15 @@ function tmuxSplit(cmd: string): void {
 
 /**
  * Worker state straight from its status file (pane.ts cannot import status.ts: it imports us).
- * Ended = any state but "running", or "running" whose runner pid is gone (a ghost that died
- * before it could write its end state). A missing/unreadable file or a status without a pid is never ended.
+ * Ended = any state but "running"/"queued", or a live state whose runner pid is gone (a ghost
+ * that died before it could write its end state). A missing/unreadable file or a status without
+ * a pid is never ended.
  */
 export function workerEnded(logDir: string, wid: string): boolean {
   try {
     const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
     if (!st.state) return false;
-    if (st.state !== "running") return true;
+    if (st.state !== "running" && st.state !== "queued") return true;
     if (typeof st.pid !== "number" || st.pid <= 0) return false;
     try {
       process.kill(st.pid, 0);

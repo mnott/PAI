@@ -96,7 +96,7 @@ export function strayWorkerProcesses(
 ): Array<{ pid: number; command: string }> {
   const owned = new Set<number>();
   for (const s of statuses) {
-    if (s.state !== "running" || !ownsPid(s as WorkerStatus)) continue;
+    if ((s.state !== "running" && s.state !== "queued") || !ownsPid(s as WorkerStatus)) continue;
     owned.add(s.pid);
     if (s.parentPid && s.parentPid > 0) owned.add(s.parentPid);
   }
@@ -644,6 +644,7 @@ export async function followWorkers(
       tool: waitingNow() ?? ticker.tool,
       state: fin ? (st.state === "running" ? "done" : st.state) : null,
       warmup: st.warmup ?? null,
+      capacity: st.capacity ?? null,
     };
   };
   // what a blocked worker waits on, from the freshest status the pane has

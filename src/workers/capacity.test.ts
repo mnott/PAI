@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
-import type { WorkerStatus } from "./status.js";
+import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, providerCap, queueRows, reorderQueue, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const DEAD = 999999;
 const st = (id: string, over: Partial<WorkerStatus> = {}): WorkerStatus =>
@@ -108,6 +108,117 @@ describe("capacityGate", () => {
     const live = () => [st("a"), st("b"), st("c")];
     expect(await capacityGate({ ...harness(live, "d").base, disabled: true })).toBeNull();
     expect(await capacityGate({ ...harness(live, "d").base, config: { enabled: false } })).toBeNull();
+  });
+
+  it("a queued run is never counted as a slot holder", async () => {
+    // three live statuses on p, one of them "queued": only two hold slots, so
+    // a fourth run at cap 3 passes without waiting
+    const h = harness(() => [st("a"), st("b"), st("c", { state: "queued" })], "d");
+    expect(await capacityGate(h.base)).toBeNull();
+    expect(h.elapsed()).toBe(0);
+  });
+});
+
+describe("queue pull-forward", () => {
+  // two fake waiters behind one holder: the one pulled to front gets the slot
+  const qharness = () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-order-"));
+    dirs.push(logDir);
+    const qdir = join(logDir, "queue", "p");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "w-early"), String(process.pid));
+    writeFileSync(join(qdir, "w-late"), String(process.pid));
+    // alive and running: holds the only slot
+    saveStatus(logDir, { id: "holder", pid: process.pid, provider: "p", state: "running", started: nowStamp(), updated: nowStamp(), label: "h", cwd: "/", term: "", model: "m", turns: 0, tools: 0, last: "", rc: null, secs: null } as WorkerStatus);
+    return { logDir, qdir };
+  };
+
+  it("front moves a waiting worker ahead of an earlier one in liveQueue", () => {
+    const { logDir } = qharness();
+    expect(liveQueue(logDir, "p")).toEqual(["w-early", "w-late"]);
+    reorderQueue(logDir, "p", "w-late", "front");
+    expect(liveQueue(logDir, "p")).toEqual(["w-late", "w-early"]);
+  });
+
+  it("up moves one place; at the head it is a no-op", () => {
+    const { logDir } = qharness();
+    reorderQueue(logDir, "p", "w-late", "up");
+    expect(liveQueue(logDir, "p")).toEqual(["w-late", "w-early"]);
+    expect(reorderQueue(logDir, "p", "w-late", "up")).toEqual(["w-late", "w-early"]);
+  });
+
+  it("the moved waiter gets the slot first: capacityGate releases in the new order", async () => {
+    const { logDir, qdir } = qharness();
+    // w-late (id-sorted last) is pulled to front while it polls; the holder ends later
+    let t = 0;
+    const r = await capacityGate({
+      logDir,
+      self: { id: "w-late", provider: "p", pid: process.pid },
+      cap: 1,
+      config: DEFAULT_CAPACITY,
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+        if (t > 60_000) throw new Error("never released");
+        if (t === 250) setFront(logDir, "p", "w-late");
+        if (t >= 750) saveStatus(logDir, { ...loadStatus(logDir, "holder")!, state: "done" });
+      },
+    });
+    expect(r).not.toBeNull(); // it did wait for the holder
+    // w-late got the slot ahead of the earlier w-early: its entry is gone, w-early's stays
+    expect(liveQueue(logDir, "p")).toEqual(["w-early"]);
+    expect(qdir).toContain("queue");
+  });
+
+  it("without the move the same gate keeps waiting (the FIFO baseline)", async () => {
+    const { logDir } = qharness();
+    let t = 0;
+    let sleeps = 0;
+    await expect(
+      capacityGate({
+        logDir,
+        self: { id: "w-late", provider: "p", pid: process.pid },
+        cap: 1,
+        config: DEFAULT_CAPACITY,
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms;
+          if (++sleeps > 6) throw new Error("stop"); // never released: w-early stays ahead
+        },
+      })
+    ).rejects.toThrow("stop");
+  });
+
+  it("front/up throw for a worker that is not waiting", () => {
+    const { logDir } = qharness();
+    expect(() => reorderQueue(logDir, "p", "holder", "front")).toThrow(/not queued/);
+    expect(() => reorderQueue(logDir, "p", "nosuch", "up")).toThrow(/not queued/);
+  });
+
+  it("queueRows lists waiters per provider in grant order with position and cap", () => {
+    const { logDir } = qharness();
+    setFront(logDir, "p", "w-late");
+    const rows = queueRows(logDir, { p: 1 });
+    expect(rows.map((r) => [r.id, r.position, r.queued, r.cap])).toEqual([
+      ["w-late", 1, 2, 1],
+      ["w-early", 2, 2, 1],
+    ]);
+    expect(rows[0].status?.label).toBeUndefined(); // no status file for w-late
+    expect(queueRows(join(logDir, "empty"), {})).toEqual([]);
+  });
+
+  it("providerCap resolves maxConcurrent and the loopback default", () => {
+    const config = {
+      providers: {
+        cloud: { maxConcurrent: 5, baseUrl: "https://api.example.com" },
+        plain: { baseUrl: "https://api.example.com" },
+        local: { baseUrl: "http://127.0.0.1:8034" },
+      },
+    };
+    expect(providerCap(config, "cloud")).toBe(5);
+    expect(providerCap(config, "plain")).toBeUndefined();
+    expect(providerCap(config, "local")).toBe(3);
+    expect(providerCap(config, "gone")).toBeUndefined();
   });
 });
 

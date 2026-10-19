@@ -14,7 +14,7 @@ import { stringify as yamlStringify } from "yaml";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
-import { isLocalProvider } from "../../workers/policy.js";
+import { isLocalProvider } from "../../workers/config.js";
 import { resolveTarget, withTarget, type Target, type TargetArgs, type TargetResolver } from "../../workers/target.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths } from "../../workers/plan-deps.js";

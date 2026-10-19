@@ -4,12 +4,23 @@
  * where nobody sees it). Runs beyond `maxConcurrent` wait here instead, in
  * FIFO order, with a status line saying why. Queue = one file per waiting run
  * (name = run id, content = pid) in <logDir>/queue/<provider>/; entries whose
- * pid is gone are dropped.
+ * pid is gone are dropped. The waiting state is "queued" (status.ts): the
+ * gate writes it through onWait while held, and the caller flips it back to
+ * "running" (and rewrites `started`) once the slot is granted.
+ *
+ * Grant order is FIFO by id unless a pull-forward file
+ * (<logDir>/queue/<provider>.order, written atomically by `pai worker queue
+ * front|up`, the cockpit or the MCP tool) puts named ids first: the file
+ * lists ids in grant order, live entries not in it keep their id order at the
+ * back. Every waiting loop re-reads it with each poll, so a move takes effect
+ * on the next check. Running workers are never interrupted — only the order
+ * of the waiting ones changes.
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { alive, isLive, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { isLocalProvider } from "./config.js";
+import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export interface CapacityConfig {
   enabled: boolean;
@@ -27,6 +38,13 @@ export const LOCAL_DEFAULT_CAP = 3;
 /** Provider cap: explicit `maxConcurrent`, else 3 for loopback, else unlimited (undefined). */
 export function resolveCap(maxConcurrent: number | undefined, local: boolean): number | undefined {
   return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
+}
+
+/** Cap of a named provider from the config, the same rule the gate applies. */
+export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; baseUrl: string }> }, provider: string): number | undefined {
+  const p = config.providers[provider];
+  if (!p) return undefined;
+  return resolveCap(p.maxConcurrent, isLocalProvider(p.baseUrl));
 }
 
 /** Longest silence of the log while queued. */
@@ -100,6 +118,60 @@ export function moveUp(logDir: string, provider: string, id: string, isAlive: (p
   return true;
 }
 
+/**
+ * setFront / moveUp for callers that report the result (CLI, cockpit, MCP):
+ * returns the new waiting order; throws when `id` is not waiting on the provider.
+ */
+export function reorderQueue(logDir: string, provider: string, id: string, how: "front" | "up"): string[] {
+  if (!liveQueue(logDir, provider).includes(id)) throw new Error(`worker ${id} is not queued on provider ${provider}`);
+  if (how === "front") setFront(logDir, provider, id);
+  else moveUp(logDir, provider, id);
+  return liveQueue(logDir, provider);
+}
+
+export interface QueueRow {
+  id: string;
+  provider: string;
+  /** 1 = next in line. */
+  position: number;
+  /** Waiting runs on this provider (M). */
+  queued: number;
+  /** Provider cap (C); undefined = unlimited. */
+  cap?: number;
+  /** Status of the waiting run, when its file is readable. */
+  status?: WorkerStatus;
+}
+
+/**
+ * The waiting workers of every provider, in grant order — the one queue
+ * reader behind `pai worker ps`' QUEUED section, /cockpit/queue and the MCP
+ * worker_queue list. Dead entries are dropped; a provider with no cap (or a
+ * cap the config no longer names) still lists its waiters, cap undefined.
+ */
+export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}): QueueRow[] {
+  let providers: string[];
+  try {
+    providers = readdirSync(join(logDir, "queue")).sort();
+  } catch {
+    return [];
+  }
+  const rows: QueueRow[] = [];
+  for (const prov of providers) {
+    const queue = liveQueue(logDir, prov);
+    queue.forEach((id, i) => {
+      rows.push({
+        id,
+        provider: prov,
+        position: i + 1,
+        queued: queue.length,
+        cap: caps[prov],
+        status: loadStatus(logDir, id) ?? undefined,
+      });
+    });
+  }
+  return rows;
+}
+
 export interface CapacityInfo {
   provider: string;
   cap: number;
@@ -121,7 +193,7 @@ export interface CapacityOpts {
   /** "front": wait ahead of the provider's other queued runs (--now). */
   priority?: "front";
   log?: (line: string) => void;
-  /** Called at the start and after every poll while queued; null when released. */
+  /** Called at the start and after every poll while queued; null once the slot is granted (the caller flips queued -> running then). */
   onWait?: (info: CapacityInfo | null) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -147,12 +219,13 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const entry = join(dir, self.id);
   writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""}`);
 
-  // Runs holding a slot: live, running, on this provider, and not waiting in the queue themselves.
+  // Runs holding a slot: live and running on this provider — a "queued" status
+  // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
     const queue = liveQueue(logDir, self.provider, isAlive);
-    const queued = new Set(queue);
+    const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
     const holding = load(logDir).filter(
-      (s) => s.id !== self.id && s.provider === self.provider && isLive(s, o.isAlive ? (w) => isAlive(w.pid) : ownsPid) && !queued.has(s.id),
+      (s) => s.id !== self.id && s.provider === self.provider && s.state === "running" && isLive(s, owns),
     ).length;
     const position = queue.indexOf(self.id) + 1;
     return { holding, position: position || queue.length + 1, queued: queue.length };
@@ -194,6 +267,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     rmSync(entry, { force: true });
   }
   const waitedSec = Math.round((now() - t0) / 100) / 10;
+  // The slot is ours: the caller flips the status back to "running" (and
+  // rewrites `started`) before we report the release.
   o.onWait?.(null);
   o.log?.(`waited ${waitedSec}s for a ${self.provider} slot`);
   return { waitedSec, cap };

@@ -50,6 +50,7 @@ svg text{fill:var(--dim);font-size:10px}
 <main>
 <section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
+<section class="card c12"><h2>Queue<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
@@ -369,9 +370,31 @@ function load(){
 }
 function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower();renderDonuts()}).catch(function(){})}
 ${POOL_PANEL_JS}
+function renderQueue(q){
+ var el=$("queuepanel");if(!q){el.innerHTML='<span class="dim">queue status unavailable</span>';return}
+ function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
+ setTip($("queuetip"),"Workers waiting behind a provider's concurrency cap, in grant order. Running workers are never interrupted; to front / up only reorder the waiting ones.");
+ var ps=q.providers||[];
+ if(!ps.length||!ps.some(function(p){return p.waiting.length})){el.innerHTML='<span class="dim">nothing waiting</span>';return}
+ el.innerHTML=ps.map(function(p){
+  var run=p.running.map(function(r){return'<span class="chip" title="'+esc(r.label)+'">'+esc(r.id)+' · '+qdur(r.ageSec)+'</span>'}).join(" ")||'<span class="dim">none running</span>';
+  var w=p.waiting.length?table(["pos","worker","label","waited","move"],p.waiting.map(function(x){
+   return[x.position,'<span title="'+esc(x.id)+'">'+esc(x.id.slice(-15))+'</span>',esc(x.label),qdur(x.waitedSec),
+    '<button data-q="front" data-id="'+esc(x.id)+'" title="move to front">to front</button> <button data-q="up" data-id="'+esc(x.id)+'" title="move one place up">up</button>']}):'<span class="dim">nothing waiting</span>';
+  return'<div style="margin-bottom:8px"><div class="chips" style="margin-bottom:4px"><b>'+esc(p.provider)+(p.cap!=null?' (cap '+p.cap+')':'')+'</b> '+run+'</div>'+w+'</div>'
+ }).join("");
+ var bs=el.querySelectorAll("button[data-q]");
+ for(var i=0;i<bs.length;i++)bs[i].onclick=function(){
+  var id=this.getAttribute("data-id"),verb=this.getAttribute("data-q");
+  this.disabled=true;
+  fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:id}),cache:"no-store"})
+   .then(function(r){return r.json()}).then(function(j){if(j.error)setTip($("queuetip"),j.error);loadQueue()}).catch(function(){loadQueue()});
+ };
+}
+function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
-tabs();load();loadSystem();loadLimits();loadPool();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(tick,1000);
+tabs();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;

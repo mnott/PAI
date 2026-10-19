@@ -155,6 +155,17 @@ export function isCockpitPath(path: string): boolean {
 }
 
 /**
+ * The cockpit write actions (POST): the queue pull-forward endpoints. They
+ * carry the same token auth as the GET routes — the wrapper below checks
+ * every /cockpit/* path whatever the method.
+ */
+export const COCKPIT_WRITE_PATHS = ["/cockpit/queue/front", "/cockpit/queue/up"] as const;
+
+export function isCockpitWrite(path: string): boolean {
+  return (COCKPIT_WRITE_PATHS as readonly string[]).includes(path);
+}
+
+/**
  * Wrap the cockpit handler with the token check for non-loopback binds. The
  * first token-authenticated response sets an HttpOnly cookie so the page's
  * relative fetches (/cockpit/data, ...) authenticate without carrying the

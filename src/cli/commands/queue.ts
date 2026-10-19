@@ -13,7 +13,7 @@ import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
-import { isLocalProvider } from "../../workers/policy.js";
+import { isLocalProvider } from "../../workers/config.js";
 import { localProviderForDelegation } from "../../workers/local-provider.js";
 import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems, runQueue } from "../../workers/queue-runner.js";

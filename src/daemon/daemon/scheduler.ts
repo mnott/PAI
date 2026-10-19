@@ -490,7 +490,7 @@ const PANE_REAP_TICK_MS = 2_000;
 
 /** True once a worker is terminal and has been for longer than the reap grace. */
 export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
-  if (!st || st.state === "running") return false;
+  if (!st || st.state === "running" || st.state === "queued") return false;
   const at = Date.parse(st.updated.replace(" ", "T"));
   return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
 }

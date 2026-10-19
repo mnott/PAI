@@ -50,7 +50,7 @@ function fakes(dir: string): { deps: Partial<KillTreeDeps>; signalled: string[] 
       },
       waitTerminal: async (d, id) => {
         const s = loadStatus(d, id);
-        return s && s.state !== "running" ? s : null;
+        return s && s.state !== "running" && s.state !== "queued" ? s : null;
       },
     },
   };
@@ -111,6 +111,20 @@ describe("killTree", () => {
     await killTree(dir, "w1", { skipRoot: true, deps: f.deps });
     expect(f.signalled).toEqual(["w4", "w2", "w3"]);
     expect(loadStatus(dir, "w1")!.state).toBe("running");
+  });
+
+  it("kill works on a queued worker: signalled, and killed when it never self-reports", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-queued-"));
+    mk(dir, "wq", 11, { state: "queued" });
+    mk(dir, "wq-child", 12, { parent: "wq", state: "queued" });
+    const f = fakes(dir);
+    // no self-report this time: the fake signal only records the signal
+    const deps = { ...f.deps, signal: (pid: number) => void f.signalled.push(`w${pid}`) };
+    const lines = await killTree(dir, "wq", { deps });
+    expect(f.signalled).toEqual(["w12", "w11"]);
+    expect(loadStatus(dir, "wq")!.state).toBe("killed");
+    expect(loadStatus(dir, "wq-child")!.state).toBe("killed");
+    expect(lines.join("\n")).toContain("sent SIGTERM to worker wq");
   });
 });
 

@@ -56,6 +56,7 @@ import {
   ANTHROPIC_NATIVE,
   assertProviderRunnable,
   classModelCapability,
+  isLocalProvider,
   isModelCapability,
   NATIVE_ANTHROPIC_MODELS,
   readWorkersSection,
@@ -94,7 +95,7 @@ import { certainContextWindow } from "../utils/model-window.js";
 import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
-import { fallThroughReason, isLocalProvider, routeRun, type RouteInfo } from "./policy.js";
+import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
 import { capacityGate, resolveCap } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
@@ -1475,9 +1476,15 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
     },
     onWait: (w) => {
       if (w) {
+        // parked at the cap: visible as "queued", never as a slot holder
+        status.state = "queued";
         status.capacity = { provider: w.provider, cap: w.cap, total: w.total, position: w.position, elapsedSec: w.elapsedSec };
         status.last = w.line;
       } else {
+        // slot granted: back to running, and `started` now counts from the grant
+        // (spawnTimeOf documents the rewrite; wait-on's ceiling and ps ages use it)
+        status.state = "running";
+        status.started = nowStamp();
         delete status.capacity;
         status.last = saved;
       }
@@ -1538,6 +1545,9 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   };
   saveStatus(a.logDir, status);
   await runGates(a, wid, status);
+  // a gate that never had to wait leaves the placeholder "running" with the
+  // spawn stamp; one that queued already flipped back to "running" with the
+  // grant stamp (runGates onWait)
   a.gated = true;
 }
 
@@ -1727,6 +1737,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     return 0;
   }
 
+  // a gate that already ran (gateStart) rewrote `started` at the slot grant;
+  // keep that stamp so the deadline and ps age count from the grant
+  const gated = a.gated ? loadStatus(logDir, wid) : null;
+  const started = gated && Number.isFinite(Date.parse(gated.started.replace(" ", "T")))
+    ? new Date(Date.parse(gated.started.replace(" ", "T")))
+    : new Date();
   let status: WorkerStatus = {
     id: wid,
     pid: process.pid,
@@ -1738,7 +1754,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     provider: target.providerName,
     model,
     state: "running",
-    started: nowStamp(),
+    started: nowStamp(started),
     updated: nowStamp(),
     turns: 0,
     tools: 0,

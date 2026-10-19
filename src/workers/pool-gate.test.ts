@@ -82,6 +82,7 @@ describe("pooled runs pass the capacity gate", () => {
     expect(posted).toEqual(["w-a"]);
     const queued = loadStatuses(d).find((s) => s.id === "w-b");
     expect(queued?.capacity?.cap).toBe(1);
+    expect(queued?.state).toBe("queued");
     expect(queued?.last).toMatch(/^queued: /);
     finish["w-a"]();
     expect(await pa).toBe(0);

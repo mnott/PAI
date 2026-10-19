@@ -48,7 +48,7 @@ export interface WorkerStatus {
   term: string;
   provider: string;
   model: string;
-  state: "running" | "done" | "failed" | "killed" | "lost";
+  state: "queued" | "running" | "done" | "failed" | "killed" | "lost";
   started: string;
   updated: string;
   turns: number;
@@ -325,7 +325,8 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (status.claims === undefined && onDisk.claims) status.claims = onDisk.claims;
   }
   // The one owner of "an ended worker holds no claims" (like its pane, below): every end path saves through here.
-  if (status.state !== "running" && status.claims?.length && !status.claimsContinue) {
+  // "queued" is not ended: a run parked at the capacity gate keeps its claims.
+  if (status.state !== "running" && status.state !== "queued" && status.claims?.length && !status.claimsContinue) {
     const errors = releaseClaims(status.cwd, status.claims);
     status.claims = [];
     if (errors.length) {
@@ -404,7 +405,8 @@ export function loadStatus(logDir: string, id: string): WorkerStatus | null {
 /**
  * Wait for a worker to record its own terminal state (the run's signal
  * handler writes killed/rc/secs). Returns that status, or null when it is
- * still "running" after `timeoutMs` — the caller then writes the state itself.
+ * still live ("running" or "queued") after `timeoutMs` — the caller then
+ * writes the state itself.
  */
 export async function waitForTerminalStatus(
   logDir: string,
@@ -415,7 +417,7 @@ export async function waitForTerminalStatus(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const s = loadStatus(logDir, id);
-    if (s && s.state !== "running") return s;
+    if (s && s.state !== "running" && s.state !== "queued") return s;
     if (Date.now() >= deadline) return null;
     await new Promise((r) => setTimeout(r, stepMs));
   }
@@ -481,28 +483,28 @@ export function ownsPid(status: OwnerFields): boolean {
   }
 }
 
-/** Any state a worker never leaves on its own: everything but "running". */
+/** Any state a worker never leaves on its own: everything but "running" and "queued". */
 export function isTerminal(state: WorkerStatus["state"] | undefined): boolean {
-  return state !== undefined && state !== "running";
+  return state !== undefined && state !== "running" && state !== "queued";
 }
 
-/** Whether a status is both marked "running" and still owns its recorded pid. */
+/** Whether a status is both marked live ("running", or "queued" at the capacity gate) and still owns its recorded pid. */
 export function isLive(
   status: OwnerFields & Pick<WorkerStatus, "state">,
   owns: (s: OwnerFields) => boolean = ownsPid
 ): boolean {
-  return status.state === "running" && owns(status);
+  return (status.state === "running" || status.state === "queued") && owns(status);
 }
 
 /** How long a "running" status may sit with a dead pid before it is declared lost. */
 export const LOST_GRACE_MS = 2 * 60_000;
 
 /**
- * Rewrite every status that is "running" with a dead pid and has not been
- * updated for `graceMs` to the terminal state "lost" (crashed or killed runs
- * that never wrote a final state), so no reader counts it. Returns the ids
- * rewritten. The one place that does this; ps, the status line and the
- * daemon call it before reading.
+ * Rewrite every status that is "running" or "queued" with a dead pid and has
+ * not been updated for `graceMs` to the terminal state "lost" (crashed or
+ * killed runs that never wrote a final state), so no reader counts it.
+ * Returns the ids rewritten. The one place that does this; ps, the status
+ * line and the daemon call it before reading.
  */
 export function reconcileStatuses(
   logDir: string,
@@ -512,7 +514,7 @@ export function reconcileStatuses(
 ): string[] {
   const lost: string[] = [];
   for (const s of loadStatuses(logDir)) {
-    if (s.state !== "running" || owns(s)) continue;
+    if ((s.state !== "running" && s.state !== "queued") || owns(s)) continue;
     const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
     if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
     saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);

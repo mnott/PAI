@@ -102,7 +102,7 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
   const stopped: string[] = [];
   for (const l of launched) {
     for (const s of loadStatuses(logDir)) {
-      if (s.label !== l.label || s.state !== "running" || Date.parse(s.started) < l.t0) continue;
+      if (s.label !== l.label || (s.state !== "running" && s.state !== "queued") || Date.parse(s.started) < l.t0) continue;
       try {
         await kill(logDir, s.id);
         stopped.push(s.id);

@@ -379,6 +379,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker providers use` | Make a provider the active one |
 | `pai worker proxy` | The local proxy for OpenAI-style providers |
 | `pai worker ps` | List this session's workers, running and finished |
+| `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker replay` | Print the transcript of one worker |
 | `pai worker resume` | Continue a finished worker with a new instruction |
 | `pai worker roles` | Old name of `classes` |

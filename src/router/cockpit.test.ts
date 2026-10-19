@@ -3,9 +3,10 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
 import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
 import type { UsageRow } from "./usage.js";
 
@@ -190,6 +191,79 @@ describe("cockpit http", () => {
     expect((await get("/cockpit/data", "POST")).status).toBe(405);
     expect((await get("/other")).body).toBe("other");
     srv.close();
+  });
+
+  it("/cockpit/queue shape and ordering; POST front/up reorder the grant order", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pai-cockpit-q-"));
+    const yaml = join(tmp, "workers.yaml");
+    writeFileSync(
+      yaml,
+      `active: p1\nproviders:\n  p1:\n    url: https://api.example.com\n    maxConcurrent: 1\n    models:\n      default: m1\n      fast: m1\n`
+    );
+    const prevYaml = process.env.PAI_WORKERS_YAML;
+    process.env.PAI_WORKERS_YAML = yaml;
+    const logDir = join(tmp, "logs");
+    const st = (id: string, state: "running" | "queued"): WorkerStatus => ({
+      id, pid: process.pid, label: `label ${id}`, cwd: "/proj", term: "", provider: "p1", model: "m1",
+      state, started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null,
+    });
+    saveStatus(logDir, st("w-holder", "running"));
+    saveStatus(logDir, st("w-early", "queued"));
+    saveStatus(logDir, st("w-late", "queued"));
+    const qdir = join(logDir, "queue", "p1");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "w-early"), String(process.pid));
+    writeFileSync(join(qdir, "w-late"), String(process.pid));
+
+    const limits = { get: async () => [] as never[] };
+    const srv = http.createServer((req, res) => {
+      if (!handleCockpit(req, res, limits as never, () => [], () => new Map(), undefined, () => [], () => null, async () => null as never, () => logDir)) res.end("other");
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as AddressInfo).port;
+    const ask = (path: string, method = "GET", body?: string) =>
+      new Promise<{ status: number; body: string }>((resolve) => {
+        const rq = http.request({ host: "127.0.0.1", port, path, method, headers: body ? { "content-type": "application/json" } : {} }, (res) => {
+          let b = "";
+          res.on("data", (c) => (b += c));
+          res.on("end", () => resolve({ status: res.statusCode!, body: b }));
+        });
+        if (body) rq.write(body);
+        rq.end();
+      });
+    try {
+      const q = JSON.parse((await ask("/cockpit/queue")).body);
+      expect(q.providers).toHaveLength(1);
+      const p = q.providers[0];
+      expect(p.provider).toBe("p1");
+      expect(p.cap).toBe(1);
+      expect(p.running.map((r: { id: string }) => r.id)).toEqual(["w-holder"]);
+      expect(p.waiting.map((w: { id: string }) => w.id)).toEqual(["w-early", "w-late"]); // FIFO by id
+      expect(p.waiting[0]).toMatchObject({ position: 1, label: "label w-early" });
+
+      const moved = await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "w-late" }));
+      expect(moved.status).toBe(200);
+      expect(JSON.parse(moved.body).order).toEqual(["w-late", "w-early"]);
+      const after = JSON.parse((await ask("/cockpit/queue")).body);
+      expect(after.providers[0].waiting.map((w: { id: string }) => w.id)).toEqual(["w-late", "w-early"]);
+
+      const up = await ask("/cockpit/queue/up", "POST", JSON.stringify({ id: "w-early" }));
+      expect(up.status).toBe(200);
+      expect(JSON.parse(up.body).order).toEqual(["w-early", "w-late"]);
+
+      expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({}))).status).toBe(400);
+      expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "nosuch" }))).status).toBe(404);
+      expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "w-holder" }))).status).toBe(409);
+      // the page carries the panel and its buttons
+      const page = await ask("/cockpit");
+      expect(page.body).toContain('id="queuepanel"');
+      expect(page.body).toContain("to front");
+      expect(page.body).toContain("nothing waiting");
+    } finally {
+      srv.close();
+      if (prevYaml === undefined) delete process.env.PAI_WORKERS_YAML;
+      else process.env.PAI_WORKERS_YAML = prevYaml;
+    }
   });
 });
 
