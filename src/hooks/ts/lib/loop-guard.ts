@@ -16,7 +16,9 @@ const WINDOW_CAP = 64;
 export const LOOP_DENY_REASON =
   "loop guard: you ran this exact command 4 times without changing anything. Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
 
-export function loopDenyReason(testRun: boolean, tool = "Bash", count = LOOP_MAX_REPEATS): string {
+export function loopDenyReason(testRun: boolean, tool = "Bash", count = LOOP_MAX_REPEATS, sameResult = false): string {
+  if (sameResult)
+    return `loop guard: same result ${LOOP_MAX_REPEATS} times without a change (${tool}, ${count} similar attempts). The result will not change; stop retrying variants. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`;
   if (tool !== "Bash")
     return `loop guard: you called ${tool} with the same input ${count} times without changing anything. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`;
   return testRun
@@ -29,6 +31,8 @@ export interface LoopState {
   window: string[];
   /** Denials per key since the last edit. */
   denials?: Record<string, number>;
+  /** Per tool: the latest normalised result, how many times in a row it came back identical, and the command that got it. */
+  results?: Record<string, { sig: string; n: number; cmd: string }>;
 }
 
 export function emptyLoopState(): LoopState {
@@ -85,14 +89,60 @@ export function isTestRunKey(key: string): boolean {
   return key.startsWith(TEST_PREFIX);
 }
 
-/** Whitespace-normalised; digits inside /tmp/... paths collapsed so a numbered output file does not hide a repeat. */
+const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
+
+/** Whitespace-normalised; every temp path replaced by a placeholder so changing temp file names do not hide a repeat. */
 export function loopKey(command: string): string {
   const test = testRunKey(command);
   if (test) return test;
   return command
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/(?:\/private)?\/tmp\/[^\s'";|&<>)]*/g, (p) => p.replace(/\d+/g, "N"));
+    .replace(TMP_PATH, "<tmp>");
+}
+
+/** Tool result as comparable text: temp paths and digits collapsed, whitespace trimmed. */
+export function resultSig(response: unknown): string {
+  let text: string;
+  if (typeof response === "string") text = response;
+  else if (response && typeof response === "object" && ("stdout" in response || "stderr" in response)) {
+    const r = response as { stdout?: unknown; stderr?: unknown };
+    text = `${typeof r.stdout === "string" ? r.stdout : ""}\n${typeof r.stderr === "string" ? r.stderr : ""}`;
+  } else text = stable(response);
+  return text.replace(TMP_PATH, "<tmp>").replace(/\d+/g, "N").replace(/\s+/g, " ").trim();
+}
+
+function tokens(s: string): Set<string> {
+  return new Set(s.replace(TMP_PATH, "<tmp>").replace(/\d+/g, "N").split(/[\s=,:;|&<>"']+/).filter(Boolean));
+}
+
+/** Loose command similarity: token-set overlap of at least 50%. */
+function similar(a: string, b: string): boolean {
+  const x = tokens(a);
+  const y = tokens(b);
+  if (!x.size || !y.size) return false;
+  let inter = 0;
+  for (const t of x) if (y.has(t)) inter++;
+  return inter / (x.size + y.size - inter) >= 0.5;
+}
+
+function callText(tool: string, input: string | Record<string, unknown> | undefined): string | null {
+  if (tool === "Bash") {
+    const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    return typeof c === "string" && c.trim() ? c : null;
+  }
+  return input && typeof input === "object" ? toolKey(tool, input) : null;
+}
+
+/** PostToolUse: counts how often a tool returned the same result since the last edit. Empty results are ignored. */
+export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown): LoopState {
+  if (EDIT_TOOLS.has(tool)) return emptyLoopState();
+  const cmd = callText(tool, input);
+  const sig = resultSig(response);
+  if (cmd === null || !sig) return state;
+  const prev = state.results?.[tool];
+  const same = prev && prev.sig === sig && similar(prev.cmd, cmd);
+  return { ...state, results: { ...state.results, [tool]: { sig, n: same ? prev.n + 1 : 1, cmd } } };
 }
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -157,6 +207,8 @@ export interface LoopStep {
   key?: string;
   /** Identical attempts of this key including this one. */
   count?: number;
+  /** Denied because the tool returned the same result repeatedly, not because the command repeated. */
+  sameResult?: boolean;
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
@@ -173,6 +225,14 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     if (tool === "Read") key = canonicalReadKey(state.window, key);
   }
   const copies = state.window.filter((k) => k === key).length;
+  const res = state.results?.[tool];
+  const text = callText(tool, input);
+  if (res && res.n >= LOOP_MAX_REPEATS && text !== null && copies < LOOP_MAX_REPEATS && similar(res.cmd, text)) {
+    const rkey = `result: ${tool}`;
+    const denials = { ...(state.denials ?? {}) };
+    denials[rkey] = (denials[rkey] ?? 0) + 1;
+    return { state: { ...state, denials }, deny: true, stop: denials[rkey] >= LOOP_STOP_DENIALS, key: rkey, count: LOOP_MAX_REPEATS + denials[rkey], sameResult: true };
+  }
   if (copies >= LOOP_MAX_REPEATS) {
     const denials = { ...(state.denials ?? {}) };
     denials[key] = (denials[key] ?? 0) + 1;
@@ -186,5 +246,5 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
       count,
     };
   }
-  return { state: { window: [...state.window, key].slice(-WINDOW_CAP), denials: state.denials }, deny: false };
+  return { state: { ...state, window: [...state.window, key].slice(-WINDOW_CAP) }, deny: false };
 }

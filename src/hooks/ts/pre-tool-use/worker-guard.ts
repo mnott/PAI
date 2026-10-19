@@ -25,7 +25,8 @@ import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
-import { emptyLoopState, loopDenyReason, stepLoopGuard, type LoopState } from "../lib/loop-guard.js";
+import { loopDenyReason, stepLoopGuard } from "../lib/loop-guard.js";
+import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
@@ -81,21 +82,11 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
   if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return null;
   try {
     const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
-    const dir = join(logDir, "loop-guard");
-    const file = join(dir, `${id.replace(/[^\w.-]/g, "_")}.json`);
-    let state: LoopState = emptyLoopState();
-    try {
-      const j = JSON.parse(readFileSync(file, "utf8")) as LoopState;
-      if (Array.isArray(j.window)) state = j;
-    } catch {
-      // first call or damaged state: start a fresh window
-    }
+    const file = loopStateFile(logDir, id);
+    const state = loadLoopState(file);
     const command = (input.tool_input as { command?: unknown } | undefined)?.command;
     const r = stepLoopGuard(state, input.tool_name, input.tool_name === "Bash" ? (typeof command === "string" ? command : undefined) : ((input.tool_input ?? {}) as Record<string, unknown>));
-    if (r.state !== state) {
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(file, JSON.stringify(r.state));
-    }
+    if (r.state !== state) saveLoopState(file, r.state);
     if (r.deny) {
       recordToolError(logDir, {
         worker: id,
@@ -117,7 +108,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
         claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : undefined,
       });
     return {
-      reason: loopDenyReason(!!r.testRun, input.tool_name, r.count),
+      reason: loopDenyReason(!!r.testRun, input.tool_name, r.count, r.sameResult),
       stopReason: r.stop
         ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; stopping so the orchestrator can decide`
         : undefined,

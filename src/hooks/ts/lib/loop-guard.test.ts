@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, type LoopState } from "./loop-guard.js";
+import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -223,5 +223,63 @@ describe("loop guard: overlapping Read ranges", () => {
   it("an Edit resets", () => {
     const calls = [...Array.from({ length: 4 }, (_, i) => rd(448 + i, 115)), ["Edit", {}] as const, rd(452, 115)];
     expect(run(calls).some((r) => r.deny)).toBe(false);
+  });
+});
+
+describe("temp-path and repeated-result evasions", () => {
+  const names = ["km", "kn", "ko", "kp", "kq", "kr", "ks"];
+  const probe = (n: string) =>
+    `timeout 110 bun src/cli/index.ts daemon keepalive > /tmp/${n}.out 2> /tmp/${n}.err; echo "rc=$?"; cat /tmp/${n}.err`;
+  it("temp file names do not change the key", () => {
+    expect(loopKey(probe("km"))).toBe(loopKey(probe("kw")));
+    expect(loopKey("cat $TMPDIR/a.txt")).toBe(loopKey("cat ${TMPDIR}/b/c.txt"));
+    expect(loopKey("cat /private/tmp/x1")).toBe(loopKey("cat /tmp/y"));
+  });
+  it("km..kw: denied at the 5th, stopped at the 7th", () => {
+    let s: LoopState = emptyLoopState();
+    const out: Array<[boolean, boolean | undefined]> = [];
+    for (const n of names) {
+      const r = stepLoopGuard(s, "Bash", probe(n));
+      s = r.state;
+      out.push([r.deny, r.stop]);
+    }
+    expect(out.map((o) => o[0])).toEqual([false, false, false, false, true, true, true]);
+    expect(out.map((o) => !!o[1])).toEqual([false, false, false, false, false, false, true]);
+    expect(LOOP_STOP_DENIALS).toBe(3);
+  });
+  it("same result 4 times with changing commands is denied, then stopped", () => {
+    let s: LoopState = emptyLoopState();
+    const seen: Array<[boolean, boolean | undefined, boolean | undefined]> = [];
+    for (let i = 0; i < 7; i++) {
+      const cmd = `grep -c foo${"x".repeat(i)} src/a.ts src/b.ts`;
+      const r = stepLoopGuard(s, "Bash", cmd);
+      s = r.state;
+      seen.push([r.deny, r.stop, r.sameResult]);
+      if (!r.deny) s = recordLoopResult(s, "Bash", cmd, { stdout: "0 matches\n", stderr: "" });
+    }
+    expect(seen.map((x) => x[0])).toEqual([false, false, false, false, true, true, true]);
+    expect(seen[4][2]).toBe(true);
+    expect(seen[6][1]).toBe(true);
+  });
+  it("differing results or an edit reset the result count", () => {
+    let s: LoopState = emptyLoopState();
+    for (let i = 0; i < 10; i++) {
+      const cmd = `grep -c foo src/a${i}.ts src/b.ts`;
+      const r = stepLoopGuard(s, "Bash", cmd);
+      expect(r.deny).toBe(false);
+      s = recordLoopResult(r.state, "Bash", cmd, `result ${i}${"y".repeat(i)}`);
+    }
+    for (let i = 0; i < 4; i++) s = recordLoopResult(s, "Bash", "ls src/a", "same");
+    s = stepLoopGuard(s, "Edit").state;
+    expect(stepLoopGuard(s, "Bash", "ls src/a").deny).toBe(false);
+  });
+  it("paging with identical digits-only differences is not blocked by distinct content", () => {
+    let s: LoopState = emptyLoopState();
+    for (let i = 0; i < 8; i++) {
+      const cmd = `sed -n ${i * 40 + 1},${i * 40 + 40}p f.ts`;
+      const r = stepLoopGuard(s, "Bash", cmd);
+      expect(r.deny).toBe(false);
+      s = recordLoopResult(r.state, "Bash", cmd, `line block ${String.fromCharCode(97 + i)} content`);
+    }
   });
 });
