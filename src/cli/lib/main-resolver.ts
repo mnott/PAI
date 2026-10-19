@@ -16,6 +16,7 @@
  * Dedup + name normalization logic: src/cli/lib/dedup-sessions.ts (shared with listing).
  */
 
+import { terminalHasName } from "../../workers/scope.js";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
@@ -214,7 +215,7 @@ function launchSession(
   // config (provider when routing is on), a wanted resume stays claude because
   // its transcript is claude-format. Duplicating that dance here is also how
   // probeResume ended up fixed in one copy and not the others.
-  launchInDir(projectDir, name, { resumableUuid, dryRun, named: !!session.persistentName && session.persistentName === name });
+  launchInDir(projectDir, name, { resumableUuid, dryRun, named: terminalHasName(name) });
   return true;
 }
 

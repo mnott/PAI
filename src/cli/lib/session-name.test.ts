@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { loadBrokerNames, resolveFriendlyName } from "./session-scan.js";
 import { nameArgs } from "./harness.js";
 import { resumeArgvText } from "./launch.js";
+import { terminalHasName } from "../../workers/scope.js";
 
 describe("friendly name precedence", () => {
   it("persistent name > clc name > ai title > directory", () => {
@@ -55,5 +56,22 @@ describe("/Name is not re-sent to a session that has the name", () => {
   it("resume argv text", () => {
     expect(resumeArgvText("u1", "Jobs", null)).toContain('"/Name Jobs"');
     expect(resumeArgvText("u1", "Jobs", null, true)).not.toContain("/Name");
+  });
+});
+
+describe("/Name follows the CURRENT terminal, not the stored session name", () => {
+  const reg = join(mkdtempSync(join(tmpdir(), "pai-term-")), "session-names.json");
+  writeFileSync(reg, JSON.stringify({ "OLD-UUID": "Untwitter" }));
+  it("resume in a new terminal id: /Name is sent", () => {
+    expect(terminalHasName("Untwitter", "w0t1p0:NEW-UUID", reg)).toBe(false);
+    expect(resumeArgvText("u1", "Untwitter", null, terminalHasName("Untwitter", "w0t1p0:NEW-UUID", reg))).toContain('"/Name Untwitter"');
+  });
+  it("same terminal already named: skipped", () => {
+    expect(terminalHasName("Untwitter", "w0t0p0:OLD-UUID", reg)).toBe(true);
+  });
+  it("never named / no terminal / no registry: the name is sent", () => {
+    expect(terminalHasName("Other", "w0t0p0:OLD-UUID", reg)).toBe(false);
+    expect(terminalHasName("Untwitter", "", reg)).toBe(false);
+    expect(terminalHasName("Untwitter", "w0t0p0:OLD-UUID", "/nonexistent/x.json")).toBe(false);
   });
 });
