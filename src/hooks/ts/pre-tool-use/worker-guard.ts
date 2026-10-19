@@ -69,8 +69,13 @@ function buildContext(cwd: string): WorkerGuardContext {
   };
 }
 
+function shortKey(key = ""): string {
+  const k = key.replace(/^\w+: /, "");
+  return k.length > 80 ? `${k.slice(0, 77)}...` : k;
+}
+
 /** Per-worker repeat window in <logDir>/loop-guard/<id>.json; deny reason when this call is a loop repeat, else null. */
-function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): string | null {
+function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: string; stopReason?: string } | null {
   const id = currentWorkerId(env, env.PAI_WORKER_LOOP_DIR || undefined);
   if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return null;
   try {
@@ -85,7 +90,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): string | n
       // first call or damaged state: start a fresh window
     }
     const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-    const r = stepLoopGuard(state, input.tool_name, typeof command === "string" ? command : undefined);
+    const r = stepLoopGuard(state, input.tool_name, input.tool_name === "Bash" ? (typeof command === "string" ? command : undefined) : ((input.tool_input ?? {}) as Record<string, unknown>));
     if (r.state !== state) {
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       writeFileSync(file, JSON.stringify(r.state));
@@ -95,12 +100,22 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): string | n
         worker: id,
         provider: env.PAI_WORKER_PROVIDER ?? "?",
         label: env.PAI_WORKER_LABEL ?? "?",
-        tool: "Bash",
-        text: `loop guard: same command ${typeof command === "string" ? command : ""}`,
+        tool: input.tool_name,
+        text: r.stop
+          ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; session stopped`
+          : input.tool_name === "Bash"
+            ? `loop guard: same command ${typeof command === "string" ? command : ""}`
+            : `loop guard: same ${input.tool_name} ${shortKey(r.key)} (${r.count}x)`,
         input: input.tool_input,
       });
     }
-    return r.deny ? loopDenyReason(!!r.testRun) : null;
+    if (!r.deny) return null;
+    return {
+      reason: loopDenyReason(!!r.testRun, input.tool_name, r.count),
+      stopReason: r.stop
+        ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; stopping so the orchestrator can decide`
+        : undefined,
+    };
   } catch {
     return null; // a guard fault must never block work
   }
@@ -131,9 +146,11 @@ async function main(): Promise<void> {
     }
   }
 
-  const loopReason = loopRepeat(input, process.env);
-  if (loopReason) {
-    process.stdout.write(renderDecision({ decision: "deny", reason: loopReason }) + "\n");
+  const loop = loopRepeat(input, process.env);
+  if (loop) {
+    const out = JSON.parse(renderDecision({ decision: "deny", reason: loop.reason }));
+    if (loop.stopReason) Object.assign(out, { continue: false, stopReason: loop.stopReason });
+    process.stdout.write(JSON.stringify(out) + "\n");
     return;
   }
 

@@ -16,7 +16,9 @@ const WINDOW_CAP = 64;
 export const LOOP_DENY_REASON =
   "loop guard: you ran this exact command 4 times without changing anything. Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
 
-export function loopDenyReason(testRun: boolean): string {
+export function loopDenyReason(testRun: boolean, tool = "Bash", count = LOOP_MAX_REPEATS): string {
+  if (tool !== "Bash")
+    return `loop guard: you called ${tool} with the same input ${count} times without changing anything. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`;
   return testRun
     ? `loop guard: you are re-running the same tests on an unchanged tree (${LOOP_MAX_REPEATS} times, flags varied). Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`
     : LOOP_DENY_REASON;
@@ -25,6 +27,8 @@ export function loopDenyReason(testRun: boolean): string {
 export interface LoopState {
   /** Normalised commands run since the last edit, oldest first. */
   window: string[];
+  /** Denials per key since the last edit. */
+  denials?: Record<string, number>;
 }
 
 export function emptyLoopState(): LoopState {
@@ -93,12 +97,62 @@ export function loopKey(command: string): string {
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
-/** Next state and whether this tool call is a loop repeat to deny. */
-export function stepLoopGuard(state: LoopState, tool: string, command?: string): { state: LoopState; deny: boolean; testRun?: boolean } {
+/** Denials of one key after which the session is stopped (the 7th identical attempt). */
+export const LOOP_STOP_DENIALS = 3;
+
+function stable(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stable(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/** Window key for a non-Bash tool call: tool name plus the normalised input. */
+export function toolKey(tool: string, input: Record<string, unknown>): string {
+  const pick = (names: string[]) => stable(Object.fromEntries(names.map((n) => [n, input[n] ?? null])));
+  if (tool === "Read") return `${tool}: ${pick(["file_path", "offset", "limit"])}`;
+  if (tool === "Grep" || tool === "Glob") return `${tool}: ${pick(["pattern", "path", "glob"])}`;
+  return `${tool}: ${stable(input)}`;
+}
+
+export interface LoopStep {
+  state: LoopState;
+  deny: boolean;
+  testRun?: boolean;
+  /** True when the same key has now been denied LOOP_STOP_DENIALS times: end the session. */
+  stop?: boolean;
+  key?: string;
+  /** Identical attempts of this key including this one. */
+  count?: number;
+}
+
+/** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
-  if (tool !== "Bash" || typeof command !== "string" || !command.trim()) return { state, deny: false };
-  const key = loopKey(command);
+  let key: string;
+  if (tool === "Bash") {
+    const command = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    if (typeof command !== "string" || !command.trim()) return { state, deny: false };
+    key = loopKey(command);
+  } else {
+    if (typeof input === "string" || !tool) return { state, deny: false };
+    key = toolKey(tool, input ?? {});
+  }
   const copies = state.window.filter((k) => k === key).length;
-  if (copies >= LOOP_MAX_REPEATS) return { state, deny: true, testRun: isTestRunKey(key) };
-  return { state: { window: [...state.window, key].slice(-WINDOW_CAP) }, deny: false };
+  if (copies >= LOOP_MAX_REPEATS) {
+    const denials = { ...(state.denials ?? {}) };
+    denials[key] = (denials[key] ?? 0) + 1;
+    const count = LOOP_MAX_REPEATS + denials[key];
+    return {
+      state: { ...state, denials },
+      deny: true,
+      testRun: isTestRunKey(key),
+      stop: denials[key] >= LOOP_STOP_DENIALS,
+      key,
+      count,
+    };
+  }
+  return { state: { window: [...state.window, key].slice(-WINDOW_CAP), denials: state.denials }, deny: false };
 }

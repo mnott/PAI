@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, type LoopState } from "./loop-guard.js";
+import { spawnSync } from "node:child_process";
+import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -105,4 +106,72 @@ describe("loop event record", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("loop guard, all tools", () => {
+  const run = (calls: Array<[string, Record<string, unknown>]>) => {
+    let s: LoopState = emptyLoopState();
+    return calls.map(([tool, input]) => {
+      const r = stepLoopGuard(s, tool, input);
+      s = r.state;
+      return r;
+    });
+  };
+  const read = (offset?: number): [string, Record<string, unknown>] => ["Read", { file_path: "src/cli/registry.ts", offset }];
+  it("484 identical Reads: deny from the 5th, stop at the 7th", () => {
+    const rs = run(Array.from({ length: 484 }, () => read()));
+    expect(rs.findIndex((r) => r.deny)).toBe(4);
+    expect(rs.findIndex((r) => r.stop)).toBe(6);
+    expect(rs[6].count).toBe(7);
+    expect(rs.slice(0, 4).some((r) => r.deny)).toBe(false);
+  });
+  it("an Edit between resets counts and denials", () => {
+    const rs = run([...Array.from({ length: 6 }, () => read()), ["Edit", {}], ...Array.from({ length: 4 }, () => read())]);
+    expect(rs.map((r) => r.deny)).toEqual([false, false, false, false, true, true, false, false, false, false, false]);
+    expect(rs.some((r) => r.stop)).toBe(false);
+  });
+  it("different offsets are different keys", () => {
+    const rs = run(Array.from({ length: 20 }, (_, i) => read(i * 100)));
+    expect(rs.some((r) => r.deny)).toBe(false);
+  });
+  it("Grep key ignores unrelated fields order; other tools use stable JSON", () => {
+    expect(toolKey("Grep", { pattern: "a", path: "x" })).toBe(toolKey("Grep", { path: "x", pattern: "a" }));
+    expect(toolKey("WebFetch", { url: "u", prompt: "p" })).toBe(toolKey("WebFetch", { prompt: "p", url: "u" }));
+    expect(toolKey("Glob", { pattern: "*.ts" })).not.toBe(toolKey("Glob", { pattern: "*.js" }));
+  });
+  it("Bash via object input behaves as before and denial reason names the tool", () => {
+    expect(loopDenyReason(false, "Read", 5)).toMatch(/called Read with the same input 5 times/);
+    const rs = run(Array.from({ length: 7 }, () => ["Bash", { command: "ls" }] as [string, Record<string, unknown>]));
+    expect(rs.map((r) => r.deny)).toEqual([false, false, false, false, true, true, true]);
+    expect(rs[6].stop).toBe(true);
+  });
+});
+
+describe("worker-guard hook", () => {
+  const hook = "src/hooks/ts/pre-tool-use/worker-guard.ts";
+  const call = (dir: string, env: Record<string, string>) =>
+    spawnSync("npx", ["tsx", hook], {
+      input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
+      env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-loop", ...env },
+      encoding: "utf8",
+    }).stdout;
+  it("worker: stops the session at the 7th Read and records the event; interactive is a no-op", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loopguard-hook-"));
+    try {
+      const outs = Array.from({ length: 7 }, () => call(dir, { PAI_WORKER: "1" }));
+      expect(outs[3]).not.toContain("deny");
+      expect(outs[4]).toContain("deny");
+      expect(outs[4]).not.toContain('"continue"');
+      const stop = JSON.parse(outs[6]);
+      expect(stop.continue).toBe(false);
+      expect(stop.stopReason).toMatch(/loop guard: Read .* repeated 7 times without a change; stopping so the orchestrator can decide/);
+      expect(readToolErrors(dir).some((r) => /loop guard: Read/.test(r.raw ?? ""))).toBe(true);
+      const dir2 = mkdtempSync(join(tmpdir(), "loopguard-hook-"));
+      const inter = Array.from({ length: 8 }, () => call(dir2, { PAI_WORKER: "" }));
+      expect(inter.every((o) => !o.includes("deny"))).toBe(true);
+      rmSync(dir2, { recursive: true, force: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60000);
 });
