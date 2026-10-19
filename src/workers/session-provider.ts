@@ -22,6 +22,8 @@ import { ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "./con
 import { loadStatus } from "./status.js";
 
 export const SESSION_PROVIDER_ENV = "PAI_SESSION_PROVIDER";
+/** The worker side of a setup launch ("anthropic + kimi workers"): class and unflagged runs follow it; "cloud" never reads it. */
+export const SESSION_WORKER_PROVIDER_ENV = "PAI_SESSION_WORKER_PROVIDER";
 
 /** How much of the transcript's tail is searched for the last assistant turn. */
 const TAIL_BYTES = 512 * 1024;
@@ -120,9 +122,13 @@ function findTranscript(home: string, sessionId: string, cwd: string): string | 
 
 export function detectSessionProvider(
   config: ProviderTable,
-  opts: { env?: NodeJS.ProcessEnv; home?: string; cwd?: string; logDir?: string } = {}
+  opts: { env?: NodeJS.ProcessEnv; home?: string; cwd?: string; logDir?: string; side?: "workers" | "orchestrator" } = {}
 ): SessionProvider | null {
   const env = opts.env ?? process.env;
+  if (opts.side === "workers") {
+    const worker = env[SESSION_WORKER_PROVIDER_ENV]?.trim();
+    if (worker) return { name: worker, why: `session workers on ${worker}` };
+  }
   const named = env[SESSION_PROVIDER_ENV]?.trim();
   if (named) return { name: named, why: `launched on ${named}` };
   try {
@@ -148,6 +154,11 @@ export function applySessionProviderEnv(
   env: NodeJS.ProcessEnv,
   target: { via: string; providerName: string }
 ): void {
-  if (target.via === "flag") delete env[SESSION_PROVIDER_ENV];
-  else if (target.via === "session") env[SESSION_PROVIDER_ENV] = target.providerName;
+  if (target.via === "flag") {
+    delete env[SESSION_PROVIDER_ENV];
+    delete env[SESSION_WORKER_PROVIDER_ENV];
+  } else if (target.via === "session") {
+    if (env[SESSION_WORKER_PROVIDER_ENV]) env[SESSION_WORKER_PROVIDER_ENV] = target.providerName;
+    else env[SESSION_PROVIDER_ENV] = target.providerName;
+  }
 }

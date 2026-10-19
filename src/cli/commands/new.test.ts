@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { looksLikePath, prepareDir, resolveDir } from "../lib/new-dir.js";
 import { builtinSetups } from "../lib/setups.js";
-import { startSession, workerScope } from "./root.js";
+import { startSession } from "./root.js";
 
 const prov = (baseUrl: string, enabled = true) => ({ enabled, protocol: "anthropic" as const, baseUrl, keyFile: null, env: {}, models: { default: "m", fast: "f" } });
 const cfg = {
@@ -36,10 +36,6 @@ describe("local worker setups", () => {
     const s = builtinSetups(cfg).find((x) => x.name === "anthropic + local workers")!;
     expect(s.orchestrator.provider).toBe("anthropic");
     expect(s.workers).toBe("flashnext");
-  });
-  it("scopes local workers to the session, others stay global", () => {
-    expect(workerScope(cfg, { name: "x", orchestrator: { provider: "anthropic" }, workers: "flashnext", kind: "builtin" })).toBe("session");
-    expect(workerScope(cfg, { name: "x", orchestrator: { provider: "anthropic" }, workers: "glm", kind: "builtin" })).toBe("global");
   });
 });
 
@@ -104,8 +100,31 @@ describe("pai new", () => {
     const text = written.join("");
     expect(code).toBe(0);
     expect(text).toContain("flashnext for this session only");
-    expect(text).toContain("PAI_SESSION_PROVIDER=flashnext");
+    expect(text).toContain("PAI_SESSION_WORKER_PROVIDER=flashnext");
+    expect(text).toContain("PAI_SESSION_PROVIDER=anthropic");
     expect(text).not.toContain("Workers now run on");
+  });
+
+  it("a remote setup (anthropic + glm workers) sets the session worker provider and never writes the global workers.yaml", async () => {
+    const yaml = join(dir, "workers.yaml");
+    writeFileSync(yaml, "active: glm\n");
+    const before = readFileSync(yaml, "utf8");
+    const savedYaml = process.env.PAI_WORKERS_YAML;
+    process.env.PAI_WORKERS_YAML = yaml;
+    try {
+      const written: string[] = [];
+      const term = { input: {} as never, output: { write: (s: string) => (written.push(s), true) } as never, isTTY: false, st: makeStyle(false) };
+      const other = { ...cfg, active: "remote" };
+      const setup = builtinSetups(other).find((s) => s.name === "anthropic + glm workers")!;
+      await startSession({ workers: { ...other, logDir: join(dir, "logs") } as never, setup, name: "app", cwd: dir, dryRun: true, term });
+      const text = written.join("");
+      expect(text).toContain("PAI_SESSION_WORKER_PROVIDER=glm");
+      expect(text).toContain("PAI_SESSION_PROVIDER=anthropic");
+      expect(readFileSync(yaml, "utf8")).toBe(before);
+    } finally {
+      if (savedYaml === undefined) delete process.env.PAI_WORKERS_YAML;
+      else process.env.PAI_WORKERS_YAML = savedYaml;
+    }
   });
 });
 
@@ -127,5 +146,24 @@ describe("pai <path> routes to new", () => {
       if (saved === undefined) delete process.env.PAI_HOME;
       else process.env.PAI_HOME = saved;
     }
+  });
+});
+
+describe("setup orchestrator model", () => {
+  it("built-in anthropic rows show opus as orchestrator", () => {
+    const rows = builtinSetups(cfg).filter((s) => s.orchestrator.provider === "anthropic");
+    expect(rows.length).toBeGreaterThan(1);
+    for (const s of rows) expect(s.orchestrator.model).toBe("opus");
+  });
+  it("launching 'anthropic + glm workers' starts claude on opus and exports the glm worker provider", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-new-"));
+    const written: string[] = [];
+    const term = { input: {} as never, output: { write: (s: string) => (written.push(s), true) } as never, isTTY: false, st: makeStyle(false) };
+    const setup = builtinSetups(cfg).find((s) => s.name === "anthropic + glm workers")!;
+    await startSession({ workers: { ...cfg, logDir: join(dir, "logs") } as never, setup, name: "app", cwd: dir, dryRun: true, term });
+    const text = written.join("");
+    expect(text).toMatch(/--model opus/);
+    expect(text).toContain("opus (anthropic)");
+    expect(text).toContain("PAI_SESSION_WORKER_PROVIDER=glm");
   });
 });

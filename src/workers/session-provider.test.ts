@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig } from "./config.js";
 import { resolveTarget } from "./routing.js";
+import { resolveRunModel } from "./run.js";
 import { applySessionProviderEnv, providerForModel } from "./session-provider.js";
 
 let tmp: string;
@@ -58,6 +59,31 @@ describe("session provider routing", () => {
       const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: env, className: cls });
       expect([t.providerName, t.modelAlias]).toEqual(["anthropic", "fast"]);
     }
+  });
+
+  it("setup launch env: worker provider wins over the orchestrator's; class/unflagged runs follow it", () => {
+    const env = { PAI_SESSION_PROVIDER: "anthropic", PAI_SESSION_WORKER_PROVIDER: "glm" };
+    for (const className of ["implement", "spotcheck", undefined]) {
+      const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: env, className });
+      expect([t.providerName, t.via]).toEqual(["glm", "session"]);
+      expect(t.modelAlias).toBe(className === "spotcheck" ? "fast" : "default");
+    }
+  });
+
+  it("session workers on a worker_model fast provider: the unnamed tier is left to worker_model", () => {
+    const c = openConfig();
+    c.providers.glm.workerModel = "fast";
+    const t = resolveTarget(c, tmp, { ...base(), sessionEnv: { PAI_SESSION_WORKER_PROVIDER: "glm" }, className: "implement" });
+    expect([t.providerName, t.modelAlias]).toEqual(["glm", null]);
+    expect(resolveRunModel(t, "implement")).toBe("glm-5.3-flash");
+  });
+
+  it("a worker that followed the setup keeps the worker env, not the orchestrator one", () => {
+    const env: NodeJS.ProcessEnv = { PAI_SESSION_PROVIDER: "anthropic", PAI_SESSION_WORKER_PROVIDER: "glm" };
+    applySessionProviderEnv(env, { via: "session", providerName: "glm" });
+    expect(env).toMatchObject({ PAI_SESSION_PROVIDER: "anthropic", PAI_SESSION_WORKER_PROVIDER: "glm" });
+    applySessionProviderEnv(env, { via: "flag", providerName: "x" });
+    expect(env.PAI_SESSION_WORKER_PROVIDER).toBeUndefined();
   });
 
   it("env provider ignores the class map's provider", () => {

@@ -64,6 +64,10 @@ describe("resolveTarget", () => {
     const t = await resolveTarget({ where: "cloud" }, deps({ workers: { ...workers, active: "auto" } as TargetDeps["workers"], env: { PAI_SESSION_PROVIDER: "anthropic" } }));
     expect(t).toMatchObject({ provider: "anthropic", model: "sonnet", description: "cloud: anthropic sonnet" });
   });
+  it("cloud in a setup session (anthropic + glm workers) resolves to the orchestrator side", async () => {
+    const env = { PAI_SESSION_PROVIDER: "anthropic", PAI_SESSION_WORKER_PROVIDER: "glm" };
+    expect(await resolveTarget({ where: "cloud" }, deps({ workers: { ...workers, active: "auto" } as TargetDeps["workers"], env }))).toMatchObject({ provider: "anthropic", model: "sonnet" });
+  });
   it("cloud under a glm session: glm default; fast -> glm fast", async () => {
     const env = { PAI_SESSION_PROVIDER: "glm" };
     expect(await resolveTarget({ where: "cloud" }, deps({ env }))).toMatchObject({ provider: "glm", model: "glm-big" });

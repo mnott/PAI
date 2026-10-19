@@ -7,13 +7,12 @@
 import { basename } from "node:path";
 import { isLoopbackProvider } from "../../workers/run-env.js";
 import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
-import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
+import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
 import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { resolveLocalProvider } from "../../workers/local-provider.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { useProvider } from "../../workers/providers.js";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderTable, suggest, type Style } from "../help.js";
 import { buildHarness, dryRunText, execHarness, type Harness } from "../lib/harness.js";
@@ -21,7 +20,7 @@ import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
-import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
+import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, recordWorkers, recordedWorkers, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
@@ -104,8 +103,8 @@ export function plainTable(rows: SessionRow[], st: Style): string {
 }
 
 /** Setup that reproduces how a session last ran, workers as configured now. */
-export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "active">): Setup {
-  const workers = cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE;
+export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "active">, recorded: string | null = row ? recordedWorkers(row.name) : null): Setup {
+  const workers = recorded ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
   const orch = row && row.provider !== "—" ? { provider: row.provider, model: row.model } : { provider: workers };
   return { name: "Last time", orchestrator: orch, workers, kind: "last" };
 }
@@ -196,12 +195,6 @@ interface StartArgs {
   term: Term;
 }
 
-/** Local (loopback) worker providers apply to the started session only; others switch the global provider. */
-export function workerScope(workers: Pick<WorkersConfig, "providers" | "nativeModels">, setup: Setup): "session" | "global" {
-  const p = setup.workers === ANTHROPIC_NATIVE ? undefined : workers.providers[setup.workers];
-  return p && isLoopbackProvider(p) ? "session" : "global";
-}
-
 export async function startSession(a: StartArgs): Promise<number> {
   const { workers, setup, name, cwd, resume, dryRun, term } = a;
   const st = term.st;
@@ -225,7 +218,8 @@ export async function startSession(a: StartArgs): Promise<number> {
   try {
     harness = await buildHarness(workers, {
       provider: setup.orchestrator.provider,
-      model: modelFor(provider, setup.orchestrator.model),
+      // the native "opus" alias is not in the worker model table (sonnet/haiku), so it passes through
+      model: provider.native && setup.orchestrator.model === "opus" ? "opus" : modelFor(provider, setup.orchestrator.model),
       cwd,
       resume: resume?.uuid,
       name,
@@ -242,22 +236,14 @@ export async function startSession(a: StartArgs): Promise<number> {
   if (resume && resume.provider !== "—" && (resume.provider !== harness.provider || shortModel(resume.model) !== shortModel(harness.model))) {
     out(`Conversation history carries over to ${shortModel(harness.model)}.`);
   }
-  const current = workers.active && workers.active !== "auto" ? workers.active : ANTHROPIC_NATIVE;
-  if (workerScope(workers, setup) === "session") {
-    // local workers: this session only, the global provider and class map stay as they are
-    harness.env[SESSION_PROVIDER_ENV] = setup.workers;
-    out(`Workers run on ${setup.workers} for this session only.`);
-  } else if (setup.workers !== current) {
-    if (dryRun) out(st.dim(`(dry run) would route workers to ${setup.workers}; they run on ${current} now`));
-    else {
-      useProvider(setup.workers);
-      out(`Workers now run on ${setup.workers} (was ${current}).`);
-    }
-  }
+  // the setup's workers apply to this session only; the global provider and class map are never written
+  harness.env[SESSION_WORKER_PROVIDER_ENV] = setup.workers;
+  out(`Workers run on ${setup.workers} for this session only.`);
   if (dryRun) {
     out(dryRunText(harness));
     return 0;
   }
+  recordWorkers(name, setup.workers);
   return execHarness(harness, workers);
 }
 

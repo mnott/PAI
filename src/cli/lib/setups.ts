@@ -27,7 +27,10 @@ export interface Setup {
   local?: true;
 }
 
-export const setupsPath = () => paiHomePath("setups.json");
+/** The chat on the Anthropic plan runs the operator's chat model (Opus); worker models are a separate choice. */
+const NATIVE_ORCHESTRATOR = { provider: ANTHROPIC_NATIVE, model: "opus" };
+
+export const setupsPath =() => paiHomePath("setups.json");
 
 /** "claude-opus-5-5" -> "opus-5.5"; "glm-5.3[1m]" -> "glm-5.3". */
 export function shortModel(model: string | undefined): string {
@@ -103,22 +106,22 @@ const PRIORITY = ["glm", "kimi"];
  */
 export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), resolved?: string): Setup[] {
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
-  const out: Setup[] = [{ name: "anthropic only", orchestrator: { provider: ANTHROPIC_NATIVE }, workers: ANTHROPIC_NATIVE, kind: "builtin" }];
+  const out: Setup[] = [{ name: "anthropic only", orchestrator: NATIVE_ORCHESTRATOR, workers: ANTHROPIC_NATIVE, kind: "builtin" }];
   const names = [...PRIORITY, ...(cfg.active && cfg.active !== "auto" && !PRIORITY.includes(cfg.active) && cfg.active !== ANTHROPIC_NATIVE ? [cfg.active] : [])].filter(enabled);
   const remote = names.filter((n) => !isLoopbackProvider(cfg.providers[n]));
   for (const n of remote) {
-    out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
+    out.push({ name: `anthropic + ${n} workers`, orchestrator: NATIVE_ORCHESTRATOR, workers: n, kind: "builtin" });
   }
   // Running local (loopback) providers: workers only. A local orchestrator is not a default.
   const up = Object.entries(cfg.providers).filter(([n, p]) => p.enabled && isLoopbackProvider(p) && !down.has(n));
   if (up.length) {
     const pick = up.find(([n]) => n === resolved) ?? up[0];
-    out.push({ name: "anthropic + local workers", orchestrator: { provider: ANTHROPIC_NATIVE }, workers: pick[0], kind: "builtin", local: true });
+    out.push({ name: "anthropic + local workers", orchestrator: NATIVE_ORCHESTRATOR, workers: pick[0], kind: "builtin", local: true });
     const urls = new Set([pick[1].baseUrl]);
     for (const [n, p] of up) {
       if (urls.has(p.baseUrl)) continue;
       urls.add(p.baseUrl);
-      out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
+      out.push({ name: `anthropic + ${n} workers`, orchestrator: NATIVE_ORCHESTRATOR, workers: n, kind: "builtin" });
     }
   }
   for (const n of names) if (!isLoopbackProvider(cfg.providers[n])) out.push({ name: `${n} only`, orchestrator: { provider: n }, workers: n, kind: "builtin" });
@@ -157,4 +160,30 @@ export function findSetup(setups: Setup[], query: string): Setup | null {
   if (exact) return exact;
   const pre = setups.filter((s) => s.name.toLowerCase().startsWith(q));
   return pre.length === 1 ? pre[0] : null;
+}
+
+export const sessionWorkersPath = () => paiHomePath("session-workers.json");
+
+/** Worker provider a session was last started with, by session name; null when never recorded. */
+export function recordedWorkers(name: string, path = sessionWorkersPath()): string | null {
+  try {
+    const v = (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)[name];
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function recordWorkers(name: string, workers: string, path = sessionWorkersPath()): void {
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    // first record
+  }
+  data[name] = workers;
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+  renameSync(tmp, path);
 }
