@@ -35,6 +35,12 @@ import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
 import { resolveCap } from "./capacity.js";
+import {
+  LOCAL_STATUS_REFRESH_MS,
+  readLocalStatus,
+  writeLocalStatus,
+  type LocalStatus,
+} from "./local-status.js";
 import { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck } from "../cli/lib/setups.js";
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
@@ -127,17 +133,32 @@ export async function resolveLocalProvider(
   logDir: string,
   opts: ResolveLocalOpts = {}
 ): Promise<LocalResolution> {
+  // The daemon's cached answer is the authority; probe directly only when it
+  // is not refreshing the cache (or a test injects its own port check).
+  const cached = opts.check ? null : readLocalStatus(logDir);
+  if (cached) {
+    const r = cached.running;
+    if (r && cfg.providers[r.provider]?.enabled) return { name: r.provider, why: `daemon: ${r.why}` };
+    throw new NoLocalServerError(noServerMessage());
+  }
   const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck))
     .filter(([, running]) => running)
     .map(([name]) => name);
-  if (!up.length) {
-    throw new NoLocalServerError(
-      "no local model server is running — start one, or run this on the cloud " +
-        "(drop --local / local: true; `pai worker providers` shows which local providers are running)"
-    );
-  }
+  if (!up.length) throw new NoLocalServerError(noServerMessage());
+  return pickLocal(up, logDir, opts.yamlPath);
+}
+
+function noServerMessage(): string {
+  return (
+    "no local model server is running — local work is not available; do not start model servers " +
+    "(run this on the cloud: drop --local / local: true; `pai worker local` shows the current answer)"
+  );
+}
+
+/** Which of the running local providers `--local` runs on. Throws when `local:` names one that is not running. */
+export function pickLocal(up: string[], logDir: string, yamlPath: string = workersYamlPath()): LocalResolution {
   if (up.length === 1) return { name: up[0], why: "only local server up" };
-  const pref = readLocalPreference(opts.yamlPath ?? workersYamlPath());
+  const pref = readLocalPreference(yamlPath);
   if (pref !== undefined) {
     if (!up.includes(pref)) {
       throw new NoLocalServerError(
@@ -151,6 +172,56 @@ export async function resolveLocalProvider(
     .sort((a, b) => b.at.localeCompare(a.at))[0];
   return { name: best.name, why: "most recently started/used" };
 }
+
+/** Probe every local provider and decide which one `--local` runs on. */
+export async function computeLocalStatus(
+  cfg: Pick<WorkersConfig, "providers">,
+  logDir: string,
+  opts: { check?: PortCheck; yamlPath?: string; now?: Date } = {}
+): Promise<LocalStatus> {
+  const probed = await probeLoopback(cfg, opts.check ?? httpModelsCheck);
+  const up = Object.entries(probed).filter(([, v]) => v).map(([n]) => n);
+  const down = Object.entries(probed).filter(([, v]) => !v).map(([n]) => n);
+  const disabled = Object.entries(cfg.providers)
+    .filter(([, p]) => !p.enabled && isLoopbackProvider(p))
+    .map(([n]) => n);
+  let running: LocalStatus["running"] = null;
+  if (up.length) {
+    try {
+      const pick = pickLocal(up, logDir, opts.yamlPath);
+      running = { provider: pick.name, model: cfg.providers[pick.name]?.models.default ?? "?", why: pick.why };
+    } catch {
+      // `local:` names a provider that is not up: report the first running one
+      running = { provider: up[0], model: cfg.providers[up[0]]?.models.default ?? "?", why: "only running local server" };
+    }
+  }
+  return { at: (opts.now ?? new Date()).toISOString(), running, down, disabled };
+}
+
+/** Cached answer, else a direct probe (daemon unreachable). Never writes the cache. */
+export async function currentLocalStatus(logDir?: string): Promise<LocalStatus> {
+  const { workers } = readWorkersSection();
+  const dir = logDir ?? workersLogDir(workers);
+  return readLocalStatus(dir) ?? (await computeLocalStatus(workers, dir));
+}
+
+/** Daemon side: refresh the cache now and every 30 s. Returns the stop function. */
+export function startLocalStatusRefresh(): () => void {
+  const refresh = async (): Promise<void> => {
+    try {
+      const { workers } = readWorkersSection();
+      const dir = workersLogDir(workers);
+      writeLocalStatus(dir, await computeLocalStatus(workers, dir));
+    } catch (e) {
+      process.stderr.write(`[pai-daemon] Local status refresh error: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  };
+  void refresh();
+  const timer = setInterval(() => void refresh(), LOCAL_STATUS_REFRESH_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 
 /** The provider behind a name that may be the value `local` (plan/queue runners). */
 export async function resolvePlanProvider(

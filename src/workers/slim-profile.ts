@@ -31,6 +31,7 @@ const GUARD_HOOKS = [
   "ztk-auto.sh",
   "caseleaf-warm-builds",
   "block-sleep-poll",
+  "local-model-hint",
   "worker-guard",
   "worker-path-repair",
   "worker-edit-repair",
