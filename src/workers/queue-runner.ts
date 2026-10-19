@@ -5,7 +5,7 @@
  * Everything touching workers, git, shells or the clock goes through QueueDeps.
  */
 
-import { withRunLock, queueLockPath } from "./run-lock.js";
+import { withRunLock, queueLockPath, type LockDeps } from "./run-lock.js";
 import { filesOverlap } from "./plan.js";
 import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
@@ -17,6 +17,8 @@ export interface QueueDeps {
   /** Run a shell command (gate, proof, install) in `cwd`. */
   sh(cmd: string, cwd: string): Promise<{ ok: boolean; output: string }>;
   merge(repo: string, workerId: string, gate: string): Promise<MergeOutcome>;
+  /** Stop the workers this runner has started (SIGTERM/SIGINT path). */
+  stopActive?(): Promise<void>;
 }
 
 export interface QueueRunOptions {
@@ -26,6 +28,8 @@ export interface QueueRunOptions {
   escalate?: boolean;
   /** Called after an item reached ready or needs-decision (the stored item). */
   onEvent?: (kind: "ready" | "needs-decision", item: QueueItem) => void;
+  /** Lock/signal hooks, replaced by tests. */
+  lockDeps?: LockDeps;
 }
 
 export interface QueueRunSummary {
@@ -41,10 +45,22 @@ const LOCAL_ATTEMPTS = 2;
 export const proofValue = (out: string): string => out.trim().split("\n").pop()?.trim() ?? "";
 
 export function runQueue(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps): Promise<QueueRunSummary> {
-  return withRunLock(queueLockPath(store.path), "the queue", () => runQueueLocked(store, settings, opts, deps));
+  const running = new Set<string>();
+  let aborted = false;
+  const guarded: QueueDeps = {
+    ...deps,
+    startWorker: (req) => (aborted ? new Promise<WorkerOutcome>(() => undefined) : deps.startWorker(req).then((o) => (aborted ? new Promise<WorkerOutcome>(() => undefined) : o))),
+  };
+  // interrupted items go back to pending so the next run restarts them
+  const onSignal = async (): Promise<void> => {
+    aborted = true;
+    await deps.stopActive?.();
+    for (const id of running) if (store.get(id)?.state === "running") move(store, id, "pending");
+  };
+  return withRunLock(queueLockPath(store.path), "the queue", () => runQueueLocked(store, settings, opts, guarded, running), { ...opts.lockDeps, onSignal });
 }
 
-async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps): Promise<QueueRunSummary> {
+async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps, active: Set<string>): Promise<QueueRunSummary> {
   const summary: QueueRunSummary = { ready: [], tooBig: [], needsDecision: [] };
   const take = opts.escalate ? "cloud" : "pending";
   const queue = store.list().filter((i) => i.state === take);
@@ -54,6 +70,7 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
 
   const attemptItem = async (item: QueueItem): Promise<void> => {
     move(store, item.id, "running");
+    active.add(item.id);
     const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> = opts.escalate
       ? [{ tier: "sonnet", provider: "anthropic" }]
       : Array.from({ length: LOCAL_ATTEMPTS }, () => ({ tier: "local" as const, provider: opts.provider }));
@@ -119,7 +136,10 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
       if (running.has(it.id) || store.get(it.id)?.state !== take) continue;
       if (busy.some((b) => it.files.length && b.files.length && filesOverlap(b.files, it.files))) continue;
       busy.push(it);
-      const done = attemptItem(it).finally(() => running.delete(it.id));
+      const done = attemptItem(it).finally(() => {
+        running.delete(it.id);
+        active.delete(it.id);
+      });
       running.set(it.id, { item: it, done });
     }
     if (running.size === 0) break;

@@ -43,6 +43,10 @@ export interface LockDeps {
   pid?: number;
   now?: () => number;
   isAlive?: (pid: number) => boolean;
+  /** Runs on SIGTERM/SIGINT before the lock is released and the process exits (stop workers, write the run-end). */
+  onSignal?: (sig: NodeJS.Signals) => Promise<void>;
+  /** Exit hook; tests replace process.exit. */
+  exit?: (code: number) => void;
 }
 
 /** Run `fn` holding the lock at `path`; refuses when a live run holds it. `what` names the run in the message. */
@@ -61,9 +65,19 @@ export async function withRunLock<T>(path: string | undefined, what: string, fn:
       /* already gone */
     }
   };
+  let signalled = false;
   const onSignal = (sig: NodeJS.Signals): void => {
-    release();
-    process.exit(128 + (sig === "SIGTERM" ? 15 : 2));
+    if (signalled) return;
+    signalled = true;
+    void (async () => {
+      try {
+        await deps.onSignal?.(sig);
+      } catch {
+        /* the exit must happen anyway */
+      }
+      release();
+      (deps.exit ?? process.exit)(128 + (sig === "SIGTERM" ? 15 : 2));
+    })();
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);

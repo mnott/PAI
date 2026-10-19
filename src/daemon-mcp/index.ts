@@ -102,7 +102,7 @@ import { workerModel } from "./tools/worker-model.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
 import {
-  planAmend, planRun, planSave, planStatusText, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
+  planAmend, planRun, planSave, planStatusText, planStop, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
   realDelegationDeps,
 } from "./tools/delegation.js";
 
@@ -1392,6 +1392,12 @@ async function startShim(): Promise<void> {
     "Plain-language status of a plan: done, running, waiting, needs-decision with the failure tail, wall time, escalations.",
     { project, name: planName },
     async (args) => planStatusText(args, delegation)
+  );
+  server.tool(
+    "plan_stop",
+    "Stop a running plan gracefully: no new part starts, the in-flight parts finish and merge, then the run ends. plan_run resumes it.",
+    { project, name: planName },
+    async (args) => planStop(args, delegation)
   );
   server.tool(
     "plan_amend",

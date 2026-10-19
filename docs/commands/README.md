@@ -169,6 +169,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai plan` | Run a planned job on local workers without a model in the loop |
 | `pai plan run` | Run a plan: local workers in parallel, merged with the plan's gate |
 | `pai plan status` | Summarise a plan's run log: done, running, waiting, needs-decision |
+| `pai plan stop` | Ask a running plan to stop after its in-flight parts |
 | `pai plan validate` | Check a plan file and list its parts |
 | `pai project` | Your registered projects: list, add, rename, check |
 | `pai project add` | Register a folder as a project |
