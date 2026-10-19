@@ -35,3 +35,8 @@ External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths
 - Full index: ~10 seconds for ~1,000 files
 - Incremental: ~2 seconds (hash-based change detection)
 - Runs automatically via the daemon scheduler
+
+## Switches
+
+- `vaultIndex.enabled` (default `true`): read-only indexing of `vaultPath` for memory search. Set to `false` to skip the vault index pass.
+- `obsidian.enabled` (default `false`): the Obsidian sync that writes into the PAI-generated vault (session notes, master notes, symlinks). It never affects vault indexing.
