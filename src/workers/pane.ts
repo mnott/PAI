@@ -87,6 +87,17 @@ const FIND_SESSION = `function findSession(app, id) {
     return null;
 }`;
 
+// A split or new tab makes the new session the active one. Capture what was
+// active before and put it back afterwards, so typing focus stays with the
+// operator's session. Only restores a selection inside the app's own window:
+// never activates iTerm, raises a window or touches the frontmost app.
+const CAPTURE_ACTIVE = `var prevTab = null, prevSess = null;
+    try { prevTab = f.w.currentTab(); prevSess = prevTab.currentSession(); } catch (e) {}`;
+const RESTORE_ACTIVE = `try {
+        if (prevTab && f.w.currentTab().id() !== prevTab.id()) prevTab.select();
+        if (prevSess && prevTab.currentSession().id() !== prevSess.id()) prevSess.select();
+    } catch (e) {}`;
+
 // Smallest height a follow pane may be split down to (the visible-pane gate
 // refuses anything under 8 rows).
 const MIN_ROWS = 8;
@@ -115,6 +126,7 @@ function run(argv) {
     if (!app.running()) return "notrunning";
     var f = findSession(app, targetID);
     if (!f) return "notfound";
+    ${CAPTURE_ACTIVE}
     // sizing the new session would grow the whole window: pin the window's
     // bounds now and restore them after the split, so the panes share the
     // existing space
@@ -151,10 +163,7 @@ function run(argv) {
     }
     live.push(newS);
     ${REBALANCE}
-    // a split makes the new session the tab's active one: re-select the
-    // launching session so focus returns to where the operator was typing,
-    // never the new pane
-    try { f.s.select(); } catch (e) {}
+    ${RESTORE_ACTIVE}
     try { f.w.bounds = winBounds; } catch (e) {}
     return lived.map(function (l) { return l + ","; }).join("") + "|" + newS.id();
 }`;
@@ -192,24 +201,25 @@ function run(argv) {
     if (!app.running()) return "notrunning";
     var f = findSession(app, argv[0]);
     if (!f) return "notfound";
+    ${CAPTURE_ACTIVE}
     // the follow command is part of the split itself (see WORKER_SPLIT_SCRIPT):
     // nothing is ever typed into a session afterwards
     f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
-    // keep the tab's active session where it was (see WORKER_SPLIT_SCRIPT)
-    try { f.s.select(); } catch (e) {}
+    ${RESTORE_ACTIVE}
     return "opened";
 }`;
 
 // Fallback placements when a split would be too small: the follow command in a
 // new tab of the host's window, or in a new window. argv: host session id,
 // follow command, profile name ("" = default). Return the new session id.
-const NEW_PLACE_SCRIPT = `${FIND_SESSION}
+export const NEW_PLACE_SCRIPT = `${FIND_SESSION}
 function run(argv) {
     var kind = argv[0], followCmd = argv[2], profileName = argv[3];
     var app = Application("iTerm2");
     if (!app.running()) return "notrunning";
     var f = findSession(app, argv[1]);
     if (!f) return "notfound";
+    ${CAPTURE_ACTIVE}
     var opts = { command: followCmd };
     var w = f.w;
     if (kind === "tab") {
@@ -218,7 +228,9 @@ function run(argv) {
     } else {
         w = profileName === "" ? app.createWindowWithDefaultProfile(opts) : app.createWindowWithProfile(profileName, opts);
     }
-    return w.currentTab().currentSession().id();
+    var id = w.currentTab().currentSession().id();
+    if (kind === "tab") { ${RESTORE_ACTIVE} }
+    return id;
 }`;
 
 // ---------------------------------------------------------------------------
