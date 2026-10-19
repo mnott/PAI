@@ -60,6 +60,17 @@ describe("callerItermId", () => {
     const id = await callerItermId({ CLAUDE_CODE_SESSION_ID: "abcd1234-aaaa-bbbb" }, () => resolveHostSession({ CLAUDE_CODE_SESSION_ID: "abcd1234-aaaa-bbbb" }, deps, 500));
     expect(id).toBe(UID);
   });
+  it("under the background daemon, resolves via the statusline session map", async () => {
+    const procs: Record<number, [number, string]> = { 500: [400, "??"], 400: [1, "??"] };
+    const deps: HostDeps = {
+      psOf: (pid) => procs[pid] ?? null,
+      commandsOf: (pids) => new Map(pids.map((p) => [p, "node"] as [number, string])),
+      listSessions: async () => [{ id: UID, tty: "/dev/ttys009" }],
+      mapHost: (c) => ("abcd1234-aaaa-bbbb".startsWith(c) ? UID : ""),
+    };
+    const env = { CLAUDE_CODE_SESSION_ID: "abcd1234-aaaa-bbbb" };
+    expect(await callerItermId(env, () => resolveHostSession(env, deps, 500))).toBe(UID);
+  });
   it("unresolvable: empty, no throw", async () => {
     expect(await callerItermId({}, async () => { throw new Error("x"); })).toBe("");
   });
