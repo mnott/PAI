@@ -786,13 +786,15 @@ const waitOnCommand: CommandDef = {
   name: "wait-on",
   summary: "Wait for a background job to finish",
   description:
-    "Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed.\n" +
+    "Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed. Exit 4: killed by the ceiling or stall rule (its whole process tree gets SIGTERM, SIGKILL after 5 s; likely a hang or infinite loop).\n" +
     "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.",
   args: [{ name: "PID", required: true, summary: "Process id of the job" }],
   options: [
     { name: "log", type: "string", value: "FILE", summary: "Log file whose last lines are printed on return; FILE.rc holds the exit code" },
     { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" },
     { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
+    { name: "max-minutes", type: "number", value: "N", summary: "Hard ceiling on the process's age (default 30): still alive then = kill its process tree, exit 4" },
+    { name: "stall-minutes", type: "number", value: "N", summary: "With --log: log silent this long while alive (default 5) = kill its process tree, exit 4" },
   ],
   examples: ["pai worker wait-on 12345", "pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60"],
   seeAlso: ["pai worker wait", "pai worker wait-url", "pai worker wait-file"],
@@ -808,7 +810,7 @@ const waitOnCommand: CommandDef = {
         });
       }
       return await waitOn(
-        { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail) },
+        { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail), maxMinutes: num(ctx.opts["max-minutes"]), stallMinutes: num(ctx.opts["stall-minutes"]) },
         { ...waitOnDeps, mark }
       );
     }),
