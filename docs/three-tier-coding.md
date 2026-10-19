@@ -112,6 +112,9 @@ pai worker pending            # finished branches not merged yet
 The router serves a cockpit page at `http://127.0.0.1:8790/cockpit`. It reads the router's usage log and the worker status
 files and shows, for a chosen window:
 
+![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](images/cockpit.png)
+
+
 - **Cloud** and **Local** totals, **Providers**, **Speed per model**;
 - **Tokens per bucket by kind** and **Tokens per day per model** (last 14 days);
 - **Cache hit ratio**, **Local prefix cache** and **Cache verdict by pause** (whether the prompt cache survived a pause);
@@ -128,8 +131,11 @@ model route stays limited to loopback and the tailnet. A wildcard bind is refuse
 
 On a 38-unit refactoring job (a CLI framework migration with about 900 new tests), a local 80B mixture-of-experts model
 as tier 2 matched the cloud-only run on quality: every unit merged through the gate, the full suite stayed green, behaviour
-parity was 97 %. It took about twice as long, and a slow local tier made the cloud orchestration more expensive, because
-the orchestrator waits and re-reads while the local slot works. The levers that matter most are the ones above: pipelined
+parity was 97 %. That first run took about twice as long as the cloud-only run (5 h vs 2.5 h, both with one implementer at
+a time), and a slow local tier made the cloud orchestration more expensive, because the orchestrator waits and re-reads
+while the local slot works. It ran before most of the mechanisms on this page existed: no loop guard for the first hours,
+no time limits or orphan reaper, a context window at half the model's native length for the first units, and parts started
+one after the other instead of pipelined until the third unit. The levers that matter most are the ones above: pipelined
 parts, fixed part size, the loop guard and the time limits, and enough local slots for the parts that can run in parallel.
 
 See also: [worker-providers.md](worker-providers.md) · [router.md](router.md) · [worker-denials.md](worker-denials.md) ·
