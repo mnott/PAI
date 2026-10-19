@@ -30,6 +30,7 @@ Run one task on a worker (another provider or model)
 pai worker run [options]
 ```
 
+For local work use --local (picks the running local model); do not name a local provider.
 Starts a Claude Code worker through the chosen provider and waits for it. The task goes in as -p '<task>' or, safer for long text, --spec FILE.
 Options this command does not know (for example -p, --allowedTools) are handed to claude unchanged.
 --label is the row shown in `ps`, `follow` and the status line; without it the first line of the task is used.

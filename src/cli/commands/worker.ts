@@ -11,7 +11,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
-import { runWorker, type RunOptions } from "../../workers/run.js";
+import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
+import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
 import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
@@ -56,6 +57,9 @@ async function guard(next: string, fn: () => Promise<number | void> | number | v
     return await fn();
   } catch (e) {
     if (e instanceof CliError) throw e;
+    // a down or disabled local provider is a usage mistake, not a failure:
+    // exit 2, the message plain, the fix (--local) named
+    if (e instanceof LocalProviderRefusedError) throw new CliError(e.message, LOCAL_MECHANISM_LINE, 2);
     throw new CliError(msgOf(e), next);
   }
 }
@@ -202,6 +206,7 @@ const runCommand: CommandDef = {
   name: "run",
   summary: "Run one task on a worker (another provider or model)",
   description:
+    "For local work use --local (picks the running local model); do not name a local provider.\n" +
     "Starts a Claude Code worker through the chosen provider and waits for it. The task goes in as -p '<task>' or, safer for long text, --spec FILE.\n" +
     "Options this command does not know (for example -p, --allowedTools) are handed to claude unchanged.\n" +
     "--label is the row shown in `ps`, `follow` and the status line; without it the first line of the task is used.\n" +

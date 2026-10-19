@@ -56,15 +56,26 @@ import {
   ANTHROPIC_NATIVE,
   assertProviderRunnable,
   classModelCapability,
+  getProviderOrNative,
   isLocalProvider,
   isModelCapability,
   NATIVE_ANTHROPIC_MODELS,
   readWorkersSection,
   resolveModelCapability,
   type WorkerProvider,
+  type WorkersConfig,
 } from "./config.js";
 import { buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
-import { NoLocalServerError, resolveLocalProvider } from "./local-provider.js";
+import {
+  httpModelsCheck,
+  LOCAL_MECHANISM_LINE,
+  NoLocalServerError,
+  PORT_TIMEOUT_MS,
+  probeLoopback,
+  providerHostPort,
+  resolveLocalProvider,
+  type PortCheck,
+} from "./local-provider.js";
 import { probeRouter } from "../router/supervisor.js";
 import { detectCurrentModel } from "./launch.js";
 
@@ -254,6 +265,12 @@ export interface RunOptions {
   imageSize?: string;
   /** --timeout-ms: image-engine request timeout (default: 120000). */
   imageTimeoutMs?: number;
+  /**
+   * Port-probe seam for the down/disabled local-provider guard (tests
+   * inject; production: httpModelsCheck — the same probe
+   * resolveLocalProvider uses).
+   */
+  _localCheck?: PortCheck;
 }
 
 /**
@@ -657,6 +674,20 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     ? resolveCapabilityRun(config, capability)
     : null;
 
+  // A disabled provider is refused before anything else reads the config —
+  // same style as the down-local refusal below (an explicit --provider
+  // naming a disabled provider must never run anyway).
+  if (opts.providerFlag) {
+    const named = getProviderOrNative(config, opts.providerFlag);
+    if (named && !named.enabled) {
+      throw new LocalProviderRefusedError(
+        `provider "${opts.providerFlag}" is disabled — it cannot run this worker. ` +
+          `Enable it with: pai worker providers enable ${opts.providerFlag}` +
+          (isLoopbackProvider(named) ? `\n${LOCAL_MECHANISM_LINE}` : "")
+      );
+    }
+  }
+
   // Worker routing policy (policy.ts): picks local or cloud unless the caller named a provider.
   let route = opts._route;
   let providerFlag = opts.providerFlag;
@@ -740,6 +771,12 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         cwd: opts.cwd,
       });
   assertProviderRunnable(target.providerName, target.provider);
+  // A named provider that is a local (loopback) one gets the same guard
+  // --local has: never wait for a server that is down, never run on a
+  // disabled one. The probe is resolveLocalProvider's (httpModelsCheck,
+  // short timeout); the refusal names the running local provider and the
+  // fix (--local). Remote providers are untouched.
+  await assertLocalProviderAlive(config, logDir, target.providerName, target.provider, opts);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
   const modelFlag = opts.modelFlag ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);
@@ -892,6 +929,52 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     }
     throw e;
   }
+}
+
+/** A named local provider that is disabled or whose server does not answer. */
+export class LocalProviderRefusedError extends Error {}
+
+/**
+ * A provider named for this run (--provider, a class pin, a profile, a
+ * policy pin, a resume) that is loopback must be enabled and its server
+ * must answer the HTTP models probe — the same probe resolveLocalProvider
+ * uses. Refused immediately otherwise: never wait for a down local server,
+ * never run on a disabled one. The message names the provider, what is
+ * wrong with it, which local provider IS running (if any), and the fix.
+ * Remote providers pass untouched; a run already resolved by --local passes
+ * untouched (its server was probed by resolveLocalProvider itself).
+ */
+export async function assertLocalProviderAlive(
+  config: WorkersConfig,
+  logDir: string,
+  name: string,
+  p: WorkerProvider,
+  opts: { localFlag?: boolean; _localCheck?: PortCheck } = {}
+): Promise<void> {
+  if (opts.localFlag || !isLoopbackProvider(p)) return;
+  const check = opts._localCheck ?? httpModelsCheck;
+  if (!p.enabled) {
+    const running = Object.entries(await probeLoopback(config, check))
+      .filter(([, up]) => up)
+      .map(([n]) => n);
+    throw new LocalProviderRefusedError(
+      `provider "${name}" is a local (loopback) provider and is disabled — it cannot run this worker.` +
+        (running.length ? `\nRunning local provider: ${running.join(", ")}.` : "\nNo local model server is running.") +
+        `\n${LOCAL_MECHANISM_LINE}`
+    );
+  }
+  const hp = providerHostPort(p);
+  const up = hp ? await check(hp.host, hp.port, PORT_TIMEOUT_MS) : false;
+  if (up) return;
+  const running = Object.entries(await probeLoopback(config, check))
+    .filter(([n, isUp]) => isUp && n !== name)
+    .map(([n]) => n);
+  throw new LocalProviderRefusedError(
+    `provider "${name}" is a local (loopback) provider whose server does not answer on ${hp ? `${hp.host}:${hp.port}` : "its port"} — ` +
+      `it is not running. This run is refused instead of waiting for it.` +
+      (running.length ? `\nRunning local provider: ${running.join(", ")}.` : "\nNo local model server is running.") +
+      `\n${LOCAL_MECHANISM_LINE}`
+  );
 }
 
 /**
