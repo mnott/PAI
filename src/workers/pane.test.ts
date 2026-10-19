@@ -18,6 +18,9 @@ import {
   PROFILE_NAME,
   SPLIT_SCRIPT,
   WINDOW_BOUNDS_SCRIPT,
+  NEW_PLACE_SCRIPT,
+  REBALANCE_SCRIPT,
+  VERIFY_PANE_SCRIPT,
   WORKER_SPLIT_SCRIPT,
   checkPaneForWorker,
   dynamicProfilePath,
@@ -336,23 +339,29 @@ describe("split scripts never leak keystrokes", () => {
   });
 });
 
-describe("split scripts never steal input focus", () => {
-  it("re-selects the launching session after the split (a split makes the new session active)", () => {
+describe("pane scripts never steal focus", () => {
+  const all = () => [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT, NEW_PLACE_SCRIPT, REBALANCE_SCRIPT, VERIFY_PANE_SCRIPT, WINDOW_BOUNDS_SCRIPT];
+
+  it("restores the previously active session after a split or new tab", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      const select = script.indexOf("f.s.select()");
-      expect(script.indexOf("split")).toBeGreaterThan(-1);
-      expect(select).toBeGreaterThan(script.lastIndexOf("command: followCmd"));
+      expect(script).toMatch(/prevSess\.select\(\)/);
+      expect(script.indexOf("prevSess.select()")).toBeGreaterThan(script.lastIndexOf("command: followCmd"));
+    }
+    expect(NEW_PLACE_SCRIPT).toMatch(/prevTab\.select\(\)/);
+  });
+
+  it("never activates, raises, or changes the frontmost app", () => {
+    for (const script of all()) {
+      expect(script).not.toMatch(/activate|frontmost|\.index\s*=|newS\.select|f\.s\.select|f\.w\.select/);
     }
   });
 
-  it("never activates and never selects the new session", () => {
-    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
-      expect(script).toMatch(/f\.s\.select\(\)/);
-      expect(script).not.toMatch(/newS\.select/);
-      expect(script).not.toMatch(/activate/);
+  it("only restores via the captured previous tab/session", () => {
+    for (const script of all()) {
+      for (const m of script.matchAll(/(\w+(?:\.\w+)*)\.select\(\)/g)) {
+        expect(["prevTab", "prevSess"]).toContain(m[1]);
+      }
     }
-    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/select/);
-    expect(WINDOW_BOUNDS_SCRIPT).not.toMatch(/activate/);
   });
 });
 
