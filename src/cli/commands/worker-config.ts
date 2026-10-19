@@ -33,6 +33,7 @@ import {
   describeProviders,
   removeProvider,
   setClass,
+  setProviderCap,
   setProviderEnabled,
   setWorkersEnabled,
   unsetClass,
@@ -356,6 +357,36 @@ const providersTestCommand: CommandDef = {
 };
 
 /** The provider subcommands except `use` (shared with `pai providers`, see providers.ts). */
+const providersCapCommand: CommandDef = {
+  name: "cap",
+  summary: "Show or set how many workers run in parallel on a provider",
+  description:
+    "Without N, shows the provider's effective cap and where it comes from (config or default). " +
+    "N (>= 1) writes maxConcurrent to workers.yaml; `default` removes it again. " +
+    "Unset, a local provider runs one worker at a time and a cloud provider is uncapped.",
+  args: [
+    { name: "PROVIDER", required: true, summary: "Provider name" },
+    { name: "N", summary: "Parallel runs (>= 1), or `default` to unset" },
+  ],
+  examples: ["pai worker providers cap local", "pai worker providers cap local 2", "pai worker providers cap local default"],
+  seeAlso: ["pai worker providers", "pai worker queue"],
+  run(ctx) {
+    try {
+      const name = ctx.args.PROVIDER as string;
+      const raw = ctx.args.N as string | undefined;
+      let cap: number | "default" | undefined;
+      if (raw !== undefined) {
+        cap = raw === "default" ? "default" : Number(raw);
+        if (cap !== "default" && (!Number.isInteger(cap) || cap < 1)) throw new WorkersConfigError(`cap must be an integer >= 1 or "default", got "${raw}"`);
+      }
+      const { effective } = setProviderCap(name, cap);
+      out(ok(`${name}: ${effective}`));
+    } catch (e) {
+      fail(e, "pai worker providers");
+    }
+  },
+};
+
 export const PROVIDER_EDIT_COMMANDS: CommandDef[] = [
   providersAddCommand,
   providersUpdateCommand,
@@ -363,6 +394,7 @@ export const PROVIDER_EDIT_COMMANDS: CommandDef[] = [
   enableDisable(true),
   enableDisable(false),
   providersTestCommand,
+  providersCapCommand,
 ];
 
 export const workerProvidersCommand: CommandDef = {

@@ -248,6 +248,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai projects unregister` | Remove a project that should never have been registered |
 | `pai providers` | List providers (● = active); `providers use NAME` switches |
 | `pai providers add` | Add a provider (the first one also turns workers on) |
+| `pai providers cap` | Show or set how many workers run in parallel on a provider |
 | `pai providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai providers enable` | Turn a provider on (also clears its cooldown) |
 | `pai providers remove` | Remove a provider and the classes pointing at it |
@@ -387,6 +388,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
 | `pai worker providers` | Providers workers can run on: list, add, remove, use, enable, disable, test |
 | `pai worker providers add` | Add a provider (the first one also turns workers on) |
+| `pai worker providers cap` | Show or set how many workers run in parallel on a provider |
 | `pai worker providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai worker providers enable` | Turn a provider on (also clears its cooldown) |
 | `pai worker providers list` | List providers, their models and whether workers are on |

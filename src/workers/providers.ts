@@ -40,6 +40,7 @@ import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
+import { LOCAL_DEFAULT_CAP, resolveCap } from "./capacity.js";
 import { LOCAL_MECHANISM_LINE, probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
@@ -170,6 +171,42 @@ export function updateProvider(
   }
   writeWorkersSection(raw, workers, configPath);
   return workers;
+}
+
+/** A provider's parallel cap as the capacity gate applies it, and where it comes from. */
+export function describeCap(p: WorkerProvider): { cap: number | undefined; source: "config" | "default" } {
+  const cap = resolveCap(p.maxConcurrent, isLoopbackProvider(p));
+  return { cap, source: p.maxConcurrent !== undefined ? "config" : "default" };
+}
+
+export function capText(p: WorkerProvider): string {
+  const { cap, source } = describeCap(p);
+  return `cap ${cap ?? "unlimited"} (${source})`;
+}
+
+/**
+ * Set (positive integer) or unset (undefined / "default") a provider's
+ * maxConcurrent in workers.yaml. Returns the effective cap afterwards.
+ */
+export function setProviderCap(
+  name: string,
+  cap: number | "default" | undefined,
+  configPath?: string
+): { workers: WorkersConfig; effective: string } {
+  const { raw, workers } = readWorkersSection(configPath);
+  const p = workers.providers[name];
+  if (!p) {
+    throw new WorkersConfigError(
+      `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+    );
+  }
+  if (cap !== undefined) {
+    if (cap === "default") delete p.maxConcurrent;
+    else if (!Number.isInteger(cap) || cap < 1) throw new WorkersConfigError("cap must be an integer >= 1 (or \"default\")");
+    else p.maxConcurrent = cap;
+    writeWorkersSection(raw, workers, configPath);
+  }
+  return { workers, effective: capText(p) };
 }
 
 export function removeProvider(name: string, configPath?: string): WorkersConfig {
@@ -462,6 +499,7 @@ export function describeProviders(
     if (p.engine === "image") {
       lines.push(`    engine image (no process spawn — POSTs {url}/images/generations directly)`);
     }
+    lines.push(`    ${capText(p)}`);
     const cls = classesForProvider(workers, name);
     lines.push(`    classes: ${cls.length ? cls.join(", ") : "(none)"}`);
   }

@@ -33,16 +33,23 @@ export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true };
  * and /v1/cache/stats on a vllm-mlx server report model names and cache
  * counters only, not max-num-seqs.
  */
-export const LOCAL_DEFAULT_CAP = 3;
+export const LOCAL_DEFAULT_CAP = 1;
+
+/** Cap shown/used by queue and plan runners for a provider with no cap at all (cloud, unset). */
+export const UNCAPPED_QUEUE_CAP = 3;
 
 /**
  * Provider cap, the model's default concurrency: explicit `maxConcurrent`
- * (1 for a server that decodes one request at a time, N or unset for a
- * parallel-capable one), else 3 for loopback, else unlimited (undefined).
- * Loopback never means serial: only a cap of 1 does.
+ * (N for a parallel-capable server), else LOCAL_DEFAULT_CAP for loopback (one
+ * local engine serves one request at a time), else unlimited (undefined).
  */
 export function resolveCap(maxConcurrent: number | undefined, local: boolean): number | undefined {
   return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
+}
+
+/** resolveCap with a number always: unlimited becomes UNCAPPED_QUEUE_CAP (queue/plan runners). */
+export function effectiveCap(maxConcurrent: number | undefined, local: boolean): number {
+  return resolveCap(maxConcurrent, local) ?? UNCAPPED_QUEUE_CAP;
 }
 
 /** Cap of a named provider from the config, the same rule the gate applies. */

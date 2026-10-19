@@ -97,7 +97,7 @@ describe("capacityGate", () => {
 
   it("is unlimited for a remote provider without maxConcurrent", async () => {
     expect(resolveCap(undefined, false)).toBeUndefined();
-    expect(resolveCap(undefined, true)).toBe(3);
+    expect(resolveCap(undefined, true)).toBe(1);
     expect(resolveCap(5, false)).toBe(5);
     const h = harness(() => Array.from({ length: 10 }, (_, i) => st(`r${i}`)), "z");
     expect(await capacityGate({ ...h.base, cap: resolveCap(undefined, false) })).toBeNull();
@@ -217,7 +217,7 @@ describe("queue pull-forward", () => {
     };
     expect(providerCap(config, "cloud")).toBe(5);
     expect(providerCap(config, "plain")).toBeUndefined();
-    expect(providerCap(config, "local")).toBe(3);
+    expect(providerCap(config, "local")).toBe(1);
     expect(providerCap(config, "gone")).toBeUndefined();
   });
 });
