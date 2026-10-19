@@ -33,6 +33,7 @@
  * is the same as a fresh start.
  */
 
+import { terminalHasName } from "../../../workers/scope.js";
 import { realpathSync } from "node:fs";
 import chalk from "chalk";
 import { err } from "../../lib/utils.js";
@@ -118,8 +119,8 @@ export async function cmdGoto(
 
   // ---- 4. Build argv components ----
   const name = friendlyName ?? query;
-  // the session's own name (set with /Name) is never re-sent
-  const named = !!matchedSession.persistentName && matchedSession.persistentName === name;
+  // /Name is re-sent unless THIS terminal already carries the name
+  const named = terminalHasName(name);
 
   // ---- 5. Dry-run mode ----
   if (opts.dryRun) {

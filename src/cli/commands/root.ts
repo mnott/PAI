@@ -4,6 +4,7 @@
  * screens are testable with a fake TTY.
  */
 
+import { terminalHasName } from "../../workers/scope.js";
 import { basename } from "node:path";
 import { isLoopbackProvider } from "../../workers/run-env.js";
 import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
@@ -254,7 +255,7 @@ export async function startSession(a: StartArgs): Promise<number> {
       cwd,
       resume: resume?.uuid,
       name,
-      named: !!resume?.named,
+      named: !!resume && terminalHasName(name),
     });
   } catch (e) {
     if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {

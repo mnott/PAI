@@ -288,3 +288,25 @@ export function itermForClaudeSession(
   const term = best?.term;
   return term ? itermUuid(term) : null;
 }
+
+/**
+ * Does the terminal this process runs in already carry `name` in the AIBroker
+ * registry (keyed by this ITERM_SESSION_ID's UUID)? Only then is /Name skipped:
+ * a new claude process usually runs in a new terminal session, whatever the
+ * transcript or the old tab was called.
+ */
+export function terminalHasName(
+  name: string,
+  term: string = process.env.ITERM_SESSION_ID ?? "",
+  registryPath: string = AIBROKER_REGISTRY
+): boolean {
+  const uuid = itermUuid(term);
+  if (!uuid || !name) return false;
+  try {
+    const names = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, unknown>;
+    const have = names[uuid];
+    return typeof have === "string" && have.trim() === name.trim();
+  } catch {
+    return false;
+  }
+}
