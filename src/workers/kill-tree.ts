@@ -26,7 +26,7 @@ export interface KillTreeDeps {
   owns: (s: WorkerStatus) => boolean;
   isAlive: (pid: number) => boolean;
   waitTerminal: (logDir: string, id: string) => Promise<WorkerStatus | null>;
-  request: (logDir: string, ledger: string, id: string) => void;
+  request: (logDir: string, ledger: string, id: string, forced?: boolean) => void;
   /** Wait after SIGKILL is not needed; this is the grace between SIGTERM and SIGKILL. */
   graceMs: number;
 }
@@ -36,9 +36,29 @@ const defaultDeps = (): KillTreeDeps => ({
   owns: ownsPid,
   isAlive: (pid) => pidAlive(pid),
   waitTerminal: (dir, id) => waitForTerminalStatus(dir, id),
-  request: (dir, ledger, id) => requestKill(dir, ledger, id, callerDescription()),
+  request: (dir, ledger, id, forced) => requestKill(dir, ledger, id, callerDescription(), forced === true),
   graceMs: 1000,
 });
+
+/** Identities under which a worker's owner session can appear: launching session name/key, spawner Claude session. */
+function ownerIdentities(s: WorkerStatus): string[] {
+  const ids = [s.session?.name, s.sessionKey, s.spawnerSession, s.spawnerSession ? `claude-session:${s.spawnerSession}` : undefined];
+  return ids.filter((x): x is string => !!x);
+}
+
+/**
+ * Refusal text when a session-originated kill targets another session's worker, else null.
+ * No recorded owner keeps the old behaviour; the owner session always passes.
+ */
+export function killRefusal(s: WorkerStatus, env: NodeJS.ProcessEnv, force: boolean): string | null {
+  if (force) return env.PAI_WORKER ? `worker ${s.id}: --force is only for the operator's terminal, not from a worker process` : null;
+  const owners = ownerIdentities(s);
+  if (!owners.length) return null;
+  const me = callerDescription(env);
+  if (owners.includes(me) || (env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID))) return null;
+  const owner = s.session?.name || s.sessionKey || owners[0];
+  return `worker ${s.id} belongs to session ${owner}; refused (use --force from the operator's terminal or that session)`;
+}
 
 /** Live descendants of `id`, deepest first (leaves before their parents). */
 export function descendantsLeavesFirst(statuses: WorkerStatus[], id: string): WorkerStatus[] {
@@ -58,7 +78,7 @@ export function descendantsLeavesFirst(statuses: WorkerStatus[], id: string): Wo
   return out.sort((a, b) => b.depth - a.depth).map((x) => x.s);
 }
 
-async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps): Promise<string> {
+async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, forced = false): Promise<string> {
   const id = recorded.id;
   // A pooled task's `pid` is the shared slot process; the process to end is its `pai worker run` client,
   // whose disconnect makes the pool host cancel the task and write the terminal status.
@@ -72,7 +92,7 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps):
     saveStatus(logDir, recorded);
     return `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`;
   }
-  d.request(logDir, ledgerPath(logDir), id);
+  d.request(logDir, ledgerPath(logDir), id, forced);
   // a worker holding the machine-wide build lock frees it and its build tree dies with it
   await releaseBuildsOf(buildsDir(), id).catch(() => []);
   try {
@@ -119,17 +139,28 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps):
 export async function killTree(
   logDir: string,
   id: string,
-  opts: { only?: boolean; skipRoot?: boolean; deps?: Partial<KillTreeDeps> } = {}
+  opts: {
+    only?: boolean;
+    skipRoot?: boolean;
+    deps?: Partial<KillTreeDeps>;
+    /** Set by session-originated kills (the CLI): checks ownership. Internal callers (plans, loop guard, gc, daemon) omit it. */
+    caller?: { env: NodeJS.ProcessEnv; force: boolean };
+  } = {}
 ): Promise<string[]> {
   const d = { ...defaultDeps(), ...opts.deps };
   const root = loadStatus(logDir, id);
   if (!root) throw new Error(`no worker named "${id}"`);
+  if (opts.caller) {
+    const refusal = killRefusal(root, opts.caller.env, opts.caller.force);
+    if (refusal) throw new Error(refusal);
+  }
+  const forced = opts.caller?.force === true;
   const order = opts.only ? [] : descendantsLeavesFirst(loadStatuses(logDir), id);
   if (!opts.skipRoot) order.push(root);
   const lines: string[] = [];
   for (const s of order) {
     try {
-      lines.push(await killOne(logDir, s, d));
+      lines.push(await killOne(logDir, s, d, forced));
     } catch (e) {
       if (s.id === id) throw e;
       lines.push(`worker ${s.id}: kill failed: ${e instanceof Error ? e.message : String(e)}`);

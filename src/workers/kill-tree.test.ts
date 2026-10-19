@@ -161,3 +161,53 @@ describe("killTree pid ownership (real ownsPid)", () => {
     expect(r.lines[0]).toContain("not this worker any more");
   });
 });
+
+describe("killTree session ownership", () => {
+  const owned = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-own-"));
+    mk(dir, "w1", 1, { session: { id: "u1", name: "PAI" } as WorkerStatus["session"] });
+    return dir;
+  };
+  const env = (name: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ PAI_SESSION_NAME: name, ...extra });
+
+  it("owner session may kill", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("PAI"), force: false } });
+    expect(f.signalled).toEqual(["w1"]);
+  });
+
+  it("another session is refused, nothing signalled", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    await expect(killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: false } })).rejects.toThrow(
+      "worker w1 belongs to session PAI; refused (use --force from the operator's terminal or that session)"
+    );
+    expect(f.signalled).toEqual([]);
+  });
+
+  it("--force from a non-worker is allowed and flagged; from a worker it is refused", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    const forced: (boolean | undefined)[] = [];
+    f.deps.request = (_d, _l, _i, fo) => void forced.push(fo);
+    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: true } });
+    expect(f.signalled).toEqual(["w1"]);
+    expect(forced).toEqual([true]);
+    const dir2 = owned();
+    await expect(
+      killTree(dir2, "w1", { deps: fakes(dir2).deps, caller: { env: env("CaseLeaf", { PAI_WORKER: "1" }), force: true } })
+    ).rejects.toThrow("--force");
+  });
+
+  it("ownerless worker and internal callers are unaffected", async () => {
+    const dir = tree();
+    const f = fakes(dir);
+    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: false } });
+    expect(f.signalled.length).toBe(4);
+    const dir2 = owned();
+    const f2 = fakes(dir2);
+    await killTree(dir2, "w1", { deps: f2.deps });
+    expect(f2.signalled).toEqual(["w1"]);
+  });
+});

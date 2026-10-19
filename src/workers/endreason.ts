@@ -38,7 +38,10 @@ export function callerDescription(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 /** Write the kill-request marker and the WORKER-KILL ledger line; call right before signalling. */
-export function requestKill(logDir: string, ledger: string, id: string, by: string = callerDescription()): void {
+export function requestKill(logDir: string, ledger: string, id: string,
+  by: string = callerDescription(),
+  forced = false
+): void {
   const req: KillRequest = {
     ts: new Date().toISOString(),
     by,
@@ -47,7 +50,7 @@ export function requestKill(logDir: string, ledger: string, id: string, by: stri
     cwd: process.cwd(),
   };
   writeFileSync(killMarkerPath(logDir, id), JSON.stringify(req));
-  appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd });
+  appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd, ...(forced ? { forced: 1 } : {}) });
 }
 
 function readMarker(logDir: string, id: string): KillRequest | null {

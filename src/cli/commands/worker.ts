@@ -805,9 +805,12 @@ const gcCommand: CommandDef = {
 const killCommand: CommandDef = {
   name: "kill",
   summary: "Stop a running worker",
-  description: "Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.",
+  description: "Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A session may only kill workers it started (another session's worker is refused; --force overrides from the operator's terminal). A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
-  options: [{ name: "only", type: "boolean", summary: "Kill only this worker, leave its children running" }],
+  options: [
+    { name: "only", type: "boolean", summary: "Kill only this worker, leave its children running" },
+    { name: "force", type: "boolean", summary: "Kill another session's worker (operator's terminal only, not from a worker); logged as forced" },
+  ],
   examples: ["pai worker kill w-20260101-abc", "pai worker ps   (find the id first)"],
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
@@ -819,7 +822,7 @@ const killCommand: CommandDef = {
       if (status.state !== "running" && status.state !== "queued")
         throw new Error(`worker ${id} is not running (state: ${status.state})`);
       if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
-      for (const line of await killTree(dir, id, { only: ctx.opts.only === true })) out(line);
+      for (const line of await killTree(dir, id, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true } })) out(line);
     }),
 };
 
