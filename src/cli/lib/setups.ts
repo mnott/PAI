@@ -22,6 +22,8 @@ export interface Setup {
   orchestrator: { provider: string; model?: string };
   /** Provider the worker classes run on. */
   workers: string;
+  /** Worker model: "fast" or a model id. Absent = what workersModel() derives for the provider; the Workers column and the written profile both read it. */
+  workersModel?: string;
   kind: "last" | "builtin" | "saved";
   /** The one "local workers" row: Workers column reads "<provider> (local)". */
   local?: true;
@@ -42,12 +44,33 @@ export function shortModel(model: string | undefined): string {
 
 type Cfg = Pick<WorkersConfig, "providers" | "active" | "nativeModels">;
 
-/** Display label for a provider's worker role, e.g. "glm-fast (glm)". */
-export function workersLabel(cfg: Cfg, provider: string): string {
-  const p = getProviderOrNative(cfg, provider);
-  const fast = p?.models.fast;
+/** The worker model a provider's setup row shows (and writes): "fast" when the provider has a distinct fast model, else the provider default (undefined). */
+export function workersModel(cfg: Cfg, provider: string): string | undefined {
+  if (provider === ANTHROPIC_NATIVE) return "fast";
+  const m = getProviderOrNative(cfg, provider)?.models;
+  return m?.fast && m.fast !== m.default ? "fast" : undefined;
+}
+
+/** Display label for a provider's worker role, e.g. "glm-fast (glm)"; a named model shows as "<model> (<provider>)". */
+export function workersLabel(cfg: Cfg, provider: string, model?: string): string {
+  if (model && model !== "fast") return `${model} (${provider})`;
   if (provider === ANTHROPIC_NATIVE) return "anthropic (haiku)";
-  return fast && fast !== p?.models.default ? `${provider}-fast (${provider})` : `${provider} (${provider})`;
+  return workersModel(cfg, provider) ? `${provider}-fast (${provider})` : `${provider} (${provider})`;
+}
+
+/** The Workers column of a setup row. */
+export function setupWorkersLabel(cfg: Cfg, s: Setup): string {
+  return s.local ? `${s.workers} (local)` : workersLabel(cfg, s.workers, s.workersModel);
+}
+
+/** The profile a chosen setup writes: exactly the provider and model its row displays, for chat and workers. */
+export function setupProfile(cfg: Cfg, s: Setup): { chat: { provider: string; model?: string }; workers: { provider: string; model?: string } } {
+  const chatModel = s.orchestrator.model ?? getProviderOrNative(cfg, s.orchestrator.provider)?.models.default;
+  const wModel = s.workersModel ?? workersModel(cfg, s.workers);
+  return {
+    chat: { provider: s.orchestrator.provider, ...(chatModel ? { model: chatModel } : {}) },
+    workers: { provider: s.workers, ...(wModel ? { model: wModel } : {}) },
+  };
 }
 
 export function orchestratorLabel(cfg: Cfg, o: Setup["orchestrator"]): string {
