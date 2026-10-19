@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parsePlan, type Plan } from "./plan.js";
-import { realCommitsAhead, workerArgs, worktreeProblem } from "./plan-deps.js";
+import { realCommitsAhead, checkoutProblem, workerArgs } from "./plan-deps.js";
 import {
   appendRunLog,
   dryRunSchedule,
@@ -291,9 +291,25 @@ describe("part isolation", () => {
     expect(h.log.some((e) => e.event === "part-end" && (e as { reason?: string }).reason === "loop")).toBe(true);
   });
 
-  it("a status without a worktree is a problem", () => {
-    expect(worktreeProblem({ id: "w1", worktreeDir: null })).toMatch(/no worktree/);
-    expect(worktreeProblem({ id: "w1", worktreeDir: "/x" })).toBeNull();
+  it("an untouched plan checkout is fine; a moved HEAD or dirty tree is a problem unless it is a runner merge", () => {
+    const b = { head: "aaaaaaa", dirty: "" };
+    expect(checkoutProblem("w1", b, { ...b })).toBeNull();
+    expect(checkoutProblem("w1", b, { head: "bbbbbbb", dirty: "" }, new Set(["bbbbbbb"]))).toBeNull();
+    expect(checkoutProblem("w1", b, { head: "bbbbbbb", dirty: "" })).toMatch(/changed the plan's checkout/);
+    expect(checkoutProblem("w1", b, { head: "aaaaaaa", dirty: " M x.ts\n" })).toMatch(/changed the plan's checkout/);
+  });
+
+  it("a loop-stopped worker is a failed attempt that gets the Sonnet escalation, never fatal", async () => {
+    const p = plan();
+    const h = harness(p);
+    const tiers: string[] = [];
+    h.deps.startWorker = async (r) => {
+      tiers.push(`${r.attempt}:${r.tier}`);
+      return { id: `w-${tiers.length}`, ok: false, loopStopped: true, failure: "loop-stopped" };
+    };
+    await runPlan(p, { parallel: 1, escalate: "sonnet" }, h.deps);
+    expect(tiers.length).toBeGreaterThanOrEqual(2);
+    expect(tiers.some((t) => t.endsWith(":sonnet"))).toBe(true);
   });
 
   it("a fatal worker outcome sends the part to needs-decision without a retry", async () => {

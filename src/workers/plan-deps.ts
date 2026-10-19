@@ -61,9 +61,26 @@ export function workerArgs(req: Pick<StartRequest, "label" | "provider" | "tier"
   return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
 }
 
-/** Error text when a started worker is not isolated in a worktree; null when it is. */
-export function worktreeProblem(st: { id: string; worktreeDir?: string | null }): string | null {
-  return st.worktreeDir ? null : `worker ${st.id} has no worktree; refusing to let it edit the plan's checkout`;
+/** State of the plan checkout: HEAD and the dirty-path listing. */
+export interface CheckoutState {
+  head: string;
+  dirty: string;
+}
+
+export async function checkoutState(repo: string): Promise<CheckoutState> {
+  const head = (await capture("git", ["rev-parse", "HEAD"], repo)).out.trim();
+  const dirty = (await capture("git", ["status", "--porcelain"], repo)).out;
+  return { head, dirty };
+}
+
+/** HEADs the runner's own merges produced, per repo: a moved HEAD that is one of them is not a worker edit. */
+const mergedHeads = new Map<string, Set<string>>();
+
+/** Error text when the plan checkout changed during a part other than by the runner's merges; null when untouched. */
+export function checkoutProblem(id: string, before: CheckoutState, after: CheckoutState, merged: ReadonlySet<string> = new Set()): string | null {
+  const headMoved = after.head !== before.head && !merged.has(after.head);
+  if (!headMoved && after.dirty === before.dirty) return null;
+  return `worker ${id} changed the plan's checkout (${headMoved ? `HEAD ${before.head.slice(0, 7)} -> ${after.head.slice(0, 7)}` : "working tree"})`;
 }
 
 /** Commits on worker/<id> beyond `base` that change something (empty commits do not count). */
@@ -74,15 +91,16 @@ export async function realCommitsAhead(repo: string, base: string, id: string): 
   return n;
 }
 
-/** Run one worker as `pai worker run` and read its outcome: spawn refusal, missing worktree and report checks included. */
+/** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
 export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
+  const before = await checkoutState(repo);
   const r = await capture(pai(), workerArgs(req, specFile, repo), repo);
   const st = loadStatuses(logDir)
     .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
   if (!st) return { id: "", ok: false, spawnRefused: true, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
-  const problem = worktreeProblem(st);
+  const problem = checkoutProblem(st.id, before, await checkoutState(repo), mergedHeads.get(repo));
   if (problem) return { id: st.id, ok: false, fatal: true, failure: problem };
   let text = "";
   try {
@@ -107,6 +125,7 @@ export async function mergeBranch(repo: string, id: string, gate: string): Promi
   const output = r.out + r.err;
   if (r.code !== 0) return { ok: false, before, output };
   const head = await rev("rev-parse", "HEAD");
+  if (head) mergedHeads.set(repo, (mergedHeads.get(repo) ?? new Set()).add(head));
   return { ok: true, commit: head || undefined, before, output };
 }
 
