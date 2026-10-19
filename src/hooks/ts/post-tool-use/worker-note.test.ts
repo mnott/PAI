@@ -28,8 +28,11 @@ describe("worker-note in a pool slot", () => {
       notePending: ["use the other branch"],
     } as WorkerStatus);
     setSlotCurrent(d, "prov-1", "pooled1");
-    expect(run(d, { PAI_POOL_SLOT: "prov-1" })).toContain("use the other branch");
-    // delivered once
+    // no token in the env: nothing is produced and the note stays pending
     expect(run(d, { PAI_POOL_SLOT: "prov-1" })).toBe("");
+    const env = { PAI_POOL_SLOT: "prov-1", PAI_WORKER_NOTE_TOKEN: "ab12cd34" };
+    expect(run(d, env)).toContain("PAI note [ab12cd34]: use the other branch");
+    // delivered once
+    expect(run(d, env)).toBe("");
   });
 });
