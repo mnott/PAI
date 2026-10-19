@@ -23,11 +23,11 @@ const cfg = {
 };
 const row = { name: "Jobs", provider: "anthropic", model: "claude-opus-5-5" } as SessionRow;
 
-/** What the Workers column promises: "anthropic (haiku)" and "<p>-fast (<p>)" mean the fast model; "<p> (<p>)" the default. */
+/** What the Workers column promises: "<p>-fast (<p>)" and "<p> (haiku)" mean the fast model; "<p> (<p>)" the provider default. */
 const promised = (label: string): { provider: string; model?: string } => {
-  const fast = /^anthropic \(haiku\)$|-fast \(/.test(label);
-  const provider = /^(\S+?)(-fast)? \(/.exec(label)![1];
-  return { provider, ...(fast ? { model: "fast" } : {}) };
+  const m = /^(\S+?)(-fast)? \((\S+)\)$/.exec(label)!;
+  const fast = m[2] === "-fast" || m[3] === "haiku";
+  return { provider: m[1], ...(fast ? { model: "fast" } : {}) };
 };
 
 describe("every setup row writes and resolves what it displays", () => {
@@ -36,7 +36,7 @@ describe("every setup row writes and resolves what it displays", () => {
 
   it("the table covers every built-in kind", () => {
     const names = setups.map((s) => s.name);
-    for (const n of ["Last time", "anthropic only", "anthropic + glm workers", "anthropic + local workers", "glm only"]) expect(names).toContain(n);
+    for (const n of ["Last time", "anthropic only", "anthropic + haiku workers", "anthropic + glm workers", "anthropic + local workers", "glm only"]) expect(names).toContain(n);
   });
 
   it.each(setups.map((s) => [s.name, s] as const))("%s", (_n, s) => {
@@ -54,10 +54,20 @@ describe("every setup row writes and resolves what it displays", () => {
     expect(profile.chat?.model).toBe(s.orchestrator.model ?? (cfg.providers as Record<string, { models: { default: string } }>)[s.orchestrator.provider]?.models.default);
   });
 
-  it("anthropic only resolves to anthropic fast (haiku), never the default", () => {
+  it("anthropic only resolves to the anthropic default (sonnet), not fast", () => {
     const s = setups.find((x) => x.name === "anthropic only")!;
+    expect(setupProfile(cfg, s).workers).toEqual({ provider: "anthropic" });
+    expect(o.cells(s)[3]).toBe("anthropic (anthropic)");
+    const r = resolveWorkers({}, { cfg, profile: setupProfile(cfg, s), env: {}, budgets: {}, routing: { cooldowns: {} } as never });
+    expect({ provider: r.provider, model: r.model }).toEqual({ provider: "anthropic", model: undefined });
+  });
+
+  it("anthropic + haiku workers resolves to anthropic fast (haiku)", () => {
+    const s = setups.find((x) => x.name === "anthropic + haiku workers")!;
     expect(setupProfile(cfg, s).workers).toEqual({ provider: "anthropic", model: "fast" });
     expect(o.cells(s)[3]).toBe("anthropic (haiku)");
+    const r = resolveWorkers({}, { cfg, profile: setupProfile(cfg, s), env: {}, budgets: {}, routing: { cooldowns: {} } as never });
+    expect({ provider: r.provider, model: r.model }).toEqual({ provider: "anthropic", model: "fast" });
   });
 
   it("Last time keeps the session's own worker model", () => {

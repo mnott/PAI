@@ -44,17 +44,17 @@ export function shortModel(model: string | undefined): string {
 
 type Cfg = Pick<WorkersConfig, "providers" | "active" | "nativeModels">;
 
-/** The worker model a provider's setup row shows (and writes): "fast" when the provider has a distinct fast model, else the provider default (undefined). */
+/** The worker model a provider's setup row shows (and writes): "fast" when the provider has a distinct fast model, else the provider default (undefined). An explicit row model (workersModel on the Setup) overrides this. */
 export function workersModel(cfg: Cfg, provider: string): string | undefined {
-  if (provider === ANTHROPIC_NATIVE) return "fast";
+  if (provider === ANTHROPIC_NATIVE) return undefined;
   const m = getProviderOrNative(cfg, provider)?.models;
   return m?.fast && m.fast !== m.default ? "fast" : undefined;
 }
 
 /** Display label for a provider's worker role, e.g. "glm-fast (glm)"; a named model shows as "<model> (<provider>)". */
 export function workersLabel(cfg: Cfg, provider: string, model?: string): string {
-  if (model && model !== "fast") return `${model} (${provider})`;
-  if (provider === ANTHROPIC_NATIVE) return "anthropic (haiku)";
+  if (model === "fast") return provider === ANTHROPIC_NATIVE ? "anthropic (haiku)" : `${provider}-fast (${provider})`;
+  if (model) return `${model} (${provider})`;
   return workersModel(cfg, provider) ? `${provider}-fast (${provider})` : `${provider} (${provider})`;
 }
 
@@ -129,7 +129,11 @@ const PRIORITY = ["glm", "kimi"];
  */
 export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), resolved?: string): Setup[] {
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
-  const out: Setup[] = [{ name: "anthropic only", orchestrator: NATIVE_ORCHESTRATOR, workers: ANTHROPIC_NATIVE, kind: "builtin" }];
+  const out: Setup[] = [
+    // anthropic workers run the anthropic default (sonnet); the haiku row is the explicit cheap choice
+    { name: "anthropic only", orchestrator: NATIVE_ORCHESTRATOR, workers: ANTHROPIC_NATIVE, kind: "builtin" },
+    { name: "anthropic + haiku workers", orchestrator: NATIVE_ORCHESTRATOR, workers: ANTHROPIC_NATIVE, workersModel: "fast", kind: "builtin" },
+  ];
   const names = [...PRIORITY, ...(cfg.active && cfg.active !== "auto" && !PRIORITY.includes(cfg.active) && cfg.active !== ANTHROPIC_NATIVE ? [cfg.active] : [])].filter(enabled);
   const remote = names.filter((n) => !isLoopbackProvider(cfg.providers[n]));
   for (const n of remote) {

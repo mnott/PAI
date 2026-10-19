@@ -36,9 +36,10 @@ Last ran on   opus-5.5 (anthropic) with workers on glm-fast
   #  Setup                     Orchestrator          Workers          Status
   ─  ────────────────────────  ────────────────────  ───────────────  ───────────────────────────────
 › 1  Last time                 opus-5.5 (anthropic)  glm-fast (glm)   70% used
-  2  anthropic only            sonnet (anthropic)    anthropic (haiku) ok
-  3  anthropic + kimi workers  sonnet (anthropic)    kimi-fast (kimi) kimi: at limit, 100% until 16:15
-  4  glm only                  glm-5.3 (glm)         glm-fast (glm)   70% used
+  2  anthropic only            sonnet (anthropic)    anthropic (anthropic) ok
+  3  anthropic + haiku workers sonnet (anthropic)    anthropic (haiku) ok
+  4  anthropic + kimi workers  sonnet (anthropic)    kimi-fast (kimi) kimi: at limit, 100% until 16:15
+  5  glm only                  glm-5.3 (glm)         glm-fast (glm)   70% used
 ```
 
 Before launch, always one explicit line: `Starting "NAME": orchestrator opus-5.5 (anthropic), workers glm-fast (glm)`.
