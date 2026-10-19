@@ -37,6 +37,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai obsidian`](obsidian.md) | Mirror project notes into an Obsidian vault |
 | [`pai open`](open.md) | Reopen a session (on its own provider unless --provider is given) |
 | [`pai pause`](pause.md) | Save your place before leaving a session |
+| [`pai plan`](plan.md) | Run a planned job on local workers without a model in the loop |
 | [`pai project`](project.md) | Your registered projects: list, add, rename, check |
 | [`pai projects`](projects.md) | Same as project |
 | [`pai providers`](providers.md) | List providers (● = active); `providers use NAME` switches |
@@ -164,6 +165,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai obsidian sync` | Copy project notes into the vault and rebuild its index pages |
 | `pai open` | Reopen a session (on its own provider unless --provider is given) |
 | `pai pause` | Save your place before leaving a session |
+| `pai plan` | Run a planned job on local workers without a model in the loop |
+| `pai plan run` | Run a plan: local workers in parallel, merged with the plan's gate |
+| `pai plan status` | Summarise a plan's run log: done, running, waiting, needs-decision |
+| `pai plan validate` | Check a plan file and list its parts |
 | `pai project` | Your registered projects: list, add, rename, check |
 | `pai project add` | Register a folder as a project |
 | `pai project alias` | Give a project a second name that also finds it |
