@@ -8,6 +8,7 @@ import {
   inventoryRows,
   inventoryText,
   parseSizeMb,
+  processTreeRssMb,
   parseTable,
   readInventory,
   writeInventory,
@@ -45,7 +46,7 @@ const deps = (over: Partial<Record<string, unknown>> = {}): InventoryDeps => ({
     if (url in over) return over[url];
     if (url === "http://127.0.0.1:8035/v1/models") return { data: [{ id: "flash-next" }] };
     if (url === "http://127.0.0.1:11434/api/ps") return { models: [{ name: "arctic-embed-m-v1.5-f16", size: 600 * 1048576 }] };
-    if (url === "http://127.0.0.1:11434/api/tags") return { models: [{ name: "arctic-embed-m-v1.5-f16" }, { name: "qwen3:8b" }] };
+    if (url === "http://127.0.0.1:11434/api/tags") return { models: [{ name: "arctic-embed-m-v1.5-f16", size: 600 * 1048576 }, { name: "qwen3:8b", size: 5_000_000_000 }] };
     return null;
   },
   run: async (_c, args) => (args[1] === "ls" ? DOCKER_LS : args[1] === "ps" ? DOCKER_PS : "Docker Model Runner is running\n"),
@@ -73,6 +74,35 @@ describe("parsers", () => {
   });
 });
 
+describe("processTreeRssMb", () => {
+  // ps -axo pid=,ppid=,rss= output: a thin python listener (30 MB) whose engine
+  // child (50 GB) holds the model; the listener's own RSS says nothing
+  const PS = [
+    "    1     0    9000",
+    "  500     1    1200",
+    "  501   500     29000", // listener: the python server
+    "  502   501  51000000", // engine child: the model
+    "  503   502    200000", // grandchild
+    "  600     1    99000", // unrelated process
+  ].join("\n");
+  const run = async (_c: string, args: string[]) => (args[0] === "-axo" ? PS : null);
+
+  it("sums the RSS of the listener's whole process tree", async () => {
+    expect(await processTreeRssMb("501", run)).toBe(Math.round((29000 + 51000000 + 200000) / 1024));
+  });
+
+  it("ignores processes outside the tree; a bare listener is its own RSS", async () => {
+    expect(await processTreeRssMb("600", run)).toBe(Math.round(99000 / 1024));
+    expect(await processTreeRssMb("1", run)).toBe(Math.round((9000 + 1200 + 29000 + 51000000 + 200000 + 99000) / 1024));
+  });
+
+  it("survives a reparented cycle and missing ps output", async () => {
+    const cyc = "1 1 100\n2 1 200\n1 2 100"; // pid 1 listed as its own descendant
+    expect(await processTreeRssMb("1", async () => cyc)).toBe(Math.round(300 / 1024));
+    expect(await processTreeRssMb("1", async () => null)).toBe(0);
+  });
+});
+
 describe("computeInventory", () => {
   it("lists providers, ollama and docker with models, memory and users", async () => {
     const inv = await computeInventory(input(), deps());
@@ -80,12 +110,22 @@ describe("computeInventory", () => {
     expect(by["flashnext-iq3"]).toBeUndefined();
     expect(by["strata"]).toMatchObject({ status: "running", port: 8035, users: ["worker:flashnext-iq3"] });
     expect(by["strata"]!.models[0]).toMatchObject({ model: "flash-next", kind: "coding", memoryMb: 21000 });
-    expect(by["coder"]).toMatchObject({ status: "stopped", port: 8034 });
+    // a DISABLED provider is not a user of anything: no runtime row for coder
+    expect(by["coder"]).toBeUndefined();
+    expect(inv.runtimes.some((r) => r.users.some((u) => u === "worker:coder"))).toBe(false);
     expect(by["ollama"]!.models.find((m) => m.model === "arctic-embed-m-v1.5-f16")).toMatchObject({ loaded: true, memoryMb: 600, usedBy: ["pai-embedding"] });
     expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, usedBy: ["paperfull-llm"] });
     const dmr = by["docker-model-runner"]!;
     expect(dmr.status).toBe("running");
     expect(dmr.models.find((m) => m.loaded)!.usedBy).toEqual(["paperfull-embed"]);
+  });
+
+  it("carries the size on disk per installed model (ollama tags `size`, docker ls SIZE)", async () => {
+    const inv = await computeInventory(input(), deps());
+    const by = Object.fromEntries(inv.runtimes.map((r) => [r.name, r]));
+    expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, sizeMb: 4768 });
+    expect(by["ollama"]!.models.find((m) => m.model === "arctic-embed-m-v1.5-f16")!.sizeMb).toBe(600);
+    expect(by["docker-model-runner"]!.models.find((m) => m.model === "qwen3:8B-Q4_K_M")!.sizeMb).toBe(4792);
   });
 
   it("hints at duplicate embedding runtimes", async () => {
@@ -111,11 +151,13 @@ describe("render and cache", () => {
     const inv = await computeInventory(input(), deps());
     const rows = inventoryRows(inv);
     expect(rows[0]!.slice(0, 2)).toEqual(["strata", "running"]);
-    expect(rows[rows.length - 1]![1]).toBe("stopped");
+    // the disabled provider left the table entirely: no stopped row for it
+    expect(rows.some((r) => r[1] === "stopped")).toBe(false);
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
-    expect(text).toContain("runtime | status | model | kind | memory | used by | port");
+    expect(text).toContain("runtime | status | model | kind | memory / on disk | used by | port");
     expect(text).toContain("strata | running | flash-next | coding | 20.5 GB | worker:flashnext-iq3 | 8035");
-    expect(text).toContain("qwen3:8b (installed) | chat | - | paperfull-llm | 11434");
+    // an installed-only model shows its size on disk, not "-"
+    expect(text).toContain("qwen3:8b (installed) | chat | 4.7 GB | paperfull-llm | 11434");
     expect(text).toContain("duplicates: embedding runs on 2 runtimes");
   });
 

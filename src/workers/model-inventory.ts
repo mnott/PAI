@@ -34,6 +34,8 @@ export interface InventoryModel {
   kind: ModelKind;
   loaded: boolean;
   memoryMb?: number;
+  /** size on disk (ollama /api/tags `size`, `docker model ls` SIZE column) */
+  sizeMb?: number;
   usedBy: string[];
 }
 
@@ -68,7 +70,7 @@ export interface DeclaredConsumer {
 export interface InventoryDeps {
   getJson: (url: string) => Promise<unknown | null>;
   run: (cmd: string, args: string[]) => Promise<string | null>;
-  /** RSS in MB of the process listening on a port */
+  /** summed RSS in MB of the process tree listening on a port (the engine child, not only the listener) */
   rssMb: (port: number) => Promise<number | undefined>;
 }
 
@@ -100,10 +102,45 @@ export const liveDeps: InventoryDeps = {
   run: exec,
   async rssMb(port) {
     const pid = ((await exec("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])) ?? "").split("\n")[0];
-    const rss = pid ? Number(((await exec("ps", ["-o", "rss=", "-p", pid])) ?? "").trim()) : NaN;
-    return Number.isFinite(rss) && rss > 0 ? Math.round(rss / 1024) : undefined;
+    if (!pid) return undefined;
+    const tree = await processTreeRssMb(pid, exec);
+    return tree > 0 ? tree : undefined;
   },
 };
+
+/**
+ * Summed RSS (MB) of a process and all its descendants. A loopback server's
+ * listener is often a thin python/node front (Strata: ~30 MB) while the engine
+ * child holds the model (~50 GB); the listener's own RSS says nothing.
+ * `ps -o pid=,ppid=,rss=` once, then walk the tree.
+ */
+export async function processTreeRssMb(rootPid: string, run: (cmd: string, args: string[]) => Promise<string | null> = exec): Promise<number> {
+  const out = await run("ps", ["-axo", "pid=,ppid=,rss="]);
+  if (!out) return 0;
+  const kids = new Map<string, Array<{ pid: string; rss: number }>>();
+  const own = new Map<string, number>();
+  for (const line of out.split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
+    if (!m) continue;
+    const [, pid, ppid, rss] = m;
+    own.set(pid!, Number(rss));
+    const list = kids.get(ppid!) ?? [];
+    list.push({ pid: pid!, rss: Number(rss) });
+    kids.set(ppid!, list);
+  }
+  let sum = own.get(rootPid) ?? 0; // the listener's own RSS counts too
+  const seen = new Set<string>([rootPid]);
+  const stack = [rootPid];
+  while (stack.length) {
+    for (const k of kids.get(stack.pop()!) ?? []) {
+      if (seen.has(k.pid)) continue; // a reparented cycle must not loop forever
+      seen.add(k.pid);
+      sum += k.rss;
+      stack.push(k.pid);
+    }
+  }
+  return Math.round(sum / 1024);
+}
 
 export function modelKind(name: string): ModelKind {
   return /embed|e5-|bge-|minilm|arctic|gte-|nomic/i.test(name) ? "embedding" : "chat";
@@ -160,9 +197,9 @@ async function detectOllama(input: InventoryInput, deps: InventoryDeps): Promise
   type OM = { name?: string; size?: number; size_vram?: number };
   const loaded = ((ps as { models?: OM[] } | null)?.models ?? []).filter((m) => m.name);
   const installed = ((tags as { models?: OM[] } | null)?.models ?? []).filter((m) => m.name);
-  for (const m of loaded) rt.models.push({ model: m.name!, kind: modelKind(m.name!), loaded: true, memoryMb: m.size ? mb(m.size) : undefined, usedBy: [] });
+  for (const m of loaded) rt.models.push({ model: m.name!, kind: modelKind(m.name!), loaded: true, memoryMb: m.size ? mb(m.size) : undefined, sizeMb: m.size ? mb(m.size) : undefined, usedBy: [] });
   for (const m of installed) {
-    if (!rt.models.some((x) => x.model === m.name)) rt.models.push({ model: m.name!, kind: modelKind(m.name!), loaded: false, usedBy: [] });
+    if (!rt.models.some((x) => x.model === m.name)) rt.models.push({ model: m.name!, kind: modelKind(m.name!), loaded: false, sizeMb: m.size ? mb(m.size) : undefined, usedBy: [] });
   }
   return rt;
 }
@@ -178,7 +215,7 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
   for (const r of parseTable(ls ?? "")) {
     const name = r["MODEL NAME"];
     if (!name) continue;
-    rt.models.push({ model: name, kind: modelKind(name), loaded: loadedNames.has(name), usedBy: [] });
+    rt.models.push({ model: name, kind: modelKind(name), loaded: loadedNames.has(name), sizeMb: parseSizeMb(r["SIZE"] ?? ""), usedBy: [] });
   }
   return rt;
 }
@@ -186,15 +223,16 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
   const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; defaults: string[] }>();
   for (const [name, p] of Object.entries(input.providers)) {
-    if (!isLoopbackProvider(p)) continue;
+    // a DISABLED provider is no user of anything: it must not surface as a
+    // stopped runtime "used by worker:<name>" (~17 such rows seen live)
+    if (!p.enabled || !isLoopbackProvider(p)) continue;
     const hp = providerHostPort(p);
     if (!hp) continue;
     const key = String(hp.port);
-    const e = byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [] };
+    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [] }).get(key)!;
     e.names.push(name);
-    if (p.enabled) e.enabled.push(name);
+    e.enabled.push(name);
     if (p.models.default && !e.defaults.includes(p.models.default)) e.defaults.push(p.models.default);
-    byPort.set(key, e);
   }
   const ollamaPort = Number(new URL(input.embedding.ollamaUrl).port) || 11434;
   const out: InventoryRuntime[] = [];
@@ -204,11 +242,12 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
       .map(async (e) => {
         const h = e.host.includes(":") ? `[${e.host}]` : e.host;
         const body = (await deps.getJson(`http://${h}:${e.port}/v1/models`)) as { data?: Array<{ id?: string }> } | null;
-        const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
         const ids = (body?.data ?? []).map((d) => d.id).filter((x): x is string => !!x);
         const running = body !== null;
         const rss = running ? await deps.rssMb(e.port) : undefined;
-        const names = running ? e.enabled : e.names;
+        // a declared endpoint (e.g. strata) can sit behind a provider that is
+        // DISABLED in workers.yaml: keep the runtime, attach no worker user
+        const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
         const rt: InventoryRuntime = {
           name: decl?.name ?? e.enabled[0] ?? e.names[0],
           kind: decl?.kind ?? "openai-server",
@@ -218,7 +257,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           users: [],
         };
         if (rss && rt.models.length) rt.models[0].memoryMb = rss;
-        attach(rt, names.map((n) => ({ name: `worker:${n}` })));
+        attach(rt, e.enabled.map((n) => ({ name: `worker:${n}` })));
         out.push(rt);
       })
   );
@@ -364,7 +403,8 @@ export function inventoryRows(inv: ModelInventory): string[][] {
         r.status,
         m.loaded || r.status !== "running" ? m.model : `${m.model} (installed)`,
         m.kind,
-        m.loaded ? fmtMem(m.memoryMb) : "-",
+        // loaded: RSS; installed only: size on disk
+        m.loaded ? fmtMem(m.memoryMb) : fmtMem(m.sizeMb),
         (m.usedBy.length ? m.usedBy : r.models.length === 1 ? r.users : []).join(", ") || "-",
         port,
       ]);
@@ -373,7 +413,7 @@ export function inventoryRows(inv: ModelInventory): string[][] {
   return rows;
 }
 
-export const INVENTORY_HEADERS = ["runtime", "status", "model", "kind", "memory", "used by", "port"];
+export const INVENTORY_HEADERS = ["runtime", "status", "model", "kind", "memory / on disk", "used by", "port"];
 
 export function inventoryText(inv: ModelInventory, table: (headers: string[], rows: string[][]) => string): string {
   const lines = [table(INVENTORY_HEADERS, inventoryRows(inv))];
