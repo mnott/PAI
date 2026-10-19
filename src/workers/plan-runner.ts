@@ -22,6 +22,8 @@ export interface WorkerOutcome {
   fatal?: boolean;
   /** `pai worker run` refused or failed before any worker existed (pane/gate/config): an environment error, never retried. */
   spawnRefused?: boolean;
+  /** The loop guard stopped the worker: a failed attempt (retry ladder), never a pass. */
+  loopStopped?: boolean;
   /** The worker's worktree, when it has one. */
   worktreeDir?: string;
   /** The worker's final message (its R report). */
@@ -171,7 +173,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
       }
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
       const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1 });
-      deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
+      deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, ...(out.loopStopped ? { reason: "loop" } : {}), tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";
         const n = (refusals.get(failure) ?? 0) + 1;

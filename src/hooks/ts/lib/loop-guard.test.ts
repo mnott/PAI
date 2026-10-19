@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
@@ -174,6 +175,27 @@ describe("worker-guard hook", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60000);
+});
+
+describe("worker-guard hook: hard stop signals the worker", () => {
+  it("at the 7th identical call the hook writes the loop-stop marker and SIGTERMs the claude pid", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loopguard-kill-"));
+    const victim = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      const exited = new Promise<string | null>((res) => victim.on("exit", (_c, sig) => res(sig)));
+      for (let i = 0; i < 7; i++)
+        spawnSync("npx", ["tsx", "src/hooks/ts/pre-tool-use/worker-guard.ts"], {
+          input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
+          env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-kill", PAI_WORKER: "1", PAI_LOOP_STOP_PID: String(victim.pid) },
+          encoding: "utf8",
+        });
+      expect(await exited).toBe("SIGTERM");
+      expect(existsSync(join(dir, "w-kill.loop-stop"))).toBe(true);
+    } finally {
+      victim.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90000);
 });
 
 describe("loop guard: overlapping Read ranges", () => {

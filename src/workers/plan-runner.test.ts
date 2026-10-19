@@ -275,6 +275,22 @@ describe("part isolation", () => {
     expect(s.spawnRefusal).toBe("pai: --no-pane refused");
   });
 
+  it("a loop-stopped part is a failed attempt: retried, logged with reason loop, then needs-decision", async () => {
+    const p = plan();
+    const h = harness(p);
+    const starts: string[] = [];
+    h.deps.startWorker = async (r) => {
+      starts.push(`${r.part.id}:${r.attempt}`);
+      return { id: `w-${starts.length}`, ok: false, loopStopped: true, failure: "loop-stopped: Bash vitest repeated 7 times" };
+    };
+    const s = await runPlan(p, { parallel: 1 }, h.deps);
+    expect(starts.length).toBeGreaterThanOrEqual(2);
+    expect(starts[0].endsWith(":1") && starts[1].startsWith(starts[0].split(":")[0])).toBe(true);
+    expect(s.merged).toHaveLength(0);
+    expect(s.needsDecision.length).toBeGreaterThan(0);
+    expect(h.log.some((e) => e.event === "part-end" && (e as { reason?: string }).reason === "loop")).toBe(true);
+  });
+
   it("a status without a worktree is a problem", () => {
     expect(worktreeProblem({ id: "w1", worktreeDir: null })).toMatch(/no worktree/);
     expect(worktreeProblem({ id: "w1", worktreeDir: "/x" })).toBeNull();

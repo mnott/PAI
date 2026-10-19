@@ -94,7 +94,7 @@ export async function launchWorker(req: Pick<StartRequest, "label" | "provider" 
   const passed = !!report && (report.result ? report.result === "+" : (report.checks ?? []).every((c) => c.ok !== false));
   const ok = st.state === "done" && (st.rc ?? 0) === 0 && passed;
   const failure = ok ? undefined : !report ? `worker ended without a valid report (${st.state}): ${tail(text || r.err, 15)}` : [report.why, ...(report.open ?? []), report.notes].filter(Boolean).join("\n") || `report result ${report.result ?? "?"}`;
-  return { id: st.id, ok, failure, tokens: workerTokens(logDir, st.id), worktreeDir: st.worktreeDir ?? undefined, report: text };
+  return { id: st.id, ok, failure, ...(st.loopStopped ? { loopStopped: true } : {}), tokens: workerTokens(logDir, st.id), worktreeDir: st.worktreeDir ?? undefined, report: text };
 }
 
 /** Merge worker/<id> into `repo`'s checkout with `pai worker merge` (--verify when a gate is given); an empty branch is refused. */

@@ -164,6 +164,8 @@ export interface WorkerStatus {
   deadlineAt?: number | null;
   /** Limit in minutes the deadline was derived from. */
   maxMinutes?: number | null;
+  /** The loop guard stopped this run (state failed, `last` says why). */
+  loopStopped?: boolean;
   /** The deadline stopped this run (state failed, `last` says why). */
   timedOut?: boolean;
   /** Launching process (the parent of `pai worker run`) at start, and its command name. */
