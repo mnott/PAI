@@ -110,7 +110,8 @@ import {
   setCooldown,
   type CapabilityRunResolution,
 } from "./routing.js";
-import { currentSessionName, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
+import { detectSessionName } from "./session-name.js";
+import { isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
 import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
@@ -667,7 +668,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
   // The session's profile (workers, budget fallback) comes before routing; an explicit provider/--local skipped it above.
   let profileModel: string | undefined;
-  if (!providerFlag && !capability && !route && currentSessionName()) {
+  let providerWhy: string | undefined;
+  if (!providerFlag && !capability && !route && (await detectSessionName())) {
     const r = resolveWorkers(
       { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
       await liveResolveCtx()
@@ -676,6 +678,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     if (r.provider && (r.source === "profile" || r.source === "fallback")) {
       providerFlag = r.provider;
       profileModel = r.model;
+      providerWhy = r.source === "fallback" ? "session profile fallback" : "session profile";
       if (!opts.quiet) process.stderr.write(`pai worker: ${r.description}\n`);
     }
   }
@@ -747,7 +750,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
   const reportFormat = resolveReportFormat(opts.reportFormatFlag);
   // the route and why, once (also recorded in the status as routeWhy)
-  const routeWhy = target.routeWhy ? `${target.providerName}/${model} (${target.routeWhy})` : undefined;
+  const routeReason = target.via === "flag" && providerWhy ? providerWhy : target.routeWhy;
+  const routeWhy = routeReason ? `${target.providerName}/${model} (${routeReason})` : undefined;
   if (routeWhy && !opts.quiet) process.stderr.write(`pai worker: route ${routeWhy}\n`);
 
   // tracked across every engine (including a quota reroute's recursive
