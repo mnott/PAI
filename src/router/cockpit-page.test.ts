@@ -37,7 +37,7 @@ describe("cockpit page compression", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
-      "lim", "$", "esc", "gauge", "ago", "dur",
+      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml",
       `${body}\nrenderLimits();`
     );
     const lim = {
@@ -46,7 +46,7 @@ describe("cockpit page compression", () => {
         ...Array.from({ length: 18 }, (_, i) => ({ provider: `dead${i}`, kind: "local", up: false })),
       ],
     };
-    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "");
+    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "");
     const html = els.local!.innerHTML;
     expect(html).toContain("up1");
     expect(html).toContain("<details");
@@ -272,5 +272,26 @@ describe("cockpit workers panel", () => {
     const i = (s: string) => COCKPIT_HTML.indexOf(s);
     expect(i("Workers — running and waiting")).toBeGreaterThan(i('id="cloud"'));
     expect(i("Workers — running and waiting")).toBeLessThan(i("<h2>System"));
+  });
+});
+
+describe("cockpit LOCAL models section", () => {
+  const modelsHtml = new Function("esc", "table", `${COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0]}; return modelsHtml;`)(
+    (s: unknown) => String(s ?? ""),
+    (h: string[], rows: unknown[][]) => `T[${h.join(",")}]${rows.map((r) => r.join("|")).join(";")}`
+  ) as (inv: unknown) => string;
+  const inv = {
+    runtimes: [
+      { name: "ollama", status: "running", port: 11434, users: ["pai-embedding"], models: [{ model: "arctic", kind: "embedding", loaded: true, memoryMb: 600, usedBy: ["pai-embedding"] }] },
+      { name: "coder", status: "stopped", port: 8034, users: [], models: [] },
+    ],
+    duplicates: ["embedding runs on 2 runtimes: a + b"],
+  };
+  it("lists running runtimes with memory and users, collapses stopped, shows duplicates", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain("ollama|arctic|embedding|600 MB|pai-embedding|11434");
+    expect(h).toContain("duplicates: embedding runs on 2 runtimes");
+    expect(h).toContain("1 runtime stopped");
+    expect(h).not.toContain("<td>coder");
   });
 });

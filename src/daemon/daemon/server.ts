@@ -33,6 +33,7 @@ import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sync.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
+import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -179,6 +180,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   startWorkerSupervisor();
   // The one answer to "which local model is running" (sessions read it, never probe).
   startLocalStatusRefresh();
+  // Every local model runtime, its models and users (`pai models`, cockpit LOCAL).
+  startInventoryRefresh();
 
   // Cache keepalive spawns trivial workers on the workers config — also no
   // backend dependency (observations store opportunistically when Postgres

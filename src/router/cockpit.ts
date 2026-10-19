@@ -16,6 +16,7 @@ import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { buildsDir, listBuildsSync } from "../builds/queue.js";
 import { buildSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
+import { currentInventory } from "../workers/model-inventory.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { getProfile } from "../workers/session-profile-store.js";
@@ -583,6 +584,11 @@ export function handleCockpit(
       limits.get().catch((): ProviderLimits[] => []),
     ]).then(
       ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls) })),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+  } else if (url.pathname === "/cockpit/models") {
+    currentInventory().then(
+      (inv) => send(200, "application/json", JSON.stringify(inv)),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/pool") {
