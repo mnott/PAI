@@ -28,7 +28,8 @@ describe("buildHarness", () => {
     const plan = await buildLaunchPlan(workers, "alpha", undefined, nameArgs("demo"), "/nonexistent-pai-test-logs");
     const h = await buildHarness(workers, { provider: "alpha", cwd: "/tmp/x", name: "demo" });
     expect(h.argv).toEqual(plan.argv);
-    expect(h.env).toEqual(plan.env);
+    // the session name rides along so worker spawns find the profile
+    expect(h.env).toEqual({ ...plan.env, PAI_SESSION_NAME: "demo" });
     expect(h.cmd).toBe("claude");
     expect(h.model).toBe("alpha-1");
   });

@@ -24,6 +24,7 @@ arguments of every delegation tool: "locally" -> where local; "on the cloud" -> 
 ("on kimi") -> where <name>; "fast" -> model fast; "immediately / now / first" -> now true.
 Never pick a local provider by name; PAI resolves the one that answers. Each result starts with where it runs: tell the user.
 Report in plain words; never ask the user to run commands.
+Per-session models: session_profile_get / session_profile_set answer and change "switch workers to glm", "what happens if kimi runs out" (fallback list), "use opus for this session by default" (chat), per named session, without touching the global config.
 
 ### Skills
 

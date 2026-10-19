@@ -161,29 +161,3 @@ export function findSetup(setups: Setup[], query: string): Setup | null {
   const pre = setups.filter((s) => s.name.toLowerCase().startsWith(q));
   return pre.length === 1 ? pre[0] : null;
 }
-
-export const sessionWorkersPath = () => paiHomePath("session-workers.json");
-
-/** Worker provider a session was last started with, by session name; null when never recorded. */
-export function recordedWorkers(name: string, path = sessionWorkersPath()): string | null {
-  try {
-    const v = (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)[name];
-    return typeof v === "string" && v ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-export function recordWorkers(name: string, workers: string, path = sessionWorkersPath()): void {
-  let data: Record<string, unknown> = {};
-  try {
-    data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    // first record
-  }
-  data[name] = workers;
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
-  renameSync(tmp, path);
-}

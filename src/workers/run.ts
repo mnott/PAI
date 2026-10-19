@@ -103,12 +103,14 @@ import {
   capabilityForRun,
   isQuotaFailure,
   nextAutoProvider,
+  NoProviderError,
   recordBudgetCooldowns,
   resolveCapabilityRun,
   resolveTarget,
   setCooldown,
   type CapabilityRunResolution,
 } from "./routing.js";
+import { currentSessionName, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
 import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
@@ -662,6 +664,20 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     providerFlag = res.name;
     if (!opts.quiet) process.stderr.write(`pai worker: local provider ${res.name} (${res.why})\n`);
   }
+  // The session's profile (workers, budget fallback) comes before routing; an explicit provider/--local skipped it above.
+  let profileModel: string | undefined;
+  if (!providerFlag && !capability && !route && currentSessionName()) {
+    const r = resolveWorkers(
+      { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
+      await liveResolveCtx()
+    );
+    if (r.source === "none") throw new NoProviderError(r.description);
+    if (r.provider && (r.source === "profile" || r.source === "fallback")) {
+      providerFlag = r.provider;
+      profileModel = r.model;
+      if (!opts.quiet) process.stderr.write(`pai worker: ${r.description}\n`);
+    }
+  }
   if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
     const routed = await routeRun(config, logDir, opts);
     if (routed) {
@@ -699,6 +715,9 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   assertProviderRunnable(target.providerName, target.provider);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
+  const modelFlag = opts.modelFlag ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);
+  if (profileModel === "fast" && !opts.modelFlag) target.modelAlias = "fast";
+  if (profileModel === "default" && !opts.modelFlag) target.modelAlias = "default";
 
   const noBrowser = opts.browser === undefined ? config.noBrowserByDefault : !opts.browser;
   const parsed = parseRunnerArgs(noBrowser ? stripBrowserArgs(opts.claudeArgs) : opts.claudeArgs);
@@ -711,7 +730,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
 
   let model = capabilityResolution
     ? capabilityResolution.model
-    : resolveRunModel(target, opts.className, opts.modelFlag);
+    : resolveRunModel(target, opts.className, modelFlag);
   if (!capabilityResolution) {
     // capability runs pin their model on purpose (an image prompt on the
     // image model); the step-down guards the class/provider resolution only
@@ -719,7 +738,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       resolved: model,
       providerName: target.providerName,
       provider: target.provider,
-      modelFlag: opts.modelFlag,
+      modelFlag,
       callerPinned: parsed.callerModel,
     });
     model = step.model;

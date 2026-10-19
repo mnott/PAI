@@ -13,6 +13,8 @@ import { buildLaunchPlan, maskLaunchEnv, type LaunchPlan } from "../../workers/l
 import type { WorkersConfig } from "../../workers/config.js";
 import { workersLogDir, ledgerPath } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
+import { SESSION_NAME_ENV, getProfile } from "../../workers/session-profile-store.js";
+import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { printExitDir } from "./exit-dir.js";
 
 export interface Harness {
@@ -33,6 +35,10 @@ export async function buildHarness(
 ): Promise<Harness> {
   const extra = [...(opts.resume ? ["--resume", opts.resume] : []), ...nameArgs(opts.name, opts.named)];
   const plan: LaunchPlan = await buildLaunchPlan(workers, opts.provider, opts.model, extra, workersLogDir(workers));
+  // the session's name lets worker spawns find its profile; its worker provider follows the profile
+  plan.env[SESSION_NAME_ENV] = opts.name;
+  const wp = getProfile(opts.name)?.workers?.provider;
+  if (wp) plan.env[SESSION_WORKER_PROVIDER_ENV] = wp;
   return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model };
 }
 
