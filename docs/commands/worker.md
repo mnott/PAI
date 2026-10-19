@@ -674,6 +674,27 @@ pai worker wait-file /tmp/a.rc /tmp/b.rc --max 60
 
 See also: `pai worker wait`, `pai worker wait-on`, `pai worker wait-url`
 
+### pai worker test-run
+
+Run a test command; when it goes silent, say where it is stuck
+
+```
+pai worker test-run [options]
+```
+
+Runs the command (after --) with Node diagnostic reports enabled and passes its output through. When it prints nothing for --idle seconds (default 60, or 8 s before a `timeout N` in the command), every node process under it gets SIGUSR2 and the reports' javascriptStack is printed as the file:line the main thread is stuck in; an empty stack means an async wait. A synchronous infinite loop blocks the runner's own timeout, so without this a hung run shows nothing. Worker test commands (vitest, jest, node --test, npm test) are routed through it by the PAI guard. Exit code is the command's.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--idle SECS` | number | — | Silence after which the probe fires (default 60) |
+
+```sh
+pai worker test-run -- npx vitest run src/parse.test.ts
+pai worker test-run --idle 20 -- timeout 120 npm test
+```
+
+See also: `pai worker wait-on`
+
 ### pai worker wait
 
 Wait for child workers; returns when any finishes or --max elapses
@@ -1569,6 +1590,7 @@ See also: `pai worker providers`
 | `pai worker wait-on` | Wait for a background job to finish |
 | `pai worker wait-url` | Wait for a server to answer HTTP |
 | `pai worker wait-file` | Wait for files to appear |
+| `pai worker test-run` | Run a test command; when it goes silent, say where it is stuck |
 | `pai worker wait` | Wait for child workers; returns when any finishes or --max elapses |
 | `pai worker model` | Show or set the model a provider uses |
 | `pai worker capability` | Choose which provider serves a capability (e.g. image) |

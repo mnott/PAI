@@ -8,6 +8,7 @@
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
@@ -34,6 +35,7 @@ import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-sta
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
+import { DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
 import { BATCH_ENV } from "../../workers/session-profile.js";
@@ -914,6 +916,29 @@ const waitUrlCommand: CommandDef = {
   run: (ctx) => guard("pai worker wait-url <url>", () => waitUrl({ url: String(ctx.args.URL), maxSecs: num(ctx.opts.max) }, { ...realProbeDeps, out })),
 };
 
+const testRunCommand: CommandDef = {
+  name: "test-run",
+  summary: "Run a test command; when it goes silent, say where it is stuck",
+  description:
+    "Runs the command (after --) with Node diagnostic reports enabled and passes its output through. When it prints nothing for --idle seconds (default 60, or 8 s before a `timeout N` in the command), every node process under it gets SIGUSR2 and the reports' javascriptStack is printed as the file:line the main thread is stuck in; an empty stack means an async wait. A synchronous infinite loop blocks the runner's own timeout, so without this a hung run shows nothing. Worker test commands (vitest, jest, node --test, npm test) are routed through it by the PAI guard. Exit code is the command's.",
+  allowUnknown: true,
+  options: [{ name: "idle", type: "number", value: "SECS", summary: `Silence after which the probe fires (default ${DEFAULT_IDLE_SECS})` }],
+  examples: ["pai worker test-run -- npx vitest run src/parse.test.ts", "pai worker test-run --idle 20 -- timeout 120 npm test"],
+  seeAlso: ["pai worker wait-on"],
+  run: (ctx) =>
+    guard("pai worker test-run -- <command>", async () => {
+      const words = ctx.rest[0] === "--" ? ctx.rest.slice(1) : ctx.rest;
+      if (!words.length) throw new CliError("no command given", "pai worker test-run -- npx vitest run <file>");
+      const code = await runProbed({
+        command: words.join(" "),
+        cwd: process.cwd(),
+        reportDir: join(logDir(), "reports"),
+        idleSecs: num(ctx.opts.idle),
+      });
+      return code;
+    }),
+};
+
 const waitFileCommand: CommandDef = {
   name: "wait-file",
   summary: "Wait for files to appear",
@@ -1130,6 +1155,7 @@ export const workerCommand: CommandDef = {
     waitOnCommand,
     waitUrlCommand,
     waitFileCommand,
+    testRunCommand,
     waitCommand,
     modelCommand,
     capabilityCommand,

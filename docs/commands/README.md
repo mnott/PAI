@@ -408,6 +408,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker run` | Run one task on a worker (another provider or model) |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker status-line` | One-line worker summary for a status bar |
+| `pai worker test-run` | Run a test command; when it goes silent, say where it is stuck |
 | `pai worker usage` | Token totals per provider and model for a set of workers |
 | `pai worker verify` | Check that a worker's changes are already in your checkout |
 | `pai worker wait` | Wait for child workers; returns when any finishes or --max elapses |
