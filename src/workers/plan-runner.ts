@@ -22,6 +22,10 @@ export interface WorkerOutcome {
   fatal?: boolean;
   /** `pai worker run` refused or failed before any worker existed (pane/gate/config): an environment error, never retried. */
   spawnRefused?: boolean;
+  /** The worker's worktree, when it has one. */
+  worktreeDir?: string;
+  /** The worker's final message (its R report). */
+  report?: string;
 }
 
 export interface StartRequest {

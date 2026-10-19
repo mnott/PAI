@@ -15,13 +15,13 @@ import { sumRunUsage } from "./usage.js";
 import { appendRunLog, tail, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
 
-interface Captured {
+export interface Captured {
   code: number | null;
   out: string;
   err: string;
 }
 
-function capture(cmd: string, args: string[], cwd: string, shell = false): Promise<Captured> {
+export function capture(cmd: string, args: string[], cwd: string, shell = false): Promise<Captured> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env, shell });
     let out = "";
@@ -33,7 +33,7 @@ function capture(cmd: string, args: string[], cwd: string, shell = false): Promi
   });
 }
 
-const pai = (): string => process.env.PAI_BIN || "pai";
+export const pai = (): string => process.env.PAI_BIN || "pai";
 
 /** Tokens a finished worker used, from its run log; null when unavailable. */
 function workerTokens(logDir: string, id: string): number | null {
@@ -57,7 +57,7 @@ export async function dirtyPaths(repo: string): Promise<string[]> {
 }
 
 /** Args of the part worker: `--worktree` is explicit so the caller's own mode is never inherited. */
-export function workerArgs(req: StartRequest, specFile: string, repo: string): string[] {
+export function workerArgs(req: Pick<StartRequest, "label" | "provider" | "tier">, specFile: string, repo: string): string[] {
   return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
 }
 
@@ -74,6 +74,42 @@ export async function realCommitsAhead(repo: string, base: string, id: string): 
   return n;
 }
 
+/** Run one worker as `pai worker run` and read its outcome: spawn refusal, missing worktree and report checks included. */
+export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
+  const t0 = Date.now() - 1000;
+  const r = await capture(pai(), workerArgs(req, specFile, repo), repo);
+  const st = loadStatuses(logDir)
+    .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
+    .sort((a, b) => b.started.localeCompare(a.started))[0];
+  if (!st) return { id: "", ok: false, spawnRefused: true, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
+  const problem = worktreeProblem(st);
+  if (problem) return { id: st.id, ok: false, fatal: true, failure: problem };
+  let text = "";
+  try {
+    text = (JSON.parse(r.out) as { result?: string }).result ?? "";
+  } catch {
+    text = r.out;
+  }
+  const report = parseWorkerReport(text);
+  const passed = !!report && (report.result ? report.result === "+" : (report.checks ?? []).every((c) => c.ok !== false));
+  const ok = st.state === "done" && (st.rc ?? 0) === 0 && passed;
+  const failure = ok ? undefined : !report ? `worker ended without a valid report (${st.state}): ${tail(text || r.err, 15)}` : [report.why, ...(report.open ?? []), report.notes].filter(Boolean).join("\n") || `report result ${report.result ?? "?"}`;
+  return { id: st.id, ok, failure, tokens: workerTokens(logDir, st.id), worktreeDir: st.worktreeDir ?? undefined, report: text };
+}
+
+/** Merge worker/<id> into `repo`'s checkout with `pai worker merge` (--verify when a gate is given); an empty branch is refused. */
+export async function mergeBranch(repo: string, id: string, gate: string): Promise<MergeOutcome> {
+  const rev = async (...a: string[]) => (await capture("git", a, repo)).out.trim();
+  const before = await rev("rev-parse", "HEAD");
+  const ahead = await realCommitsAhead(repo, before, id);
+  if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no non-empty commit beyond ${before.slice(0, 7)}` };
+  const r = await capture(pai(), ["worker", "merge", id, ...(gate ? ["--verify", gate] : [])], repo);
+  const output = r.out + r.err;
+  if (r.code !== 0) return { ok: false, before, output };
+  const head = await rev("rev-parse", "HEAD");
+  return { ok: true, commit: head || undefined, before, output };
+}
+
 export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): RunnerDeps {
   const dir = mkdtempSync(join(tmpdir(), "pai-plan-"));
   return {
@@ -82,38 +118,9 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
     async startWorker(req: StartRequest): Promise<WorkerOutcome> {
       const specFile = join(dir, `${req.part.id}-${req.attempt}.txt`);
       writeFileSync(specFile, req.spec, "utf8");
-      const t0 = Date.now() - 1000;
-      const args = workerArgs(req, specFile, plan.repo);
-      const r = await capture(pai(), args, plan.repo);
-      const st = loadStatuses(logDir)
-        .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
-        .sort((a, b) => b.started.localeCompare(a.started))[0];
-      if (!st) return { id: "", ok: false, spawnRefused: true, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
-      const problem = worktreeProblem(st);
-      if (problem) return { id: st.id, ok: false, fatal: true, failure: problem };
-      let text = "";
-      try {
-        text = (JSON.parse(r.out) as { result?: string }).result ?? "";
-      } catch {
-        text = r.out;
-      }
-      const report = parseWorkerReport(text);
-      const passed = !!report && (report.result ? report.result === "+" : (report.checks ?? []).every((c) => c.ok !== false));
-      const ok = st.state === "done" && (st.rc ?? 0) === 0 && passed;
-      const failure = ok ? undefined : !report ? `worker ended without a valid report (${st.state}): ${tail(text || r.err, 15)}` : [report.why, ...(report.open ?? []), report.notes].filter(Boolean).join("\n") || `report result ${report.result ?? "?"}`;
-      return { id: st.id, ok, failure, tokens: workerTokens(logDir, st.id) };
+      return launchWorker(req, specFile, plan.repo, logDir);
     },
-    async merge(id: string, gate: string): Promise<MergeOutcome> {
-      const rev = async (...a: string[]) => (await capture("git", a, plan.repo)).out.trim();
-      const before = await rev("rev-parse", "HEAD");
-      const ahead = await realCommitsAhead(plan.repo, before, id);
-      if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no non-empty commit beyond ${before.slice(0, 7)}` };
-      const r = await capture(pai(), ["worker", "merge", id, "--verify", gate], plan.repo);
-      const output = r.out + r.err;
-      if (r.code !== 0) return { ok: false, before, output };
-      const head = await rev("rev-parse", "HEAD");
-      return { ok: true, commit: head || undefined, before, output };
-    },
+    merge: (id: string, gate: string) => mergeBranch(plan.repo, id, gate),
     async unitCheck(cmd: string) {
       const r = await capture(cmd, [], plan.repo, true);
       return { ok: r.code === 0, output: r.out + r.err };
