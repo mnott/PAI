@@ -91,7 +91,7 @@ export function processTree(pid: number): number[] {
 
 const running = (pid: number): boolean => pidAlive(pid) && !isZombie(pid);
 
-async function killProcessTree(pid: number, graceMs = KILL_GRACE_MS): Promise<void> {
+export async function killProcessTree(pid: number, graceMs = KILL_GRACE_MS): Promise<void> {
   const tree = processTree(pid);
   const send = (sig: NodeJS.Signals, pids: number[]) => {
     for (const p of pids) {

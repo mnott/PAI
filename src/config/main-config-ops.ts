@@ -148,6 +148,7 @@ function workersMainConfigShape(): Record<string, unknown> {
     cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
     defaultMaxMinutes: workers.defaultMaxMinutes,
     noBrowserByDefault: workers.noBrowserByDefault,
+    reaper: workers.reaper,
     ...(workers.fallback ? { fallback: workers.fallback } : {}),
   };
 }
@@ -164,6 +165,7 @@ function schemaRoot(): Record<string, unknown> {
       cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
       defaultMaxMinutes: DEFAULT_MAX_MINUTES,
       noBrowserByDefault: false,
+      reaper: true,
     },
   };
 }

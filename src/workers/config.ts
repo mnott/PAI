@@ -457,6 +457,8 @@ export interface WorkersConfig {
   capacity: CapacityConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
+  /** Daemon reaper for orphaned worker processes (workers.reaper, default on). */
+  reaper: boolean;
   /**
    * Run native-Anthropic workers through `caveman claude` (workers.caveman).
    * Off pins them to api.anthropic.com even when the user settings route
@@ -578,6 +580,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     stagger: { ...DEFAULT_STAGGER },
     capacity: { ...DEFAULT_CAPACITY },
     noBrowserByDefault: false,
+    reaper: true,
     caveman: false,
     fallback: null,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
@@ -1159,6 +1162,10 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     bad(".noBrowserByDefault", "must be true or false");
   }
   const noBrowserByDefault = w.noBrowserByDefault === true;
+  if (w.reaper !== undefined && typeof w.reaper !== "boolean") {
+    bad(".reaper", "must be true or false");
+  }
+  const reaper = w.reaper !== false;
 
   if (w.caveman !== undefined && typeof w.caveman !== "boolean") {
     bad(".caveman", "must be true or false");
@@ -1223,6 +1230,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     stagger,
     capacity,
     noBrowserByDefault,
+    reaper,
     caveman,
     fallback,
     nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
@@ -1308,6 +1316,7 @@ export function writeWorkersSection(
         stagger: workers.stagger,
         capacity: workers.capacity,
         noBrowserByDefault: workers.noBrowserByDefault,
+        reaper: workers.reaper,
         caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),
       }
