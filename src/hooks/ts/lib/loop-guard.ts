@@ -1,154 +1,56 @@
 /**
- * loop-guard.ts — repeat detection for worker Bash commands.
+ * loop-guard.ts — repeat detection for worker tool calls.
  *
- * A worker that re-runs the exact same command with nothing changed in between
- * is stuck (seen: 68x one probe, 12x one vitest run after committing, 9x an
- * A/B proof alternation, 6x one sed read). The window is the Bash commands
- * since the last Edit/Write/MultiEdit/NotebookEdit; the 5th copy of a command
- * is denied. Alternating A,B,A,B is covered the same way: each of the two
- * commands reaches 4 copies in the window, so the next of either is denied.
- * Different sed ranges are different commands and never repeat.
+ * A loop is a problem only when it makes no progress. A call is a repeat of an
+ * earlier one (since the last Edit/Write/MultiEdit/NotebookEdit) when its
+ * command is >= 0.9 similar AND that earlier call's result was >= 0.9 similar
+ * to the result of the call before it. The result is only known after the call,
+ * so PreToolUse denies the next call when the last 4 similar calls all returned
+ * similar results (PostToolUse records results via recordLoopResult). A similar
+ * command whose result changes (polling, tailing, retry that succeeds, same
+ * command over different files) is progress and never counts. Waiting verbs
+ * and bounded sleeps are exempt. Unknown results count as similar.
  */
 
 export const LOOP_MAX_REPEATS = 4;
+/** Denials of one cluster after which the session is stopped (the 7th attempt). */
+export const LOOP_STOP_DENIALS = 3;
+const SIMILARITY = 0.9;
+const READ_OVERLAP = 0.8;
+const RESULT_CHARS = 2000;
 const WINDOW_CAP = 64;
 
-export const LOOP_DENY_REASON =
-  "loop guard: you ran this exact command 4 times without changing anything. Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
+const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
+export const LOOP_DENY_REASON = `loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
 
-export function loopDenyReason(testRun: boolean, tool = "Bash", count = LOOP_MAX_REPEATS, sameResult = false): string {
-  if (sameResult)
-    return `loop guard: same result ${LOOP_MAX_REPEATS} times without a change (${tool}, ${count} similar attempts). The result will not change; stop retrying variants. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`;
-  if (tool !== "Bash")
-    return `loop guard: you called ${tool} with the same input ${count} times without changing anything. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`;
-  return testRun
-    ? `loop guard: you are re-running the same tests on an unchanged tree (${LOOP_MAX_REPEATS} times, flags varied). Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).`
-    : LOOP_DENY_REASON;
+export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string {
+  return tool === "Bash"
+    ? LOOP_DENY_REASON
+    : `loop guard: you called ${tool} with similar input ${count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. ${SELF}`;
 }
 
 export interface LoopState {
-  /** Normalised commands run since the last edit, oldest first. */
+  /** Call keys (`Tool\tnormalised input`) since the last edit, oldest first. */
   window: string[];
-  /** Denials per key since the last edit. */
+  /** Normalised result text per window entry; null while unknown. */
+  outs?: Array<string | null>;
+  /** Denials per cluster head since the last edit. */
   denials?: Record<string, number>;
-  /** Per tool: the latest normalised result, how many times in a row it came back identical, and the command that got it. */
-  results?: Record<string, { sig: string; n: number; cmd: string }>;
 }
 
 export function emptyLoopState(): LoopState {
   return { window: [] };
 }
 
-const RUNNERS: Array<[RegExp, string]> = [
-  [/^(?:(?:npx|bunx|pnpm exec|pnpm dlx|yarn) )?vitest\b/, "vitest"],
-  [/^(?:(?:npx|bunx|pnpm exec|pnpm dlx|yarn) )?jest\b/, "jest"],
-  [/^(?:npm|pnpm|yarn) (?:run )?test\b/, "npm test"],
-  [/^bun test\b/, "bun test"],
-  [/^(?:(?:python3?|uv run|poetry run) (?:-m )?)?pytest\b/, "pytest"],
-  [/^go test\b/, "go test"],
-  [/^swift test\b/, "swift test"],
-  [/^xcodebuild\b.*\btest\b/, "xcodebuild test"],
-];
-
-/** Flags whose next token is a value, not a target. */
-const VALUE_FLAGS = new Set([
-  "--config", "-c", "--dir", "--root", "-r", "--reporter", "--project", "--outputFile", "--testNamePattern", "-t",
-  "-k", "-m", "--timeout", "--testTimeout", "--pool", "--shard", "--environment", "--workspace", "--mode", "-p",
-  "--rootdir", "--tb", "--maxfail", "--count", "--run", "-run", "-tags", "-scheme", "-destination", "-project",
-  "-workspace", "-only-testing", "--filter", "--maxWorkers", "-w", "--cache-dir", "--ignore", "--deselect",
-]);
-
-/** Test-run key: runner plus sorted target paths; flags, quotes, redirections and pipes dropped. Null for non-test commands. */
-function testRunKey(command: string): string | null {
-  for (const raw of command.split(/&&|\|\||;|\|/)) {
-    let seg = raw.replace(/\d*>>?&?\S*/g, " ").replace(/\s+/g, " ").trim();
-    seg = seg.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S* )+/, "");
-    const hit = RUNNERS.find(([re]) => re.test(seg));
-    if (!hit) continue;
-    const targets = new Set<string>();
-    const toks = seg.replace(/["']/g, "").split(" ").slice(1);
-    for (let i = 0; i < toks.length; i++) {
-      const t = toks[i];
-      if (t === "--") continue;
-      if (t.startsWith("-")) {
-        if (VALUE_FLAGS.has(t)) i++;
-        continue;
-      }
-      if (/^(?:run|test|exec|vitest|jest|pytest)$/.test(t) || (hit[1] === "xcodebuild test" && !/[/.]/.test(t))) continue;
-      targets.add(t.replace(/^\.\//, ""));
-    }
-    return TEST_PREFIX + (targets.size ? `${hit[1]} ${[...targets].sort().join(" ")}` : `${hit[1]} (all)`);
-  }
-  return null;
-}
-
-const TEST_PREFIX = "test-run: ";
-
-/** True when the key was derived from a test-runner command. */
-export function isTestRunKey(key: string): boolean {
-  return key.startsWith(TEST_PREFIX);
-}
-
-const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
-
-/** Whitespace-normalised; every temp path replaced by a placeholder so changing temp file names do not hide a repeat. */
-export function loopKey(command: string): string {
-  const test = testRunKey(command);
-  if (test) return test;
-  return command
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(TMP_PATH, "<tmp>");
-}
-
-/** Tool result as comparable text: temp paths and digits collapsed, whitespace trimmed. */
-export function resultSig(response: unknown): string {
-  let text: string;
-  if (typeof response === "string") text = response;
-  else if (response && typeof response === "object" && ("stdout" in response || "stderr" in response)) {
-    const r = response as { stdout?: unknown; stderr?: unknown };
-    text = `${typeof r.stdout === "string" ? r.stdout : ""}\n${typeof r.stderr === "string" ? r.stderr : ""}`;
-  } else text = stable(response);
-  return text.replace(TMP_PATH, "<tmp>").replace(/\d+/g, "N").replace(/\s+/g, " ").trim();
-}
-
-function tokens(s: string): Set<string> {
-  return new Set(s.replace(TMP_PATH, "<tmp>").replace(/\d+/g, "N").split(/[\s=,:;|&<>"']+/).filter(Boolean));
-}
-
-/** Loose command similarity: token-set overlap of at least 50%. */
-function similar(a: string, b: string): boolean {
-  const x = tokens(a);
-  const y = tokens(b);
-  if (!x.size || !y.size) return false;
-  let inter = 0;
-  for (const t of x) if (y.has(t)) inter++;
-  return inter / (x.size + y.size - inter) >= 0.5;
-}
-
-function callText(tool: string, input: string | Record<string, unknown> | undefined): string | null {
-  if (tool === "Bash") {
-    const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
-    return typeof c === "string" && c.trim() ? c : null;
-  }
-  return input && typeof input === "object" ? toolKey(tool, input) : null;
-}
-
-/** PostToolUse: counts how often a tool returned the same result since the last edit. Empty results are ignored. */
-export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown): LoopState {
-  if (EDIT_TOOLS.has(tool)) return emptyLoopState();
-  const cmd = callText(tool, input);
-  const sig = resultSig(response);
-  if (cmd === null || !sig) return state;
-  const prev = state.results?.[tool];
-  const same = prev && prev.sig === sig && similar(prev.cmd, cmd);
-  return { ...state, results: { ...state.results, [tool]: { sig, n: same ? prev.n + 1 : 1, cmd } } };
-}
-
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
+const WAIT_VERB = /\bpai worker (?:wait|wait-on|wait-url|wait-file)\b/;
 
-/** Denials of one key after which the session is stopped (the 7th identical attempt). */
-export const LOOP_STOP_DENIALS = 3;
+function exempt(command: string): boolean {
+  if (WAIT_VERB.test(command)) return true;
+  const m = /\bsleep (\d+(?:\.\d+)?)\b/.exec(command);
+  return !!m && Number(m[1]) <= 60;
+}
 
 function stable(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
@@ -159,19 +61,34 @@ function stable(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
-/** Window key for a non-Bash tool call: tool name plus the normalised input. */
-export function toolKey(tool: string, input: Record<string, unknown>): string {
-  const pick = (names: string[]) => stable(Object.fromEntries(names.map((n) => [n, input[n] ?? null])));
-  if (tool === "Read") {
-    const { start, end } = readRange(input);
-    return `${READ_PREFIX}${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
-  }
-  if (tool === "Grep" || tool === "Glob") return `${tool}: ${pick(["pattern", "path", "glob"])}`;
-  return `${tool}: ${stable(input)}`;
+/** Token set of a command: quotes stripped, temp paths -> TMP, digit runs -> NUM, split on whitespace and shell operators. */
+function tokenSet(text: string): string[] {
+  const toks = text
+    .replace(TMP_PATH, " TMP ")
+    .replace(/["']/g, "")
+    .split(/[\s;|&<>(){}]+/)
+    .filter(Boolean)
+    .map((t) => t.replace(/\d+/g, "NUM"));
+  return [...new Set(toks)].sort();
 }
 
-const READ_PREFIX = "Read@";
-const READ_OVERLAP = 0.8;
+/** Normalised command text; equal for commands that differ only in numbers, temp names, quoting or spacing. */
+export function loopKey(command: string): string {
+  return tokenSet(command).join(" ");
+}
+
+/**
+ * Jaccard on token sets, except overlap-coefficient (intersection / smaller set) when both sets have >= 3
+ * tokens: adding a flag or a redirect to a command must not hide it (a Jaccard of 5 vs 7 tokens is 0.71),
+ * while `git status` vs `git log` (2 tokens each) and unrelated longer commands stay far apart.
+ */
+function tokenSimilarity(a: string, b: string): number {
+  const x = a.split(" ");
+  const y = new Set(b.split(" "));
+  const inter = x.filter((t) => y.has(t)).length;
+  const small = Math.min(x.length, y.size);
+  return inter / (small >= 3 ? small : x.length + y.size - inter || 1);
+}
 
 function readRange(input: Record<string, unknown>): { start: number; end: number } {
   const off = typeof input.offset === "number" && input.offset > 0 ? input.offset : 1;
@@ -179,72 +96,135 @@ function readRange(input: Record<string, unknown>): { start: number; end: number
   return { start: off, end: off + lim - 1 };
 }
 
-function parseReadKey(key: string): { file: string; start: number; end: number } | null {
-  const m = /^Read@(.*)#(\d+)-(\d+|inf)$/s.exec(key);
+function parseRead(body: string): { file: string; start: number; end: number } | null {
+  const m = /^Read@(.*)#(\d+)-(\d+|inf)$/s.exec(body);
   return m ? { file: m[1], start: Number(m[2]), end: m[3] === "inf" ? Infinity : Number(m[3]) } : null;
 }
 
-/** Key of an earlier Read of the same file overlapping this one by >= 80% of its lines, else the key itself. */
-function canonicalReadKey(window: string[], key: string): string {
-  const cur = parseReadKey(key);
-  if (!cur) return key;
-  const len = cur.end - cur.start + 1;
-  for (const k of window) {
-    const prev = parseReadKey(k);
-    if (!prev || prev.file !== cur.file) continue;
-    const inter = Math.min(prev.end, cur.end) - Math.max(prev.start, cur.start) + 1;
-    if (inter > 0 && inter / len >= READ_OVERLAP) return k;
+/** Share of the new call's lines already covered by an earlier call (same file), 0 for different files. */
+function readCoverage(prev: string, cur: string): number {
+  const p = parseRead(prev);
+  const c = parseRead(cur);
+  if (!p || !c || p.file !== c.file) return 0;
+  const cap = (n: number) => Math.min(n, 1e9); // no limit = to the end of the file
+  const inter = cap(Math.min(p.end, c.end)) - Math.max(p.start, c.start) + 1;
+  return inter > 0 ? inter / (cap(c.end) - c.start + 1) : 0;
+}
+
+/** Window key of a call, or null when it is not trackable or is exempt. Display text is the part after the tab. */
+export function callKey(tool: string, input: string | Record<string, unknown> | undefined): string | null {
+  if (tool === "Bash") {
+    const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    return typeof c === "string" && c.trim() && !exempt(c) ? `Bash\t${loopKey(c)}` : null;
   }
-  return key;
+  if (!tool || !input || typeof input !== "object") return null;
+  if (tool === "Read") {
+    const { start, end } = readRange(input);
+    return `Read\tRead@${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
+  }
+  return `${tool}\t${tokenSet(stable(input)).join(" ")}`;
+}
+
+/** Back-compat name for the non-Bash window key. */
+export function toolKey(tool: string, input: Record<string, unknown>): string {
+  return callKey(tool, input) ?? "";
+}
+
+function keysSimilarOneWay(a: string, b: string): boolean {
+  const [ta, ba] = a.split("\t");
+  const [tb, bb] = b.split("\t");
+  if (ta !== tb) return false;
+  return ta === "Read" ? readCoverage(ba, bb) >= READ_OVERLAP : tokenSimilarity(ba, bb) >= SIMILARITY;
+}
+
+const keysSimilar = (a: string, b: string) => keysSimilarOneWay(a, b) || keysSimilarOneWay(b, a);
+
+/** Window indexes of the cluster the new key joins: everything similar to it, and similar to those (so a full-file Read or a bare `vitest run` ties its narrower variants together). */
+function clusterOf(window: string[], key: string): number[] {
+  const members = new Set<number>();
+  const frontier = [key];
+  while (frontier.length) {
+    const cur = frontier.pop() as string;
+    window.forEach((k, i) => {
+      if (!members.has(i) && keysSimilar(k, cur)) {
+        members.add(i);
+        frontier.push(k);
+      }
+    });
+  }
+  return [...members].sort((x, y) => x - y);
+}
+
+/** Tool result as comparable text: temp paths collapsed, whitespace trimmed, head and tail of long text. */
+export function resultSig(response: unknown): string {
+  let text: string;
+  if (typeof response === "string") text = response;
+  else if (response && typeof response === "object" && ("stdout" in response || "stderr" in response)) {
+    const r = response as { stdout?: unknown; stderr?: unknown };
+    text = `${typeof r.stdout === "string" ? r.stdout : ""}\n${typeof r.stderr === "string" ? r.stderr : ""}`;
+  } else text = stable(response);
+  text = text.replace(TMP_PATH, "TMP").replace(/\s+/g, " ").trim();
+  // head and tail: a growing log keeps its head, a progress line changes its tail
+  return text.length > RESULT_CHARS ? `${text.slice(0, RESULT_CHARS / 2)} ${text.slice(-RESULT_CHARS / 2)}` : text;
+}
+
+function resultsSimilar(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a == null || b == null) return true;
+  if (a === b) return true;
+  const x = new Set(a.split(" "));
+  const y = new Set(b.split(" "));
+  let inter = 0;
+  for (const t of x) if (y.has(t)) inter++;
+  return inter / (x.size + y.size - inter) >= SIMILARITY;
+}
+
+/** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
+export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown): LoopState {
+  if (EDIT_TOOLS.has(tool)) return emptyLoopState();
+  const key = callKey(tool, input);
+  const last = state.window.length - 1;
+  if (key === null || last < 0 || state.window[last] !== key) return state;
+  const outs = [...(state.outs ?? [])];
+  while (outs.length < state.window.length) outs.push(null);
+  outs[last] = resultSig(response);
+  return { ...state, outs };
 }
 
 export interface LoopStep {
   state: LoopState;
   deny: boolean;
-  testRun?: boolean;
-  /** True when the same key has now been denied LOOP_STOP_DENIALS times: end the session. */
+  /** True when the same cluster has now been denied LOOP_STOP_DENIALS times: end the session. */
   stop?: boolean;
+  /** Display text of the cluster head. */
   key?: string;
-  /** Identical attempts of this key including this one. */
+  /** Similar attempts of this cluster including this one. */
   count?: number;
-  /** Denied because the tool returned the same result repeatedly, not because the command repeated. */
-  sameResult?: boolean;
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
-  let key: string;
-  if (tool === "Bash") {
-    const command = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
-    if (typeof command !== "string" || !command.trim()) return { state, deny: false };
-    key = loopKey(command);
-  } else {
-    if (typeof input === "string" || !tool) return { state, deny: false };
-    key = toolKey(tool, input ?? {});
-    if (tool === "Read") key = canonicalReadKey(state.window, key);
-  }
-  const copies = state.window.filter((k) => k === key).length;
-  const res = state.results?.[tool];
-  const text = callText(tool, input);
-  if (res && res.n >= LOOP_MAX_REPEATS && text !== null && copies < LOOP_MAX_REPEATS && similar(res.cmd, text)) {
-    const rkey = `result: ${tool}`;
+  const key = callKey(tool, input);
+  if (key === null) return { state, deny: false };
+  const idx = clusterOf(state.window, key);
+  const lastN = idx.slice(-LOOP_MAX_REPEATS);
+  const outs = state.outs ?? [];
+  const stalled = lastN.length >= LOOP_MAX_REPEATS && lastN.every((i, n) => n === 0 || resultsSimilar(outs[lastN[n - 1]], outs[i]));
+  if (stalled) {
+    const head = state.window[idx[0]];
     const denials = { ...(state.denials ?? {}) };
-    denials[rkey] = (denials[rkey] ?? 0) + 1;
-    return { state: { ...state, denials }, deny: true, stop: denials[rkey] >= LOOP_STOP_DENIALS, key: rkey, count: LOOP_MAX_REPEATS + denials[rkey], sameResult: true };
-  }
-  if (copies >= LOOP_MAX_REPEATS) {
-    const denials = { ...(state.denials ?? {}) };
-    denials[key] = (denials[key] ?? 0) + 1;
-    const count = LOOP_MAX_REPEATS + denials[key];
+    denials[head] = (denials[head] ?? 0) + 1;
     return {
       state: { ...state, denials },
       deny: true,
-      testRun: isTestRunKey(key),
-      stop: denials[key] >= LOOP_STOP_DENIALS,
-      key,
-      count,
+      stop: denials[head] >= LOOP_STOP_DENIALS,
+      key: head.split("\t")[1],
+      count: LOOP_MAX_REPEATS + denials[head],
     };
   }
-  return { state: { ...state, window: [...state.window, key].slice(-WINDOW_CAP) }, deny: false };
+  const window = [...state.window, key];
+  const nextOuts = [...outs];
+  while (nextOuts.length < state.window.length) nextOuts.push(null);
+  nextOuts.push(null);
+  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false };
 }
