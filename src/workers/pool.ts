@@ -430,6 +430,8 @@ export interface PoolTaskRequest {
   specPath?: string;
   parent?: string;
   stage?: string;
+  /** The `pai worker run` client's pid: killing it cancels the pooled task (the host sees the disconnect). */
+  clientPid?: number;
   reportFormat: "json" | "ag2";
   outputFormat: "text" | "json";
   /** The run wants its own worktree: served by a slot worktree (loopback providers only). */
