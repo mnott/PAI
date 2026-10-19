@@ -580,8 +580,8 @@ No arguments lists every worker parked behind a provider's concurrency cap, per 
 
 | Argument | Required | Description |
 |---|---|---|
-| `VERB` | no | front or up (default: list the queue) |
-| `ID` | no | Worker id to pull forward (with front/up) |
+| `VERB` | no | next (alias front) or up (default: list the queue) |
+| `ID` | no | Worker id to pull forward (with next/up) |
 
 ```sh
 pai worker queue
