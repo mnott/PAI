@@ -6,6 +6,22 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-10-19
+
+### Added
+
+- **Delegation and MCP tools:** tier 0 sessions delegate through MCP tools — `plan_save` / `plan_run` / `plan_status` / `plan_amend` for planned jobs and `queue_*` tools for small incremental changes (`pai queue`). A `worker_queue` state, queue view and pull-forward appear in `ps`, the cockpit and MCP. `session_profile_get` / `session_profile_set` read and write a session's model profile over MCP.
+- **Model routing:** `"local"` resolves to the running local model server (each configured local provider is probed on its port; exactly one up wins, several up fall back to a named choice). Every delegation entry point takes `where` / `model` / `now`. `worker_model` sets the model per provider; plan and queue runs pass model and priority through. Per-session model profiles carry a `fallback` list and `parallel_min`; a batch skips fallback targets whose concurrency cap is below `parallel_min`. Setups write the session's worker provider and the model they show, never the global config; `"cloud"` follows the session's provider like normal routing.
+- **Workers and guards:** the loop guard's no-progress rule counts worktree changes as progress, so a worker doing real work is never stopped for repeating reads or runs. Guard hits on a worker are notified to the session that started it. Goal notes carry a per-run token named in the worker contract. The plan runner stops its workers on SIGTERM and supports a graceful plan stop. Plan and queue runs refuse a double start (run lock) and their status shows running. A headless worker exits about 20 s after its final result instead of idling on leftover background tasks. Detached plan and queue runs report events to the starting session and PAILot and survive the session.
+- **Cockpit and CLI:** the worker panel shows running and waiting workers near the top, with pull-forward. The cockpit gets a favicon and a dark-mode toggle. The `pai` session picker runs under 1 s warm; launch screens fit their width, take arrow keys, keep the session's own name and group named sessions one row each; "/" opens search without inserting it.
+
+### Fixed
+
+- **Tests:** test runs can never write the live config or send real notifications, and clear `PAI_SESSION_*`; config-writer tests pass inside workers.
+- **Worktree knowledge tests** are stable under load.
+- **Cockpit syntax check test** compiles the inline scripts, catching the queue-panel and theme-toggle syntax errors that shipped broken.
+- **Workers:** kill ends pooled descendants too; `wait-on` never kills a worker process (use `pai worker wait` for workers); queued workers are not stall-killed by `wait-on` and heartbeat in json mode; worker panes open without stealing focus; iTerm enumeration survives a closing window; the plan runner checks the plan checkout rather than the final worker status, isolates every part in its own worktree, merges only real commits, uses visible panes, does not retry spawn refusals, and exits when blocked instead of idling.
+
 ## [0.68.0] - 2026-10-19
 
 ### Added
