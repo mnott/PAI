@@ -51,6 +51,19 @@ describe("capacityGate", () => {
     expect(liveQueue(h.base.logDir, "p", h.base.isAlive)).toEqual([]);
   });
 
+  it("logs a heartbeat at least every 60 s while queued", async () => {
+    const h = harness(() => [st("a"), st("b"), st("c", { state: "done" })].map((x, i) => (i === 2 ? st("c", { state: "running" }) : x)), "d");
+    let sleeps = 0;
+    const sleep = async (ms: number) => {
+      await h.base.sleep(ms === 2000 ? 20_000 : ms);
+      if (++sleeps > 12) throw new Error("stop");
+    };
+    await expect(capacityGate({ ...h.base, sleep })).rejects.toThrow("stop");
+    const beats = h.lines.filter((l) => l.startsWith("queued: still waiting"));
+    expect(beats.length).toBeGreaterThanOrEqual(2);
+    expect(beats[0]).toMatch(/^queued: still waiting, position 1, \d+s$/);
+  });
+
   it("does not wait below the cap", async () => {
     const h = harness(() => [st("a"), st("b")], "c");
     expect(await capacityGate(h.base)).toBeNull();

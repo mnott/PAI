@@ -569,7 +569,7 @@ Wait for a background job to finish
 pai worker wait-on PID [options]
 ```
 
-Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed. Exit 4: killed by the ceiling or stall rule (its whole process tree gets SIGTERM, SIGKILL after 5 s; likely a hang or infinite loop).
+Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed. Exit 4: killed by the ceiling or stall rule (its whole process tree gets SIGTERM, SIGKILL after 5 s; likely a hang or infinite loop). A `pai worker run` target still queued behind its provider cap is not stall-killed (the queue prints a heartbeat at least every 60 s), and the ceiling counts from when it left the queue.
 Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.
 
 | Argument | Required | Description |
@@ -581,7 +581,7 @@ Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! >
 | `--log FILE` | string | — | Log file whose last lines are printed on return; FILE.rc holds the exit code |
 | `--max SECS` | number | — | Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) |
 | `--tail N` | number | — | Log lines printed on return (default 20) |
-| `--max-minutes N` | number | — | Hard ceiling on the process's age (default 30): still alive then = kill its process tree, exit 4 |
+| `--max-minutes N` | number | — | Hard ceiling on the process's age (default 30; a queued worker run counts from leaving the queue): still alive then = kill its process tree, exit 4 |
 | `--stall-minutes N` | number | — | With --log: log silent this long while alive (default 5) = kill its process tree, exit 4 |
 
 ```sh

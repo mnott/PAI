@@ -152,3 +152,23 @@ describe("waitOn ceiling and stall kill", () => {
     expect(killed).toEqual([42]);
   });
 });
+
+describe("waitOn queued worker", () => {
+  it("is not stall-killed while queued, and the stall rule applies once running", async () => {
+    const log = join(dir, "q.log");
+    writeFileSync(log, "queued: 2 on p, cap 1 (position 1)\n");
+    const f = fake({});
+    let queued = true;
+    const killed: number[] = [];
+    f.deps.logMtime = () => 1_000_000;
+    f.deps.killTree = async (p) => void killed.push(p);
+    f.deps.queue = () => ({ queued, started: null });
+    // 10 minutes queued with a silent log: no kill
+    expect(await waitOn({ pid: 42, log, maxSecs: 600, stallMinutes: 5, maxMinutes: 6 }, f.deps)).toBe(3);
+    expect(killed).toEqual([]);
+    // leaves the queue: stall clock restarts, then fires
+    queued = false;
+    expect(await waitOn({ pid: 42, log, maxSecs: 590, stallMinutes: 5, maxMinutes: 100 }, f.deps)).toBe(4);
+    expect(killed).toEqual([42]);
+  });
+});
