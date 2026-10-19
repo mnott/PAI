@@ -205,7 +205,7 @@ describe("cockpit page scripts", () => {
 
 describe("cockpit workers panel", () => {
   const table = (COCKPIT_HTML.match(/function table\([\s\S]*?\n/) ?? [""])[0];
-  const body = COCKPIT_HTML.match(/function renderQueue[\s\S]*?\n\}/)![0];
+  const body = COCKPIT_HTML.match(/var qdrag[\s\S]*?\n\}/)![0];
   const render = (q: unknown) => {
     const els: Record<string, { innerHTML: string; querySelectorAll: () => unknown[] }> = {
       queuepanel: { innerHTML: "", querySelectorAll: () => [] },
@@ -218,8 +218,8 @@ describe("cockpit workers panel", () => {
 
   it("renders running chips with no waiting entries", () => {
     const html = render({ providers: [{ provider: "glm", cap: 2, running: [{ id: "w1", label: "fix-x", ageSec: 120, now: "editing" }], waiting: [] }] });
-    expect(html).toContain("glm");
-    expect(html).toContain("cap 2");
+    expect(html).toContain("glm/?");
+    expect(html).toContain("other"); // no session: the "other" block
     expect(html).toContain("fix-x");
     expect(html).toContain("editing");
     expect(html).not.toContain("nothing running or waiting");
@@ -230,6 +230,36 @@ describe("cockpit workers panel", () => {
     expect(html).toContain("later");
     expect(html).toContain('data-q="front"');
     expect(html).toContain('data-q="up"');
+  });
+
+  it("one block per session, models inside, the cap-1 provider on its own block first", () => {
+    const html = render({
+      providers: [
+        { provider: "anthropic", cap: 4, running: [
+          { id: "w1", label: "alpha", ageSec: 10, session: "PAI", model: "sonnet" },
+          { id: "w2", label: "beta", ageSec: 20, session: "PAI", model: "sonnet" },
+          { id: "w3", label: "gamma", ageSec: 30, session: "AIBroker", model: "opus" },
+          { id: "w4", label: "shelly", ageSec: 30, session: "other", model: "haiku" },
+        ], waiting: [] },
+        { provider: "local", cap: 1, running: [{ id: "l1", label: "running-local", ageSec: 5, session: "PAI", model: "flashnext-iq3" }],
+          waiting: [
+            { id: "l2", label: "first-wait", waitedSec: 9, position: 1, session: "AIBroker", model: "flashnext-iq3" },
+            { id: "l3", label: "second-wait", waitedSec: 4, position: 2, session: "PAI", model: "flashnext-iq3" },
+          ] },
+      ],
+    });
+    const at = (x: string) => html.indexOf(x);
+    expect(at("local: flashnext-iq3 (cap 1)")).toBeGreaterThanOrEqual(0);
+    expect(at("local: flashnext-iq3 (cap 1)")).toBeLessThan(at("AIBroker <span"));
+    expect(at("AIBroker <span")).toBeLessThan(at("PAI <span"));
+    expect(at("PAI <span")).toBeLessThan(at(">other <span"));
+    expect(html).toContain("anthropic/sonnet ×2");
+    expect(html).toContain("anthropic/opus ×1");
+    // waiting order, session label and drag handle in the local block
+    expect(at("first-wait")).toBeLessThan(at("second-wait"));
+    expect(at("running-local")).toBeLessThan(at("first-wait"));
+    expect(html).toContain('draggable="true" data-id="l2"');
+    expect(html).not.toContain('data-id="w1" data-prov'); // running rows are not draggable
   });
 
   it("marks stale sessions dim and shows the empty state", () => {

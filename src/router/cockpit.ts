@@ -5,7 +5,7 @@
  */
 
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
@@ -14,7 +14,8 @@ import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionI
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
-import { providerCap, queueRows, reorderQueue } from "../workers/capacity.js";
+import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
+import { ownerSessionName } from "../workers/scope.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
@@ -429,8 +430,18 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 export interface QueueProvider {
   provider: string;
   cap?: number;
-  running: Array<{ id: string; label: string; ageSec: number; now?: string }>;
-  waiting: Array<{ id: string; label: string; waitedSec: number; position: number }>;
+  running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string }>;
+  waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string }>;
+}
+
+/**
+ * The block a worker belongs to: the session that started it (AIBroker name),
+ * else its project (cwd) name when a terminal is known, else "other" (a bare shell).
+ */
+function sessionGroup(s: WorkerStatus): string {
+  if (!s.session?.name && !s.session?.id && !s.term) return "other";
+  const name = ownerSessionName(s);
+  return name.startsWith("tab ") || name === "?" ? basename(s.cwd || "") || "other" : name;
 }
 
 /** The /cockpit/queue payload: every provider with a live or waiting worker. */
@@ -456,7 +467,7 @@ export function cockpitQueue(
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   for (const s of loadStatuses(logDir)) {
-    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined });
+    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model });
   }
   for (const r of queueRows(logDir, caps)) {
     const s = r.status;
@@ -465,6 +476,8 @@ export function cockpitQueue(
       label: s?.label ?? "",
       waitedSec: s ? waited(s) : 0,
       position: r.position,
+      session: s ? sessionGroup(s) : "other",
+      model: s?.model ?? "",
     });
   }
   return { now, providers: [...byProvider.values()] };
@@ -473,8 +486,8 @@ export function cockpitQueue(
 /**
  * Serve /cockpit, /cockpit/data, /cockpit/system, /cockpit/pool,
  * /cockpit/queue and the queue write actions. Returns false when the path is
- * not a cockpit path. GET except the two POST queue endpoints
- * (/cockpit/queue/front, /cockpit/queue/up); the router binds 127.0.0.1
+ * not a cockpit path. GET except the three POST queue endpoints
+ * (/cockpit/queue/front, /cockpit/queue/up, /cockpit/queue/move); the router binds 127.0.0.1
  * unless router.bind opens a second listener (then every cockpit route,
  * writes included, is token-gated — see src/router/cockpit-auth.ts).
  */
@@ -495,18 +508,22 @@ export function handleCockpit(
     res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
     res.end(body);
   };
-  if (req.method === "POST" && (url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up")) {
+  if (req.method === "POST" && (url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
     const body = readBody(req)
-      .then((raw) => JSON.parse(raw || "{}") as { id?: string })
-      .catch(() => ({} as { id?: string }));
-    body.then(({ id }) => {
+      .then((raw) => JSON.parse(raw || "{}") as { id?: string; position?: number })
+      .catch(() => ({} as { id?: string; position?: number }));
+    body.then(({ id, position }) => {
       if (!id || typeof id !== "string") return send(400, "application/json", JSON.stringify({ error: "id required" }));
+      const move = url.pathname.endsWith("/move");
+      if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ error: "position (>= 1) required" }));
       try {
         const { workers } = readWorkersSection();
         const logDir = queueLogDir(workers);
         const status = loadStatus(logDir, id);
         if (!status) return send(404, "application/json", JSON.stringify({ error: `no worker named "${id}"` }));
-        const order = reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") ? "front" : "up");
+        const order = move
+          ? reorderQueueTo(logDir, status.provider, id, position as number)
+          : reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") ? "front" : "up");
         send(200, "application/json", JSON.stringify({ id, provider: status.provider, order }));
       } catch (e) {
         send(409, "application/json", JSON.stringify({ error: (e as Error).message }));

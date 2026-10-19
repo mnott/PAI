@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
+import type { WorkersConfig } from "../workers/config.js";
 import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
 import type { UsageRow } from "./usage.js";
 
@@ -251,6 +252,13 @@ describe("cockpit http", () => {
       expect(up.status).toBe(200);
       expect(JSON.parse(up.body).order).toEqual(["w-early", "w-late"]);
 
+      const mv = await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-early", position: 2 }));
+      expect(mv.status).toBe(200);
+      expect(JSON.parse(mv.body).order).toEqual(["w-late", "w-early"]);
+      const mv1 = await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-early", position: 1 }));
+      expect(JSON.parse(mv1.body).order).toEqual(["w-early", "w-late"]);
+      expect((await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-early" }))).status).toBe(400);
+      expect((await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-holder", position: 1 }))).status).toBe(409);
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({}))).status).toBe(400);
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "nosuch" }))).status).toBe(404);
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "w-holder" }))).status).toBe(409);
@@ -259,6 +267,10 @@ describe("cockpit http", () => {
       expect(page.body).toContain('id="queuepanel"');
       expect(page.body).toContain("to front");
       expect(page.body).toContain("nothing waiting");
+      // drag and drop wiring: draggable rows post to /move, refresh pauses while dragging
+      expect(page.body).toContain('draggable="true"');
+      expect(page.body).toContain('post("move"');
+      expect(page.body).toContain("if(qdrag)return");
     } finally {
       srv.close();
       if (prevYaml === undefined) delete process.env.PAI_WORKERS_YAML;
@@ -435,5 +447,37 @@ describe("built cockpit page", () => {
     const js = readFileSync(built, "utf8");
     expect(js).toContain("function ringTiles");
     expect(js).not.toContain('bignum dim">not reported');
+  });
+});
+
+describe("cockpitQueue grouping", () => {
+  it("rows carry session and model; a missing session falls back to the project, a bare shell to other", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pai-cockpit-g-"));
+    const logDir = join(tmp, "logs");
+    const mk = (id: string, over: Partial<WorkerStatus>): WorkerStatus => ({
+      id, pid: process.pid, label: `label ${id}`, cwd: "/work/proj-x", term: "", provider: "anthropic", model: "sonnet",
+      state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null, ...over,
+    });
+    saveStatus(logDir, mk("a1", { session: { id: "s-AIBroker", name: "AIBroker" } }));
+    saveStatus(logDir, mk("a2", { session: { id: "s-PAI", name: "PAI" }, model: "opus" }));
+    saveStatus(logDir, mk("a3", { term: "w1t0p0:11111111-2222-3333-4444-555555555555" }));
+    saveStatus(logDir, mk("a4", {}));
+    saveStatus(logDir, mk("l1", { provider: "local", model: "flashnext-iq3", session: { id: "s-PAI", name: "PAI" } }));
+    saveStatus(logDir, mk("l2", { provider: "local", model: "flashnext-iq3", state: "queued", session: { id: "s-AIBroker", name: "AIBroker" } }));
+    const qdir = join(logDir, "queue", "local");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "l2"), String(process.pid));
+    const workers = { providers: { local: { url: "http://127.0.0.1:1", maxConcurrent: 1, models: { default: "flashnext-iq3" } } }, nativeModels: {} } as unknown as WorkersConfig;
+    const q = cockpitQueue(logDir, workers, Date.now(), () => true);
+    const by = (p: string) => q.providers.find((x) => x.provider === p)!;
+    const sess = Object.fromEntries(by("anthropic").running.map((r) => [r.id, `${r.session}|${r.model}`]));
+    expect(sess.a1).toBe("AIBroker|sonnet");
+    expect(sess.a2).toBe("PAI|opus");
+    expect(sess.a3).toBe("proj-x|sonnet");
+    expect(sess.a4).toBe("other|sonnet");
+    const local = by("local");
+    expect(local.cap).toBe(1);
+    expect(local.running.map((r) => r.session)).toEqual(["PAI"]);
+    expect(local.waiting.map((w) => `${w.position}|${w.session}|${w.model}`)).toEqual(["1|AIBroker|flashnext-iq3"]);
   });
 });

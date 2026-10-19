@@ -159,7 +159,7 @@ export function isCockpitPath(path: string): boolean {
  * carry the same token auth as the GET routes — the wrapper below checks
  * every /cockpit/* path whatever the method.
  */
-export const COCKPIT_WRITE_PATHS = ["/cockpit/queue/front", "/cockpit/queue/up"] as const;
+export const COCKPIT_WRITE_PATHS = ["/cockpit/queue/front", "/cockpit/queue/up", "/cockpit/queue/move"] as const;
 
 export function isCockpitWrite(path: string): boolean {
   return (COCKPIT_WRITE_PATHS as readonly string[]).includes(path);
