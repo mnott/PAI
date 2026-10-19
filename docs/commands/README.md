@@ -41,6 +41,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai project`](project.md) | Your registered projects: list, add, rename, check |
 | [`pai projects`](projects.md) | Same as project |
 | [`pai providers`](providers.md) | List providers (● = active); `providers use NAME` switches |
+| [`pai queue`](queue.md) | Queue small changes, run them on a local worker, review in a batch |
 | [`pai registry`](registry.md) | Maintain the project registry: scan, stats, rebuild |
 | [`pai rename`](rename.md) | Give a session a new name |
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
@@ -235,6 +236,14 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai providers test` | Send one word through a provider to check it answers |
 | `pai providers update` | Change a provider's cost tier and tags |
 | `pai providers use` | Make a provider the active one |
+| `pai queue` | Queue small changes, run them on a local worker, review in a batch |
+| `pai queue accept` | Merge ready items with the project's gate, then run its install command |
+| `pai queue add` | Queue one small change, described in a sentence |
+| `pai queue again` | Re-queue an item with what is still wrong |
+| `pai queue list` | Every item of the project with its state |
+| `pai queue reject` | Drop items; their branches stay for `pai worker gc` |
+| `pai queue review` | One compact list of ready items: sentence, diff stat, gate, proof |
+| `pai queue run` | Drain the pending items on the local provider; nothing is merged |
 | `pai registry` | Maintain the project registry: scan, stats, rebuild |
 | `pai registry dedupe` | Merge registry rows that describe the same project |
 | `pai registry lookup` | Print the project name for a folder (for scripts) |

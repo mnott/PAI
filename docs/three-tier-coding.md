@@ -97,6 +97,13 @@ With `pai worker pool on`, small runs talk to long-lived headless slots so the p
 runs. Each provider and model has its own slot settings file, and a slot knows which job it is serving, so goal notes,
 guards and the help budget work inside pooled runs as they do in standalone ones.
 
+## Small incremental changes
+
+Not every request is a planned job. A one-sentence fix ("the tooltip says Sav", "move this button") needs no plan and no
+cloud tier: `pai queue add` it, `pai queue run` lets a local worker do each in its own worktree branch, and
+`pai queue review` shows the results as a batch to accept, reject or send back with a note. Anything over the size limit
+becomes too-big, and items still wrong after two rounds go to Sonnet. See [queue.md](queue.md).
+
 ## Watching it
 
 ```

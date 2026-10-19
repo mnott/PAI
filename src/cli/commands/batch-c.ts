@@ -7,6 +7,7 @@ import { dbCommand } from "./db.js";
 import { identityCommand } from "./identity.js";
 import { issueCommand } from "./issue.js";
 import { planCommand } from "./plan.js";
+import { queueCommand } from "./queue.js";
 import { mcpCommand } from "./mcp.js";
 import { notifyCommand } from "./notify.js";
 import { projectAliasCommand, projectCommand } from "./project.js";
@@ -15,7 +16,7 @@ import { taskAliasCommand, taskCommand } from "./task.js";
 import { topicCommand } from "./topic.js";
 
 export const BATCH_C: Partial<Record<GroupId, CommandDef[]>> = {
-  workers: [planCommand],
+  workers: [planCommand, queueCommand],
   memory: [projectCommand, projectAliasCommand, registryCommand, taskCommand, taskAliasCommand, issueCommand, identityCommand, topicCommand],
   daemon: [daemonCommand, configCommand, mcpCommand, notifyCommand, dbCommand],
 };
