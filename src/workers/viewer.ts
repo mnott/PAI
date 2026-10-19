@@ -30,6 +30,7 @@ import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
 import { eventsPath, ledgerPath } from "./paths.js";
 import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
+import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
@@ -150,6 +151,11 @@ export function psOutput(
         : `scope: tab ${currentTabKey(env)} (this iTerm tab)`;
   const inbox = inboxCounts(logDir, scoped);
   const parts = [renderTable(c, scoped, scopeLabel, new Date(), inbox)];
+  try {
+    parts.unshift(formatWorktreesStats(worktreesStats(logDir)));
+  } catch {
+    /* the header is an extra line: never fail ps over it */
+  }
   // machine view: every live spawned worker on the host, whoever owns it —
   // chat panes are terminals, not spawned workers, and never counted
   const scopedIds = new Set(scoped.map((s) => s.id));

@@ -17,7 +17,7 @@ import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
-import { runWorktreeGcDaily } from "../worktree-gc.js";
+import { startWorktreeGc } from "../worktree-gc.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -121,7 +121,6 @@ export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "
       await runVaultIndex();
       await runEmbed();
       await runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
-      await runWorktreeGcDaily();
     },
   };
 }
@@ -239,7 +238,7 @@ export function startIndexScheduler(): void {
   // Chaining embed onto the end of every index pass makes the alternation
   // guaranteed rather than a race: index, then vault, then embed, every cycle.
   const cycle = (label: string, withEmbed: boolean) =>
-    // Quiet mode: the whole cycle (index, vault, embed, stale pass, worktree gc)
+    // Quiet mode: the whole cycle (index, vault, embed, stale pass)
     // is one deferred job, run once when quiet ends.
     deferIfQuiet(withEmbed ? "maintenance" : "index")
       ? Promise.resolve()
@@ -247,7 +246,6 @@ export function startIndexScheduler(): void {
       .then(() => runVaultIndex())
       .then(() => (withEmbed ? runEmbed() : undefined))
       .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
-      .then(() => (withEmbed ? runWorktreeGcDaily() : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });
@@ -556,6 +554,8 @@ export function startWorkerSupervisor(): void {
     process.stderr.write("[pai-daemon] Worker supervisor: disabled (workers are off)\n");
     return;
   }
+
+  startWorktreeGc();
 
   let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {
