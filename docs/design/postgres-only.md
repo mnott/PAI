@@ -17,7 +17,7 @@ step uses `docker cp`. The migration command's pre-flight check and rollback ste
 depend on this bind mount being present on the host, not on anything inside the container.
 
 Open question, not resolved by this change: `~/.pai/pgdata` sits outside `PAI_HOME`
-(`~/.claude/pai`), i.e. Postgres data isn't backed up/relocated the way the rest of PAI's
+(`~/.pai`), i.e. Postgres data isn't backed up/relocated the way the rest of PAI's
 state is. Out of scope here — flagging it, not moving it.
 
 ## 1. Inventory — every non-test file that opens or touches SQLite
@@ -434,5 +434,5 @@ sweep.
   2. Preflight: `pai-pgvector` bind mount `~/.pai/pgdata -> /var/lib/postgresql/data` present; `pg_dump` of the configured database to a host path.
   3. `pai db migrate-to-postgres`: kg_entities, all registry tables, and the SQLite-only memory_files/memory_chunks (19,744 paths) and vault rows (3,371 paths) absent from Postgres. Refuse on any count mismatch.
   4. Verify: per-table counts (SQLite rows == Postgres rows for migrated sets, Postgres superset for memory/vault paths), spot checks, sequences setval'd.
-  5. Cleanup: delete `~/.claude/pai/federation.db` (+ -wal/-shm) and `~/.claude/pai/registry.db` only after step 4 passes. Rollback = the step-2 pg_dump plus the CCC backup volume copy.
-  6. Restart `com.pai.pai-daemon`, `com.pai.task-scheduler` (and `claudaemon` if it used SQLite); confirm the daemon log shows the Postgres backend and no SQLite file is recreated (`ls ~/.claude/pai/*.db` stays empty after a full scheduler cycle). Open sessions pick up the new MCP shim on their next restart.
+  5. Cleanup: delete `~/.pai/federation.db` (+ -wal/-shm) and `~/.pai/registry.db` only after step 4 passes. Rollback = the step-2 pg_dump plus the CCC backup volume copy.
+  6. Restart `com.pai.pai-daemon`, `com.pai.task-scheduler` (and `claudaemon` if it used SQLite); confirm the daemon log shows the Postgres backend and no SQLite file is recreated (`ls ~/.pai/*.db` stays empty after a full scheduler cycle). Open sessions pick up the new MCP shim on their next restart.

@@ -9,7 +9,7 @@
  * The CLI's `--key` writes the token inline as `key:` in workers.yaml
  * (quoted, and the file is kept 0600 — see workers-config.ts); `--key-file`
  * still writes only a path. The MCP `add` tool instead accepts a raw `key`
- * and parks it in ~/.claude/pai/keys/<name>, mode 0600, storing only the
+ * and parks it in ~/.pai/keys/<name>, mode 0600, storing only the
  * path in the config — a chat is not a place to leave a credential lying
  * around.
  */
@@ -47,7 +47,7 @@ export interface AddProviderInput {
   name: string;
   baseUrl: string;
   keyFile?: string | null;
-  /** Raw token (MCP `add` only): parked in ~/.claude/pai/keys/<name>, only the path stored. */
+  /** Raw token (MCP `add` only): parked in ~/.pai/keys/<name>, only the path stored. */
   key?: string;
   /** Raw token (CLI `--key` only): written verbatim as `key:` in workers.yaml. */
   inlineKey?: string;
@@ -62,7 +62,7 @@ export interface AddProviderInput {
   contextWindow?: number;
   costTier?: number;
   tags?: string[];
-  /** Config file override (tests, dry runs); default ~/.claude/pai/config.yaml. */
+  /** Config file override (tests, dry runs); default ~/.pai/config.yaml. */
   configPath?: string;
 }
 

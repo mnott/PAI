@@ -131,7 +131,7 @@ files and shows, for a chosen window:
 
 To open it from another device on your tailnet, set `router.bind` to `tailscale` (or an explicit address) in the main
 config. The router then opens a second listener on that address; the cockpit needs the token from
-`~/.claude/pai/router-cockpit.token` (as `?token=`, a Bearer header, or the cookie the first token hit sets), and the `/v1`
+`~/.pai/router-cockpit.token` (as `?token=`, a Bearer header, or the cookie the first token hit sets), and the `/v1`
 model route stays limited to loopback and the tailnet. A wildcard bind is refused.
 
 ## How it looks to you

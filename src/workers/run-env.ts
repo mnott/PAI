@@ -85,7 +85,7 @@ const LOCAL_STREAM_IDLE_VARS = [
   "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS",
 ] as const;
 
-/** Parent of every per-worker config copy; outside ~/.claude/pai so the worker guard treats the copy as safe. */
+/** Parent of every per-worker config copy; outside ~/.pai so the worker guard treats the copy as safe. */
 export const WORKER_CONFIG_COPY_ROOT = join(tmpdir(), "pai-worker-config");
 const COPY_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 

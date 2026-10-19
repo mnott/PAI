@@ -7,11 +7,11 @@
  * components are a near-miss of the cwd; in isolated A/B arms also the
  * absolute-path tokens of Bash commands. Only I/O here; the rule lives in
  * lib/path-repair.ts. Each repair is logged one line to
- * ~/.claude/pai/logs/workers/path-repair.log. A no-op in interactive sessions.
+ * ~/.pai/logs/workers/path-repair.log. A no-op in interactive sessions.
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { join } from "node:path";
 import { armGuardReason, denyReason, renderDeny, repairPath, renderRepair, type PathRepairInput } from "../lib/path-repair.js";
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const reason = guard ?? (repair ? null : denyReason(input, process.env));
   if (!repair && !reason) return;
   try {
-    const dir = join(homedir(), ".claude", "pai", "logs", "workers");
+    const dir = paiHomePath("logs", "workers");
     mkdirSync(dir, { recursive: true });
     const what = repair
       ? `${repair.old}\t${repair.new}`

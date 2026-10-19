@@ -19,7 +19,7 @@ tools work whether the file is YAML or JSON.
 | `voices.yaml` | YAML, comment-preserving | preferred whenever it exists — `loadVoicesConfig`/`migrateVoicesToYaml` (`src/config/voices-config.ts`) |
 | `voices.json` | JSON | fallback; currently an orphan (nothing in `src/` reads it) |
 
-All five live under the PAI_HOME namespace dir (`~/.claude/pai` by default,
+All five live under the PAI_HOME namespace dir (`~/.pai` by default,
 `PAI_HOME=<dir>` to move it; `pai config path` prints the resolved paths).
 
 ### Known external readers

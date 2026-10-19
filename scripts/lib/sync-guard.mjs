@@ -28,10 +28,13 @@ export function expandHomePath(p) {
 }
 
 /**
- * Resolve PAI_HOME directory: PAI_HOME env var or ~/.claude/pai default.
+ * Resolve PAI_HOME directory: PAI_HOME env var, else ~/.pai (legacy ~/.claude/pai until migrated; same rule as src/config/pai-home.ts).
  */
-function paiHomeDir() {
-  return process.env.PAI_HOME || join(homedir(), ".claude", "pai");
+export function paiHomeDir() {
+  if (process.env.PAI_HOME) return process.env.PAI_HOME;
+  const fresh = join(homedir(), ".pai");
+  const legacy = join(homedir(), ".claude", "pai");
+  return !existsSync(join(fresh, "config.yaml")) && existsSync(join(legacy, "config.yaml")) ? legacy : fresh;
 }
 
 /**

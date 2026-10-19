@@ -46,6 +46,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WorkersConfig } from "./config.js";
 import { panesDir, statusPath } from "./paths.js";
+import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
 
 export const PROFILE_NAME = "pai-worker";
@@ -1155,7 +1156,7 @@ export async function openFollowPane(
  * cannot create it through Bash; only the operator's own shell can.
  */
 export function headlessOverridePath(): string {
-  return process.env.PAI_HEADLESS_OK_FILE ?? join(homedir(), ".claude", "pai", "headless-ok");
+  return process.env.PAI_HEADLESS_OK_FILE ?? paiHomePath("headless-ok");
 }
 
 /**

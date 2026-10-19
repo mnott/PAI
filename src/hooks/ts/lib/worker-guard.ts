@@ -185,22 +185,25 @@ function abs(p: string, cwd: string, home: string): string | null {
   return hasUnresolvedVar(e) ? null : resolve(cwd, e);
 }
 
+/** The live PAI home dirs: the default ~/.pai and the pre-migration ~/.claude/pai (see config/pai-home.ts). */
+const LIVE_PAI_DIRS = (home: string): string[] => [`${home}/.pai`, `${home}/.claude/pai`];
+
 /** Live PAI/Claude config that tests and workers must not write. */
 export function isLiveConfig(p: string, home: string): boolean {
   if (p === `${home}/.claude.json` || p === `${home}/.claude/settings.json`) return true;
-  return dirname(p) === `${home}/.claude/pai` && /\.(ya?ml|json)$/.test(p);
+  return LIVE_PAI_DIRS(home).includes(dirname(p)) && /\.(ya?ml|json)$/.test(p);
 }
 
 const LIVE_CONFIG_REASON = "workers never write live PAI config; set HOME=$(mktemp -d) or PAI_WORKERS_YAML=<copy> for state-changing checks (tests use temp-dir copies)";
 
 const CONFIG_VERBS = "inline-keys|add|update|remove|enable|disable|use|set";
 
-/** True when a path value (env assignment or inherited) points outside the live ~/.claude/pai dir. */
+/** True when a path value (env assignment or inherited) points outside the live PAI home (~/.pai, or legacy ~/.claude/pai). */
 function outsideLivePai(v: string | undefined, home: string): boolean {
   if (!v) return false;
   const p = v.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?/, home);
   if (!p.startsWith("/")) return false;
-  return p !== `${home}/.claude/pai` && !p.startsWith(`${home}/.claude/pai/`);
+  return !LIVE_PAI_DIRS(home).some((d) => p === d || p.startsWith(`${d}/`));
 }
 
 /**

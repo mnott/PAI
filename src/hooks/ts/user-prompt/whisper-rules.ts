@@ -4,8 +4,8 @@
  * whisper-rules.ts
  *
  * UserPromptSubmit hook that injects:
- * 1. User-defined whisper rules from ~/.claude/pai/whisper-rules.md
- * 2. Budget-aware model tiering guidance from ~/.claude/pai/advisor-mode.json
+ * 1. User-defined whisper rules from ~/.pai/whisper-rules.md
+ * 2. Budget-aware model tiering guidance from ~/.pai/advisor-mode.json
  *
  * The advisor mode implements the "advisor strategy" pattern:
  * - Normal (budget < 70%): use any model freely

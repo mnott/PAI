@@ -9,7 +9,7 @@
 //         -> 4 finish (recreate HNSW, ANALYZE, record binding).
 // Never writes config; never VACUUM FULL.
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomeDir } from "./lib/sync-guard.mjs";
 import { join } from "node:path";
 import pg from "pg";
 import YAML from "yaml";
@@ -32,9 +32,9 @@ const BATCH = Number(arg("batch", 64));
 const CONCURRENCY = Number(arg("concurrency", 2));
 const PHASE = arg("phase", "all");
 
-const cfg = YAML.parse(readFileSync(join(homedir(), ".claude", "pai", "config.yaml"), "utf8"));
+const cfg = YAML.parse(readFileSync(join(paiHomeDir(), "config.yaml"), "utf8"));
 const connectionString = cfg?.postgres?.connectionString;
-if (!connectionString) throw new Error("postgres.connectionString missing in ~/.claude/pai/config.yaml");
+if (!connectionString) throw new Error("postgres.connectionString missing in PAI_HOME/config.yaml");
 const pool = new pg.Pool({ connectionString, max: 3 });
 pool.on("error", () => {}); // surfaces on the next query and is retried
 

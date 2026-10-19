@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { paiHomePath } from "../config/pai-home.js";
 
 export interface SessionInfo {
   /** display name */
@@ -29,8 +30,8 @@ export interface SessionSources {
 export function defaultSources(): SessionSources {
   const home = homedir();
   return {
-    workerDirs: [join(home, ".claude", "pai", "logs", "workers"), join(home, ".claude", "logs", "workers")],
-    agentSessionsFile: join(home, ".claude", "pai", "agent-sessions.json"),
+    workerDirs: [paiHomePath("logs", "workers"), join(home, ".claude", "logs", "workers")],
+    agentSessionsFile: paiHomePath("agent-sessions.json"),
     projectsDir: join(home, ".claude", "projects"),
   };
 }
