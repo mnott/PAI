@@ -9,8 +9,8 @@ import { getProviderOrNative, readWorkersSection } from "../../workers/config.js
 import { workersLogDir } from "../../workers/paths.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths, pai, realRunnerDeps } from "../../workers/plan-deps.js";
-import { detachRun, PlanReporter } from "../../workers/run-events.js";
-import { detachedArgv, finishDetached, reportOrigin, runMessenger } from "../../workers/run-report-wiring.js";
+import { PlanReporter } from "../../workers/run-events.js";
+import { finishDetached, reportOrigin, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { resolve } from "node:path";
 import type { RunLogEntry } from "../../workers/plan-runner.js";
 import { blockedMessage, planStatus, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
@@ -76,7 +76,7 @@ const runCmd: CommandDef = {
     const logDir = workersLogDir(readWorkersSection().workers);
     const origin = reportOrigin();
     if (ctx.opts.detach === true) {
-      const rec = detachRun(logDir, "plan", plan.job, pai(), detachedArgv("plan", [resolve(path)], ctx.opts), process.cwd(), origin ?? {});
+      const rec = startDetached(logDir, { kind: "plan", label: plan.job, positional: [resolve(path)], opts: ctx.opts, cwd: process.cwd(), origin });
       out(`detached: ${rec.id} (pid ${rec.pid}); progress in ${log}, output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);
       return 0;
     }

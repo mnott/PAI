@@ -237,7 +237,8 @@ export function decideEditGate(ctx: EditGateContext): EditGateDecision {
   return {
     decision: "block",
     reason:
-      "Code changes are delegated. You decide the size: a small change -> call the PAI MCP tool `queue_add` " +
+      `Code changes are delegated, as a standing policy for the whole session: retrying Edit/Write on ${ctx.filePath} or any other code file is denied the same way. ` +
+      "You decide the size: a small change -> call the PAI MCP tool `queue_add` " +
       "(one sentence + files), then `queue_run`; a larger job -> write the plan yourself and call `plan_save` " +
       "then `plan_run`. Report to the user in plain words; never ask the user to run commands.",
   };

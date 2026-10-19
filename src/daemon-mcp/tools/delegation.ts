@@ -8,28 +8,20 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
-import { dirtyPaths, realRunnerDeps } from "../../workers/plan-deps.js";
-import {
-  planStatus,
-  readRunLog,
-  renderSchedule,
-  resumeState,
-  runPlan,
-  tail,
-  type RunLogEntry,
-  type RunOptions,
-  type RunSummary,
-} from "../../workers/plan-runner.js";
+import { dirtyPaths } from "../../workers/plan-deps.js";
+import { planStatus, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
 import { again, loadSettings, move, queueStatePath, QueueStore, type QueueItem, type QueueSettings } from "../../workers/queue.js";
-import { acceptItems, runQueue, type QueueRunOptions, type QueueRunSummary } from "../../workers/queue-runner.js";
+import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
+import { reportOrigin, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
+import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
 import type { WorkerToolResult } from "./worker-model.js";
 
 export type { WorkerToolResult };
@@ -65,13 +57,12 @@ export interface DelegationDeps {
   /** Default local provider name and its parallel cap. */
   provider(settings: QueueSettings): { name: string; cap: number };
   dirtyPaths(repo: string): Promise<string[]>;
-  /** Start a plan run in the background; the returned promise is the run (not awaited by the tool). */
-  startPlan(plan: Plan, opts: RunOptions, planPath: string): Promise<RunSummary>;
-  startQueue(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, repo: string): Promise<QueueRunSummary>;
+  /** Hand a plan/queue run to a detached process (same path as `pai plan|queue run --detach`). */
+  detach(req: DetachRequest): RunRecord;
   accept(store: QueueStore, settings: QueueSettings, ids: string[], repo: string): ReturnType<typeof acceptItems>;
   branchDiff(repo: string, workerId: string): Promise<string>;
-  /** Session that is calling, recorded so reports can find it. */
-  session(): string | undefined;
+  /** Calling session: where the run's events are delivered. */
+  origin(): RunOrigin | null;
   now(): number;
 }
 
@@ -99,9 +90,6 @@ export function localProvider(settings: QueueSettings): { name: string; cap: num
   }
 }
 
-// plan runs in flight in this process; a second plan_run for the same plan is refused
-const active = new Set<string>();
-
 export function realDelegationDeps(): DelegationDeps {
   return {
     async resolveProject(project) {
@@ -113,17 +101,10 @@ export function realDelegationDeps(): DelegationDeps {
     },
     provider: localProvider,
     dirtyPaths,
-    startPlan(plan, opts, planPath) {
-      const logDir = workersLogDir(readWorkersSection().workers);
-      return runPlan(plan, opts, realRunnerDeps(plan, logDir, runLogPath(planPath)));
-    },
-    startQueue(store, settings, opts, repo) {
-      const logDir = workersLogDir(readWorkersSection().workers);
-      return runQueue(store, settings, opts, realQueueDeps(logDir, repo));
-    },
+    detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
     accept: (store, settings, ids, repo) => acceptItems(store, settings, ids, realQueueDeps(workersLogDir(readWorkersSection().workers), repo)),
     branchDiff,
-    session: () => process.env.PAI_SESSION_NAME ?? process.env.CLAUDE_SESSION_ID ?? undefined,
+    origin: () => reportOrigin(),
     now: Date.now,
   };
 }
@@ -220,23 +201,16 @@ export async function planRun(args: { project: string; name: string; escalate?: 
       return fail(problemsText(e));
     }
     const { path, plan } = loaded;
-    if (active.has(path)) return fail(`Plan "${args.name}" is already running; check it with plan_status.`);
     const clash = dirtyConflicts(plan, await deps.dirtyPaths(plan.repo));
     if (clash.length) return fail(`Not started: ${plan.repo} has uncommitted changes to files the plan touches (${clash.join(", ")}). Commit or stash them first.`);
 
     const log = runLogPath(path);
-    const { merged, unitsChecked } = resumeState(readRunLog(log));
+    const { merged } = resumeState(readRunLog(log));
     const total = plan.units.flatMap((u) => u.parts).length;
     const par = parallelOf(plan, deps.provider(loadSettings(repo)).cap);
-    const session = deps.session();
-    if (session) writeFileSync(`${path}.session`, session + "\n", "utf8");
-
-    active.add(path);
-    void deps
-      .startPlan(plan, { parallel: par, escalate: args.escalate === true, merged, unitsChecked }, path)
-      .catch(() => undefined)
-      .finally(() => active.delete(path));
-    return text(`Plan "${args.name}" started in the background: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`);
+    const origin = deps.origin();
+    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
+    return text(`Plan "${args.name}" started in the background${origin ? "" : " (no calling session found, events are not delivered)"}: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`);
   } catch (e) {
     return error(e);
   }
@@ -268,7 +242,7 @@ export async function planStatusText(args: { project: string; name: string }, de
     const total = plan.units.flatMap((u) => u.parts).length;
     const escalations = log.filter((e) => e.event === "escalate").length;
     const lines = [
-      `Plan "${args.name}": ${st.done.length} of ${total} parts done${active.has(path) ? ", run in progress" : ""}.`,
+      `Plan "${args.name}": ${st.done.length} of ${total} parts done.`,
       `Done: ${idList(st.done)}. Running: ${idList(st.running)}. Waiting: ${idList(st.waiting)}. Needs a decision: ${idList(st.needsDecision)}.`,
       `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations.`,
     ];
@@ -327,16 +301,10 @@ export async function queueAdd(args: { project: string; sentence: string; files?
 export async function queueRun(args: { project: string; escalate?: boolean }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     const { repo, store, settings } = await openQueue(args.project, deps);
-    const key = `queue:${repo}`;
-    if (active.has(key)) return fail("The queue is already running; check it with queue_review.");
     const pending = store.list().filter((i) => i.state === (args.escalate ? "cloud" : "pending"));
     if (!pending.length) return text(args.escalate ? "No items are marked for the cloud." : "Nothing is pending.");
     const prov = deps.provider(settings);
-    active.add(key);
-    void deps
-      .startQueue(store, settings, { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, escalate: args.escalate === true }, repo)
-      .catch(() => undefined)
-      .finally(() => active.delete(key));
+    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { parallel: settings.maxParallel ?? prov.cap, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
     return text(`Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`);
   } catch (e) {
     return error(e);
