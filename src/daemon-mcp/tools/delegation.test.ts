@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAI_INSTRUCTIONS } from "../instructions.js";
 import { QueueStore, queueStatePath } from "../../workers/queue.js";
 import { appendRunLog } from "../../workers/plan-runner.js";
+import { planLockPath } from "../../workers/run-lock.js";
 import { runLogPath } from "../../workers/plan.js";
 import {
   planAmend, planRun, planSave, planStatusText, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
@@ -90,6 +91,19 @@ describe("plan_run / plan_status / plan_amend", () => {
       origin: { name: "sess-1" },
     });
     expect(existsSync(join(repo, ".pai/plans/job2/plan.yaml.session"))).toBe(false);
+  });
+  it("plan_status shows a live run and plan_run refuses a second start", async () => {
+    await planSave({ project: "p", name: "job5", plan }, deps);
+    const path = join(repo, ".pai/plans/job5/plan.yaml");
+    appendRunLog(runLogPath(path), { event: "part-start", part: "a" });
+    writeFileSync(planLockPath(path), JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+    const st = text(await planStatusText({ project: "p", name: "job5" }, deps));
+    expect(st).toMatch(new RegExp(`Running since \\d\\d:\\d\\d \\(pid ${process.pid}\\)`));
+    expect(st).toContain("last event: part-start a");
+    const r = await planRun({ project: "p", name: "job5" }, deps);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("already in progress since");
+    expect(detach).not.toHaveBeenCalled();
   });
   it("refuses a dirty checkout", async () => {
     await planSave({ project: "p", name: "job3", plan }, deps);

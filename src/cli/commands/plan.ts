@@ -3,6 +3,7 @@
  * this file declares names, flags and help.
  */
 
+import { planLockPath } from "../../workers/run-lock.js";
 import { existsSync } from "node:fs";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
@@ -64,7 +65,7 @@ const runCmd: CommandDef = {
     if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai plan run PLAN.yaml --escalate sonnet");
     const log = runLogPath(path);
     const { merged, unitsChecked } = resumeState(readRunLog(log));
-    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", merged, unitsChecked };
+    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", merged, unitsChecked, lockPath: planLockPath(resolve(path)) };
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;

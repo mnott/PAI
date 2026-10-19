@@ -5,6 +5,7 @@
  * Everything touching workers, git, shells or the clock goes through QueueDeps.
  */
 
+import { withRunLock, queueLockPath } from "./run-lock.js";
 import { filesOverlap } from "./plan.js";
 import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
@@ -39,7 +40,11 @@ const LOCAL_ATTEMPTS = 2;
 /** Last non-empty stdout line of the proof command: the path (or value) it produced. */
 export const proofValue = (out: string): string => out.trim().split("\n").pop()?.trim() ?? "";
 
-export async function runQueue(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps): Promise<QueueRunSummary> {
+export function runQueue(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps): Promise<QueueRunSummary> {
+  return withRunLock(queueLockPath(store.path), "the queue", () => runQueueLocked(store, settings, opts, deps));
+}
+
+async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps): Promise<QueueRunSummary> {
   const summary: QueueRunSummary = { ready: [], tooBig: [], needsDecision: [] };
   const take = opts.escalate ? "cloud" : "pending";
   const queue = store.list().filter((i) => i.state === take);

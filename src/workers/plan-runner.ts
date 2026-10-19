@@ -8,6 +8,7 @@
  * Everything that touches workers, git or the clock goes through RunnerDeps.
  */
 
+import { withRunLock } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { composeSpec, filesOverlap, type Plan, type PlanPart } from "./plan.js";
 
@@ -98,6 +99,8 @@ export interface RunOptions {
   merged?: ReadonlySet<string>;
   /** Unit ids whose unit_check already passed. */
   unitsChecked?: ReadonlySet<string>;
+  /** Lock file held for the duration of the run (one run per plan). */
+  lockPath?: string;
 }
 
 const TAIL_LINES = 40;
@@ -123,7 +126,11 @@ export function pickStartable(
   return picked;
 }
 
-export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise<RunSummary> {
+export function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise<RunSummary> {
+  return withRunLock(opts.lockPath, `plan ${plan.job}`, () => runPlanLocked(plan, opts, deps));
+}
+
+async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise<RunSummary> {
   const parts = plan.units.flatMap((u) => u.parts);
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);
