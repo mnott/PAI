@@ -25,7 +25,7 @@ import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
-import { emptyLoopState, LOOP_DENY_REASON, stepLoopGuard, type LoopState } from "../lib/loop-guard.js";
+import { emptyLoopState, loopDenyReason, stepLoopGuard, type LoopState } from "../lib/loop-guard.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
@@ -69,10 +69,10 @@ function buildContext(cwd: string): WorkerGuardContext {
   };
 }
 
-/** Per-worker repeat window in <logDir>/loop-guard/<id>.json; true when this call is a loop repeat. */
-function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): boolean {
+/** Per-worker repeat window in <logDir>/loop-guard/<id>.json; deny reason when this call is a loop repeat, else null. */
+function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): string | null {
   const id = currentWorkerId(env, env.PAI_WORKER_LOOP_DIR || undefined);
-  if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return false;
+  if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return null;
   try {
     const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
     const dir = join(logDir, "loop-guard");
@@ -100,9 +100,9 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): boolean {
         input: input.tool_input,
       });
     }
-    return r.deny;
+    return r.deny ? loopDenyReason(!!r.testRun) : null;
   } catch {
-    return false; // a guard fault must never block work
+    return null; // a guard fault must never block work
   }
 }
 
@@ -131,8 +131,9 @@ async function main(): Promise<void> {
     }
   }
 
-  if (loopRepeat(input, process.env)) {
-    process.stdout.write(renderDecision({ decision: "deny", reason: LOOP_DENY_REASON }) + "\n");
+  const loopReason = loopRepeat(input, process.env);
+  if (loopReason) {
+    process.stdout.write(renderDecision({ decision: "deny", reason: loopReason }) + "\n");
     return;
   }
 
