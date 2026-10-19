@@ -4,11 +4,12 @@
  * supervision). Recipe: `nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid`,
  * then `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until exit 0.
  *
- * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours.
+ * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours,
+ * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes).
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadStatus, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
@@ -18,12 +19,20 @@ const POLL_MS = 2000;
 const HEARTBEAT_MS = 20_000;
 /** Slack between the first observation and a process start time (ps lstart has 1 s resolution). */
 const REUSE_SLACK_MS = 2000;
+export const WAIT_KILLED_EXIT = 4;
+export const MAX_MINUTES_DEFAULT = 10;
+export const STALL_MINUTES_DEFAULT = 5;
+const KILL_GRACE_MS = 5000;
 
 export interface WaitOnOpts {
   pid: number;
   log?: string;
   maxSecs?: number;
   tail?: number;
+  /** Hard ceiling on the process's age; still alive then = kill its tree (default 10). */
+  maxMinutes?: number;
+  /** With a log: no growth for this long while alive = kill its tree (default 5). */
+  stallMinutes?: number;
 }
 
 export interface WaitOnDeps {
@@ -38,6 +47,10 @@ export interface WaitOnDeps {
   proc?: (pid: number) => ProcInfo | null;
   /** Record (or, with null, clear) what this worker waits on in its status. */
   mark?: (w: WaitingOn | null) => void;
+  /** Modification time (ms epoch) of a file, null when absent. */
+  logMtime?: (file: string) => number | null;
+  /** SIGTERM the pid and its descendants, SIGKILL the survivors after 5 s. */
+  killTree?: (pid: number) => Promise<void>;
 }
 
 /** A `mark` that writes `waitingOn` into worker `id`'s status file; a no-op for an unknown id. */
@@ -58,6 +71,43 @@ function isZombie(pid: number): boolean {
   }
 }
 
+/** `pid` followed by all its live descendants, parents first (from one `ps` snapshot). */
+export function processTree(pid: number): number[] {
+  let rows: string[] = [];
+  try {
+    rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).split("\n");
+  } catch {
+    return [pid];
+  }
+  const kids = new Map<number, number[]>();
+  for (const r of rows) {
+    const [c, pp] = r.trim().split(/\s+/).map(Number);
+    if (Number.isInteger(c) && Number.isInteger(pp)) kids.set(pp, [...(kids.get(pp) ?? []), c]);
+  }
+  const out = [pid];
+  for (let i = 0; i < out.length; i++) out.push(...(kids.get(out[i]) ?? []).filter((k) => !out.includes(k)));
+  return out;
+}
+
+const running = (pid: number): boolean => pidAlive(pid) && !isZombie(pid);
+
+async function killProcessTree(pid: number, graceMs = KILL_GRACE_MS): Promise<void> {
+  const tree = processTree(pid);
+  const send = (sig: NodeJS.Signals, pids: number[]) => {
+    for (const p of pids) {
+      try {
+        process.kill(p, sig);
+      } catch {
+        /* gone between the snapshot and the signal */
+      }
+    }
+  };
+  send("SIGTERM", tree);
+  const until = Date.now() + graceMs;
+  while (Date.now() < until && tree.some(running)) await new Promise((r) => setTimeout(r, 100));
+  send("SIGKILL", tree.filter(running));
+}
+
 export const realDeps: WaitOnDeps = {
   probe(pid) {
     // kill(0) succeeds on a zombie (exited, parent has not reaped it); that job is finished
@@ -76,6 +126,14 @@ export const realDeps: WaitOnDeps = {
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   out: (l) => console.log(l),
   proc: realProc,
+  logMtime(file) {
+    try {
+      return statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  },
+  killTree: killProcessTree,
 };
 
 const readLines = (file: string | undefined): string[] => {
@@ -91,10 +149,14 @@ function rcOf(pid: number, log?: string): string | null {
   return null;
 }
 
+const fmtMinutes = (ms: number): string => `${Math.round((ms / 60_000) * 100) / 100}m`;
+
 export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<number> {
   const maxMs = Math.min(o.maxSecs ?? WAIT_DEFAULT_SECS, WAIT_CAP_SECS) * 1000;
   const tail = o.tail ?? 20;
   const t0 = d.now();
+  const ceilMs = (o.maxMinutes ?? MAX_MINUTES_DEFAULT) * 60_000;
+  const stallMs = (o.stallMinutes ?? STALL_MINUTES_DEFAULT) * 60_000;
   const baseLines = readLines(o.log).length;
 
   let ranSince: number | null = null;
@@ -128,10 +190,21 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   d.mark?.({ pid: o.pid, cmd: p?.cmd ?? "", startedAt: p?.startedAt ?? null, log: o.log ?? null });
   try {
     let nextBeat = t0 + HEARTBEAT_MS;
+    // The ceiling counts from the process start, so it holds across repeated wait-on calls.
+    const born = ranSince ?? t0;
+    const killed = async (why: string): Promise<number> => {
+      await d.killTree?.(o.pid);
+      d.out(`wait-on: pid ${o.pid} ${why}, killed process tree; likely hang or infinite loop`);
+      if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
+      return WAIT_KILLED_EXIT;
+    };
     while (d.now() - t0 < maxMs) {
       await d.sleep(Math.min(POLL_MS, Math.max(0, maxMs - (d.now() - t0))));
       const st = d.startTime(o.pid);
       if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
+      if (d.now() - born >= ceilMs) return await killed(`still running after ${fmtMinutes(ceilMs)}`);
+      const m = o.log ? d.logMtime?.(o.log) : null;
+      if (m != null && d.now() - Math.max(m, born) >= stallMs) return await killed(`no output for ${fmtMinutes(stallMs)}`);
       if (d.now() >= nextBeat) {
         d.out(`running ${Math.round((d.now() - t0) / 1000)}s, log +${readLines(o.log).length - baseLines} lines`);
         nextBeat += HEARTBEAT_MS;
