@@ -665,7 +665,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       origin: "spawn",
       outputFormat: task.outputFormat,
       ...(task.maxMinutes ? { deadlineAt: t0 + task.maxMinutes * 60_000, maxMinutes: task.maxMinutes } : {}),
-      pool: { task: taskNo, slotSession: session.record.claudeSession, hostPid: process.pid, ...(prep ? { slot: prep.dir } : {}) },
+      ...(task.parent ? { parent: task.parent } : {}),
+      ...(task.stage ? { stage: task.stage } : {}),
+      pool: {
+        task: taskNo,
+        slotSession: session.record.claudeSession,
+        hostPid: process.pid,
+        ...(task.clientPid ? { clientPid: task.clientPid } : {}),
+        ...(prep ? { slot: prep.dir } : {}),
+      },
       ...(prep ? { branch: prep.branch, worktreeDir: prep.dir, worktreeBase: prep.base, worktreeSnapshot: false } : {}),
     };
     saveStatus(logDir, status);

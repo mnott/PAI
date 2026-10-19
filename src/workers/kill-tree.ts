@@ -57,14 +57,18 @@ export function descendantsLeavesFirst(statuses: WorkerStatus[], id: string): Wo
   return out.sort((a, b) => b.depth - a.depth).map((x) => x.s);
 }
 
-async function killOne(logDir: string, status: WorkerStatus, d: KillTreeDeps): Promise<string> {
-  const id = status.id;
+async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps): Promise<string> {
+  const id = recorded.id;
+  // A pooled task's `pid` is the shared slot process; the process to end is its `pai worker run` client,
+  // whose disconnect makes the pool host cancel the task and write the terminal status.
+  const clientPid = recorded.pool?.clientPid;
+  const status: WorkerStatus = clientPid ? { ...recorded, pid: clientPid } : recorded;
   if (!status.pid || status.pid <= 0) return `skipped worker ${id}: no pid recorded`;
   if (!d.owns(status)) {
-    status.state = "lost";
-    status.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
-    status.rc = null;
-    saveStatus(logDir, status);
+    recorded.state = "lost";
+    recorded.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
+    recorded.rc = null;
+    saveStatus(logDir, recorded);
     return `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`;
   }
   d.request(logDir, ledgerPath(logDir), id);
@@ -91,7 +95,7 @@ async function killOne(logDir: string, status: WorkerStatus, d: KillTreeDeps): P
     }
   }
   if (!selfReported) {
-    const latest = loadStatus(logDir, id) ?? status;
+    const latest = loadStatus(logDir, id) ?? recorded;
     if (latest.state === "running") {
       latest.state = "killed";
       latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);

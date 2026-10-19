@@ -93,6 +93,18 @@ describe("killTree", () => {
     expect(loadStatus(dir, "w3")!.state).toBe("done");
   });
 
+  it("ends a pooled child through its client pid, not the shared slot pid; non-pooled child as before", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-tree-"));
+    mk(dir, "w1", 1);
+    mk(dir, "w5", 99, { parent: "w1", pool: { task: 1, slotSession: null, hostPid: 77, clientPid: 5 } });
+    mk(dir, "w3", 3, { parent: "w1" });
+    const f = fakes(dir);
+    const lines = await killTree(dir, "w1", { deps: f.deps });
+    expect([...f.signalled].sort()).toEqual(["w1", "w3", "w5"]); // pid 5, never the slot pid 99
+    expect(lines.join("\n")).not.toContain("pid 99");
+    for (const id of ["w1", "w3", "w5"]) expect(loadStatus(dir, id)!.state).toBe("killed");
+  });
+
   it("skipRoot ends only the descendants", async () => {
     const dir = tree();
     const f = fakes(dir);

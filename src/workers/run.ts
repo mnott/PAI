@@ -1390,6 +1390,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         specPath: a.specPath,
         parent: a.parent,
         stage: a.stage,
+        clientPid: process.pid,
         reportFormat: a.reportFormat,
         outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
         maxMinutes: limitMinutes,
