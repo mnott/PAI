@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestorTty, resolveHostSession, type HostDeps, type ItermSession } from "./pane.js";
+import { ancestorTty, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
 
 const LIVE = "88D76B26-0000-0000-0000-000000000001";
 const DEAD = "78C67D79-0000-0000-0000-000000000002";
@@ -106,5 +106,33 @@ describe("ancestorTty", () => {
   });
   it("null when the whole chain is ??", () => {
     expect(ancestorTty(deps({ 500: [400, "??"], 400: [1, "??"] }, []), 500)).toBeNull();
+  });
+});
+
+describe("resolveHostSession: bg-pty-host without a jobPid match", () => {
+  const sess = [attachSession(LIVE, 900), attachSession(DEAD, 111)];
+  const base = (extra: Partial<HostDeps>): HostDeps => ({ ...deps(bgChain, sess, { ...bgCmds, 900: "-zsh", 111: "-zsh" }), ...extra });
+
+  it("resolves via the attach client's ITERM_SESSION_ID", async () => {
+    const d = base({ attachClients: () => [4242], itermIdOf: (pid) => (pid === 4242 ? `w5t0p0:${LIVE}` : "") });
+    expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "attach client 4242" });
+  });
+
+  it("resolves via the AIBroker registry", async () => {
+    const d = base({ attachClients: () => [], registryHost: (cid) => (cid.startsWith(SHORT) ? LIVE : "") });
+    expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "registry" });
+  });
+
+  it("nothing found -> no host, reasons listed", async () => {
+    const d = base({ attachClients: () => [4242], itermIdOf: () => "", registryHost: () => "" });
+    const h = await resolveHostSession({}, d, 75840);
+    expect(h).toMatchObject({ uid: "", via: "none" });
+    expect(h.reason).toContain("attach client:");
+    expect(h.reason).toContain("registry:");
+  });
+
+  it("underBackgroundDaemon sees the bg-pty-host ancestor", () => {
+    expect(underBackgroundDaemon(base({}), 75840)).toBe(true);
+    expect(underBackgroundDaemon(deps(chain, [], {}), 500)).toBe(false);
   });
 });

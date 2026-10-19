@@ -111,3 +111,16 @@ describe("openVerifiedPane placement", () => {
     expect(s.placed).toEqual([]);
   });
 });
+
+describe("openVerifiedPane without any host", () => {
+  const bare = (daemon: boolean) => openVerifiedPane(dir, config, "w-none", "", {}, ops, { ...seam({ split: "ok" }), daemon: () => daemon });
+  it("refuses with the daemon reason under the Claude background daemon", async () => {
+    await expect(bare(true)).rejects.toThrow(/neither TMUX nor ITERM_SESSION_ID is set.*runs under the Claude background daemon; no attached terminal found/);
+  });
+  it("keeps the plain refusal elsewhere", async () => {
+    await expect(bare(false)).rejects.not.toThrow(/background daemon/);
+  });
+  it("a resolved host without ITERM_SESSION_ID is accepted", async () => {
+    await expect(openVerifiedPane(dir, config, "w-res", TERM, {}, ops, seam({ split: "ok" }))).resolves.toContain("S1");
+  });
+});

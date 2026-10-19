@@ -794,6 +794,12 @@ export interface HostDeps {
   commandsOf(pids: number[]): Map<number, string>;
   /** Every open iTerm session. Empty when iTerm is not running; rejects when the listing fails. */
   listSessions(): Promise<ItermSession[]>;
+  /** Pids of `claude attach <id>` client processes for a Claude session (short or full id). */
+  attachClients?(cid: string): number[];
+  /** ITERM_SESSION_ID in a process's environment, "" when unreadable or unset. */
+  itermIdOf?(pid: number): string;
+  /** iTerm session uid the AIBroker registry records for a Claude session id, "" when none. */
+  registryHost?(cid: string): string;
 }
 
 export const realHostDeps: HostDeps = {
@@ -831,7 +837,47 @@ export const realHostDeps: HostDeps = {
     if (process.platform !== "darwin") return [];
     return listItermSessions(); // rejects on failure: resolveHostSession reports why
   },
+  attachClients(cid) {
+    const short = cid.slice(0, 8);
+    const re = new RegExp(`\\battach\\s+(${short}|${cid})\\b`, "i");
+    let out = "";
+    try {
+      out = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, maxBuffer: 32 << 20 });
+    } catch {
+      return [];
+    }
+    return out.split("\n").flatMap((l) => {
+      const r = /^\s*(\d+)\s+(.*)$/.exec(l);
+      return r && re.test(r[2]) && !/--bg-pty-host/.test(r[2]) ? [Number(r[1])] : [];
+    });
+  },
+  itermIdOf(pid) {
+    try {
+      const out = execFileSync("ps", ["eww", "-o", "command=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
+      return /\bITERM_SESSION_ID=(\S+)/.exec(out)?.[1] ?? "";
+    } catch {
+      return "";
+    }
+  },
+  registryHost(cid) {
+    try {
+      const dir = join(homedir(), ".aibroker");
+      const entries = (JSON.parse(readFileSync(join(dir, "session-restore.json"), "utf8")) as { entries?: Record<string, unknown>[] }).entries ?? [];
+      const hit = entries.find((e) => [e.claudeSessionId, e.sessionId].some((v) => typeof v === "string" && (v === cid || v.startsWith(cid))));
+      if (!hit || typeof hit.name !== "string") return "";
+      const names = JSON.parse(readFileSync(join(dir, "session-names.json"), "utf8")) as Record<string, unknown>;
+      return Object.keys(names).find((k) => names[k] === hit.name) ?? "";
+    } catch {
+      return "";
+    }
+  },
 };
+
+/** True when the process chain from `start` passes a `--bg-pty-host` process: a session under the Claude background daemon. */
+export function underBackgroundDaemon(deps: HostDeps = realHostDeps, start: number = process.pid): boolean {
+  const cmds = deps.commandsOf(ancestorPids(deps, start));
+  return [...cmds.values()].some((c) => /--bg-pty-host\b/.test(c));
+}
 
 /** Pids from `start` up through its parents (self included), stopping at init or an unknown pid. */
 function ancestorPids(deps: HostDeps, start: number): number[] {
@@ -922,6 +968,16 @@ export async function resolveHostSession(
     const why = hits.length ? `ambiguous, ${hits.length} sessions run attach ${short}: ${hits.map((s) => s.id).join(", ")}` : `no session runs attach ${short}`;
     if (hits.length) return { uid: "", term: "", via: "none", reason: [...notes, `attach: ${why}`].join("; ") };
     notes.push(`attach: ${why}`);
+    for (const pid of deps.attachClients?.(cid) ?? []) {
+      const uid = itermUuid(deps.itermIdOf?.(pid) ?? "");
+      const live = uid && sessions.find((s) => s.id === uid);
+      if (live) return found(live, `attach client ${pid}`);
+    }
+    notes.push("attach client: no attach process with a live ITERM_SESSION_ID");
+    const reg = deps.registryHost?.(cid) ?? "";
+    const regLive = reg && sessions.find((s) => s.id === reg);
+    if (regLive) return found(regLive, "registry");
+    notes.push("registry: no AIBroker entry for this Claude session");
   } else {
     notes.push("attach: no Claude session id in env or ancestors");
   }
@@ -1305,6 +1361,7 @@ export interface PaneSeam {
   verify?: typeof verifyPane;
   place?: typeof openPlaced;
   hostSelected?: (hostUid: string) => Promise<boolean>;
+  daemon?: () => boolean;
 }
 
 /**
@@ -1332,8 +1389,13 @@ export async function openVerifiedPane(
   }
   const envUid = itermUuid(env.ITERM_SESSION_ID ?? "");
   const hostUid = itermUuid(term);
-  if (!envUid) throw new Error("neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees");
-  if (envUid !== hostUid) {
+  if (!envUid && !hostUid) {
+    const daemon = (seam.daemon ?? (() => underBackgroundDaemon()))();
+    throw new Error(
+      `neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees${daemon ? " (runs under the Claude background daemon; no attached terminal found)" : ""}`
+    );
+  }
+  if (envUid && envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
   }
   // a split in a background tab is invisible: use a new window instead
