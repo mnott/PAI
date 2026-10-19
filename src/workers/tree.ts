@@ -18,6 +18,7 @@
  */
 
 import type { WorkersTreeConfig } from "./config.js";
+import { currentWorkerId } from "./worker-id.js";
 import { isLive, loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 
 /** The env var the runner sets in every worker's environment. */
@@ -25,7 +26,7 @@ export const WORKER_ID_ENV = "PAI_WORKER_ID";
 
 /** The worker this process runs inside, when it runs inside one. */
 export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
-  const id = env[WORKER_ID_ENV];
+  const id = currentWorkerId(env);
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
