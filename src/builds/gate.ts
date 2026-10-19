@@ -7,6 +7,8 @@
  * group, a parent-death poll covers a vanished shell, and a detached watcher
  * covers a SIGKILLed gate. A command run from inside another gated build
  * (PAI_BUILD_TICKET set, e.g. a door called by `pai build run`) just runs.
+ * A test-kind job (simulator/device runs) draws from its own pool of slots and
+ * shuts down the simulators it booted when it ends.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -20,16 +22,23 @@ import {
   patchTicket,
   removeTicket,
   tryStart,
+  type BuildKind,
   type BuildTicket,
   type QueueDeps,
 } from "./queue.js";
+import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
 
 export interface RunBuildOptions {
   dir: string;
   command: string[];
   full?: boolean;
   label?: string;
+  /** Pool the job draws from (default "build"). */
+  kind?: BuildKind;
+  /** Slots of that pool. */
   slots: number;
+  /** simctl runner for the test-kind simulator cleanup (default: real `xcrun simctl`). */
+  simctl?: Simctl;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
   /** Poll interval while waiting for a slot. */
@@ -72,10 +81,11 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   // A door that calls `pai build lock` from inside `pai build run` already holds the slot.
   if (env.PAI_BUILD_TICKET) return exec(wrap(o.command), { ...childEnv }, cwd, null, o, undefined);
 
+  const kind: BuildKind = o.kind ?? "build";
   const label = o.label || o.command.slice(0, 2).join(" ");
   const ticket = await enqueue(
     o.dir,
-    { pid: process.pid, label, session: sessionName(env, cwd), worker: env.PAI_WORKER_ID, cmd: o.command.join(" "), mode },
+    { pid: process.pid, label, session: sessionName(env, cwd), worker: env.PAI_WORKER_ID, cmd: o.command.join(" "), mode, kind },
     o.deps
   );
   o.spawnWatcher?.(o.dir, ticket.id);
@@ -125,6 +135,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       }
       await new Promise((r) => setTimeout(r, poll));
     }
+    if (kind === "test") await patchTicket(o.dir, ticket.id, { bootedBefore: bootedSimulators(o.simctl) });
     out(`build started: ${label} (${mode}) — log ${buildLogPath(o.dir, ticket.id)}`);
     const code = await exec(wrap(o.command), { ...childEnv, PAI_BUILD_TICKET: ticket.id }, cwd, ticket, o, (c) => {
       child = c;
@@ -133,6 +144,10 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     return aborted ? 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15) : code;
   } finally {
     clearInterval(watch);
+    if (kind === "test") {
+      const t = await getTicket(o.dir, ticket.id);
+      if (t?.bootedBefore) shutdownAdded(t.bootedBefore, o.simctl);
+    }
     if (o.handleSignals) for (const s of sigs) process.off(s, onSig);
     await removeTicket(o.dir, ticket.id);
   }
@@ -180,14 +195,15 @@ function exec(
   });
 }
 
-/** Detached-watcher body: kill the build tree and drop the ticket once the gate process is gone. */
-export async function watchTicket(dir: string, id: string, deps: Partial<QueueDeps> = {}, intervalMs = 1000): Promise<void> {
+/** Detached-watcher body: kill the build tree, drop the ticket and shut down the simulators a test job booted once the gate process is gone. */
+export async function watchTicket(dir: string, id: string, deps: Partial<QueueDeps> = {}, intervalMs = 1000, simctl?: Simctl): Promise<void> {
   const isAlive = deps.isAlive ?? ((pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } });
   for (;;) {
     const t = await getTicket(dir, id);
     if (!t) return;
     if (!isAlive(t.pid)) {
       await listBuilds(dir, deps); // prune kills the group and removes the ticket
+      if (t.kind === "test" && t.bootedBefore) shutdownAdded(t.bootedBefore, simctl);
       return;
     }
     await new Promise((r) => setTimeout(r, intervalMs));

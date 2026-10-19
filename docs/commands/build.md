@@ -8,7 +8,7 @@ One machine-wide build queue: run, lock, queue, next, doctor
 pai build <command>
 ```
 
-Heavy builds (xcodebuild, simulator tests, swift/gradle/cargo build or test) run one at a time machine-wide, FIFO, at low priority, deltas by default. Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.
+Heavy builds (xcodebuild, swift/gradle/cargo build or test) run machine-wide through builds.slots slots, simulator/device test runs through their own builds.testSlots slots, FIFO, at low priority, deltas by default. Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.
 
 ```sh
 pai build run -- xcodebuild -scheme App build
@@ -23,15 +23,17 @@ Run a build command under the machine-wide build queue
 pai build run [options]
 ```
 
-Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked.
+Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--full` | flag | — | Full build (PAI_BUILD_MODE=full): releases only, or when asked |
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
+| `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
 
 ```sh
 pai build run -- xcodebuild -scheme App build
+pai build run --kind test -- xcodebuild -scheme App test
 pai build run --full --label release -- tools/build.sh
 ```
 
@@ -51,6 +53,7 @@ A door script (registered in .pai/builds.yaml) wraps its real command in this: `
 |---|---|---|---|
 | `--full` | flag | — | Full build (PAI_BUILD_MODE=full): releases only, or when asked |
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
+| `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
 
 ```sh
 pai build lock -- xcodebuild -scheme App test
@@ -60,13 +63,13 @@ See also: `pai build run`, `pai build doctor`
 
 ### pai build queue
 
-Show the running and waiting builds
+Show the running and waiting builds and tests
 
 ```
 pai build queue
 ```
 
-Lists the builds holding a slot and those waiting, in start order.
+Lists, per pool (builds, tests), the jobs holding a slot and those waiting, in start order.
 
 ```sh
 pai build queue
@@ -133,7 +136,7 @@ pai build watch DIR ID
 |---|---|
 | `pai build run` | Run a build command under the machine-wide build queue |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
-| `pai build queue` | Show the running and waiting builds |
+| `pai build queue` | Show the running and waiting builds and tests |
 | `pai build next` | Give a waiting build the next free slot |
 | `pai build doctor` | Check the project's registered build doors |
 | `pai build watch` | Internal: kill a build tree when its gate process dies |

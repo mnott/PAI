@@ -431,8 +431,12 @@ function renderQueue(q){
   out.push(block(esc(s)+((q.sessionMax||{})[s]?' <span class="dim">max '+q.sessionMax[s]+' at a time</span> ':'')+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
  });
  if(bhas){
-  var brow=bq.running.map(function(b){return'<tr><td style="text-align:right"></td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">running</td><td style="text-align:right">'+qdur(b.ageSec)+'</td></tr>'}).concat(bq.waiting.map(function(b){return'<tr><td style="text-align:right">'+b.position+'</td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">waiting</td><td style="text-align:right">'+qdur(b.waitedSec)+'</td></tr>'}));
-  out.unshift(block('builds ('+bq.slots+' slot'+(bq.slots===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
+  [["test","tests",bq.testSlots],["build","builds",bq.slots]].forEach(function(P){
+   var run=bq.running.filter(function(b){return b.kind===P[0]}),wt=bq.waiting.filter(function(b){return b.kind===P[0]});
+   if(!run.length&&!wt.length)return;
+   var brow=run.map(function(b){return'<tr><td style="text-align:right"></td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">running</td><td style="text-align:right">'+qdur(b.ageSec)+'</td></tr>'}).concat(wt.map(function(b,i){return'<tr><td style="text-align:right">'+(i+1)+'</td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">waiting</td><td style="text-align:right">'+qdur(b.waitedSec)+'</td></tr>'}));
+   out.unshift(block(P[1]+' ('+P[2]+' slot'+(P[2]===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
+  });
  }
  el.innerHTML=out.join("")+wt;
  function post(verb,body){

@@ -3,8 +3,9 @@
  *
  * One ticket file per build in <dir>/tickets, written under a short mkdir
  * mutex. A ticket is "waiting" or "running"; the running ones hold the slots
- * (config `builds.slots`, default 1), the waiting ones start in `seq` order
- * (FIFO; `next` gives one the lowest seq). A ticket whose gate process is
+ * (config `builds.slots`, default 1; test-kind tickets have their own pool,
+ * `builds.testSlots`), the waiting ones start in `seq` order within their
+ * pool (FIFO; `next` gives one the lowest seq). A ticket whose gate process is
  * gone is pruned by whoever looks next, and the build tree it left behind is
  * killed, so a SIGKILLed caller cannot keep the lock.
  */
@@ -12,9 +13,19 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TEST_SLOTS } from "./config.js";
+
+/** Which pool a ticket draws from: compiling ("build") or simulator/device test runs ("test"). */
+export type BuildKind = "build" | "test";
+
+export const ticketKind = (t: Pick<BuildTicket, "kind">): BuildKind => t.kind ?? "build";
 
 export interface BuildTicket {
   id: string;
+  /** Pool of the ticket; absent means "build". */
+  kind?: BuildKind;
+  /** Simulators already booted when a test job started (so only the ones it added get shut down). */
+  bootedBefore?: string[];
   /** The gate process (`pai build run|lock`) that owns this ticket. */
   pid: number;
   label: string;
@@ -154,7 +165,7 @@ export async function listBuilds(dir: string, d: Partial<QueueDeps> = {}): Promi
 
 export async function enqueue(
   dir: string,
-  info: Pick<BuildTicket, "pid" | "label" | "session" | "cmd" | "mode"> & { worker?: string },
+  info: Pick<BuildTicket, "pid" | "label" | "session" | "cmd" | "mode"> & { worker?: string; kind?: BuildKind },
   d: Partial<QueueDeps> = {}
 ): Promise<BuildTicket> {
   const deps = { ...defaultDeps(), ...d };
@@ -179,9 +190,11 @@ export async function tryStart(dir: string, id: string, slots: number, d: Partia
     const me = all.find((t) => t.id === id);
     if (!me) throw new Error(`build ${id} is not queued any more`);
     if (me.state === "running") return true;
-    const free = slots - all.filter((t) => t.state === "running").length;
+    const kind = ticketKind(me);
+    const pool = all.filter((t) => ticketKind(t) === kind);
+    const free = slots - pool.filter((t) => t.state === "running").length;
     if (free <= 0) return false;
-    const first = all.filter((t) => t.state === "waiting").sort((a, b) => a.seq - b.seq).slice(0, free);
+    const first = pool.filter((t) => t.state === "waiting").sort((a, b) => a.seq - b.seq).slice(0, free);
     if (!first.some((t) => t.id === id)) return false;
     writeTicket(dir, { ...me, state: "running", startedAt: deps.now() });
     return true;
@@ -238,18 +251,30 @@ const mins = (ms: number): string => {
   return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m`;
 };
 
-/** The text `pai build queue` and `pai worker ps` print. */
-export function renderBuildQueue(tickets: BuildTicket[], slots: number, now = Date.now()): string {
-  const head = `builds (${slots} slot${slots === 1 ? "" : "s"})`;
-  if (!tickets.length) return `${head}: nothing running or waiting`;
-  const lines = [head];
-  let pos = 0;
-  for (const t of tickets) {
-    const mode = t.mode === "full" ? " [full]" : "";
-    if (t.state === "running") lines.push(`  running  ${t.label}${mode} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}  ${t.id}`);
-    else lines.push(`  ${++pos}. waiting ${t.label}${mode} — ${t.session}, ${mins(now - t.enqueuedAt)}  ${t.id}`);
-  }
-  return lines.join("\n");
+/** Slot counts of both pools. */
+export interface PoolSlots {
+  build: number;
+  test: number;
+}
+
+/** The text `pai build queue` and `pai worker ps` print: one block per pool. */
+export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlots, testSlots?: number, now = Date.now()): string {
+  const pools: PoolSlots = typeof slots === "number" ? { build: slots, test: testSlots ?? DEFAULT_TEST_SLOTS } : slots;
+  const plural = (n: number): string => `${n} slot${n === 1 ? "" : "s"}`;
+  const block = (kind: BuildKind, name: string, n: number): string => {
+    const head = `${name} (${plural(n)})`;
+    const mine = tickets.filter((t) => ticketKind(t) === kind);
+    if (!mine.length) return `${head}: nothing running or waiting`;
+    const lines = [head];
+    let pos = 0;
+    for (const t of mine) {
+      const mode = t.mode === "full" ? " [full]" : "";
+      if (t.state === "running") lines.push(`  running  ${t.label}${mode} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}  ${t.id}`);
+      else lines.push(`  ${++pos}. waiting ${t.label}${mode} — ${t.session}, ${mins(now - t.enqueuedAt)}  ${t.id}`);
+    }
+    return lines.join("\n");
+  };
+  return [block("build", "builds", pools.build), block("test", "tests", pools.test)].join("\n");
 }
 
 /** Read-only, lock-free view for `pai worker ps` and the cockpit: live tickets only, nothing pruned. */
