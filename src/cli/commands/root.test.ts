@@ -224,12 +224,12 @@ describe("local setup rows", () => {
     const s0 = await localState(c as never, async () => false);
     expect(s0.resolved).toBeUndefined();
     expect(rows(c, s0.down)).toEqual([]);
-    expect(builtinSetups(c, s0.down).map((s) => s.name)).toEqual(["anthropic only"]);
+    expect(builtinSetups(c, s0.down).map((s) => s.name)).toEqual(["anthropic only", "anthropic + haiku workers"]);
   });
   it("saved setups stay as they are", () => {
     const c = lcfg({ a: local(8000) });
     const saved = [{ name: "mine", orchestrator: { provider: "anthropic" }, workers: "a", kind: "saved" as const }];
-    expect(allSetups(c, null, saved, new Set(), "a").map((s) => s.name)).toEqual(["mine", "anthropic only", "anthropic + local workers"]);
+    expect(allSetups(c, null, saved, new Set(), "a").map((s) => s.name)).toEqual(["mine", "anthropic only", "anthropic + haiku workers", "anthropic + local workers"]);
   });
 });
 
