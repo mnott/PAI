@@ -163,6 +163,20 @@ describe("render and cache", () => {
     expect(text).toContain("duplicates: embedding runs on 2 runtimes");
   });
 
+  it("loaded models sort first, installed-only after, stopped runtimes last", () => {
+    const mk = (model: string, loaded: boolean) => ({ model, kind: "chat" as const, loaded, usedBy: [] });
+    const rows = inventoryRows({
+      at: "x",
+      duplicates: [],
+      runtimes: [
+        { name: "stopped-rt", kind: "ollama", status: "stopped", models: [], users: [] },
+        { name: "idle-rt", kind: "docker-model-runner", status: "idle", models: [mk("idle-m", false)], users: [] },
+        { name: "live-rt", kind: "ollama", status: "running", models: [mk("cold-m", false), mk("hot-m", true)], users: [] },
+      ],
+    } as never);
+    expect(rows.map((r) => r[0] + ":" + r[2])).toEqual(["live-rt:hot-m", "live-rt:cold-m (installed)", "idle-rt:idle-m (installed)", "stopped-rt:-"]);
+  });
+
   it("cache round-trips while fresh", async () => {
     const dir = mkdtempSync(join(tmpdir(), "inv-"));
     const inv = await computeInventory(input(), deps(), new Date(1_000_000));

@@ -437,10 +437,11 @@ export const fmtMem = (m?: number): string => (m == null ? "-" : m >= 1024 ? `${
 export const fmtMemMapped = (m: { memoryMb?: number; mappedMb?: number }): string =>
   m.mappedMb ? `${fmtMem(m.memoryMb)} (+${fmtMem(m.mappedMb).replace(/\.0 /, " ")} file mapped)` : fmtMem(m.memoryMb);
 
-/** One row per model (a runtime with no models gets one row); stopped runtimes are listed after the running ones. */
+/** One row per model (a runtime with no models gets one row); loaded models come first, then installed-only ones, stopped runtimes last. */
 export function inventoryRows(inv: ModelInventory): string[][] {
   const rows: string[][] = [];
-  const ordered = [...inv.runtimes].sort((a, b) => Number(b.status === "running") - Number(a.status === "running"));
+  const rank = (r: InventoryRuntime): number => (r.status === "stopped" ? 2 : r.models.some((m) => m.loaded) ? 0 : 1);
+  const ordered = [...inv.runtimes].sort((a, b) => rank(a) - rank(b));
   for (const r of ordered) {
     const port = r.port != null ? String(r.port) : "-";
     if (r.status === "stopped") {
@@ -451,7 +452,7 @@ export function inventoryRows(inv: ModelInventory): string[][] {
     const status = r.status === "idle" ? "idle (not loaded)" : r.status;
     const notServed = (r.notServed ?? []).map((n) => `${n} (not served)`);
     if (!r.models.length) rows.push([r.name, status, "-", "-", "-", [...r.users, ...notServed].join(", ") || "-", port]);
-    for (const m of r.models) {
+    for (const m of [...r.models].sort((a, b) => Number(b.loaded) - Number(a.loaded))) {
       rows.push([
         r.name,
         status,

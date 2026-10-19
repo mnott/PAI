@@ -67,7 +67,7 @@ svg text{fill:var(--dim);font-size:10px}
 <section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
-<section class="card c12"><h2>Models — in use<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
+<section class="card c12"><h2>Models — loaded<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
 <section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
@@ -139,23 +139,30 @@ function renderLimits(){
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var mdl=null;
-/** Models tile: only models in use or loaded by default; the rest fold into one line with their size on disk. */
+/** Models tile: only loaded models (they hold memory) as rows; not-loaded models and stopped runtimes fold into one dim line, expandable to the full rows. */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  function mem(m){return m==null?"-":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
- var inuse=[],other=[],gb=0;
+ var live=[],idle=[],stopped=[];
  inv.runtimes.forEach(function(r){
+  if(r.status==="stopped"){stopped.push(r);return}
   r.models.forEach(function(m){
-   var used=m.usedBy.length>0||(r.status==="running"&&r.models.length===1&&r.users.length>0);
-   if(used||m.loaded)inuse.push([esc(m.model),esc(r.name)+(r.status==="idle"?' <span class="dim">(idle)</span>':""),esc(m.kind),esc((m.usedBy.length?m.usedBy:r.users).concat(m===r.models[0]?(r.notServed||[]).map(function(n){return n+" (not served)"}):[]).join(", ")||"-"),m.loaded?mem(m.memoryMb)+(m.mappedMb?" (+"+mem(m.mappedMb).replace(".0 "," ")+" file mapped)":""):'<span class="dim">on disk</span>']);
-   else{other.push([esc(r.name),esc(m.model),esc(m.kind),mem(m.sizeMb)]);gb+=m.sizeMb||0}
+   var users=esc((m.usedBy.length?m.usedBy:r.models.length===1?r.users:[]).concat(m===r.models[0]?(r.notServed||[]).map(function(n){return n+" (not served)"}):[]).join(", ")||"-");
+   if(m.loaded)live.push([esc(m.model),esc(r.name),esc(m.kind),users,mem(m.memoryMb)+(m.mappedMb?" (+"+mem(m.mappedMb).replace(".0 "," ")+" file mapped)":"")]);
+   else idle.push([esc(r.name),esc(m.model),esc(m.kind),users,mem(m.sizeMb)]);
   });
  });
- var h=inuse.length?table(["model","runtime","kind","used by","loaded (memory, or on disk)"],inuse):'<span class="dim">no model in use or loaded</span>';
- if(other.length)h+='<details class="downs"><summary>'+other.length+' other installed model'+(other.length===1?'':'s')+', '+(gb/1024).toFixed(1)+' GB on disk — not used by anything</summary>'+table(["runtime","model","kind","size on disk"],other)+'</details>';
+ var h=live.length?table(["model","runtime","kind","used by","memory"],live):'<span class="dim">no model loaded</span>';
+ var parts=[];
+ if(idle.length)parts.push("not loaded: "+idle.map(function(o){return o[1]+" "+o[2]+" ("+o[0]+")"}).join(", "));
+ if(stopped.length)parts.push("stopped: "+stopped.map(function(r){return r.name}).join(", "));
+ if(parts.length){
+  h+='<details class="downs dim"><summary>'+parts.join(" · ")+'</summary>';
+  if(idle.length)h+=table(["runtime","model","kind","used by","size on disk"],idle);
+  if(stopped.length)h+=stopped.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ");
+  h+='</details>';
+ }
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
- var dn=inv.runtimes.filter(function(r){return r.status==="stopped"&&r.users.length});
- if(dn.length)h+='<details class="downs"><summary>'+dn.length+' runtime'+(dn.length===1?'':'s')+' stopped</summary>'+dn.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ")+'</details>';
  return h;
 }
 function renderModels(){
