@@ -23,6 +23,7 @@ import { renderDecision } from "../lib/render-decision.js";
 import { mainSessionBashReason } from "../lib/main-session-git-gate.js";
 import { modelServerReason } from "../lib/model-server-guard.js";
 import { cachedLocalAnswer } from "../lib/local-answer.js";
+import { buildGateReason } from "../lib/build-gate.js";
 import { raiseWaitTimeout } from "../lib/wait-timeout.js";
 
 function allow(): void {
@@ -53,6 +54,11 @@ async function main(): Promise<void> {
   const command = input.tool_input?.command;
   if (process.env.PAI_WORKER !== "1" && typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
     const why = mainSessionBashReason(command, (input as { cwd?: string }).cwd ?? process.cwd());
+    if (why) return deny(why);
+  }
+  // sessions and workers alike: heavy builders only through the machine-wide queue
+  if (typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
+    const why = buildGateReason(command, (input as { cwd?: string }).cwd ?? process.cwd());
     if (why) return deny(why);
   }
   // sessions and workers alike: the operator starts model servers, PAI answers which one runs
