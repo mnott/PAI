@@ -71,7 +71,9 @@ import { detectCurrentModel } from "./launch.js";
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { decideEndReason, endFields, parentInfo, type EndInfo } from "./endreason.js";
-import { takeLoopStop } from "./loop-stop.js";
+import { peekLoopStop, takeLoopStop } from "./loop-stop.js";
+import { TroubleWatcher } from "./worker-trouble.js";
+import { reportOrigin, runMessenger } from "./run-report-wiring.js";
 import {
   ensureNoMcpConfig,
   eventsPath,
@@ -143,7 +145,7 @@ import {
   type BashRun,
   type WorkerReport,
 } from "./report.js";
-import { recordDenial } from "./denials.js";
+import { parseDenialText, recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
 import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
@@ -1980,6 +1982,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // every Bash call + outcome, and the untracked files present at spawn: the
   // end-of-run proof check (checkProof) and stray-file listing read these
   const bashRuns: BashRun[] = [];
+  let trouble: TroubleWatcher | undefined;
+  let troubleTimer: ReturnType<typeof setInterval> | undefined;
   const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
   if (headless) {
@@ -1991,12 +1995,19 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         /* child died instantly; the close handler reports it */
       }
     }
+    const origin = reportOrigin();
+    if (origin) {
+      trouble = new TroubleWatcher(wid, label, runMessenger(logDir), origin);
+      troubleTimer = setInterval(() => trouble?.tick(), 60_000);
+      troubleTimer.unref();
+    }
     eventsFd = openSync(eventsPath(logDir, wid), "a");
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
     if (addendum) writeEvent({ type: "contract-addendum", text: `${addendum.path} sha ${addendum.sha}`, sha: addendum.sha });
     const rl = createInterface({ input: proc.stdout! });
     const toolUses = new Map<string, { name: string; input: unknown }>();
     rl.on("line", (line) => {
+      trouble?.activity();
       if (parsed.outputFormat === "stream-json") {
         process.stdout.write(line + "\n");
       }
@@ -2049,7 +2060,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
             sawResult = true;
             status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
             status.sleepSec = null;
-            recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString());
+            if (recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString())) {
+              const d = parseDenialText(toolResultText(block.content), "?");
+              if (d) trouble?.onDenial(d.hook, d.reason);
+            }
             if (block.is_error === true) {
               recordToolError(logDir, {
                 worker: wid,
@@ -2095,6 +2109,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     });
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
+  if (troubleTimer) clearInterval(troubleTimer);
+  if (trouble) {
+    const stop = peekLoopStop(logDir, wid);
+    if (stop) trouble.onLoopStop(stop.reason);
+    await trouble.flush();
+  }
   resultGrace.cancel();
   await resultGrace.settled();
   // the result already received is the outcome; the signal that ended the leftovers is not
