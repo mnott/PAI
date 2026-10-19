@@ -266,7 +266,7 @@ describe("note delivery", () => {
     setWorkerNote(dir, id, "b");
     const notes = takePendingNotes(dir, id)!;
     expect(notes).toEqual(["a", "b"]);
-    expect(noteContext(notes)).toContain("b");
+    expect(noteContext(notes, "t0k3n")).toContain("b");
   });
 
   it("ps shows pending, then the delivery time", () => {

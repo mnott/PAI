@@ -10,7 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { readWorkersSection } from "../../../workers/config.js";
-import { noteContext, takePendingNotes } from "../../../workers/note-delivery.js";
+import { NOTE_TOKEN_ENV, noteContext, takePendingNotes } from "../../../workers/note-delivery.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
 import { recordLoopResult } from "../lib/loop-guard.js";
@@ -44,10 +44,13 @@ function main(): void {
   const id = currentWorkerId(process.env, logDir);
   if (!isWorkerSession() || !id) return;
   recordResult(readStdin(), logDir, id);
+  // no token, no delivery: a note is never produced without the run's token (notes stay pending)
+  const token = process.env[NOTE_TOKEN_ENV];
+  if (!token) return;
   const notes = takePendingNotes(logDir, id);
   if (!notes) return;
   process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: noteContext(notes) } }) + "\n",
+    JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: noteContext(notes, token) } }) + "\n",
   );
 }
 

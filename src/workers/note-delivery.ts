@@ -7,6 +7,7 @@
  * returned exactly once and the delivery time is recorded for `pai worker ps`.
  */
 
+import { randomBytes } from "node:crypto";
 import { loadStatus, nowStamp, saveStatus } from "./status.js";
 
 /** The pending notes of a worker, cleared and stamped as delivered; null when there are none. */
@@ -20,7 +21,15 @@ export function takePendingNotes(logDir: string, id: string, d: Date = new Date(
   return notes;
 }
 
-/** The additionalContext text for the delivered notes. */
-export function noteContext(notes: string[]): string {
-  return notes.map((n) => `Operator note (pai worker goal): ${n}`).join("\n");
+/** Env var carrying the per-run note token from the runner to the worker's hooks. */
+export const NOTE_TOKEN_ENV = "PAI_WORKER_NOTE_TOKEN";
+
+/** A fresh random per-run token (8 hex chars). */
+export function newNoteToken(): string {
+  return randomBytes(4).toString("hex");
+}
+
+/** The additionalContext text for the delivered notes, each authenticated with the run's token. */
+export function noteContext(notes: string[], token: string): string {
+  return notes.map((n) => `PAI note [${token}]: ${n}`).join("\n");
 }

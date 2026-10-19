@@ -50,6 +50,7 @@ import {
   closeSync,
   writeSync,
 } from "node:fs";
+import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { appendSystemPromptArgs, parseRunnerArgs, shortText, stripPromptValues } from "./args.js";
 import {
   ANTHROPIC_NATIVE,
@@ -1603,6 +1604,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+  const noteToken = newNoteToken();
+  env[NOTE_TOKEN_ENV] = noteToken;
   applySessionProviderEnv(env, target);
   if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
 
@@ -1691,7 +1694,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // ONE flag: contract (unless the caller brought their own), placement, caller text
   cmd.push(
     ...appendSystemPromptArgs([
-      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate)] : []),
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, noteToken)] : []),
       ...(addendum ? [addendum.text] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
