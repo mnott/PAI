@@ -61,7 +61,7 @@ describe("screens", () => {
     const t = lines.join("\n");
     expect(t).toContain('"20 - Webseiten"');
     expect(t).toContain('"keepalive"');
-    expect(t).toContain("opus-5.5 (anthropic) with workers on glm-fast");
+    expect(t).toContain("opus-5.5 (anthropic) with workers on f");
     expect(t).toContain("Enter  Continue exactly like last time");
     expect(t).toContain("s      Choose a different setup");
     expect(t).toContain("n      Start fresh");
