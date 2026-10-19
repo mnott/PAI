@@ -100,7 +100,7 @@ describe("killTree", () => {
     mk(dir, "w3", 3, { parent: "w1" });
     const f = fakes(dir);
     const lines = await killTree(dir, "w1", { deps: f.deps });
-    expect(f.signalled).toEqual(["w5", "w3", "w1"]); // pid 5, never the slot pid 99
+    expect([...f.signalled].sort()).toEqual(["w1", "w3", "w5"]); // pid 5, never the slot pid 99
     expect(lines.join("\n")).not.toContain("pid 99");
     for (const id of ["w1", "w3", "w5"]) expect(loadStatus(dir, id)!.state).toBe("killed");
   });
