@@ -9,8 +9,8 @@
  *   now    true: front of the provider's waiting order
  *
  * "local" is resolveLocalProvider(); "cloud" is the session's cloud provider
- * (PAI_SESSION_PROVIDER, else workers.yaml `active`, each only when not
- * loopback, else anthropic). The description is the line a tool result starts
+ * (the provider normal routing follows: detectSessionProvider, else workers.yaml
+ * `active`, each only when not loopback, else anthropic). The description is the line a tool result starts
  * with, so the session can tell the operator where the work runs.
  */
 
@@ -18,7 +18,7 @@ import { CliError } from "../cli/define.js";
 import { ANTHROPIC_NATIVE, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
 import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./local-provider.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { SESSION_PROVIDER_ENV } from "./session-provider.js";
+import { detectSessionProvider } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
 
 export interface TargetArgs {
@@ -65,13 +65,13 @@ function modelFor(cfg: ProviderTable, provider: string, model: string | undefine
 }
 
 /** The provider "the cloud" means for this session. */
-function cloudProvider(cfg: ProviderTable, env: NodeJS.ProcessEnv): string {
+function cloudProvider(cfg: ProviderTable, env: NodeJS.ProcessEnv, logDir: string): string {
   const usable = (n: string | null | undefined): n is string => {
     if (!n || n === "auto") return false;
     const p = getProviderOrNative(cfg, n);
     return !!p && p.enabled && !isLoopbackProvider(p);
   };
-  const session = env[SESSION_PROVIDER_ENV]?.trim();
+  const session = detectSessionProvider(cfg, { env, logDir })?.name;
   if (usable(session)) return session;
   if (usable(cfg.active)) return cfg.active;
   return ANTHROPIC_NATIVE;
@@ -104,7 +104,7 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
     provider = (await resolveLocalProvider(cfg, deps.logDir, deps)).name;
     label = "local: ";
   } else if (where === "cloud") {
-    provider = cloudProvider(cfg, deps.env ?? process.env);
+    provider = cloudProvider(cfg, deps.env ?? process.env, deps.logDir);
     label = "cloud: ";
   } else {
     const p = getProviderOrNative(cfg, where);

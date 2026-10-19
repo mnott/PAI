@@ -1,7 +1,7 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkersConfig } from "./config.js";
 import type { PortCheck } from "./local-provider.js";
 import { resolveTarget, type TargetDeps } from "./target.js";
@@ -37,6 +37,15 @@ const deps = (over: Partial<TargetDeps> = {}): TargetDeps => ({
 });
 
 describe("resolveTarget", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("cloud follows the detected session (transcript model), not workers.yaml active", async () => {
+    const home = mkdtempSync(join(tmpdir(), "target-home-"));
+    mkdirSync(join(home, ".claude", "projects", "p"), { recursive: true });
+    writeFileSync(join(home, ".claude", "projects", "p", "sess-1.jsonl"), JSON.stringify({ type: "assistant", message: { model: "claude-sonnet-5-5" } }) + "\n");
+    vi.stubEnv("HOME", home);
+    const t = await resolveTarget({ where: "cloud" }, deps({ env: { CLAUDE_CODE_SESSION_ID: "sess-1" } }));
+    expect(t).toMatchObject({ provider: "anthropic", model: "sonnet", description: "cloud: anthropic sonnet" });
+  });
   it("local, one server up: it, described by name", async () => {
     const t = await resolveTarget({ where: "local" }, deps());
     expect(t).toMatchObject({ provider: "flash", description: "local: flash" });
