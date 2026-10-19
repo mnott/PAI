@@ -101,6 +101,10 @@ import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
+import {
+  planAmend, planRun, planSave, planStatusText, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
+  realDelegationDeps,
+} from "./tools/delegation.js";
 
 // ---------------------------------------------------------------------------
 // IPC client singleton
@@ -1341,6 +1345,80 @@ async function startShim(): Promise<void> {
         return workerError(e);
       }
     }
+  );
+
+  // Delegation tools for tier 0 (direct library calls, see tools/delegation.ts)
+  const delegation = realDelegationDeps();
+  const project = z.string().min(1).describe("Project slug or checkout folder.");
+  const planName = z.string().min(1).describe("Plan name (folder under <project>/.pai/plans/).");
+  const idsArg = z.array(z.string().min(1)).min(1).describe("Queue item ids, e.g. [\"q3\"].");
+
+  server.tool(
+    "plan_save",
+    "Save a plan you wrote (units of parts, each with a spec, files, proof, depends_on; a gate for the merged tree), validate it and get the schedule in plain words. Use for larger jobs.",
+    {
+      project,
+      name: planName,
+      plan: z.object({
+        gate: z.string().describe("Shell command that must pass on the merged tree."),
+        provider: z.string().optional().describe("Local provider; default: the active local one."),
+        max_parallel: z.number().int().min(1).optional(),
+        preamble: z.string().optional().describe("Text prepended to every part spec."),
+        units: z.array(z.object({
+          id: z.string(),
+          preamble: z.string().optional(),
+          unit_check: z.string().optional().describe("Command run after the unit's last part merged."),
+          parts: z.array(z.object({
+            id: z.string(),
+            spec: z.string().describe("The task text for the worker."),
+            files: z.array(z.string()).optional().describe("Paths the part touches; parts sharing a file never run together."),
+            proof: z.string().optional().describe("Command the worker must run and show passing."),
+            depends_on: z.array(z.string()).optional(),
+            risky: z.boolean().optional(),
+          })).min(1),
+        })).min(1),
+      }),
+    },
+    async (args) => planSave(args, delegation)
+  );
+  server.tool(
+    "plan_run",
+    "Start a saved plan in the background and return at once; merged parts are skipped on a re-run. Follow with plan_status.",
+    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision.") },
+    async (args) => planRun(args, delegation)
+  );
+  server.tool(
+    "plan_status",
+    "Plain-language status of a plan: done, running, waiting, needs-decision with the failure tail, wall time, escalations.",
+    { project, name: planName },
+    async (args) => planStatusText(args, delegation)
+  );
+  server.tool(
+    "plan_amend",
+    "Append a clarification to a part's spec (what you do at a needs-decision); the next plan_run resumes.",
+    { project, name: planName, part: z.string().min(1), spec_append: z.string().min(1) },
+    async (args) => planAmend(args, delegation)
+  );
+  server.tool(
+    "queue_add",
+    "Queue one small change described in a sentence (plus likely files, optional screenshot). Use for small changes; then queue_run.",
+    { project, sentence: z.string().min(1), files: z.array(z.string()).optional(), image: z.string().optional() },
+    async (args) => queueAdd(args, delegation)
+  );
+  server.tool(
+    "queue_run",
+    "Start the pending queue items on the local provider in the background and return at once; nothing is merged.",
+    { project, escalate: z.boolean().optional().describe("Run the items marked cloud on Sonnet instead.") },
+    async (args) => queueRun(args, delegation)
+  );
+  server.tool("queue_review", "Ready queue items with diff stat, gate result and proof path, in plain words.", { project }, async (args) => queueReview(args, delegation));
+  server.tool("queue_accept", "Merge ready queue items with the project's gate.", { project, ids: idsArg }, async (args) => queueAccept(args, delegation));
+  server.tool("queue_reject", "Drop queue items.", { project, ids: idsArg, why: z.string().optional() }, async (args) => queueReject(args, delegation));
+  server.tool(
+    "queue_again",
+    "Re-queue an item with what is still wrong; after two rounds it is marked for the cloud.",
+    { project, id: z.string().min(1), note: z.string().min(1) },
+    async (args) => queueAgain(args, delegation)
   );
 
   server.tool(

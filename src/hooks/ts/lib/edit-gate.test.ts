@@ -137,20 +137,14 @@ describe("decideEditGate", () => {
     expect(decideEditGate(ctx({ filePath: "/repo/Notes/TODO.md" }))).toEqual({ decision: "allow" });
   });
 
-  it("blocks a code path inside a git work tree with the standing message", () => {
+  it("blocks a code path inside a git work tree with the delegation message", () => {
     const out = decideEditGate(ctx({}));
     expect(out.decision).toBe("block");
-    expect((out as { reason: string }).reason).toContain("main session does not edit code");
-    expect((out as { reason: string }).reason).toContain("pai worker run");
-  });
-
-  it("tells the session this is a standing policy, not a one-off error, and names the next step", () => {
-    const out = decideEditGate(ctx({}));
     const reason = (out as { reason: string }).reason;
-    expect(reason).toContain("standing policy for the whole session");
-    expect(reason).toContain("retrying Edit/Write");
-    expect(reason).toContain("--provider anthropic");
-    expect(reason).toContain(ctx({}).filePath);
+    expect(reason).toContain("Code changes are delegated. You decide the size");
+    for (const tool of ["queue_add", "queue_run", "plan_save", "plan_run"]) expect(reason).toContain(tool);
+    expect(reason).toContain("never ask the user to run commands");
+    expect(reason).not.toContain("pai worker run");
   });
 
   it("allows worker sessions regardless of path", () => {

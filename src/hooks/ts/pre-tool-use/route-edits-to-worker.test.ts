@@ -39,7 +39,7 @@ describe("route-edits-to-worker", () => {
     const parsed = JSON.parse(out);
     expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("PAI guard: ");
-    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("main session does not edit code");
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("Code changes are delegated");
   });
 
   it("allows a source file edit when PAI_WORKER=1", () => {

@@ -14,6 +14,13 @@ Run project_detect at session start.
 - end session → pause procedure + rename session note (never leave as "New Session")
 - cpp → release order is in CLAUDE.md
 
+### Delegating code changes
+
+Edit/Write on code files is denied in this session; you decide the size. A small change: queue_add (one
+sentence + files), queue_run, then queue_review and queue_accept / queue_reject / queue_again. A larger job:
+write the plan yourself, plan_save, plan_run, follow with plan_status, and at a needs-decision clarify with
+plan_amend and plan_run again. Report to the user in plain words; never ask the user to run commands.
+
 ### Skills
 
 Fetch full instructions with prompts/get { name }. Skills are already listed with USE WHEN descriptions.

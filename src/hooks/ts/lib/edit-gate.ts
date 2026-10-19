@@ -7,7 +7,7 @@
  * decide on — same split as lib/agent-gate.ts.
  */
 
-import { basename, extname } from "node:path";
+import { extname } from "node:path";
 import { scriptWritesRepoCode } from "./orchestrator-script-writes.js";
 
 export const SCRATCH_DIR = ".pai-scratch";
@@ -234,14 +234,11 @@ export function decideEditGate(ctx: EditGateContext): EditGateDecision {
   if (isProseEdit(ctx.filePath)) return { decision: "allow" };
   if (!ctx.isGitWorkTree) return { decision: "allow" };
 
-  const label = basename(ctx.filePath).slice(0, 60) || "edit";
   return {
     decision: "block",
     reason:
-      `main session does not edit code — this is a standing policy for the whole session, not a problem ` +
-      `with this edit: retrying Edit/Write on ${ctx.filePath} or any other code file will be denied the ` +
-      `same way. Next step: write a spec file, then run ` +
-      `pai worker run --label "${label}" --class implement --provider anthropic --output-format json -p "$(cat <spec>)" ` +
-      `(target: ${ctx.filePath})`,
+      "Code changes are delegated. You decide the size: a small change -> call the PAI MCP tool `queue_add` " +
+      "(one sentence + files), then `queue_run`; a larger job -> write the plan yourself and call `plan_save` " +
+      "then `plan_run`. Report to the user in plain words; never ask the user to run commands.",
   };
 }
