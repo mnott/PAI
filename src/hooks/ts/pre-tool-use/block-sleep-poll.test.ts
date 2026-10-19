@@ -39,6 +39,6 @@ describe("block-sleep-poll", () => {
   });
 
   it("allows a long sleep in the background (prints nothing)", () => {
-    expect(runHook("sleep 590", { run_in_background: true })).toBe("");
+    expect(runHook("pai pane run -- sleep 590", { run_in_background: true })).toBe("");
   });
 });

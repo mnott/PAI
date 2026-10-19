@@ -39,6 +39,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai observation`](observation.md) | Notes the system took while you worked |
 | [`pai obsidian`](obsidian.md) | Mirror project notes into an Obsidian vault |
 | [`pai open`](open.md) | Reopen a session (on its own provider unless --provider is given) |
+| [`pai pane`](pane.md) | Run a command in a visible pane: run |
 | [`pai pause`](pause.md) | Save your place before leaving a session |
 | [`pai plan`](plan.md) | Run a planned job on local workers without a model in the loop |
 | [`pai project`](project.md) | Your registered projects: list, add, rename, check |
@@ -179,6 +180,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai obsidian status` | Check the vault: healthy, broken, orphaned and missing links |
 | `pai obsidian sync` | Copy project notes into the vault and rebuild its index pages |
 | `pai open` | Reopen a session (on its own provider unless --provider is given) |
+| `pai pane` | Run a command in a visible pane: run |
+| `pai pane run` | Run a command in a visible pane and wait for it |
 | `pai pause` | Save your place before leaving a session |
 | `pai plan` | Run a planned job on local workers without a model in the loop |
 | `pai plan run` | Run a plan: local workers in parallel, merged with the plan's gate |
