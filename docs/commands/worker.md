@@ -127,10 +127,12 @@ Shows the workers started from this terminal. When other sessions have live work
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | flag | — | Workers of all sessions, not just this terminal's |
+| `--panes` | flag | — | List process -> pane -> tab for everything running, checked live |
 
 ```sh
 pai worker ps
 pai worker ps --all
+pai worker ps --panes
 ```
 
 See also: `pai worker follow`, `pai worker pending`, `pai worker kill`

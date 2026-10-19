@@ -474,6 +474,8 @@ function renderQueue(q){
   });
  }
  if(pl.length)out.unshift(block("plans",["plan","parts","phase","in phase","running","workers"],pl.map(function(p){return'<tr><td style="text-align:left">'+esc(p.job)+'</td><td style="text-align:right">'+p.merged+'/'+p.total+'</td><td style="text-align:left">'+esc(p.phase)+'</td><td style="text-align:right">'+qdur(p.phaseSec)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc((p.running||[]).join(", "))+'</td></tr>'})));
+ var pv=q.paneViolations||[];
+ if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return'<tr style="color:#d33"><td style="text-align:left">'+esc(p.id)+'</td><td style="text-align:left">'+esc(p.mark)+'</td><td style="text-align:left">'+esc(p.why||"")+'</td></tr>'})));
  var pn=q.panes||[];
  if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
  el.innerHTML=out.join("")+wt;

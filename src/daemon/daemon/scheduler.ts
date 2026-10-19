@@ -12,6 +12,7 @@ import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from 
 import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
+import { auditTick } from "../../workers/pane-audit.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { cliEntry } from "../pass-priority.js";
@@ -556,6 +557,13 @@ export function startWorkerSupervisor(): void {
   }
 
   startWorktreeGc();
+
+  // every running process owns a live pane in its starting session's tab: judged every 30 s
+  const paneAudit = setInterval(() => {
+    const dir = workersLogDir(readWorkersSection().workers);
+    void auditTick(dir, runMessenger(dir)).catch(() => undefined);
+  }, 30_000);
+  paneAudit.unref();
 
   let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {

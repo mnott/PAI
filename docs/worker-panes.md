@@ -67,3 +67,7 @@ pai pane run --label tests -- npx vitest run
 ### The guard
 
 The PreToolUse Bash hook (interactive sessions only; workers already have a pane) denies a Bash call with `run_in_background: true` unless the command starts with `pai pane run`, `pai worker run`, `pai plan run`, `pai build run` or `pai build lock` (leading `cd` and env assignments are skipped). The denial reads: "Background commands run in a visible pane: `pai pane run --label <what> -- <command>`." Foreground calls are unaffected. The rule lives in `src/hooks/ts/lib/background-gate.ts`.
+
+## Pane audit
+
+Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.

@@ -215,6 +215,7 @@ function run(argv) {
 // ---------------------------------------------------------------------------
 
 /** Run a JXA script with argv. Rejects when osascript itself cannot run. */
+export { osascript as osascriptJxa };
 function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", ["-l", "JavaScript", "-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
@@ -443,6 +444,8 @@ export interface PaneEntry {
   opened: string;
   /** the scope (registry key) the entry was opened under */
   scope?: string;
+  /** iTerm uuid of the session that started the process: its tab is where the pane must be */
+  host?: string;
 }
 
 /**
@@ -1102,6 +1105,7 @@ export async function openPaneForWorker(
     worker: wid,
     opened: new Date().toISOString().replace("T", " ").slice(0, 19),
     scope,
+    host: itermUuid(term) || undefined,
   });
   return { message: `pane opened for ${wid}`, session: out.slice(bar + 1) };
 }
