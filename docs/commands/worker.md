@@ -551,7 +551,7 @@ Stop a running worker
 pai worker kill ID [options]
 ```
 
-Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.
+Stops the worker and every live descendant (the tree `pai worker ps` draws), leaves first: SIGTERM, then SIGKILL if a process outlives it. Each saves its final state. A session may only kill workers it started (another session's worker is refused; --force overrides from the operator's terminal). A worker whose process id has been reused by something else is marked lost and nothing is signalled. --only stops just this worker.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -560,6 +560,7 @@ Stops the worker and every live descendant (the tree `pai worker ps` draws), lea
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--only` | flag | — | Kill only this worker, leave its children running |
+| `--force` | flag | — | Kill another session's worker (operator's terminal only, not from a worker); logged as forced |
 
 ```sh
 pai worker kill w-20260101-abc
