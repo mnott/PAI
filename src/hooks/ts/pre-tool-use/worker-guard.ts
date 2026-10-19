@@ -108,7 +108,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
         claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : undefined,
       });
     return {
-      reason: loopDenyReason(!!r.testRun, input.tool_name, r.count, r.sameResult),
+      reason: loopDenyReason(input.tool_name, r.count),
       stopReason: r.stop
         ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; stopping so the orchestrator can decide`
         : undefined,

@@ -8,13 +8,14 @@ import { emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, record
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
-function feed(calls: Array<[string, string?]>): number[] {
+function feed(calls: Array<[string, string?]>, out: (i: number) => string = () => "same output"): number[] {
   let s: LoopState = emptyLoopState();
   const denied: number[] = [];
   calls.forEach(([tool, cmd], i) => {
     const r = stepLoopGuard(s, tool, cmd);
     s = r.state;
     if (r.deny) denied.push(i);
+    else s = recordLoopResult(s, tool, cmd, out(i));
   });
   return denied;
 }
@@ -46,10 +47,10 @@ describe("loop guard", () => {
   });
   it("never denies different sed ranges", () => {
     const calls = Array.from({ length: 30 }, (_, i) => bash(`sed -n ${i * 40 + 1},${i * 40 + 40}p f.ts`));
-    expect(feed(calls)).toEqual([]);
+    expect(feed(calls, (i) => `block ${i} text`)).toEqual([]);
   });
   it("does not collapse digits outside /tmp paths", () => {
-    expect(feed(Array.from({ length: 8 }, (_, i) => bash(`echo ${i}`)))).toEqual([]);
+    expect(feed(Array.from({ length: 8 }, (_, i) => bash(`echo ${i}`)), (i) => String(i))).toEqual([]);
   });
   it("an edit resets the window", () => {
     const c = bash("npm test");
@@ -57,7 +58,7 @@ describe("loop guard", () => {
   });
 });
 
-describe("test-run keying", () => {
+describe("similarity of commands", () => {
   const variants = [
     "npx vitest run src/cli/defs/launch.test.ts --config vitest.config.ts 2>&1",
     'npx vitest run "src/cli/defs/launch.test.ts" 2>&1',
@@ -67,30 +68,49 @@ describe("test-run keying", () => {
     "npx vitest run src/cli/defs/launch.test.ts 2>&1",
     "npx vitest run --dir src/cli/defs src/cli/defs/launch.test.ts 2>&1",
   ];
-  it("the seven flag variants share one key; the 5th is denied", () => {
-    expect(loopKey(variants[0])).toBe(loopKey(variants[6]));
-    expect(new Set(variants.map(loopKey)).size).toBe(1);
+  it("the seven vitest flag variants are one cluster; the 5th is denied", () => {
     expect(feed(variants.map(bash))).toEqual([4, 5, 6]);
   });
-  it("a different target is a different key", () => {
-    expect(loopKey("npx vitest run src/a.test.ts")).not.toBe(loopKey("npx vitest run src/b.test.ts"));
-    expect(feed(Array.from({ length: 8 }, (_, i) => bash(`npx vitest run src/f${i}.test.ts`)))).toEqual([]);
+  it("a different target with a different result is progress", () => {
+    expect(feed(Array.from({ length: 8 }, (_, i) => bash(`npx vitest run src/f${i}.test.ts`)), (i) => `pass file ${i}`)).toEqual([]);
+    expect(feed(["a", "b", "c", "d", "e", "f"].map((n) => bash(`npx vitest run src/${n}.test.ts`)))).toEqual([]);
   });
-  it("no target keys as all; pipes and cd prefix ignored", () => {
-    expect(loopKey("npm test | tail -20")).toBe(loopKey("cd x && npm run test -- --watch=false 2>&1"));
-    expect(loopKey("pytest -x tests/a.py")).toBe(loopKey("python -m pytest tests/a.py -v | head"));
-    expect(loopKey("go test ./...")).not.toBe(loopKey("go test ./pkg"));
+  it("two genuinely different commands are not merged", () => {
+    const calls: Array<[string, string]> = [];
+    for (let i = 0; i < 4; i++) calls.push(bash("git status"), bash("git log"));
+    expect(feed(calls)).toEqual([]);
+    expect(loopKey("git status")).not.toBe(loopKey("git log"));
+    expect(feed(Array.from({ length: 6 }, () => bash("git status")).concat(Array.from({ length: 3 }, () => bash("git log"))))).toEqual([4, 5]);
   });
   it("an edit resets the count", () => {
     const v = variants.map(bash);
     expect(feed([...v.slice(0, 4), edit, ...v.slice(4)])).toEqual([]);
   });
-  it("non-test commands keep plain normalisation", () => {
-    expect(loopKey("echo   hi  ")).toBe("echo hi");
+  it("a real edit-test cycle stays allowed", () => {
+    const calls: Array<[string, string?]> = [];
+    for (let i = 0; i < 6; i++) calls.push(bash("npx vitest run src/a.test.ts"), bash("npx vitest run src/a.test.ts"), edit);
+    expect(feed(calls)).toEqual([]);
+  });
+  it("polling with a changing result is progress", () => {
+    const calls = Array.from({ length: 12 }, () => bash("tail -20 build.log"));
+    expect(feed(calls, (i) => `building step ${i} of twelve`.repeat(1) + ` line${i}`)).toEqual([]);
+  });
+  it("a retry whose result finally changes is allowed", () => {
+    const calls = Array.from({ length: 6 }, () => bash("curl -s localhost:8080/health"));
+    expect(feed(calls, (i) => (i < 3 ? "connection refused" : "ok healthy"))).toEqual([]);
+  });
+  it("waiting verbs and bounded sleeps are exempt", () => {
+    expect(feed(Array.from({ length: 10 }, () => bash("pai worker wait abc --max 100")))).toEqual([]);
+    expect(feed(Array.from({ length: 10 }, () => bash("sleep 30; cat out.log")))).toEqual([]);
+    expect(feed(Array.from({ length: 6 }, () => bash("sleep 300")))).toEqual([4, 5]);
+  });
+  it("normalises numbers, quotes and spacing", () => {
+    expect(loopKey("echo   hi  ")).toBe(loopKey('echo "hi"'));
+    expect(loopKey("sed -n 1,40p a.ts")).toBe(loopKey("sed -n 41,80p a.ts"));
     expect(loopKey("git commit -m x")).not.toBe(loopKey("git commit -m y"));
   });
-  it("deny message names the tests", () => {
-    expect(loopDenyReason(true)).toMatch(/re-running the same tests on an unchanged tree \(4 times, flags varied\)/);
+  it("deny message", () => {
+    expect(loopDenyReason()).toMatch(/same result/);
   });
 });
 
@@ -132,7 +152,7 @@ describe("loop guard, all tools", () => {
     expect(rs.some((r) => r.stop)).toBe(false);
   });
   it("different offsets are different keys", () => {
-    const rs = run(Array.from({ length: 20 }, (_, i) => read(i * 100)));
+    const rs = run(Array.from({ length: 20 }, (_, i) => ["Read", { file_path: "src/cli/registry.ts", offset: i * 100, limit: 50 }] as [string, Record<string, unknown>]));
     expect(rs.some((r) => r.deny)).toBe(false);
   });
   it("Grep key ignores unrelated fields order; other tools use stable JSON", () => {
@@ -141,7 +161,7 @@ describe("loop guard, all tools", () => {
     expect(toolKey("Glob", { pattern: "*.ts" })).not.toBe(toolKey("Glob", { pattern: "*.js" }));
   });
   it("Bash via object input behaves as before and denial reason names the tool", () => {
-    expect(loopDenyReason(false, "Read", 5)).toMatch(/called Read with the same input 5 times/);
+    expect(loopDenyReason("Read", 5)).toMatch(/called Read with similar input 5 times/);
     const rs = run(Array.from({ length: 7 }, () => ["Bash", { command: "ls" }] as [string, Record<string, unknown>]));
     expect(rs.map((r) => r.deny)).toEqual([false, false, false, false, true, true, true]);
     expect(rs[6].stop).toBe(true);
@@ -247,18 +267,18 @@ describe("temp-path and repeated-result evasions", () => {
     expect(out.map((o) => !!o[1])).toEqual([false, false, false, false, false, false, true]);
     expect(LOOP_STOP_DENIALS).toBe(3);
   });
-  it("same result 4 times with changing commands is denied, then stopped", () => {
+  it("similar commands with the same result 4 times: denied, then stopped", () => {
     let s: LoopState = emptyLoopState();
-    const seen: Array<[boolean, boolean | undefined, boolean | undefined]> = [];
+    const seen: Array<[boolean, boolean | undefined]> = [];
+    const base = "grep -c foo src/a.ts src/b.ts src/c.ts src/d.ts src/e.ts src/f.ts src/g.ts src/h.ts src/i.ts";
     for (let i = 0; i < 7; i++) {
-      const cmd = `grep -c foo${"x".repeat(i)} src/a.ts src/b.ts`;
+      const cmd = `${base} --x${"y".repeat(i)}`;
       const r = stepLoopGuard(s, "Bash", cmd);
       s = r.state;
-      seen.push([r.deny, r.stop, r.sameResult]);
+      seen.push([r.deny, r.stop]);
       if (!r.deny) s = recordLoopResult(s, "Bash", cmd, { stdout: "0 matches\n", stderr: "" });
     }
     expect(seen.map((x) => x[0])).toEqual([false, false, false, false, true, true, true]);
-    expect(seen[4][2]).toBe(true);
     expect(seen[6][1]).toBe(true);
   });
   it("differing results or an edit reset the result count", () => {
@@ -269,7 +289,8 @@ describe("temp-path and repeated-result evasions", () => {
       expect(r.deny).toBe(false);
       s = recordLoopResult(r.state, "Bash", cmd, `result ${i}${"y".repeat(i)}`);
     }
-    for (let i = 0; i < 4; i++) s = recordLoopResult(s, "Bash", "ls src/a", "same");
+    for (let i = 0; i < 4; i++) s = recordLoopResult(stepLoopGuard(s, "Bash", "ls src/a").state, "Bash", "ls src/a", "same");
+    expect(stepLoopGuard(s, "Bash", "ls src/a").deny).toBe(true);
     s = stepLoopGuard(s, "Edit").state;
     expect(stepLoopGuard(s, "Bash", "ls src/a").deny).toBe(false);
   });

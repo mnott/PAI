@@ -11,7 +11,8 @@ export function loopStateFile(logDir: string, id: string): string {
 export function loadLoopState(file: string): LoopState {
   try {
     const j = JSON.parse(readFileSync(file, "utf8")) as LoopState;
-    if (Array.isArray(j.window)) return j;
+    // entries from the earlier key format have no tool prefix: start fresh
+    if (Array.isArray(j.window) && j.window.every((k) => typeof k === "string" && k.includes("\t"))) return { window: j.window, outs: j.outs, denials: j.denials };
   } catch {
     // first call or damaged state: start a fresh window
   }
