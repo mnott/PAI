@@ -9,6 +9,7 @@
  * Each repair is logged one line to ~/.claude/pai/logs/workers/edit-repair.log.
  */
 
+import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,7 @@ function logRepair(tail: string): void {
   try {
     const dir = join(homedir(), ".claude", "pai", "logs", "workers");
     mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, "edit-repair.log"), `${new Date().toISOString()}\tworker=${process.env.PAI_WORKER_ID ?? "-"}\t${tail}\n`);
+    appendFileSync(join(dir, "edit-repair.log"), `${new Date().toISOString()}\tworker=${currentWorkerId(process.env, dir) ?? "-"}\t${tail}\n`);
   } catch {
     // logging must never block the decision
   }
