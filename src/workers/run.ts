@@ -177,6 +177,10 @@ export interface RunOptions {
   noStagger?: boolean;
   /** --no-queue: skip the per-provider concurrency cap. */
   noQueue?: boolean;
+  /** --now: wait at the front of the provider's queue (capacity.ts). */
+  priority?: "front";
+  /** --model fast without a provider: the routed provider's fast model. */
+  modelFast?: boolean;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
   /** --mcp value: server/set names, comma-separated. */
@@ -688,6 +692,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         cwd: opts.cwd,
       });
   assertProviderRunnable(target.providerName, target.provider);
+  if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
 
   const noBrowser = opts.browser === undefined ? config.noBrowserByDefault : !opts.browser;
   const parsed = parseRunnerArgs(noBrowser ? stripBrowserArgs(opts.claudeArgs) : opts.claudeArgs);
@@ -786,6 +791,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         noPane: opts.noPane ?? false,
         noStagger: opts.noStagger,
         noQueue: opts.noQueue,
+        priority: opts.priority,
         mcpFlag: opts.mcpFlag,
         cwd: opts.cwd,
         specPath: opts.specPath,
@@ -1302,6 +1308,7 @@ export interface ExecuteArgs {
   noPane: boolean;
   noStagger?: boolean;
   noQueue?: boolean;
+  priority?: "front";
   mcpFlag?: string;
   cwd?: string;
   specPath?: string;
@@ -1457,6 +1464,7 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
     cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
     config: config.capacity,
     disabled: a.noQueue,
+    priority: a.priority,
     log: (line) => {
       process.stderr.write(`${line}\n`);
     },

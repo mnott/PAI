@@ -110,3 +110,16 @@ describe("capacityGate", () => {
     expect(await capacityGate({ ...harness(live, "d").base, config: { enabled: false } })).toBeNull();
   });
 });
+
+describe("queue priority", () => {
+  it("a run marked front waits ahead of older queued runs", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    writeFileSync(join(q, "w-001"), "100");
+    writeFileSync(join(q, "w-002"), "100");
+    writeFileSync(join(q, "w-003"), "100 front");
+    expect(liveQueue(logDir, "p", () => true)).toEqual(["w-003", "w-001", "w-002"]);
+  });
+});

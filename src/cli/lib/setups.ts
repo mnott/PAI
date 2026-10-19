@@ -7,7 +7,6 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { connect } from "node:net";
 import { dirname } from "node:path";
 import { paiHomePath } from "../../config/pai-home.js";
 import {
@@ -51,25 +50,29 @@ export function orchestratorLabel(cfg: Cfg, o: Setup["orchestrator"]): string {
   return `${shortModel(model)} (${o.provider})`;
 }
 
-/** True when something accepts a TCP connection at host:port within timeoutMs. */
+/** True when a model server answers at host:port within timeoutMs. */
 export type PortCheck = (host: string, port: number, timeoutMs: number) => Promise<boolean>;
 
-export const tcpPortCheck: PortCheck = (host, port, timeoutMs) =>
-  new Promise((resolve) => {
-    const sock = connect({ host, port });
-    const done = (ok: boolean) => {
-      sock.destroy();
-      resolve(ok);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once("connect", () => done(true));
-    sock.once("error", () => done(false));
-  });
+/**
+ * A model server is running when GET /v1/models answers 2xx with a JSON body.
+ * A bare TCP connect reported ports as running that no model server answered.
+ */
+export const httpModelsCheck: PortCheck = async (host, port, timeoutMs) => {
+  try {
+    const h = host.includes(":") ? `[${host}]` : host;
+    const res = await fetch(`http://${h}:${port}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return false;
+    await res.json();
+    return true;
+  } catch {
+    return false;
+  }
+};
 
-export const PORT_TIMEOUT_MS = 150;
+export const PORT_TIMEOUT_MS = 500;
 
 /** Enabled loopback providers whose server does not answer now; all checked in parallel. */
-export async function downLocalProviders(cfg: Cfg, check: PortCheck = tcpPortCheck): Promise<Set<string>> {
+export async function downLocalProviders(cfg: Cfg, check: PortCheck = httpModelsCheck): Promise<Set<string>> {
   const local = Object.entries(cfg.providers).filter(([, p]) => p.enabled && isLoopbackProvider(p));
   const down = new Set<string>();
   await Promise.all(

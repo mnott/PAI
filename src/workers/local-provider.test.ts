@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NATIVE_ANTHROPIC_MODELS, type WorkersConfig } from "./config.js";
 import {
+  PORT_TIMEOUT_MS,
   probeLoopback,
   readLocalPreference,
   resolveLocalProvider,
@@ -46,7 +47,7 @@ describe("probeLoopback", () => {
     });
     expect(running).toEqual({ up: true, also: false, dead: false });
     expect(calls).toHaveLength(3);
-    expect(calls.every(([, , t]) => t === 150)).toBe(true);
+    expect(calls.every(([, , t]) => t === PORT_TIMEOUT_MS)).toBe(true);
     expect(calls.map(([h]) => h).sort()).toEqual(["127.0.0.1", "localhost", "localhost"]);
   });
 });

@@ -7,7 +7,7 @@
  *   resolveLocalProvider()  the loopback provider to run on, or an error
  *
  * Local providers are those whose url is loopback (127.0.0.1 / localhost /
- * ::1). Each is probed on its port with the same TCP check `pai setups` uses
+ * ::1). Each is probed on its port with the same HTTP check (GET /v1/models, 2xx with JSON) `pai setups` uses
  * to list only running local providers (cli/lib/setups.ts — one
  * implementation, imported here). Exactly one up → it. Several up → the one
  * workers.yaml's top-level `local:` key names (like `active:`), else the one
@@ -35,9 +35,9 @@ import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
 import { resolveCap } from "./capacity.js";
-import { PORT_TIMEOUT_MS, tcpPortCheck, type PortCheck } from "../cli/lib/setups.js";
+import { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck } from "../cli/lib/setups.js";
 
-export { PORT_TIMEOUT_MS, tcpPortCheck, type PortCheck };
+export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
 
 /** The host and port a provider's server answers on. */
 export function providerHostPort(p: WorkerProvider): { host: string; port: number } | null {
@@ -53,7 +53,7 @@ export function providerHostPort(p: WorkerProvider): { host: string; port: numbe
 /** Probe every enabled loopback provider in parallel: name → running. */
 export async function probeLoopback(
   cfg: Pick<WorkersConfig, "providers">,
-  check: PortCheck = tcpPortCheck
+  check: PortCheck = httpModelsCheck
 ): Promise<Record<string, boolean>> {
   const local = Object.entries(cfg.providers).filter(([, p]) => p.enabled && isLoopbackProvider(p));
   const out: Record<string, boolean> = {};
@@ -101,7 +101,7 @@ export interface LocalResolution {
 export class NoLocalServerError extends WorkersConfigError {}
 
 export interface ResolveLocalOpts {
-  /** Port probe seam (tests inject; default tcpPortCheck, short timeout). */
+  /** Port probe seam (tests inject; default httpModelsCheck, short timeout). */
   check?: PortCheck;
   /** workers.yaml whose `local:` key decides among several up servers. */
   yamlPath?: string;
@@ -117,7 +117,7 @@ export async function resolveLocalProvider(
   logDir: string,
   opts: ResolveLocalOpts = {}
 ): Promise<LocalResolution> {
-  const up = Object.entries(await probeLoopback(cfg, opts.check ?? tcpPortCheck))
+  const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck))
     .filter(([, running]) => running)
     .map(([name]) => name);
   if (!up.length) {

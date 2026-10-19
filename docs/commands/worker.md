@@ -47,8 +47,10 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--timeout-ms N` | number | — | How long an image run waits for its answer (default 120000) |
 | `--chain STAGES` | string | — | Comma-separated stages run one after the other, e.g. draft,implement,review |
 | `--agent NAME` | string | — | Run the agent definition ~/.claude/agents/NAME.md on a worker |
-| `--model ID` | string | — | Model for this run (default: the model set for the class) |
+| `--model ID` | string | — | Model for this run: default, fast or a model id (default: the model set for the class) |
 | `--urgent` | flag | — | Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`) |
+| `--where WHERE` | string | — | Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where) |
+| `--now` | flag | — | Go ahead of the runs waiting for a slot on the provider |
 | `--local` | flag | — | Run on the local model server PAI resolves (the one that answers); never pick a local provider by name |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |
 | `--cloud` | flag | — | This run goes to the cloud under the prefer-local or auto policy |
@@ -74,6 +76,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
 pai worker run --provider glm --spec /tmp/task.txt
 pai worker run --local -p 'Summarize the changelog'
+pai worker run --where cloud --model fast --now -p 'Say hi'
 pai worker run --chain draft,implement,review -p 'Add a --json flag to the export command'
 pai worker run --print-cmd --class spotcheck -p 'Say hi'
 ```
