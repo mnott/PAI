@@ -20,7 +20,8 @@ import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./lo
 import { isLoopbackProvider } from "./run-env.js";
 import { detectSessionProvider } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
-import { currentSessionName, liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
+import { detectSessionName } from "./session-name.js";
+import { liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
 
 export interface TargetArgs {
   where?: string;
@@ -99,7 +100,7 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
   if (!where) {
     // the session's own profile (or its fallback) decides before today's routing does
     const env = deps.env ?? process.env;
-    const r = deps.profileCtx || currentSessionName(env)
+    const r = deps.profileCtx || (await detectSessionName(env))
       ? resolveWorkers({ explicit: { model: modelArg }, batch: args.batch }, await (deps.profileCtx ?? (() => liveResolveCtx(env)))())
       : undefined;
     if (r?.source === "none") throw new CliError(r.description, "pai session profile: session_profile_set fallback / parallel_min");

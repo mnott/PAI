@@ -30,6 +30,7 @@ import { getProviderOrNative, type WorkersConfig } from "./config.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { cooldownRemaining, autoOrder, type RoutingState } from "./routing.js";
 import { SESSION_WORKER_PROVIDER_ENV } from "./session-provider.js";
+import { detectSessionName } from "./session-name.js";
 import { BATCH_ENV, currentSessionName, getProfile, type ProfileTarget, type SessionProfile } from "./session-profile-store.js";
 
 export * from "./session-profile-store.js";
@@ -143,7 +144,7 @@ export async function liveResolveCtx(env: NodeJS.ProcessEnv = process.env): Prom
     import("./paths.js"),
   ]);
   const { workers } = readWorkersSection();
-  const profile = getProfile(currentSessionName(env));
+  const profile = getProfile(await detectSessionName(env));
   if (profile && workers.routing.policy !== "order") {
     try {
       await budgetCache.warm(workers);

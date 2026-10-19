@@ -9,7 +9,6 @@
  */
 
 import {
-  currentSessionName,
   getProfile,
   liveResolveCtx,
   profilesPath,
@@ -21,6 +20,7 @@ import {
   type SessionProfile,
 } from "../../workers/session-profile.js";
 
+import { detectSessionName } from "../../workers/session-name.js";
 export type { WorkerToolResult } from "./worker-model.js";
 import type { WorkerToolResult } from "./worker-model.js";
 
@@ -72,13 +72,13 @@ export async function describeProfile(name: string, profile: SessionProfile | nu
   return lines.join("\n");
 }
 
-function nameOf(args: SessionProfileArgs, deps: SessionProfileDeps): string | undefined {
-  return args.name?.trim() || currentSessionName(deps.env);
+async function nameOf(args: SessionProfileArgs, deps: SessionProfileDeps): Promise<string | undefined> {
+  return args.name?.trim() || (await detectSessionName(deps.env));
 }
 
 export async function sessionProfileGet(args: Pick<SessionProfileArgs, "name">, deps: SessionProfileDeps): Promise<WorkerToolResult> {
   try {
-    const name = nameOf(args, deps);
+    const name = await nameOf(args, deps);
     if (!name) return fail("this session has no name; pass name (the session's persistent name)");
     return text(await describeProfile(name, getProfile(name, deps.path), deps));
   } catch (e) {
@@ -88,7 +88,7 @@ export async function sessionProfileGet(args: Pick<SessionProfileArgs, "name">, 
 
 export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionProfileDeps): Promise<WorkerToolResult> {
   try {
-    const name = nameOf(args, deps);
+    const name = await nameOf(args, deps);
     if (!name) return fail("this session has no name; pass name (the session's persistent name)");
     const patch: ProfilePatch = {};
     if ("chat" in args) patch.chat = args.chat ?? null;
@@ -99,7 +99,7 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
     const profile = updateProfile(name, patch, deps.path);
     const out = [await describeProfile(name, profile, deps)];
     if (args.chat) {
-      const running = name === currentSessionName(deps.env);
+      const running = name === (await detectSessionName(deps.env));
       const model = args.chat.model ?? args.chat.provider;
       if (args.apply_now && deps.send) {
         const r = await deps.send(name, `/model ${model}`);

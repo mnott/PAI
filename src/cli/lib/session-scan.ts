@@ -1188,3 +1188,16 @@ export function resolveSessionByNameOrId(
     `No session found matching "${query}".\n\nRun: pai sessions          to list sessions.\nRun: pai sessions --all    to include transcript-only sessions.\nRun: pai find <words>      to search prompt history.`
   );
 }
+
+/** The /Name a Claude session carries in its transcript (customTitle), found by session id; undefined when unnamed or not on disk. */
+export function transcriptCustomTitle(claudeSessionId: string, projectsDir: string = CLAUDE_PROJECTS_DIR): string | undefined {
+  try {
+    for (const d of readdirSync(projectsDir)) {
+      const f = join(projectsDir, d, `${claudeSessionId}.jsonl`);
+      if (existsSync(f)) return parseTranscript(f).customTitle;
+    }
+  } catch {
+    // no projects dir: unnamed
+  }
+  return undefined;
+}
