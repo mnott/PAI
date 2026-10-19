@@ -47,6 +47,33 @@ export interface LoopState {
   runs?: Record<string, number>;
   /** Worktree fingerprint at the last counted run per action key; a different one is progress. */
   prints?: Record<string, string>;
+  /** Window key -> ms timestamp of the first "still running" result of a polling call (see isWaitResult). */
+  waits?: Record<string, number>;
+}
+
+/** Total polling time per command key after which a "still running" helper is treated as an ordinary repeat again. */
+export const WAIT_CAP_MS = 45 * 60_000;
+const WAIT_TEXT = /still running|call again|in progress|not (?:yet )?(?:done|finished|ready)/i;
+
+function exitCodeOf(response: unknown): number | null {
+  if (typeof response === "string") {
+    const m = /^Exit code (\d+)/m.exec(response);
+    return m ? Number(m[1]) : null;
+  }
+  if (response && typeof response === "object") {
+    const r = response as Record<string, unknown>;
+    for (const k of ["exitCode", "exit_code", "returncode", "code"]) if (typeof r[k] === "number") return r[k] as number;
+  }
+  return null;
+}
+
+/**
+ * A polling helper's "come back later" result: exit code 3 (when the code is known) with output saying it is still
+ * running / call again / in progress. Such a call is a wait, not a repeat.
+ */
+export function isWaitResult(response: unknown): boolean {
+  const code = exitCodeOf(response);
+  return (code === 3 || code === null) && WAIT_TEXT.test(resultSig(response));
 }
 
 /** Runs of one action key without an edit at which the call is denied / the session stopped. */
@@ -253,9 +280,17 @@ function resultsSimilar(a: string | null | undefined, b: string | null | undefin
 }
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
-export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown): LoopState {
+export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   if (EDIT_TOOLS.has(tool)) return emptyLoopState();
   const key = callKey(tool, input);
+  if (key !== null && tool === "Bash") {
+    const waits = { ...(state.waits ?? {}) };
+    if (isWaitResult(response)) return { ...state, waits: { ...waits, [key]: waits[key] ?? now } };
+    if (key in waits) {
+      delete waits[key];
+      state = { ...state, waits };
+    }
+  }
   const last = state.window.length - 1;
   if (key === null || last < 0 || state.window[last] !== key) return state;
   const outs = [...(state.outs ?? [])];
@@ -278,8 +313,22 @@ export interface LoopStep {
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null): LoopStep {
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now()): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (tool === "Bash") {
+    // the previous result of this command said "still running": polling is waiting, bounded by WAIT_CAP_MS
+    const wk = callKey(tool, input);
+    const since = wk === null ? undefined : state.waits?.[wk];
+    if (wk !== null && since !== undefined) {
+      if (now - since < WAIT_CAP_MS) return { state, deny: false };
+      return {
+        state,
+        deny: true,
+        key: wk.split("\t")[1],
+        reason: `loop guard: this command has reported "still running" for over ${WAIT_CAP_MS / 60_000} minutes (wait cap per command). It is not finishing; check what it is waiting on or report the blocker. ${SELF}`,
+      };
+    }
+  }
   if (tool === "Bash") {
     const cmd = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     const ak = typeof cmd === "string" ? actionKey(cmd) : null;

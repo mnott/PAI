@@ -49,6 +49,13 @@ const ENTRIES = [
   "daemon-mcp/index.mjs",
 ].map((p) => join(DIST, p));
 
+/**
+ * An unreferenced chunk is kept until it is this old. A long-running process (a `pai worker run` that outlives a
+ * rebuild) lazily imports chunks of the build it started from; deleting them immediately made it die with
+ * ERR_MODULE_NOT_FOUND. Rebuilding rewrites referenced chunks, so mtime is when a build last wrote the file.
+ */
+const MAX_AGE_MS = Number(process.env.PRUNE_DIST_MAX_AGE_MS ?? 24 * 3600_000);
+
 /** Extensions this script is allowed to delete. */
 const PRUNABLE = [".mjs", ".mjs.map", ".d.mts", ".d.mts.map"];
 
@@ -99,6 +106,7 @@ if (missingEntries.length > 0) {
 
 let removed = 0;
 let freed = 0;
+let kept = 0;
 for (const name of readdirSync(DIST)) {
   const p = join(DIST, name);
   let st;
@@ -114,6 +122,11 @@ for (const name of readdirSync(DIST)) {
   const owner = p.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs");
   if (reachable.has(p) || reachable.has(owner)) continue;
 
+  if (Date.now() - st.mtimeMs < MAX_AGE_MS) {
+    kept += 1;
+    continue;
+  }
+
   try {
     unlinkSync(p);
     removed += 1;
@@ -125,6 +138,6 @@ for (const name of readdirSync(DIST)) {
 
 console.log(
   removed > 0
-    ? `✔ Pruned ${removed} unreferenced bundle file(s) from dist/ (${(freed / 1e6).toFixed(1)} MB), ${reachable.size} reachable.`
-    : `✔ dist/ has no unreferenced bundle files (${reachable.size} reachable).`
+    ? `✔ Pruned ${removed} unreferenced bundle file(s) from dist/ (${(freed / 1e6).toFixed(1)} MB), ${reachable.size} reachable, ${kept} recent kept.`
+    : `✔ dist/ has no stale unreferenced bundle files (${reachable.size} reachable, ${kept} recent kept).`
 );
