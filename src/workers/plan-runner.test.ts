@@ -253,6 +253,31 @@ describe("dryRunSchedule and status", () => {
   });
 });
 
+describe("model and priority reach every worker spawn", () => {
+  it("workerArgs: model and --now on a local worker; the sonnet tier keeps sonnet", () => {
+    const req = { part: { id: "a" }, label: "l", spec: "", provider: "glm", tier: "local", attempt: 1 } as unknown as StartRequest;
+    const a = workerArgs({ ...req, model: "glm-small", priority: "front" }, "/tmp/s.txt", "/repo");
+    expect(a.slice(a.indexOf("--model"), a.indexOf("--model") + 2)).toEqual(["--model", "glm-small"]);
+    expect(a).toContain("--now");
+    const plain = workerArgs(req, "/tmp/s.txt", "/repo");
+    expect(plain).not.toContain("--model");
+    expect(plain).not.toContain("--now");
+    const s = workerArgs({ ...req, tier: "sonnet", model: "glm-small" }, "/tmp/s.txt", "/repo");
+    expect(s.filter((x) => x === "--model")).toHaveLength(1);
+    expect(s[s.indexOf("--model") + 1]).toBe("sonnet");
+  });
+  it("runPlan hands model and priority to every local-tier start request", async () => {
+    const p = plan();
+    const h = harness(p);
+    const seen: StartRequest[] = [];
+    const inner = h.deps.startWorker;
+    h.deps.startWorker = async (r) => (seen.push(r), inner(r));
+    await runPlan(p, { parallel: 2, model: "fast", priority: "front" }, h.deps);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const r of seen) expect(r).toMatchObject({ model: "fast", priority: "front" });
+  });
+});
+
 describe("part isolation", () => {
   it("spawn args always carry --worktree and never --no-worktree", () => {
     const args = workerArgs({ part: { id: "a" }, label: "l", spec: "", provider: "anthropic", tier: "local", attempt: 1 } as unknown as StartRequest, "/tmp/s.txt", "/repo");

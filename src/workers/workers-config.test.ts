@@ -873,3 +873,18 @@ describe("provider contract key in workers.yaml", () => {
     expect(readWorkersSection(jsonPath).workers.providers[name].contract).toBe("/tmp/x-contract.md");
   });
 });
+
+describe("worker_model", () => {
+  const raw = (extra: Record<string, unknown>) => ({ baseUrl: "https://x.example.invalid", models: { default: "m", fast: "f" }, ...extra });
+  it("parses default|fast, defaults to unset, rejects anything else", () => {
+    expect(parseProvider("p", raw({ workerModel: "fast" })).workerModel).toBe("fast");
+    expect(parseProvider("p", raw({})).workerModel).toBeUndefined();
+    expect(() => parseProvider("p", raw({ workerModel: "slow" }))).toThrow(WorkersConfigError);
+  });
+  it("round-trips through the yaml key worker_model", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wm-"));
+    const yamlPath = isolateYaml(dir);
+    writeWorkersYamlText(yamlPath, starterWorkersYamlText().replace("    tier: 3\n    models:\n      default: glm-5.3[1m]", "    tier: 3\n    worker_model: fast\n    models:\n      default: glm-5.3[1m]"));
+    expect(readWorkersSection(join(dir, "config.json")).workers.providers.glm.workerModel).toBe("fast");
+  });
+});

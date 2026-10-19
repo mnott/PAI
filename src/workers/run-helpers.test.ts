@@ -465,6 +465,13 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
     expect(modelArgs(model, false)).toEqual(["--model", "sonnet"]);
   });
 
+  it("worker_model fast: a request naming no model gets the fast one; an explicit alias or flag wins", () => {
+    const p = { ...nativeAnthropicProvider(), workerModel: "fast" as const };
+    expect(resolveRunModel({ provider: p, modelAlias: null }, "implement")).toBe("haiku");
+    expect(resolveRunModel({ provider: p, modelAlias: "default" }, "implement")).toBe("sonnet");
+    expect(resolveRunModel({ provider: p, modelAlias: null }, "implement", "opus")).toBe("opus");
+  });
+
   it("--class spotcheck and --class simple resolve the fast model (haiku)", () => {
     expect(resolveRunModel(native(), "spotcheck")).toBe("haiku");
     expect(resolveRunModel(native(), "simple")).toBe("haiku");

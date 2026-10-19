@@ -101,6 +101,13 @@ export interface WorkerProvider {
    * model id to a tier, e.g. a heavyweight default to the opus tier.
    */
   modelTiers?: Record<string, ModelTier>;
+  /**
+   * Model a worker gets on this provider when the request names none:
+   * "default" (the default, unset) or "fast". Set "fast" on an expensive
+   * provider. An explicit model (`--model`, a `provider/role` class target,
+   * where/model) still wins. workers.yaml `worker_model`.
+   */
+  workerModel?: "default" | "fast";
   /** Extra environment variables for runs through this provider (string values). */
   env: Record<string, string>;
   note?: string;
@@ -695,6 +702,9 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  if (p.workerModel !== undefined && p.workerModel !== "default" && p.workerModel !== "fast") {
+    bad(`.providers.${name}.worker_model`, 'must be "default" or "fast"');
+  }
   const quotaSkipAt = p.quotaSkipAt === undefined ? undefined : p.quotaSkipAt;
   if (quotaSkipAt !== undefined) {
     if (typeof quotaSkipAt !== "number" || quotaSkipAt < 0 || quotaSkipAt > 100) {
@@ -809,6 +819,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
+    ...(p.workerModel === "fast" ? { workerModel: "fast" as const } : {}),
     ...(quotaSkipAt !== undefined ? { quotaSkipAt } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(thinking !== undefined ? { thinking } : {}),

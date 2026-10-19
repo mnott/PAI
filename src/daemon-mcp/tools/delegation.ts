@@ -87,8 +87,6 @@ const fail = (s: string): WorkerToolResult => error(new Error(s));
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-// ponytail: plan_run/queue_run honor the resolved provider; the plan/queue runners spawn workers with --provider only, so model and now: true
-// are resolved and reported but not yet passed on to those workers (pai worker run --model / --now carry them).
 /** The three optional arguments every delegation tool takes; `local: true` is where "local". */
 export interface WhereArgs extends TargetArgs {
   local?: boolean;
@@ -96,6 +94,15 @@ export interface WhereArgs extends TargetArgs {
 
 const asked = (a: WhereArgs): boolean => a.local === true || !!a.where || !!a.model || a.now === true;
 const targetArgs = (a: WhereArgs): TargetArgs => ({ where: a.where ?? (a.local === true ? "local" : undefined), model: a.model, now: a.now });
+
+/** The `pai plan|queue run` options a resolved target becomes: provider, model, --now (the runners hand them to every worker). */
+function runTarget(t: Target | undefined, withProvider = true): Record<string, unknown> {
+  return {
+    ...(withProvider && t?.provider ? { provider: t.provider } : {}),
+    ...(t?.model ? { model: t.model } : t?.modelFast ? { model: "fast" } : {}),
+    ...(t?.priority ? { now: true } : {}),
+  };
+}
 
 /** Resolve the arguments once; undefined when the caller named nothing (today's routing). */
 async function resolveWhere(a: WhereArgs, deps: DelegationDeps): Promise<Target | undefined> {
@@ -245,7 +252,7 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const target = await resolveWhere(args, deps);
     const par = parallelOf(plan, target?.provider ? deps.capOf(target.provider) : deps.provider(loadSettings(repo)).cap);
     const origin = deps.origin();
-    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...(target?.provider ? { provider: target.provider } : {}), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
+    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
     return text(withTarget(target, `Plan "${args.name}" started in the background${origin ? "" : " (no calling session found, events are not delivered)"}: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`));
   } catch (e) {
     return error(e);
@@ -366,7 +373,7 @@ export async function queueRun(args: { project: string; escalate?: boolean } & W
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
     const target = await resolveWhere(args, deps);
     const prov = target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
-    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
+    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
     return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`));
   } catch (e) {
     return error(e);

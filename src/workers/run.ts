@@ -181,6 +181,8 @@ export interface RunOptions {
   priority?: "front";
   /** --model fast without a provider: the routed provider's fast model. */
   modelFast?: boolean;
+  /** --model default without a provider: the routed provider's default model, not its worker_model. */
+  modelDefault?: boolean;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
   /** --mcp value: server/set names, comma-separated. */
@@ -435,8 +437,9 @@ export function resolveRunModel(
 ): string {
   if (modelFlag) return modelFlag;
   const alias = target.modelAlias;
-  const capability =
-    alias && isModelCapability(alias) ? alias : classModelCapability(className);
+  let capability = alias && isModelCapability(alias) ? alias : classModelCapability(className);
+  // nothing named a model (no flag, no class role): the provider's worker_model decides
+  if (!alias && capability === "default" && target.provider.workerModel === "fast") capability = "fast";
   return resolveModelCapability(target.provider, capability);
 }
 
@@ -693,6 +696,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
   assertProviderRunnable(target.providerName, target.provider);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
+  if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
 
   const noBrowser = opts.browser === undefined ? config.noBrowserByDefault : !opts.browser;
   const parsed = parseRunnerArgs(noBrowser ? stripBrowserArgs(opts.claudeArgs) : opts.claudeArgs);

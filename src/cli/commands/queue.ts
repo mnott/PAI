@@ -100,6 +100,8 @@ const runCmd: CommandDef = {
     { name: "provider", type: "string", value: "NAME", summary: "Provider name (the detached runner passes what it resolved; the value local is resolved at run start)" },
     { name: "parallel", type: "number", value: "N", summary: "Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only sonnet)" },
+    { name: "model", type: "string", value: "MODEL", summary: "Model the items' workers get: default, fast or a model id (default: the provider's worker_model)" },
+    { name: "now", type: "boolean", summary: "The items' workers go ahead of the runs waiting for a slot on the provider" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
   ],
   examples: ["pai queue run", "pai queue run --detach", "pai queue run --parallel 2", "pai queue run --escalate sonnet"],
@@ -127,7 +129,7 @@ const runCmd: CommandDef = {
     }
     const reporter = origin ? new QueueReporter(basename(repo), runMessenger(logDir), origin) : null;
     const onEvent = reporter ? (k: "ready" | "needs-decision", it: QueueItem) => (k === "ready" ? reporter.onReady(it) : reporter.onNeedsDecision(it)) : undefined;
-    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === "sonnet", onEvent }, realQueueDeps(logDir, repo));
+    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === "sonnet", ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), onEvent }, realQueueDeps(logDir, repo));
     await reporter?.finish();
     finishDetached(logDir);
     out(`ready: ${s.ready.join(", ") || "none"}; too-big: ${s.tooBig.join(", ") || "none"}; needs-decision: ${s.needsDecision.join(", ") || "none"}`);

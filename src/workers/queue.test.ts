@@ -9,6 +9,14 @@ const tmp = () => join(mkdtempSync(join(tmpdir(), "pai-queue-test-")), "state", 
 const settings = (y = "") => parseSettings(y);
 
 describe("store and transitions", () => {
+  it("runQueue hands model and priority to every local worker", async () => {
+    const s = new QueueStore(join(mkdtempSync(join(tmpdir(), "q-")), "queue.jsonl"));
+    s.add("one", "/r");
+    const seen: Array<{ model?: string; priority?: string }> = [];
+    const f = fakeDeps({ async startWorker(req) { seen.push({ model: req.model, priority: req.priority }); return { id: "w", ok: true, worktreeDir: "/wt", report: "R ok" }; } });
+    await runQueue(s, settings(), { provider: "local", parallel: 1, model: "fast", priority: "front" }, f.deps);
+    expect(seen).toEqual([{ model: "fast", priority: "front" }]);
+  });
   it("adds items with ids, persists, and enforces transitions", () => {
     const path = tmp();
     const s = new QueueStore(path, () => 0);

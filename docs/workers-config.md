@@ -162,7 +162,10 @@ built-in Anthropic↔OpenAI proxy), `engine: codex` (runs the provider on the
 Codex CLI instead of Claude Code) or `engine: image` (see "Capabilities"
 below), `env` (extra environment for runs through this provider), `note`
 (shown in `pai worker providers`), `quota_probe` + `quota_skip_at`,
-`context_window`, `thinking` (`on`|`off`; default off for a non-anthropic
+`context_window`, `worker_model` (`default`|`fast`; the model a worker gets
+on this provider when the request names none, e.g. `fast` on an expensive
+provider; an explicit `--model`, a `provider/role` class target or the
+where/model arguments still win; default `default`), `thinking` (`on`|`off`; default off for a non-anthropic
 provider: the run sends no `thinking`/effort fields; `on` keeps Claude Code's
 defaults), `tags`, `usage`, `model_tiers`. Full field semantics:
 `src/workers/config.ts`.

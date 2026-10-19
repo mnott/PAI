@@ -96,7 +96,18 @@ describe("plan_save", () => {
     const r = await planRun({ project: "p", name: "jobr", where: "kimi", model: "fast", now: true }, deps);
     expect(target).toHaveBeenCalledWith({ where: "kimi", model: "fast", now: true });
     expect(text(r)).toMatch(/^Runs on kimi\./);
-    expect(detach.mock.calls[0][0].opts).toMatchObject({ provider: "kimi" });
+    expect(detach.mock.calls[0][0].opts).toMatchObject({ provider: "kimi", now: true });
+  });
+  it("plan_run / queue_run pass the resolved model and --now on to the runner", async () => {
+    await planSave({ project: "p", name: "jobm", plan }, deps);
+    target.mockResolvedValueOnce({ provider: "glm", model: "glm-small", priority: "front", description: "glm glm-small" });
+    await planRun({ project: "p", name: "jobm", where: "glm", model: "fast", now: true }, deps);
+    expect(detach.mock.calls[0][0].opts).toMatchObject({ provider: "glm", model: "glm-small", now: true });
+    await queueAdd({ project: "p", sentence: "one" }, deps);
+    target.mockResolvedValueOnce({ modelFast: true, description: "default routing fast model" });
+    await queueRun({ project: "p", model: "fast" }, deps);
+    expect(detach.mock.calls[1][0].opts).toMatchObject({ model: "fast" });
+    expect(detach.mock.calls[1][0].opts).not.toHaveProperty("now");
   });
 });
 

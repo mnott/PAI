@@ -39,6 +39,10 @@ export interface StartRequest {
   /** "local" runs on plan.provider; "sonnet" is the escalation. */
   tier: "local" | "sonnet";
   attempt: number;
+  /** Model for a local-tier worker (`pai worker run --model`); the sonnet tier names its own. */
+  model?: string;
+  /** "front": the worker goes ahead of the provider's waiting runs (`--now`). */
+  priority?: "front";
 }
 
 export interface MergeOutcome {
@@ -102,6 +106,10 @@ export interface RunSummary {
 export interface RunOptions {
   parallel: number;
   escalate?: boolean;
+  /** Model every local-tier worker of the run gets (default: the provider's). */
+  model?: string;
+  /** "front": every worker of the run goes ahead of the provider's waiting runs. */
+  priority?: "front";
   /** Part ids already merged (from the log). */
   merged?: ReadonlySet<string>;
   /** Unit ids whose unit_check already passed. */
@@ -228,7 +236,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
         deps.log({ event: "escalate", part: p.id, unit: p.unit, attempt: i + 1, tier, note: tail(failure ?? "", 10) });
       }
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
-      const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1 });
+      const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, ...(out.loopStopped ? { reason: "loop" } : {}), tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";

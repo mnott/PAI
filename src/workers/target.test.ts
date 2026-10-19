@@ -41,6 +41,13 @@ describe("resolveTarget", () => {
     const t = await resolveTarget({ where: "local" }, deps());
     expect(t).toMatchObject({ provider: "flash", description: "local: flash" });
   });
+  it("worker_model fast: the provider's fast model unless the request says default or names one", async () => {
+    const w = { ...workers, providers: { ...workers.providers, glm: { ...workers.providers.glm, workerModel: "fast" } } } as unknown as TargetDeps["workers"];
+    expect(await resolveTarget({ where: "glm" }, deps({ workers: w }))).toMatchObject({ provider: "glm", model: "glm-small" });
+    expect(await resolveTarget({ where: "glm", model: "default" }, deps({ workers: w }))).toMatchObject({ model: "glm-big" });
+    expect(await resolveTarget({ where: "glm", model: "x-1" }, deps({ workers: w }))).toMatchObject({ model: "x-1" });
+    expect(await resolveTarget({ model: "default" }, deps({ workers: w }))).toMatchObject({ modelDefault: true });
+  });
   it("local, none up: the no-local-server error", async () => {
     await expect(resolveTarget({ where: "local" }, deps({ check: none }))).rejects.toThrow(/no local model server/);
   });

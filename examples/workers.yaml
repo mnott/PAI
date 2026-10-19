@@ -6,6 +6,11 @@
 # Per-user state, kept 0600: this file can hold API keys (`key:`, below).
 # Never commit it or share it. `key_file: <path>` keeps a secret in its own
 # 0600 file instead, if you'd rather not put it here.
+#
+# Per provider, `worker_model: default | fast` is the model a worker gets when
+# the request names none (default: default). Set `fast` on an expensive
+# provider; an explicit --model, a provider/role class target or where/model
+# still wins.
 
 active: anthropic          # provider for `pai worker run` without --provider or --class
 
