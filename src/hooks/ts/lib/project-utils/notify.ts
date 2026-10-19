@@ -32,6 +32,8 @@ export function isWhatsAppEnabled(): boolean {
  * When WhatsApp is NOT configured, ntfy fires as the fallback channel.
  */
 export async function sendNtfyNotification(message: string, retries = 2): Promise<boolean> {
+  // Test runners never reach ntfy.sh.
+  if (process.env.VITEST || process.env.NODE_ENV === 'test' || process.env.BUN_TEST) return true;
   if (isWhatsAppEnabled()) {
     console.error(`WhatsApp (Whazaa) enabled in MCP config — skipping ntfy`);
     return true;

@@ -22,6 +22,7 @@
 import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { assertTestWriteAllowed } from "./test-isolation.js";
 
 /** Resolved at call time so a changed HOME (tests) is honoured. */
 export function claudeJsonPath(): string {
@@ -69,6 +70,7 @@ export function readClaudeJson(): Record<string, unknown> {
  * previous direct writeFileSync could truncate the file and then fail.
  */
 export function writeClaudeJson(data: Record<string, unknown>): void {
+  assertTestWriteAllowed(claudeJsonPath());
   const serialized = JSON.stringify(data, null, 2) + "\n";
 
   if (existsSync(claudeJsonPath())) {

@@ -17,6 +17,7 @@ import {
   chmodSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { assertTestWriteAllowed } from "./test-isolation.js";
 import { Document, YAMLMap, parseDocument, type Node, type Pair, type Scalar } from "yaml";
 
 export class YamlStoreError extends Error {}
@@ -27,6 +28,7 @@ export class YamlStoreError extends Error {}
  * 0600 — every PAI-owned YAML file can carry secrets, key or no key.
  */
 export function writeYamlFileAtomic(path: string, text: string, opts: { label?: string } = {}): void {
+  assertTestWriteAllowed(path);
   const label = opts.label ?? path;
   const parsed = parseDocument(text);
   if (parsed.errors.length) {
