@@ -19,7 +19,7 @@ import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
-import { allSetups, findSetup, loadSaved, orchestratorLabel, shortModel, workersLabel, type Setup } from "../lib/setups.js";
+import { allSetups, downLocalProviders, findSetup, loadSaved, orchestratorLabel, shortModel, workersLabel, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
@@ -126,7 +126,8 @@ export function setupsTable(
   cfg: Parameters<typeof workersLabel>[0] & Pick<WorkersConfig, "routing">,
   budget: Parameters<typeof providerHealth>[2],
   st: Style,
-  routing?: RoutingState
+  routing?: RoutingState,
+  down: ReadonlySet<string> = new Set()
 ) {
   const health = (name: string): Health => {
     const h = providerHealth(name, cfg, budget);
@@ -134,6 +135,7 @@ export function setupsTable(
     return left > 0 ? { state: "limit", reason: `${name}: cooling down, ${Math.ceil(left / 60_000)}m left` } : h;
   };
   const status = (s: Setup): Health => {
+    if (s.kind === "last" && down.has(s.workers)) return { state: "limit", reason: "down" };
     const a = health(s.orchestrator.provider);
     return a.state !== "ok" ? a : health(s.workers);
   };
@@ -241,9 +243,23 @@ export async function startSession(a: StartArgs): Promise<number> {
   return execHarness(harness, workers);
 }
 
+/** Setup lookup for `--with`: a setup on a local provider that is not running gets a clear error. */
+export async function resolveSetup(workers: WorkersConfig, last: Setup | null, query: string, down?: ReadonlySet<string>): Promise<Setup> {
+  const d = down ?? (await downLocalProviders(workers));
+  const saved = loadSaved();
+  const setup = findSetup(allSetups(workers, last, saved, d), query);
+  if (setup) return setup;
+  const hidden = findSetup(allSetups(workers, last, saved), query);
+  if (hidden && d.has(hidden.workers)) {
+    throw new CliError(`local provider ${hidden.workers} is not running; start it with pai worker local`, "pai setups");
+  }
+  throw unknownSetup(query, allSetups(workers, last, saved, d));
+}
+
 async function chooseSetup(term: Term, workers: WorkersConfig, last: Setup, budget: Parameters<typeof providerHealth>[2]): Promise<Setup | null> {
-  const setups = allSetups(workers, last, loadSaved());
-  const o = setupsTable(setups, workers, budget, term.st);
+  const down = await downLocalProviders(workers);
+  const setups = allSetups(workers, last, loadSaved(), down);
+  const o = setupsTable(setups, workers, budget, term.st, undefined, down);
   return runPicker({ ...o, title: "Choose a setup" }, term.st, term.input, term.output);
 }
 
@@ -259,9 +275,7 @@ async function openRow(row: SessionRow, workers: WorkersConfig, withName: string
   const go = (setup: Setup, fresh: boolean) => startSession({ workers, setup, name: row.name, cwd, resume: fresh ? undefined : row, dryRun, term });
 
   if (withName) {
-    const setup = findSetup(allSetups(workers, last, loadSaved()), withName);
-    if (!setup) throw unknownSetup(withName, allSetups(workers, last, loadSaved()));
-    return go(setup, false);
+    return go(await resolveSetup(workers, last, withName), false);
   }
   if (!term.isTTY) {
     if (dryRun) return go(last, false);
@@ -316,9 +330,7 @@ export async function runNewWith(
   register?: Register
 ): Promise<number> {
   const workers = loadWorkers();
-  const all = allSetups(workers, lastSetup(null, workers), loadSaved());
-  const setup = findSetup(all, args.with);
-  if (!setup) throw unknownSetup(args.with, all);
+  const setup = await resolveSetup(workers, lastSetup(null, workers), args.with);
   const cwd = await prepareDir(args.dir, { dryRun: args.dryRun, out: (s) => term.output.write(s + "\n"), register });
   return startSession({ workers, setup, name: args.name ?? (basename(cwd) || "session"), cwd, dryRun: args.dryRun, term });
 }
@@ -336,8 +348,7 @@ export async function runRoot(
   const workers = loadWorkers();
 
   if (!args.name && args.with) {
-    const setup = findSetup(allSetups(workers, lastSetup(null, workers), loadSaved()), args.with);
-    if (!setup) throw unknownSetup(args.with, allSetups(workers, lastSetup(null, workers), loadSaved()));
+    const setup = await resolveSetup(workers, lastSetup(null, workers), args.with);
     return startSession({ workers, setup, name: basename(process.cwd()) || "session", cwd: process.cwd(), dryRun: args.dryRun, term });
   }
 
