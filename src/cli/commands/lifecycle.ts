@@ -199,7 +199,7 @@ export const restoreTop: CommandDef = {
     { name: "no-postgres", type: "boolean", default: false, summary: "Do not restore the Postgres database" },
     { name: "yes", type: "boolean", default: false, summary: "Do not ask for confirmation" },
   ],
-  examples: ["pai restore", "pai restore ~/.claude/pai/backups/20260101-120000 --no-postgres --yes"],
+  examples: ["pai restore", "pai restore ~/.pai/backups/20260101-120000 --no-postgres --yes"],
   seeAlso: ["pai backup"],
   run: (c) => legacy(() => runRestore(c.args.BACKUP as string | undefined, { postgres: c.opts["no-postgres"] !== true, yes: c.opts.yes === true })),
 };

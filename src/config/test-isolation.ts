@@ -34,9 +34,9 @@ export function assertTestWriteAllowed(path: string): void {
   const home = realHome();
   if (!home) return;
   const target = resolve(path);
-  const paiHome = join(home, ".claude", "pai");
+  const paiHomes = [join(home, ".claude", "pai"), join(home, ".pai")];
   const claudeJson = join(home, ".claude.json");
-  if (target === claudeJson || target.startsWith(claudeJson + ".") || target === paiHome || target.startsWith(paiHome + sep)) {
+  if (target === claudeJson || target.startsWith(claudeJson + ".") || paiHomes.some((h) => target === h || target.startsWith(h + sep))) {
     throw new Error(
       `refusing to write ${path}: test-isolation rule — tests must never write the live PAI config; ` +
         `use a temp PAI home (PAI_HOME=<mkdtemp dir>) instead`

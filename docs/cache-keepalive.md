@@ -170,7 +170,7 @@ queued; it has no value later.
 
 ### State file
 
-Per-session beat counters live at `~/.claude/pai/session-keepalive.json`
+Per-session beat counters live at `~/.pai/session-keepalive.json`
 (`PAI_HOME`-relative, rebuildable — a damaged file just resets counters, it
 is never a reason to skip beating):
 

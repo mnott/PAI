@@ -1,6 +1,6 @@
 /**
  * config.ts — the `workers` section of the PAI config file (CONFIG_FILE,
- * see src/daemon/config.ts's paiConfigFilePath — ~/.claude/pai/config.yaml
+ * see src/daemon/config.ts's paiConfigFilePath — ~/.pai/config.yaml
  * today, config.json until `pai config yaml` runs).
  *
  * Everything that knows about worker providers reads this module: the CLI

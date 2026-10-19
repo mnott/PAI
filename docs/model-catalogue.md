@@ -297,11 +297,11 @@ provided the provider's tool-calling still works over Chat Completions
 ## 3. `workers.yaml` snippets
 
 All of these are commented out and use placeholder key files under
-`~/.claude/pai/keys/<name>` (the on-disk field is `key_file`; `keysDir()` in
+`~/.pai/keys/<name>` (the on-disk field is `key_file`; `keysDir()` in
 `src/workers/config.ts:1050` resolves to `paiHomePath("keys")`, i.e.
-`~/.claude/pai/keys`). Every snippet below was validated to parse without
+`~/.pai/keys`). Every snippet below was validated to parse without
 throwing via `readWorkersYaml()` against a temp file — see §3 validation
-output. None of this was written into the live `~/.claude/pai/workers.yaml`.
+output. None of this was written into the live `~/.pai/workers.yaml`.
 
 ```yaml
 # --- OpenAI, via the PAI proxy (protocol: openai) ---
@@ -309,7 +309,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   openai:
 #     protocol: openai
 #     upstream_url: "https://api.openai.com/v1"
-#     key_file: "~/.claude/pai/keys/openai"
+#     key_file: "~/.pai/keys/openai"
 #     models:
 #       default: gpt-5.1        # gpt-6-astra needs Responses API for tools — see docs/model-catalogue.md §2
 #       fast: gpt-5-mini
@@ -320,7 +320,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   gemini:
 #     protocol: openai
 #     upstream_url: "https://generativelanguage.googleapis.com/v1beta/openai"
-#     key_file: "~/.claude/pai/keys/gemini"
+#     key_file: "~/.pai/keys/gemini"
 #     models:
 #       default: gemini-3.5-flash
 #       fast: gemini-3.5-flash-lite
@@ -332,7 +332,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   xai:
 #     protocol: openai
 #     upstream_url: "https://api.x.ai/v1"
-#     key_file: "~/.claude/pai/keys/xai"
+#     key_file: "~/.pai/keys/xai"
 #     models:
 #       default: grok-4.6
 #       fast: grok-build-0.1
@@ -343,7 +343,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   mistral:
 #     protocol: openai
 #     upstream_url: "https://api.mistral.ai/v1"
-#     key_file: "~/.claude/pai/keys/mistral"
+#     key_file: "~/.pai/keys/mistral"
 #     models:
 #       default: mistral-large-latest
 #       fast: mistral-small-latest
@@ -354,7 +354,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   deepseek:
 #     protocol: openai
 #     upstream_url: "https://api.deepseek.com"
-#     key_file: "~/.claude/pai/keys/deepseek"
+#     key_file: "~/.pai/keys/deepseek"
 #     models:
 #       default: deepseek-v4-pro
 #       fast: deepseek-flash
@@ -364,7 +364,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 # providers:
 #   glm2:
 #     url: "https://api.z.ai/api/anthropic"
-#     key_file: "~/.claude/pai/keys/glm2"
+#     key_file: "~/.pai/keys/glm2"
 #     models:
 #       default: glm-5.3
 #       fast: glm-5.3-flash
@@ -374,7 +374,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 # providers:
 #   kimi2:
 #     url: "https://api.kimi.ai/coding/"
-#     key_file: "~/.claude/pai/keys/kimi2"
+#     key_file: "~/.pai/keys/kimi2"
 #     models:
 #       default: kimi-k3
 #     tier: 3
@@ -384,7 +384,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   qwen:
 #     protocol: openai
 #     upstream_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-#     key_file: "~/.claude/pai/keys/qwen"
+#     key_file: "~/.pai/keys/qwen"
 #     models:
 #       default: qwen3.8-max
 #       fast: qwen3.5-flash
@@ -395,7 +395,7 @@ output. None of this was written into the live `~/.claude/pai/workers.yaml`.
 #   groq:
 #     protocol: openai
 #     upstream_url: "https://api.groq.com/openai/v1"
-#     key_file: "~/.claude/pai/keys/groq"
+#     key_file: "~/.pai/keys/groq"
 #     models:
 #       default: openai/gpt-oss-120b
 #       fast: llama-3.1-8b-instant
@@ -442,13 +442,13 @@ reproduce (run `bun install` first if `node_modules` is missing).
 
 ```
 # 1. Save the key
-mkdir -p ~/.claude/pai/keys && chmod 700 ~/.claude/pai/keys
-printf '%s' 'sk-...' > ~/.claude/pai/keys/deepseek && chmod 600 ~/.claude/pai/keys/deepseek
+mkdir -p ~/.pai/keys && chmod 700 ~/.pai/keys
+printf '%s' 'sk-...' > ~/.pai/keys/deepseek && chmod 600 ~/.pai/keys/deepseek
 
 # 2. Add the provider (flags confirmed via `pai worker providers add --help`)
 pai worker providers add deepseek \
   --protocol openai --upstream-url https://api.deepseek.com \
-  --key-file ~/.claude/pai/keys/deepseek \
+  --key-file ~/.pai/keys/deepseek \
   --model deepseek-v4-pro --fast-model deepseek-flash \
   --cost-tier 1
 
@@ -478,7 +478,7 @@ uses what does.
 Fact, not assumption, gathered from this environment's own ledger and test
 suite:
 
-- **495 recorded worker runs** in `~/.claude/pai/logs/workers/*.status`
+- **495 recorded worker runs** in `~/.pai/logs/workers/*.status`
   (this machine's ledger) break down as `anthropic`: 199, `glm`: 284,
   `kimi`: 12. **Zero** used a provider with `protocol: "openai"` — `glm` and
   `kimi` are both configured in the live `workers.yaml` against

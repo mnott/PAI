@@ -4,7 +4,7 @@ PAI tracks your weekly Claude usage and automatically adjusts subagent model sel
 
 ## How it works
 
-The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.claude/pai/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
+The statusline reads your OAuth usage from the Anthropic API (5-hour and 7-day windows) and writes the weekly budget percentage to `~/.pai/advisor-mode.json`. A whisper-rules hook reads this file on every prompt and injects model-tiering guidance.
 
 ## Automatic thresholds
 

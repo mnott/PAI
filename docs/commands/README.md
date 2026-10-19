@@ -20,6 +20,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
 | [`pai help`](help.md) | Explain a command (same as `pai <command> --help`) |
+| [`pai home`](home.md) | Where PAI keeps its files; move them out of ~/.claude |
 | [`pai hooks-db`](hooks-db.md) | Registry updates for the stop and pre-compact hooks |
 | [`pai identity`](identity.md) | Say who you are, so mail to you can be told from mail to others |
 | [`pai install`](install.md) | First-time setup: storage, search, hooks, daemon |
@@ -117,6 +118,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
 | `pai help` | Explain a command (same as `pai <command> --help`) |
+| `pai home` | Where PAI keeps its files; move them out of ~/.claude |
+| `pai home migrate` | Move PAI's home from ~/.claude/pai to ~/.pai |
+| `pai home path` | Print where PAI's home is |
 | `pai hooks-db` | Registry updates for the stop and pre-compact hooks |
 | `pai hooks-db pre-compact` | Mark the project's open session compacted and log it |
 | `pai hooks-db session-stop` | Mark the project's latest session completed |

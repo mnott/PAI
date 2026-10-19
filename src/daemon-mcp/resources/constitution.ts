@@ -35,7 +35,7 @@ User
 | Memory | \${PAI_DIR}/projects/*/Notes/ | Session notes, todos |
 | Skills | ~/.claude/skills/ | Workflow instructions |
 | History | \${PAI_HOME}/History/ | Automated capture |
-| Config | ~/.claude/pai/ | Agent preferences (config.yaml, workers.yaml, etc.) |
+| Config | ~/.pai/ | Agent preferences (config.yaml, workers.yaml, etc.) |
 
 ## Two-Tier MCP Strategy
 

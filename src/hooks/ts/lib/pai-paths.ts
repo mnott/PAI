@@ -10,7 +10,7 @@
  *   agents/, commands/, settings.json, statusline-command.sh,
  *   tab-color-command.sh). It is harness-specific: a future harness would
  *   need its own adapter directory with its own conventions.
- * - PAI_HOME (~/.claude/pai by default — see ../../../config/pai-home.ts) is
+ * - PAI_HOME (~/.pai by default — see ../../../config/pai-home.ts) is
  *   where PAI's own state lives: everything hooks WRITE (History/,
  *   agent-sessions.json, session-routing.json, ...) resolves there, with a
  *   fallback to the pre-2026-09-19 ADAPTER_DIR location and a one-time

@@ -1,5 +1,5 @@
 /**
- * `pai config` — the PAI_HOME namespace dir (~/.claude/pai by default) and
+ * `pai config` — the PAI_HOME namespace dir (~/.pai by default) and
  * moving the per-user files that live under it: config.json, workers.yaml,
  * whisper-rules.md, advisor-mode.json, session-state/, and the remaining
  * per-subsystem state files/dirs migrated from ~/.config/pai on 2026-09-19

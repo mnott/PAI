@@ -11,7 +11,7 @@
  *     inside 100.64.0.0/10; anything else gets 403 before any routing.
  *   - the cockpit GET routes need the cockpit token (?token=, Authorization:
  *     Bearer, or the cookie the first token-authenticated hit sets). It is
- *     generated on first start and kept at ~/.claude/pai/router-cockpit.token,
+ *     generated on first start and kept at ~/.pai/router-cockpit.token,
  *     mode 0600; the full token URL is printed once at startup.
  *
  * 0.0.0.0 is refused outright: the loopback listener already serves the local

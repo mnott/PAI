@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { paiHomeDir } from "../config/pai-home.js";
 
 export interface BuildTicket {
   id: string;
@@ -61,7 +62,7 @@ const defaultDeps = (): QueueDeps => ({
 /** Where builds live: PAI_BUILD_DIR, else PAI_HOME/logs/builds. */
 export function buildsDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.PAI_BUILD_DIR) return env.PAI_BUILD_DIR;
-  return join(env.PAI_HOME || join(homedir(), ".claude", "pai"), "logs", "builds");
+  return join(env.PAI_HOME || paiHomeDir(), "logs", "builds");
 }
 
 const ticketsDir = (dir: string): string => join(dir, "tickets");

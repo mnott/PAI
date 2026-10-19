@@ -1,8 +1,8 @@
 /**
  * config.ts — Configuration loader for PAI Daemon
  *
- * Loads config from ~/.claude/pai/config.json (the pre-2026-09-19 location
- * was ~/.config/pai/config.json, briefly ~/.claude/pai.json in between —
+ * Loads config from ~/.pai/config.json (the pre-2026-09-19 location
+ * was ~/.config/pai/config.json, briefly ~/.pai.json in between —
  * see paiConfigFilePath/migrateConfigFile).
  * Deep-merges with defaults so partial configs work fine.
  * Expands ~ in path values at runtime.
@@ -131,7 +131,7 @@ export interface RouterConfig {
    * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit
    * IPv4 — never 0.0.0.0. A wider bind adds a second listener on that address
    * for the cockpit, which then needs the token from
-   * ~/.claude/pai/router-cockpit.token (printed once as a full URL at
+   * ~/.pai/router-cockpit.token (printed once as a full URL at
    * startup); /v1 keeps answering only loopback and tailnet remotes.
    */
   bind: string;
@@ -438,8 +438,8 @@ export const ConfigMigrationError = PaiFileMigrationError;
 export type ConfigMigrateResult = MigrateFileResult;
 
 /**
- * `pai config migrate`: move config.json (from ~/.claude/pai.json or
- * ~/.config/pai/config.json, whichever is found) to ~/.claude/pai/config.json
+ * `pai config migrate`: move config.json (from ~/.pai.json or
+ * ~/.config/pai/config.json, whichever is found) to ~/.pai/config.json
  * byte-for-byte, verify the copy, then rename the old file aside as
  * config.json.migrated-<YYYYMMDD> (never deleted).
  */

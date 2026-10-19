@@ -63,8 +63,8 @@ describe("--storage", () => {
     const cfg = await u.stepStorage(rl);
     expect(cfg).toEqual({ storageBackend: "sqlite" });
     u.mergeConfig(cfg);
-    const files = readdirSync(join(home, ".claude", "pai")).filter((f) => f.startsWith("config."));
+    const files = readdirSync(join(home, ".pai")).filter((f) => f.startsWith("config."));
     expect(files.length).toBeGreaterThan(0);
-    expect(readFileSync(join(home, ".claude", "pai", files[0]), "utf8")).toMatch(/"?storageBackend"?:\s*"?sqlite/);
+    expect(readFileSync(join(home, ".pai", files[0]), "utf8")).toMatch(/"?storageBackend"?:\s*"?sqlite/);
   });
 });

@@ -28,7 +28,7 @@ describe("router file paths resolve at call time", () => {
     dirs.push(dir);
     vi.stubEnv("PAI_HOME", "");
     vi.stubEnv("HOME", dir);
-    expect(usageLogFile()).toBe(join(dir, ".claude", "pai", "logs", "router-usage.jsonl"));
-    expect(routerPidFile()).toBe(join(dir, ".claude", "pai", "router.pid"));
+    expect(usageLogFile()).toBe(join(dir, ".pai", "logs", "router-usage.jsonl"));
+    expect(routerPidFile()).toBe(join(dir, ".pai", "router.pid"));
   });
 });

@@ -31,7 +31,7 @@ import {
 } from "fs";
 import { join, resolve, basename } from "path";
 import { homedir, platform } from "os";
-import { syncSkipReason } from "./lib/sync-guard.mjs";
+import { paiHomeDir as resolvePaiHomeDir, syncSkipReason } from "./lib/sync-guard.mjs";
 
 const HOOKS_SRC = "src/hooks/ts";
 const HOOKS_OUT = "dist/hooks";
@@ -299,7 +299,7 @@ if (skipReason) {
     }
   }
 
-  const paiHomeDir = process.env.PAI_HOME || join(homedir(), ".claude", "pai");
+  const paiHomeDir = resolvePaiHomeDir();
   syncContentDirSymlink(join(paiHomeDir, "agents"), join(claudeDir, "agents"));
   syncContentDirSymlink(join(paiHomeDir, "commands"), join(claudeDir, "commands"));
 

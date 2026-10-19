@@ -6,18 +6,18 @@
  * Worker-only (PAI_WORKER=1): rewrites an old_string whose whitespace the
  * model altered to the exact original span when it matches exactly once, and
  * denies no-op edits. Only I/O here; the rule lives in lib/edit-repair.ts.
- * Each repair is logged one line to ~/.claude/pai/logs/workers/edit-repair.log.
+ * Each repair is logged one line to ~/.pai/logs/workers/edit-repair.log.
  */
 
 import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { join } from "node:path";
 import { REPAIR_NOTE, renderDeny, renderEditRepair, repairEdit, type EditRepairInput } from "../lib/edit-repair.js";
 
 function logRepair(tail: string): void {
   try {
-    const dir = join(homedir(), ".claude", "pai", "logs", "workers");
+    const dir = paiHomePath("logs", "workers");
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "edit-repair.log"), `${new Date().toISOString()}\tworker=${currentWorkerId(process.env, dir) ?? "-"}\t${tail}\n`);
   } catch {

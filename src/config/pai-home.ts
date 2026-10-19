@@ -3,7 +3,7 @@
  * migration into it.
  *
  * Every PAI-owned per-user file (workers.yaml, config.json, whisper-rules.md,
- * advisor-mode.json, ...) lives under PAI_HOME (~/.claude/pai by default) so
+ * advisor-mode.json, ...) lives under PAI_HOME (~/.pai by default) so
  * nothing PAI writes can ever collide with a file Claude Code itself
  * introduces under ~/.claude. Decided 2026-09-19 — see docs/workers-config.md.
  */
@@ -32,9 +32,28 @@ function filesByteIdentical(a: string, b: string): boolean {
   }
 }
 
-/** PAI_HOME (test isolation, power users) overrides the default namespace dir. */
+/** The pre-2026-10-19 PAI home, inside the Claude Code directory. */
+export function legacyPaiHomeDir(): string {
+  return join(homedir(), ".claude", "pai");
+}
+
+/** The default PAI home: independent of Claude Code. */
+export function defaultPaiHomeDir(): string {
+  return join(homedir(), ".pai");
+}
+
+/**
+ * THE one PAI_HOME resolver. PAI_HOME env overrides; else ~/.pai; except that
+ * until `pai home migrate` has run (~/.pai has no config.yaml but the legacy
+ * ~/.claude/pai does) the legacy dir keeps being used so nothing breaks.
+ * Shell mirrors (statusline, hooks) must apply the same rule.
+ */
 export function paiHomeDir(): string {
-  return process.env.PAI_HOME || join(homedir(), ".claude", "pai");
+  if (process.env.PAI_HOME) return process.env.PAI_HOME;
+  const fresh = defaultPaiHomeDir();
+  const legacy = legacyPaiHomeDir();
+  if (!existsSync(join(fresh, "config.yaml")) && existsSync(join(legacy, "config.yaml"))) return legacy;
+  return fresh;
 }
 
 /** A path under PAI_HOME, e.g. `paiHomePath("config.json")`. */
@@ -54,7 +73,7 @@ const noticesPrinted = new Set<string>();
 export function resolvePaiFile(newPath: string, oldCandidates: string[], migrateHint: string): string {
   if (existsSync(newPath)) return newPath;
   for (const old of oldCandidates) {
-    if (existsSync(old)) {
+    if (old !== newPath && existsSync(old)) {
       if (!noticesPrinted.has(newPath)) {
         noticesPrinted.add(newPath);
         process.stderr.write(
@@ -88,7 +107,7 @@ export function migratePaiFile(
   oldCandidates: string[],
   opts: { dryRun?: boolean } = {}
 ): MigrateFileResult {
-  const fromPath = oldCandidates.find((p) => existsSync(p)) ?? null;
+  const fromPath = oldCandidates.find((p) => p !== newPath && existsSync(p)) ?? null;
   if (!fromPath) {
     const note = existsSync(newPath) ? "already at new location" : "nothing to migrate — file does not exist yet";
     return { fromPath: null, toPath: newPath, dryRun: !!opts.dryRun, note };
@@ -141,7 +160,7 @@ export function migratePaiDir(
   oldCandidates: string[],
   opts: { dryRun?: boolean } = {}
 ): MigrateDirResult {
-  const fromDir = oldCandidates.find((p) => existsSync(p) && statSync(p).isDirectory()) ?? null;
+  const fromDir = oldCandidates.find((p) => p !== newDir && existsSync(p) && statSync(p).isDirectory()) ?? null;
   if (!fromDir) {
     const note = existsSync(newDir) ? "already at new location" : "nothing to migrate — directory does not exist yet";
     return { fromDir: null, toDir: newDir, dryRun: !!opts.dryRun, note };

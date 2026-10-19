@@ -204,7 +204,7 @@ describe("pre-tool-use/worker-tool-name-repair entrypoint", () => {
     expect(out.permissionDecision).toBe("allow");
     expect(out.updatedInput).toEqual({ pattern: "**/*" });
 
-    const log = join(home, ".claude", "pai", "logs", "workers", "tool-repair.log");
+    const log = join(home, ".pai", "logs", "workers", "tool-repair.log");
     expect(existsSync(log)).toBe(true);
     const line = readFileSync(log, "utf8").trimEnd().split("\n").pop()!;
     expect(line).toContain("worker=20261016-000000-00000");
@@ -231,7 +231,7 @@ describe("pre-tool-use/worker-tool-name-repair entrypoint", () => {
     expect(out.permissionDecision).toBe("allow");
     expect(out.updatedInput).toEqual({ file_path: "/x" });
 
-    const log = join(home, ".claude", "pai", "logs", "workers", "tool-repair.log");
+    const log = join(home, ".pai", "logs", "workers", "tool-repair.log");
     expect(existsSync(log)).toBe(true);
     const line = readFileSync(log, "utf8").trimEnd().split("\n").pop()!;
     expect(line).toContain("[model]");

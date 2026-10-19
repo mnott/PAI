@@ -57,12 +57,15 @@ fi
 # turn runs it, and every step here is idempotent and derives from current state
 # rather than accumulating.
 #
-# Location: PAI_HOME (~/.claude/pai by default — see src/config/pai-home.ts).
+# Location: PAI_HOME (~/.pai by default — see src/config/pai-home.ts).
 # A shell script can't import that resolver, so this mirrors its two-path
 # logic inline: new location, else the pre-2026-09-19 ~/.config/pai one if a
 # fresh lock is already sitting there (an in-flight hook from before this
 # script updated) — never both, that would defeat the mutex.
-PAI_HOME_DIR="${PAI_HOME:-$HOME/.claude/pai}"
+PAI_HOME_DIR="${PAI_HOME:-}"
+if [ -z "$PAI_HOME_DIR" ]; then
+    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then PAI_HOME_DIR="$HOME/.claude/pai"; else PAI_HOME_DIR="$HOME/.pai"; fi
+fi
 LOCK_DIR="$PAI_HOME_DIR/.session-stop.lock"
 OLD_LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
 mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
