@@ -87,12 +87,23 @@ function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv, timeout = 
       ...(env ? { env } : {}),
     }).trim();
   } catch (e) {
-    const err = e as { stderr?: Buffer | string; message?: string };
+    const err = e as { stderr?: Buffer | string; message?: string; status?: number };
     const why =
       (typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf8")) ||
       err.message ||
       String(e);
-    throw new Error(`git ${args.join(" ")} in ${cwd}: ${why.trim()}`);
+    throw Object.assign(new Error(`git ${args.join(" ")} in ${cwd}: ${why.trim()}`), { status: err.status });
+  }
+}
+
+/** `git merge-base --is-ancestor`: exit 1 means "no", any other failure throws. */
+function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
+  try {
+    git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return false;
+    throw e;
   }
 }
 
@@ -808,7 +819,7 @@ function mergeSnapshotWorker(
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (e) {
-      const err = e as { stderr?: Buffer | string; message?: string };
+      const err = e as { stderr?: Buffer | string; message?: string; status?: number };
       const why =
         (typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf8")) ||
         err.message ||
@@ -888,7 +899,7 @@ function applyNoCommit(cwd: string, id: string, branch: string, worktreeDir: str
     });
   } catch (e) {
     const conflicted = git(cwd, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
-    const err = e as { stderr?: Buffer | string; message?: string };
+    const err = e as { stderr?: Buffer | string; message?: string; status?: number };
     const why = ((typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf8")) || err.message || "").trim();
     throw new Error(
       conflicted.length
@@ -1386,7 +1397,10 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   }
   const tip = git(dir, ["rev-parse", "HEAD"]);
   // never drop a branch whose tip the archive ref would not keep reachable
-  if (hasBranch) git(repo, ["merge-base", "--is-ancestor", `refs/heads/${branch}`, tip]);
+  if (hasBranch && !isAncestor(repo, `refs/heads/${branch}`, tip)) {
+    // worktree HEAD moved off the branch: keep the branch tip under its own ref
+    git(repo, ["update-ref", `${target}-branch`, `refs/heads/${branch}`]);
+  }
   const salvage = salvageIgnored(checkout, dir, id);
   if (salvage.failed.length) throw new Error(`cannot salvage ${salvage.failed.join(", ")}`);
   git(repo, ["update-ref", target, tip]);
