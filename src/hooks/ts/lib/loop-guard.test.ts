@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -397,4 +397,32 @@ describe("no-progress rule (action key)", () => {
     const cmd = "tools/build.sh --wait 100";
     expect(feed(Array.from({ length: 7 }, () => bash(cmd)), () => "Exit code 1\nstill running? no: build failed")).toEqual([4, 5, 6]);
   });
+});
+
+describe("build-door polls are waits", () => {
+  const repo = mkdtempSync(join(tmpdir(), "lg-door-"));
+  mkdirSync(join(repo, ".pai"), { recursive: true });
+  writeFileSync(join(repo, ".pai", "builds.yaml"), "doors: [tools/build.sh]\n");
+  const run = (cmd: string, n: number, t0 = 0, step = 0) => {
+    let s: LoopState = emptyLoopState();
+    const denied: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const now = t0 + i * step;
+      const r = stepLoopGuard(s, "Bash", cmd, null, now, repo);
+      s = r.state;
+      if (r.deny) denied.push(i);
+      else s = recordLoopResult(s, "Bash", cmd, "same output", now);
+    }
+    return denied;
+  };
+  const shapes = [
+    `cd ${repo} && sh tools/build.sh mac --wait`,
+    "sh tools/build.sh test ios -only-testing:X --wait 2>&1 | grep -E 'error|warning'",
+    "sh tools/build.sh mac --wait",
+    "pai build lock -- true",
+  ];
+  for (const c of shapes) it(`never denies: ${c}`, () => expect(run(c, 9)).toEqual([]));
+  it("without --wait it is an ordinary repeat", () => expect(run("sh tools/build.sh mac", 9)).toEqual([4, 5, 6, 7, 8]));
+  it("--wait on a non-door is an ordinary repeat", () => expect(run("sh tools/other.sh mac --wait", 9)).toEqual([4, 5, 6, 7, 8]));
+  it("the cap still applies after 45 minutes", () => expect(run("sh tools/build.sh mac --wait", 4, 0, WAIT_CAP_MS / 2)).toEqual([2, 3]));
 });
