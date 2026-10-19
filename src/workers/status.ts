@@ -58,6 +58,8 @@ export interface WorkerStatus {
   secs: number | null;
   /** Launching session resolved through AIBroker, when it was. */
   session?: WorkerSessionRef | null;
+  /** Session-profile name of the launching session: the key of its `max_parallel` gate. */
+  sessionKey?: string;
   /** Claude Code session id (system/init) — what `resume` continues. */
   claudeSession?: string | null;
   /**

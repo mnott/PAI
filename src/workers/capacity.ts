@@ -35,7 +35,12 @@ export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true };
  */
 export const LOCAL_DEFAULT_CAP = 3;
 
-/** Provider cap: explicit `maxConcurrent`, else 3 for loopback, else unlimited (undefined). */
+/**
+ * Provider cap, the model's default concurrency: explicit `maxConcurrent`
+ * (1 for a server that decodes one request at a time, N or unset for a
+ * parallel-capable one), else 3 for loopback, else unlimited (undefined).
+ * Loopback never means serial: only a cap of 1 does.
+ */
 export function resolveCap(maxConcurrent: number | undefined, local: boolean): number | undefined {
   return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
 }
@@ -50,7 +55,10 @@ export function providerCap(config: { providers: Record<string, { maxConcurrent?
 /** Longest silence of the log while queued. */
 export const HEARTBEAT_MS = 60_000;
 
-const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.-]/g, "_"));
+/** Queue key of a session's `max_parallel` gate (a provider name never contains "~"). */
+export const sessionScopeKey = (name: string): string => `session~${name}`;
+
+const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.~-]/g, "_"));
 
 interface QueueEntry {
   id: string;
@@ -210,6 +218,12 @@ export interface CapacityInfo {
 export interface CapacityOpts {
   logDir: string;
   self: { id: string; provider: string; pid?: number };
+  /**
+   * Gate on something other than the provider: a session's `max_parallel`.
+   * `key` names the queue (<logDir>/queue/<key>), `label` the status line,
+   * `holds` picks the running runs that count against the cap.
+   */
+  scope?: { key: string; label: string; holds: (s: WorkerStatus) => boolean };
   /** Resolved cap; undefined = unlimited. */
   cap: number | undefined;
   config: CapacityConfig;
@@ -238,7 +252,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const dir = queueDir(logDir, self.provider);
+  const queueKey = o.scope?.key ?? self.provider;
+  const label = o.scope?.label ?? self.provider;
+  const holds = o.scope?.holds ?? ((s: WorkerStatus) => s.provider === self.provider);
+  const dir = queueDir(logDir, queueKey);
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""}`);
@@ -246,10 +263,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
-    const queue = liveQueue(logDir, self.provider, isAlive);
+    const queue = liveQueue(logDir, queueKey, isAlive);
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
     const holding = load(logDir).filter(
-      (s) => s.id !== self.id && s.provider === self.provider && s.state === "running" && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && s.state === "running" && isLive(s, owns),
     ).length;
     const position = queue.indexOf(self.id) + 1;
     return { holding, position: position || queue.length + 1, queued: queue.length };
@@ -264,12 +281,12 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const info = (): CapacityInfo => {
     const total = c.holding + c.queued;
     return {
-      provider: self.provider,
+      provider: label,
       cap,
       total,
       position: c.position,
       elapsedSec: Math.floor((now() - t0) / 1000),
-      line: `queued: ${total} on ${self.provider}, cap ${cap} (position ${c.position})`,
+      line: `queued: ${total} on ${label}, cap ${cap} (position ${c.position})`,
     };
   };
   o.log?.(info().line);
@@ -294,6 +311,6 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // The slot is ours: the caller flips the status back to "running" (and
   // rewrites `started`) before we report the release.
   o.onWait?.(null);
-  o.log?.(`waited ${waitedSec}s for a ${self.provider} slot`);
+  o.log?.(`waited ${waitedSec}s for a ${label} slot`);
   return { waitedSec, cap };
 }

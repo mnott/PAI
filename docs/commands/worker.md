@@ -1293,24 +1293,26 @@ See also: `pai worker local`, `pai worker providers`
 
 ### pai worker local
 
-Switch which local model server runs
+Which local model runs; the operator switches tiers
 
 ```
-pai worker local TARGET [options]
+pai worker local [TARGET] [options]
 ```
 
+Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.
 TARGET is a tier name (stops every local server, starts that tier), `off` (stops all) or `status` (what is up).
 Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).
 
 | Argument | Required | Description |
 |---|---|---|
-| `TARGET` | yes | A tier name, off, or status |
+| `TARGET` | no | A tier name, off, or status; omit for the running local model |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--dry-run` | flag | — | Print the exact commands without starting or stopping anything |
 
 ```sh
+pai worker local
 pai worker local status
 pai worker local big --dry-run
 ```
@@ -1549,7 +1551,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
-| `pai worker local` | Switch which local model server runs |
+| `pai worker local` | Which local model runs; the operator switches tiers |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
 | `pai worker proxy` | The local proxy for OpenAI-style providers |

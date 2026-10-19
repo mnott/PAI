@@ -109,7 +109,7 @@ import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
-import { capacityGate, resolveCap } from "./capacity.js";
+import { capacityGate, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
   autoOrder,
@@ -124,7 +124,7 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { detectSessionName } from "./session-name.js";
-import { isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
+import { getProfile, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
 import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
@@ -1594,7 +1594,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
 async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
-  await capacityGate({
+  const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
     cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
@@ -1620,7 +1620,14 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
       }
       saveStatus(logDir, status);
     },
-  });
+  };
+  // the session's own limit ("one after the other"): same gate, counted per session across providers
+  const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
+  if (status.sessionKey && max) {
+    const key = status.sessionKey;
+    await capacityGate({ ...gate, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
+  }
+  await capacityGate(gate);
   await staggerGate({
     logDir,
     self: { id: wid, provider: target.providerName },
@@ -1653,6 +1660,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   if (!a.parsed.headless || a.printCmd || a.gated) return;
   const wid = a.id ?? newWorkerId();
   a.id = wid;
+  const sessionKey = await detectSessionName();
   const status: WorkerStatus = {
     id: wid,
     pid: process.pid,
@@ -1672,6 +1680,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     secs: null,
     origin: "spawn",
     outputFormat: a.parsed.outputFormat,
+    ...(sessionKey ? { sessionKey } : {}),
   };
   saveStatus(a.logDir, status);
   await runGates(a, wid, status);
@@ -1707,6 +1716,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ? a.panePrepared.verified
     : headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
   const session = resolveSession(term);
+  const sessionKey = await detectSessionName();
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
   const spawnerSession = resolveSpawnerSession(logDir, cwd);
@@ -1903,6 +1913,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(preamble ? { preamble: { path: preamble.path, hash: preamble.hash } } : {}),
     ...(addendum ? { contractAddendum: { path: addendum.path, sha: addendum.sha } } : {}),
     ...(session ? { session } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // no window seed: contextWindow comes from the init event only, and the
     // meter stays hidden until one is announced (never a guessed default)

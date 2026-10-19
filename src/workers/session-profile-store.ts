@@ -24,6 +24,8 @@ export interface SessionProfile {
   workers?: ProfileTarget;
   fallback?: ProfileTarget[];
   parallel_min?: number;
+  /** Most workers of this session running at once, on any provider (1 = one after the other). */
+  max_parallel?: number;
 }
 
 export type Profiles = Record<string, SessionProfile>;
@@ -50,6 +52,7 @@ function cleanProfile(v: unknown): SessionProfile {
     if (list.length) out.fallback = list;
   }
   if (typeof r.parallel_min === "number" && Number.isInteger(r.parallel_min) && r.parallel_min > 0) out.parallel_min = r.parallel_min;
+  if (typeof r.max_parallel === "number" && Number.isInteger(r.max_parallel) && r.max_parallel > 0) out.max_parallel = r.max_parallel;
   return out;
 }
 
@@ -110,12 +113,13 @@ export interface ProfilePatch {
   workers?: ProfileTarget | null;
   fallback?: ProfileTarget[] | null;
   parallel_min?: number | null;
+  max_parallel?: number | null;
 }
 
 export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath()): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
-  for (const k of ["chat", "workers", "fallback", "parallel_min"] as const) {
+  for (const k of ["chat", "workers", "fallback", "parallel_min", "max_parallel"] as const) {
     if (!(k in patch)) continue;
     const v = patch[k];
     if (v === null || v === undefined) delete next[k];

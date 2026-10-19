@@ -1245,6 +1245,7 @@ async function startShim(): Promise<void> {
       "workers {provider, model}: where its workers run; takes effect on the next spawn.",
       "fallback [{provider, model?}]: ordered targets when the workers' provider runs out of budget.",
       "parallel_min: in batch fan-outs skip fallback targets whose concurrency cap is lower.",
+      "max_parallel: most of this session's workers running at once, on any provider; 1 = one after the other, null/0 = parallel again.",
       "chat {provider, model}: the session's default chat model, applied when it next starts; apply_now sends /model into the running session.",
     ].join("\n"),
     {
@@ -1253,6 +1254,7 @@ async function startShim(): Promise<void> {
       workers: profileTarget.nullable().optional(),
       fallback: z.array(profileTarget).nullable().optional(),
       parallel_min: z.number().int().min(0).nullable().optional(),
+      max_parallel: z.number().int().min(0).nullable().optional(),
       apply_now: z.boolean().optional().describe("With chat: also send /model <m> into the running session."),
     },
     async (args) => sessionProfileSet(args, await realSessionProfileDeps())

@@ -415,7 +415,7 @@ function renderQueue(q){
  });
  Object.keys(sess).sort(function(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}).forEach(function(s){
   var it=sess[s].sort(function(a,b){return a.k<b.k?-1:a.k>b.k?1:0}),cnt={};it.forEach(function(x){cnt[x.k]=(cnt[x.k]||0)+1});
-  out.push(block(esc(s)+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
+  out.push(block(esc(s)+((q.sessionMax||{})[s]?' <span class="dim">max '+q.sessionMax[s]+' at a time</span> ':'')+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
  });
  el.innerHTML=out.join("");
  function post(verb,body){

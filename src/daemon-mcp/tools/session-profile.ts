@@ -45,6 +45,8 @@ export interface SessionProfileArgs {
   fallback?: ProfileTarget[] | null;
   /** Skip fallback targets with a concurrency cap below this in batch spawns; 0 clears. */
   parallel_min?: number | null;
+  /** Most of this session's workers running at once, on any provider (1 = one after the other); 0/null clears. */
+  max_parallel?: number | null;
   /** With a chat change: send `/model <m>` into the running session now. */
   apply_now?: boolean;
 }
@@ -66,6 +68,7 @@ export async function describeProfile(name: string, profile: SessionProfile | nu
     `workers: ${tgt(p.workers)}`,
     `fallback: ${p.fallback?.length ? p.fallback.map(tgt).join(", ") : "none (global order)"}`,
     `parallel_min: ${p.parallel_min ?? "not set"}`,
+    `max_parallel: ${p.max_parallel ?? "not set (parallel)"}`,
     `next worker spawn: ${single.description}`,
   ];
   if (p.parallel_min && batch.description !== single.description) lines.push(`next batch spawn: ${batch.description}`);
@@ -95,7 +98,8 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
     if ("workers" in args) patch.workers = args.workers ?? null;
     if ("fallback" in args) patch.fallback = args.fallback?.length ? args.fallback : null;
     if ("parallel_min" in args) patch.parallel_min = args.parallel_min ? args.parallel_min : null;
-    if (!Object.keys(patch).length) return fail("nothing to set: pass chat, workers, fallback and/or parallel_min");
+    if ("max_parallel" in args) patch.max_parallel = args.max_parallel ? args.max_parallel : null;
+    if (!Object.keys(patch).length) return fail("nothing to set: pass chat, workers, fallback, parallel_min and/or max_parallel");
     const profile = updateProfile(name, patch, deps.path);
     const out = [await describeProfile(name, profile, deps)];
     if (args.chat) {

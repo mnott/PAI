@@ -16,6 +16,7 @@ import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
+import { getProfile } from "../workers/session-profile-store.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
@@ -434,6 +435,9 @@ export interface QueueProvider {
   waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string }>;
 }
 
+/** Session blocks with a `max_parallel` profile key: group name -> limit. */
+export type SessionLimits = Record<string, number>;
+
 /**
  * The block a worker belongs to: the session that started it (AIBroker name),
  * else its project (cwd) name when a terminal is known, else "other" (a bare shell).
@@ -450,7 +454,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
-): { now: number; providers: QueueProvider[] } {
+): { now: number; providers: QueueProvider[]; sessionMax: SessionLimits } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -466,12 +470,19 @@ export function cockpitQueue(
     const t = Date.parse((s.started ?? "").replace(" ", "T"));
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
-  for (const s of loadStatuses(logDir)) {
+  const sessionMax: SessionLimits = {};
+  const statuses = loadStatuses(logDir);
+  for (const s of statuses) {
+    const max = s.sessionKey ? getProfile(s.sessionKey)?.max_parallel : undefined;
+    if (max && (s.state === "queued" || (s.state === "running" && isLive(s, owns)))) sessionMax[sessionGroup(s)] = max;
+  }
+  for (const s of statuses) {
     if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model });
   }
   for (const r of queueRows(logDir, caps)) {
     const s = r.status;
-    row(r.provider).waiting.push({
+    // a run held by its session's max_parallel waits in the session queue; it sits in its own provider's rows
+    row(s && r.provider.startsWith("session~") ? s.provider : r.provider).waiting.push({
       id: r.id,
       label: s?.label ?? "",
       waitedSec: s ? waited(s) : 0,
@@ -480,7 +491,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, providers: [...byProvider.values()] };
+  return { now, providers: [...byProvider.values()], sessionMax };
 }
 
 /**

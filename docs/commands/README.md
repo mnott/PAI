@@ -357,7 +357,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker install` | Set up the Agent hook and command shims |
 | `pai worker kill` | Stop a running worker |
-| `pai worker local` | Switch which local model server runs |
+| `pai worker local` | Which local model runs; the operator switches tiers |
 | `pai worker log` | Worker ledger or the raw events of one worker |
 | `pai worker mcp` | MCP servers workers may load |
 | `pai worker merge` | Merge a worker's branch into your checkout |

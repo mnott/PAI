@@ -42,3 +42,7 @@ serialised. Each resolution carries a one-line reason, for example
   Workers changes apply to the next spawn.
 - Launch: choosing a setup on the launch screen writes the session's profile
   only, never the global config. The status line shows `workers: <provider/model>`.
+
+## max_parallel
+
+`max_parallel: <n>` limits how many of the session's workers run at once, on any provider (1 = one after the other). A worker waits at the capacity gate (queue `session~<name>`, shown in `pai worker ps` and the cockpit, whose session block reads "max N at a time") while the session already has n running. Set it with `session_profile_set max_parallel 1`, clear it with `max_parallel: null`. It is independent of the provider cap (`maxConcurrent` in workers.yaml, the model's default concurrency): serial comes from a cap of 1 or from this key, never from a provider being local.
