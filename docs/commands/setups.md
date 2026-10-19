@@ -8,7 +8,7 @@ Orchestrator + worker combinations (save your own)
 pai setups [command]
 ```
 
-A setup says which model runs the main conversation and which provider the workers run on. "Last time" is how your latest session ran; the rest are built from your configured providers and anything you saved. Every enabled local provider (loopback, e.g. a model on this machine) gets "anthropic + <provider> workers": Anthropic orchestrates, the local model does the work, for that session only. The list reads your configuration and cooldowns; it does not contact any provider.
+A setup says which model runs the main conversation and which provider the workers run on. "Last time" is how your latest session ran; the rest are built from your configured providers and anything you saved. Every enabled local provider (loopback, e.g. a model on this machine) whose server answers right now gets "anthropic + <provider> workers": Anthropic orchestrates, the local model does the work, for that session only. Local providers that are not running are left out ("Last time" stays, marked down). The list reads your configuration and cooldowns and tries one local TCP connect per local provider; nothing remote is contacted.
 
 ```sh
 pai setups

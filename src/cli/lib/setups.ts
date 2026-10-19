@@ -7,6 +7,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { dirname } from "node:path";
 import { paiHomePath } from "../../config/pai-home.js";
 import {
@@ -50,10 +51,47 @@ export function orchestratorLabel(cfg: Cfg, o: Setup["orchestrator"]): string {
   return `${shortModel(model)} (${o.provider})`;
 }
 
+/** True when something accepts a TCP connection at host:port within timeoutMs. */
+export type PortCheck = (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+
+export const tcpPortCheck: PortCheck = (host, port, timeoutMs) =>
+  new Promise((resolve) => {
+    const sock = connect({ host, port });
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+
+export const PORT_TIMEOUT_MS = 150;
+
+/** Enabled loopback providers whose server does not answer now; all checked in parallel. */
+export async function downLocalProviders(cfg: Cfg, check: PortCheck = tcpPortCheck): Promise<Set<string>> {
+  const local = Object.entries(cfg.providers).filter(([, p]) => p.enabled && isLoopbackProvider(p));
+  const down = new Set<string>();
+  await Promise.all(
+    local.map(async ([n, p]) => {
+      let ok = false;
+      try {
+        const u = new URL(p.baseUrl);
+        const host = u.hostname.replace(/^\[|\]$/g, "");
+        ok = await check(host, Number(u.port) || (u.protocol === "https:" ? 443 : 80), PORT_TIMEOUT_MS);
+      } catch {
+        ok = false;
+      }
+      if (!ok) down.add(n);
+    })
+  );
+  return down;
+}
+
 const PRIORITY = ["glm", "kimi"];
 
 /** Built-in setups from what is configured and enabled. */
-export function builtinSetups(cfg: Cfg): Setup[] {
+export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set()): Setup[] {
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
   const out: Setup[] = [{ name: "anthropic only", orchestrator: { provider: ANTHROPIC_NATIVE }, workers: ANTHROPIC_NATIVE, kind: "builtin" }];
   const names = [...PRIORITY, ...(cfg.active && cfg.active !== "auto" && !PRIORITY.includes(cfg.active) && cfg.active !== ANTHROPIC_NATIVE ? [cfg.active] : [])].filter(enabled);
@@ -62,7 +100,7 @@ export function builtinSetups(cfg: Cfg): Setup[] {
   }
   // Enabled local (loopback) providers: workers only. A local orchestrator is not a default.
   for (const [n, p] of Object.entries(cfg.providers)) {
-    if (p.enabled && !names.includes(n) && isLoopbackProvider(p)) {
+    if (p.enabled && !names.includes(n) && isLoopbackProvider(p) && !down.has(n)) {
       out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
     }
   }
@@ -90,9 +128,9 @@ export function saveSetup(setup: Omit<Setup, "kind">, path = setupsPath()): void
   renameSync(tmp, path);
 }
 
-/** "Last time" first, then saved, then built-in; duplicates of Last time kept (they have names). */
-export function allSetups(cfg: Cfg, last: Setup | null, saved: Setup[]): Setup[] {
-  return [...(last ? [last] : []), ...saved, ...builtinSetups(cfg)];
+/** "Last time" first (kept even if its provider is down), then saved, then built-in; setups on a down local provider are dropped; duplicates of Last time kept (they have names). */
+export function allSetups(cfg: Cfg, last: Setup | null, saved: Setup[], down: ReadonlySet<string> = new Set()): Setup[] {
+  return [...(last ? [last] : []), ...saved.filter((s) => !down.has(s.workers)), ...builtinSetups(cfg, down)];
 }
 
 /** Find a setup by exact name (case-insensitive), else unique prefix. */
