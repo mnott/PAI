@@ -5,13 +5,16 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
+import { pai } from "../../workers/plan-deps.js";
+import { detachRun, QueueReporter } from "../../workers/run-events.js";
+import { detachedArgv, finishDetached, reportOrigin, runMessenger } from "../../workers/run-report-wiring.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
-import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueSettings } from "../../workers/queue.js";
+import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems, runQueue } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 
@@ -88,8 +91,9 @@ const runCmd: CommandDef = {
     projectOpt,
     { name: "parallel", type: "number", value: "N", summary: "Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only sonnet)" },
+    { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
   ],
-  examples: ["pai queue run", "pai queue run --parallel 2", "pai queue run --escalate sonnet"],
+  examples: ["pai queue run", "pai queue run --detach", "pai queue run --parallel 2", "pai queue run --escalate sonnet"],
   seeAlso: ["pai queue review", "pai queue accept", "pai plan run"],
   run: async (ctx) => {
     const esc = ctx.opts.escalate;
@@ -98,7 +102,17 @@ const runCmd: CommandDef = {
     const prov = providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
     const logDir = workersLogDir(readWorkersSection().workers);
-    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === "sonnet" }, realQueueDeps(logDir, repo));
+    const origin = reportOrigin();
+    if (ctx.opts.detach === true) {
+      const rec = detachRun(logDir, "queue", basename(repo), pai(), detachedArgv("queue", [], ctx.opts), repo, origin ?? {});
+      out(`detached: ${rec.id} (pid ${rec.pid}); output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);
+      return 0;
+    }
+    const reporter = origin ? new QueueReporter(basename(repo), runMessenger(logDir), origin) : null;
+    const onEvent = reporter ? (k: "ready" | "needs-decision", it: QueueItem) => (k === "ready" ? reporter.onReady(it) : reporter.onNeedsDecision(it)) : undefined;
+    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === "sonnet", onEvent }, realQueueDeps(logDir, repo));
+    await reporter?.finish();
+    finishDetached(logDir);
     out(`ready: ${s.ready.join(", ") || "none"}; too-big: ${s.tooBig.join(", ") || "none"}; needs-decision: ${s.needsDecision.join(", ") || "none"}`);
     if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
     return s.needsDecision.length ? 1 : 0;

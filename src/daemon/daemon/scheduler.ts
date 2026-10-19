@@ -9,8 +9,10 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes, loadRegistry } from "../../workers/pane.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
-import { loadStatus, type WorkerStatus } from "../../workers/status.js";
+import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
+import { sweepRuns } from "../../workers/run-events.js";
+import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
@@ -529,6 +531,8 @@ export function startWorkerSupervisor(): void {
   const tick = () => {
     if (!ticking) {
       ticking = true;
+      // detached plan/queue runs that died without a done marker: tell their session once
+      void sweepRuns(workersLogDir(readWorkersSection().workers), runMessenger(workersLogDir(readWorkersSection().workers)), alive).catch(() => undefined);
     runSupervisionTick(workersLogDir(readWorkersSection().workers), {
       ...(process.env.PAI_WORKER_STALL_MINUTES ? { stallMs: stallMinutesFromEnv() * 60_000 } : {}),
       thrashFails: thrashFailsFromEnv(),
