@@ -145,6 +145,7 @@ import { validateAg2 } from "./agentish.js";
 import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { killTree } from "./kill-tree.js";
+import { armResultGrace, leftoverNote } from "./result-grace.js";
 import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
@@ -1863,6 +1864,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           return "the worker's stdin is already closed (its turn ended) — use: pai worker resume";
         }
         operatorInFlight += 1;
+        resultGrace.cancel();
         if (closeTimer) {
           clearTimeout(closeTimer);
           closeTimer = null;
@@ -1894,6 +1896,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   };
 
   let killed = false;
+  const resultGrace = armResultGrace(headless ? proc.pid : undefined);
   const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit)) : null;
   const cleanup = () => {
     stopDeadline?.();
@@ -2057,17 +2060,22 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         armStdinClose();
         ctx.resultEvent = e;
         ctx.resultReport = report;
+        resultGrace.onResult();
       }
     });
   }
 
-  const rc = await new Promise<number>((resolve, reject) => {
+  let rc = await new Promise<number>((resolve, reject) => {
     proc.on("error", (e) => {
       markStartFailed(logDir, status, e);
       reject(e);
     });
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
+  resultGrace.cancel();
+  await resultGrace.settled();
+  // the result already received is the outcome; the signal that ended the leftovers is not
+  if (resultGrace.fired && ctx.resultEvent) rc = ctx.resultEvent.is_error ? 1 : 0;
   if (eventsFd !== null) closeSync(eventsFd);
   cleanup();
 
@@ -2153,6 +2161,10 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         paths: verify.failures.map((f) => f.path).slice(0, 5).join(","),
       });
     }
+  }
+  if (resultGrace.fired && resultEvent) {
+    status.last = leftoverNote(resultGrace.leftover);
+    appendLedger(ledger, "WORKER-LEFTOVER-ENDED", { id: wid, processes: resultGrace.leftover });
   }
   return finaliseRun({
     logDir,
