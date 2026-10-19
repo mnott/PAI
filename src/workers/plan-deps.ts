@@ -13,7 +13,7 @@ import { eventsPath } from "./paths.js";
 import { loadStatuses } from "./status.js";
 import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
-import { headlessAllowed, openVerifiedPane, resolveHostSession } from "./pane.js";
+import { headlessAllowed, openVerifiedPane, realPaneOps, resolveHostSession } from "./pane.js";
 import { readWorkersSection } from "./config.js";
 import { GATE_MARK } from "./worktree.js";
 import { PlanTracker, gatePhaseName } from "./plan-status.js";
@@ -128,12 +128,12 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
 }
 
 /** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
-export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
+export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string, planPane?: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
   const before = await checkoutState(repo);
   const mark = { label: req.label, t0 };
   launched.add(mark);
-  const r = await capture(pai(), workerArgs(req, specFile, repo), repo).finally(() => launched.delete(mark));
+  const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, planPane ? { ...process.env, PAI_PLAN_PANE: planPane } : process.env).finally(() => launched.delete(mark));
   const st = loadStatuses(logDir)
     .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
@@ -233,15 +233,16 @@ export async function mergeBranch(repo: string, id: string, gate: string, onGate
 }
 
 /**
- * The plan's one pane (same placement rules as worker panes: split, else tab, else window; the host
- * tab stays selected): `pai worker follow plan-<job>` streams the live log. A pane that cannot open is
+ * The plan's one pane for its whole life (split, else tab; never a window): its workers open none, `follow` shows
+ * their live transcripts in it: `pai worker follow plan-<job>` streams the live log. A pane that cannot open is
  * logged and the run goes on; its workers' own fail-closed gate still applies.
  */
-export async function openPlanPane(logDir: string, tracker: PlanTracker, open: typeof openVerifiedPane = openVerifiedPane): Promise<boolean> {
+export async function openPlanPane(logDir: string, tracker: PlanTracker, open: typeof openVerifiedPane = openVerifiedPane, host: () => Promise<{ term: string }> = resolveHostSession): Promise<boolean> {
   if (headlessAllowed()) return false;
   try {
-    const term = (await resolveHostSession()).term;
-    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term)}`);
+    const term = (await host()).term;
+    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term, process.env, realPaneOps, { noWindow: true })}`);
+    tracker.hasPane = true;
     return true;
   } catch (e) {
     tracker.log(`plan pane not opened: ${e instanceof Error ? e.message : String(e)}`);
@@ -272,12 +273,13 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
         ? setInterval(() => {
             const st = loadStatuses(logDir).find((s) => s.label === req.label && Date.parse(s.started) >= t0);
             if (!st) return;
+            tracker.setWorker(req.part.id, st.id);
             tracker.phase(`running ${req.part.id} (${st.id})`);
             clearInterval(watch);
           }, 1500)
         : undefined;
       try {
-        return await launchWorker(req, specFile, plan.repo, logDir);
+        return await launchWorker(req, specFile, plan.repo, logDir, tracker?.hasPane ? tracker.id : undefined);
       } finally {
         if (watch) clearInterval(watch);
       }

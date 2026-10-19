@@ -1370,6 +1370,11 @@ export async function requireVisiblePane(
     process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
     return false;
   }
+  if (process.env.PAI_PLAN_PANE) {
+    // a plan runner's worker: the plan's one pane is its visible pane
+    process.stderr.write(`[pai worker] pane for ${wid}: plan pane ${process.env.PAI_PLAN_PANE}\n`);
+    return true;
+  }
   const how = `hidden runs need the operator's ${ALLOW_HIDDEN_ENV}=1 or ${headlessOverridePath()}`;
   if (noPane) {
     appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: `headless requested, no override (${how})`.slice(0, 300) });

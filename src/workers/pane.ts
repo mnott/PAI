@@ -1381,6 +1381,8 @@ export interface PaneSeam {
   place?: typeof openPlaced;
   hostSelected?: (hostUid: string) => Promise<boolean>;
   daemon?: () => boolean;
+  /** Never open a new window (plan panes): a tab of the host window is the widest fallback. */
+  noWindow?: boolean;
 }
 
 /**
@@ -1419,9 +1421,10 @@ export async function openVerifiedPane(
   }
   // a split in a background tab is invisible: use a new window instead
   if (!(await (seam.hostSelected ?? hostTabSelected)(hostUid))) {
-    const where = await place(logDir, config, wid, term, hostUid, "window");
-    process.stderr.write("[pai worker] pane: new window (host tab not selected)\n");
-    placements.set(wid, "window");
+    const kind = seam.noWindow ? "tab" : "window";
+    const where = await place(logDir, config, wid, term, hostUid, kind);
+    process.stderr.write(`[pai worker] pane: new ${kind} (host tab not selected)\n`);
+    placements.set(wid, kind);
     return where;
   }
   const r = await split(logDir, config, wid, term);
@@ -1435,7 +1438,8 @@ export async function openVerifiedPane(
     if (!/pane too small/.test((e as Error).message)) throw e;
     // no room in this window is not "no visible pane possible": try a new tab, then a new window
     await ops.rebalanceIterm?.(loadRegistry(logDir).map((x) => x.session)).catch(() => undefined);
-    for (const kind of ["tab", "window"] as const) {
+    // ended panes of the scope were closed before the split, so their room is already free again
+    for (const kind of seam.noWindow ? (["tab"] as const) : (["tab", "window"] as const)) {
       try {
         const where = await place(logDir, config, wid, term, hostUid, kind);
         process.stderr.write(`[pai worker] pane: opened in a new ${kind} (${kind === "tab" ? "window too crowded" : "no room for a tab"})\n`);

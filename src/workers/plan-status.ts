@@ -28,6 +28,8 @@ export interface PlanRunStatus {
   parts: { merged: number; total: number };
   /** Ids of the parts whose worker runs now. */
   running: string[];
+  /** Worker id per part id, for every worker the run started: what the plan pane follows. */
+  workers?: Record<string, string>;
   /** Tests the plan gate counted last time: the denominator of "tests 214/2600". */
   testTotal?: number;
 }
@@ -176,6 +178,14 @@ export class PlanTracker {
     this.save();
   }
 
+  /** True once the run's one pane is open: its workers open none of their own. */
+  hasPane = false;
+
+  setWorker(part: string, wid: string): void {
+    this.status.workers = { ...this.status.workers, [part]: wid };
+    this.save();
+  }
+
   merged(n: number): void {
     this.status.parts.merged = n;
     this.save();
@@ -205,7 +215,7 @@ export function planLogTail(logDir: string, id: string, n = 40): string {
 }
 
 /** Stream the live log into `write` until `stop()` is true; the file's whole content first, then what is appended. */
-export async function followPlanLog(logDir: string, id: string, write: (s: string) => void, stop: () => boolean = () => false, pollMs = 500): Promise<void> {
+export async function followPlanLog(logDir: string, id: string, write: (s: string) => void, stop: () => boolean = () => false, pollMs = 500, more: () => string = () => ""): Promise<void> {
   let at = 0;
   for (;;) {
     try {
@@ -216,6 +226,12 @@ export async function followPlanLog(logDir: string, id: string, write: (s: strin
       }
     } catch {
       /* not written yet */
+    }
+    try {
+      const extra = more();
+      if (extra) write(extra);
+    } catch {
+      /* a transcript that cannot be read is skipped */
     }
     if (stop()) return;
     await new Promise((r) => setTimeout(r, pollMs));
