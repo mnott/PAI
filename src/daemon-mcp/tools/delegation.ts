@@ -7,6 +7,7 @@
  * Results are plain sentences: tier 0 relays them to the user as they are.
  */
 
+import { planLockPath, queueLockPath, readRunLock, sinceText } from "../../workers/run-lock.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
@@ -204,6 +205,8 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const clash = dirtyConflicts(plan, await deps.dirtyPaths(plan.repo));
     if (clash.length) return fail(`Not started: ${plan.repo} has uncommitted changes to files the plan touches (${clash.join(", ")}). Commit or stash them first.`);
 
+    const held = readRunLock(planLockPath(path));
+    if (held) return fail(`A run of plan "${args.name}" is already in progress ${sinceText(held)}. Follow it with plan_status.`);
     const log = runLogPath(path);
     const { merged } = resumeState(readRunLog(log));
     const total = plan.units.flatMap((u) => u.parts).length;
@@ -241,8 +244,11 @@ export async function planStatusText(args: { project: string; name: string }, de
     const secs = Math.round(st.wallMs / 1000);
     const total = plan.units.flatMap((u) => u.parts).length;
     const escalations = log.filter((e) => e.event === "escalate").length;
+    const held = readRunLock(planLockPath(path));
+    const last = log[log.length - 1];
     const lines = [
       `Plan "${args.name}": ${st.done.length} of ${total} parts done.`,
+      ...(held ? [`Running ${sinceText(held)}${last ? `; last event: ${last.event}${last.part ? ` ${last.part}` : last.unit ? ` ${last.unit}` : ""}` : ""}.`] : []),
       `Done: ${idList(st.done)}. Running: ${idList(st.running)}. Waiting: ${idList(st.waiting)}. Needs a decision: ${idList(st.needsDecision)}.`,
       `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations.`,
     ];
@@ -303,6 +309,8 @@ export async function queueRun(args: { project: string; escalate?: boolean }, de
     const { repo, store, settings } = await openQueue(args.project, deps);
     const pending = store.list().filter((i) => i.state === (args.escalate ? "cloud" : "pending"));
     if (!pending.length) return text(args.escalate ? "No items are marked for the cloud." : "Nothing is pending.");
+    const held = readRunLock(queueLockPath(store.path));
+    if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
     const prov = deps.provider(settings);
     deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { parallel: settings.maxParallel ?? prov.cap, ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
     return text(`Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`);
