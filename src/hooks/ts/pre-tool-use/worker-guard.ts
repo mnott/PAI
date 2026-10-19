@@ -25,7 +25,7 @@ import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
-import { loopDenyReason, stepLoopGuard } from "../lib/loop-guard.js";
+import { loopDenyReason, actionKey, stepLoopGuard, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
@@ -85,7 +85,13 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
     const file = loopStateFile(logDir, id);
     const state = loadLoopState(file);
     const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-    const r = stepLoopGuard(state, input.tool_name, input.tool_name === "Bash" ? (typeof command === "string" ? command : undefined) : ((input.tool_input ?? {}) as Record<string, unknown>));
+    const bashCmd = input.tool_name === "Bash" && typeof command === "string" ? command : undefined;
+    const r = stepLoopGuard(
+      state,
+      input.tool_name,
+      input.tool_name === "Bash" ? bashCmd : ((input.tool_input ?? {}) as Record<string, unknown>),
+      bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(input.cwd || process.cwd()) : null,
+    );
     if (r.state !== state) saveLoopState(file, r.state);
     if (r.deny) {
       recordToolError(logDir, {

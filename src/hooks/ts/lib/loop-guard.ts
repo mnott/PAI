@@ -9,8 +9,15 @@
  * similar results (PostToolUse records results via recordLoopResult). A similar
  * command whose result changes (polling, tailing, retry that succeeds, same
  * command over different files) is progress and never counts. Waiting verbs
- * and bounded sleeps are exempt. Unknown results count as similar.
+ * and bounded sleeps are exempt. Unknown results count as similar. Runner runs
+ * (see actionKey) reset when the worktree fingerprint changed since the previous
+ * run of the key, so edits made through Bash count as progress too.
  */
+
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 
 export const LOOP_MAX_REPEATS = 4;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
@@ -38,6 +45,8 @@ export interface LoopState {
   denials?: Record<string, number>;
   /** Runner invocations per action key since the last edit (see actionKey). */
   runs?: Record<string, number>;
+  /** Worktree fingerprint at the last counted run per action key; a different one is progress. */
+  prints?: Record<string, string>;
 }
 
 /** Runs of one action key without an edit at which the call is denied / the session stopped. */
@@ -69,6 +78,38 @@ export function actionKey(command: string): string | null {
     return [m[1], ...[...new Set(args)].sort()].join(" ");
   }
   return null;
+}
+
+/**
+ * Cheap fingerprint of the worktree state: `git status` (tracked changes and untracked files) plus size and mtime of
+ * each listed path, so re-editing an already modified file changes it. Null outside a git worktree or on error.
+ */
+export function worktreeFingerprint(cwd: string): string | null {
+  try {
+    const out = execFileSync("git", ["-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
+    const root = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const h = createHash("sha1").update(out);
+    const parts = out.split("\0");
+    for (let i = 0; i < parts.length; i++) {
+      const e = parts[i];
+      if (e.length < 4) continue;
+      if (e[0] === "R" || e[0] === "C") i++; // rename: next field is the origin path
+      try {
+        const st = statSync(join(root, e.slice(3)));
+        h.update(`${e.slice(3)}\t${st.size}\t${st.mtimeMs}\n`);
+      } catch {
+        // deleted path: the status line already says so
+      }
+    }
+    return h.digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/** The command itself edits files before it runs the runner (the fingerprint is taken before the command runs). */
+function inlineEdit(command: string): boolean {
+  return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit apply\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
 }
 
 export function emptyLoopState(): LoopState {
@@ -237,14 +278,16 @@ export interface LoopStep {
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>): LoopStep {
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
   if (tool === "Bash") {
     const cmd = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     const ak = typeof cmd === "string" ? actionKey(cmd) : null;
     if (ak !== null) {
-      const n = (state.runs?.[ak] ?? 0) + 1;
-      state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n } };
+      // the worktree changed since the previous run of this key (Bash edit, git apply, codegen): progress
+      const changed = inlineEdit(cmd as string) || !!fingerprint && state.prints?.[ak] !== undefined && state.prints[ak] !== fingerprint;
+      const n = (changed ? 0 : (state.runs?.[ak] ?? 0)) + 1;
+      state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n }, ...(fingerprint ? { prints: { ...(state.prints ?? {}), [ak]: fingerprint } } : {}) };
       if (n >= RUN_DENY_AT)
         return {
           state,
@@ -252,7 +295,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
           stop: n >= RUN_STOP_AT,
           key: ak,
           count: n,
-          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything; the result will not change. Read the failure, change code or the test, or report the blocker. ${SELF}`,
+          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker. ${SELF}`,
         };
     }
   }
