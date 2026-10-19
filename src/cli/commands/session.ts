@@ -30,6 +30,7 @@ import {
   scanSessions,
   type ScannedSession,
 } from "../lib/session-scan.js";
+import { getProfile } from "../../workers/session-profile-store.js";
 import { prepareDir } from "../lib/new-dir.js";
 import { legacy } from "../lib/legacy.js";
 import { cmdRename } from "./session/commands.js";
@@ -329,8 +330,9 @@ const openCommand: CommandDef = {
       flagModel: ctx.opts.model as string | undefined,
       name,
     });
+    if (!ctx.opts.provider && !ctx.opts.model) applyProfileChat(choice, name, workers);
     const provider = getProviderOrNative(workers, choice.provider)!;
-    const model = ctx.opts.model ? (ctx.opts.model as string) : modelFor(provider, choice.model);
+    const model = ctx.opts.model ? (ctx.opts.model as string) : chatModel(provider, choice.model);
 
     const probe = probeResume(session.uuid, cwd);
     if (!probe.ok) {
@@ -367,6 +369,19 @@ const openCommand: CommandDef = {
   },
 };
 
+/** The session's profile chat model replaces the default choice when no flag named one (and its provider is configured). */
+export function applyProfileChat(choice: { provider: string; model?: string }, name: string, workers: WorkersConfig): void {
+  const chat = getProfile(name)?.chat;
+  if (!chat || !getProviderOrNative(workers, chat.provider)) return;
+  choice.provider = chat.provider;
+  choice.model = chat.model;
+}
+
+/** A profile's model alias ("opus") passes through on the native login; otherwise the provider's own table decides. */
+function chatModel(provider: Parameters<typeof modelFor>[0] & { native?: boolean }, wanted: string | undefined): string | undefined {
+  return provider.native && wanted === "opus" ? "opus" : modelFor(provider, wanted);
+}
+
 // ---------------------------------------------------------------------------
 // new
 // ---------------------------------------------------------------------------
@@ -378,6 +393,7 @@ async function startNewIn(o: { dir?: string; name?: string; provider?: string; m
   const cwd = await prepareDir(o.dir, { dryRun: o.dryRun, out });
   const name = o.name ?? (basename(cwd) || "session");
   const choice = chooseProvider({ flagProvider: o.provider, flagModel: o.model, origin: null, active: workers.active });
+  if (!o.provider && !o.model) applyProfileChat(choice, name, workers);
   assertAvailable(choice.provider, launchableProviderNames(workers), (alt) => `pai new --provider ${alt}`);
   let harness: Harness;
   try {

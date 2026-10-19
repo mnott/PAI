@@ -31,6 +31,7 @@ import { formatPending, pendingGate, pendingResults } from "../../workers/pendin
 import { runWait } from "../../workers/wait.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
+import { BATCH_ENV } from "../../workers/session-profile.js";
 import { resolveTarget, type TargetResolver } from "../../workers/target.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { dim, err, ok } from "../lib/utils.js";
@@ -220,6 +221,7 @@ const runCommand: CommandDef = {
     { ...OPT.model, summary: "Model for this run: default, fast or a model id (default: the model set for the class)" },
     { name: "urgent", type: "boolean", summary: "Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`)" },
     { name: "where", type: "string", value: "WHERE", summary: "Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where)" },
+    { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
     { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
@@ -254,6 +256,7 @@ const runCommand: CommandDef = {
   run: (ctx) =>
     guard("pai worker run --print-cmd -p 'test'   (shows the command without starting it)", async () => {
       const plan = buildRunPlan(ctx);
+      if (flag(ctx, "batch")) process.env[BATCH_ENV] = "1";
       await applyTarget(ctx, plan);
       return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
     }),

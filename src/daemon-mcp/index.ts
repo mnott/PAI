@@ -104,6 +104,7 @@ import { endLabel } from "../workers/endreason.js";
 import { sayToWorker } from "../workers/operator.js";
 import { handoffFromInside, readInbox } from "../workers/handoff.js";
 import { workerModel } from "./tools/worker-model.js";
+import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet } from "./tools/session-profile.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
 import {
@@ -1225,6 +1226,34 @@ async function startShim(): Promise<void> {
       model: z.string().optional().describe("The new model id (required for set)."),
     },
     async (args) => workerModel(args)
+  );
+
+  const profileTarget = z.object({ provider: z.string(), model: z.string().optional().describe("default | fast | a model id") });
+  server.tool(
+    "session_profile_get",
+    "Show a session's model profile: chat model, worker provider/model, budget fallback list, parallel_min, and where the next worker spawn would run (with the reason). Default: this session.",
+    { name: z.string().optional().describe("Session name (default: this session).") },
+    async (args) => sessionProfileGet(args, await realSessionProfileDeps())
+  );
+
+  server.tool(
+    "session_profile_set",
+    [
+      "Change a session's model profile (partial update; null clears a part). Default: this session.",
+      "workers {provider, model}: where its workers run; takes effect on the next spawn.",
+      "fallback [{provider, model?}]: ordered targets when the workers' provider runs out of budget.",
+      "parallel_min: in batch fan-outs skip fallback targets whose concurrency cap is lower.",
+      "chat {provider, model}: the session's default chat model, applied when it next starts; apply_now sends /model into the running session.",
+    ].join("\n"),
+    {
+      name: z.string().optional().describe("Session name (default: this session)."),
+      chat: profileTarget.nullable().optional(),
+      workers: profileTarget.nullable().optional(),
+      fallback: z.array(profileTarget).nullable().optional(),
+      parallel_min: z.number().int().min(0).nullable().optional(),
+      apply_now: z.boolean().optional().describe("With chat: also send /model <m> into the running session."),
+    },
+    async (args) => sessionProfileSet(args, await realSessionProfileDeps())
   );
 
   server.tool(

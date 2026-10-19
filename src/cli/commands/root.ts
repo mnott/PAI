@@ -8,6 +8,7 @@ import { basename } from "node:path";
 import { isLoopbackProvider } from "../../workers/run-env.js";
 import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
 import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
+import { SESSION_NAME_ENV, getProfile, updateProfile, type SessionProfile } from "../../workers/session-profile-store.js";
 import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
 import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
@@ -20,7 +21,7 @@ import { providerHealth, readBudget, type Health } from "../lib/health.js";
 import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
-import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, recordWorkers, recordedWorkers, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
+import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
 import { collectView, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
@@ -129,9 +130,10 @@ export function plainTable(rows: SessionRow[], st: Style): string {
 }
 
 /** Setup that reproduces how a session last ran, workers as configured now. */
-export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "active">, recorded: string | null = row ? recordedWorkers(row.name) : null): Setup {
-  const workers = recorded ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
-  const orch = row && row.provider !== "—" ? { provider: row.provider, model: row.model } : { provider: workers };
+export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "active">, profile: SessionProfile | null = row ? getProfile(row.name) : null): Setup {
+  const workers = profile?.workers?.provider ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
+  // the session's own default chat model (its profile) wins over whatever it last ran on
+  const orch = profile?.chat ? { provider: profile.chat.provider, model: profile.chat.model } : row && row.provider !== "—" ? { provider: row.provider, model: row.model } : { provider: workers };
   return { name: "Last time", orchestrator: orch, workers, kind: "last" };
 }
 
@@ -264,12 +266,18 @@ export async function startSession(a: StartArgs): Promise<number> {
   }
   // the setup's workers apply to this session only; the global provider and class map are never written
   harness.env[SESSION_WORKER_PROVIDER_ENV] = setup.workers;
+  harness.env[SESSION_NAME_ENV] = name;
   out(`Workers run on ${setup.workers} for this session only.`);
   if (dryRun) {
     out(dryRunText(harness));
     return 0;
   }
-  recordWorkers(name, setup.workers);
+  // the choice becomes this session's profile (its default from now on); the global config is never written
+  const prev = getProfile(name);
+  updateProfile(name, {
+    chat: { provider: setup.orchestrator.provider, ...(setup.orchestrator.model ? { model: setup.orchestrator.model } : {}) },
+    workers: { provider: setup.workers, ...(prev?.workers?.provider === setup.workers && prev.workers.model ? { model: prev.workers.model } : {}) },
+  });
   return execHarness(harness, workers);
 }
 

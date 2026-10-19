@@ -50,6 +50,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--model ID` | string | — | Model for this run: default, fast or a model id (default: the model set for the class) |
 | `--urgent` | flag | — | Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`) |
 | `--where WHERE` | string | — | Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where) |
+| `--batch` | flag | — | This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min |
 | `--now` | flag | — | Go ahead of the runs waiting for a slot on the provider |
 | `--local` | flag | — | Run on the local model server PAI resolves (the one that answers); never pick a local provider by name |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |

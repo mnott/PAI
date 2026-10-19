@@ -15,6 +15,8 @@ import { detectProject } from "../detect.js";
 import { expandMcpNames } from "../../../workers/mcp.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
+import { SESSION_NAME_ENV, readProfiles, type Profiles } from "../../../workers/session-profile-store.js";
+import { SESSION_WORKER_PROVIDER_ENV } from "../../../workers/session-provider.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -239,6 +241,21 @@ export async function cmdNames(opts: { json?: boolean; all?: boolean }): Promise
   console.log(dim(`  ${tableRows.length} named project(s)`));
 }
 
+/**
+ * AIBroker starts a closed session from this effective config (flags + env), not through `pai`.
+ * A session profile for the project's name therefore rides along: the session's name (so worker
+ * spawns find the profile), its worker provider and, on the native login, its chat model.
+ */
+export function withSessionProfile(effective: SessionConfig, names: string[], profiles: Profiles = readProfiles()): SessionConfig {
+  const name = names.find((n) => profiles[n]);
+  if (!name) return effective;
+  const p = profiles[name];
+  const env = { ...(effective.env ?? {}), [SESSION_NAME_ENV]: name, ...(p.workers ? { [SESSION_WORKER_PROVIDER_ENV]: p.workers.provider } : {}) };
+  const model = p.chat && p.chat.provider === 'anthropic' && p.chat.model && !/\s/.test(p.chat.model) ? p.chat.model : undefined;
+  const flags = model && !/(^|\s)--model\b/.test(effective.flags ?? '') ? `${effective.flags ?? ''} --model ${model}`.trim() : effective.flags;
+  return { ...effective, env, ...(flags !== undefined ? { flags } : {}) };
+}
+
 export async function cmdConfig(
   identifier: string | undefined,
   opts: {
@@ -406,8 +423,8 @@ export async function cmdConfig(
     console.log(ok(`Config updated for ${bold(project.slug)}`));
   }
 
-  const effective = { ...getGlobalDefaults(), ...config };
   const aliases = await getProjectAliases(project.id);
+  const effective = withSessionProfile({ ...getGlobalDefaults(), ...config }, [project.slug, ...aliases]);
 
   if (opts.json) {
     console.log(JSON.stringify({

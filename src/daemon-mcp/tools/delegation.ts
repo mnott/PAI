@@ -105,8 +105,11 @@ function runTarget(t: Target | undefined, withProvider = true): Record<string, u
 }
 
 /** Resolve the arguments once; undefined when the caller named nothing (today's routing). */
-async function resolveWhere(a: WhereArgs, deps: DelegationDeps): Promise<Target | undefined> {
-  return asked(a) ? deps.target(targetArgs(a)) : undefined;
+async function resolveWhere(a: WhereArgs, deps: DelegationDeps, batch = false): Promise<Target | undefined> {
+  if (asked(a)) return deps.target({ ...targetArgs(a), ...(batch ? { batch } : {}) });
+  // nothing named: the session's profile (workers, fallback) decides, when it has one
+  const t = await deps.target({ ...(batch ? { batch } : {}) });
+  return t.provider ? t : undefined;
 }
 
 export function localProvider(settings: QueueSettings): { name: string; cap: number } {
@@ -189,7 +192,7 @@ export async function planSave(args: { project: string; name: string; plan: Plan
     const settings = loadSettings(repo);
     // local: true → the plan's provider is `local`, resolved to the running
     // local server at run start (never a provider picked by name)
-    const target = await resolveWhere({ ...input, where: input.where ?? (input.provider && input.local !== true ? input.provider : undefined) }, deps);
+    const target = await resolveWhere({ ...input, where: input.where ?? (input.provider && input.local !== true ? input.provider : undefined) }, deps, input.max_parallel !== 1);
     const provider = target?.provider ?? input.provider ?? deps.provider(settings).name;
     const doc: Record<string, unknown> = {
       job: name,
@@ -249,7 +252,7 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const log = runLogPath(path);
     const { merged } = resumeState(readRunLog(log));
     const total = plan.units.flatMap((u) => u.parts).length;
-    const target = await resolveWhere(args, deps);
+    const target = await resolveWhere(args, deps, (plan.maxParallel ?? 2) > 1);
     const par = parallelOf(plan, target?.provider ? deps.capOf(target.provider) : deps.provider(loadSettings(repo)).cap);
     const origin = deps.origin();
     deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
@@ -371,8 +374,8 @@ export async function queueRun(args: { project: string; escalate?: boolean } & W
     if (!pending.length) return text(args.escalate ? "No items are marked for the cloud." : "Nothing is pending.");
     const held = readRunLock(queueLockPath(store.path));
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
-    const target = await resolveWhere(args, deps);
-    const prov = target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
+    const target = await resolveWhere(args, deps, true);
+    const prov =target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
     deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
     return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`));
   } catch (e) {

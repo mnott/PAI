@@ -20,11 +20,14 @@ import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./lo
 import { isLoopbackProvider } from "./run-env.js";
 import { detectSessionProvider } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
+import { currentSessionName, liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
 
 export interface TargetArgs {
   where?: string;
   model?: string;
   now?: boolean;
+  /** The spawn is part of a fan-out (queue run, plan run with parallel > 1): session-profile fallback honours parallel_min. */
+  batch?: boolean;
 }
 
 export interface Target {
@@ -46,6 +49,8 @@ export interface TargetDeps extends ResolveLocalOpts {
   workers: Pick<WorkersConfig, "providers" | "nativeModels"> & { active?: string | null };
   logDir: string;
   env?: NodeJS.ProcessEnv;
+  /** Session-profile resolution context (session-profile.ts); default: the live one. */
+  profileCtx?: () => Promise<ResolveCtx>;
 }
 
 /** The deps for the live config. */
@@ -92,6 +97,16 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
   const cfg = deps.workers;
 
   if (!where) {
+    // the session's own profile (or its fallback) decides before today's routing does
+    const env = deps.env ?? process.env;
+    const r = deps.profileCtx || currentSessionName(env)
+      ? resolveWorkers({ explicit: { model: modelArg }, batch: args.batch }, await (deps.profileCtx ?? (() => liveResolveCtx(env)))())
+      : undefined;
+    if (r?.source === "none") throw new CliError(r.description, "pai session profile: session_profile_set fallback / parallel_min");
+    if (r?.provider && (r.source === "profile" || r.source === "fallback")) {
+      const model = modelFor(cfg, r.provider, r.model);
+      return { provider: r.provider, model: model || undefined, priority, description: `${r.description}${priority ? ", first in line" : ""}` };
+    }
     const fast = modelArg === "fast";
     const dflt = modelArg === "default";
     const id = modelArg && modelArg !== "default" && !fast ? modelArg : undefined;

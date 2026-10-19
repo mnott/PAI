@@ -84,17 +84,17 @@ describe("plan_save", () => {
     const r = await planSave({ project: "p", name: "jobl", plan: { ...plan, provider: undefined, local: true } }, deps);
     expect(r.isError).toBeUndefined();
     expect(text(r)).toMatch(/^Runs on local: flashnext\./);
-    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined });
+    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined, batch: true });
     expect(readFileSync(join(repo, ".pai/plans/jobl/plan.yaml"), "utf8")).toContain("provider: flashnext");
     const w = await planSave({ project: "p", name: "jobw", plan: { ...plan, provider: undefined, where: "cloud", model: "fast" } }, deps);
-    expect(target).toHaveBeenLastCalledWith({ where: "cloud", model: "fast", now: undefined });
+    expect(target).toHaveBeenLastCalledWith({ where: "cloud", model: "fast", now: undefined, batch: true });
     expect(readFileSync(join(repo, ".pai/plans/jobw/plan.yaml"), "utf8")).toContain("provider: anthropic");
     expect(text(w)).toContain("Runs on cloud");
   });
   it("plan_run passes where/model/now to the resolver and the provider to the runner", async () => {
     await planSave({ project: "p", name: "jobr", plan }, deps);
     const r = await planRun({ project: "p", name: "jobr", where: "kimi", model: "fast", now: true }, deps);
-    expect(target).toHaveBeenCalledWith({ where: "kimi", model: "fast", now: true });
+    expect(target).toHaveBeenCalledWith({ where: "kimi", model: "fast", now: true, batch: true });
     expect(text(r)).toMatch(/^Runs on kimi\./);
     expect(detach.mock.calls[0][0].opts).toMatchObject({ provider: "kimi", now: true });
   });
@@ -202,7 +202,7 @@ describe("queue_*", () => {
     await queueAdd({ project: "p", sentence: "one", local: true }, deps);
     const r = await queueRun({ project: "p", local: true }, deps);
     expect(text(r)).toContain("Started 1 item (q1)");
-    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined });
+    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined, batch: true });
     expect(text(r)).toMatch(/^Runs on local: flashnext\./);
     expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { provider: "flashnext", parallel: 3 } });
   });

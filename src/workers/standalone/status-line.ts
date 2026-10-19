@@ -17,6 +17,8 @@ import { workersLogDir } from "../paths.js";
 import { recordSessionMapEntry } from "../scope.js";
 import { pendingCountCached } from "../pending.js";
 import { statusLineOutput } from "../viewer.js";
+import { readRoutingState } from "../routing.js";
+import { currentSessionName, getProfile, resolveWorkers } from "../session-profile.js";
 
 const term = process.argv[2] ?? process.env.ITERM_SESSION_ID ?? "";
 const cwd = process.argv[3] ?? process.cwd();
@@ -29,6 +31,9 @@ try {
   let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date());
   const unmerged = pendingCountCached(logDir, cwd);
   if (unmerged) out = [out, `⚑${unmerged} unmerged`].filter(Boolean).join(" ");
+  // where this session's next worker would run: the same resolver every spawn uses (no live budget poll in the bar)
+  const r = resolveWorkers({}, { cfg: workers, profile: getProfile(currentSessionName()), env: process.env, budgets: {}, routing: readRoutingState(logDir) });
+  if (r.provider) out = [`workers: ${r.provider}${r.model && r.model !== "default" ? `/${r.model}` : ""}`, out].filter(Boolean).join(" ");
   if (out) process.stdout.write(out + "\n");
 } catch {
   // no workers section or a broken config: no line, never an error in the bar
