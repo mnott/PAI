@@ -151,3 +151,12 @@ export function slimProfileArgs(
   writeFileSync(path, JSON.stringify(slimSettings(user, env, provider, noteHookCommand(logDir)), null, 2) + "\n", "utf8");
   return ["--setting-sources", "project,local", "--settings", path];
 }
+
+/**
+ * Settings-file id of a pool slot. The file is read when the slot's claude
+ * starts, so slots of different providers must not share one name: the last
+ * writer's provider env (or lack of it) would land in every slot.
+ */
+export function poolSlotSettingsId(providerName: string, model: string): string {
+  return `pool-slot-${providerName}-${model}`.replace(/[^A-Za-z0-9._-]/g, "_");
+}
