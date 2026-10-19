@@ -18,11 +18,20 @@ import { recordSessionMapEntry } from "../scope.js";
 import { pendingCountCached } from "../pending.js";
 import { statusLineOutput } from "../viewer.js";
 import { readRoutingState } from "../routing.js";
-import { currentSessionName, getProfile, resolveWorkers } from "../session-profile.js";
+import { detectSessionName } from "../session-name.js";
+import { getProfile, resolveWorkers } from "../session-profile.js";
+import { readSessionNameCache, sessionNameCachePath, writeSessionNameCache } from "./session-name-cache.js";
 
 const term = process.argv[2] ?? process.env.ITERM_SESSION_ID ?? "";
 const cwd = process.argv[3] ?? process.cwd();
 const claudeSession = process.argv[4] ?? "";
+
+/** detectSessionName once per session identity per 5 min, the result in the cache file. */
+async function cacheAndReturn(path: string | null): Promise<string | undefined> {
+  const name = await detectSessionName();
+  writeSessionNameCache(path, name);
+  return name;
+}
 
 try {
   const { workers } = readWorkersSection();
@@ -31,8 +40,13 @@ try {
   let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date());
   const unmerged = pendingCountCached(logDir, cwd);
   if (unmerged) out = [out, `⚑${unmerged} unmerged`].filter(Boolean).join(" ");
-  // where this session's next worker would run: the same resolver every spawn uses (no live budget poll in the bar)
-  const r = resolveWorkers({}, { cfg: workers, profile: getProfile(currentSessionName()), env: process.env, budgets: {}, routing: readRoutingState(logDir) });
+  // where this session's next worker would run: the same resolver every spawn uses (no live budget poll in the bar).
+  // The session name comes from detectSessionName — the one resolver — so a session not started by `pai`
+  // (no PAI_SESSION_NAME) still shows its route; its slow paths sit behind a 5-min file cache keyed by
+  // ITERM_SESSION_ID/claude session, since this line runs on every prompt.
+  const namePath = sessionNameCachePath(logDir, process.env, cwd);
+  const sessionName = readSessionNameCache(namePath) ?? (await cacheAndReturn(namePath));
+  const r = resolveWorkers({}, { cfg: workers, profile: getProfile(sessionName), env: process.env, budgets: {}, routing: readRoutingState(logDir) });
   if (r.provider) out = [`workers: ${r.provider}${r.model && r.model !== "default" ? `/${r.model}` : ""}`, out].filter(Boolean).join(" ");
   if (out) process.stdout.write(out + "\n");
 } catch {

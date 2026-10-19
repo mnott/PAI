@@ -191,7 +191,7 @@ export interface ResolvedTarget {
   classMcp: string[] | null;
   /** How the provider was chosen — names the bypass rule for rerouting. */
   via: "flag" | "class" | "session" | "active" | "auto";
-  /** Why this provider, for the run's one route line ("session: launched on glm"). */
+  /** Why this provider, for the run's one route line ("session: launched on glm"). Absent for a flag pin: flagProvider is an internal pin (--local, a policy choice, a profile) as much as a typed --provider, so the caller names that real source (run.ts providerWhy). */
   routeWhy?: string;
   /**
    * One line on why budget routing moved the run off a higher-priority
@@ -284,7 +284,6 @@ export function resolveTarget(
       modelAlias: null,
       classMcp: null,
       via: "flag",
-      routeWhy: "flag: --provider",
     };
   }
 

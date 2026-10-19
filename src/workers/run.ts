@@ -64,7 +64,7 @@ import {
   type WorkerProvider,
 } from "./config.js";
 import { buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
-import { resolveLocalProvider } from "./local-provider.js";
+import { NoLocalServerError, resolveLocalProvider } from "./local-provider.js";
 import { probeRouter } from "../router/supervisor.js";
 import { detectCurrentModel } from "./launch.js";
 
@@ -660,17 +660,37 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // Worker routing policy (policy.ts): picks local or cloud unless the caller named a provider.
   let route = opts._route;
   let providerFlag = opts.providerFlag;
+  // The route reason names the real source: only a --provider the caller
+  // actually typed says "flag: --provider"; --local says "(local)", a
+  // routing-policy pin says "(routing policy: <mode>)" — like the session
+  // profile case below.
+  let providerWhy: string | undefined = opts.providerFlag ? "flag: --provider" : undefined;
   // --local: PAI resolves the running local server itself (local-provider.ts);
   // the resolved name wins over --provider — a provider literally named
   // "local" is not the mechanism.
   if (opts.localFlag) {
-    const res = await resolveLocalProvider(config, logDir);
-    providerFlag = res.name;
-    if (!opts.quiet) process.stderr.write(`pai worker: local provider ${res.name} (${res.why})\n`);
+    try {
+      const res = await resolveLocalProvider(config, logDir);
+      providerFlag = res.name;
+      providerWhy = "local";
+      if (!opts.quiet) process.stderr.write(`pai worker: local provider ${res.name} (${res.why})\n`);
+    } catch (e) {
+      // --print-cmd is a dry run: nothing must answer a port for the argv
+      // audit, so an unresolved local pin falls back to the first configured
+      // loopback provider and the route line still says (local). A real run
+      // keeps the hard error — nothing spawns onto a server that is down.
+      if (!(opts.printCmd && e instanceof NoLocalServerError)) throw e;
+      const first = Object.entries(config.providers).find(
+        ([, p]) => p.enabled && isLoopbackProvider(p)
+      );
+      if (!first) throw e;
+      providerFlag = first[0];
+      providerWhy = "local";
+      if (!opts.quiet) process.stderr.write(`pai worker: local provider ${first[0]} (dry run: no local server up)\n`);
+    }
   }
   // The session's profile (workers, budget fallback) comes before routing; an explicit provider/--local skipped it above.
   let profileModel: string | undefined;
-  let providerWhy: string | undefined;
   if (!providerFlag && !capability && !route && (await detectSessionName())) {
     const r = resolveWorkers(
       { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
@@ -689,6 +709,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     if (routed) {
       route = routed.route;
       providerFlag = routed.providerFlag ?? undefined;
+      if (providerFlag) providerWhy = `routing policy: ${route.policy}`;
     }
   }
 
