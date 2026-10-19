@@ -20,7 +20,7 @@ const HEARTBEAT_MS = 20_000;
 /** Slack between the first observation and a process start time (ps lstart has 1 s resolution). */
 const REUSE_SLACK_MS = 2000;
 export const WAIT_KILLED_EXIT = 4;
-export const MAX_MINUTES_DEFAULT = 10;
+export const MAX_MINUTES_DEFAULT = 30;
 export const STALL_MINUTES_DEFAULT = 5;
 const KILL_GRACE_MS = 5000;
 
@@ -29,7 +29,7 @@ export interface WaitOnOpts {
   log?: string;
   maxSecs?: number;
   tail?: number;
-  /** Hard ceiling on the process's age; still alive then = kill its tree (default 10). */
+  /** Hard ceiling on the process's age; still alive then = kill its tree (default 30). */
   maxMinutes?: number;
   /** With a log: no growth for this long while alive = kill its tree (default 5). */
   stallMinutes?: number;

@@ -793,7 +793,7 @@ const waitOnCommand: CommandDef = {
     { name: "log", type: "string", value: "FILE", summary: "Log file whose last lines are printed on return; FILE.rc holds the exit code" },
     { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" },
     { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
-    { name: "max-minutes", type: "number", value: "N", summary: "Hard ceiling on the process's age (default 10): still alive then = kill its process tree, exit 4" },
+    { name: "max-minutes", type: "number", value: "N", summary: "Hard ceiling on the process's age (default 30): still alive then = kill its process tree, exit 4" },
     { name: "stall-minutes", type: "number", value: "N", summary: "With --log: log silent this long while alive (default 5) = kill its process tree, exit 4" },
   ],
   examples: ["pai worker wait-on 12345", "pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --max 60"],
