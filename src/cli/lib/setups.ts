@@ -51,11 +51,18 @@ export function workersModel(cfg: Cfg, provider: string): string | undefined {
   return m?.fast && m.fast !== m.default ? "fast" : undefined;
 }
 
-/** Display label for a provider's worker role, e.g. "glm-fast (glm)"; a named model shows as "<model> (<provider>)". */
+/**
+ * Display label for a provider's worker role: the model the resolver will
+ * actually use, named — "sonnet (anthropic)" / "haiku (anthropic)" for the
+ * native tiers, "glm-fast (glm)" for a provider's fast model, "<model>
+ * (<provider>)" for a written model.
+ */
 export function workersLabel(cfg: Cfg, provider: string, model?: string): string {
-  if (model === "fast") return provider === ANTHROPIC_NATIVE ? "anthropic (haiku)" : `${provider}-fast (${provider})`;
-  if (model) return `${model} (${provider})`;
-  return workersModel(cfg, provider) ? `${provider}-fast (${provider})` : `${provider} (${provider})`;
+  const p = getProviderOrNative(cfg, provider);
+  const tier = model === "fast" ? "fast" : model ? undefined : workersModel(cfg, provider);
+  const named = tier ? p?.models[tier] : p?.models.default;
+  if (named) return `${named} (${provider})`;
+  return model ? `${model} (${provider})` : `${provider} (${provider})`;
 }
 
 /** The Workers column of a setup row. */
