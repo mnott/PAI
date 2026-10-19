@@ -7,7 +7,12 @@ Install PAI and Claude remembers. Ask it what you were working on, find that con
 - Automatic session notes, split by topic, written by a background daemon
 - Federated keyword and semantic search across sessions, notes and vaults
 - Workers on any provider, orchestrated from one Claude Code session
+- Three-tier coding: the cloud plans and reviews, a local model writes the code ([guide](docs/three-tier-coding.md))
 - Everything runs locally
+
+![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit.png)
+
+*The router cockpit (`http://127.0.0.1:8790/cockpit`): provider limits, local servers, memory and power, the worker pool, token and cache accounting, speed per model. See [the cockpit section](docs/three-tier-coding.md#the-cockpit).*
 
 ## Install
 
@@ -55,6 +60,8 @@ Every `pai` command has a page generated from the live CLI: `pai help`, `pai mor
 ## Worker Providers
 
 Only the orchestrator session runs on Anthropic; every worker runs on a provider you choose, routed by class. Providers and classes live in one `workers.yaml`.
+
+Large coding jobs can run in three tiers (cloud plans and reviews, a local model writes the code), with loop guards, time limits and a cockpit: [docs/three-tier-coding.md](docs/three-tier-coding.md).
 
 → [docs/worker-providers.md](docs/worker-providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
 

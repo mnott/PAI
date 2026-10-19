@@ -6,6 +6,27 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-10-19
+
+### Added
+
+- **Three-tier coding guide:** [docs/three-tier-coding.md](docs/three-tier-coding.md) covers cloud orchestration with local implementers, the guards and time limits around it, and the router cockpit.
+- **Loop guard** for workers: identical tool calls since the last edit are counted for every tool (test runs keyed by runner and target files, `Read` by file and range); the 5th is denied, three denials of the same call stop the session with a loop event.
+- **`pai worker help`:** a budgeted call to a stronger model for one bounded sub-task (default 2 per unit, `PAI_HELP_BUDGET`), recorded in a ledger.
+- **`pai worker wait-on`:** `--max-minutes` (default 30, from the process start) and `--stall-minutes` (default 5 with `--log`) kill the process tree and exit 4.
+- **Orphan reaper** in the daemon (`workers.reaper`, default on): kills busy processes that workers left behind (ppid 1, over 2 minutes old, over 50 % CPU in two samples).
+- **Goal notes** reach running workers: `pai worker goal` notes are delivered after the worker's next tool call.
+- **Daemon quiet mode** defers maintenance jobs during measured runs.
+
+### Fixed
+
+- **Pool slots:** one settings file per provider and model instead of a shared one; a slot resolves the job it serves (`PAI_POOL_SLOT`), so goal notes, guards and the help budget work in pooled runs.
+- **Local providers:** worker settings keep the provider's output cap, drop first-party-only flags and turn thinking off unless the provider enables it; provider `router` and `contract` keys are read and written.
+- **Workers:** never write the live worker config (private copy per worker); kill ends the whole tree; dead-pid and failed-start workers are marked lost or failed; queued-then-started workers stay killable; `wait` reports unconfirmed claimed changes and timeouts correctly.
+- **Guards:** the orchestrator Bash guard treats sed/perl scripts, heredoc bodies and non-code targets correctly; the worker guard hook sees every tool; delete denials tell the worker to report `delete:` entries.
+- **Router:** gzip, deflate and br request bodies are decoded.
+- **Merge gate:** rejects merges that remove test cases; snapshot merges go through the same gate.
+
 ## [0.67.1] - 2026-10-18
 
 ### Fixed
