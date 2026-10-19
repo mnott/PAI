@@ -6,7 +6,8 @@ import { parseArgs } from "../parse.js";
 import { GROUPS } from "../registry.js";
 import { resolve, runCli, type Io } from "../run.js";
 import { makeStyle } from "../help.js";
-import { buildRunPlan, workerCommand } from "./worker.js";
+import { applyTarget, buildRunPlan, workerCommand } from "./worker.js";
+import type { Target, TargetArgs } from "../../workers/target.js";
 
 const sub = (name: string) => workerCommand.subcommands!.find((c) => c.name === name)!;
 const parse = (verb: string, argv: string[]) => parseArgs(sub(verb), argv);
@@ -270,5 +271,53 @@ describe("worker verbs: output and exit codes (temp PAI_HOME)", () => {
     const text = written.join("");
     expect(text).toContain("--print-cmd");
     expect(text).toContain("Examples");
+  });
+});
+
+describe("worker run: applyTarget (--where / --model / --now)", () => {
+  const seen: TargetArgs[] = [];
+  const fake = (t: Target) => async (a: TargetArgs): Promise<Target> => (seen.push(a), t);
+  const apply = async (argv: string[], t: Target) => {
+    seen.length = 0;
+    const ctx = parse("run", ["-p", "x", ...argv]);
+    const p = buildRunPlan(ctx);
+    await applyTarget(ctx, p, fake(t));
+    return p;
+  };
+  beforeEach(() => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("--where local --now: provider, model and front priority land on the run", async () => {
+    const p = await apply(["--where", "local", "--now"], { provider: "flash", model: "flash-m", priority: "front", description: "local: flash" });
+    expect(seen).toEqual([{ where: "local", model: undefined, now: true }]);
+    expect(p.kind === "run" && p.run).toMatchObject({ providerFlag: "flash", modelFlag: "flash-m", priority: "front" });
+  });
+  it("--where cloud --model fast: the resolved concrete model is the flag", async () => {
+    const p = await apply(["--where", "cloud", "--model", "fast"], { provider: "glm", model: "glm-small", description: "cloud: glm glm-small" });
+    expect(p.kind === "run" && p.run).toMatchObject({ providerFlag: "glm", modelFlag: "glm-small" });
+    expect(p.kind === "run" && p.run.priority).toBeUndefined();
+  });
+  it("--where <provider> names it", async () => {
+    const p = await apply(["--where", "kimi"], { provider: "kimi", model: "k3", description: "kimi k3" });
+    expect(seen[0].where).toBe("kimi");
+    expect(p.kind === "run" && p.run.providerFlag).toBe("kimi");
+  });
+  it("--model fast alone: the routed provider's fast model", async () => {
+    const p = await apply(["--model", "fast"], { modelFast: true, description: "default routing fast model" });
+    expect(p.kind === "run" && p.run).toMatchObject({ modelFast: true });
+  });
+  it("--model default alone: not the provider's worker_model", async () => {
+    const p = await apply(["--model", "default"], { modelDefault: true, description: "default routing" });
+    expect(p.kind === "run" && p.run).toMatchObject({ modelDefault: true });
+  });
+  it("a model id with none of the three leaves the run alone and asks the resolver nothing", async () => {
+    const p = await apply(["--model", "claude-x"], { description: "unused" });
+    expect(seen).toEqual([]);
+    expect(p.kind === "run" && p.run.modelFlag).toBe("claude-x");
+  });
+  it("--where with --local is refused", async () => {
+    await expect(apply(["--where", "cloud", "--local"], { description: "x" })).rejects.toThrow(/use one/);
   });
 });

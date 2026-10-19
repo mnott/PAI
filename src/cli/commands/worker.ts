@@ -30,7 +30,7 @@ import { formatPending, pendingGate, pendingResults } from "../../workers/pendin
 import { runWait } from "../../workers/wait.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
-import { resolveTarget } from "../../workers/target.js";
+import { resolveTarget, type TargetResolver } from "../../workers/target.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { dim, err, ok } from "../lib/utils.js";
 
@@ -177,13 +177,13 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
 }
 
 /** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
-async function applyTarget(ctx: RunContext, plan: RunPlan): Promise<void> {
+export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget): Promise<void> {
   const where = str(ctx.opts.where);
   const model = str(ctx.opts.model);
   const now = flag(ctx, "now");
   if (!where && !now && model !== "fast" && model !== "default") return;
   if (where && flag(ctx, "local")) throw new Error("--where and --local both name where to run; use one");
-  const t = await resolveTarget({ where, model, now });
+  const t = await resolveIt({ where, model, now });
   process.stderr.write(`pai worker: ${t.description}\n`);
   const target = plan.kind === "chain" ? plan.chain : plan.run;
   if (t.provider) target.providerFlag = t.provider;
@@ -191,6 +191,7 @@ async function applyTarget(ctx: RunContext, plan: RunPlan): Promise<void> {
   target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
   if (plan.kind === "run") {
     if (t.modelFast) plan.run.modelFast = true;
+    if (t.modelDefault) plan.run.modelDefault = true;
     if (t.priority) plan.run.priority = t.priority;
   }
 }

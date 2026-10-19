@@ -34,6 +34,8 @@ export interface Target {
   model?: string;
   /** `fast` asked with no provider fixed: the routed provider's fast model (RunOptions.modelFast). */
   modelFast?: boolean;
+  /** `default` asked with no provider fixed: the routed provider's default model, whatever its worker_model (RunOptions.modelDefault). */
+  modelDefault?: boolean;
   /** "front": goes ahead of the provider's waiting runs. */
   priority?: "front";
   /** One plain line: "local: flashnext-iq3", "cloud: anthropic sonnet", "kimi k3". */
@@ -58,7 +60,7 @@ function modelFor(cfg: ProviderTable, provider: string, model: string | undefine
   const p = getProviderOrNative(cfg, provider);
   const m = model?.trim();
   if (m && m !== "default" && m !== "fast") return m;
-  if (m === "fast") return p?.models.fast ?? p?.models.default ?? "";
+  if (m === "fast" || (m !== "default" && p?.workerModel === "fast")) return p?.models.fast ?? p?.models.default ?? "";
   return p?.models.default ?? "";
 }
 
@@ -91,8 +93,9 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
 
   if (!where) {
     const fast = modelArg === "fast";
+    const dflt = modelArg === "default";
     const id = modelArg && modelArg !== "default" && !fast ? modelArg : undefined;
-    return { model: id, modelFast: fast || undefined, priority, description: `default routing${id ? ` ${id}` : fast ? " fast model" : ""}${priority ? ", first in line" : ""}` };
+    return { model: id, modelFast: fast || undefined, modelDefault: dflt || undefined, priority, description: `default routing${id ? ` ${id}` : fast ? " fast model" : ""}${priority ? ", first in line" : ""}` };
   }
 
   let provider: string;

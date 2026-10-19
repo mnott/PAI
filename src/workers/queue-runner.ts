@@ -11,7 +11,7 @@ import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
 
 export interface QueueDeps {
-  startWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "spec"> & { attempt: number; itemId: string }): Promise<WorkerOutcome>;
+  startWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "spec" | "model" | "priority"> & { attempt: number; itemId: string }): Promise<WorkerOutcome>;
   /** Size and stat of worker/<id> against the checkout; commits = non-empty commits on it. */
   inspect(repo: string, workerId: string): Promise<DiffInfo & { commits: number }>;
   /** Run a shell command (gate, proof, install) in `cwd`. */
@@ -28,6 +28,10 @@ export interface QueueRunOptions {
   parallel: number;
   /** Take "cloud" items and run them on Sonnet instead of the pending ones. */
   escalate?: boolean;
+  /** Model every local-tier worker of the run gets (default: the provider's). */
+  model?: string;
+  /** "front": every worker of the run goes ahead of the provider's waiting runs. */
+  priority?: "front";
   /** Called after an item reached ready or needs-decision (the stored item). */
   onEvent?: (kind: "ready" | "needs-decision", item: QueueItem) => void;
   /** Lock/signal hooks, replaced by tests. */
@@ -82,7 +86,7 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
     let failure: string | undefined;
     for (let i = 0; i < ladder.length; i++) {
       const { tier, provider } = ladder[i];
-      const out = await deps.startWorker({ itemId: item.id, label: `queue: ${item.id}`, spec: composeQueueSpec(item, settings, failure), provider, tier, attempt: i + 1 });
+      const out = await deps.startWorker({ itemId: item.id, label: `queue: ${item.id}`, spec: composeQueueSpec(item, settings, failure), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";
         const n = (refusals.get(failure) ?? 0) + 1;

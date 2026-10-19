@@ -128,6 +128,7 @@ function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> 
   if (y.contract !== undefined) raw.contract = y.contract;
   if (y.quota_probe !== undefined) raw.quotaProbe = y.quota_probe;
   if (y.quota_skip_at !== undefined) raw.quotaSkipAt = y.quota_skip_at;
+  if (y.worker_model !== undefined) raw.workerModel = y.worker_model;
   if (y.context_window !== undefined) raw.contextWindow = y.context_window;
   if (y.thinking !== undefined) raw.thinking = y.thinking;
   if (y.maxConcurrent !== undefined) raw.maxConcurrent = y.maxConcurrent;
@@ -156,6 +157,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.contract) y.contract = p.contract;
   if (p.quotaProbe) y.quota_probe = p.quotaProbe;
   if (p.quotaSkipAt !== undefined) y.quota_skip_at = p.quotaSkipAt;
+  if (p.workerModel) y.worker_model = p.workerModel;
   if (p.contextWindow !== undefined) y.context_window = p.contextWindow;
   if (p.thinking !== undefined) y.thinking = p.thinking ? "on" : "off";
   if (p.maxConcurrent !== undefined) y.maxConcurrent = p.maxConcurrent;
@@ -539,6 +541,11 @@ export function starterWorkersYamlText(): string {
 # Per-user state, kept 0600: this file can hold API keys (\`key:\`, below).
 # Never commit it or share it. \`key_file: <path>\` keeps a secret in its own
 # 0600 file instead, if you'd rather not put it here.
+#
+# Per provider, \`worker_model: default | fast\` is the model a worker gets when
+# the request names none (default: default). Set \`fast\` on an expensive
+# provider; an explicit --model, a provider/role class target or where/model
+# still wins.
 
 active: anthropic          # provider for \`pai worker run\` without --provider or --class
 
@@ -615,6 +622,8 @@ export function buildWorkersYamlText(data: WorkersYamlData): string {
   lines.push("# Providers PAI can run workers on, the model each role uses, and which");
   lines.push("# provider every --class goes to. Edit by hand; `pai worker providers` shows");
   lines.push("# the effective result. Comments are preserved when PAI writes this file.");
+  lines.push("# Per provider, `worker_model: default | fast` is the model a worker gets when");
+  lines.push("# the request names none (default: default); an explicit model still wins.");
   lines.push("");
   lines.push(
     `active: ${data.active ?? "null"}` +

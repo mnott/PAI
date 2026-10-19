@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CAPACITY, capacityGate, liveQueue, resolveCap, type CapacityInfo } from "./capacity.js";
+import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
 import type { WorkerStatus } from "./status.js";
 
 const DEAD = 999999;
@@ -121,5 +121,39 @@ describe("queue priority", () => {
     writeFileSync(join(q, "w-002"), "100");
     writeFileSync(join(q, "w-003"), "100 front");
     expect(liveQueue(logDir, "p", () => true)).toEqual(["w-003", "w-001", "w-002"]);
+  });
+});
+
+describe("setFront / moveUp", () => {
+  const setup = () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    for (const id of ["w-001", "w-002", "w-003"]) writeFileSync(join(q, id), "100");
+    return logDir;
+  };
+  const yes = () => true;
+  it("setFront puts a waiting run ahead of the rest; unknown id is false", () => {
+    const dir = setup();
+    expect(setFront(dir, "p", "w-003", yes)).toBe(true);
+    expect(liveQueue(dir, "p", yes)).toEqual(["w-003", "w-001", "w-002"]);
+    expect(setFront(dir, "p", "w-nope", yes)).toBe(false);
+  });
+  it("moveUp moves one place; first place is a no-op", () => {
+    const dir = setup();
+    expect(moveUp(dir, "p", "w-003", yes)).toBe(true);
+    expect(liveQueue(dir, "p", yes)).toEqual(["w-001", "w-003", "w-002"]);
+    expect(moveUp(dir, "p", "w-003", yes)).toBe(true);
+    expect(liveQueue(dir, "p", yes)).toEqual(["w-003", "w-001", "w-002"]);
+    expect(moveUp(dir, "p", "w-003", yes)).toBe(false);
+  });
+  it("moveUp past a front run joins the front group; a later --now run goes behind it", () => {
+    const dir = setup();
+    setFront(dir, "p", "w-001", yes);
+    expect(moveUp(dir, "p", "w-002", yes)).toBe(true);
+    expect(liveQueue(dir, "p", yes)).toEqual(["w-002", "w-001", "w-003"]);
+    writeFileSync(join(dir, "queue", "p", "w-004"), "100 front");
+    expect(liveQueue(dir, "p", yes)).toEqual(["w-002", "w-001", "w-004", "w-003"]);
   });
 });

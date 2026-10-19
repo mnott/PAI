@@ -34,12 +34,24 @@ export const HEARTBEAT_MS = 60_000;
 
 const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.-]/g, "_"));
 
-/**
- * Live queue entries of a provider, oldest first, runs marked "front" (--now)
- * ahead of the rest; dead entries are removed. An entry file holds "<pid>" or
- * "<pid> front".
- */
-export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive): string[] {
+interface QueueEntry {
+  id: string;
+  pid: number;
+  front: boolean;
+  /** Explicit position (moveUp), within the entry's group; unset = after the ranked ones, by name. */
+  rank?: number;
+}
+
+const entryText = (e: QueueEntry): string => `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}`;
+
+function readEntry(dir: string, id: string): QueueEntry {
+  const [p, ...marks] = readFileSync(join(dir, id), "utf8").trim().split(/\s+/);
+  const rank = marks.map(Number).find((n) => Number.isInteger(n));
+  return { id, pid: Number(p), front: marks.includes("front"), ...(rank === undefined ? {} : { rank }) };
+}
+
+/** Live entries in waiting order: "front" runs first, then by rank, then oldest (by name); dead entries are removed. */
+function liveEntries(logDir: string, provider: string, isAlive: (pid: number) => boolean): QueueEntry[] {
   const dir = queueDir(logDir, provider);
   let names: string[];
   try {
@@ -47,14 +59,45 @@ export function liveQueue(logDir: string, provider: string, isAlive: (pid: numbe
   } catch {
     return [];
   }
-  const out: Array<{ id: string; front: boolean }> = [];
+  const out: QueueEntry[] = [];
   for (const id of names.sort()) {
-    const [p, mark] = readFileSync(join(dir, id), "utf8").trim().split(/\s+/);
-    const pid = Number(p);
-    if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) out.push({ id, front: mark === "front" });
+    const e = readEntry(dir, id);
+    if (Number.isInteger(e.pid) && e.pid > 0 && isAlive(e.pid)) out.push(e);
     else rmSync(join(dir, id), { force: true });
   }
-  return [...out.filter((e) => e.front), ...out.filter((e) => !e.front)].map((e) => e.id);
+  const group = (e: QueueEntry) => (e.front ? 0 : 1);
+  // stable sort: ties keep the by-name order
+  return out.sort((a, b) => group(a) - group(b) || (a.rank ?? Infinity) - (b.rank ?? Infinity));
+}
+
+/**
+ * Live queue entries of a provider in waiting order (see liveEntries). An
+ * entry file holds "<pid>", "<pid> front" and, after moveUp, "<pid> [front] <rank>".
+ * This is the single ordering mechanism: `--now`, `pai worker queue front|up`
+ * and the cockpit queue panel all go through capacityGate's priority, setFront
+ * and moveUp.
+ */
+export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive): string[] {
+  return liveEntries(logDir, provider, isAlive).map((e) => e.id);
+}
+
+/** Put a waiting run ahead of the provider's non-front runs ("front"). False when it is not waiting. */
+export function setFront(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): boolean {
+  const e = liveEntries(logDir, provider, isAlive).find((x) => x.id === id);
+  if (!e) return false;
+  if (!e.front) writeFileSync(join(queueDir(logDir, provider), id), entryText({ ...e, front: true, rank: undefined }));
+  return true;
+}
+
+/** Move a waiting run one place up. False when it is not waiting or already first. */
+export function moveUp(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): boolean {
+  const order = liveEntries(logDir, provider, isAlive);
+  const i = order.findIndex((x) => x.id === id);
+  if (i <= 0) return false;
+  // the run takes the place (and group) of the one it passes
+  [order[i - 1], order[i]] = [{ ...order[i], front: order[i - 1].front }, order[i - 1]];
+  order.forEach((e, rank) => writeFileSync(join(queueDir(logDir, provider), e.id), entryText({ ...e, rank })));
+  return true;
 }
 
 export interface CapacityInfo {
