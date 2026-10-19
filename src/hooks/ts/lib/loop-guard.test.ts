@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { existsSync, writeFileSync } from "node:fs";
+import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -336,6 +336,39 @@ describe("no-progress rule (action key)", () => {
     expect(feed([bash(run1), bash(run2), edit, bash(run3), bash(run1)])).toEqual([]);
     const calls = ["a", "b", "c", "a", "b", "c"].map((n) => bash(`npx vitest run src/${n}.test.ts`));
     expect(feed(calls, (i) => `r${i}`)).toEqual([]);
+  });
+  it("a worktree change between runs resets the count; no change still denies at 3", () => {
+    const cmd = "npx tsc --noEmit";
+    const run = (prints: Array<string | null>) => {
+      let s: LoopState = emptyLoopState();
+      return prints.map((fp, i) => {
+        const r = stepLoopGuard(s, "Bash", cmd, fp);
+        s = recordLoopResult(r.state, "Bash", cmd, `result ${i}`);
+        return r.deny;
+      });
+    };
+    expect(run(["a", "b", "c", "d", "e", "f"])).toEqual([false, false, false, false, false, false]);
+    expect(run(["a", "a", "a", "a"])).toEqual([false, false, true, true]);
+    expect(run(["a", "a", "b", "b", "b"])).toEqual([false, false, false, false, true]);
+    expect(run([null, null, null])).toEqual([false, false, true]);
+  });
+  it("worktreeFingerprint sees Bash edits, even to an already modified file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fp-"));
+    try {
+      const g = (...a: string[]) => spawnSync("git", ["-C", dir, ...a], { encoding: "utf8" });
+      g("init", "-q");
+      writeFileSync(join(dir, "a.ts"), "one");
+      const f0 = worktreeFingerprint(dir);
+      expect(f0).toBe(worktreeFingerprint(dir));
+      spawnSync("sh", ["-c", "printf two-two > a.ts"], { cwd: dir });
+      const f1 = worktreeFingerprint(dir);
+      expect(f1).not.toBe(f0);
+      spawnSync("sh", ["-c", "printf three > a.ts"], { cwd: dir });
+      expect(worktreeFingerprint(dir)).not.toBe(f1);
+      expect(worktreeFingerprint(tmpdir())).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
   it("waits stay exempt", () => {
     expect(feed(Array.from({ length: 8 }, () => bash("pai worker wait-on 123 --log /tmp/x.log")))).toEqual([]);
