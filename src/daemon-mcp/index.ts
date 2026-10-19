@@ -1439,7 +1439,7 @@ async function startShim(): Promise<void> {
 
   server.tool(
     "plan_save",
-    "Save a plan you wrote (units of parts, each with a spec, files, proof, depends_on; a gate for the merged tree), validate it and get the schedule in plain words. Use for larger jobs.",
+    "Save a plan you wrote (units of parts, each with a spec, files, proof, depends_on, overlap; a gate for the merged tree), validate it and get the schedule in plain words. Use for larger jobs. Mark parts that do not depend on the part before them with overlap: true so the local model does not idle during that part's gate and merge.",
     {
       project,
       name: planName,
@@ -1461,6 +1461,7 @@ async function startShim(): Promise<void> {
             proof: z.string().optional().describe("Command the worker must run and show passing."),
             depends_on: z.array(z.string()).optional(),
             risky: z.boolean().optional(),
+            overlap: z.boolean().optional().describe("Default false. Mark a part that is independent of the part before it: its worker starts as soon as that part's worker has ended, while the gate and merge still run (the local engine serves one worker at a time, this fills its idle time). Rejected if it depends on that part; its merge waits for it."),
           })).min(1),
         })).min(1),
       }),
@@ -1487,7 +1488,7 @@ async function startShim(): Promise<void> {
   );
   server.tool(
     "plan_amend",
-    "Append a clarification to a part's spec (what you do at a needs-decision); the next plan_run resumes.",
+    "Append a clarification to a part's spec (what you do at a needs-decision); the next plan_run resumes. A part's overlap flag (start its worker while the previous part is gated) is set in plan_save, not here.",
     { project, name: planName, part: z.string().min(1), spec_append: z.string().min(1) },
     async (args) => planAmend(args, delegation)
   );

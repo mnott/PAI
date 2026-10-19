@@ -85,7 +85,7 @@ export interface RunnerDeps {
 
 export interface RunLogEntry {
   ts?: string;
-  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "gate-start" | "gate-end" | "escalate" | "needs-decision" | "unit-check";
+  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "gate-start" | "gate-end" | "escalate" | "needs-decision" | "unit-check" | "worker-start" | "worker-end" | "model-idle" | "overlap-continue";
   part?: string;
   unit?: string;
   worker?: string;
@@ -100,8 +100,18 @@ export interface RunLogEntry {
   note?: string;
   /** gate-start: the gate's commands; gate-end: each command's duration. */
   commands?: Array<{ cmd: string; ms?: number; ok?: boolean }>;
-  /** gate-end: whole gate duration in ms. */
+  /** gate-end: whole gate duration in ms; worker-end: the worker's run; model-idle: the gap. */
   ms?: number;
+  /** worker-start/worker-end/model-idle: the provider the worker runs on. */
+  provider?: string;
+  /** model-idle: what the runner did meanwhile (gate, merge, unit-check, waiting-for-dependency); part-end: "loop". */
+  reason?: string;
+  /** part-start: the part started while an earlier part was still being gated. */
+  overlap?: boolean;
+  /** run-end: local model idle time, wall time and overlapped starts of the run. */
+  idleMs?: number;
+  wallMs?: number;
+  overlaps?: number;
 }
 
 export type PartState = "waiting" | "running" | "merged" | "needs-decision";
@@ -221,6 +231,54 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     return r;
   };
 
+  // one worker at a time per provider slot count: `parallel` workers on a provider, never more
+  const cap = opts.parallel;
+  const activeWorkers = new Map<string, number>();
+  const waiters: Array<{ provider: string; grant: () => void }> = [];
+  const lastEnd = new Map<string, number>();
+  const causes = new Map<string, string[]>();
+  let idleTotal = 0;
+  let overlaps = 0;
+  const startedAt = deps.now();
+  let wake: () => void = () => undefined;
+  // parts whose worker ended but whose gate, merge or unit check is still going
+  const postWorker = new Set<string>();
+  // overlapped part -> the parts it overlapped (merge waits for them)
+  const overlapOn = new Map<string, string[]>();
+  const noteCause = (c: string): void => {
+    for (const [prov, list] of causes) if ((activeWorkers.get(prov) ?? 0) === 0 && !list.includes(c)) list.push(c);
+  };
+  const workerBegin = (p: PlanPart, provider: string, tier: string, attempt: number): void => {
+    const t = deps.now();
+    if ((activeWorkers.get(provider) ?? 0) === 0 && lastEnd.has(provider)) {
+      const ms = t - lastEnd.get(provider)!;
+      const list = causes.get(provider) ?? [];
+      const why = list.includes("gate") ? list.filter((c) => c !== "merge") : list;
+      if (tier === "local") idleTotal += ms;
+      deps.log({ event: "model-idle", part: p.id, unit: p.unit, provider, tier, ms, reason: why.join("+") || "waiting-for-dependency" });
+    }
+    causes.set(provider, []);
+    activeWorkers.set(provider, (activeWorkers.get(provider) ?? 0) + 1);
+    postWorker.delete(p.id);
+    deps.log({ event: "worker-start", part: p.id, unit: p.unit, provider, tier, attempt });
+  };
+  const acquire = (p: PlanPart, provider: string, tier: string, attempt: number): Promise<void> => {
+    if ((activeWorkers.get(provider) ?? 0) < cap) {
+      workerBegin(p, provider, tier, attempt);
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => waiters.push({ provider, grant: () => (workerBegin(p, provider, tier, attempt), resolve()) }));
+  };
+  const release = (p: PlanPart, provider: string): void => {
+    activeWorkers.set(provider, (activeWorkers.get(provider) ?? 1) - 1);
+    lastEnd.set(provider, deps.now());
+    causes.set(provider, []);
+    postWorker.add(p.id);
+    const i = waiters.findIndex((w) => w.provider === provider);
+    if (i >= 0 && (activeWorkers.get(provider) ?? 0) < cap) waiters.splice(i, 1)[0].grant();
+    wake();
+  };
+
   const progress = (): void => deps.progress?.([...state.values()].filter((v) => v === "merged").length, [...running.keys()]);
 
   const label = (p: PlanPart) => `${plan.job}: ${p.unit} ${p.id}`;
@@ -234,6 +292,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       return;
     }
     const r = await exclusive(() => {
+      noteCause("unit-check");
       deps.phase?.(`unit check ${unitId}`);
       return deps.unitCheck(unit.unitCheck!);
     });
@@ -260,9 +319,18 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
         escalations++;
         deps.log({ event: "escalate", part: p.id, unit: p.unit, attempt: i + 1, tier, note: tail(failure ?? "", 10) });
       }
-      deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
+      deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier, ...(overlapOn.has(p.id) && i === 0 ? { overlap: true } : {}) });
       deps.phase?.(`starting ${p.id}`);
-      const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
+      const granted = acquire(p, provider, tier, i + 1);
+      const wstart = deps.now();
+      await granted;
+      let out: WorkerOutcome;
+      try {
+        out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
+      } finally {
+        release(p, provider);
+      }
+      deps.log({ event: "worker-end", part: p.id, unit: p.unit, worker: out.id, provider, tier, attempt: i + 1, ok: out.ok, ms: deps.now() - wstart });
       deps.note?.(`${p.id} worker ${out.id || "-"} ${out.ok ? "finished ok" : "failed"}${out.ok ? "" : `: ${tail(out.failure ?? "", 4)}`}`);
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, ...(out.loopStopped ? { reason: "loop" } : {}), tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
       if (!out.ok && out.spawnRefused) {
@@ -285,6 +353,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
         return (e) => {
           if (e.ev === "gate-start") {
             cmds = e.commands.map((cmd) => ({ cmd }));
+            noteCause("gate");
             deps.log({ event: "gate-start", part: p.id, unit: p.unit, worker: out.id, gate: plan.gate, commands: cmds });
           } else if (e.ev === "cmd-start") {
             deps.phase?.(`gate: ${gatePhaseName(e.cmd)}`);
@@ -297,7 +366,11 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
           } else deps.phase?.(e.text, true);
         };
       };
+      // an overlapped part merges only after the parts it overlapped are through (merged, or out with a decision)
+      const gated = (overlapOn.get(p.id) ?? []).map((id) => running.get(id)?.done).filter((d): d is Promise<void> => !!d);
+      if (gated.length) await Promise.all(gated);
       let m = await exclusive(() => {
+        noteCause("merge");
         deps.phase?.(`merging ${p.id}`);
         return deps.merge(out.id, plan.gate, gateObserver());
       });
@@ -317,27 +390,49 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     }
     state.set(p.id, "needs-decision");
     deps.log({ event: "needs-decision", part: p.id, unit: p.unit, note: tail(failure ?? "", 10) });
+    for (const [q, over] of overlapOn) {
+      if (over.includes(p.id) && running.has(q)) deps.log({ event: "overlap-continue", part: q, unit: p.unit, note: `${p.id} failed its gate; ${q} is independent of it and keeps running` });
+    }
   };
 
+  const idleFields = (): Pick<RunLogEntry, "idleMs" | "wallMs" | "overlaps"> => ({ idleMs: idleTotal, wallMs: deps.now() - startedAt, overlaps });
   deps.log({ event: "run-start", note: `parallel=${opts.parallel}${opts.escalate ? " escalate=sonnet" : ""}` });
   // a resumed run may have units complete but unchecked (killed between merge and check)
   for (const u of plan.units) await checkUnit(u.id);
   for (;;) {
-    const busy = [...running.values()].map((r) => r.part);
     if (!stopping && stopRequested()) stopping = true;
-    for (const p of haltedBy || stopping ? [] : pickStartable(parts.filter((p) => !p.dependsOn.some((d) => failedParts.has(d))), state, busy, opts.parallel - running.size)) {
+    const launch = (p: PlanPart): void => {
       state.set(p.id, "running");
+      // started while earlier parts are past their worker (gate, merge, unit check): an overlap
+      const over = [...postWorker].filter((id) => running.has(id));
+      if (p.overlap && over.length) {
+        overlapOn.set(p.id, over);
+        overlaps++;
+      }
       const done = attemptPart(p).finally(() => {
         running.delete(p.id);
         active.delete(p.id);
+        postWorker.delete(p.id);
+        overlapOn.delete(p.id);
         progress();
       });
       running.set(p.id, { part: p, done });
       active.set(p.id, p);
       progress();
+    };
+    if (!haltedBy && !stopping) {
+      const eligible = parts.filter((p) => !p.dependsOn.some((d) => failedParts.has(d)));
+      for (const p of pickStartable(eligible, state, [...running.values()].map((r) => r.part), opts.parallel - running.size)) launch(p);
+      // an orchestrator-marked part, once every part before it has started, may start once the workers of the running parts have ended, though their gate is still going
+      const workers = [...activeWorkers.values()].reduce((a, b) => a + b, 0);
+      const free = opts.parallel - workers;
+      if (free > 0) {
+        for (const p of pickStartable(eligible.filter((q) => q.overlap && parts.slice(0, parts.indexOf(q)).every((e) => state.get(e.id) !== "waiting")), state, [...running.values()].map((r) => r.part), free)) launch(p);
+      }
     }
     if (running.size === 0) break;
-    await Promise.race([...running.values()].map((r) => r.done));
+    const woken = new Promise<void>((r) => (wake = r));
+    await Promise.race([woken, ...[...running.values()].map((r) => r.done)]);
   }
   if (stopping && opts.stopPath) {
     try {
@@ -359,10 +454,10 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     ...(stopping ? { stopped: true } : {}),
   };
   if (stopping) {
-    deps.log({ event: "run-end", ok: false, status: "stopped", note: `stop requested; merged=${summary.merged.length} waiting=${waiting.length}` });
+    deps.log({ event: "run-end", ok: false, status: "stopped", note: `stop requested; merged=${summary.merged.length} waiting=${waiting.length}`, ...idleFields() });
     return summary;
   }
-  deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, ...(summary.stuck ? { status: "blocked" } : {}), note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}` });
+  deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, ...(summary.stuck ? { status: "blocked" } : {}), note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}`, ...idleFields() });
   return summary;
 }
 
@@ -444,12 +539,17 @@ export interface PlanStatus {
   needsDecision: string[];
   tokens: number;
   wallMs: number;
+  /** Local model idle time between workers (sum of model-idle events) and parts that started overlapped. */
+  idleMs: number;
+  overlaps: number;
 }
 
 /** Summarise the log against the plan's parts. `now` closes an unfinished run segment. */
 export function planStatus(plan: Plan, log: RunLogEntry[], now: number): PlanStatus {
   const last = new Map<string, RunLogEntry>();
   let tokens = 0;
+  let idleMs = 0;
+  let overlaps = 0;
   let wallMs = 0;
   let segStart: number | null = null;
   let lastTs = 0;
@@ -462,11 +562,13 @@ export function planStatus(plan: Plan, log: RunLogEntry[], now: number): PlanSta
       segStart = null;
     }
     if (e.part && ["part-start", "part-end", "merge", "needs-decision"].includes(e.event)) last.set(e.part, e);
+    if (e.event === "model-idle" && e.tier === "local" && typeof e.ms === "number") idleMs += e.ms;
+    if (e.event === "part-start" && e.overlap) overlaps++;
     if (e.event === "part-end" && typeof e.tokens === "number") tokens += e.tokens;
   }
   // an open segment is a run in progress when the log is fresh, else a run that died: count up to its last entry
   if (segStart !== null) wallMs += (now - lastTs < 120_000 ? now : lastTs) - segStart;
-  const s: PlanStatus = { done: [], running: [], waiting: [], needsDecision: [], tokens, wallMs };
+  const s: PlanStatus = { done: [], running: [], waiting: [], needsDecision: [], tokens, wallMs, idleMs, overlaps };
   const runActive = segStart !== null && now - lastTs < 120_000;
   for (const p of plan.units.flatMap((u) => u.parts)) {
     const e = last.get(p.id);
@@ -476,6 +578,16 @@ export function planStatus(plan: Plan, log: RunLogEntry[], now: number): PlanSta
     else s.waiting.push(p.id);
   }
   return s;
+}
+
+/** "local model idle 1m02s of 7m24s (14%), 2 overlapped starts". */
+export function idleText(idleMs: number, wallMs: number, overlaps: number): string {
+  const f = (ms: number): string => {
+    const s = Math.round(ms / 1000);
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+  };
+  const pct = wallMs > 0 ? Math.round((idleMs / wallMs) * 100) : 0;
+  return `local model idle ${f(idleMs)} of ${f(wallMs)} (${pct}%), ${overlaps} overlapped ${overlaps === 1 ? "start" : "starts"}`;
 }
 
 export function renderStatus(plan: Plan, st: PlanStatus): string {
@@ -488,5 +600,6 @@ export function renderStatus(plan: Plan, st: PlanStatus): string {
     `waiting        ${fmt(st.waiting)}`,
     `needs-decision ${fmt(st.needsDecision)}`,
     `wall so far    ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, tokens ${st.tokens}`,
+    idleText(st.idleMs, st.wallMs, st.overlaps),
   ].join("\n");
 }

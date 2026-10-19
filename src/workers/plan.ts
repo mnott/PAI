@@ -19,6 +19,8 @@ export interface PlanPart {
   proof?: string;
   dependsOn: string[];
   risky: boolean;
+  /** Orchestrator-marked: may start its worker while the previous part's worker has ended but its gate/merge still runs. */
+  overlap?: boolean;
 }
 
 export interface PlanUnit {
@@ -71,6 +73,7 @@ export const PLAN_SCHEMA = {
                 proof: "string — command the worker must run and show passing",
                 depends_on: "string[] — part ids (any unit) that must be merged first",
                 risky: "boolean — documented intent for review; shown in the schedule",
+                overlap: "boolean — default false; the part is independent of the part before it, so its worker may start as soon as that part's worker has ended, while its gate and merge still run (its merge waits for it). Rejected when it depends on that part",
               },
             },
           },
@@ -180,6 +183,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
             else seen.set(id, uid);
           }
           if (p.proof !== undefined && typeof p.proof !== "string") problems.push(`${pw}proof: must be a string`);
+          if (p.overlap !== undefined && typeof p.overlap !== "boolean") problems.push(`${pw}overlap: must be a boolean`);
           if (p.risky !== undefined && typeof p.risky !== "boolean") problems.push(`${pw}risky: must be a boolean`);
           const pieces = [planPre, unitPre, spec].filter((x): x is string => !!x).map((x) => textOrFile(x, baseDir));
           parts.push({
@@ -190,6 +194,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
             ...(typeof p.proof === "string" && p.proof.trim() ? { proof: p.proof.trim() } : {}),
             dependsOn: strList(p.depends_on, `${pw}depends_on`, problems),
             risky: p.risky === true,
+            ...(p.overlap === true ? { overlap: true } : {}),
           });
         });
       }
@@ -207,6 +212,14 @@ export function parsePlan(text: string, baseDir: string): Plan {
       else if (!seen.has(d)) problems.push(`part ${p.id}: depends_on unknown part "${d}"`);
     }
   }
+  const byId = new Map(all.map((p) => [p.id, p]));
+  all.forEach((p, i) => {
+    if (!p.overlap) return;
+    const prev = all[i - 1];
+    if (!prev) return void problems.push(`part ${p.id}: overlap: true on the first part of the plan; there is no earlier part to overlap`);
+    const via = dependsVia(p, prev.id, byId);
+    if (via) problems.push(`part ${p.id}: overlap: true but it depends on ${prev.id}, the part before it that is still being gated when it would start${via.length > 1 ? ` (via ${via.slice(0, -1).join(" -> ")})` : ""}; remove overlap or the dependency`);
+  });
   const cycle = findCycle(all);
   if (cycle) problems.push(`dependency cycle: ${cycle.join(" -> ")}`);
   if (problems.length) throw new PlanError([...new Set(problems)]);
@@ -219,6 +232,19 @@ export function parsePlan(text: string, baseDir: string): Plan {
     p.files = p.files.map((f) => stripRepoPaths(f, repoAbs));
   }
   return { job, repo: repoAbs, gate, provider, ...(maxParallel ? { maxParallel } : {}), units, warnings };
+}
+
+/** The dependency path from `part` to `target` (ending in target), or null when `part` does not depend on it, directly or transitively. */
+function dependsVia(part: PlanPart, target: string, byId: Map<string, PlanPart>, seen = new Set<string>()): string[] | null {
+  for (const d of part.dependsOn) {
+    if (d === target) return [d];
+    if (seen.has(d)) continue;
+    seen.add(d);
+    const dep = byId.get(d);
+    const sub = dep ? dependsVia(dep, target, byId, seen) : null;
+    if (sub) return [d, ...sub];
+  }
+  return null;
 }
 
 function findCycle(parts: PlanPart[]): string[] | null {

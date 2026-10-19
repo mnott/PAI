@@ -61,7 +61,8 @@ describe("PlanReporter", () => {
     let t = 0;
     const r = new PlanReporter("job", 2, m, origin, () => t);
     r.onLog({ event: "merge", part: "a", ok: true });
-    r.onLog({ event: "part-end", part: "a", tokens: 2500 });
+    r.onLog({ event: "part-end", part: "a", tier: "sonnet", tokens: 2500 });
+    r.onLog({ event: "part-end", part: "b", tier: "local", tokens: 900 });
     r.onLog({ event: "escalate", part: "b" });
     t = 5 * 60_000;
     r.onLog({ event: "run-end", ok: true });
@@ -70,6 +71,7 @@ describe("PlanReporter", () => {
     expect(m.session[0].text).toContain("wall=5 min");
     expect(m.session[0].text).toContain("escalations=1");
     expect(m.session[0].text).toContain("cloud_tokens=2500");
+    expect(m.session[0].text).toContain("local_tokens=900");
     expect(m.pailot).toEqual(["job is done: all 2 parts merged in 5 min."]);
   });
 
