@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
-import { slimProfileArgs, slimSettings } from "./slim-profile.js";
+import { poolSlotSettingsId, slimProfileArgs, slimSettings } from "./slim-profile.js";
 
 const USER = {
   env: { A: "1" },
@@ -116,5 +116,22 @@ describe("slim profile note hook", () => {
 
   it("adds none without a hook command", () => {
     expect((slimSettings(USER) as any).hooks.PostToolUse).toBeUndefined();
+  });
+});
+
+describe("pool slot settings", () => {
+  it("gives each provider/model its own file carrying its provider env", () => {
+    const dir = mkdtempSync(join(tmpdir(), "slim-"));
+    const user = join(dir, "settings.json");
+    writeFileSync(user, JSON.stringify({ env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000" } }));
+    const local = { ...nativeAnthropicProvider(), native: false, env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192" } } as WorkerProvider;
+    const env = { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_ENTRYPOINT: "cli" };
+    const a = slimProfileArgs(dir, poolSlotSettingsId("codernext4", "qwen/3"), [], env, user, local);
+    const b = slimProfileArgs(dir, poolSlotSettingsId("anthropic", "haiku"), [], env, user, nativeAnthropicProvider());
+    expect(a[3]).not.toBe(b[3]);
+    const sa = JSON.parse(readFileSync(a[3], "utf8")).env;
+    expect(sa.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("8192");
+    expect(sa.CLAUDE_CODE_DISABLE_THINKING).toBe("1");
+    expect(JSON.parse(readFileSync(b[3], "utf8")).env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("64000");
   });
 });
