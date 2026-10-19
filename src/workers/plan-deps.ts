@@ -58,7 +58,7 @@ export async function dirtyPaths(repo: string): Promise<string[]> {
 
 /** Args of the part worker: `--worktree` is explicit so the caller's own mode is never inherited. */
 export function workerArgs(req: StartRequest, specFile: string, repo: string): string[] {
-  return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--no-pane", "--output-format", "json"];
+  return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
 }
 
 /** Error text when a started worker is not isolated in a worktree; null when it is. */
@@ -88,7 +88,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
       const st = loadStatuses(logDir)
         .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
         .sort((a, b) => b.started.localeCompare(a.started))[0];
-      if (!st) return { id: "", ok: false, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
+      if (!st) return { id: "", ok: false, spawnRefused: true, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
       const problem = worktreeProblem(st);
       if (problem) return { id: st.id, ok: false, fatal: true, failure: problem };
       let text = "";

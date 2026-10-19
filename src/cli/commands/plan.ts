@@ -71,6 +71,7 @@ const runCmd: CommandDef = {
     const logDir = workersLogDir(readWorkersSection().workers);
     const s = await runPlan(plan, opts, realRunnerDeps(plan, logDir, log));
     out(`merged ${s.merged.length}/${plan.units.flatMap((u) => u.parts).length}; needs-decision: ${s.needsDecision.join(", ") || "none"}; blocked: ${s.blocked.join(", ") || "none"}; unit checks failed: ${s.unitFailures.join(", ") || "none"}; escalations: ${s.escalations}`);
+    if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
     return s.needsDecision.length || s.blocked.length || s.unitFailures.length ? 1 : 0;
   },
 };

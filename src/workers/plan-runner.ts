@@ -20,6 +20,8 @@ export interface WorkerOutcome {
   tokens?: number | null;
   /** The part must not be retried (e.g. the worker had no worktree); it goes straight to needs-decision. */
   fatal?: boolean;
+  /** `pai worker run` refused or failed before any worker existed (pane/gate/config): an environment error, never retried. */
+  spawnRefused?: boolean;
 }
 
 export interface StartRequest {
@@ -76,6 +78,8 @@ export interface RunSummary {
   blocked: string[];
   unitFailures: string[];
   escalations: number;
+  /** The refusal that stopped scheduling (repeated identically), printed once. */
+  spawnRefusal?: string;
 }
 
 export interface RunOptions {
@@ -116,6 +120,8 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
   const checked = new Set(opts.unitsChecked ?? []);
   const unitFailures: string[] = [];
   let escalations = 0;
+  const refusals = new Map<string, number>();
+  let haltedBy: string | undefined;
   const running = new Map<string, { part: PlanPart; done: Promise<void> }>();
   // merges and unit checks touch the checkout: one at a time
   let lock: Promise<unknown> = Promise.resolve();
@@ -156,6 +162,13 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
       const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1 });
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
+      if (!out.ok && out.spawnRefused) {
+        failure = out.failure || "worker spawn refused";
+        const n = (refusals.get(failure) ?? 0) + 1;
+        refusals.set(failure, n);
+        if (n >= 2) haltedBy = failure;
+        break;
+      }
       if (!out.ok && out.fatal) {
         failure = out.failure || "the worker could not be isolated";
         break;
@@ -186,7 +199,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
   for (const u of plan.units) await checkUnit(u.id);
   for (;;) {
     const busy = [...running.values()].map((r) => r.part);
-    for (const p of pickStartable(parts, state, busy, opts.parallel - running.size)) {
+    for (const p of haltedBy ? [] : pickStartable(parts, state, busy, opts.parallel - running.size)) {
       state.set(p.id, "running");
       const done = attemptPart(p).finally(() => running.delete(p.id));
       running.set(p.id, { part: p, done });
@@ -201,6 +214,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
     blocked: waiting,
     unitFailures,
     escalations,
+    ...(haltedBy ? { spawnRefusal: haltedBy } : {}),
   };
   deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}` });
   return summary;

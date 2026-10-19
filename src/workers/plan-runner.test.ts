@@ -217,6 +217,22 @@ describe("part isolation", () => {
     const args = workerArgs({ part: { id: "a" }, label: "l", spec: "", provider: "anthropic", tier: "local", attempt: 1 } as unknown as StartRequest, "/tmp/s.txt", "/repo");
     expect(args).toContain("--worktree");
     expect(args).not.toContain("--no-worktree");
+    expect(args).not.toContain("--no-pane");
+  });
+
+  it("a spawn refusal goes to needs-decision without retry and stops scheduling after the second identical refusal", async () => {
+    const p = plan();
+    const h = harness(p);
+    const starts: string[] = [];
+    h.deps.startWorker = async (r) => {
+      starts.push(r.part.id);
+      return { id: "", ok: false, spawnRefused: true, failure: "pai: --no-pane refused" };
+    };
+    const s = await runPlan(p, { parallel: 1 }, h.deps);
+    expect(starts).toHaveLength(2);
+    expect(new Set(starts).size).toBe(2);
+    expect(s.needsDecision).toHaveLength(2);
+    expect(s.spawnRefusal).toBe("pai: --no-pane refused");
   });
 
   it("a status without a worktree is a problem", () => {
