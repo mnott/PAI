@@ -217,8 +217,12 @@ describe("followProfile", () => {
 });
 
 describe("checkPaneForWorker", () => {
+  // Injected env/platform: the backend decision must not depend on whether
+  // this test run happens to sit in iTerm2 or tmux, or on the parent tree.
+  const ITERM_ENV = { ITERM_SESSION_ID: "w0t0p0:00000000-0000-0000-0000-000000000000" };
+
   it("reports the profile path, its existence and the font it contains", async () => {
-    const out = await checkPaneForWorker("no-such-worker-id", 13, "");
+    const out = await checkPaneForWorker("no-such-worker-id", 13, "", ITERM_ENV, "darwin");
     expect(out).toContain("no pane for no-such-worker-id");
     expect(out).toContain(dynamicProfilePath());
     expect(out).toContain("(exists)");
@@ -226,8 +230,13 @@ describe("checkPaneForWorker", () => {
   });
 
   it("reports the hosting window's bounds, saying why when it cannot", async () => {
-    const out = await checkPaneForWorker("no-such-worker-id", 13, "");
+    const out = await checkPaneForWorker("no-such-worker-id", 13, "", ITERM_ENV, "darwin");
     expect(out).toContain("window bounds: (not in iTerm2)");
+  });
+
+  it("stops at the no-pane line when the backend is not iTerm", async () => {
+    const out = await checkPaneForWorker("no-such-worker-id", 13, "", {}, "darwin");
+    expect(out).toBe("no pane for no-such-worker-id");
   });
 });
 

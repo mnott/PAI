@@ -1158,9 +1158,15 @@ async function windowBoundsLine(term: string): Promise<string> {
  * plus the dynamic profile's path, its existence, and the font it contains
  * (or, when missing, would write).
  */
-export async function checkPaneForWorker(wid: string, fontSize: number, term: string): Promise<string> {
+export async function checkPaneForWorker(
+  wid: string,
+  fontSize: number,
+  term: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: string = process.platform
+): Promise<string> {
   const lines = [workerPaneOpen(wid) ? `pane for ${wid} open` : `no pane for ${wid}`];
-  if (paneBackend(process.env, process.platform, term) !== "iterm") return lines.join("\n");
+  if (paneBackend(env, platform, term) !== "iterm") return lines.join("\n");
   lines.push(await windowBoundsLine(term));
   const path = dynamicProfilePath();
   if (existsSync(path)) {
