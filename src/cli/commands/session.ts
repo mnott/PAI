@@ -29,6 +29,7 @@ import {
   scanSessions,
   type ScannedSession,
 } from "../lib/session-scan.js";
+import { prepareDir } from "../lib/new-dir.js";
 import { legacy } from "../lib/legacy.js";
 import { cmdRename } from "./session/commands.js";
 import { getProviderOrNative } from "../../workers/config.js";
@@ -97,7 +98,7 @@ export async function collectRows(opts: { project?: string; all?: boolean; worke
   return rows;
 }
 
-export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean; limit?: number }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
+export async function collectView(opts: { project?: string; all?: boolean; workers?: boolean; limit?: number; offline?: boolean }): Promise<{ rows: SessionRow[]; workers: WorkersConfig | null }> {
   let workers: WorkersConfig | null = null;
   try {
     workers = readWorkersSection().workers;
@@ -106,11 +107,11 @@ export async function collectView(opts: { project?: string; all?: boolean; worke
   }
   const [scanned, live] = await Promise.all([
     scanSessions({ limit: opts.limit ?? (opts.all ? 1000 : opts.workers ? 25 : 150), filter: opts.all ? "all" : "named", workers: opts.workers }),
-    fetchLiveSessions().catch(() => []),
+    opts.offline ? Promise.resolve([]) : fetchLiveSessions().catch(() => []),
   ]);
   const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
   const needle = opts.project?.toLowerCase();
-  const budget = workers ? await readBudget(workers) : {};
+  const budget = workers && !opts.offline ? await readBudget(workers) : {};
   const rows = scanned
     .filter((s) => !needle || projectOf(s).toLowerCase().includes(needle) || s.decodedPath.toLowerCase().includes(needle))
     .sort((a, b) => b.mtime - a.mtime)
@@ -316,43 +317,66 @@ const openCommand: CommandDef = {
 // new
 // ---------------------------------------------------------------------------
 
+/** Start a session in DIR on the active provider (no --with): the old `pai new`, now for any folder. */
+async function startNewIn(o: { dir?: string; name?: string; provider?: string; model?: string; dryRun: boolean }): Promise<number> {
+  const st = style();
+  const workers = loadWorkers();
+  const cwd = await prepareDir(o.dir, { dryRun: o.dryRun, out });
+  const name = o.name ?? (basename(cwd) || "session");
+  const choice = chooseProvider({ flagProvider: o.provider, flagModel: o.model, origin: null, active: workers.active });
+  assertAvailable(choice.provider, launchableProviderNames(workers), (alt) => `pai new --provider ${alt}`);
+  let harness: Harness;
+  try {
+    harness = await buildHarness(workers, { provider: choice.provider, model: choice.model, cwd, name });
+  } catch (e) {
+    if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {
+      throw new CliError((e as Error).message, "pai providers   (lists what is available)");
+    }
+    throw e;
+  }
+  out(`Starting "${name}" on ${st.bold(harness.provider)} (${harness.model})`);
+  if (o.dryRun) {
+    out(dryRunText(harness));
+    return 0;
+  }
+  return execHarness(harness, workers);
+}
+
+export const runNewDefault = (o: { dir?: string; dryRun: boolean }) => startNewIn(o);
+
 const newCommand: CommandDef = {
   name: "new",
-  summary: "Start a fresh session in this folder",
+  summary: "Start a new session in a new or existing folder",
   description:
-    "Starts Claude Code in the current folder on the chosen provider. Without --provider it uses the active provider (see `pai providers`).",
+    "Creates DIR when it is missing (default: the current folder), registers it as a project and starts Claude Code there. " +
+    "With --with the setup decides who orchestrates and which provider the workers run on, and nothing is asked. " +
+    "Without it the session runs on the active provider (see `pai providers`; --provider overrides). " +
+    "`pai ./dir` or `pai ~/dir` does the same as `pai new`.",
+  args: [{ name: "DIR", summary: "Folder to start in; created if missing (default: the current folder)" }],
   options: [
+    { name: "with", type: "string", value: "SETUP", summary: 'Start with this setup, no questions (see: pai setups), e.g. "anthropic + flashnext-iq3 workers"' },
     { ...OPT.provider, summary: "Provider to start on (default: the active provider)" },
     { ...OPT.model },
     { name: "name", type: "string", value: "NAME", summary: "Session name (default: the folder name)" },
     { ...OPT.dryRun },
   ],
-  examples: ["pai new", "pai new --provider glm", "pai new --provider kimi --model k3 --name spike", "pai new --dry-run"],
-  seeAlso: ["pai open", "pai providers"],
+  examples: [
+    'pai new ~/code/app --with "anthropic + flashnext-iq3 workers"',
+    'pai new ~/code/app --with "anthropic only" --name app',
+    "pai new",
+    "pai new --provider glm",
+    "pai new ~/code/spike --provider kimi --model k3 --dry-run",
+  ],
+  seeAlso: ["pai setups", "pai open", "pai providers"],
   async run(ctx) {
-    const st = style();
-    const workers = loadWorkers();
-    const cwd = process.cwd();
-    const name = (ctx.opts.name as string | undefined) ?? (basename(cwd) || "session");
-    const choice = chooseProvider({
-      flagProvider: ctx.opts.provider as string | undefined,
-      flagModel: ctx.opts.model as string | undefined,
-      origin: null,
-      active: workers.active,
-    });
-    assertAvailable(choice.provider, launchableProviderNames(workers), (alt) => `pai new --provider ${alt}`);
-    let harness: Harness;
-    try {
-      harness = await buildHarness(workers, { provider: choice.provider, model: choice.model, cwd, name });
-    } catch (e) {
-      if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {
-        throw new CliError((e as Error).message, "pai providers   (lists what is available)");
-      }
-      throw e;
+    const dir = ctx.args.DIR as string | undefined;
+    const name = ctx.opts.name as string | undefined;
+    const withSetup = ctx.opts.with as string | undefined;
+    if (withSetup) {
+      const { runNewWith } = await import("./root.js");
+      return runNewWith({ dir, with: withSetup, name, dryRun: ctx.dryRun });
     }
-    out(`Starting "${name}" on ${st.bold(harness.provider)} (${harness.model})`);
-    if (ctx.dryRun) return void out(dryRunText(harness));
-    return execHarness(harness, workers);
+    return startNewIn({ dir, name, provider: ctx.opts.provider as string | undefined, model: ctx.opts.model as string | undefined, dryRun: ctx.dryRun });
   },
 };
 
@@ -406,5 +430,5 @@ export const sessionCommand: CommandDef = {
 
 export const lsCommand: CommandDef = { ...listCommand, name: "ls", aliasOf: "session list", daily: true };
 export const openTop: CommandDef = { ...openCommand, aliasOf: "session open" };
-export const newTop: CommandDef = { ...newCommand, aliasOf: "session new" };
+export const newTop: CommandDef = { ...newCommand, aliasOf: "session new", daily: true };
 export const renameTop: CommandDef = { ...renameCommand, aliasOf: "session rename" };

@@ -8,12 +8,13 @@ Orchestrator + worker combinations (save your own)
 pai setups [command]
 ```
 
-A setup says which model runs the main conversation and which provider the workers run on. "Last time" is how your latest session ran; the rest are built from your configured providers and anything you saved.
+A setup says which model runs the main conversation and which provider the workers run on. "Last time" is how your latest session ran; the rest are built from your configured providers and anything you saved. Every enabled local provider (loopback, e.g. a model on this machine) gets "anthropic + <provider> workers": Anthropic orchestrates, the local model does the work, for that session only. The list reads your configuration and cooldowns; it does not contact any provider.
 
 ```sh
 pai setups
 pai setups save "my mix"
 pai webseiten --with "anthropic + glm workers"
+pai new ~/code/app --with "anthropic + flashnext-iq3 workers"
 ```
 
 See also: `pai`, `pai providers`

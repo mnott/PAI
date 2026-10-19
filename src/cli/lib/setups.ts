@@ -14,6 +14,7 @@ import {
   getProviderOrNative,
   type WorkersConfig,
 } from "../../workers/config.js";
+import { isLoopbackProvider } from "../../workers/run-env.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 
 export interface Setup {
@@ -59,7 +60,13 @@ export function builtinSetups(cfg: Cfg): Setup[] {
   for (const n of names) {
     out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
   }
-  for (const n of names) out.push({ name: `${n} only`, orchestrator: { provider: n }, workers: n, kind: "builtin" });
+  // Enabled local (loopback) providers: workers only. A local orchestrator is not a default.
+  for (const [n, p] of Object.entries(cfg.providers)) {
+    if (p.enabled && !names.includes(n) && isLoopbackProvider(p)) {
+      out.push({ name: `anthropic + ${n} workers`, orchestrator: { provider: ANTHROPIC_NATIVE }, workers: n, kind: "builtin" });
+    }
+  }
+  for (const n of names) if (!isLoopbackProvider(cfg.providers[n])) out.push({ name: `${n} only`, orchestrator: { provider: n }, workers: n, kind: "builtin" });
   return out;
 }
 

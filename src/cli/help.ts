@@ -183,6 +183,7 @@ const DAILY_EXAMPLES = [
   ["pai ls", "the sessions as a table"],
   ["pai setups", "orchestrator + worker combinations"],
   ['pai setups save "my mix"', "keep the current combination"],
+  ['pai new ~/code/app --with "anthropic + flashnext-iq3 workers"', "start a new folder: Anthropic plans, the local model codes"],
   ['pai webseiten --with "glm only"', "scripting: start it that way, no questions"],
 ];
 

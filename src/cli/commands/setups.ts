@@ -3,7 +3,8 @@
 import { readWorkersSection, ANTHROPIC_NATIVE, type WorkersConfig } from "../../workers/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { colorEnabled, makeStyle, renderMore, renderTable } from "../help.js";
-import { readBudget } from "../lib/health.js";
+import { readRoutingState } from "../../workers/routing.js";
+import { workersLogDir } from "../../workers/paths.js";
 import { allSetups, loadSaved, saveSetup, setupsPath } from "../lib/setups.js";
 import { GROUPS } from "../registry.js";
 import { lastSetup, setupsTable } from "./root.js";
@@ -52,17 +53,20 @@ export const setupsCommand: CommandDef = {
   summary: "Orchestrator + worker combinations (save your own)",
   description:
     "A setup says which model runs the main conversation and which provider the workers run on. " +
-    "\"Last time\" is how your latest session ran; the rest are built from your configured providers and anything you saved.",
+    "\"Last time\" is how your latest session ran; the rest are built from your configured providers and anything you saved. " +
+    "Every enabled local provider (loopback, e.g. a model on this machine) gets \"anthropic + <provider> workers\": Anthropic orchestrates, the local model does the work, for that session only. " +
+    "The list reads your configuration and cooldowns; it does not contact any provider.",
   daily: true,
   subcommands: [saveCommand],
-  examples: ["pai setups", 'pai setups save "my mix"', 'pai webseiten --with "anthropic + glm workers"'],
+  examples: ["pai setups", 'pai setups save "my mix"', 'pai webseiten --with "anthropic + glm workers"', 'pai new ~/code/app --with "anthropic + flashnext-iq3 workers"'],
   seeAlso: ["pai", "pai providers"],
   async run() {
     const st = makeStyle(colorEnabled());
     const workers = load();
-    const [{ rows }, budget] = await Promise.all([collectView({}), readBudget(workers)]);
+    // Status comes from config and the routing state file: no provider is probed, no budget fetched.
+    const { rows } = await collectView({ limit: 1, offline: true });
     const setups = allSetups(workers, lastSetup(rows[0] ?? null, workers), loadSaved());
-    const o = setupsTable(setups, workers, budget, st);
+    const o = setupsTable(setups, workers, {}, st, readRoutingState(workersLogDir(workers)));
     process.stdout.write(renderTable(o.headers, setups.map(o.cells), st) + "\n\n");
     process.stdout.write(st.dim('Use one: pai <session> --with "<setup>"   ·   keep the current mix: pai setups save "<name>"') + "\n");
   },
