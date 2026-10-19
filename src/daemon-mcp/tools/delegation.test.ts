@@ -16,7 +16,8 @@ let repo: string;
 let deps: DelegationDeps;
 const detach = vi.fn();
 const accept = vi.fn();
-const resolveLocal = vi.fn();
+const target = vi.fn();
+const capOf = vi.fn();
 
 const text = (r: { content: Array<{ text: string }> }) => r.content[0].text;
 
@@ -40,11 +41,17 @@ beforeEach(() => {
   mkdirSync(join(repo, "home"), { recursive: true });
   detach.mockReset().mockReturnValue({ id: "run-1", pid: 1 });
   accept.mockReset();
-  resolveLocal.mockReset().mockResolvedValue({ name: "flashnext", cap: 3 });
+  target.mockReset().mockImplementation(async (a: { where?: string; now?: boolean }) => ({
+    provider: a.where === "local" ? "flashnext" : a.where === "cloud" ? "anthropic" : a.where,
+    priority: a.now ? "front" : undefined,
+    description: a.where === "local" ? "local: flashnext" : `${a.where ?? "default routing"}`,
+  }));
+  capOf.mockReset().mockReturnValue(3);
   deps = {
     resolveProject: async () => repo,
     provider: () => ({ name: "local", cap: 2 }),
-    resolveLocal,
+    target,
+    capOf,
     dirtyPaths: async () => [],
     detach,
     accept,
@@ -73,11 +80,23 @@ describe("plan_save", () => {
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, gate: " " } }, deps))).toContain("needs a gate");
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, units: [] } }, deps))).toContain("at least one unit");
   });
-  it("local: true stores the provider as `local`, resolved at run start, never a picked name", async () => {
+  it("local: true / where go through the resolver; the result starts with where it runs", async () => {
     const r = await planSave({ project: "p", name: "jobl", plan: { ...plan, provider: undefined, local: true } }, deps);
     expect(r.isError).toBeUndefined();
-    expect(readFileSync(join(repo, ".pai/plans/jobl/plan.yaml"), "utf8")).toContain("provider: local");
-    expect(resolveLocal).not.toHaveBeenCalled();
+    expect(text(r)).toMatch(/^Runs on local: flashnext\./);
+    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined });
+    expect(readFileSync(join(repo, ".pai/plans/jobl/plan.yaml"), "utf8")).toContain("provider: flashnext");
+    const w = await planSave({ project: "p", name: "jobw", plan: { ...plan, provider: undefined, where: "cloud", model: "fast" } }, deps);
+    expect(target).toHaveBeenLastCalledWith({ where: "cloud", model: "fast", now: undefined });
+    expect(readFileSync(join(repo, ".pai/plans/jobw/plan.yaml"), "utf8")).toContain("provider: anthropic");
+    expect(text(w)).toContain("Runs on cloud");
+  });
+  it("plan_run passes where/model/now to the resolver and the provider to the runner", async () => {
+    await planSave({ project: "p", name: "jobr", plan }, deps);
+    const r = await planRun({ project: "p", name: "jobr", where: "kimi", model: "fast", now: true }, deps);
+    expect(target).toHaveBeenCalledWith({ where: "kimi", model: "fast", now: true });
+    expect(text(r)).toMatch(/^Runs on kimi\./);
+    expect(detach.mock.calls[0][0].opts).toMatchObject({ provider: "kimi" });
   });
 });
 
@@ -172,7 +191,8 @@ describe("queue_*", () => {
     await queueAdd({ project: "p", sentence: "one", local: true }, deps);
     const r = await queueRun({ project: "p", local: true }, deps);
     expect(text(r)).toContain("Started 1 item (q1)");
-    expect(resolveLocal).toHaveBeenCalledTimes(1);
+    expect(target).toHaveBeenCalledWith({ where: "local", model: undefined, now: undefined });
+    expect(text(r)).toMatch(/^Runs on local: flashnext\./);
     expect(detach.mock.calls[0][0]).toMatchObject({ kind: "queue", opts: { provider: "flashnext", parallel: 3 } });
   });
   it("review lists ready items in words; reject/again/accept act on them", async () => {
@@ -217,7 +237,8 @@ describe("instructions", () => {
     }
   });
   it("a local worker means local: true, never a provider name", () => {
-    expect(PAI_INSTRUCTIONS).toContain("local: true");
-    expect(PAI_INSTRUCTIONS).toContain("never pick a local provider by name");
+    for (const t of ["where local", "where cloud", "where <name>", "model fast", "now true", "Never pick a local provider by name"]) {
+      expect(PAI_INSTRUCTIONS).toContain(t);
+    }
   });
 });

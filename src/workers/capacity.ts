@@ -34,7 +34,11 @@ export const HEARTBEAT_MS = 60_000;
 
 const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.-]/g, "_"));
 
-/** Live queue entries of a provider, oldest first; dead entries are removed. */
+/**
+ * Live queue entries of a provider, oldest first, runs marked "front" (--now)
+ * ahead of the rest; dead entries are removed. An entry file holds "<pid>" or
+ * "<pid> front".
+ */
 export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive): string[] {
   const dir = queueDir(logDir, provider);
   let names: string[];
@@ -43,13 +47,14 @@ export function liveQueue(logDir: string, provider: string, isAlive: (pid: numbe
   } catch {
     return [];
   }
-  const out: string[] = [];
+  const out: Array<{ id: string; front: boolean }> = [];
   for (const id of names.sort()) {
-    const pid = Number(readFileSync(join(dir, id), "utf8").trim());
-    if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) out.push(id);
+    const [p, mark] = readFileSync(join(dir, id), "utf8").trim().split(/\s+/);
+    const pid = Number(p);
+    if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) out.push({ id, front: mark === "front" });
     else rmSync(join(dir, id), { force: true });
   }
-  return out;
+  return [...out.filter((e) => e.front), ...out.filter((e) => !e.front)].map((e) => e.id);
 }
 
 export interface CapacityInfo {
@@ -70,6 +75,8 @@ export interface CapacityOpts {
   cap: number | undefined;
   config: CapacityConfig;
   disabled?: boolean;
+  /** "front": wait ahead of the provider's other queued runs (--now). */
+  priority?: "front";
   log?: (line: string) => void;
   /** Called at the start and after every poll while queued; null when released. */
   onWait?: (info: CapacityInfo | null) => void;
@@ -95,7 +102,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const dir = queueDir(logDir, self.provider);
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
-  writeFileSync(entry, String(self.pid ?? process.pid));
+  writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""}`);
 
   // Runs holding a slot: live, running, on this provider, and not waiting in the queue themselves.
   const check = () => {

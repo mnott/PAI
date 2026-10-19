@@ -90,6 +90,7 @@ import {
 } from "../workers/providers.js";
 import { testProvider, runWorker } from "../workers/run.js";
 import { probeLoopback } from "../workers/local-provider.js";
+import { resolveTarget, withTarget } from "../workers/target.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
 import { runChain } from "../workers/chain.js";
@@ -158,6 +159,13 @@ async function proxyTool(
     };
   }
 }
+/** where / model / now: the same three optional arguments on every delegation tool (workers/target.ts). */
+const whereArgs = {
+  where: z.string().optional().describe("Where it runs: \"local\" (PAI picks the running local server), \"cloud\" (the session's cloud provider) or a provider name. Omit for default routing."),
+  model: z.string().optional().describe("\"default\", \"fast\" or a model id."),
+  now: z.boolean().optional().describe("true: ahead of the runs already waiting."),
+};
+
 
 // ---------------------------------------------------------------------------
 // MCP server
@@ -972,9 +980,9 @@ async function startShim(): Promise<void> {
       "Manage worker providers (list, add, update, remove, use, enable, disable, test).",
       "",
       "action=list (default) shows providers (with cost tier and tags), classes and routing.",
-      "Every loopback (local) provider is marked running or not running by a port",
-      "probe: an enabled provider that is not running is not usable — never pick a",
-      "local provider by name; pass local: true to the delegation tools instead.",
+      "Every loopback (local) provider is marked running or not running by an HTTP",
+      "probe (GET /v1/models): an enabled provider that is not running is not usable — never pick a",
+      "local provider by name; pass where: \"local\" to the delegation tools instead.",
       "action=add needs name, model — and either key_file or key, plus:",
       "  base_url (anthropic protocol) or upstream_url (protocol=openai, runs",
       "  through the local PAI proxy). A raw key is written to",
@@ -1339,18 +1347,23 @@ async function startShim(): Promise<void> {
       kind: z.enum(["proposal", "result", "question", "blocker"]).describe("What the handoff carries."),
       text: z.string().min(1).describe("The message body, one paragraph."),
       data: z.record(z.string(), z.unknown()).optional().describe("Structured payload (optional)."),
-      local: z.boolean().optional().describe("true with a proposal: the parent should run it on the local model server PAI resolves (carried in the payload; never name a local provider)."),
+      local: z.boolean().optional().describe("Same as where: \"local\"."),
+      ...whereArgs,
     },
     async (args) => {
       try {
+        // where/model/now ride up in the payload: the parent's delegation tools
+        // take them with the same meaning (resolveTarget); resolved here too so
+        // the result says where the proposal would run
+        const asked = args.local === true || args.where || args.model || args.now === true;
+        const where = args.where ?? (args.local === true ? "local" : undefined);
+        const target = asked ? await resolveTarget({ where, model: args.model, now: args.now }) : undefined;
         const h = await handoffFromInside(
           workersLogDir(readWorkersSection().workers),
           process.env,
-          // `local: true` rides up in the payload: the parent's delegation
-          // tools take it with the same meaning (resolveLocalProvider)
-          args.local === true ? { ...args, data: { ...(args.data ?? {}), local: true } } : args
+          asked ? { ...args, data: { ...(args.data ?? {}), ...(where ? { where } : {}), ...(args.model ? { model: args.model } : {}), ...(args.now ? { now: true } : {}) } } : args
         );
-        return workerText(`ok → ${h.to} (${h.kind}); the parent sees it in its inbox`);
+        return workerText(withTarget(target, `ok → ${h.to} (${h.kind}); the parent sees it in its inbox`));
       } catch (e) {
         return workerError(e);
       }
@@ -1358,6 +1371,7 @@ async function startShim(): Promise<void> {
   );
 
   // Delegation tools for tier 0 (direct library calls, see tools/delegation.ts)
+  const localArg = z.boolean().optional().describe("Same as where: \"local\".");
   const delegation = realDelegationDeps();
   const project = z.string().min(1).describe("Project slug or checkout folder.");
   const planName = z.string().min(1).describe("Plan name (folder under <project>/.pai/plans/).");
@@ -1371,8 +1385,9 @@ async function startShim(): Promise<void> {
       name: planName,
       plan: z.object({
         gate: z.string().describe("Shell command that must pass on the merged tree."),
-        provider: z.string().optional().describe("Provider name; default: the local server PAI resolves. Never pick a local provider by name — use local: true."),
-        local: z.boolean().optional().describe("true: run the parts on the local model server PAI resolves (the one that answers)."),
+        provider: z.string().optional().describe("Provider name; prefer where. Never pick a local provider by name — use where: \"local\"."),
+        local: localArg,
+        ...whereArgs,
         max_parallel: z.number().int().min(1).optional(),
         preamble: z.string().optional().describe("Text prepended to every part spec."),
         units: z.array(z.object({
@@ -1395,7 +1410,7 @@ async function startShim(): Promise<void> {
   server.tool(
     "plan_run",
     "Start a saved plan in the background and return at once; merged parts are skipped on a re-run. Follow with plan_status.",
-    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision.") },
+    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision."), local: localArg, ...whereArgs },
     async (args) => planRun(args, delegation)
   );
   server.tool(
@@ -1424,7 +1439,8 @@ async function startShim(): Promise<void> {
       sentence: z.string().min(1),
       files: z.array(z.string()).optional(),
       image: z.string().optional(),
-      local: z.boolean().optional().describe("true: the item runs on the local model server PAI resolves."),
+      local: localArg,
+      ...whereArgs,
     },
     async (args) => queueAdd(args, delegation)
   );
@@ -1434,7 +1450,8 @@ async function startShim(): Promise<void> {
     {
       project,
       escalate: z.boolean().optional().describe("Run the items marked cloud on Sonnet instead."),
-      local: z.boolean().optional().describe("true: run on the local model server PAI resolves (the one that answers); never pick a local provider by name."),
+      local: localArg,
+      ...whereArgs,
     },
     async (args) => queueRun(args, delegation)
   );

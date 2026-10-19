@@ -30,6 +30,7 @@ import { formatPending, pendingGate, pendingResults } from "../../workers/pendin
 import { runWait } from "../../workers/wait.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
+import { resolveTarget } from "../../workers/target.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { dim, err, ok } from "../lib/utils.js";
 
@@ -175,6 +176,25 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   };
 }
 
+/** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
+async function applyTarget(ctx: RunContext, plan: RunPlan): Promise<void> {
+  const where = str(ctx.opts.where);
+  const model = str(ctx.opts.model);
+  const now = flag(ctx, "now");
+  if (!where && !now && model !== "fast" && model !== "default") return;
+  if (where && flag(ctx, "local")) throw new Error("--where and --local both name where to run; use one");
+  const t = await resolveTarget({ where, model, now });
+  process.stderr.write(`pai worker: ${t.description}\n`);
+  const target = plan.kind === "chain" ? plan.chain : plan.run;
+  if (t.provider) target.providerFlag = t.provider;
+  // "default" / "fast" are aliases, never a raw model id
+  target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
+  if (plan.kind === "run") {
+    if (t.modelFast) plan.run.modelFast = true;
+    if (t.priority) plan.run.priority = t.priority;
+  }
+}
+
 const runCommand: CommandDef = {
   name: "run",
   summary: "Run one task on a worker (another provider or model)",
@@ -195,8 +215,10 @@ const runCommand: CommandDef = {
     { name: "timeout-ms", type: "number", value: "N", summary: "How long an image run waits for its answer (default 120000)" },
     { name: "chain", type: "string", value: "STAGES", summary: "Comma-separated stages run one after the other, e.g. draft,implement,review" },
     { name: "agent", type: "string", value: "NAME", summary: "Run the agent definition ~/.claude/agents/NAME.md on a worker" },
-    { ...OPT.model, summary: "Model for this run (default: the model set for the class)" },
+    { ...OPT.model, summary: "Model for this run: default, fast or a model id (default: the model set for the class)" },
     { name: "urgent", type: "boolean", summary: "Needs a fast answer: go to the cloud even when the policy prefers local (see `pai worker policy`)" },
+    { name: "where", type: "string", value: "WHERE", summary: "Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where)" },
+    { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
     { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
@@ -222,6 +244,7 @@ const runCommand: CommandDef = {
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
     "pai worker run --provider glm --spec /tmp/task.txt",
     "pai worker run --local -p 'Summarize the changelog'",
+    "pai worker run --where cloud --model fast --now -p 'Say hi'",
     "pai worker run --chain draft,implement,review -p 'Add a --json flag to the export command'",
     "pai worker run --print-cmd --class spotcheck -p 'Say hi'",
   ],
@@ -229,6 +252,7 @@ const runCommand: CommandDef = {
   run: (ctx) =>
     guard("pai worker run --print-cmd -p 'test'   (shows the command without starting it)", async () => {
       const plan = buildRunPlan(ctx);
+      await applyTarget(ctx, plan);
       return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
     }),
 };
