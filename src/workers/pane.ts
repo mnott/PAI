@@ -495,11 +495,11 @@ function entryPath(logDir: string, e: PaneEntry): string {
   return join(panesDir(logDir), e.scope ?? "", `${e.worker}.json`);
 }
 
-function saveEntry(logDir: string, e: PaneEntry): void {
+export function saveEntry(logDir: string, e: PaneEntry): void {
   const path = entryPath(logDir, e);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ session: e.session, worker: e.worker, opened: e.opened }, null, 1), "utf8");
+  writeFileSync(tmp, JSON.stringify({ session: e.session, worker: e.worker, opened: e.opened, ...(e.host ? { host: e.host } : {}) }, null, 1), "utf8");
   renameSync(tmp, path);
 }
 

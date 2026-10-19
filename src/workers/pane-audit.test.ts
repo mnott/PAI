@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
-import type { PaneEntry } from "./pane.js";
+import { loadRegistry, saveEntry, type PaneEntry } from "./pane.js";
 import type { Messenger } from "./run-events.js";
 
 const H = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
@@ -30,6 +30,35 @@ describe("auditPanes", () => {
   it("host from the process when the entry has none", () => {
     const e: PaneEntry = { session: P1, worker: "w-1", opened: "x" };
     expect(auditPanes([{ ...procs[0], host: `w0t0p0:${H}` }], [e], tabs({ [H]: "1:2", [P1]: "3:3" }))[0].mark).toBe("WRONG TAB");
+  });
+});
+
+describe("host tab of every kind", () => {
+  const T = tabs({ [H]: "1:2", [P1]: "1:2", [P2]: "1:2" });
+  it("worker, plan run and pane run with a recorded host: host tab filled, ok", () => {
+    const procs = [
+      { id: "w-1", kind: "worker" as const },
+      { id: "plan-1", kind: "plan" as const },
+      { id: "pane-1", kind: "pane" as const },
+    ];
+    const v = auditPanes(procs, [entry("w-1", P1), entry("plan-1", P2), entry("pane-1", P1)], T);
+    expect(v.map((x) => [x.mark, x.hostTab])).toEqual([["ok", "1:2"], ["ok", "1:2"], ["ok", "1:2"]]);
+  });
+  it("no host recorded anywhere: HOST UNKNOWN, not ok", () => {
+    const e: PaneEntry = { session: P1, worker: "pane-1", opened: "x" };
+    expect(auditPanes([{ id: "pane-1", kind: "pane" }], [e], T)[0]).toMatchObject({ mark: "HOST UNKNOWN" });
+  });
+  it("host not in the iTerm listing: HOST UNKNOWN", () => {
+    expect(auditPanes([{ id: "w-1", kind: "worker" }], [entry("w-1", P1)], tabs({ [P1]: "1:2" }))[0].mark).toBe("HOST UNKNOWN");
+  });
+  it("the registry file keeps the host", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-audit-reg-"));
+    try {
+      saveEntry(dir, { session: P1, worker: "pane-1", opened: "2026-01-01 00:00:00", scope: "s", host: H });
+      expect(loadRegistry(dir)[0].host).toBe(H);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

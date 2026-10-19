@@ -2,7 +2,8 @@
  * pane-audit.ts — every process PAI starts (worker, plan runner, `pai pane run`) owns a LIVE pane in the
  * tab of the session that started it. The audit reads the pane registry and a listing of iTerm sessions
  * with their tab, and judges each running process: ok, NO PANE (none recorded, or gone while the process
- * runs) or WRONG TAB (the pane is not in the starting session's tab). The daemon runs it every 30 s,
+ * runs) WRONG TAB (the pane is not in the starting session's tab) or HOST UNKNOWN (the starting session's tab cannot be
+ * determined, so the placement cannot be judged). The daemon runs it every 30 s,
  * writes <logDir>/pane-audit.json for `ps` and the cockpit, and reports each violation once.
  */
 
@@ -17,7 +18,7 @@ import { loadPlanStatuses } from "./plan-status.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
 
-export type PaneMark = "ok" | "NO PANE" | "WRONG TAB";
+export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN";
 
 export interface AuditProc {
   id: string;
@@ -52,7 +53,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     const tab = tabOf(e.session);
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
     const hostTab = tabOf(host);
-    if (hostTab && hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
+    if (!hostTab) return { ...v, mark: "HOST UNKNOWN", tab, why: host ? `starting session ${host} is not in the iTerm listing` : `pane ${e.session} has no recorded starting session` };
+    if (hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
     return { ...v, tab, hostTab };
   });
 }
