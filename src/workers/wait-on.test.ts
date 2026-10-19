@@ -153,22 +153,40 @@ describe("waitOn ceiling and stall kill", () => {
   });
 });
 
-describe("waitOn queued worker", () => {
-  it("is not stall-killed while queued, and the stall rule applies once running", async () => {
-    const log = join(dir, "q.log");
-    writeFileSync(log, "queued: 2 on p, cap 1 (position 1)\n");
+describe("waitOn worker target", () => {
+  const silent = (cmd: string | null, queue?: WaitOnDeps["queue"]) => {
     const f = fake({});
-    let queued = true;
     const killed: number[] = [];
     f.deps.logMtime = () => 1_000_000;
     f.deps.killTree = async (p) => void killed.push(p);
-    f.deps.queue = () => ({ queued, started: null });
-    // 10 minutes queued with a silent log: no kill
-    expect(await waitOn({ pid: 42, log, maxSecs: 600, stallMinutes: 5, maxMinutes: 6 }, f.deps)).toBe(3);
-    expect(killed).toEqual([]);
-    // leaves the queue: stall clock restarts, then fires
-    queued = false;
-    expect(await waitOn({ pid: 42, log, maxSecs: 590, stallMinutes: 5, maxMinutes: 100 }, f.deps)).toBe(4);
+    f.deps.proc = () => (cmd === null ? null : { cmd, startedAt: 1_000_000 - 5000 });
+    if (queue) f.deps.queue = queue;
+    return { f, killed };
+  };
+  const opts = { pid: 42, log: join(dir, "q.log"), maxSecs: 590, stallMinutes: 0.2, maxMinutes: 1, tail: 0 };
+
+  it("is never killed when queued or running per its status", async () => {
+    writeFileSync(opts.log, "x\n");
+    for (const queued of [true, false]) {
+      const { f, killed } = silent(null, () => ({ queued, started: null, id: "w-1" }));
+      expect(await waitOn(opts, f.deps)).toBe(3);
+      expect(killed).toEqual([]);
+      expect(f.out.filter((l) => l.startsWith("pid 42 is worker w-1: waiting without stall/ceiling kill"))).toHaveLength(1);
+    }
+  });
+
+  it("is never killed when its command line is a worker run", async () => {
+    for (const cmd of ["node /x/dist/cli/index.mjs worker run --label a -p b", "/usr/local/bin/pai worker run --provider anthropic"]) {
+      const { f, killed } = silent(cmd);
+      expect(await waitOn(opts, f.deps)).toBe(3);
+      expect(killed).toEqual([]);
+      expect(f.out.some((l) => l.includes("is worker"))).toBe(true);
+    }
+  });
+
+  it("still kills a plain process", async () => {
+    const { f, killed } = silent("make test");
+    expect(await waitOn(opts, f.deps)).toBe(4);
     expect(killed).toEqual([42]);
   });
 });

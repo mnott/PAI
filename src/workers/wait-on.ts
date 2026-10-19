@@ -6,7 +6,7 @@
  *
  * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours,
  * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes).
- * A `pai worker run` still queued behind its provider cap is exempt from both; the ceiling counts from when it left the queue.
+ * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -53,7 +53,7 @@ export interface WaitOnDeps {
   /** SIGTERM the pid and its descendants, SIGKILL the survivors after 5 s. */
   killTree?: (pid: number) => Promise<void>;
   /** Worker status of the awaited pid: queued behind the provider cap (capacity gate) or not, and when it left the queue (ms epoch); null = not a worker. */
-  queue?: (pid: number) => { queued: boolean; started: number | null } | null;
+  queue?: (pid: number) => { queued: boolean; started: number | null; id?: string } | null;
 }
 
 /** A `queue` dep reading the worker status whose pid is the awaited one. */
@@ -62,7 +62,7 @@ export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
     const s = loadStatuses(logDir).find((w) => (w.pid === pid || w.runPid === pid) && w.state === "running");
     if (!s) return null;
     const t = Date.parse(s.started);
-    return { queued: !!s.capacity, started: Number.isFinite(t) ? t : null };
+    return { queued: !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
   };
 }
 
@@ -162,6 +162,9 @@ function rcOf(pid: number, log?: string): string | null {
   return null;
 }
 
+/** A command line that is a `pai worker run` client. */
+export const isWorkerRunCmd = (cmd: string): boolean => /(?:\bpai|\/dist\/cli\/index\.mjs)\s+worker\s+run\b/.test(cmd);
+
 const fmtMinutes = (ms: number): string => `${Math.round((ms / 60_000) * 100) / 100}m`;
 
 export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<number> {
@@ -209,6 +212,8 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     // ceiling counts from when it left the queue (the status `started` is rewritten then).
     let born = born0;
     let queued = false;
+    // A worker has its own deadline and supervision; stall/ceiling rules are for builds and tests.
+    let isWorker = false;
     const killed = async (why: string): Promise<number> => {
       await d.killTree?.(o.pid);
       d.out(`wait-on: pid ${o.pid} ${why}, killed process tree; likely hang or infinite loop`);
@@ -221,10 +226,15 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
       if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
       const q = d.queue?.(o.pid) ?? null;
       queued = q?.queued ?? false;
+      if (!isWorker && (q || isWorkerRunCmd(p?.cmd ?? ""))) {
+        isWorker = true;
+        const id = q?.id ?? "<id>";
+        d.out(`pid ${o.pid} is worker ${id}: waiting without stall/ceiling kill; prefer \`pai worker wait ${id}\``);
+      }
       born = queued ? d.now() : Math.max(born0, q?.started ?? 0);
-      if (queued) {
+      if (queued || isWorker) {
         if (d.now() >= nextBeat) {
-          d.out(`running ${Math.round((d.now() - t0) / 1000)}s, worker queued behind the provider cap`);
+          d.out(`running ${Math.round((d.now() - t0) / 1000)}s, ${queued ? "worker queued behind the provider cap" : "worker running"}`);
           nextBeat += HEARTBEAT_MS;
         }
         continue;
