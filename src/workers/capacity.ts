@@ -119,6 +119,23 @@ export function moveUp(logDir: string, provider: string, id: string, isAlive: (p
 }
 
 /**
+ * Move a waiting run to a 1-based `position` in one step (drag and drop). The run
+ * takes the group (front or not) of the neighbour it lands next to, so the
+ * order stays one list. False when it is not waiting.
+ */
+export function moveTo(logDir: string, provider: string, id: string, position: number, isAlive: (pid: number) => boolean = alive): boolean {
+  const order = liveEntries(logDir, provider, isAlive);
+  const from = order.findIndex((x) => x.id === id);
+  if (from < 0) return false;
+  const [e] = order.splice(from, 1);
+  const to = Math.max(0, Math.min(order.length, Math.floor(position) - 1));
+  const near = order[to - 1] ?? order[to];
+  order.splice(to, 0, { ...e, front: near ? near.front : e.front });
+  order.forEach((x, rank) => writeFileSync(join(queueDir(logDir, provider), x.id), entryText({ ...x, rank })));
+  return true;
+}
+
+/**
  * setFront / moveUp for callers that report the result (CLI, cockpit, MCP):
  * returns the new waiting order; throws when `id` is not waiting on the provider.
  */
@@ -126,6 +143,13 @@ export function reorderQueue(logDir: string, provider: string, id: string, how: 
   if (!liveQueue(logDir, provider).includes(id)) throw new Error(`worker ${id} is not queued on provider ${provider}`);
   if (how === "front") setFront(logDir, provider, id);
   else moveUp(logDir, provider, id);
+  return liveQueue(logDir, provider);
+}
+
+/** moveTo for callers that report the result: the new waiting order; throws when `id` is not waiting. */
+export function reorderQueueTo(logDir: string, provider: string, id: string, position: number): string[] {
+  if (!liveQueue(logDir, provider).includes(id)) throw new Error(`worker ${id} is not queued on provider ${provider}`);
+  moveTo(logDir, provider, id, position);
   return liveQueue(logDir, provider);
 }
 

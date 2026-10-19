@@ -56,7 +56,7 @@ svg text{fill:var(--dim);font-size:10px}
 .tip:hover,.tip:focus{color:var(--acc);outline:none}
 .tip::after{content:attr(data-tip);display:none;position:absolute;z-index:5;top:18px;left:-6px;width:max-content;max-width:min(340px,72vw);padding:6px 9px;background:var(--fg);color:var(--bg);border-radius:6px;font-size:12px;font-weight:400;line-height:1.4;white-space:pre-line;text-align:left;text-transform:none;letter-spacing:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .tip:hover::after,.tip:focus::after{display:block}
-.downs{width:100%;color:var(--dim)}.downs summary{cursor:pointer}.downs .chip{margin:2px 2px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;white-space:nowrap}.chip b{font-weight:600}
+.downs{width:100%;color:var(--dim)}.downs summary{cursor:pointer}.downs .chip{margin:2px 2px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;white-space:nowrap}.chip b{font-weight:600}.grip{cursor:grab;color:var(--dim)}tr.qrow{cursor:grab}
 #sessions td:first-child span[title]{display:inline-block;max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
@@ -385,26 +385,53 @@ function load(){
 }
 function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower();renderDonuts()}).catch(function(){})}
 ${POOL_PANEL_JS}
+var qdrag=false;
 function renderQueue(q){
+ if(qdrag)return;
  var el=$("queuepanel");if(!q){el.innerHTML='<span class="dim">queue status unavailable</span>';return}
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
- setTip($("queuetip"),"Running workers and those waiting behind a provider's concurrency cap, in grant order. Running workers are never interrupted; to front / up only reorder the waiting ones.");
+ setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use to front / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
  if(!ps.length){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
- el.innerHTML=ps.map(function(p){
-  var run=p.running.map(function(r){var idle=r.ageSec>86400;return'<span class="chip'+(idle?' dim':'')+'" title="'+esc(r.label)+'">'+(idle?'idle session · ':'')+esc(r.label||r.id)+' · '+qdur(r.ageSec)+(r.now&&!idle?' · '+esc(r.now):'')+'</span>'}).join(" ")||'<span class="dim">none running</span>';
-  var w=p.waiting.length?table(["pos","worker","label","waited","move"],p.waiting.map(function(x){
-   return[x.position,'<span title="'+esc(x.id)+'">'+esc(x.id.slice(-15))+'</span>',esc(x.label),qdur(x.waitedSec),
-    '<button data-q="front" data-id="'+esc(x.id)+'" title="move to front">to front</button> <button data-q="up" data-id="'+esc(x.id)+'" title="move one place up">up</button>']})):'<span class="dim">nothing waiting</span>';
-  return'<div style="margin-bottom:8px"><div class="chips" style="margin-bottom:4px"><b>'+esc(p.provider)+(p.cap!=null?' (cap '+p.cap+')':'')+'</b> '+run+'</div>'+w+'</div>'
- }).join("");
- var bs=el.querySelectorAll("button[data-q]");
- for(var i=0;i<bs.length;i++)bs[i].onclick=function(){
-  var id=this.getAttribute("data-id"),verb=this.getAttribute("data-q");
-  this.disabled=true;
-  fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:id}),cache:"no-store"})
+ var BTN='<button data-q="front" data-id="@" title="move to front">to front</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
+ function mk(it,p,waiting,serial){
+  var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
+  var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span> ':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];
+  if(serial)cells.push(esc(it.session||"other"));else cells.push(mdl);
+  cells.push(waiting?'waiting':idle?'idle session':'running',qdur(waiting?it.waitedSec:it.ageSec),waiting?'':esc(idle?"":it.now||""),waiting?BTN.split("@").join(esc(it.id)):"");
+  var drag=waiting&&serial;
+  return'<tr class="'+(idle?'dim':'')+(drag?' qrow':'')+'"'+(drag?' draggable="true" data-id="'+esc(it.id)+'" data-prov="'+esc(p.provider)+'" data-pos="'+it.position+'"':'')+'>'+cells.map(function(c,i){return'<td style="text-align:'+(i===1||i===2||i===5?'left':'right')+'">'+c+'</td>'}).join("")+'</tr>'
+ }
+ function block(title,head,rows){return'<div style="margin-bottom:10px"><div style="margin-bottom:2px"><b>'+title+'</b></div><div class="tw"><table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.join("")+'</table></div></div>'}
+ var out=[],sess={};
+ ps.forEach(function(p){
+  if(p.cap===1){
+   var rows=p.running.map(function(r){return mk(r,p,false,true)}).concat(p.waiting.map(function(w){return mk(w,p,true,true)}));
+   var mods={};p.running.concat(p.waiting).forEach(function(x){if(x.model)mods[x.model]=1});
+   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (cap 1)',["pos","worker","session","state","age / waited","now","move"],rows.concat(p.waiting.length?[]:['<tr><td colspan="7" class="dim" style="text-align:left">nothing waiting</td></tr>'])));
+   return}
+  p.running.forEach(function(r){(sess[r.session||"other"]=sess[r.session||"other"]||[]).push({k:p.provider+"/"+(r.model||"?"),h:mk(r,p,false,false)})});
+  p.waiting.forEach(function(w){(sess[w.session||"other"]=sess[w.session||"other"]||[]).push({k:p.provider+"/"+(w.model||"?"),h:mk(w,p,true,false)})});
+ });
+ Object.keys(sess).sort(function(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}).forEach(function(s){
+  var it=sess[s].sort(function(a,b){return a.k<b.k?-1:a.k>b.k?1:0}),cnt={};it.forEach(function(x){cnt[x.k]=(cnt[x.k]||0)+1});
+  out.push(block(esc(s)+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
+ });
+ el.innerHTML=out.join("");
+ function post(verb,body){
+  fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
    .then(function(r){return r.json()}).then(function(j){if(j.error)setTip($("queuetip"),j.error);loadQueue()}).catch(function(){loadQueue()});
- };
+ }
+ var bs=el.querySelectorAll("button[data-q]");
+ for(var i=0;i<bs.length;i++)bs[i].onclick=function(){this.disabled=true;post(this.getAttribute("data-q"),{id:this.getAttribute("data-id")})};
+ var rs=el.querySelectorAll("tr.qrow"),from=null;
+ for(var k=0;k<rs.length;k++){(function(tr){
+  tr.ondragstart=function(e){qdrag=true;from=tr;tr.style.opacity=".4";if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",tr.getAttribute("data-id"))}catch(x){}}};
+  tr.ondragover=function(e){if(from&&from.getAttribute("data-prov")===tr.getAttribute("data-prov")){e.preventDefault();tr.style.outline="1px solid var(--acc)"}};
+  tr.ondragleave=function(){tr.style.outline=""};
+  tr.ondrop=function(e){e.preventDefault();tr.style.outline="";if(!from||from===tr||from.getAttribute("data-prov")!==tr.getAttribute("data-prov"))return;post("move",{id:from.getAttribute("data-id"),position:Number(tr.getAttribute("data-pos"))})};
+  tr.ondragend=function(){from=null;qdrag=false;tr.style.opacity="";loadQueue()};
+ })(rs[k])}
 }
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
