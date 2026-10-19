@@ -464,6 +464,10 @@ export interface WorkersConfig {
   capacity: CapacityConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
+  /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
+  gcOlderThanHours: number;
+  /** Size cap in GB of the worktrees dir; over it, gc archives the oldest finished ones (workers.worktreesMaxGb). */
+  worktreesMaxGb: number;
   /** Daemon reaper for orphaned worker processes (workers.reaper, default on). */
   reaper: boolean;
   /**
@@ -486,7 +490,10 @@ export interface WorkersConfig {
 // Defaults
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_LOG_DIR = "~/.claude/logs/workers";
+export const DEFAULT_GC_OLDER_THAN_HOURS = 6;
+export const DEFAULT_WORKTREES_MAX_GB = 20;
+
+export const DEFAULT_LOG_DIR ="~/.claude/logs/workers";
 
 export const DEFAULT_PANE: WorkersPaneConfig = {
   enabled: true,
@@ -587,6 +594,8 @@ export function defaultWorkersConfig(): WorkersConfig {
     stagger: { ...DEFAULT_STAGGER },
     capacity: { ...DEFAULT_CAPACITY },
     noBrowserByDefault: false,
+    gcOlderThanHours: DEFAULT_GC_OLDER_THAN_HOURS,
+    worktreesMaxGb: DEFAULT_WORKTREES_MAX_GB,
     reaper: true,
     caveman: false,
     fallback: null,
@@ -1183,6 +1192,13 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     bad(".noBrowserByDefault", "must be true or false");
   }
   const noBrowserByDefault = w.noBrowserByDefault === true;
+  const positive = (key: string, v: unknown, dflt: number): number => {
+    if (v === undefined) return dflt;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) bad(`.${key}`, "must be a positive number");
+    return v as number;
+  };
+  const gcOlderThanHours = positive("gcOlderThanHours", w.gcOlderThanHours, DEFAULT_GC_OLDER_THAN_HOURS);
+  const worktreesMaxGb = positive("worktreesMaxGb", w.worktreesMaxGb, DEFAULT_WORKTREES_MAX_GB);
   if (w.reaper !== undefined && typeof w.reaper !== "boolean") {
     bad(".reaper", "must be true or false");
   }
@@ -1251,6 +1267,8 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     stagger,
     capacity,
     noBrowserByDefault,
+    gcOlderThanHours,
+    worktreesMaxGb,
     reaper,
     caveman,
     fallback,
@@ -1337,6 +1355,8 @@ export function writeWorkersSection(
         stagger: workers.stagger,
         capacity: workers.capacity,
         noBrowserByDefault: workers.noBrowserByDefault,
+        gcOlderThanHours: workers.gcOlderThanHours,
+        worktreesMaxGb: workers.worktreesMaxGb,
         reaper: workers.reaper,
         caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),

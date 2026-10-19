@@ -19,6 +19,7 @@ import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } f
 import { currentInventory } from "../workers/model-inventory.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
+import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
 import { getProfile } from "../workers/session-profile-store.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
@@ -480,7 +481,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
-): { now: number; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds } {
+): { now: number; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; worktrees: string } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -517,7 +518,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now) };
+  return { now, providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)) };
 }
 
 /**

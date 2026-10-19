@@ -137,6 +137,7 @@ import {
   adoptTree,
   markResumed,
   salvageOnExit,
+  archiveEmptyResult,
   gcWorktreesThrottled,
   inPlaceSystemPrompt,
   recordWorktree,
@@ -649,7 +650,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const logDir = workersLogDir(config);
   mkdirSync(logDir, { recursive: true });
   try {
-    const gc = gcWorktreesThrottled(logDir)?.filter((r) => r.archive);
+    const gc = gcWorktreesThrottled(logDir, 60, Date.now(), { olderThanHours: config.gcOlderThanHours, maxGb: config.worktreesMaxGb })?.filter((r) => r.archive);
     if (gc?.length) process.stderr.write(`pai worker: archived ${gc.length} leftover worktree(s) (pai worker gc)\n`);
   } catch {
     // best effort
@@ -1243,6 +1244,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
       // the inbox line is best effort; it must never fail the exit path
     }
   }
+  // nothing to merge: the worktree goes now instead of piling up until gc
+  if (f.worktree && status.worktreeDir) archiveEmptyResult(logDir, status);
   return finalRc;
 }
 

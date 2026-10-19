@@ -404,7 +404,8 @@ function renderQueue(q){
  setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
  var bq=q.builds,bhas=bq&&(bq.running.length||bq.waiting.length);
- if(!ps.length&&!bhas){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
+ var wt=q.worktrees?'<div class="dim">'+esc(q.worktrees)+'</div>':'';
+ if(!ps.length&&!bhas){el.innerHTML='<span class="dim">nothing running or waiting</span>'+wt;return}
  var BTN='<button data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
@@ -433,7 +434,7 @@ function renderQueue(q){
   var brow=bq.running.map(function(b){return'<tr><td style="text-align:right"></td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">running</td><td style="text-align:right">'+qdur(b.ageSec)+'</td></tr>'}).concat(bq.waiting.map(function(b){return'<tr><td style="text-align:right">'+b.position+'</td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">waiting</td><td style="text-align:right">'+qdur(b.waitedSec)+'</td></tr>'}));
   out.unshift(block('builds ('+bq.slots+' slot'+(bq.slots===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
  }
- el.innerHTML=out.join("");
+ el.innerHTML=out.join("")+wt;
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
    .then(function(r){return r.json()}).then(function(j){if(j.error)setTip($("queuetip"),j.error);loadQueue()}).catch(function(){loadQueue()});

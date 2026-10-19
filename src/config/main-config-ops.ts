@@ -22,6 +22,8 @@ import {
   DEFAULT_ROUTING,
   DEFAULT_TREE,
   DEFAULT_CACHE_KEEPALIVE_SECS,
+  DEFAULT_GC_OLDER_THAN_HOURS,
+  DEFAULT_WORKTREES_MAX_GB,
   DEFAULT_MAX_MINUTES,
   maskKey,
 } from "../workers/config.js";
@@ -148,6 +150,8 @@ function workersMainConfigShape(): Record<string, unknown> {
     cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
     defaultMaxMinutes: workers.defaultMaxMinutes,
     noBrowserByDefault: workers.noBrowserByDefault,
+    gcOlderThanHours: workers.gcOlderThanHours,
+    worktreesMaxGb: workers.worktreesMaxGb,
     reaper: workers.reaper,
     ...(workers.fallback ? { fallback: workers.fallback } : {}),
   };
@@ -165,6 +169,8 @@ function schemaRoot(): Record<string, unknown> {
       cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
       defaultMaxMinutes: DEFAULT_MAX_MINUTES,
       noBrowserByDefault: false,
+      gcOlderThanHours: DEFAULT_GC_OLDER_THAN_HOURS,
+      worktreesMaxGb: DEFAULT_WORKTREES_MAX_GB,
       reaper: true,
     },
   };

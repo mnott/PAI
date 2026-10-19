@@ -1375,6 +1375,58 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   return { archive: target, knowledge, salvaged: salvage.lines };
 }
 
+/**
+ * A worker that finished with nothing to merge (no commits, no uncommitted or
+ * missing files) has no use for its worktree: archive the empty state and
+ * remove it now. Anything else is left for merge/discard/gc. Never throws.
+ */
+export function archiveEmptyResult(logDir: string, st: WorkerStatus): boolean {
+  const tree = ownedTree(st);
+  if (!tree || !existsSync(tree.dir) || isSlotWorktree(tree.dir) || isLive(st)) return false;
+  try {
+    const k = worktreeKnowledge(logDir, st.id, tree.dir);
+    if (k.commits.length || k.dirty.length || k.missing.length) return false;
+    if (safeCommitsSince(tree.dir, st.worktreeBase ?? "HEAD") > 0) return false;
+    const target = `refs/pai-archive/${st.id}`;
+    archiveWorktree(logDir, st.id, tree.dir, tree.branch);
+    saveStatus(logDir, { ...st, branch: null, worktreeDir: null, commits: null, archived: target });
+    appendLedger(ledgerPath(logDir), "WORKER-GC", { id: st.id, archive: target, why: "empty" });
+    invalidatePendingCache(logDir, st.cwd);
+    return true;
+  } catch {
+    return false; // kept for gc, which reports it
+  }
+}
+
+/** Bytes under `dir` (du -sk), 0 when unreadable. */
+function dirBytes(dir: string): number {
+  const r = spawnSync("du", ["-sk", dir], { encoding: "utf8" });
+  return (parseInt(String(r.stdout).split("\t")[0] ?? "", 10) || 0) * 1024;
+}
+
+/** Worktree count and total size, for `pai worker ps` and the cockpit. */
+export function worktreesStats(logDir: string): { count: number; bytes: number } {
+  const root = worktreesDir(logDir);
+  if (!existsSync(root)) return { count: 0, bytes: 0 };
+  const dirs = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  return { count: dirs.length, bytes: dirs.length ? dirBytes(root) : 0 };
+}
+
+const statsCache = new Map<string, { at: number; stats: { count: number; bytes: number } }>();
+
+/** worktreesStats, recomputed at most once a minute per logDir (the cockpit polls every few seconds). */
+export function worktreesStatsCached(logDir: string, now = Date.now()): { count: number; bytes: number } {
+  const hit = statsCache.get(logDir);
+  if (hit && now - hit.at < 60_000) return hit.stats;
+  const stats = worktreesStats(logDir);
+  statsCache.set(logDir, { at: now, stats });
+  return stats;
+}
+
+export function formatWorktreesStats(s: { count: number; bytes: number }): string {
+  return `worktrees: ${s.count} (${(s.bytes / 1024 ** 3).toFixed(1)} GB)`;
+}
+
 /** Finished workers whose worktree is still on disk (not merged, not discarded, not archived). */
 export function leftoverWorktrees(logDir: string): number {
   let n = 0;
@@ -1489,7 +1541,8 @@ export function gcWorktrees(
   olderThanHours = 24,
   dryRun = false,
   now = Date.now(),
-  report = false
+  report = false,
+  maxGb?: number
 ): GcEntry[] {
   const cutoff = now - olderThanHours * 3_600_000;
   const out: GcEntry[] = [];
@@ -1515,6 +1568,7 @@ export function gcWorktrees(
     }
   };
 
+  const young: { st: WorkerStatus; tree: { dir: string; branch: string }; end: number }[] = [];
   for (const st of statuses) {
     const tree = ownedTree(st);
     if (!tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir)) continue;
@@ -1525,8 +1579,35 @@ export function gcWorktrees(
     } catch {
       continue;
     }
-    if (end > cutoff) continue;
+    if (end > cutoff) {
+      young.push({ st, tree, end });
+      continue;
+    }
     archive(st.id, tree.dir, tree.branch, st);
+  }
+
+  // Size guard: over the cap, archive the oldest remaining finished trees too.
+  // Running workers are not in `young`; a tree that cannot be salvaged is reported, not removed.
+  if (maxGb && existsSync(root) && !dryRun) {
+    const cap = maxGb * 1024 ** 3;
+    let total = dirBytes(root);
+    if (total > cap) {
+      console.log(`worktree gc: ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB, archiving oldest finished`);
+      for (const y of young.sort((a, b) => a.end - b.end)) {
+        if (total <= cap) break;
+        const size = dirBytes(y.tree.dir);
+        const before = out.length;
+        archive(y.st.id, y.tree.dir, y.tree.branch, y.st);
+        const e = out[before];
+        if (e?.archive) {
+          total -= size;
+          console.log(`worktree gc: cap archived ${y.st.id} (${(size / 1024 ** 3).toFixed(2)} GB)`);
+        } else if (e?.skipped) {
+          console.log(`worktree gc: cap kept ${y.st.id}: ${e.skipped}`);
+        }
+      }
+      if (total > cap) console.log(`worktree gc: still ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB (running or unsalvageable workers)`);
+    }
   }
 
   // Pooled-slot workers: a branch in the shared slot worktree, never a tree of their own.
@@ -1570,7 +1651,12 @@ export function gcWorktrees(
 }
 
 /** Run `gcWorktrees` at most once per `everyMin` minutes (stamp file in the logDir). */
-export function gcWorktreesThrottled(logDir: string, everyMin = 60, now = Date.now()): GcEntry[] | null {
+export function gcWorktreesThrottled(
+  logDir: string,
+  everyMin = 60,
+  now = Date.now(),
+  opts: { olderThanHours?: number; maxGb?: number } = {}
+): GcEntry[] | null {
   const stamp = join(logDir, GC_STAMP);
   try {
     if (now - statSync(stamp).mtimeMs < everyMin * 60_000) return null;
@@ -1579,5 +1665,5 @@ export function gcWorktreesThrottled(logDir: string, everyMin = 60, now = Date.n
   }
   mkdirSync(logDir, { recursive: true });
   writeFileSync(stamp, String(now), "utf8");
-  return gcWorktrees(logDir, 24, false, now);
+  return gcWorktrees(logDir, opts.olderThanHours ?? 24, false, now, false, opts.maxGb);
 }
