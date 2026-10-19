@@ -6,13 +6,26 @@
 
 import { POOL_PANEL_HTML, POOL_PANEL_JS } from "./pool-panel.js";
 
+/** Favicon: a router fanning one request out to three tiers. Inline data URI —
+ *  no extra file, no extra route; encodeURIComponent keeps it safe in Safari,
+ *  Chrome and Firefox. */
+const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#3b6fe0"/><g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M8 32h16"/><path d="M24 32 46 14"/><path d="M24 32h22"/><path d="M24 32 46 50"/></g><g fill="#fff"><circle cx="50" cy="14" r="4"/><circle cx="50" cy="32" r="4"/><circle cx="50" cy="50" r="4"/></g></svg>';
+export const COCKPIT_FAVICON_SVG = FAVICON_SVG;
+export const COCKPIT_FAVICON_DATA_URI = "data:image/svg+xml," + encodeURIComponent(FAVICON_SVG);
+
 export const COCKPIT_HTML = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PAI router cockpit</title>
+<link rel="icon" type="image/svg+xml" href="${COCKPIT_FAVICON_DATA_URI}">
+<meta name="theme-color" content="#3b6fe0">
+<script>
+// the theme before the first paint: the saved choice, else the system's
+try{var T=localStorage.getItem("pai.cockpit.theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=T}catch(e){}
+</script>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
-@media(prefers-color-scheme:dark){:root{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}}
+:root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
 header{flex-wrap:wrap;display:flex;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
 h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
@@ -20,6 +33,8 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
+#theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
+:root[data-theme=dark] .ic-sun{display:none}:root:not([data-theme=dark]) .ic-moon{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,1fr)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.tw{overflow-x:auto}
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
@@ -46,7 +61,7 @@ svg text{fill:var(--dim);font-size:10px}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
-<span id="stamp">loading...</span></header>
+<span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
 <section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
@@ -394,6 +409,10 @@ function renderQueue(q){
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
 function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
+/** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
+function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
+$("theme").onclick=function(){var t=document.documentElement.dataset.theme==="dark"?"light":"dark";setTheme(t);try{localStorage.setItem("pai.cockpit.theme",t)}catch(e){}};
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 tabs();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
