@@ -21,7 +21,6 @@
  * session map (see below), so their tab still claims them.
  */
 
-import { currentWorkerId } from "./worker-id.js";
 import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -230,7 +229,7 @@ export function resolveSpawnerSession(
   env: NodeJS.ProcessEnv = process.env,
   now: number = Date.now()
 ): string | null {
-  const parentId = currentWorkerId(env, logDir);
+  const parentId = env.PAI_WORKER_ID;
   if (parentId) {
     const inherited = loadStatus(logDir, parentId)?.spawnerSession;
     if (inherited) return inherited;

@@ -20,7 +20,7 @@ import {
   type SlotProcess,
 } from "./pool.js";
 import { defaultWorkersConfig, type WorkerProvider, type WorkersConfig } from "./config.js";
-import { eventsPath, ledgerPath, slotCurrentPath, statusPath } from "./paths.js";
+import { eventsPath, ledgerPath, statusPath } from "./paths.js";
 import { parseLedger } from "./ledger.js";
 import { ROUTER_PORT } from "../router/router.js";
 import { git } from "./worktree.js";
@@ -81,9 +81,6 @@ const resultEvt = (result: string): Record<string, unknown> => ({ type: "result"
 // Fake slot process: emits scripted stream-json lines per fed turn
 // ---------------------------------------------------------------------------
 
-/** Test seam: runs when a task is fed to a slot (the job is in flight). */
-let onFeed: (() => void) | null = null;
-
 class FakeSlot implements SlotProcess {
   readonly pid = process.pid; // pickSlot probes liveness with kill(pid, 0)
   readonly fedTexts: string[] = [];
@@ -100,7 +97,6 @@ class FakeSlot implements SlotProcess {
     this.lineCb?.(JSON.stringify(obj));
   }
   write(text: string): boolean {
-    onFeed?.();
     try {
       this.fedTexts.push(String(JSON.parse(text).message?.content ?? ""));
     } catch {
@@ -194,8 +190,6 @@ const task = (over: Partial<PoolTaskRequest> = {}): PoolTaskRequest => ({
   trailer: "\nREPORT-FORMAT-END",
   ...over,
 });
-
-const slotJobFile = (logDir: string, env: NodeJS.ProcessEnv): string => slotCurrentPath(logDir, String(env.PAI_POOL_SLOT));
 
 // every host created by a test gets closed here, so vitest can exit
 const liveHosts: PoolHost[] = [];
@@ -403,25 +397,6 @@ describe("pooled task lifecycle", () => {
     const t = h.slots[0]!.fedTexts[0]!;
     expect(h.argvs[0]!.join(" ")).not.toContain("SHARED-RULES");
     expect(t.indexOf("worker id wt1")).toBeGreaterThan(t.indexOf("NEW TASK"));
-  });
-
-  it("names the slot in its env and records the served job around a task", async () => {
-    const h = makeHost({}, undefined, { prodBuilders: false });
-    liveHosts.push(h.host);
-    let during: string | null = null;
-    onFeed = () => {
-      const f = slotJobFile(h.host.logDir, h.envs[0]!);
-      during = existsSync(f) ? readFileSync(f, "utf8").trim() : null;
-    };
-    try {
-      await h.host.runTask(task({ id: "cur1" }));
-    } finally {
-      onFeed = null;
-    }
-    expect(h.envs[0]!.PAI_POOL_SLOT).toBeTruthy();
-    expect(h.envs[0]!.PAI_WORKER_ID).toBeUndefined();
-    expect(during).toBe("cur1");
-    expect(existsSync(slotJobFile(h.host.logDir, h.envs[0]!))).toBe(false);
   });
 
   it("a marked shared preamble rides in the slot system prompt; the user turn keeps the unit part", async () => {

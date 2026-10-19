@@ -5,7 +5,6 @@
  * exit codes are the ones hooks, prompts, skills and shims already call.
  */
 
-import { currentWorkerId } from "../../workers/worker-id.js";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider } from "../../workers/config.js";
@@ -801,7 +800,7 @@ const waitOnCommand: CommandDef = {
   seeAlso: ["pai worker wait", "pai worker wait-url", "pai worker wait-file"],
   run: (ctx) =>
     guard("pai worker wait-on <pid>", async () => {
-      const wid = currentWorkerId(process.env, logDir());
+      const wid = process.env.PAI_WORKER_ID;
       const mark = wid ? statusMarker(logDir(), wid) : undefined;
       // a killed wait-on must not leave a stale waitingOn behind
       for (const sig of ["SIGINT", "SIGTERM"] as const) {

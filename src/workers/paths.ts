@@ -61,8 +61,3 @@ export function panesDir(logDir: string): string {
 export function noMcpConfigPath(logDir: string): string {
   return join(logDir, "no-mcp.json");
 }
-
-/** Job id a pooled slot is serving right now (one line); absent while the slot is idle. */
-export function slotCurrentPath(logDir: string, slot: string): string {
-  return join(logDir, "slots", `${slot}.current`);
-}

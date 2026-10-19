@@ -22,7 +22,6 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
@@ -54,8 +53,7 @@ import {
   type StreamEvent,
 } from "./run.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
-import { POOL_SLOT_ENV, clearSlotCurrent, setSlotCurrent } from "./worker-id.js";
-import { slotsDir, ensureSlotWorktree, prepareSlot, releaseSlot, slotPath, slotServesRepo, type SlotPrep } from "./slots.js";
+import { ensureSlotWorktree, prepareSlot, releaseSlot, slotPath, slotServesRepo, type SlotPrep } from "./slots.js";
 import { commitsSince, salvageNotes, salvageOnExit, worktreeSystemPrompt } from "./worktree.js";
 import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedPaths, type BashRun } from "./report.js";
 import {
@@ -136,8 +134,6 @@ export class PoolSlotSession {
   readonly record: PoolSlotRecord;
   /** The spec's shared preamble this process carries in its system prompt (null = none). */
   shared: string | null = null;
-  /** Stable PAI_POOL_SLOT name of this process. */
-  slotName = "";
   private proc: SlotProcess;
   private listeners = new Set<(e: StreamEvent) => void>();
   private exited = false;
@@ -397,11 +393,6 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     appendLedger(ledger, "WORKER-POOL-SLOT-END", { key: key.replaceAll("\u0000", "/"), pid: s.pid, note: why });
   };
 
-  let plainSlots = 0;
-  /** Worktree slots keep their slot dir name (codernext4-1); other slots get a host-unique one. */
-  const slotNameFor = (cwd: string): string =>
-    dirname(cwd) === slotsDir(logDir) ? basename(cwd) : `pool-${process.pid}-${++plainSlots}`;
-
   /** Spawn a slot process for provider+model, wait for its init event. */
   const spawnSlot = async (
     providerName: string,
@@ -413,12 +404,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // loopback providers take the router like worker runs do (prefix fixes); down or `router: false` stays direct
     const via = await loopbackRouterChoice(provider, providerName, routerOn, opts.probeRouter ?? probeRouter);
     const env = envFor(providerName, provider, via);
-    // no static PAI_WORKER_ID on a slot: it serves many tasks, so a baked-in id
-    // would attribute later jobs' children to a stale worker
+    // no PAI_WORKER_ID on a slot: it serves many tasks; children it spawns
+    // stand on their own rather than attribute to a stale worker id
     delete env.PAI_WORKER_ID;
-    // ...but it does have a stable name; the job it serves is in slots/<name>.current (worker-id.ts)
-    const slotName = slotNameFor(cwd);
-    env[POOL_SLOT_ENV] = slotName;
     let cmd: string[] = [...cmdHead(env, config.caveman)];
     const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
@@ -464,7 +452,6 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const proc = spawner(cmd, cwd, env);
     record.pid = proc.pid;
     const session = new PoolSlotSession(record, proc);
-    session.slotName = slotName;
     session.shared = shared ?? null;
 
     // the init event announces the session id — when the build emits it at
@@ -580,7 +567,6 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   const release = (session: PoolSlotSession): void => {
-    if (session.slotName) clearSlotCurrent(logDir, session.slotName);
     session.record.tasks += 1;
     session.record.lastUsedAt = nowStamp(now());
     session.record.busyWith = null;
@@ -669,7 +655,6 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       ...(prep ? { branch: prep.branch, worktreeDir: prep.dir, worktreeBase: prep.base, worktreeSnapshot: false } : {}),
     };
     saveStatus(logDir, status);
-    if (session.slotName) setSlotCurrent(logDir, session.slotName, wid);
     appendLedger(ledger, "WORKER-START", {
       id: wid,
       provider: task.provider,

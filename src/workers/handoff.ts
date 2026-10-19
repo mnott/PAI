@@ -11,7 +11,6 @@
  * a worker something is the operator's job (`pai worker say`).
  */
 
-import { currentWorkerId } from "./worker-id.js";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLive, loadStatus } from "./status.js";
@@ -149,7 +148,7 @@ export async function handoffFromInside(
   payload: unknown,
   deps: HandoffDeps = {}
 ): Promise<Handoff> {
-  const mine = currentWorkerId(env, logDir);
+  const mine = env.PAI_WORKER_ID;
   if (!mine) {
     throw new Error(
       "not inside a worker — handoffs are sent by workers (PAI_WORKER_ID unset). " +
