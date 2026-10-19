@@ -12,7 +12,8 @@ export const UNKNOWN_ANSWER = "unknown (the daemon is not reporting; run `pai wo
 export function cachedLocalAnswer(): string {
   try {
     const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
-    return st ? localStatusLine(st) : UNKNOWN_ANSWER;
+    // only a fresh probe may say "none"; a hook never probes
+    return st?.running ? localStatusLine(st) : UNKNOWN_ANSWER;
   } catch {
     return UNKNOWN_ANSWER;
   }

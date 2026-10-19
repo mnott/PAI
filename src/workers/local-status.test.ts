@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WorkersConfig } from "./config.js";
-import { computeLocalStatus, resolveLocalProvider } from "./local-provider.js";
+import { computeLocalStatus, currentLocalStatus, resolveLocalProvider } from "./local-provider.js";
 import { localStatusLine, readLocalStatus, writeLocalStatus, type LocalStatus } from "./local-status.js";
 
 const prov = (baseUrl: string, model: string, enabled = true) => ({
@@ -66,9 +66,32 @@ describe("cache", () => {
     expect((await resolveLocalProvider(cfg, dir)).name).toBe("local30");
   });
 
-  it("a fresh cache saying none running refuses with the do-not-start message", async () => {
+  it("resolveLocalProvider with nothing up refuses with the do-not-start message", async () => {
+    await expect(resolveLocalProvider(cfg, tmp(), { check: async () => false })).rejects.toThrow(/do not start model servers/);
+  });
+});
+
+describe("currentLocalStatus: none only after a fresh probe", () => {
+  const up = async (_h: string, port: number) => port === 8035;
+  const nothing = async () => false;
+
+  it("missing cache + server up -> running", async () => {
+    expect((await currentLocalStatus(tmp(), { cfg, check: up })).running?.provider).toBe("flashnext-iq3");
+  });
+
+  it("stale cache saying none + server up -> running", async () => {
+    const dir = tmp();
+    writeLocalStatus(dir, { at: new Date(Date.now() - 600_000).toISOString(), running: null, down: [], disabled: [] });
+    expect((await currentLocalStatus(dir, { cfg, check: up })).running?.provider).toBe("flashnext-iq3");
+  });
+
+  it("fresh cache saying none + server up -> running", async () => {
     const dir = tmp();
     writeLocalStatus(dir, { at: new Date().toISOString(), running: null, down: [], disabled: [] });
-    await expect(resolveLocalProvider(cfg, dir)).rejects.toThrow(/do not start model servers/);
+    expect((await currentLocalStatus(dir, { cfg, check: up })).running?.provider).toBe("flashnext-iq3");
+  });
+
+  it("all down -> none", async () => {
+    expect((await currentLocalStatus(tmp(), { cfg, check: nothing })).running).toBeNull();
   });
 });

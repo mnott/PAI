@@ -11,9 +11,10 @@
 
 import { readFileSync } from "node:fs";
 import { cachedLocalAnswer } from "../lib/local-answer.js";
+import { sessionWorkersLine } from "../../../workers/session-profile.js";
 import { isLocalPrompt, localModelHint } from "../lib/local-model-hint.js";
 
-function main(): void {
+async function main(): Promise<void> {
   let prompt = "";
   try {
     const input = JSON.parse(readFileSync(0, "utf8")) as { prompt?: string };
@@ -22,8 +23,8 @@ function main(): void {
     return;
   }
   if (!isLocalPrompt(prompt)) return;
-  const hint = localModelHint(prompt, cachedLocalAnswer());
+  const hint = localModelHint(prompt, cachedLocalAnswer(), await sessionWorkersLine());
   if (hint) process.stdout.write(hint);
 }
 
-main();
+void main();

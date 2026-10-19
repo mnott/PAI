@@ -45,6 +45,9 @@ import { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck } from "../cli/lib/set
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
 
+/** A busy single-slot server answers /v1/models slowly; 500 ms read it as down. */
+export const LOCAL_PROBE_TIMEOUT_MS = 2000;
+
 /**
  * The one line every local-provider refusal and every provider listing
  * carries: local work goes through the mechanism (--local), never through
@@ -76,7 +79,7 @@ export async function probeLoopback(
   await Promise.all(
     local.map(async ([name, p]) => {
       const hp = providerHostPort(p);
-      out[name] = hp ? await check(hp.host, hp.port, PORT_TIMEOUT_MS) : false;
+      out[name] = hp ? await check(hp.host, hp.port, LOCAL_PROBE_TIMEOUT_MS) : false;
     })
   );
   return out;
@@ -135,12 +138,10 @@ export async function resolveLocalProvider(
 ): Promise<LocalResolution> {
   // The daemon's cached answer is the authority; probe directly only when it
   // is not refreshing the cache (or a test injects its own port check).
+  // A cached "none" is never trusted: only a fresh probe may say none.
   const cached = opts.check ? null : readLocalStatus(logDir);
-  if (cached) {
-    const r = cached.running;
-    if (r && cfg.providers[r.provider]?.enabled) return { name: r.provider, why: `daemon: ${r.why}` };
-    throw new NoLocalServerError(noServerMessage());
-  }
+  const r = cached?.running;
+  if (r && cfg.providers[r.provider]?.enabled) return { name: r.provider, why: `daemon: ${r.why}` };
   const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck))
     .filter(([, running]) => running)
     .map(([name]) => name);
@@ -198,11 +199,20 @@ export async function computeLocalStatus(
   return { at: (opts.now ?? new Date()).toISOString(), running, down, disabled };
 }
 
-/** Cached answer, else a direct probe (daemon unreachable). Never writes the cache. */
-export async function currentLocalStatus(logDir?: string): Promise<LocalStatus> {
-  const { workers } = readWorkersSection();
-  const dir = logDir ?? workersLogDir(workers);
-  return readLocalStatus(dir) ?? (await computeLocalStatus(workers, dir));
+/**
+ * Cached "running" answer, else a fresh direct probe. "None running" is only
+ * ever the result of a fresh probe (missing, stale or "none" caches never
+ * count). Never writes the cache.
+ */
+export async function currentLocalStatus(
+  logDir?: string,
+  opts: { check?: PortCheck; cfg?: Pick<WorkersConfig, "providers"> } = {}
+): Promise<LocalStatus> {
+  const workers = opts.cfg ?? readWorkersSection().workers;
+  const dir = logDir ?? workersLogDir(workers as WorkersConfig);
+  const cached = opts.check ? null : readLocalStatus(dir);
+  if (cached?.running && workers.providers[cached.running.provider]?.enabled) return cached;
+  return computeLocalStatus(workers, dir, { check: opts.check });
 }
 
 /** Daemon side: refresh the cache now and every 30 s. Returns the stop function. */

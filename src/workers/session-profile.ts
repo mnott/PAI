@@ -136,7 +136,7 @@ export function resolveWorkers(args: ResolveArgs, ctx: ResolveCtx): WorkersResol
 }
 
 /** The live context: config, this session's profile, fresh budget readings (warmed best effort) and recorded cooldowns. */
-export async function liveResolveCtx(env: NodeJS.ProcessEnv = process.env): Promise<ResolveCtx> {
+export async function liveResolveCtx(env: NodeJS.ProcessEnv = process.env, warm = true): Promise<ResolveCtx> {
   const [{ readWorkersSection }, { budgetCache }, { readRoutingState }, { workersLogDir }] = await Promise.all([
     import("./config.js"),
     import("./budget.js"),
@@ -145,7 +145,7 @@ export async function liveResolveCtx(env: NodeJS.ProcessEnv = process.env): Prom
   ]);
   const { workers } = readWorkersSection();
   const profile = getProfile(await detectSessionName(env));
-  if (profile && workers.routing.policy !== "order") {
+  if (warm && profile && workers.routing.policy !== "order") {
     try {
       await budgetCache.warm(workers);
     } catch {
@@ -156,3 +156,18 @@ export async function liveResolveCtx(env: NodeJS.ProcessEnv = process.env): Prom
 }
 
 export const isBatchEnv = (env: NodeJS.ProcessEnv = process.env): boolean => env[BATCH_ENV] === "1";
+
+/**
+ * "this session's workers: <provider/model> (<reason>)" from the same resolver
+ * every spawn uses; null outside a session. Never warms budget readings (cheap
+ * enough for a hook).
+ */
+export async function sessionWorkersLine(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  try {
+    if (!(await detectSessionName(env))) return null;
+    const r = resolveWorkers({ batch: env[BATCH_ENV] === "1" }, await liveResolveCtx(env, false));
+    return `this session's workers: ${r.description}`;
+  } catch {
+    return null;
+  }
+}

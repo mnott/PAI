@@ -6,9 +6,9 @@ export function isLocalPrompt(prompt: string): boolean {
   return LOCAL_PROMPT.test(prompt);
 }
 
-export function localModelHint(prompt: string, answer: string): string | null {
+export function localModelHint(prompt: string, answer: string, workersLine?: string | null): string | null {
   if (!isLocalPrompt(prompt)) return null;
   return (
-    `<system-reminder>\n${answer}. Do not probe ports or start model servers; \`--local\` picks the running model.\n</system-reminder>\n`
+    `<system-reminder>\n${workersLine ? `${workersLine}\n` : ""}${answer}. Do not probe ports or start model servers; \`--local\` picks the running model.\n</system-reminder>\n`
   );
 }

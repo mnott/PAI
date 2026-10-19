@@ -25,6 +25,7 @@ import {
 } from "../../workers/workers-config.js";
 import { testProvider } from "../../workers/run.js";
 import { currentLocalStatus, probeLoopback } from "../../workers/local-provider.js";
+import { sessionWorkersLine } from "../../workers/session-profile.js";
 import { localStatusLine } from "../../workers/local-status.js";
 import {
   addProvider,
@@ -170,6 +171,8 @@ const providersListCommand: CommandDef = {
   seeAlso: ["pai providers", "pai worker providers add"],
   async run() {
     try {
+      const line = await sessionWorkersLine();
+      if (line) out(line);
       await printProviders();
     } catch (e) {
       fail(e, "pai worker config check");
@@ -678,7 +681,11 @@ export const workerLocalCommand: CommandDef = {
   async run(ctx) {
     try {
       const target = ctx.args.TARGET as string | undefined;
-      if (!target) return void out(localStatusLine(await currentLocalStatus()));
+      if (!target) {
+        const line = await sessionWorkersLine();
+        if (line) out(line);
+        return void out(localStatusLine(await currentLocalStatus()));
+      }
       const cfg = readLocalConfig(workersYamlPath());
       if (target === "status") return void printLocalStatus(cfg);
       if (target === "off") {
