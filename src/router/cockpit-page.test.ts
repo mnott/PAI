@@ -170,8 +170,11 @@ describe("cockpit favicon and dark mode", () => {
   it("the dark palette lives under [data-theme=dark], not a media query", () => {
     expect(COCKPIT_HTML).toContain(":root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}");
     expect(COCKPIT_HTML).not.toMatch(/@media\(prefers-color-scheme:dark\)/);
-    expect(COCKPIT_HTML).toContain(":root[data-theme=dark] .ic-sun{display:none}");
-    expect(COCKPIT_HTML).toContain(":root:not([data-theme=dark]) .ic-moon{display:none}");
+    // the icon shows the mode a click switches TO: light shows the moon, dark shows the sun
+    expect(COCKPIT_HTML).toContain(":root[data-theme=dark] .ic-moon{display:none}");
+    expect(COCKPIT_HTML).toContain(":root:not([data-theme=dark]) .ic-sun{display:none}");
+    // title and label follow the theme on load, not only on click
+    expect(COCKPIT_HTML).toContain('setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");');
   });
 });
 
