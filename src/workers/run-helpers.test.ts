@@ -506,8 +506,10 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
 
   it("the providers listing shows the built-in default and fast models", () => {
     const lines = describeProviders(parseWorkersConfig({ active: "anthropic", providers: {} }));
-    expect(lines[0]).toMatch(/^anthropic {2}\[built-in, active\]/);
-    expect(lines[1]).toBe("    default sonnet  fast haiku  image (none)");
+    // the top line is the --local notice; the built-in row follows it
+    expect(lines[0]).toBe("For local work use --local (picks the running local model); do not name a local provider.");
+    expect(lines[1]).toMatch(/^anthropic {2}\[built-in, active\]/);
+    expect(lines[2]).toBe("    default sonnet  fast haiku  image (none)");
   });
 
   it("the providers listing marks loopback providers running / not running, remotes never", () => {

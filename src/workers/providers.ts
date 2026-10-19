@@ -40,7 +40,7 @@ import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { probeLoopback, type PortCheck } from "./local-provider.js";
+import { LOCAL_MECHANISM_LINE, probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
 export interface AddProviderInput {
@@ -416,6 +416,9 @@ export function describeProviders(
   running?: Record<string, boolean>
 ): string[] {
   const lines: string[] = [];
+  // the top line every reader of this list needs (incident 2026-10-19: a
+  // session named an enabled-but-down loopback provider from this list)
+  lines.push(LOCAL_MECHANISM_LINE);
   const nativeActive = workers.active === ANTHROPIC_NATIVE;
   const nativeDefault = !workers.active;
   lines.push(

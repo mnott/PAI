@@ -39,6 +39,16 @@ import { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck } from "../cli/lib/set
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
 
+/**
+ * The one line every local-provider refusal and every provider listing
+ * carries: local work goes through the mechanism (--local), never through
+ * naming a loopback provider (incident 2026-10-19: a session named an
+ * enabled-but-down loopback provider and the worker sat at "starting" for
+ * minutes). Lives here so run.ts and providers.ts share it without a cycle.
+ */
+export const LOCAL_MECHANISM_LINE =
+  "For local work use --local (picks the running local model); do not name a local provider.";
+
 /** The host and port a provider's server answers on. */
 export function providerHostPort(p: WorkerProvider): { host: string; port: number } | null {
   try {
