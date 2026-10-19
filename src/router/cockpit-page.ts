@@ -115,8 +115,19 @@ function renderLimits(){
   c+=h;
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
- if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
- $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
+ if(dn.length&&!mdl)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ $("local").innerHTML=(lo+modelsHtml(mdl))||'<span class="dim">no local providers</span>';
+}
+var mdl=null;
+function modelsHtml(inv){
+ if(!inv||!inv.runtimes)return"";
+ var up=inv.runtimes.filter(function(r){return r.status==="running"}),dn=inv.runtimes.filter(function(r){return r.status!=="running"}),rows=[];
+ function mem(m){return m==null?"-":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
+ up.forEach(function(r){r.models.forEach(function(m){rows.push([esc(r.name),esc(m.model)+(m.loaded?"":' <span class="dim">(installed)</span>'),esc(m.kind),m.loaded?mem(m.memoryMb):"-",esc((m.usedBy.length?m.usedBy:r.models.length===1?r.users:[]).join(", ")||"-"),r.port==null?"-":r.port])});if(!r.models.length)rows.push([esc(r.name),"-","-","-",esc(r.users.join(", ")||"-"),r.port==null?"-":r.port])});
+ var h=rows.length?table(["runtime","model","kind","memory","used by","port"],rows):"";
+ (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
+ if(dn.length)h+='<details class="downs"><summary>'+dn.length+' runtime'+(dn.length===1?'':'s')+' stopped</summary>'+dn.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ")+'</details>';
+ return h;
 }
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
@@ -434,7 +445,8 @@ function renderQueue(q){
  })(rs[k])}
 }
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
-function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits()}).catch(function(){})}
+function loadLimits(){loadModels();fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}

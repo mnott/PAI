@@ -109,6 +109,7 @@ import { configList, configGet, configSet, configUnset } from "./tools/config.js
 import { workerCapability } from "./tools/worker-capability.js";
 import { currentLocalStatus } from "../workers/local-provider.js";
 import { localStatusReport } from "../workers/local-status.js";
+import { currentInventory, inventoryRows, INVENTORY_HEADERS } from "../workers/model-inventory.js";
 import {
   planAmend, planRun, planSave, planStatusText, planStop, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
   realDelegationDeps,
@@ -1288,6 +1289,18 @@ async function startShim(): Promise<void> {
     async () => {
       const r = localStatusReport(await currentLocalStatus());
       return { content: [{ type: "text" as const, text: `${r.text}\n${JSON.stringify(r.json)}` }] };
+    }
+  );
+
+  server.tool(
+    "models_list",
+    "Every local model runtime on this machine (loopback worker providers, ollama, Docker Model Runner): status, loaded and installed models, kind, memory, who uses each and the port, plus a duplicates hint when two runtimes serve the same job. Read-only, the daemon's 30 s answer; never loads a model.",
+    {},
+    async () => {
+      const inv = await currentInventory();
+      const rows = inventoryRows(inv).map((r) => r.join(" | "));
+      const text = [INVENTORY_HEADERS.join(" | "), ...rows, ...inv.duplicates.map((d) => `duplicates: ${d}`)].join("\n");
+      return { content: [{ type: "text" as const, text: `${text}\n${JSON.stringify(inv)}` }] };
     }
   );
 

@@ -7,6 +7,7 @@ import { providersCommand } from "./commands/providers.js";
 import { PROVIDER_EDIT_COMMANDS, WORKER_CONFIG_COMMANDS } from "./commands/worker-config.js";
 import { routerCommand } from "./commands/router.js";
 import { moreCommand, setupsCommand } from "./commands/setups.js";
+import { modelsCommand } from "./commands/models.js";
 import { SESSION_NOTE_COMMANDS, sessionsCommand } from "./commands/session-notes.js";
 import { backupTop, cdTop, clearNamesCmd, endTop, findTop, launchTop, listTop, notesTop, pauseTop, restoreTop, resumeTop, shellInitTop, updateTop } from "./commands/lifecycle.js";
 import { hooksDbCommand } from "./commands/hooks-db.js";
@@ -65,4 +66,5 @@ export const GROUPS: GroupDef[] = [
 
 // Memory, knowledge and audit commands (one file per group in ./commands).
 GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand);
+GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand);
 GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand);
