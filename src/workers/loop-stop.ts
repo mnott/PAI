@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadStatus, saveStatus } from "./status.js";
+import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 
 export const loopStopMarkerPath = (logDir: string, id: string): string => join(logDir, `${id}.loop-stop`);
 
@@ -66,6 +67,8 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
   } catch {
     // process already gone
   }
+  // a loop-stopped worker frees the machine-wide build lock and kills its build tree
+  void releaseBuildsOf(buildsDir(), id).catch(() => []);
 }
 
 /** The marker of a loop-stopped worker, consumed on read; null when there is none. */

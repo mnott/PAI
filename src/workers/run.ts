@@ -168,6 +168,7 @@ import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig 
 import { pinNotices, projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
 import { createOperatorServer } from "./operator.js";
 import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
+import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 import {
   buildCodexArgs,
@@ -2079,7 +2080,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     } catch {
       /* already gone */
     }
-    process.exit(143);
+    // the build lock and tree of a killed worker go with it
+    void releaseBuildsOf(buildsDir(), wid).catch(() => []).finally(() => process.exit(143));
+    setTimeout(() => process.exit(143), 2000).unref();
   };
   process.once("SIGTERM", () => onSignal("SIGTERM"));
   process.once("SIGINT", () => onSignal("SIGINT"));

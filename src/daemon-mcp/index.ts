@@ -21,6 +21,8 @@
  *   resources    — reference docs read when needed (guides, constitution).
  */
 
+import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
+import { buildSlots } from "../builds/config.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -1596,6 +1598,33 @@ async function startShim(): Promise<void> {
         if (!status) return workerError(new Error(`no worker named "${args.id}"`));
         const order = reorderQueue(logDir, status.provider, args.id, action === "front" ? "front" : "up");
         return workerText(`${args.id} is now position ${order.indexOf(args.id) + 1} of ${order.length} on ${status.provider}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "build_queue",
+    [
+      "The machine-wide build queue (builds.slots, default 1): heavy builds run one at a time, FIFO.",
+      "",
+      "action=list (default) shows the running and waiting builds; action=next gives a",
+      "waiting build (id) the next free slot. A running build is never interrupted.",
+    ].join("\n"),
+    {
+      action: z.enum(["list", "next"]).optional().describe("list (default) or next."),
+      id: z.string().optional().describe("Build id (or the label of a waiting build) for next."),
+    },
+    async (args) => {
+      try {
+        const dir = buildsDir();
+        if ((args.action ?? "list") === "next") {
+          if (!args.id) return workerError(new Error("id is required for next"));
+          const order = await buildNext(dir, args.id);
+          return workerText(`waiting order: ${order.join(", ") || "-"}`);
+        }
+        return workerText(renderBuildQueue(await listBuilds(dir), buildSlots()));
       } catch (e) {
         return workerError(e);
       }

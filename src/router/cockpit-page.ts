@@ -392,7 +392,8 @@ function renderQueue(q){
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
  setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use to front / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
- if(!ps.length){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
+ var bq=q.builds,bhas=bq&&(bq.running.length||bq.waiting.length);
+ if(!ps.length&&!bhas){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
  var BTN='<button data-q="front" data-id="@" title="move to front">to front</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
@@ -417,6 +418,10 @@ function renderQueue(q){
   var it=sess[s].sort(function(a,b){return a.k<b.k?-1:a.k>b.k?1:0}),cnt={};it.forEach(function(x){cnt[x.k]=(cnt[x.k]||0)+1});
   out.push(block(esc(s)+((q.sessionMax||{})[s]?' <span class="dim">max '+q.sessionMax[s]+' at a time</span> ':'')+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
  });
+ if(bhas){
+  var brow=bq.running.map(function(b){return'<tr><td style="text-align:right"></td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">running</td><td style="text-align:right">'+qdur(b.ageSec)+'</td></tr>'}).concat(bq.waiting.map(function(b){return'<tr><td style="text-align:right">'+b.position+'</td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">waiting</td><td style="text-align:right">'+qdur(b.waitedSec)+'</td></tr>'}));
+  out.unshift(block('builds ('+bq.slots+' slot'+(bq.slots===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
+ }
  el.innerHTML=out.join("");
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
