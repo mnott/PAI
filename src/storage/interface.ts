@@ -388,6 +388,9 @@ export interface StorageBackend {
     after?: { projectId: number; id: string } | null,
   ): Promise<Array<{ id: string; text: string; project_id: number; path: string }>>;
 
+  /** Number of chunks without a vector (the embed backlog). */
+  countUnembeddedChunks(): Promise<number>;
+
   /**
    * Store an embedding for a single chunk.
    */

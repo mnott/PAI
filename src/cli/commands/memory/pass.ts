@@ -6,12 +6,10 @@
 
 import { embedChunksWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
+import { EMBED_PASS_BATCH_SIZE, DEFAULT_EMBED_MAX_LOAD, DEFAULT_EMBED_MAX_MINUTES, liveYieldCheck } from "../../../memory/embed-pass.js";
 import { reexecBackground, type PassName } from "../../../daemon/pass-priority.js";
 
-/** Budget for one embed pass; mirrors the daemon's in-process budget. */
-const EMBED_MAX_MILLIS = 240_000;
-
-async function runPass(name: PassName, sleepMs: number): Promise<unknown> {
+async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): Promise<unknown> {
   if (name === "noop") {
     await new Promise((r) => setTimeout(r, sleepMs));
     return { pid: process.pid };
@@ -23,18 +21,30 @@ async function runPass(name: PassName, sleepMs: number): Promise<unknown> {
   try {
     for (const r of await registry.listProjects({ status: "active" })) projectNames.set(r.id, r.slug);
   } catch { /* registry unavailable — IDs will be used instead */ }
+  let end: { outcome: string; reason?: string } = { outcome: "done" };
   const count = await embedChunksWithBackend(storage, () => false, projectNames, {
-    maxMillis: EMBED_MAX_MILLIS,
+    maxMillis: embed.maxMinutes * 60_000,
+    batchSize: EMBED_PASS_BATCH_SIZE,
+    shouldYield: liveYieldCheck(embed.maxLoad),
+    onEnd: (r) => { end = r; },
   });
-  return { count };
+  return { count, ...end };
 }
 
-export async function memoryPassCmd(name: string, opts: { sleep?: string | number }): Promise<number> {
+export interface EmbedPassArgs {
+  maxMinutes: number;
+  maxLoad: number;
+}
+
+export async function memoryPassCmd(name: string, opts: { sleep?: string | number; maxMinutes?: number; maxLoad?: number }): Promise<number> {
   reexecBackground();
   try {
     const sleepValue = opts.sleep ?? 0;
     const sleepMs = typeof sleepValue === 'string' ? parseInt(sleepValue, 10) : sleepValue;
-    const result = await runPass(name as PassName, sleepMs);
+    const result = await runPass(name as PassName, sleepMs, {
+      maxMinutes: Number(opts.maxMinutes) || DEFAULT_EMBED_MAX_MINUTES,
+      maxLoad: Number(opts.maxLoad) || DEFAULT_EMBED_MAX_LOAD,
+    });
     process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
     return 0;
   } catch (e) {

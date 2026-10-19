@@ -18,6 +18,7 @@ import {
   lastIndexTime,
   embedInProgress,
   lastEmbedTime,
+  lastEmbedPass,
   vaultIndexInProgress,
   lastVaultIndexTime,
   passFailures,
@@ -69,6 +70,14 @@ export async function handleRequest(
       }
     })();
 
+    const embedBacklog = await (async () => {
+      try {
+        return storageBackend ? await storageBackend.countUnembeddedChunks() : null;
+      } catch {
+        return null;
+      }
+    })();
+
     sendResponse(socket, {
       id,
       ok: true,
@@ -80,6 +89,10 @@ export async function handleRequest(
         embedInProgress,
         lastEmbedTime: lastEmbedTime ? new Date(lastEmbedTime).toISOString() : null,
         embedIntervalSecs: daemonConfig.embedIntervalSecs,
+        embedBacklog,
+        lastEmbedPass: lastEmbedPass
+          ? { ...lastEmbedPass, at: new Date(lastEmbedPass.at).toISOString() }
+          : null,
         socketPath: daemonConfig.socketPath,
         storageBackend: storageBackend?.backendType ?? "initializing",
         db: dbStats,

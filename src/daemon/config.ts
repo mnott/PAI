@@ -144,6 +144,10 @@ export interface PaiDaemonConfig {
   /** Run an embed pass 60s after daemon start. Off by default: with a large
    *  backlog it makes every restart a CPU storm, and it ignores the interval. */
   embedOnStartup: boolean;
+  /** Wall-clock budget of one embed pass in minutes (default 60); the rest waits for the next cycle. */
+  embedMaxMinutes?: number;
+  /** Load average (1 min) above which an embed pass yields (default 8). */
+  embedMaxLoad?: number;
 
   /** Local hour (0-23) to anchor the recurring index/embed cycle to. When unset,
    *  the cycle is anchored to daemon start, so a daytime restart pins every
@@ -286,6 +290,8 @@ export const DEFAULTS: PaiDaemonConfig = {
   indexIntervalSecs: 300,
   embedIntervalSecs: 600,
   embedOnStartup: false,
+  embedMaxMinutes: 60,
+  embedMaxLoad: 8,
   passPriority: "background",
   storageBackend: "sqlite",
   postgres: {

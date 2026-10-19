@@ -29,6 +29,8 @@ export let indexSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 /** True while an embedding pass is running. */
 export let embedInProgress = false;
 export let lastEmbedTime = 0;
+/** Outcome of the latest embed pass (budget hit, yielded, done), null before the first. */
+export let lastEmbedPass: import("../../memory/embed-pass.js").EmbedPassRecord | null = null;
 export let embedSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 
 /** True while a vault index pass is running. */
@@ -71,6 +73,7 @@ export function setIndexInProgress(v: boolean): void { indexInProgress = v; }
 export function setLastIndexTime(v: number): void { lastIndexTime = v; }
 export function setIndexSchedulerTimer(v: ReturnType<typeof setInterval> | null): void { indexSchedulerTimer = v; }
 export function setEmbedInProgress(v: boolean): void { embedInProgress = v; }
+export function setLastEmbedPass(v: import("../../memory/embed-pass.js").EmbedPassRecord | null): void { lastEmbedPass = v; }
 export function setLastEmbedTime(v: number): void { lastEmbedTime = v; }
 export function setEmbedSchedulerTimer(v: ReturnType<typeof setInterval> | null): void { embedSchedulerTimer = v; }
 export function setVaultIndexInProgress(v: boolean): void { vaultIndexInProgress = v; }

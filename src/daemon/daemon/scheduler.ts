@@ -21,6 +21,13 @@ import { runWorktreeGcDaily } from "../worktree-gc.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
+import {
+  DEFAULT_EMBED_MAX_LOAD,
+  DEFAULT_EMBED_MAX_MINUTES,
+  EMBED_PASS_BATCH_SIZE,
+  liveYieldCheck,
+  type EmbedPassOutcome,
+} from "../../memory/embed-pass.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
 import { deferIfQuiet, type DeferredKind } from "../quiet.js";
@@ -41,6 +48,7 @@ import {
   setIndexSchedulerTimer,
   setEmbedInProgress,
   setLastEmbedTime,
+  setLastEmbedPass,
   setEmbedSchedulerTimer,
   setVaultIndexInProgress,
   setLastVaultIndexTime,
@@ -333,7 +341,8 @@ export async function runEmbed(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled embed pass...\n");
 
-    const { count } = await runPassPrioritised("embed", async () => {
+    // Not runPassPrioritised: the child needs the budget/load arguments.
+    const { count } = await (async () => {
       const projectNames = new Map<number, string>();
       try {
         const rows = await registryBackend.listProjects({ status: "active" });
@@ -342,6 +351,21 @@ export async function runEmbed(): Promise<void> {
 
       // Explicit budgets so one embed phase can never outlast an index cycle.
       // Backlogs drain across passes, not within one.
+      const maxMinutes = daemonConfig.embedMaxMinutes ?? DEFAULT_EMBED_MAX_MINUTES;
+      const maxLoad = daemonConfig.embedMaxLoad ?? DEFAULT_EMBED_MAX_LOAD;
+      if (daemonConfig.passPriority === "background") {
+        const r = await runPassChild<{ count: number; outcome?: EmbedPassOutcome; reason?: string }>("embed", [
+          "--max-minutes", String(maxMinutes), "--max-load", String(maxLoad),
+        ]).catch((e) => {
+          if (e instanceof PassSpawnError) return null;
+          throw e;
+        });
+        if (r) {
+          setLastEmbedPass({ at: Date.now(), outcome: r.outcome ?? "done", embedded: r.count, ...(r.reason ? { reason: r.reason } : {}) });
+          return { count: r.count };
+        }
+        process.stderr.write("[pai-daemon] embed pass: cannot spawn child; running in-process at normal priority\n");
+      }
       const count = await embedChunksWithBackend(
         storageBackend,
         () => shutdownRequested,
@@ -352,10 +376,15 @@ export async function runEmbed(): Promise<void> {
         // a backlog only clears at roughly the budget's share of the cycle. What
         // broke the starvation was bounding the pass at all, not this number —
         // it can be raised freely as long as it stays finite.
-        { maxMillis: 240_000 },
+        {
+          maxMillis: maxMinutes * 60_000,
+          batchSize: EMBED_PASS_BATCH_SIZE,
+          shouldYield: liveYieldCheck(maxLoad),
+          onEnd: (r) => setLastEmbedPass({ at: Date.now(), ...r }),
+        },
       );
       return { count };
-    });
+    })();
 
     // Vault chunks (project 999) are indexed through the same storageBackend
     // as everything else (indexVault() writes via backend.insertChunks()), so
