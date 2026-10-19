@@ -64,8 +64,8 @@ svg text{fill:var(--dim);font-size:10px}
 <span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
 <section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
+<section class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 <section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
-<section class="card c12"><h2>Queue<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
 <section class="card c12"><div class="kpis" id="kpis"></div></section>
 <section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
@@ -388,11 +388,11 @@ ${POOL_PANEL_JS}
 function renderQueue(q){
  var el=$("queuepanel");if(!q){el.innerHTML='<span class="dim">queue status unavailable</span>';return}
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
- setTip($("queuetip"),"Workers waiting behind a provider's concurrency cap, in grant order. Running workers are never interrupted; to front / up only reorder the waiting ones.");
- var ps=q.providers||[];
- if(!ps.length||!ps.some(function(p){return p.waiting.length})){el.innerHTML='<span class="dim">nothing waiting</span>';return}
+ setTip($("queuetip"),"Running workers and those waiting behind a provider's concurrency cap, in grant order. Running workers are never interrupted; to front / up only reorder the waiting ones.");
+ var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
+ if(!ps.length){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
  el.innerHTML=ps.map(function(p){
-  var run=p.running.map(function(r){return'<span class="chip" title="'+esc(r.label)+'">'+esc(r.id)+' · '+qdur(r.ageSec)+'</span>'}).join(" ")||'<span class="dim">none running</span>';
+  var run=p.running.map(function(r){var idle=r.ageSec>86400;return'<span class="chip'+(idle?' dim':'')+'" title="'+esc(r.label)+'">'+(idle?'idle session · ':'')+esc(r.label||r.id)+' · '+qdur(r.ageSec)+(r.now&&!idle?' · '+esc(r.now):'')+'</span>'}).join(" ")||'<span class="dim">none running</span>';
   var w=p.waiting.length?table(["pos","worker","label","waited","move"],p.waiting.map(function(x){
    return[x.position,'<span title="'+esc(x.id)+'">'+esc(x.id.slice(-15))+'</span>',esc(x.label),qdur(x.waitedSec),
     '<button data-q="front" data-id="'+esc(x.id)+'" title="move to front">to front</button> <button data-q="up" data-id="'+esc(x.id)+'" title="move one place up">up</button>']})):'<span class="dim">nothing waiting</span>';

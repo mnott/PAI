@@ -429,7 +429,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 export interface QueueProvider {
   provider: string;
   cap?: number;
-  running: Array<{ id: string; label: string; ageSec: number }>;
+  running: Array<{ id: string; label: string; ageSec: number; now?: string }>;
   waiting: Array<{ id: string; label: string; waitedSec: number; position: number }>;
 }
 
@@ -456,7 +456,7 @@ export function cockpitQueue(
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   for (const s of loadStatuses(logDir)) {
-    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s) });
+    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined });
   }
   for (const r of queueRows(logDir, caps)) {
     const s = r.status;

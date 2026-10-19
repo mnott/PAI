@@ -199,3 +199,45 @@ describe("cockpit page scripts", () => {
     for (const body of bodies) expect(() => new Function(body)).not.toThrow();
   });
 });
+
+describe("cockpit workers panel", () => {
+  const table = (COCKPIT_HTML.match(/function table\([\s\S]*?\n/) ?? [""])[0];
+  const body = COCKPIT_HTML.match(/function renderQueue[\s\S]*?\n\}/)![0];
+  const render = (q: unknown) => {
+    const els: Record<string, { innerHTML: string; querySelectorAll: () => unknown[] }> = {
+      queuepanel: { innerHTML: "", querySelectorAll: () => [] },
+      queuetip: { innerHTML: "", querySelectorAll: () => [] },
+    };
+    const fn = new Function("q", "$", "esc", "setTip", "loadQueue", `${table}\n${body}\nrenderQueue(q);`);
+    fn(q, (id: string) => els[id], (s: string) => s, () => {}, () => {});
+    return els.queuepanel!.innerHTML;
+  };
+
+  it("renders running chips with no waiting entries", () => {
+    const html = render({ providers: [{ provider: "glm", cap: 2, running: [{ id: "w1", label: "fix-x", ageSec: 120, now: "editing" }], waiting: [] }] });
+    expect(html).toContain("glm");
+    expect(html).toContain("cap 2");
+    expect(html).toContain("fix-x");
+    expect(html).toContain("editing");
+    expect(html).not.toContain("nothing running or waiting");
+  });
+
+  it("renders waiting entries with buttons", () => {
+    const html = render({ providers: [{ provider: "anthropic", cap: 1, running: [], waiting: [{ id: "w-2", label: "later", waitedSec: 30, position: 1 }] }] });
+    expect(html).toContain("later");
+    expect(html).toContain('data-q="front"');
+    expect(html).toContain('data-q="up"');
+  });
+
+  it("marks stale sessions dim and shows the empty state", () => {
+    const html = render({ providers: [{ provider: "glm", running: [{ id: "a", label: "AIBroker", ageSec: 250000 }], waiting: [] }] });
+    expect(html).toContain("idle session");
+    expect(render({ providers: [{ provider: "glm", running: [], waiting: [] }] })).toContain("nothing running or waiting");
+  });
+
+  it("sits above the System card, below the gauges", () => {
+    const i = (s: string) => COCKPIT_HTML.indexOf(s);
+    expect(i("Workers — running and waiting")).toBeGreaterThan(i('id="cloud"'));
+    expect(i("Workers — running and waiting")).toBeLessThan(i("<h2>System"));
+  });
+});
