@@ -44,7 +44,8 @@ The everyday job is: find a session, start it, make sure it runs where you want.
 pai                 # picker: newest sessions first, type to filter, Enter opens
 pai NAME            # open a session by name; shows how it will start (Enter = exactly like last time)
 pai ls              # the same list as a plain table
-pai setups          # orchestrator + worker combinations you can start a session with
+pai setups          # orchestrator + worker combinations you can start a session with (local models included)
+pai new ~/code/app --with "anthropic + flashnext-iq3 workers"   # new folder: Anthropic plans, the local model codes
 pai more            # every other command, grouped (memory, workers, daemon, ...)
 pai help <command>  # full help for one command, e.g. pai help worker
 ```

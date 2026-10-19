@@ -80,29 +80,35 @@ See also: `pai ls`, `pai new`, `pai providers`
 
 ### pai session new
 
-Start a fresh session in this folder
+Start a new session in a new or existing folder
 
 ```
-pai session new [options]
+pai session new [DIR] [options]
 ```
 
-Starts Claude Code in the current folder on the chosen provider. Without --provider it uses the active provider (see `pai providers`).
+Creates DIR when it is missing (default: the current folder), registers it as a project and starts Claude Code there. With --with the setup decides who orchestrates and which provider the workers run on, and nothing is asked. Without it the session runs on the active provider (see `pai providers`; --provider overrides). `pai ./dir` or `pai ~/dir` does the same as `pai new`.
+
+| Argument | Required | Description |
+|---|---|---|
+| `DIR` | no | Folder to start in; created if missing (default: the current folder) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--with SETUP` | string | — | Start with this setup, no questions (see: pai setups), e.g. "anthropic + flashnext-iq3 workers" |
 | `--provider NAME` | string | — | Provider to start on (default: the active provider) |
 | `--model ID` | string | — | Model id on that provider (default: its default model) |
 | `--name NAME` | string | — | Session name (default: the folder name) |
 | `--dry-run` | flag | — | Print the exec line instead of executing |
 
 ```sh
+pai new ~/code/app --with "anthropic + flashnext-iq3 workers"
+pai new ~/code/app --with "anthropic only" --name app
 pai new
 pai new --provider glm
-pai new --provider kimi --model k3 --name spike
-pai new --dry-run
+pai new ~/code/spike --provider kimi --model k3 --dry-run
 ```
 
-See also: `pai open`, `pai providers`
+See also: `pai setups`, `pai open`, `pai providers`
 
 ### pai session rename
 
@@ -479,7 +485,7 @@ See also: `pai session cleanup`
 |---|---|
 | `pai session list` | List sessions, newest first |
 | `pai session open` | Reopen a session (on its own provider unless --provider is given) |
-| `pai session new` | Start a fresh session in this folder |
+| `pai session new` | Start a new session in a new or existing folder |
 | `pai session rename` | Give a session a new name |
 | `pai session info` | Show everything known about one session note |
 | `pai session slug` | Suggest a short name for a session note from its transcript |

@@ -30,7 +30,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai mcp`](mcp.md) | Install the PAI tools for Claude Code |
 | [`pai memory`](memory.md) | Search and index your notes and memory files |
 | [`pai more`](more.md) | Every other command, by group |
-| [`pai new`](new.md) | Start a fresh session in this folder |
+| [`pai new`](new.md) | Start a new session in a new or existing folder |
 | [`pai notes`](notes.md) | List the markdown session notes |
 | [`pai notify`](notify.md) | Notification settings: status, set, test, send |
 | [`pai observation`](observation.md) | Notes the system took while you worked |
@@ -147,7 +147,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai memory sources` | Where the indexed content comes from |
 | `pai memory status` | How much the memory index holds |
 | `pai more` | Every other command, by group |
-| `pai new` | Start a fresh session in this folder |
+| `pai new` | Start a new session in a new or existing folder |
 | `pai notes` | List the markdown session notes |
 | `pai notes list` | List the markdown session notes (same as `pai notes`) |
 | `pai notify` | Notification settings: status, set, test, send |
@@ -272,7 +272,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai session handover` | Write the "Continue" block of a project's TODO.md |
 | `pai session info` | Show everything known about one session note |
 | `pai session list` | List sessions, newest first |
-| `pai session new` | Start a fresh session in this folder |
+| `pai session new` | Start a new session in a new or existing folder |
 | `pai session open` | Reopen a session (on its own provider unless --provider is given) |
 | `pai session pause` | Save a checkpoint before leaving (same as `pai pause`) |
 | `pai session recent` | Named sessions with their resume status, live ones first |

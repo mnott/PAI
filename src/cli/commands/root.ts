@@ -5,6 +5,10 @@
  */
 
 import { basename } from "node:path";
+import { isLoopbackProvider } from "../../workers/run-env.js";
+import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
+import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
+import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
 import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { useProvider } from "../../workers/providers.js";
@@ -117,10 +121,21 @@ export function launchScreen(row: SessionRow, last: Setup, cfg: Parameters<typeo
   ];
 }
 
-export function setupsTable(setups: Setup[], cfg: Parameters<typeof workersLabel>[0] & Pick<WorkersConfig, "routing">, budget: Parameters<typeof providerHealth>[2], st: Style) {
+export function setupsTable(
+  setups: Setup[],
+  cfg: Parameters<typeof workersLabel>[0] & Pick<WorkersConfig, "routing">,
+  budget: Parameters<typeof providerHealth>[2],
+  st: Style,
+  routing?: RoutingState
+) {
+  const health = (name: string): Health => {
+    const h = providerHealth(name, cfg, budget);
+    const left = routing && h.state === "ok" ? cooldownRemaining(routing, name) : 0;
+    return left > 0 ? { state: "limit", reason: `${name}: cooling down, ${Math.ceil(left / 60_000)}m left` } : h;
+  };
   const status = (s: Setup): Health => {
-    const a = providerHealth(s.orchestrator.provider, cfg, budget);
-    return a.state !== "ok" ? a : providerHealth(s.workers, cfg, budget);
+    const a = health(s.orchestrator.provider);
+    return a.state !== "ok" ? a : health(s.workers);
   };
   return {
     headers: ["#", "Setup", "Orchestrator", "Workers", "Status"],
@@ -160,6 +175,12 @@ interface StartArgs {
   resume?: SessionRow;
   dryRun: boolean;
   term: Term;
+}
+
+/** Local (loopback) worker providers apply to the started session only; others switch the global provider. */
+export function workerScope(workers: Pick<WorkersConfig, "providers" | "nativeModels">, setup: Setup): "session" | "global" {
+  const p = setup.workers === ANTHROPIC_NATIVE ? undefined : workers.providers[setup.workers];
+  return p && isLoopbackProvider(p) ? "session" : "global";
 }
 
 export async function startSession(a: StartArgs): Promise<number> {
@@ -202,7 +223,11 @@ export async function startSession(a: StartArgs): Promise<number> {
     out(`Conversation history carries over to ${shortModel(harness.model)}.`);
   }
   const current = workers.active && workers.active !== "auto" ? workers.active : ANTHROPIC_NATIVE;
-  if (setup.workers !== current) {
+  if (workerScope(workers, setup) === "session") {
+    // local workers: this session only, the global provider and class map stay as they are
+    harness.env[SESSION_PROVIDER_ENV] = setup.workers;
+    out(`Workers run on ${setup.workers} for this session only.`);
+  } else if (setup.workers !== current) {
     if (dryRun) out(st.dim(`(dry run) would route workers to ${setup.workers}; they run on ${current} now`));
     else {
       useProvider(setup.workers);
@@ -284,12 +309,30 @@ export function finishCd(cdDir: string, term: Pick<Term, "output">, env: NodeJS.
   return 0;
 }
 
+/** `pai new DIR --with SETUP`: create + register the folder, then start exactly like `pai NAME --with`. */
+export async function runNewWith(
+  args: { dir?: string; with: string; name?: string; dryRun: boolean },
+  term: Term = systemTerm(),
+  register?: Register
+): Promise<number> {
+  const workers = loadWorkers();
+  const all = allSetups(workers, lastSetup(null, workers), loadSaved());
+  const setup = findSetup(all, args.with);
+  if (!setup) throw unknownSetup(args.with, all);
+  const cwd = await prepareDir(args.dir, { dryRun: args.dryRun, out: (s) => term.output.write(s + "\n"), register });
+  return startSession({ workers, setup, name: args.name ?? (basename(cwd) || "session"), cwd, dryRun: args.dryRun, term });
+}
+
 export async function runRoot(
   args: { name?: string; with?: string; dryRun: boolean },
   term: Term = systemTerm()
 ): Promise<number> {
   const st = term.st;
   const out = (s: string) => term.output.write(s + "\n");
+  if (args.name && looksLikePath(args.name)) {
+    if (args.with) return runNewWith({ dir: args.name, with: args.with, dryRun: args.dryRun }, term);
+    return (await import("./session.js")).runNewDefault({ dir: args.name, dryRun: args.dryRun });
+  }
   const workers = loadWorkers();
 
   if (!args.name && args.with) {
@@ -345,8 +388,9 @@ export const rootCommand: CommandDef = {
   summary: "Open a session by name; shows how it will start",
   description:
     "`pai` shows your sessions, newest first; type to filter, Enter opens one.\n" +
-    "`pai NAME` opens a session by name (an exact name wins; part of a name or an id also works).",
-  args: [{ name: "NAME", summary: "Session name, part of it, or its id" }],
+    "`pai NAME` opens a session by name (an exact name wins; part of a name or an id also works).\n" +
+    "`pai ./dir`, `pai ~/dir` or the name of an existing folder starts a new session there, like `pai new`.",
+  args: [{ name: "NAME", summary: "Session name, part of it, or its id (a folder path starts a new session there)" }],
   options: [
     { name: "with", type: "string", value: "SETUP", summary: "Scripting: start with this setup, no questions (see: pai setups)" },
     { ...OPT.dryRun },

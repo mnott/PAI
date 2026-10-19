@@ -2,31 +2,37 @@
 
 # pai new
 
-Start a fresh session in this folder
+Start a new session in a new or existing folder
 
 ```
-pai new [options]
+pai new [DIR] [options]
 ```
 
-Starts Claude Code in the current folder on the chosen provider. Without --provider it uses the active provider (see `pai providers`).
+Creates DIR when it is missing (default: the current folder), registers it as a project and starts Claude Code there. With --with the setup decides who orchestrates and which provider the workers run on, and nothing is asked. Without it the session runs on the active provider (see `pai providers`; --provider overrides). `pai ./dir` or `pai ~/dir` does the same as `pai new`.
 
 Shortcut for `pai session new`.
 
+| Argument | Required | Description |
+|---|---|---|
+| `DIR` | no | Folder to start in; created if missing (default: the current folder) |
+
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--with SETUP` | string | — | Start with this setup, no questions (see: pai setups), e.g. "anthropic + flashnext-iq3 workers" |
 | `--provider NAME` | string | — | Provider to start on (default: the active provider) |
 | `--model ID` | string | — | Model id on that provider (default: its default model) |
 | `--name NAME` | string | — | Session name (default: the folder name) |
 | `--dry-run` | flag | — | Print the exec line instead of executing |
 
 ```sh
+pai new ~/code/app --with "anthropic + flashnext-iq3 workers"
+pai new ~/code/app --with "anthropic only" --name app
 pai new
 pai new --provider glm
-pai new --provider kimi --model k3 --name spike
-pai new --dry-run
+pai new ~/code/spike --provider kimi --model k3 --dry-run
 ```
 
-See also: `pai open`, `pai providers`
+See also: `pai setups`, `pai open`, `pai providers`
 
 ## See also
 
