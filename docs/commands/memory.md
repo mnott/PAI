@@ -115,13 +115,16 @@ Semantic and hybrid search need a vector per text chunk. This fills in the missi
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--batch-size N` | number | 50 | Chunks to compute per batch |
+| `--batch-size N` | number | 25 | Chunks to compute per batch |
+| `--max-minutes N` | number | 60 | Stop cleanly after this many minutes; run again to continue |
+| `--all` | flag | — | No time budget: run until the whole backlog is embedded |
 | `--background` | flag | — | Run at low priority so the computer stays responsive |
 
 ```sh
 pai memory embed
 pai memory embed my-project --batch-size 20
-pai memory embed --background
+pai memory embed --max-minutes 10
+pai memory embed --all
 ```
 
 See also: `pai memory index`, `pai memory backend detect`
@@ -289,6 +292,8 @@ Used by the background service to run an index or embed pass at low priority and
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--sleep MS` | number | 0 | noop pass only: sleep this many milliseconds |
+| `--max-minutes N` | number | — | embed pass only: time budget in minutes |
+| `--max-load N` | number | — | embed pass only: yield above this load average |
 
 ```sh
 pai memory pass noop --sleep 10
