@@ -25,7 +25,7 @@ Run a command in a visible pane and wait for it
 pai pane run [options]
 ```
 
-Opens one pane (split of this window, else a tab, never a new window; an ended PAI pane of the session is reused) that shows the command's live output and its exit code, tees the output to <PAI home>/logs/panes/<id>.log, and blocks until the command ends. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. SIGTERM/SIGINT/SIGHUP to this command kill the command's whole process group. Every background shell command of a session goes through here: the Bash guard denies a bare run_in_background command. Several words are exec'd as given; a single word is run by sh -c.
+Opens one pane (split of the starting session's tab, never a window or another tab; an ended PAI pane of the session is reused) that shows the command's live output and its exit code, tees the output to <PAI home>/logs/panes/<id>.log, and blocks until the command ends. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. SIGTERM/SIGINT/SIGHUP to this command kill the command's whole process group. Every background shell command of a session goes through here: the Bash guard denies a bare run_in_background command. Several words are exec'd as given; a single word is run by sh -c.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

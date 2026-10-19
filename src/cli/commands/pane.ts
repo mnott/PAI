@@ -24,7 +24,7 @@ export function runCommandInPane(command: string[], label?: string, cwd?: string
     openPane: async (id) => {
       if (inVisiblePane()) return "already in a pane; none opened";
       const term = (await resolveHostSession()).term;
-      return openVerifiedPane(logDir, workers, id, term, process.env, realPaneOps, { noWindow: true });
+      return openVerifiedPane(logDir, workers, id, term, process.env, realPaneOps);
     },
   });
 }

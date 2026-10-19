@@ -28,8 +28,7 @@ import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
 import { followPaneRun, isPaneRunId, loadPaneRunStatus } from "../../workers/pane-run.js";
-import { PlanFollower } from "../../workers/plan-follow.js";
-import { followPlanLog, planLogTail } from "../../workers/plan-status.js";
+import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -406,8 +405,7 @@ const followCommand: CommandDef = {
       if (target?.startsWith("plan-")) {
         if (!flag(ctx, "live") && (process.env.PAI_WORKER === "1" || !process.stdout.isTTY)) out(planLogTail(logDir(), target, num(ctx.opts.tail) ?? 40));
         else {
-          const follower = new PlanFollower(logDir(), target);
-          await followPlanLog(logDir(), target, (t) => void process.stdout.write(t), () => false, 500, () => follower.poll());
+          await followPlanLog(logDir(), target, (t) => void process.stdout.write(t), () => planRunEnded(logDir(), target));
         }
         return;
       }

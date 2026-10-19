@@ -28,9 +28,9 @@ export interface PlanRunStatus {
   parts: { merged: number; total: number };
   /** Ids of the parts whose worker runs now. */
   running: string[];
-  /** Worker id per part id, for every worker the run started: what the plan pane follows. */
+  /** Worker id per part id, for every worker the run started: the run's workers (each in its own pane). */
   workers?: Record<string, string>;
-  /** True once the run's one pane is open: its workers open none of their own. */
+  /** True once the runner's own pane is open (its workers each open theirs). */
   hasPane?: boolean;
   /** Tests the plan gate counted last time: the denominator of "tests 214/2600". */
   testTotal?: number;
@@ -65,19 +65,6 @@ export function loadPlanStatuses(logDir: string): PlanRunStatus[] {
     .sort()
     .map((n) => loadPlanStatus(logDir, n.slice(0, -".planstatus".length)))
     .filter((s): s is PlanRunStatus => !!s);
-}
-
-/**
- * Is PAI_PLAN_PANE real? It names a plan run whose runner is alive, owns a pane, and is running
- * the part this worker was started for (PAI_PLAN_PART) or already lists this worker id. A variable
- * set by anything else (a shell, a plan worker's own child) is not accepted.
- */
-export function planPaneAccepted(logDir: string, planId: string | undefined, part: string | undefined, wid: string): boolean {
-  if (!planId || !/^plan-[A-Za-z0-9._-]+$/.test(planId)) return false;
-  const s = loadPlanStatus(logDir, planId);
-  if (!s || s.state !== "running" || !s.hasPane || !pidAlive(s.pid)) return false;
-  if (Object.values(s.workers ?? {}).includes(wid)) return true;
-  return !!part && s.running.includes(part);
 }
 
 export function fmtElapsed(ms: number): string {
@@ -193,7 +180,7 @@ export class PlanTracker {
     this.save();
   }
 
-  /** True once the run's one pane is open: its workers open none of their own. */
+  /** True once the runner's own pane is open (its workers each open theirs). */
   get hasPane(): boolean {
     return this.status.hasPane === true;
   }
@@ -236,10 +223,17 @@ export function planLogTail(logDir: string, id: string, n = 40): string {
   }
 }
 
+/** True once the plan's runner has ended, been killed or vanished: its status is not "running" any more. */
+export function planRunEnded(logDir: string, id: string): boolean {
+  const s = loadPlanStatus(logDir, id);
+  return !s || s.state !== "running";
+}
+
 /** Stream the live log into `write` until `stop()` is true; the file's whole content first, then what is appended. */
-export async function followPlanLog(logDir: string, id: string, write: (s: string) => void, stop: () => boolean = () => false, pollMs = 500, more: () => string = () => ""): Promise<void> {
+export async function followPlanLog(logDir: string, id: string, write: (s: string) => void, stop: () => boolean = () => false, pollMs = 500): Promise<void> {
   let at = 0;
   for (;;) {
+    const done = stop(); // asked before the read, so the last lines are still shown
     try {
       const text = readFileSync(planLiveFile(logDir, id), "utf8");
       if (text.length > at) {
@@ -249,13 +243,7 @@ export async function followPlanLog(logDir: string, id: string, write: (s: strin
     } catch {
       /* not written yet */
     }
-    try {
-      const extra = more();
-      if (extra) write(extra);
-    } catch {
-      /* a transcript that cannot be read is skipped */
-    }
-    if (stop()) return;
+    if (done) return;
     await new Promise((r) => setTimeout(r, pollMs));
   }
 }

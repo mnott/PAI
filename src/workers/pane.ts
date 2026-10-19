@@ -100,8 +100,8 @@ const RESTORE_ACTIVE = `try {
     } catch (e) {}`;
 
 // Smallest height a follow pane may be split down to (the visible-pane gate
-// refuses anything under 8 rows).
-const MIN_ROWS = 8;
+// refuses anything under 6 rows).
+const MIN_ROWS = 6;
 
 // Equalise the follow panes' heights. iTerm exposes no pane position, so panes
 // are grouped by column count: panes stacked in one column share it, and a
@@ -208,30 +208,6 @@ function run(argv) {
     f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
     ${RESTORE_ACTIVE}
     return "opened";
-}`;
-
-// Fallback placements when a split would be too small: the follow command in a
-// new tab of the host's window, or in a new window. argv: host session id,
-// follow command, profile name ("" = default). Return the new session id.
-export const NEW_PLACE_SCRIPT = `${FIND_SESSION}
-function run(argv) {
-    var kind = argv[0], followCmd = argv[2], profileName = argv[3];
-    var app = Application("iTerm2");
-    if (!app.running()) return "notrunning";
-    var f = findSession(app, argv[1]);
-    if (!f) return "notfound";
-    ${CAPTURE_ACTIVE}
-    var opts = { command: followCmd };
-    var w = f.w;
-    if (kind === "tab") {
-        if (profileName === "") w.createTabWithDefaultProfile(opts);
-        else w.createTabWithProfile(profileName, opts);
-    } else {
-        w = profileName === "" ? app.createWindowWithDefaultProfile(opts) : app.createWindowWithProfile(profileName, opts);
-    }
-    var id = w.currentTab().currentSession().id();
-    if (kind === "tab") { ${RESTORE_ACTIVE} }
-    return id;
 }`;
 
 // ---------------------------------------------------------------------------
@@ -1315,8 +1291,8 @@ async function hostTabSelected(hostUid: string): Promise<boolean> {
   }
 }
 
-/** Where a follow pane sits: split of the host's tab, a new tab of its window, or a new window. */
-export type PanePlacement = "split" | "tab" | "window";
+/** Where a follow pane sits: always a split of the host's tab. */
+export type PanePlacement = "split";
 
 const placements = new Map<string, PanePlacement>();
 
@@ -1325,7 +1301,7 @@ export function panePlacement(wid: string): PanePlacement | undefined {
   return placements.get(wid);
 }
 
-const MIN_PANE_ROWS = 8;
+const MIN_PANE_ROWS = 6;
 const MIN_PANE_COLS = 40;
 
 /** True while a `worker follow <wid>` process runs on that tty. */
@@ -1384,11 +1360,8 @@ export async function verifyPane(
 export interface PaneSeam {
   split?: typeof openPaneForWorker;
   verify?: typeof verifyPane;
-  place?: typeof openPlaced;
   hostSelected?: (hostUid: string) => Promise<boolean>;
   daemon?: () => boolean;
-  /** Never open a new window (plan panes): a tab of the host window is the widest fallback. */
-  noWindow?: boolean;
 }
 
 /**
@@ -1408,7 +1381,6 @@ export async function openVerifiedPane(
 ): Promise<string> {
   const split = seam.split ?? openPaneForWorker;
   const verify = seam.verify ?? verifyPane;
-  const place = seam.place ?? openPlaced;
   if (env.TMUX) {
     const r = await openPaneForWorker(logDir, config, wid, term);
     if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
@@ -1425,16 +1397,16 @@ export async function openVerifiedPane(
   if (envUid && envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
   }
-  // a split in a background tab is invisible: use a new window instead
-  if (!(await (seam.hostSelected ?? hostTabSelected)(hostUid))) {
-    const kind = seam.noWindow ? "tab" : "window";
-    const where = await place(logDir, config, wid, term, hostUid, kind);
-    process.stderr.write(`[pai worker] pane: new ${kind} (host tab not selected)\n`);
-    placements.set(wid, kind);
-    return where;
-  }
-  const r = await split(logDir, config, wid, term);
+  // Every pane is a split of the host's own tab: never a window, never another tab. A host tab that is not
+  // the selected one still gets its split (the operator finds it there); only the visibility proof is skipped.
+  const hostShown = await (seam.hostSelected ?? hostTabSelected)(hostUid);
+  let r = await split(logDir, config, wid, term);
   if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
+  if (!hostShown) {
+    placements.set(wid, "split");
+    process.stderr.write("[pai worker] pane: split in the host tab (not the selected one)\n");
+    return `host tab not selected (iTerm session ${r.session})`;
+  }
   try {
     const where = await verify(hostUid, r.session, wid);
     placements.set(wid, "split");
@@ -1442,51 +1414,19 @@ export async function openVerifiedPane(
   } catch (e) {
     await closePaneForWorker(logDir, wid, ops).catch(() => false);
     if (!/pane too small/.test((e as Error).message)) throw e;
-    // no room in this window is not "no visible pane possible": try a new tab, then a new window
+    // crowded tab: ended panes of the scope were closed before the split, so their room is free again;
+    // rebalance the live panes and split once more. Never a window, never a tab.
     await ops.rebalanceIterm?.(loadRegistry(logDir).map((x) => x.session)).catch(() => undefined);
-    // ended panes of the scope were closed before the split, so their room is already free again
-    for (const kind of seam.noWindow ? (["tab"] as const) : (["tab", "window"] as const)) {
-      try {
-        const where = await place(logDir, config, wid, term, hostUid, kind);
-        process.stderr.write(`[pai worker] pane: opened in a new ${kind} (${kind === "tab" ? "window too crowded" : "no room for a tab"})\n`);
-        placements.set(wid, kind);
-        return where;
-      } catch {
-        // next placement; the original too-small error is what the gate reports
-      }
+    r = await split(logDir, config, wid, term);
+    if (!r.session) throw e;
+    try {
+      const where = await verify(hostUid, r.session, wid);
+      placements.set(wid, "split");
+      return `${where} (iTerm session ${r.session})`;
+    } catch (e2) {
+      await closePaneForWorker(logDir, wid, ops).catch(() => false);
+      throw e2;
     }
-    throw e;
-  }
-}
-
-/** Open the follow pane in a new tab / window, register it and verify it, closing it again on failure. */
-export async function openPlaced(
-  logDir: string,
-  config: WorkersConfig,
-  wid: string,
-  term: string,
-  hostUid: string,
-  kind: "tab" | "window"
-): Promise<string> {
-  // a tab/window pane replaces the scope's ended panes exactly like a split does
-  await closeEndedInScope(logDir, scopeKey(term));
-  const profile = await followProfile(config.pane.fontSize);
-  const p = await osascript(NEW_PLACE_SCRIPT, [kind, hostUid, followCommand(wid), profile]);
-  const id = p.stdout.trim();
-  if (!id || id === "notfound" || id === "notrunning") {
-    throw new Error(`pane verification failed: new ${kind}: ${(p.stderr || id || "no output").slice(0, 200)}`);
-  }
-  saveEntry(logDir, {
-    session: id,
-    worker: wid,
-    opened: new Date().toISOString().replace("T", " ").slice(0, 19),
-    scope: scopeKey(term),
-  });
-  try {
-    return `${await verifyPane(hostUid, id, wid, osascript, followRunsOn, 25, 300, kind)} (iTerm session ${id}, new ${kind})`;
-  } catch (e) {
-    await closePaneForWorker(logDir, wid).catch(() => false);
-    throw e;
   }
 }
 

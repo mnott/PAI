@@ -56,7 +56,7 @@ Everything a session starts that does not run in its own pane runs in a pane. A 
 pai pane run --label tests -- npx vitest run
 ```
 
-- **Placement** is a worker pane's: a split of this window, else a tab, never a new window or a stolen focus; an ended PAI pane of the session is reused first.
+- **Placement** is a worker pane's: a split of the starting session's own tab, never a new window or tab, never a stolen focus; an ended PAI pane of the session is reused first.
 - **The pane** shows the command's live output, then its exit code, and leaves ten seconds later. The output is also written to `<PAI home>/logs/panes/<id>.log`.
 - **The caller blocks** until the command ends, prints the last 40 lines and exits with the command's exit code, so the harness's background-task notification still arrives. SIGTERM, SIGINT or SIGHUP to the caller (TaskStop) kill the command's whole process group.
 - **Listed** in `pai worker ps` and the cockpit worker panel under "panes" (label, cwd, running time, log path) while it runs.
