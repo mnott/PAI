@@ -27,6 +27,7 @@ import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
 import { emptyLoopState, loopDenyReason, stepLoopGuard, type LoopState } from "../lib/loop-guard.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
+import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -110,6 +111,11 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
       });
     }
     if (!r.deny) return null;
+    // Claude Code ignores "continue": false from a headless PreToolUse hook: end the worker ourselves
+    if (r.stop)
+      requestLoopStop(logDir, id, `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
+        claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : undefined,
+      });
     return {
       reason: loopDenyReason(!!r.testRun, input.tool_name, r.count),
       stopReason: r.stop

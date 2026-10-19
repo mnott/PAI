@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
 import { pidAlive } from "./status.js";
 
-export type EndReason = "exit" | "deadline" | "pai-worker-kill" | "parent-gone" | "external-signal";
+export type EndReason = "exit" | "deadline" | "loop-stopped" | "pai-worker-kill" | "parent-gone" | "external-signal";
 
 export interface EndInfo {
   reason: EndReason;
@@ -96,12 +96,14 @@ export function decideEndReason(a: {
   id: string;
   signal?: string;
   timedOut?: boolean;
+  loopStopped?: boolean;
   parentPid?: number;
   parentComm?: string;
   parentBackground?: boolean;
   isAlive?: (pid: number) => boolean;
 }): EndInfo {
   if (a.timedOut) return { reason: "deadline" };
+  if (a.loopStopped) return { reason: "loop-stopped" };
   if (!a.signal) return { reason: "exit" };
   const marker = readMarker(a.logDir, a.id);
   if (marker) return { reason: "pai-worker-kill", by: marker.by, note: `${a.signal} requested by pid ${marker.pid}` };

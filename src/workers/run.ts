@@ -68,6 +68,7 @@ import { detectCurrentModel } from "./launch.js";
 export { buildRunEnv } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { decideEndReason, endFields, parentInfo, type EndInfo } from "./endreason.js";
+import { takeLoopStop } from "./loop-stop.js";
 import {
   ensureNoMcpConfig,
   eventsPath,
@@ -1038,8 +1039,15 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     // partial state = the salvage summary (r=~: stopped, not failed outright)
     report = { ...(report ?? {}), result: "~", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
   }
+  const loopStop = takeLoopStop(logDir, wid);
+  if (loopStop) {
+    const reason = `loop-stopped: ${loopStop.reason}`;
+    status.loopStopped = true;
+    status.last = shortText(reason, 90);
+    report = { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+  }
   const orphanReason = checkOrphanedChildren(logDir, wid);
-  const succeeded = ok && !orphanReason && !f.timedOut;
+  const succeeded = ok && !orphanReason && !f.timedOut && !loopStop;
   status.state = succeeded ? "done" : "failed";
   status.rc = rc;
   status.secs = f.secs;
@@ -1048,7 +1056,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), notes: orphanReason, result: "-" };
     appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
   }
-  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined });
+  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
   status.endReason = end.reason;
   // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
   status.claimsContinue = report?.result === "~";
