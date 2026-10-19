@@ -9,7 +9,7 @@
  *              Retry-After (else doubling, capped) and the last good reading is
  *              served with its age; advisor-mode.json only without a reading
  *   others     the provider's workers.yaml `usage` block (jq expressions)
- *   local      up/down (TCP), RSS of the listener, tokens/s from accounting
+ *   local      up/down (TCP), RSS of the listener's process tree, tokens/s from accounting
  *   rest       counted requests vs a configured limit, labelled "estimated"
  */
 
@@ -21,6 +21,7 @@ import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
+import { processTreeRssMb } from "../workers/model-inventory.js";
 import type { UsageRow } from "./usage.js";
 import { writeRate, percentile } from "./speed.js";
 
@@ -483,8 +484,12 @@ export async function localLimits(
   let prefixCache: PrefixCacheStats | undefined;
   if (up) {
     const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
-    const rss = pid ? Number(await sh("ps", ["-o", "rss=", "-p", pid])) : NaN;
-    if (Number.isFinite(rss) && rss > 0) rssMb = Math.round(rss / 1024);
+    // the listener's own RSS is a thin front (Strata's python server ~30 MB);
+    // the engine child holds the model (~50 GB) — sum the whole tree
+    if (pid) {
+      const tree = await processTreeRssMb(pid, (c, a) => sh(c, a).then((s) => s || null));
+      if (tree > 0) rssMb = tree;
+    }
     if (background) background(prefixCacheStats(u, p));
     else prefixCache = await prefixCacheStats(u, p);
   }
