@@ -84,3 +84,14 @@ export function takeLoopStop(logDir: string, id: string): LoopStopMarker | null 
     }
   }
 }
+
+/** The marker without consuming it. */
+export function peekLoopStop(logDir: string, id: string): LoopStopMarker | null {
+  const p = loopStopMarkerPath(logDir, id);
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) as LoopStopMarker;
+  } catch {
+    return { ts: "", reason: "loop guard" };
+  }
+}
