@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { parseWorkerReport } from "./report.js";
 import { eventsPath } from "./paths.js";
 import { loadStatuses } from "./status.js";
+import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
 import { appendRunLog, tail, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
@@ -91,11 +92,33 @@ export async function realCommitsAhead(repo: string, base: string, id: string): 
   return n;
 }
 
+/** Workers this process launched and is waiting on. */
+const launched = new Set<{ label: string; t0: number }>();
+
+/** Stop every worker this process launched and still waits on, the way `pai worker kill` does (kill-tree). */
+export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree = killTree): Promise<string[]> {
+  const stopped: string[] = [];
+  for (const l of launched) {
+    for (const s of loadStatuses(logDir)) {
+      if (s.label !== l.label || s.state !== "running" || Date.parse(s.started) < l.t0) continue;
+      try {
+        await kill(logDir, s.id);
+        stopped.push(s.id);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  return stopped;
+}
+
 /** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
 export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
   const before = await checkoutState(repo);
-  const r = await capture(pai(), workerArgs(req, specFile, repo), repo);
+  const mark = { label: req.label, t0 };
+  launched.add(mark);
+  const r = await capture(pai(), workerArgs(req, specFile, repo), repo).finally(() => launched.delete(mark));
   const st = loadStatuses(logDir)
     .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
@@ -140,6 +163,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
       return launchWorker(req, specFile, plan.repo, logDir);
     },
     merge: (id: string, gate: string) => mergeBranch(plan.repo, id, gate),
+    stopActive: async () => void (await stopLaunchedWorkers(logDir)),
     async unitCheck(cmd: string) {
       const r = await capture(cmd, [], plan.repo, true);
       return { ok: r.code === 0, output: r.out + r.err };

@@ -8,8 +8,8 @@
  * Everything that touches workers, git or the clock goes through RunnerDeps.
  */
 
-import { withRunLock } from "./run-lock.js";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { withRunLock, type LockDeps } from "./run-lock.js";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { composeSpec, filesOverlap, type Plan, type PlanPart } from "./plan.js";
 
 export interface WorkerOutcome {
@@ -57,6 +57,8 @@ export interface RunnerDeps {
   unitCheck(cmd: string): Promise<{ ok: boolean; output: string }>;
   now(): number;
   log(entry: RunLogEntry): void;
+  /** Stop the workers this runner has started (SIGTERM/SIGINT path); resolves once they are told to end. */
+  stopActive?(): Promise<void>;
 }
 
 export interface RunLogEntry {
@@ -90,6 +92,9 @@ export interface RunSummary {
   escalations: number;
   /** The refusal that stopped scheduling (repeated identically), printed once. */
   spawnRefusal?: string;
+  /** The run ended on a stop request (marker or signal); `interrupted` lists parts that were in flight. */
+  stopped?: boolean;
+  interrupted?: string[];
 }
 
 export interface RunOptions {
@@ -101,6 +106,16 @@ export interface RunOptions {
   unitsChecked?: ReadonlySet<string>;
   /** Lock file held for the duration of the run (one run per plan). */
   lockPath?: string;
+  /** Stop marker (`pai plan stop`): checked before each new part; the run ends "stopped" once in-flight parts finish. */
+  stopPath?: string;
+  /** Lock/signal hooks, replaced by tests. */
+  lockDeps?: LockDeps;
+}
+
+export const planStopPath = (planPath: string): string => `${planPath}.stop`;
+
+export function requestPlanStop(planPath: string): void {
+  writeFileSync(planStopPath(planPath), new Date().toISOString(), "utf8");
 }
 
 const TAIL_LINES = 40;
@@ -127,10 +142,26 @@ export function pickStartable(
 }
 
 export function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise<RunSummary> {
-  return withRunLock(opts.lockPath, `plan ${plan.job}`, () => runPlanLocked(plan, opts, deps));
+  const running = new Map<string, PlanPart>();
+  let aborted = false;
+  // once a signal arrived the killed workers' failures must not be logged, retried or merged: the parts restart on the next run
+  const guarded: RunnerDeps = {
+    ...deps,
+    log: (e) => {
+      if (!aborted) deps.log(e);
+    },
+    startWorker: (req) => (aborted ? new Promise<WorkerOutcome>(() => undefined) : deps.startWorker(req).then((o) => (aborted ? new Promise<WorkerOutcome>(() => undefined) : o))),
+  };
+  const onSignal = async (): Promise<void> => {
+    aborted = true;
+    const interrupted = [...running.keys()];
+    await deps.stopActive?.();
+    deps.log({ event: "run-end", ok: false, status: "stopped", note: `interrupted=${interrupted.join(",") || "none"}` });
+  };
+  return withRunLock(opts.lockPath, `plan ${plan.job}`, () => runPlanLocked(plan, opts, guarded, running), { ...opts.lockDeps, onSignal });
 }
 
-async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise<RunSummary> {
+async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, active: Map<string, PlanPart>): Promise<RunSummary> {
   const parts = plan.units.flatMap((u) => u.parts);
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);
@@ -140,6 +171,15 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps): Pr
   const refusals = new Map<string, number>();
   let haltedBy: string | undefined;
   const running = new Map<string, { part: PlanPart; done: Promise<void> }>();
+  let stopping = false;
+  const stopRequested = (): boolean => !!opts.stopPath && existsSync(opts.stopPath);
+  if (opts.stopPath) {
+    try {
+      unlinkSync(opts.stopPath); // a marker left from before this run is stale
+    } catch {
+      /* none */
+    }
+  }
   // merges and unit checks touch the checkout: one at a time
   let lock: Promise<unknown> = Promise.resolve();
   const exclusive = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -222,13 +262,25 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps): Pr
   for (const u of plan.units) await checkUnit(u.id);
   for (;;) {
     const busy = [...running.values()].map((r) => r.part);
-    for (const p of haltedBy ? [] : pickStartable(parts.filter((p) => !p.dependsOn.some((d) => failedParts.has(d))), state, busy, opts.parallel - running.size)) {
+    if (!stopping && stopRequested()) stopping = true;
+    for (const p of haltedBy || stopping ? [] : pickStartable(parts.filter((p) => !p.dependsOn.some((d) => failedParts.has(d))), state, busy, opts.parallel - running.size)) {
       state.set(p.id, "running");
-      const done = attemptPart(p).finally(() => running.delete(p.id));
+      const done = attemptPart(p).finally(() => {
+        running.delete(p.id);
+        active.delete(p.id);
+      });
       running.set(p.id, { part: p, done });
+      active.set(p.id, p);
     }
     if (running.size === 0) break;
     await Promise.race([...running.values()].map((r) => r.done));
+  }
+  if (stopping && opts.stopPath) {
+    try {
+      unlinkSync(opts.stopPath);
+    } catch {
+      /* already gone */
+    }
   }
   const waiting = parts.filter((p) => state.get(p.id) === "waiting").map((p) => p.id);
   const summary: RunSummary = {
@@ -236,17 +288,23 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps): Pr
     needsDecision: parts.filter((p) => state.get(p.id) === "needs-decision").map((p) => p.id),
     blocked: waiting,
     unitFailures,
-    stuck: !haltedBy && waiting.length > 0,
+    stuck: !haltedBy && !stopping && waiting.length > 0,
     blockedOn: [...parts.filter((p) => state.get(p.id) === "needs-decision").map((p) => p.id), ...unitFailures.map((u) => `unit ${u}`)],
     escalations,
     ...(haltedBy ? { spawnRefusal: haltedBy } : {}),
+    ...(stopping ? { stopped: true } : {}),
   };
+  if (stopping) {
+    deps.log({ event: "run-end", ok: false, status: "stopped", note: `stop requested; merged=${summary.merged.length} waiting=${waiting.length}` });
+    return summary;
+  }
   deps.log({ event: "run-end", ok: !summary.needsDecision.length && !waiting.length && !unitFailures.length, ...(summary.stuck ? { status: "blocked" } : {}), note: `merged=${summary.merged.length} needs-decision=${summary.needsDecision.length} blocked=${waiting.length}` });
   return summary;
 }
 
-/** Exit code of `pai plan run`: 0 all merged, 1 failures with everything else done, 3 blocked (parts left that cannot start). */
+/** Exit code of `pai plan run`: 0 all merged, 4 stopped by `pai plan stop`, 1 failures with everything else done, 3 blocked (parts left that cannot start). */
 export function runExitCode(s: RunSummary): number {
+  if (s.stopped) return 4;
   if (s.stuck) return 3;
   return s.needsDecision.length || s.blocked.length || s.unitFailures.length ? 1 : 0;
 }

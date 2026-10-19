@@ -8,7 +8,7 @@ import { appendRunLog } from "../../workers/plan-runner.js";
 import { planLockPath } from "../../workers/run-lock.js";
 import { runLogPath } from "../../workers/plan.js";
 import {
-  planAmend, planRun, planSave, planStatusText, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
+  planAmend, planRun, planSave, planStatusText, planStop, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
   type DelegationDeps, type PlanInput,
 } from "./delegation.js";
 
@@ -104,6 +104,19 @@ describe("plan_run / plan_status / plan_amend", () => {
     expect(r.isError).toBe(true);
     expect(text(r)).toContain("already in progress since");
     expect(detach).not.toHaveBeenCalled();
+  });
+  it("plan_stop writes the marker for a live run and plan_status reports stopping", async () => {
+    await planSave({ project: "p", name: "job6", plan }, deps);
+    const path = join(repo, ".pai/plans/job6/plan.yaml");
+    expect((await planStop({ project: "p", name: "job6" }, deps)).isError).toBe(true);
+    appendRunLog(runLogPath(path), { event: "run-start" });
+    appendRunLog(runLogPath(path), { event: "part-start", part: "a" });
+    writeFileSync(planLockPath(path), JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+    expect(text(await planStatusText({ project: "p", name: "job6" }, deps))).not.toContain("Stopping after");
+    const r = await planStop({ project: "p", name: "job6" }, deps);
+    expect(r.isError).toBeUndefined();
+    expect(existsSync(`${path}.stop`)).toBe(true);
+    expect(text(await planStatusText({ project: "p", name: "job6" }, deps))).toContain("Stopping after a.");
   });
   it("refuses a dirty checkout", async () => {
     await planSave({ project: "p", name: "job3", plan }, deps);

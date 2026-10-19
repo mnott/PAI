@@ -17,7 +17,7 @@ import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths } from "../../workers/plan-deps.js";
-import { planStatus, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
+import { planStatus, planStopPath, requestPlanStop, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
 import { again, loadSettings, move, queueStatePath, QueueStore, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
@@ -248,6 +248,7 @@ export async function planStatusText(args: { project: string; name: string }, de
     const last = log[log.length - 1];
     const lines = [
       `Plan "${args.name}": ${st.done.length} of ${total} parts done.`,
+      ...(held && existsSync(planStopPath(path)) ? [`Stopping after ${st.running.join(", ") || "the current part"}.`] : []),
       ...(held ? [`Running ${sinceText(held)}${last ? `; last event: ${last.event}${last.part ? ` ${last.part}` : last.unit ? ` ${last.unit}` : ""}` : ""}.`] : []),
       `Done: ${idList(st.done)}. Running: ${idList(st.running)}. Waiting: ${idList(st.waiting)}. Needs a decision: ${idList(st.needsDecision)}.`,
       `Wall time ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s, ${escalations} escalations.`,
@@ -257,6 +258,24 @@ export async function planStatusText(args: { project: string; name: string }, de
       lines.push(`Part ${id} needs a decision${note ? `; the failure ended with:\n${note}` : ""}\nClarify it with plan_amend, then plan_run again.`);
     }
     return text(lines.join("\n"));
+  } catch (e) {
+    return error(e);
+  }
+}
+
+/** Ask a running plan to stop once its in-flight parts are done. */
+export async function planStop(args: { project: string; name: string }, deps: DelegationDeps): Promise<WorkerToolResult> {
+  try {
+    const repo = await deps.resolveProject(args.project);
+    let loaded: { path: string; plan: Plan };
+    try {
+      loaded = loadNamedPlan(repo, args.name);
+    } catch (e) {
+      return fail(problemsText(e));
+    }
+    if (!readRunLock(planLockPath(loaded.path))) return fail(`No run of plan "${args.name}" is in progress.`);
+    requestPlanStop(loaded.path);
+    return text(`Plan "${args.name}" will stop after its in-flight parts finish; follow it with plan_status. plan_run resumes it later.`);
   } catch (e) {
     return error(e);
   }

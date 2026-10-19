@@ -3,7 +3,7 @@
  * this file declares names, flags and help.
  */
 
-import { planLockPath } from "../../workers/run-lock.js";
+import { planLockPath, readRunLock } from "../../workers/run-lock.js";
 import { existsSync } from "node:fs";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
@@ -14,7 +14,7 @@ import { PlanReporter } from "../../workers/run-events.js";
 import { finishDetached, reportOrigin, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { resolve } from "node:path";
 import type { RunLogEntry } from "../../workers/plan-runner.js";
-import { blockedMessage, planStatus, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
+import { blockedMessage, planStatus, planStopPath, requestPlanStop, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
 
@@ -65,7 +65,7 @@ const runCmd: CommandDef = {
     if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai plan run PLAN.yaml --escalate sonnet");
     const log = runLogPath(path);
     const { merged, unitsChecked } = resumeState(readRunLog(log));
-    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", merged, unitsChecked, lockPath: planLockPath(resolve(path)) };
+    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;
@@ -91,6 +91,23 @@ const runCmd: CommandDef = {
     if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
     if (s.stuck) out(blockedMessage(s, path));
     return runExitCode(s);
+  },
+};
+
+const stopCmd: CommandDef = {
+  name: "stop",
+  summary: "Ask a running plan to stop after its in-flight parts",
+  description: "Writes the stop marker next to the plan. The runner starts no new part once it sees it, lets the running parts finish and merge, and ends with run-end status stopped (exit 4). Merged parts are skipped by the next `pai plan run`. Refused when no run holds the plan.",
+  args: planArg,
+  examples: ["pai plan stop plan.yaml"],
+  seeAlso: ["pai plan run", "pai plan status"],
+  run: (ctx: RunContext) => {
+    const path = resolve(String(ctx.args.PLAN));
+    load(path);
+    if (!readRunLock(planLockPath(path))) throw new CliError(`no run of ${path} is in progress`, "pai plan run PLAN.yaml");
+    requestPlanStop(path);
+    out(`stop requested: the run ends after its in-flight parts`);
+    return 0;
   },
 };
 
@@ -130,5 +147,5 @@ export const planCommand: CommandDef = {
   summary: "Run a planned job on local workers without a model in the loop",
   description: "The scripted runner: a YAML plan of units and parts is executed by a loop that starts local workers, merges them with a gate and retries or flags failures. See docs/plan-runner.md.",
   examples: ["pai plan validate plan.yaml", "pai plan run plan.yaml --dry-run", "pai plan status plan.yaml"],
-  subcommands: [runCmd, validateCmd, statusCmd],
+  subcommands: [runCmd, validateCmd, statusCmd, stopCmd],
 };

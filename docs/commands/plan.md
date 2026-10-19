@@ -87,6 +87,26 @@ pai plan status plan.yaml
 
 See also: `pai plan run`
 
+### pai plan stop
+
+Ask a running plan to stop after its in-flight parts
+
+```
+pai plan stop PLAN
+```
+
+Writes the stop marker next to the plan. The runner starts no new part once it sees it, lets the running parts finish and merge, and ends with run-end status stopped (exit 4). Merged parts are skipped by the next `pai plan run`. Refused when no run holds the plan.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PLAN` | yes | Plan file (YAML) |
+
+```sh
+pai plan stop plan.yaml
+```
+
+See also: `pai plan run`, `pai plan status`
+
 ## Subcommands
 
 | Command | Description |
@@ -94,6 +114,7 @@ See also: `pai plan run`
 | `pai plan run` | Run a plan: local workers in parallel, merged with the plan's gate |
 | `pai plan validate` | Check a plan file and list its parts |
 | `pai plan status` | Summarise a plan's run log: done, running, waiting, needs-decision |
+| `pai plan stop` | Ask a running plan to stop after its in-flight parts |
 
 ## See also
 

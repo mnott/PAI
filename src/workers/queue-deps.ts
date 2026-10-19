@@ -6,7 +6,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capture, launchWorker, mergeBranch, realCommitsAhead } from "./plan-deps.js";
+import { capture, launchWorker, mergeBranch, realCommitsAhead, stopLaunchedWorkers } from "./plan-deps.js";
 import { parseNumstat } from "./queue.js";
 import type { QueueDeps } from "./queue-runner.js";
 
@@ -30,6 +30,7 @@ export function realQueueDeps(logDir: string, repo: string): QueueDeps {
       return { ok: r.code === 0, output: r.out + r.err };
     },
     merge: mergeBranch,
+    stopActive: async () => void (await stopLaunchedWorkers(logDir)),
   };
 }
 
