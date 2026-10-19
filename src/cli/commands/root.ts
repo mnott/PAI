@@ -117,7 +117,9 @@ export function pickerOpts(rows: SessionRow[], st: Style, initialFilter?: string
     refresh,
     searchText: (r: SessionRow) => `${r.name} ${r.project} ${r.provider} ${r.model} ${r.message} ${r.id}`,
     initialFilter,
-    footer: "↑↓ move · type to filter · Enter open · Esc quit",
+    groupKey: (r: SessionRow) => (r.named ? r.name.toLowerCase() : undefined),
+    recency: (r: SessionRow) => r.lastActiveMs,
+    footer: "↑↓ move · →/← older · type to filter · Enter open · Esc quit",
     detail: (r: SessionRow) => (r.health.state === "ok" ? "" : healthText(st, r.health)),
     empty: "no session matches — Backspace to widen, or Esc and run: pai new",
   };

@@ -15,11 +15,14 @@ export interface Key {
   name?: string;
   ctrl?: boolean;
   sequence?: string;
+  shift?: boolean;
 }
 
 export interface PickerState {
   filter: string;
   cursor: number;
+  /** Group keys whose older transcripts are listed under the group's newest row. */
+  expanded?: string[];
 }
 
 export type PickerAction = "none" | "select" | "cancel" | "cd";
@@ -33,6 +36,8 @@ export function pickerKey(state: PickerState, str: string | undefined, key: Key,
   if (key.name === "backspace") return { state: { filter: state.filter.slice(0, -1), cursor: 0 }, action: "none" };
   if (key.ctrl && key.name === "u") return { state: { filter: "", cursor: 0 }, action: "none" };
   if (key.ctrl && key.name === "g") return { state, action: "cd" };
+  // "/" opens the filter; it is never part of the query
+  if (str === "/" && !state.filter) return { state, action: "none" };
   if (str && !key.ctrl && str >= " " && str !== "\u007f") return { state: { filter: state.filter + str, cursor: 0 }, action: "none" };
   return { state, action: "none" };
 }
@@ -48,6 +53,10 @@ export interface PickerOpts<T> {
   footer: string;
   /** Shown under the table for the highlighted row (e.g. a status reason). */
   detail?(item: T): string;
+  /** Rows with the same key (undefined = never grouped) collapse into one: the newest, with a count of the rest. */
+  groupKey?(item: T): string | undefined;
+  /** Larger = newer; picks the row a group shows (default: first in `items`). */
+  recency?(item: T): number;
   maxRows?: number;
   empty?: string;
   /** Called when the user presses Ctrl-G on a row */
@@ -89,9 +98,63 @@ export function filterItems<T>(items: T[], filter: string, text: (i: T) => strin
   return words.length ? items.filter((i) => words.every((w) => text(i).toLowerCase().includes(w))) : items;
 }
 
+export interface PickerRow<T> {
+  item: T;
+  /** Group key, when this row belongs to a group of more than one transcript. */
+  group?: string;
+  /** Older transcripts hidden behind this (newest) row; 0 when expanded or alone. */
+  older: number;
+  /** An expanded older transcript, shown indented under its group's newest row. */
+  child: boolean;
+}
+
+/** Pure: the rows on screen — filtered, then one row per group key unless expanded. */
+export function displayRows<T>(opts: PickerOpts<T>, state: PickerState): PickerRow<T>[] {
+  const matched = filterItems(opts.items, state.filter, opts.searchText);
+  if (!opts.groupKey) return matched.map((item) => ({ item, older: 0, child: false }));
+  const groups = new Map<string, T[]>();
+  for (const it of matched) {
+    const k = opts.groupKey(it);
+    if (k !== undefined) groups.set(k, [...(groups.get(k) ?? []), it]);
+  }
+  const rec = opts.recency;
+  const out: PickerRow<T>[] = [];
+  const done = new Set<string>();
+  for (const it of matched) {
+    const k = opts.groupKey(it);
+    if (k === undefined) {
+      out.push({ item: it, older: 0, child: false });
+      continue;
+    }
+    if (done.has(k)) continue;
+    done.add(k);
+    const all = groups.get(k)!;
+    const sorted = rec ? [...all].sort((a, b) => rec(b) - rec(a)) : all;
+    const open = state.expanded?.includes(k) ?? false;
+    out.push({ item: sorted[0], group: sorted.length > 1 ? k : undefined, older: open ? 0 : sorted.length - 1, child: false });
+    if (open) for (const c of sorted.slice(1)) out.push({ item: c, group: k, older: 0, child: true });
+  }
+  return out;
+}
+
+/** Pure: expand/collapse keys. Right/Tab opens the group under the cursor, Left/Shift-Tab closes it. */
+export function groupKeyState<T>(state: PickerState, key: Key, rows: PickerRow<T>[]): PickerState | null {
+  const open = key.name === "right" || (key.name === "tab" && !key.shift);
+  const close = key.name === "left" || (key.name === "tab" && !!key.shift);
+  if (!open && !close) return null;
+  const row = rows[state.cursor];
+  if (!row?.group) return null;
+  const expanded = state.expanded ?? [];
+  if (open) return row.older > 0 ? { ...state, expanded: [...expanded, row.group] } : null;
+  if (!expanded.includes(row.group)) return null;
+  const head = rows.findIndex((r) => r.group === row.group && !r.child);
+  return { ...state, expanded: expanded.filter((k) => k !== row.group), cursor: head >= 0 ? head : state.cursor };
+}
+
 /** Pure: the lines for the current state. */
 export function pickerView<T>(state: PickerState, opts: PickerOpts<T>, st: Style): string[] {
-  const shown = filterItems(opts.items, state.filter, opts.searchText);
+  const rows = displayRows(opts, state);
+  const shown = rows.map((r) => r.item);
   const max = opts.maxRows ?? 12;
   const start = Math.min(Math.max(0, state.cursor - max + 1), Math.max(0, shown.length - max));
   const page = shown.slice(start, start + max);
@@ -102,7 +165,13 @@ export function pickerView<T>(state: PickerState, opts: PickerOpts<T>, st: Style
     lines.push(`  ${st.yellow(opts.empty ?? "nothing matches")}`);
   } else {
     const lay = opts.layout?.(opts.width?.() ?? Infinity) ?? opts;
-    const table = renderTable(lay.headers, page.map(lay.cells), st).split("\n");
+    const cellsOf = (r: PickerRow<T>) => {
+      const c = lay.cells(r.item);
+      if (r.child) c[0] = "  " + st.dim(c[0]);
+      else if (r.older > 0) c[0] += st.dim(` (+${r.older} older)`);
+      return c;
+    };
+    const table = renderTable(lay.headers, rows.slice(start, start + max).map(cellsOf), st).split("\n");
     lines.push(table[0], table[1]);
     page.forEach((_, i) => {
       const sel = start + i === state.cursor;
@@ -165,7 +234,13 @@ export function runPicker<T>(opts0: PickerOpts<T>, st: Style, input: TtyIn, outp
       resolve(value);
     };
     const onKey = (str: string | undefined, key: Key) => {
-      const shown = filterItems(opts.items, state.filter, opts.searchText);
+      const rows = displayRows(opts, state);
+      const shown = rows.map((x) => x.item);
+      const g = groupKeyState(state, key ?? {}, rows);
+      if (g) {
+        state = g;
+        return draw();
+      }
       const r = pickerKey(state, str, key ?? {}, shown.length);
       state = r.state;
       if (r.action === "cancel") return finish(null);
