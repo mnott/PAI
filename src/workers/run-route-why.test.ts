@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,14 +29,28 @@ const { resolveTarget } = await import("./routing.js");
 const { parseWorkersConfig } = await import("./config.js");
 const { clearPolicy, writePolicy } = await import("./policy.js");
 
-const yaml = [
+let localPort = 0;
+let localStop: () => Promise<void> = async () => {};
+
+/** A loopback server on an ephemeral port answering /v1/models (the probe every local check uses). */
+async function startLocal(): Promise<() => Promise<void>> {
+  const srv = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ data: [] }));
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  localPort = (srv.address() as AddressInfo).port;
+  return () => new Promise<void>((r) => srv.close(() => r()));
+}
+
+const yamlFor = (port: number): string => [
   "providers:",
   "  glm:",
   "    url: https://glm.example.invalid",
   "    models:",
   "      default: glm-big",
   "  loc1:",
-  "    url: http://127.0.0.1:45991",
+  `    url: http://127.0.0.1:${port}`,
   "    models:",
   "      default: flash-a",
   "  loc2:",
@@ -45,15 +60,17 @@ const yaml = [
   "",
 ].join("\n");
 
-beforeAll(() => {
+beforeAll(async () => {
+  localStop = await startLocal();
   mkdirSync(home, { recursive: true });
   mkdirSync(logDir, { recursive: true });
   writeFileSync(join(home, "config.yaml"), `workers:\n  enabled: true\n  logDir: ${logDir}\n`);
-  writeFileSync(join(home, "workers.yaml"), yaml);
+  writeFileSync(join(home, "workers.yaml"), yamlFor(localPort));
   writeFileSync(join(home, "session-profiles.yaml"), "job-search:\n  workers:\n    provider: glm\n");
 }, 10_000);
 
-afterAll(() => {
+afterAll(async () => {
+  await localStop();
   delete process.env.PAI_CONFIG_FILE;
   delete process.env.PAI_WORKERS_YAML;
   try {
@@ -64,15 +81,6 @@ afterAll(() => {
   }
 });
 
-/** A loopback server answering /v1/models (the probe every local check uses). */
-async function upLocal(port: number): Promise<() => Promise<void>> {
-  const srv = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ data: [] }));
-  });
-  await new Promise<void>((r) => srv.listen(port, "127.0.0.1", r));
-  return () => new Promise<void>((r) => srv.close(() => r()));
-}
 
 /** The real CLI argv → plan path (buildRunPlan), so the flags tested are the ones typed. */
 const capture = async (argv: Record<string, string | boolean>, env: Record<string, string> = {}): Promise<string> => {
@@ -112,26 +120,22 @@ describe("route reason: the real source", () => {
 
   it("--local says (local), not flag: --provider", async () => {
     // one loopback provider, its port answering: resolveLocalProvider picks it
-    const stop = await upLocal(45991);
     try {
       const s = await capture({ local: true, "print-cmd": true });
       expect(s).toContain("route loc1/flash-a (local)");
       expect(s).not.toContain("flag: --provider");
     } finally {
-      await stop();
     }
   });
 
   it("a routing-policy pin says (routing policy: <mode>), not flag: --provider", async () => {
     // the policy pins loc1; the port answers so routeRun's findLocal takes it
-    const stop = await upLocal(45991);
     writePolicy(logDir, "prefer-local");
     try {
       const s = await capture({ "print-cmd": true });
       expect(s).toContain("route loc1/flash-a (routing policy: prefer-local)");
       expect(s).not.toContain("flag: --provider");
     } finally {
-      await stop();
       clearPolicy(logDir);
     }
   });
@@ -159,7 +163,6 @@ describe("route reason: the real source", () => {
       `--outdir=${outDir}`,
     ], { encoding: "utf8" });
     if (built.status !== 0) throw new Error(`esbuild failed: ${built.stderr}`);
-    const stop = await upLocal(45991);
     try {
       // PAI_WORKER_ALLOW_HIDDEN: a headless run needs the operator's
       // hidden-run consent even for a --print-cmd dry run (pane guard)
@@ -173,7 +176,6 @@ describe("route reason: the real source", () => {
       expect(r.stderr).toContain("route loc1/flash-a (local)");
       expect(JSON.parse(r.stdout).route).toBe("loc1/flash-a (local)");
     } finally {
-      await stop();
     }
   }, 120_000);
 
