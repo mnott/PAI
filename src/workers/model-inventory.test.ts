@@ -8,6 +8,8 @@ import {
   inventoryRows,
   inventoryText,
   parseSizeMb,
+  parseFootprint,
+  processTreeMemory,
   processTreeRssMb,
   parseTable,
   readInventory,
@@ -50,7 +52,7 @@ const deps = (over: Partial<Record<string, unknown>> = {}): InventoryDeps => ({
     return null;
   },
   run: async (_c, args) => (args[1] === "ls" ? DOCKER_LS : args[1] === "ps" ? DOCKER_PS : "Docker Model Runner is running\n"),
-  rssMb: async () => 21000,
+  memory: async () => ({ footprintMb: 21000, mappedMb: 90000 }),
 });
 
 const input = (over: Partial<InventoryInput> = {}): InventoryInput => ({
@@ -109,7 +111,7 @@ describe("computeInventory", () => {
     const by = Object.fromEntries(inv.runtimes.map((r) => [r.name, r]));
     expect(by["flashnext-iq3"]).toBeUndefined();
     expect(by["strata"]).toMatchObject({ status: "running", port: 8035, users: ["worker:flashnext-iq3"] });
-    expect(by["strata"]!.models[0]).toMatchObject({ model: "flash-next", kind: "coding", memoryMb: 21000 });
+    expect(by["strata"]!.models[0]).toMatchObject({ model: "flash-next", kind: "coding", memoryMb: 21000, mappedMb: 90000 });
     // a DISABLED provider is not a user of anything: no runtime row for coder
     expect(by["coder"]).toBeUndefined();
     expect(inv.runtimes.some((r) => r.users.some((u) => u === "worker:coder"))).toBe(false);
@@ -155,7 +157,7 @@ describe("render and cache", () => {
     expect(rows.some((r) => r[1] === "stopped")).toBe(false);
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
     expect(text).toContain("runtime | status | model | kind | memory / on disk | used by | port");
-    expect(text).toContain("strata | running | flash-next | coding | 20.5 GB | worker:flashnext-iq3 | 8035");
+    expect(text).toContain("strata | running | flash-next | coding | 20.5 GB (+87.9 GB file mapped) | worker:flashnext-iq3 | 8035");
     // an installed-only model shows its size on disk, not "-"
     expect(text).toContain("qwen3:8b (installed) | chat | 4.7 GB | paperfull-llm | 11434");
     expect(text).toContain("duplicates: embedding runs on 2 runtimes");
@@ -168,5 +170,63 @@ describe("render and cache", () => {
     writeInventory(dir, inv);
     expect(readInventory(dir, 1_000_000 + 30_000)).toEqual(inv);
     expect(readInventory(dir, 1_000_000 + 91_000)).toBeNull();
+  });
+});
+
+const FOOTPRINT = [
+  "strata [23438]: 64-bit    Footprint: 26 GB (16384 bytes per page)",
+  "  Dirty      Clean  Reclaimable    Regions    Category",
+  "    ---        ---          ---        ---    ---",
+  " 120 MB        0 B          0 B        142    Untagged",
+  "    0 B      70 GB          0 B         15    mapped file",
+].join("\n");
+
+describe("footprint", () => {
+  it("parses own footprint and the mapped file separately", () => {
+    expect(parseFootprint(FOOTPRINT)).toEqual({ footprintMb: 26624, mappedMb: 71680 });
+    expect(parseFootprint("Footprint: 8193 KB (x)")).toEqual({ footprintMb: 8 });
+    expect(parseFootprint("nothing")).toBeUndefined();
+  });
+  it("sums the tree", async () => {
+    const run = async (c: string, a: string[]) => (c === "ps" ? "1 0\n10 1\n11 10\n99 1" : a[0] === "11" ? FOOTPRINT : a[0] === "10" ? "x: Footprint: 100 MB (p)" : null);
+    expect(await processTreeMemory("10", run)).toEqual({ footprintMb: 26724, mappedMb: 71680 });
+  });
+});
+
+describe("status from what is loaded", () => {
+  const run = (ps: string) => async (_c: string, a: string[]) => (a[1] === "ls" ? DOCKER_LS : a[1] === "ps" ? ps : "Docker Model Runner is running\n");
+  const EMPTY_PS = "MODEL NAME  BACKEND  MODE  UNTIL  \n";
+  it("runner up, nothing loaded: idle, installed", async () => {
+    const inv = await computeInventory(input(), { ...deps(), run: run(EMPTY_PS) });
+    const dmr = inv.runtimes.find((r) => r.name === "docker-model-runner")!;
+    expect(dmr.status).toBe("idle");
+    expect(dmr.models.every((m) => !m.loaded)).toBe(true);
+    const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
+    expect(text).toContain("docker-model-runner | idle (not loaded) | huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16 (installed)");
+  });
+  it("one model loaded: running", async () => {
+    const inv = await computeInventory(input(), { ...deps(), run: run(DOCKER_PS) });
+    expect(inv.runtimes.find((r) => r.name === "docker-model-runner")!.status).toBe("running");
+  });
+  it("runner down: stopped", async () => {
+    const inv = await computeInventory(input(), { ...deps(), run: async (_c, a) => (a[1] === "ls" ? DOCKER_LS : "Docker Model Runner is not running") });
+    expect(inv.runtimes.find((r) => r.name === "docker-model-runner")!.status).toBe("stopped");
+  });
+});
+
+describe("consumers by served model id", () => {
+  it("a provider whose model is not served is 'not served', not a user", async () => {
+    const two = {
+      "gyro-m": prov("http://127.0.0.1:8035", "gyro-id"),
+      "flashnext-iq3": prov("http://127.0.0.1:8035", "iq3-id"),
+    } as unknown as WorkersConfig["providers"];
+    const d = { ...deps(), getJson: async (u: string) => (u === "http://127.0.0.1:8035/v1/models" ? { data: [{ id: "gyro-id" }] } : null) };
+    const inv = await computeInventory(input({ providers: two, runtimes: [], consumers: [] }), d);
+    const rt = inv.runtimes.find((r) => r.port === 8035)!;
+    expect(rt.models[0]!.usedBy).toEqual(["worker:gyro-m"]);
+    expect(rt.users).toEqual(["worker:gyro-m"]);
+    expect(rt.notServed).toEqual(["worker:flashnext-iq3"]);
+    const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
+    expect(text).toContain("worker:gyro-m, worker:flashnext-iq3 (not served)");
   });
 });

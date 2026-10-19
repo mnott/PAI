@@ -147,14 +147,14 @@ function modelsHtml(inv){
  inv.runtimes.forEach(function(r){
   r.models.forEach(function(m){
    var used=m.usedBy.length>0||(r.status==="running"&&r.models.length===1&&r.users.length>0);
-   if(used||m.loaded)inuse.push([esc(m.model),esc(r.name),esc(m.kind),esc((m.usedBy.length?m.usedBy:r.users).join(", ")||"-"),m.loaded?mem(m.memoryMb):'<span class="dim">on disk</span>']);
+   if(used||m.loaded)inuse.push([esc(m.model),esc(r.name)+(r.status==="idle"?' <span class="dim">(idle)</span>':""),esc(m.kind),esc((m.usedBy.length?m.usedBy:r.users).concat(m===r.models[0]?(r.notServed||[]).map(function(n){return n+" (not served)"}):[]).join(", ")||"-"),m.loaded?mem(m.memoryMb)+(m.mappedMb?" (+"+mem(m.mappedMb).replace(".0 "," ")+" file mapped)":""):'<span class="dim">on disk</span>']);
    else{other.push([esc(r.name),esc(m.model),esc(m.kind),mem(m.sizeMb)]);gb+=m.sizeMb||0}
   });
  });
  var h=inuse.length?table(["model","runtime","kind","used by","loaded (memory, or on disk)"],inuse):'<span class="dim">no model in use or loaded</span>';
  if(other.length)h+='<details class="downs"><summary>'+other.length+' other installed model'+(other.length===1?'':'s')+', '+(gb/1024).toFixed(1)+' GB on disk — not used by anything</summary>'+table(["runtime","model","kind","size on disk"],other)+'</details>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
- var dn=inv.runtimes.filter(function(r){return r.status!=="running"&&r.users.length});
+ var dn=inv.runtimes.filter(function(r){return r.status==="stopped"&&r.users.length});
  if(dn.length)h+='<details class="downs"><summary>'+dn.length+' runtime'+(dn.length===1?'':'s')+' stopped</summary>'+dn.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ")+'</details>';
  return h;
 }

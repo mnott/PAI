@@ -33,7 +33,10 @@ export interface InventoryModel {
   model: string;
   kind: ModelKind;
   loaded: boolean;
+  /** the serving process tree's own footprint (not RSS: that counts the mmapped model file) */
   memoryMb?: number;
+  /** model file pages mapped into the serving process (shown beside the footprint, not added to it) */
+  mappedMb?: number;
   /** size on disk (ollama /api/tags `size`, `docker model ls` SIZE column) */
   sizeMb?: number;
   usedBy: string[];
@@ -42,11 +45,14 @@ export interface InventoryModel {
 export interface InventoryRuntime {
   name: string;
   kind: RuntimeKind;
-  status: "running" | "stopped";
+  /** idle: runner up, models installed, none loaded */
+  status: "running" | "idle" | "stopped";
   port?: number;
   models: InventoryModel[];
-  /** every consumer pointing at this runtime */
+  /** every consumer pointing at this runtime (a consumer of a model the server does not serve is in notServed instead) */
   users: string[];
+  /** consumers whose model is not the one this server reports on /v1/models */
+  notServed?: string[];
 }
 
 export interface ModelInventory {
@@ -70,8 +76,8 @@ export interface DeclaredConsumer {
 export interface InventoryDeps {
   getJson: (url: string) => Promise<unknown | null>;
   run: (cmd: string, args: string[]) => Promise<string | null>;
-  /** summed RSS in MB of the process tree listening on a port (the engine child, not only the listener) */
-  rssMb: (port: number) => Promise<number | undefined>;
+  /** memory of the process tree listening on a port (the engine child, not only the listener) */
+  memory: (port: number) => Promise<{ footprintMb: number; mappedMb?: number } | undefined>;
 }
 
 export interface InventoryInput {
@@ -100,13 +106,46 @@ export const liveDeps: InventoryDeps = {
     }
   },
   run: exec,
-  async rssMb(port) {
+  async memory(port) {
     const pid = ((await exec("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])) ?? "").split("\n")[0];
     if (!pid) return undefined;
-    const tree = await processTreeRssMb(pid, exec);
-    return tree > 0 ? tree : undefined;
+    return processTreeMemory(pid, exec);
   },
 };
+
+const UNIT_MB: Record<string, number> = { B: 1 / 1048576, KB: 1 / 1024, MB: 1, GB: 1024, TB: 1048576 };
+const sizeToMb = (n: string, unit: string): number => Number(n) * (UNIT_MB[unit.toUpperCase()] ?? 0);
+
+/** `footprint <pid>` text → the process's own Footprint and its mapped-file pages (Dirty + Clean of the "mapped file" row), in MB. */
+export function parseFootprint(text: string): { footprintMb: number; mappedMb?: number } | undefined {
+  const f = text.match(/Footprint:\s*([\d.]+)\s*(B|KB|MB|GB|TB)\b/);
+  if (!f) return undefined;
+  const out: { footprintMb: number; mappedMb?: number } = { footprintMb: Math.round(sizeToMb(f[1]!, f[2]!)) };
+  const row = text.split("\n").find((l) => /\bmapped file\s*$/.test(l));
+  if (row) {
+    const cells = [...row.matchAll(/([\d.]+)\s*(B|KB|MB|GB|TB)\b/g)].slice(0, 2); // Dirty, Clean (Reclaimable is part of Clean)
+    const mapped = Math.round(cells.reduce((a, m) => a + sizeToMb(m[1]!, m[2]!), 0));
+    if (mapped > 0) out.mappedMb = mapped;
+  }
+  return out;
+}
+
+/** Summed `footprint` of a process and its descendants; mapped-file pages summed alongside. */
+export async function processTreeMemory(rootPid: string, run: (cmd: string, args: string[]) => Promise<string | null> = exec): Promise<{ footprintMb: number; mappedMb?: number } | undefined> {
+  const out = await run("ps", ["-axo", "pid=,ppid="]);
+  if (!out) return undefined;
+  const kids = new Map<string, string[]>();
+  for (const line of out.split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (m) kids.set(m[2]!, [...(kids.get(m[2]!) ?? []), m[1]!]);
+  }
+  const pids = [rootPid];
+  for (let i = 0; i < pids.length; i++) for (const k of kids.get(pids[i]!) ?? []) if (!pids.includes(k)) pids.push(k);
+  const parts = (await Promise.all(pids.map(async (p) => parseFootprint((await run("footprint", [p])) ?? "")))).filter((x) => x !== undefined);
+  if (!parts.length) return undefined;
+  const mapped = parts.reduce((a, x) => a + (x.mappedMb ?? 0), 0);
+  return { footprintMb: parts.reduce((a, x) => a + x.footprintMb, 0), ...(mapped > 0 ? { mappedMb: mapped } : {}) };
+}
 
 /**
  * Summed RSS (MB) of a process and all its descendants. A loopback server's
@@ -209,9 +248,11 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
   const ls = await deps.run("docker", ["model", "ls"]);
   if (status === null && ls === null) return null; // docker or the plugin is absent
   const running = /is running/i.test(status ?? "");
-  const rt: InventoryRuntime = { name: "docker-model-runner", kind: "docker-model-runner", status: running ? "running" : "stopped", models: [], users: [] };
+  const rt: InventoryRuntime = { name: "docker-model-runner", kind: "docker-model-runner", status: running ? "idle" : "stopped", models: [], users: [] };
+  // "running" is what is loaded (`docker model ps`), not that the runner process is up
   const psRows = running ? parseTable((await deps.run("docker", ["model", "ps"])) ?? "") : [];
   const loadedNames = new Set(psRows.map((r) => r["MODEL NAME"]).filter(Boolean));
+  if (loadedNames.size) rt.status = "running";
   for (const r of parseTable(ls ?? "")) {
     const name = r["MODEL NAME"];
     if (!name) continue;
@@ -221,7 +262,7 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 }
 
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
-  const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; defaults: string[] }>();
+  const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
   for (const [name, p] of Object.entries(input.providers)) {
     // a DISABLED provider is no user of anything: it must not surface as a
     // stopped runtime "used by worker:<name>" (~17 such rows seen live)
@@ -229,9 +270,10 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
     const hp = providerHostPort(p);
     if (!hp) continue;
     const key = String(hp.port);
-    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [] }).get(key)!;
+    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [], wanted: [] }).get(key)!;
     e.names.push(name);
     e.enabled.push(name);
+    e.wanted.push({ name: `worker:${name}`, model: p.models.default });
     if (p.models.default && !e.defaults.includes(p.models.default)) e.defaults.push(p.models.default);
   }
   const ollamaPort = Number(new URL(input.embedding.ollamaUrl).port) || 11434;
@@ -244,7 +286,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         const body = (await deps.getJson(`http://${h}:${e.port}/v1/models`)) as { data?: Array<{ id?: string }> } | null;
         const ids = (body?.data ?? []).map((d) => d.id).filter((x): x is string => !!x);
         const running = body !== null;
-        const rss = running ? await deps.rssMb(e.port) : undefined;
+        const mem = running ? await deps.memory(e.port) : undefined;
         // a declared endpoint (e.g. strata) can sit behind a provider that is
         // DISABLED in workers.yaml: keep the runtime, attach no worker user
         const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
@@ -256,8 +298,15 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           models: (running && ids.length ? ids : e.defaults).map((m) => ({ model: m, kind: "coding" as const, loaded: running, usedBy: [] })),
           users: [],
         };
-        if (rss && rt.models.length) rt.models[0].memoryMb = rss;
-        attach(rt, e.enabled.map((n) => ({ name: `worker:${n}` })));
+        if (mem && rt.models.length) {
+          rt.models[0].memoryMb = mem.footprintMb;
+          if (mem.mappedMb) rt.models[0].mappedMb = mem.mappedMb;
+        }
+        // consumers by the model id the server reports: a provider whose model is not served is no user of the served one
+        const served = running && ids.length ? new Set(ids.map((i) => i.toLowerCase())) : null;
+        const notServed = served ? e.wanted.filter((w) => w.model && !served.has(w.model.toLowerCase())) : [];
+        attach(rt, e.wanted.filter((w) => !notServed.includes(w)).map((w) => ({ name: w.name, model: served ? w.model : undefined })));
+        if (notServed.length) rt.notServed = notServed.map((w) => w.name);
         out.push(rt);
       })
   );
@@ -385,27 +434,32 @@ export function startInventoryRefresh(): () => void {
 
 export const fmtMem = (m?: number): string => (m == null ? "-" : m >= 1024 ? `${(m / 1024).toFixed(1)} GB` : `${m} MB`);
 
+export const fmtMemMapped = (m: { memoryMb?: number; mappedMb?: number }): string =>
+  m.mappedMb ? `${fmtMem(m.memoryMb)} (+${fmtMem(m.mappedMb).replace(/\.0 /, " ")} file mapped)` : fmtMem(m.memoryMb);
+
 /** One row per model (a runtime with no models gets one row); stopped runtimes are listed after the running ones. */
 export function inventoryRows(inv: ModelInventory): string[][] {
   const rows: string[][] = [];
   const ordered = [...inv.runtimes].sort((a, b) => Number(b.status === "running") - Number(a.status === "running"));
   for (const r of ordered) {
     const port = r.port != null ? String(r.port) : "-";
-    if (r.status !== "running") {
+    if (r.status === "stopped") {
       // stopped runtimes collapse to one row
       rows.push([r.name, r.status, r.models.map((m) => m.model).join(", ") || "-", [...new Set(r.models.map((m) => m.kind))].join(", ") || "-", "-", r.users.join(", ") || "-", port]);
       continue;
     }
-    if (!r.models.length) rows.push([r.name, r.status, "-", "-", "-", r.users.join(", ") || "-", port]);
+    const status = r.status === "idle" ? "idle (not loaded)" : r.status;
+    const notServed = (r.notServed ?? []).map((n) => `${n} (not served)`);
+    if (!r.models.length) rows.push([r.name, status, "-", "-", "-", [...r.users, ...notServed].join(", ") || "-", port]);
     for (const m of r.models) {
       rows.push([
         r.name,
-        r.status,
-        m.loaded || r.status !== "running" ? m.model : `${m.model} (installed)`,
+        status,
+        m.loaded ? m.model : `${m.model} (installed)`,
         m.kind,
-        // loaded: RSS; installed only: size on disk
-        m.loaded ? fmtMem(m.memoryMb) : fmtMem(m.sizeMb),
-        (m.usedBy.length ? m.usedBy : r.models.length === 1 ? r.users : []).join(", ") || "-",
+        // loaded: footprint (+ mapped model file); installed only: size on disk
+        m.loaded ? fmtMemMapped(m) : fmtMem(m.sizeMb),
+        [...(m.usedBy.length ? m.usedBy : r.models.length === 1 ? r.users : []), ...(m === r.models[0] ? notServed : [])].join(", ") || "-",
         port,
       ]);
     }
