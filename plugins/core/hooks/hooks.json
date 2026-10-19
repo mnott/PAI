@@ -18,6 +18,12 @@
         ]
       },
       {
+        "matcher": "startup|compact",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/supervision-banner.mjs" }
+        ]
+      },
+      {
         "matcher": "resume|compact",
         "hooks": [
           { "type": "command", "command": "${PAI_DIR}/Hooks/mcp-deferred-reminder.mjs" }
