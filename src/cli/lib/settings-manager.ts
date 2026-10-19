@@ -37,6 +37,8 @@ export type HookType =
 export interface HookEntry {
   hookType: HookType;
   matcher?: string;
+  /** Earlier matchers of this hook that setup rewrites to `matcher`. */
+  oldMatchers?: string[];
   command: string;
 }
 
@@ -185,11 +187,33 @@ function replaceStaleHook(
 }
 
 /**
+ * Rewrite the matcher of an already registered hook when it is exactly one of
+ * the entry's `oldMatchers`. A rule shared with other hooks is split so the
+ * others keep their matcher. No-op once migrated, so setup stays idempotent.
+ */
+function migrateMatcher(rules: HookRule[], basename: string, entry: HookEntry): boolean {
+  if (entry.matcher === undefined || !entry.oldMatchers) return false;
+  for (const rule of rules) {
+    if (rule.matcher === undefined || !entry.oldMatchers.includes(rule.matcher)) continue;
+    const mine = rule.hooks.filter((h) => h.command.split("/").pop() === basename);
+    if (mine.length === 0) continue;
+    if (mine.length === rule.hooks.length) {
+      rule.matcher = entry.matcher;
+    } else {
+      rule.hooks = rule.hooks.filter((h) => !mine.includes(h));
+      rules.push({ matcher: entry.matcher, hooks: mine });
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
  * Merge hooks — append entries, deduplicating by command string.
  * Extension-agnostic: a .mjs hook replaces an existing .ts hook with the
  * same stem, ensuring clean .ts → .mjs migrations without duplicates.
  */
-function mergeHooks(
+export function mergeHooks(
   settings: Record<string, unknown>,
   incoming: HookEntry[],
   report: string[],
@@ -215,6 +239,11 @@ function mergeHooks(
     // Exact match — already registered, skip
     const existingCmds = existingCommandsForHookType(existingRules);
     if (existingCmds.has(command) || existingCmds.has(basename)) {
+      if (migrateMatcher(existingRules, basename, entry)) {
+        report.push(chalk.yellow(`  Upgraded: hook ${hookType} → ${basename} (matcher now ${matcher})`));
+        changed = true;
+        continue;
+      }
       report.push(chalk.dim(`  Skipped: hook ${hookType} → ${basename} already registered`));
       continue;
     }
