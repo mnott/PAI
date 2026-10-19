@@ -485,7 +485,7 @@ export function cockpitQueue(
     row(s && r.provider.startsWith("session~") ? s.provider : r.provider).waiting.push({
       id: r.id,
       label: s?.label ?? "",
-      waitedSec: s ? waited(s) : 0,
+      waitedSec: r.since !== undefined ? Math.max(0, Math.floor((now - r.since) / 1000)) : s ? waited(s) : 0,
       position: r.position,
       session: s ? sessionGroup(s) : "other",
       model: s?.model ?? "",
@@ -519,7 +519,7 @@ export function handleCockpit(
     res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
     res.end(body);
   };
-  if (req.method === "POST" && (url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
+  if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
     const body = readBody(req)
       .then((raw) => JSON.parse(raw || "{}") as { id?: string; position?: number })
       .catch(() => ({} as { id?: string; position?: number }));
@@ -534,7 +534,7 @@ export function handleCockpit(
         if (!status) return send(404, "application/json", JSON.stringify({ error: `no worker named "${id}"` }));
         const order = move
           ? reorderQueueTo(logDir, status.provider, id, position as number)
-          : reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") ? "front" : "up");
+          : reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") || url.pathname.endsWith("/next") ? "front" : "up");
         send(200, "application/json", JSON.stringify({ id, provider: status.provider, order }));
       } catch (e) {
         send(409, "application/json", JSON.stringify({ error: (e as Error).message }));

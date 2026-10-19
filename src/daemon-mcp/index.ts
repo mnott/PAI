@@ -96,7 +96,7 @@ import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../
 import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
-import { ageOf, loadStatus, loadStatuses, isLive, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
+import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { providerCaps } from "../cli/commands/worker.js";
 import { deadlineLabel } from "../workers/deadline.js";
@@ -1559,13 +1559,13 @@ async function startShim(): Promise<void> {
     [
       "The provider capacity queue: workers waiting for a provider slot.",
       "",
-      "action=list (default) shows the grant order per provider; action=front",
-      "moves a waiting worker to position 1, action=up one place up. Only the",
-      "order of the WAITING ones changes — a running worker is never interrupted.",
+      "action=list (default) shows the grant order per provider; action=next",
+      "(alias front) makes a waiting worker run next, action=up moves it one place up.",
+      "Only the order of the WAITING ones changes — a running worker is never interrupted.",
     ].join("\n"),
     {
-      action: z.enum(["list", "front", "up"]).optional().describe("list (default), front or up."),
-      id: z.string().optional().describe("Worker id to pull forward (with front/up)."),
+      action: z.enum(["list", "next", "front", "up"]).optional().describe("list (default), next (alias front) or up."),
+      id: z.string().optional().describe("Worker id to pull forward (with next/up)."),
     },
     async (args) => {
       try {
@@ -1585,16 +1585,16 @@ async function startShim(): Promise<void> {
             const s = r.status;
             lines.push(
               `  ${r.position}. ${r.id}` +
-                (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${ageOf(s.updated)}` : "") +
+                (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${r.since === undefined ? ageOf(s.updated) : ageOf(nowStamp(new Date(r.since)))}` : "") +
                 `  position ${r.position} of ${r.queued}`
             );
           }
           return workerText(lines.join("\n"));
         }
-        if (!args.id) return workerError(new Error("id is required for front/up"));
+        if (!args.id) return workerError(new Error("id is required for next/up"));
         const status = loadStatus(logDir, args.id);
         if (!status) return workerError(new Error(`no worker named "${args.id}"`));
-        const order = reorderQueue(logDir, status.provider, args.id, action === "front" ? "front" : "up");
+        const order = reorderQueue(logDir, status.provider, args.id, action === "up" ? "up" : "front");
         return workerText(`${args.id} is now position ${order.indexOf(args.id) + 1} of ${order.length} on ${status.provider}`);
       } catch (e) {
         return workerError(e);

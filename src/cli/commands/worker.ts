@@ -20,7 +20,7 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
-import { ageOf, loadStatus, setWorkerNote } from "../../workers/status.js";
+import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -1022,13 +1022,13 @@ const queueCommand: CommandDef = {
   summary: "Show or reorder the workers waiting for a provider slot",
   description:
     "No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). " +
-    "`queue front ID` moves a waiting worker to position 1, `queue up ID` one place up — pull-forward. Only the order of the waiting ones changes; a running worker is never interrupted. " +
+    "`queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. " +
     "The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.",
   args: [
-    { name: "VERB", summary: "front or up (default: list the queue)" },
-    { name: "ID", summary: "Worker id to pull forward (with front/up)" },
+    { name: "VERB", summary: "next (alias front) or up (default: list the queue)" },
+    { name: "ID", summary: "Worker id to pull forward (with next/up)" },
   ],
-  examples: ["pai worker queue", "pai worker queue front 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
+  examples: ["pai worker queue", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
   seeAlso: ["pai worker ps", "pai worker kill"],
   run: (ctx) =>
     guard("pai worker queue", async () => {
@@ -1051,7 +1051,7 @@ const queueCommand: CommandDef = {
           const s = r.status;
           out(
             `  ${r.position}. ${r.id}` +
-              (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${ageOf(s.updated)}` : "") +
+              (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${r.since === undefined ? ageOf(s.updated) : ageOf(nowStamp(new Date(r.since)))}` : "") +
               `  position ${r.position} of ${r.queued}`
           );
         }
@@ -1060,8 +1060,8 @@ const queueCommand: CommandDef = {
       if (!id) throw new Error(`usage: pai worker queue ${verb} <id>`);
       const status = loadStatus(dir, id);
       if (!status) throw new Error(`no worker named "${id}"`);
-      if (verb !== "front" && verb !== "up") throw new Error(`unknown queue verb "${verb}" (expected front or up)`);
-      const order = reorderQueue(dir, status.provider, id, verb);
+      if (verb !== "next" && verb !== "front" && verb !== "up") throw new Error(`unknown queue verb "${verb}" (expected next or up)`);
+      const order = reorderQueue(dir, status.provider, id, verb === "up" ? "up" : "front");
       out(`${id} is now position ${order.indexOf(id) + 1} of ${order.length} on ${status.provider}`);
     }),
 };

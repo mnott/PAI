@@ -119,7 +119,7 @@ export interface WorkerStatus {
    */
   warmup?: { for: string; provider: string; elapsedSec: number; limitSec: number };
   /** Set while the capacity gate queues this run behind the provider cap (capacity.ts); `last` carries the line. */
-  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number };
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number };
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
   /** "provider/model (session: launched on glm)" — how the provider was chosen; set at spawn. */

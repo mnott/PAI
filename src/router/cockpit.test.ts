@@ -213,8 +213,9 @@ describe("cockpit http", () => {
     saveStatus(logDir, st("w-late", "queued"));
     const qdir = join(logDir, "queue", "p1");
     mkdirSync(qdir, { recursive: true });
-    writeFileSync(join(qdir, "w-early"), String(process.pid));
-    writeFileSync(join(qdir, "w-late"), String(process.pid));
+    // both started waiting 90 s ago; a reorder must not reset that
+    writeFileSync(join(qdir, "w-early"), `${process.pid} @${Date.now() - 90_000}`);
+    writeFileSync(join(qdir, "w-late"), `${process.pid} @${Date.now() - 90_000}`);
 
     const limits = { get: async () => [] as never[] };
     const srv = http.createServer((req, res) => {
@@ -248,6 +249,13 @@ describe("cockpit http", () => {
       const after = JSON.parse((await ask("/cockpit/queue")).body);
       expect(after.providers[0].waiting.map((w: { id: string }) => w.id)).toEqual(["w-late", "w-early"]);
 
+      const nxt = await ask("/cockpit/queue/next", "POST", JSON.stringify({ id: "w-late" }));
+      expect(nxt.status).toBe(200);
+      expect(JSON.parse(nxt.body).order[0]).toBe("w-late");
+      for (const w of JSON.parse((await ask("/cockpit/queue")).body).providers[0].waiting) expect(w.waitedSec).toBeGreaterThanOrEqual(89);
+      await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-early", position: 1 }));
+      await ask("/cockpit/queue/move", "POST", JSON.stringify({ id: "w-late", position: 2 }));
+
       const up = await ask("/cockpit/queue/up", "POST", JSON.stringify({ id: "w-early" }));
       expect(up.status).toBe(200);
       expect(JSON.parse(up.body).order).toEqual(["w-early", "w-late"]);
@@ -265,7 +273,7 @@ describe("cockpit http", () => {
       // the page carries the panel and its buttons
       const page = await ask("/cockpit");
       expect(page.body).toContain('id="queuepanel"');
-      expect(page.body).toContain("to front");
+      expect(page.body).toContain("runs next; the running worker is not interrupted");
       expect(page.body).toContain("nothing waiting");
       // drag and drop wiring: draggable rows post to /move, refresh pauses while dragging
       expect(page.body).toContain('draggable="true"');

@@ -390,10 +390,10 @@ function renderQueue(q){
  if(qdrag)return;
  var el=$("queuepanel");if(!q){el.innerHTML='<span class="dim">queue status unavailable</span>';return}
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
- setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use to front / up) to reorder it; running workers are never interrupted.");
+ setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
  if(!ps.length){el.innerHTML='<span class="dim">nothing running or waiting</span>';return}
- var BTN='<button data-q="front" data-id="@" title="move to front">to front</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
+ var BTN='<button data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
   var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span> ':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];

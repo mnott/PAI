@@ -9,6 +9,12 @@ import { gateStart } from "./run.js";
 import { loadStatuses, saveStatus } from "./status.js";
 import { updateProfile } from "./session-profile-store.js";
 
+// gateStart opens the follow pane at spawn; keep these tests off the real terminal
+vi.mock("./pane.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane.js")>();
+  return { ...actual, openVerifiedPane: vi.fn().mockResolvedValue("here"), openPaneForWorker: vi.fn(), resolveHostSession: vi.fn().mockResolvedValue({ term: "t" }) };
+});
+
 const saved = { yaml: process.env.PAI_WORKERS_YAML, home: process.env.PAI_HOME, name: process.env.PAI_SESSION_NAME };
 afterEach(() => {
   for (const [k, v] of [["PAI_WORKERS_YAML", saved.yaml], ["PAI_HOME", saved.home], ["PAI_SESSION_NAME", saved.name]] as const) {

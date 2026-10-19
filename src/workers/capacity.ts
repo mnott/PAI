@@ -66,14 +66,25 @@ interface QueueEntry {
   front: boolean;
   /** Explicit position (moveUp), within the entry's group; unset = after the ranked ones, by name. */
   rank?: number;
+  /** Epoch ms the run started waiting; written once at enqueue, kept across every reorder. */
+  since?: number;
 }
 
-const entryText = (e: QueueEntry): string => `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}`;
+const entryText = (e: QueueEntry): string =>
+  `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}`;
 
 function readEntry(dir: string, id: string): QueueEntry {
   const [p, ...marks] = readFileSync(join(dir, id), "utf8").trim().split(/\s+/);
   const rank = marks.map(Number).find((n) => Number.isInteger(n));
-  return { id, pid: Number(p), front: marks.includes("front"), ...(rank === undefined ? {} : { rank }) };
+  const at = marks.find((m) => m.startsWith("@"));
+  const since = at ? Number(at.slice(1)) : NaN;
+  return {
+    id,
+    pid: Number(p),
+    front: marks.includes("front"),
+    ...(rank === undefined ? {} : { rank }),
+    ...(Number.isFinite(since) ? { since } : {}),
+  };
 }
 
 /** Live entries in waiting order: "front" runs first, then by rank, then oldest (by name); dead entries are removed. */
@@ -172,6 +183,8 @@ export interface QueueRow {
   cap?: number;
   /** Status of the waiting run, when its file is readable. */
   status?: WorkerStatus;
+  /** Epoch ms the run started waiting (not the last reorder); undefined for an entry written before this field existed. */
+  since?: number;
 }
 
 /**
@@ -189,15 +202,16 @@ export function queueRows(logDir: string, caps: Record<string, number | undefine
   }
   const rows: QueueRow[] = [];
   for (const prov of providers) {
-    const queue = liveQueue(logDir, prov);
-    queue.forEach((id, i) => {
+    const queue = liveEntries(logDir, prov, alive);
+    queue.forEach((e, i) => {
       rows.push({
-        id,
+        id: e.id,
         provider: prov,
         position: i + 1,
         queued: queue.length,
         cap: caps[prov],
-        status: loadStatus(logDir, id) ?? undefined,
+        status: loadStatus(logDir, e.id) ?? undefined,
+        ...(e.since === undefined ? {} : { since: e.since }),
       });
     });
   }
@@ -213,6 +227,19 @@ export interface CapacityInfo {
   position: number;
   elapsedSec: number;
   line: string;
+  /** Waiting runs on the queue (M of "position N of M"). */
+  queued: number;
+  /** Label of a run holding a slot, when one is known. */
+  behind?: string;
+  /** Epoch ms this run started waiting. */
+  sinceMs: number;
+}
+
+/** The pane / footer line of a waiting run: "queued on p: position 2 of 3, behind <label> — waiting since 18:12". */
+export function queuedText(q: { provider: string; position: number; queued: number; behind?: string; sinceMs: number }): string {
+  const d = new Date(q.sinceMs);
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `queued on ${q.provider}: position ${q.position} of ${q.queued}${q.behind ? `, behind ${q.behind}` : ""} — waiting since ${hhmm}`;
 }
 
 export interface CapacityOpts {
@@ -258,18 +285,19 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const dir = queueDir(logDir, queueKey);
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
-  writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""}`);
+  const t0 = now();
+  writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}`);
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
     const queue = liveQueue(logDir, queueKey, isAlive);
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
-    const holding = load(logDir).filter(
+    const holders = load(logDir).filter(
       (s) => s.id !== self.id && holds(s) && s.state === "running" && isLive(s, owns),
-    ).length;
+    );
     const position = queue.indexOf(self.id) + 1;
-    return { holding, position: position || queue.length + 1, queued: queue.length };
+    return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };
   };
 
   let c = check();
@@ -277,7 +305,6 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     rmSync(entry, { force: true });
     return null;
   }
-  const t0 = now();
   const info = (): CapacityInfo => {
     const total = c.holding + c.queued;
     return {
@@ -286,6 +313,9 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       total,
       position: c.position,
       elapsedSec: Math.floor((now() - t0) / 1000),
+      queued: c.queued,
+      ...(c.behind ? { behind: c.behind } : {}),
+      sinceMs: t0,
       line: `queued: ${total} on ${label}, cap ${cap} (position ${c.position})`,
     };
   };
