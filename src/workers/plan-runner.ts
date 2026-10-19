@@ -18,6 +18,8 @@ export interface WorkerOutcome {
   /** Failure text (report why, open items, or the run's last output) when !ok. */
   failure?: string;
   tokens?: number | null;
+  /** The part must not be retried (e.g. the worker had no worktree); it goes straight to needs-decision. */
+  fatal?: boolean;
 }
 
 export interface StartRequest {
@@ -154,6 +156,10 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
       deps.log({ event: "part-start", part: p.id, unit: p.unit, attempt: i + 1, tier });
       const out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1 });
       deps.log({ event: "part-end", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, tier, ok: out.ok, tokens: out.tokens ?? null, note: out.ok ? undefined : tail(out.failure ?? "", 10) });
+      if (!out.ok && out.fatal) {
+        failure = out.failure || "the worker could not be isolated";
+        break;
+      }
       if (!out.ok) {
         failure = out.failure || "the worker ended without a valid passing report";
         continue;
@@ -168,7 +174,7 @@ export async function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): P
         return;
       }
       failure = m.noCommit
-        ? `no-commit: the worker branch has no commit, nothing was merged. Commit the change on the current branch (message "${label(p)}") and edit files only by relative path inside your worktree.${m.output.trim() ? `\n${tail(m.output, 10)}` : ""}`
+        ? `no-commit: the worker branch has no commit, nothing was merged. Git add the files you changed, then commit on the current branch (message "${label(p)}") and edit files only by relative path inside your worktree.${m.output.trim() ? `\n${tail(m.output, 10)}` : ""}`
         : `gate failed (${plan.gate}):\n${tail(m.output)}`;
     }
     state.set(p.id, "needs-decision");

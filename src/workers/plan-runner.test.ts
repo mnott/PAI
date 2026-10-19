@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parsePlan, type Plan } from "./plan.js";
+import { realCommitsAhead, workerArgs, worktreeProblem } from "./plan-deps.js";
 import {
   appendRunLog,
   dryRunSchedule,
@@ -207,5 +209,45 @@ describe("dryRunSchedule and status", () => {
     const st = planStatus(p, log, Date.parse(t(10)));
     expect(st).toMatchObject({ done: ["a"], running: ["b"], needsDecision: ["c"], waiting: ["d", "e"], tokens: 100, wallMs: 10_000 });
     expect(renderStatus(p, st)).toMatch(/done +1 \(a\)[\s\S]*needs-decision 1 \(c\)[\s\S]*0m10s/);
+  });
+});
+
+describe("part isolation", () => {
+  it("spawn args always carry --worktree and never --no-worktree", () => {
+    const args = workerArgs({ part: { id: "a" }, label: "l", spec: "", provider: "anthropic", tier: "local", attempt: 1 } as unknown as StartRequest, "/tmp/s.txt", "/repo");
+    expect(args).toContain("--worktree");
+    expect(args).not.toContain("--no-worktree");
+  });
+
+  it("a status without a worktree is a problem", () => {
+    expect(worktreeProblem({ id: "w1", worktreeDir: null })).toMatch(/no worktree/);
+    expect(worktreeProblem({ id: "w1", worktreeDir: "/x" })).toBeNull();
+  });
+
+  it("a fatal worker outcome sends the part to needs-decision without a retry", async () => {
+    const p = plan();
+    const h = harness(p);
+    const orig = h.deps.startWorker;
+    h.deps.startWorker = async (r) => (r.part.id === "d" ? { id: "w-d", ok: false, fatal: true, failure: "no worktree" } : orig(r));
+    await runPlan(p, { parallel: 2 }, h.deps);
+    expect(h.log.filter((e) => e.event === "part-start" && e.part === "d")).toHaveLength(1);
+    expect(h.log.some((e) => e.event === "needs-decision" && e.part === "d")).toBe(true);
+    expect(h.merges).not.toContain("w-d");
+  });
+
+  it("a branch with only an empty commit counts no real commit", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "pai-iso-"));
+    const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, encoding: "utf8" });
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(repo, "f"), "1");
+    git("add", "f");
+    git("commit", "-qm", "base");
+    const base = git("rev-parse", "HEAD").trim();
+    git("checkout", "-qb", "worker/w1");
+    git("commit", "-q", "--allow-empty", "-m", "empty");
+    expect(await realCommitsAhead(repo, base, "w1")).toBe(0);
+    writeFileSync(join(repo, "f"), "2");
+    git("commit", "-qam", "real");
+    expect(await realCommitsAhead(repo, base, "w1")).toBe(1);
   });
 });

@@ -56,6 +56,24 @@ export async function dirtyPaths(repo: string): Promise<string[]> {
     .map((l) => l.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, ""));
 }
 
+/** Args of the part worker: `--worktree` is explicit so the caller's own mode is never inherited. */
+export function workerArgs(req: StartRequest, specFile: string, repo: string): string[] {
+  return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--no-pane", "--output-format", "json"];
+}
+
+/** Error text when a started worker is not isolated in a worktree; null when it is. */
+export function worktreeProblem(st: { id: string; worktreeDir?: string | null }): string | null {
+  return st.worktreeDir ? null : `worker ${st.id} has no worktree; refusing to let it edit the plan's checkout`;
+}
+
+/** Commits on worker/<id> beyond `base` that change something (empty commits do not count). */
+export async function realCommitsAhead(repo: string, base: string, id: string): Promise<number> {
+  const revs = (await capture("git", ["rev-list", "--no-merges", `${base}..worker/${id}`], repo)).out.split("\n").filter(Boolean);
+  let n = 0;
+  for (const sha of revs) if ((await capture("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", sha], repo)).out.trim()) n++;
+  return n;
+}
+
 export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): RunnerDeps {
   const dir = mkdtempSync(join(tmpdir(), "pai-plan-"));
   return {
@@ -65,12 +83,14 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
       const specFile = join(dir, `${req.part.id}-${req.attempt}.txt`);
       writeFileSync(specFile, req.spec, "utf8");
       const t0 = Date.now() - 1000;
-      const args = ["worker", "run", "--provider", req.provider, "--class", "implement", ...(req.tier === "sonnet" ? ["--model", "sonnet"] : []), "--label", req.label, "--spec", specFile, "--cwd", plan.repo, "--no-pane", "--output-format", "json"];
+      const args = workerArgs(req, specFile, plan.repo);
       const r = await capture(pai(), args, plan.repo);
       const st = loadStatuses(logDir)
         .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
         .sort((a, b) => b.started.localeCompare(a.started))[0];
       if (!st) return { id: "", ok: false, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
+      const problem = worktreeProblem(st);
+      if (problem) return { id: st.id, ok: false, fatal: true, failure: problem };
       let text = "";
       try {
         text = (JSON.parse(r.out) as { result?: string }).result ?? "";
@@ -86,8 +106,8 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
     async merge(id: string, gate: string): Promise<MergeOutcome> {
       const rev = async (...a: string[]) => (await capture("git", a, plan.repo)).out.trim();
       const before = await rev("rev-parse", "HEAD");
-      const ahead = Number(await rev("rev-list", "--count", `HEAD..worker/${id}`));
-      if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no commit beyond ${before.slice(0, 7)}` };
+      const ahead = await realCommitsAhead(plan.repo, before, id);
+      if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no non-empty commit beyond ${before.slice(0, 7)}` };
       const r = await capture(pai(), ["worker", "merge", id, "--verify", gate], plan.repo);
       const output = r.out + r.err;
       if (r.code !== 0) return { ok: false, before, output };

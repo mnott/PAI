@@ -280,7 +280,7 @@ export function specFooter(part: PlanPart, job: string): string {
     "---",
     "Rules for this task:",
     "- Work only with RELATIVE paths inside the current working directory. It is your own git worktree; never use an absolute path to the repository, or you edit the main checkout instead.",
-    `- Commit your change on the current branch before you report, with the message "${job}: ${part.unit} ${part.id}". Uncommitted work is lost.`,
+    `- Git add the files you changed, then commit on the current branch before you report, with the message "${job}: ${part.unit} ${part.id}". An empty commit is not a commit; uncommitted work is lost.`,
     "- Report with an R message.",
   ].join("\n");
 }
