@@ -1,12 +1,14 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { providerHealth } from "../lib/health.js";
 import { allSetups, builtinSetups, findSetup, loadSaved, saveSetup, shortModel } from "../lib/setups.js";
-import { ago, finishCd, launchScreen, lastSetup, matchRows, plainTable, setupsTable, truncate } from "./root.js";
+import { pickerKey, pickerView, readOneKey, type PickerState, type TtyIn } from "../lib/picker.js";
+import { ago, finishCd, launchKey, launchScreen, lastSetup, localState, matchRows, plainTable, setupsTable, truncate } from "./root.js";
 import { oneLine, type SessionRow } from "./session.js";
 
 const st = makeStyle(false);
@@ -24,6 +26,7 @@ const row = (o: Partial<SessionRow>): SessionRow => ({
   message: "keepalive",
   dir: "/tmp/web",
   health: ok,
+  named: false,
   ...o,
 });
 
@@ -139,5 +142,93 @@ describe("finishCd", () => {
     const term = { output: { write(s: string) { expect(s).toBe("/some/dir\n"); } } as any };
     const result = finishCd("/some/dir", term);
     expect(result).toBe(0);
+  });
+});
+
+describe("launch screen keys", () => {
+  const drive = (keys: Array<[string | undefined, string?]>) => {
+    let sel = 0;
+    for (const [str, name] of keys) {
+      const r = launchKey(sel, str, { name });
+      if (!r) continue;
+      sel = r.sel;
+      if (r.choice) return { sel, choice: r.choice };
+    }
+    return { sel, choice: undefined };
+  };
+  it("Down, Down, Enter runs the third row; Up/k/j move; the marker stops at the ends", () => {
+    expect(drive([[undefined, "down"], [undefined, "down"], ["\r", "return"]])).toEqual({ sel: 2, choice: "fresh" });
+    expect(drive([[undefined, "down"], [undefined, "return"]])).toEqual({ sel: 1, choice: "setup" });
+    expect(drive([["j"], ["j"], ["j"], ["k"], [undefined, "enter"]])).toEqual({ sel: 1, choice: "setup" });
+    expect(drive([[undefined, "up"], [undefined, "return"]])).toEqual({ sel: 0, choice: "continue" });
+  });
+  it("letters keep working and Enter alone continues", () => {
+    expect(drive([["s"]]).choice).toBe("setup");
+    expect(drive([["n"]]).choice).toBe("fresh");
+    expect(drive([[undefined, "return"]]).choice).toBe("continue");
+    expect(launchKey(0, "x", {})).toBeNull();
+  });
+  it("the > marker follows the selection", () => {
+    const lines = launchScreen(row({}), lastSetup(row({}), cfg), cfg, st, 2);
+    expect(lines.filter((l) => l.startsWith(">")).join()).toContain("Start fresh");
+    expect(lines.filter((l) => l.startsWith(">"))).toHaveLength(1);
+  });
+  it("readOneKey delivers an arrow key from a simulated terminal", async () => {
+    const input = Object.assign(new EventEmitter(), { setRawMode: () => undefined, resume: () => undefined, pause: () => undefined }) as unknown as TtyIn;
+    const p = readOneKey(input);
+    (input as unknown as EventEmitter).emit("keypress", undefined, { name: "down" });
+    expect((await p)?.key.name).toBe("down");
+  });
+  it("the setup chooser moves with Up/Down and Enter picks the highlighted row", () => {
+    let s: PickerState = { filter: "", cursor: 0 };
+    s = pickerKey(s, undefined, { name: "down" }, 4).state;
+    s = pickerKey(s, undefined, { name: "down" }, 4).state;
+    s = pickerKey(s, undefined, { name: "up" }, 4).state;
+    expect(s.cursor).toBe(1);
+    expect(pickerKey(s, "\r", { name: "return" }, 4).action).toBe("select");
+    const setups = allSetups(cfg, null, []);
+    const o = setupsTable(setups, cfg, {}, st);
+    expect(pickerView(s, o, st)[5].startsWith("›")).toBe(true);
+  });
+});
+
+describe("local setup rows", () => {
+  const local = (port: number, enabled = true) => ({ ...mk(enabled), baseUrl: `http://127.0.0.1:${port}` });
+  const lcfg = (providers: Record<string, ReturnType<typeof local>>) => ({
+    active: null as unknown as string,
+    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    providers,
+    routing: { budgetWalls: {} } as never,
+    logDir: "/nonexistent-pai-test-logs",
+  });
+  const rows = (c: ReturnType<typeof lcfg>, down: Set<string>, resolved?: string) =>
+    builtinSetups(c, down, resolved).filter((s) => s.workers in c.providers);
+
+  it("one local server: one 'anthropic + local workers' row on the resolved provider, shown as '<provider> (local)', status ok", async () => {
+    const c = lcfg({ codernext: local(8000), "flashnext-iq3": local(8000) });
+    const st1 = { ...(await localState(lcfg({ "flashnext-iq3": local(8000) }) as never, async () => true)), down: new Set<string>() };
+    expect(st1.resolved).toBe("flashnext-iq3");
+    const r = rows(c, st1.down, st1.resolved);
+    expect(r.map((s) => s.name)).toEqual(["anthropic + local workers"]);
+    const o = setupsTable(r, c, {}, st);
+    expect(o.cells(r[0])[3]).toBe(`${st1.resolved} (local)`);
+    expect(o.cells(r[0])[4]).toContain("ok");
+  });
+  it("two distinct local servers: the local row plus one row for the other server", () => {
+    const c = lcfg({ a: local(8000), a2: local(8000), b: local(9000) });
+    const r = rows(c, new Set(), "a");
+    expect(r.map((s) => `${s.name}|${s.workers}`)).toEqual(["anthropic + local workers|a", "anthropic + b workers|b"]);
+  });
+  it("no local server answers: no local row at all", async () => {
+    const c = lcfg({ codernext: local(8000), b: local(9000) });
+    const s0 = await localState(c as never, async () => false);
+    expect(s0.resolved).toBeUndefined();
+    expect(rows(c, s0.down)).toEqual([]);
+    expect(builtinSetups(c, s0.down).map((s) => s.name)).toEqual(["anthropic only"]);
+  });
+  it("saved setups stay as they are", () => {
+    const c = lcfg({ a: local(8000) });
+    const saved = [{ name: "mine", orchestrator: { provider: "anthropic" }, workers: "a", kind: "saved" as const }];
+    expect(allSetups(c, null, saved, new Set(), "a").map((s) => s.name)).toEqual(["mine", "anthropic only", "anthropic + local workers"]);
   });
 });

@@ -47,6 +47,9 @@ import {
 } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import { AIBROKER_REGISTRY, itermUuid, sessionMapPath, type SessionMapEntry } from "../../workers/scope.js";
+import { readWorkersSection } from "../../workers/config.js";
+import { workersLogDir } from "../../workers/paths.js";
 import { smartDecodeDir, type DirListings } from "./utils.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 import { fmtAge as fmtAgeMs } from "../../utils/fmt-age.js";
@@ -101,13 +104,17 @@ export interface ScannedSession {
   msgCount: number;
   /** Auto-generated title from the last ai-title line in the transcript. */
   aiTitle?: string;
+  /** Name the operator set with /Name (the last custom-title line in the transcript). */
+  customTitle?: string;
+  /** The session's own persistent name (custom-title, else clc registry); undefined = never named. */
+  persistentName?: string;
 
   /** mtime in epoch ms — top-level file mtime (primary), transcript mtime (fallback). */
   mtime: number;
 
   /**
    * Human-readable friendly name (for display and /Name restoration).
-   * Priority: clc session.json name → ai-title → project dir basename.
+   * Priority: persistent name (custom-title → clc session.json) → ai-title → project dir basename.
    * NEVER slugified — preserves original spaces and capitalisation.
    */
   friendlyName?: string;
@@ -164,6 +171,40 @@ function buildClcInfoMap(): Map<string, ClcInfo> {
 }
 
 // ---------------------------------------------------------------------------
+// AIBroker persistent names (~/.aibroker/session-names.json)
+// ---------------------------------------------------------------------------
+
+/**
+ * Claude session id → the name the operator gave its terminal with /Name.
+ * AIBroker stores names by iTerm pane UUID; the status line's session map
+ * (claude-session-map.json) bridges pane → claude session. Read-only; a
+ * missing or broken file means no names.
+ */
+export function loadBrokerNames(
+  registryPath: string = AIBROKER_REGISTRY,
+  mapPath?: string
+): Map<string, string> {
+  const out = new Map<string, string>();
+  try {
+    const path = mapPath ?? sessionMapPath(workersLogDir(readWorkersSection().workers));
+    const names = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, unknown>;
+    const map = JSON.parse(readFileSync(path, "utf8")) as Record<string, SessionMapEntry>;
+    const newest = new Map<string, number>();
+    for (const e of Object.values(map)) {
+      if (!e.session || !e.term) continue;
+      const name = names[itermUuid(e.term)];
+      if (typeof name !== "string" || !name.trim()) continue;
+      if ((newest.get(e.session) ?? -1) >= e.ts) continue;
+      newest.set(e.session, e.ts);
+      out.set(e.session, name.trim());
+    }
+  } catch {
+    // no AIBroker, no map — sessions keep their own names
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // PAI registry
 // ---------------------------------------------------------------------------
 
@@ -209,7 +250,7 @@ export function migrateSessionScanCache(opts: { dryRun?: boolean } = {}): Migrat
 }
 
 interface ScanCacheFile {
-  v: 1;
+  v: 2;
   top: Record<string, { m: number; s: number; info: TopLevelInfo }>;
   tr: Record<string, { m: number; s: number; info: TranscriptInfo }>;
 }
@@ -227,7 +268,7 @@ function loadScanCache(): ScanCacheFile {
   if (scanCache) return scanCache;
   try {
     const raw = JSON.parse(readFileSync(scanCacheFilePath(), "utf8")) as ScanCacheFile;
-    if (raw && raw.v === 1 && typeof raw.top === "object" && typeof raw.tr === "object") {
+    if (raw && raw.v === 2 && typeof raw.top === "object" && typeof raw.tr === "object") {
       scanCache = raw;
       return scanCache;
     }
@@ -235,7 +276,7 @@ function loadScanCache(): ScanCacheFile {
     // Missing, unreadable or corrupt — start over. The cache is an
     // optimization; its absence costs one full parse, never correctness.
   }
-  scanCache = { v: 1, top: {}, tr: {} };
+  scanCache = { v: 2, top: {}, tr: {} };
   return scanCache;
 }
 
@@ -252,7 +293,7 @@ function flushScanCache(prune: boolean): void {
   try {
     const out: ScanCacheFile = prune
       ? {
-          v: 1,
+          v: 2,
           top: Object.fromEntries(
             Object.entries(scanCache.top).filter(([p]) => touchedTop.has(p))
           ),
@@ -323,6 +364,22 @@ function parseTopLevelFile(
 }
 
 // ---------------------------------------------------------------------------
+// Name precedence
+// ---------------------------------------------------------------------------
+
+/**
+ * A name the operator set with /Name (the session's persistent name) always
+ * wins; the directory name is only the fallback for a session never named.
+ */
+export function resolveFriendlyName(p: { customTitle?: string; clcName?: string; aiTitle?: string; dirName?: string }): {
+  name: string | undefined;
+  persistent: string | undefined;
+} {
+  const persistent = p.customTitle ?? p.clcName;
+  return { name: persistent ?? p.aiTitle ?? p.dirName, persistent };
+}
+
+// ---------------------------------------------------------------------------
 // Sessions/ transcript parser
 // ---------------------------------------------------------------------------
 
@@ -331,6 +388,7 @@ interface TranscriptInfo {
   lastUserPrompt: string;
   msgCount: number;
   aiTitle?: string;
+  customTitle?: string;
   mtime: number;
 }
 
@@ -359,6 +417,7 @@ function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
   let lastUserPrompt = "";
   let msgCount = 0;
   let aiTitle: string | undefined;
+  let customTitle: string | undefined;
 
   let content: string;
   try {
@@ -375,12 +434,19 @@ function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
     const hasUser = t.includes('"type":"user"') || t.includes('"type": "user"');
     const hasTitle =
       t.includes('"type":"ai-title"') || t.includes('"type": "ai-title"');
-    if (!hasUser && !hasTitle) continue;
+    const hasCustom = t.includes('"type":"custom-title"') || t.includes('"type": "custom-title"');
+    if (!hasUser && !hasTitle && !hasCustom) continue;
 
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(t) as Record<string, unknown>;
     } catch {
+      continue;
+    }
+
+    if (parsed.type === "custom-title") {
+      const v = parsed.customTitle;
+      if (typeof v === "string" && v.trim()) customTitle = v.trim();
       continue;
     }
 
@@ -406,7 +472,7 @@ function parseTranscriptFile(filePath: string, mtime: number): TranscriptInfo {
     if (text) lastUserPrompt = text.slice(0, 80).replace(/\n/g, " ");
   }
 
-  return { userLines, lastUserPrompt, msgCount, aiTitle, mtime };
+  return { userLines, lastUserPrompt, msgCount, aiTitle, customTitle, mtime };
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +547,7 @@ export async function scanSessions(
 
   const dirListings: DirListings = new Map();
   const clcInfoMap = buildClcInfoMap();
+  const brokerNames = loadBrokerNames();
   const rootPathMap = await buildRegistryRootPathMap();
   const results: ScannedSession[] = [];
   // Track which UUIDs we've already added (from the jsonl walk)
@@ -558,8 +625,12 @@ export async function scanSessions(
       const mtime = topInfo.mtime || transcript.mtime;
 
       // Name resolution: clc registry (verbatim) → ai-title → project basename
-      const friendlyName =
-        clcInfo?.name ?? transcript.aiTitle ?? projectBasename ?? undefined;
+      const { name: friendlyName, persistent: persistentName } = resolveFriendlyName({
+        customTitle: transcript.customTitle,
+        clcName: clcInfo?.name,
+        aiTitle: transcript.aiTitle,
+        dirName: projectBasename,
+      });
 
       const session: ScannedSession = {
         uuid,
@@ -576,6 +647,8 @@ export async function scanSessions(
         lastUserPrompt: transcript.lastUserPrompt,
         msgCount: transcript.msgCount,
         aiTitle: transcript.aiTitle,
+        customTitle: transcript.customTitle,
+        persistentName,
         mtime,
         friendlyName,
         clcDirectory: clcInfo?.directory,
@@ -652,8 +725,16 @@ export async function scanSessions(
         msgCount: transcript.msgCount,
         aiTitle: transcript.aiTitle,
         mtime: transcript.mtime,
-        friendlyName:
-          clcInfo?.name ?? transcript.aiTitle ?? projectBasename ?? undefined,
+        customTitle: transcript.customTitle,
+        ...(() => {
+          const r = resolveFriendlyName({
+            customTitle: transcript.customTitle,
+            clcName: clcInfo?.name,
+            aiTitle: transcript.aiTitle,
+            dirName: projectBasename,
+          });
+          return { friendlyName: r.name, persistentName: r.persistent };
+        })(),
         clcDirectory: clcInfo?.directory,
         registryRootPath,
       };
@@ -711,7 +792,8 @@ export async function scanSessions(
 
         if (freshestResumable) {
           // Attach the clc name to this fresher session
-          freshestResumable.friendlyName = clcInfo.name;
+          freshestResumable.friendlyName = freshestResumable.customTitle ?? clcInfo.name;
+          freshestResumable.persistentName = freshestResumable.friendlyName;
           freshestResumable.clcDirectory =
             freshestResumable.clcDirectory ?? clcInfo.directory;
           freshestResumable.sessionStatus = "resumable";
@@ -759,6 +841,7 @@ export async function scanSessions(
           msgCount: 0,
           mtime,
           friendlyName: clcInfo.name,
+          persistentName: clcInfo.name,
           clcDirectory: clcInfo.directory,
           registryRootPath,
         });
@@ -804,10 +887,20 @@ export async function scanSessions(
         msgCount: transcript.msgCount,
         aiTitle: transcript.aiTitle,
         mtime: transcript.mtime,
-        friendlyName: clcInfo.name,
+        friendlyName: transcript.customTitle ?? clcInfo.name,
+        persistentName: transcript.customTitle ?? clcInfo.name,
         clcDirectory: clcInfo.directory,
         registryRootPath,
       });
+    }
+  }
+
+  // The operator's /Name (AIBroker) beats every derived name.
+  for (const s of results) {
+    const n = brokerNames.get(s.uuid);
+    if (n) {
+      s.friendlyName = n;
+      s.persistentName = n;
     }
   }
 
@@ -932,7 +1025,9 @@ function scanFilesystemForUuidPrefix(prefix: string): ScannedSession[] {
         msgCount: transcript.msgCount,
         aiTitle: transcript.aiTitle,
         mtime: topInfo.mtime || transcript.mtime,
-        friendlyName: transcript.aiTitle ?? basename(decodedPath),
+        customTitle: transcript.customTitle,
+        persistentName: transcript.customTitle,
+        friendlyName: transcript.customTitle ?? transcript.aiTitle ?? basename(decodedPath),
         clcDirectory: undefined,
         registryRootPath: undefined,
       });

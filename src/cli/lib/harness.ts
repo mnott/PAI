@@ -24,14 +24,14 @@ export interface Harness {
   model: string;
 }
 
-/** `--name N "/Name N"`: label the session and tab (same as launchPrompt in lib/launch.ts). */
-export const nameArgs = (name: string): string[] => ["--name", name, `/Name ${name}`];
+/** `--name N "/Name N"`: label the session and tab (same as launchPrompt in lib/launch.ts). `named`: the session already carries N, so no /Name is sent. */
+export const nameArgs = (name: string, named = false): string[] => (named ? ["--name", name] : ["--name", name, `/Name ${name}`]);
 
 export async function buildHarness(
   workers: Pick<WorkersConfig, "providers" | "nativeModels" | "logDir">,
-  opts: { provider: string; model?: string; cwd: string; resume?: string; name: string }
+  opts: { provider: string; model?: string; cwd: string; resume?: string; name: string; named?: boolean }
 ): Promise<Harness> {
-  const extra = [...(opts.resume ? ["--resume", opts.resume] : []), ...nameArgs(opts.name)];
+  const extra = [...(opts.resume ? ["--resume", opts.resume] : []), ...nameArgs(opts.name, opts.named)];
   const plan: LaunchPlan = await buildLaunchPlan(workers, opts.provider, opts.model, extra, workersLogDir(workers));
   return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model };
 }
