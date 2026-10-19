@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEtime, reapOrphansOnce, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
+import { parseEtime, reapOrphansOnce, realSnapshot, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
 
 const LOG = "/logs/workers";
 const row = (o: Partial<ProcRow> = {}): ProcRow => ({
@@ -80,5 +80,26 @@ describe("reaper", () => {
   it("parses ps etime", () => {
     expect(parseEtime("02:05")).toBe(125);
     expect(parseEtime("1-02:03:04")).toBe(93784);
+  });
+});
+
+describe("realSnapshot", () => {
+  it("fills cwd from lsof stdout despite a non-zero exit, and skips other users", () => {
+    const calls: string[][] = [];
+    const run = (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (cmd === "ps") {
+        return [
+          "    1     0     0  0.0 10-00:00:00 /sbin/launchd",
+          "  200     1     0  0.0 10-00:00:00 /usr/sbin/rootd",
+          "  300     1   501 99.0       03:30 node -e for(;;){}",
+        ].join("\n");
+      }
+      return "p300\nn/logs/workers/slots/x\n"; // lsof would have exited 1; runner returns stdout anyway
+    };
+    const rows = realSnapshot(run, 501);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ pid: 300, cwd: "/logs/workers/slots/x", cpu: 99 });
+    expect(calls[1].at(-1)).toBe("300");
   });
 });
