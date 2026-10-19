@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { waitOn, statusMarker, type WaitOnDeps } from "./wait-on.js";
+import { spawn, execFileSync } from "node:child_process";
+import { waitOn, statusMarker, realDeps, type WaitOnDeps } from "./wait-on.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import type { WaitingOn } from "./waiting.js";
 
@@ -97,5 +98,57 @@ describe("waitOn", () => {
     mark(null);
     expect(loadStatus(logDir, "w9")?.waitingOn).toBeNull();
     expect(() => statusMarker(logDir, "nope")(w)).not.toThrow();
+  });
+});
+
+describe("waitOn ceiling and stall kill", () => {
+  const spin = () => spawn(process.execPath, ["-e", "for(;;){}"], { stdio: "ignore" });
+  const alive = (pid: number) => {
+    try {
+      return !execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+    } catch {
+      return false;
+    }
+  };
+
+  it("kills a spinning child at --max-minutes, prints the line, exits 4", async () => {
+    const c = spin();
+    const out: string[] = [];
+    const log = join(dir, "spin.log");
+    writeFileSync(log, "RUN v1\n");
+    const rc = await waitOn({ pid: c.pid!, log, maxMinutes: 0.03, stallMinutes: 100 }, { ...realDeps, out: (l) => out.push(l) });
+    expect(rc).toBe(4);
+    expect(out[0]).toMatch(new RegExp(`wait-on: pid ${c.pid} still running after 0\\.03m, killed process tree; likely hang`));
+    expect(out).toContain("RUN v1");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(alive(c.pid!)).toBe(false);
+  }, 20_000);
+
+  it("kills a child whose log stays silent (stall rule)", async () => {
+    const c = spin();
+    const out: string[] = [];
+    const log = join(dir, "stall.log");
+    writeFileSync(log, "RUN v1\n");
+    const rc = await waitOn({ pid: c.pid!, log, maxMinutes: 100, stallMinutes: 0.03 }, { ...realDeps, out: (l) => out.push(l) });
+    expect(rc).toBe(4);
+    expect(out[0]).toMatch(/no output for 0\.03m, killed process tree/);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(alive(c.pid!)).toBe(false);
+  }, 20_000);
+
+  it("leaves a quick process alone", async () => {
+    const c = spawn("sleep", ["1"], { stdio: "ignore" });
+    const out: string[] = [];
+    const rc = await waitOn({ pid: c.pid!, maxMinutes: 1, tail: 0 }, { ...realDeps, out: (l) => out.push(l) });
+    expect(rc).toBe(0);
+    expect(out[0]).toMatch(/gone/);
+  }, 20_000);
+
+  it("kills descendants too, with the fake clock", async () => {
+    const f = fake({});
+    const killed: number[] = [];
+    const rc = await waitOn({ pid: 42, maxMinutes: 1, tail: 0 }, { ...f.deps, killTree: async (p) => void killed.push(p) });
+    expect(rc).toBe(4);
+    expect(killed).toEqual([42]);
   });
 });
