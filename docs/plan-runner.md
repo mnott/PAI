@@ -37,10 +37,13 @@ units:
 
 ## What the runner does
 
+- Refuses to start when the repo has uncommitted changes to files a part touches (they would be clobbered or mixed in); `--allow-dirty` overrides.
 - Keeps up to N parts running (`pai worker run --provider <local> --class implement`, label `"<job>: <unit> <part>"`).
 - Starts a part when all its `depends_on` are merged and no running part touches one of its files (a directory in `files` covers everything below it); starts the next as soon as a slot frees.
 - When a part finishes with a valid passing report it is merged with `pai worker merge <id> --verify "<gate>"`. Merges and unit checks run one at a time.
-- Failure ladder: a failed gate or proof, or a worker that ends without a valid report, gets one local retry with the failure tail appended to the spec. A second failure marks the part `needs-decision`; parts that do not depend on it carry on. With `--escalate sonnet` one Sonnet implement worker runs for that part instead (counted in the summary). The runner never calls Opus.
+- Every composed spec ends with a fixed footer: work only with relative paths inside the current directory (the worker's own worktree), commit on the current branch with the message `"<job>: <unit> <part>"`, report with R. Absolute paths into the repo in a spec, `files` or `proof` are rewritten to relative ones; `validate` warns about them. Workers run with `--cwd <repo>` and the default worktree (never `--no-worktree`).
+- A merge counts only when the worker branch has at least one commit and HEAD moved. Otherwise the log records `merge` with `ok: false, status: "no-commit"` and the part goes down the failure ladder (the retry spec says why).
+- Failure ladder: a failed gate or proof, a worker branch without a commit, or a worker that ends without a valid report, gets one local retry with the failure tail appended to the spec. A second failure marks the part `needs-decision`; parts that do not depend on it carry on. With `--escalate sonnet` one Sonnet implement worker runs for that part instead (counted in the summary). The runner never calls Opus.
 - `unit_check` runs in the repo after the unit's last part merged; a failure marks the unit needs-decision.
 
 ## Run log and resume

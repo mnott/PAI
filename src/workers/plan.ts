@@ -35,6 +35,8 @@ export interface Plan {
   /** Explicit max_parallel; undefined = the provider's maxConcurrent. */
   maxParallel?: number;
   units: PlanUnit[];
+  /** Non-fatal findings of parsePlan, shown by `pai plan validate`. */
+  warnings: string[];
 }
 
 /** JSON-schema-like description of the plan file; `pai plan validate` enforces it. */
@@ -208,7 +210,15 @@ export function parsePlan(text: string, baseDir: string): Plan {
   const cycle = findCycle(all);
   if (cycle) problems.push(`dependency cycle: ${cycle.join(" -> ")}`);
   if (problems.length) throw new PlanError([...new Set(problems)]);
-  return { job, repo: isAbsolute(repo) ? repo : resolve(baseDir, repo), gate, provider, ...(maxParallel ? { maxParallel } : {}), units };
+  const repoAbs = isAbsolute(repo) ? repo : resolve(baseDir, repo);
+  const warnings: string[] = [];
+  for (const p of all) {
+    if (mentionsRepoPath(p.spec, repoAbs)) warnings.push(`part ${p.id}: spec names an absolute path into the repo (${repoAbs}); it is rewritten to a relative path, workers must stay in their worktree`);
+    if (p.files.some((f) => mentionsRepoPath(f, repoAbs))) warnings.push(`part ${p.id}: files lists an absolute path into the repo; use paths relative to the repo`);
+    if (p.proof && mentionsRepoPath(p.proof, repoAbs)) warnings.push(`part ${p.id}: proof names an absolute path into the repo; it is rewritten to a relative path`);
+    p.files = p.files.map((f) => stripRepoPaths(f, repoAbs));
+  }
+  return { job, repo: repoAbs, gate, provider, ...(maxParallel ? { maxParallel } : {}), units, warnings };
 }
 
 function findCycle(parts: PlanPart[]): string[] | null {
@@ -250,13 +260,46 @@ export function loadPlan(path: string): Plan {
 /** Where the run log of a plan lives. */
 export const runLogPath = (planPath: string): string => `${planPath}.run.jsonl`;
 
-/** The worker task: the part spec, its file list and proof, and (on a retry) the failure tail. */
-export function composeSpec(part: PlanPart, failure?: string): string {
-  const lines = [part.spec];
-  if (part.files.length) lines.push("", `Files this part touches: ${part.files.join(", ")}`);
-  if (part.proof) lines.push("", `Proof required: run \`${part.proof}\` and show it passing.`);
+/** Replace absolute paths into the plan's repo by relative ones. */
+export function stripRepoPaths(text: string, repo: string): string {
+  const r = repo.replace(/\/+$/, "");
+  if (!r) return text;
+  const esc = r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`${esc}/`, "g"), "").replace(new RegExp(`${esc}(?![\\w.-])`, "g"), ".");
+}
+
+/** Whether `text` names an absolute path inside `repo`. */
+export function mentionsRepoPath(text: string, repo: string): boolean {
+  const r = repo.replace(/\/+$/, "");
+  return !!r && r !== "/" && stripRepoPaths(text, r) !== text;
+}
+
+/** Fixed footer of every composed spec: keeps the worker in its worktree and makes it commit. */
+export function specFooter(part: PlanPart, job: string): string {
+  return [
+    "---",
+    "Rules for this task:",
+    "- Work only with RELATIVE paths inside the current working directory. It is your own git worktree; never use an absolute path to the repository, or you edit the main checkout instead.",
+    `- Commit your change on the current branch before you report, with the message "${job}: ${part.unit} ${part.id}". Uncommitted work is lost.`,
+    "- Report with an R message.",
+  ].join("\n");
+}
+
+/** The worker task: the part spec, its file list and proof, the fixed footer, and (on a retry) the failure tail. */
+export function composeSpec(part: PlanPart, failure: string | undefined, job: string, repo?: string): string {
+  const clean = (t: string) => (repo ? stripRepoPaths(t, repo) : t);
+  const lines = [clean(part.spec)];
+  if (part.files.length) lines.push("", `Files this part touches: ${part.files.map(clean).join(", ")}`);
+  if (part.proof) lines.push("", `Proof required: run \`${clean(part.proof)}\` and show it passing.`);
   if (failure) lines.push("", "The previous attempt failed. Its failure output (tail):", "```", failure.trim(), "```", "Fix the cause and try again.");
+  lines.push("", specFooter(part, job));
   return lines.join("\n");
+}
+
+/** Dirty paths (from `git status --porcelain`) that a part of the plan touches. */
+export function dirtyConflicts(plan: Plan, dirty: string[]): string[] {
+  const files = plan.units.flatMap((u) => u.parts.flatMap((p) => p.files));
+  return dirty.filter((d) => filesOverlap([d], files));
 }
 
 /** Two file lists collide when they share a path or one names a directory containing the other. */

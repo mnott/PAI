@@ -7,8 +7,8 @@ import { existsSync } from "node:fs";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
-import { realRunnerDeps } from "../../workers/plan-deps.js";
+import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
+import { dirtyPaths, realRunnerDeps } from "../../workers/plan-deps.js";
 import { planStatus, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
 import { resolveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/policy.js";
@@ -42,12 +42,13 @@ const runCmd: CommandDef = {
   name: "run",
   summary: "Run a plan: local workers in parallel, merged with the plan's gate",
   description:
-    "Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`. A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts.",
+    "Runs the parts of a plan on the local provider, no model in the loop: up to N parts at once, a part starts when its dependencies are merged and no running part shares a file, each finished part is merged with `pai worker merge --verify GATE`; a part whose worker branch holds no commit counts as no-commit, not merged, and goes down the failure ladder. The run is refused when the repo has uncommitted changes to files a part touches (--allow-dirty overrides). A failed part gets one local retry with the failure output appended, then is marked needs-decision while independent parts continue (with --escalate sonnet, one Sonnet worker runs instead). Progress is appended to PLAN.run.jsonl; running the same plan again skips merged parts.",
   args: planArg,
   options: [
     { name: "parallel", type: "number", value: "N", summary: "Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision" },
     { name: "dry-run", type: "boolean", summary: "Print the schedule that would run; start nothing" },
+    { name: "allow-dirty", type: "boolean", summary: "Run although the repo has uncommitted changes to files a part touches" },
   ],
   examples: ["pai plan run plan.yaml", "pai plan run plan.yaml --dry-run", "pai plan run plan.yaml --parallel 2 --escalate sonnet"],
   seeAlso: ["pai plan validate", "pai plan status", "pai worker merge"],
@@ -62,6 +63,10 @@ const runCmd: CommandDef = {
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;
+    }
+    if (ctx.opts["allow-dirty"] !== true) {
+      const clash = dirtyConflicts(plan, await dirtyPaths(plan.repo));
+      if (clash.length) throw new CliError(`${plan.repo} has uncommitted changes to files the plan touches: ${clash.join(", ")}. A run would clobber or mix them in.`, "commit or stash them, or pass --allow-dirty");
     }
     const logDir = workersLogDir(readWorkersSection().workers);
     const s = await runPlan(plan, opts, realRunnerDeps(plan, logDir, log));
@@ -80,6 +85,7 @@ const validateCmd: CommandDef = {
   run: (ctx: RunContext) => {
     const plan = load(String(ctx.args.PLAN));
     const n = plan.units.flatMap((u) => u.parts).length;
+    for (const w of plan.warnings) out(`warning: ${w}`);
     out(`ok: job ${plan.job}, ${plan.units.length} units, ${n} parts, provider ${plan.provider}, ${parallelOf(plan, undefined)} at a time`);
     return 0;
   },

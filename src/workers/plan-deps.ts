@@ -47,6 +47,15 @@ function workerTokens(logDir: string, id: string): number | null {
   }
 }
 
+/** Paths with uncommitted changes in the plan's repo (`git status --porcelain`). */
+export async function dirtyPaths(repo: string): Promise<string[]> {
+  const r = await capture("git", ["status", "--porcelain"], repo);
+  return r.out
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => l.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, ""));
+}
+
 export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): RunnerDeps {
   const dir = mkdtempSync(join(tmpdir(), "pai-plan-"));
   return {
@@ -75,11 +84,15 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
       return { id: st.id, ok, failure, tokens: workerTokens(logDir, st.id) };
     },
     async merge(id: string, gate: string): Promise<MergeOutcome> {
+      const rev = async (...a: string[]) => (await capture("git", a, plan.repo)).out.trim();
+      const before = await rev("rev-parse", "HEAD");
+      const ahead = Number(await rev("rev-list", "--count", `HEAD..worker/${id}`));
+      if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no commit beyond ${before.slice(0, 7)}` };
       const r = await capture(pai(), ["worker", "merge", id, "--verify", gate], plan.repo);
       const output = r.out + r.err;
-      if (r.code !== 0) return { ok: false, output };
-      const head = await capture("git", ["rev-parse", "HEAD"], plan.repo);
-      return { ok: true, commit: head.out.trim() || undefined, output };
+      if (r.code !== 0) return { ok: false, before, output };
+      const head = await rev("rev-parse", "HEAD");
+      return { ok: true, commit: head || undefined, before, output };
     },
     async unitCheck(cmd: string) {
       const r = await capture(cmd, [], plan.repo, true);

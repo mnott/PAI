@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { composeSpec, filesOverlap, loadPlan, parsePlan, PlanError } from "./plan.js";
+import { composeSpec, dirtyConflicts, filesOverlap, loadPlan, parsePlan, PlanError } from "./plan.js";
 
 const base = "job: j\nrepo: /r\ngate: g\nprovider: local\n";
 const unit = (parts: string) => `${base}units:\n  - id: u\n    parts:\n${parts}`;
@@ -55,10 +55,31 @@ describe("parsePlan", () => {
 describe("helpers", () => {
   it("composeSpec adds files, proof and the failure tail", () => {
     const plan = loadPlan(join(dirname(new URL(import.meta.url).pathname), "fixtures", "plan-demo.yaml"));
-    const s = composeSpec(plan.units[0].parts[0], "boom");
+    const s = composeSpec(plan.units[0].parts[0], "boom", plan.job);
     expect(s).toMatch(/Files this part touches: src\/tok.ts/);
     expect(s).toMatch(/Proof required: run `npx vitest run src\/tok.test.ts`/);
     expect(s).toMatch(/previous attempt failed[\s\S]*boom/);
+  });
+  it("composeSpec always appends the worktree/commit footer and strips absolute repo paths", () => {
+    const plan = parsePlan(unit("      - {id: a, spec: 'Edit /r/src/x.ts now', files: [/r/src/x.ts]}\n"), "/nonexistent");
+    const s = composeSpec(plan.units[0].parts[0], undefined, plan.job, plan.repo);
+    expect(s).toMatch(/RELATIVE paths inside the current working directory/);
+    expect(s).toContain('message "j: u a"');
+    expect(s).toMatch(/Report with an R message/);
+    expect(s).not.toContain("/r/src");
+    expect(s).toContain("Edit src/x.ts now");
+    expect(composeSpec(plan.units[0].parts[0], "boom", plan.job)).toMatch(/RELATIVE paths/);
+  });
+  it("validate warns about absolute paths into the repo", () => {
+    const plan = parsePlan(unit("      - {id: a, spec: 'Edit /r/src/x.ts', files: [/r/src/x.ts]}\n      - {id: b, spec: fine, files: [src/y.ts]}\n"), "/nonexistent");
+    expect(plan.warnings.join("\n")).toMatch(/part a: spec names an absolute path[\s\S]*part a: files lists an absolute path/);
+    expect(plan.warnings.join("\n")).not.toMatch(/part b/);
+    expect(plan.units[0].parts[0].files).toEqual(["src/x.ts"]);
+  });
+  it("dirtyConflicts lists dirty paths a part touches", () => {
+    const plan = parsePlan(unit("      - {id: a, spec: A, files: [src/x.ts, lib/]}\n"), "/nonexistent");
+    expect(dirtyConflicts(plan, ["src/x.ts", "lib/q.ts", "README.md"])).toEqual(["src/x.ts", "lib/q.ts"]);
+    expect(dirtyConflicts(plan, ["README.md"])).toEqual([]);
   });
   it("filesOverlap: same path or containing directory", () => {
     expect(filesOverlap(["a/b.ts"], ["./a/b.ts"])).toBe(true);
