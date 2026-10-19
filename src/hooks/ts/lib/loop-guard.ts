@@ -112,9 +112,40 @@ function stable(v: unknown): string {
 /** Window key for a non-Bash tool call: tool name plus the normalised input. */
 export function toolKey(tool: string, input: Record<string, unknown>): string {
   const pick = (names: string[]) => stable(Object.fromEntries(names.map((n) => [n, input[n] ?? null])));
-  if (tool === "Read") return `${tool}: ${pick(["file_path", "offset", "limit"])}`;
+  if (tool === "Read") {
+    const { start, end } = readRange(input);
+    return `${READ_PREFIX}${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
+  }
   if (tool === "Grep" || tool === "Glob") return `${tool}: ${pick(["pattern", "path", "glob"])}`;
   return `${tool}: ${stable(input)}`;
+}
+
+const READ_PREFIX = "Read@";
+const READ_OVERLAP = 0.8;
+
+function readRange(input: Record<string, unknown>): { start: number; end: number } {
+  const off = typeof input.offset === "number" && input.offset > 0 ? input.offset : 1;
+  const lim = typeof input.limit === "number" && input.limit > 0 ? input.limit : Infinity;
+  return { start: off, end: off + lim - 1 };
+}
+
+function parseReadKey(key: string): { file: string; start: number; end: number } | null {
+  const m = /^Read@(.*)#(\d+)-(\d+|inf)$/s.exec(key);
+  return m ? { file: m[1], start: Number(m[2]), end: m[3] === "inf" ? Infinity : Number(m[3]) } : null;
+}
+
+/** Key of an earlier Read of the same file overlapping this one by >= 80% of its lines, else the key itself. */
+function canonicalReadKey(window: string[], key: string): string {
+  const cur = parseReadKey(key);
+  if (!cur) return key;
+  const len = cur.end - cur.start + 1;
+  for (const k of window) {
+    const prev = parseReadKey(k);
+    if (!prev || prev.file !== cur.file) continue;
+    const inter = Math.min(prev.end, cur.end) - Math.max(prev.start, cur.start) + 1;
+    if (inter > 0 && inter / len >= READ_OVERLAP) return k;
+  }
+  return key;
 }
 
 export interface LoopStep {
@@ -139,6 +170,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
   } else {
     if (typeof input === "string" || !tool) return { state, deny: false };
     key = toolKey(tool, input ?? {});
+    if (tool === "Read") key = canonicalReadKey(state.window, key);
   }
   const copies = state.window.filter((k) => k === key).length;
   if (copies >= LOOP_MAX_REPEATS) {

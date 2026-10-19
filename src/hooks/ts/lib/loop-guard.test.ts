@@ -175,3 +175,31 @@ describe("worker-guard hook", () => {
     }
   }, 60000);
 });
+
+describe("loop guard: overlapping Read ranges", () => {
+  const rd = (offset: number, limit: number, file = "src/cli/commands/audit.ts") => ["Read", { file_path: file, offset, limit }] as const;
+  const run = (calls: ReadonlyArray<readonly [string, Record<string, unknown>]>) => {
+    let s: LoopState = emptyLoopState();
+    return calls.map(([t, i]) => {
+      const r = stepLoopGuard(s, t, i);
+      s = r.state;
+      return r;
+    });
+  };
+  it("creeping offset 448..471 limit 115: denied at the 5th, stopped at the 7th", () => {
+    const res = run(Array.from({ length: 10 }, (_, i) => rd(448 + i, 115)));
+    expect(res.map((r) => r.deny)).toEqual([false, false, false, false, true, true, true, true, true, true]);
+    expect(res.findIndex((r) => r.stop)).toBe(6);
+  });
+  it("paging 1-200, 201-400, 401-600 is allowed", () => {
+    expect(run([rd(1, 200), rd(201, 200), rd(401, 200)]).some((r) => r.deny)).toBe(false);
+  });
+  it("a full-file read covers narrower ranges", () => {
+    const res = run([["Read", { file_path: "a.ts" }], rd(10, 50, "a.ts"), rd(20, 50, "a.ts"), rd(30, 50, "a.ts"), rd(40, 50, "a.ts")]);
+    expect(res[4].deny).toBe(true);
+  });
+  it("an Edit resets", () => {
+    const calls = [...Array.from({ length: 4 }, (_, i) => rd(448 + i, 115)), ["Edit", {}] as const, rd(452, 115)];
+    expect(run(calls).some((r) => r.deny)).toBe(false);
+  });
+});
