@@ -24,6 +24,7 @@ import { mainSessionBashReason } from "../lib/main-session-git-gate.js";
 import { modelServerReason } from "../lib/model-server-guard.js";
 import { cachedLocalAnswer } from "../lib/local-answer.js";
 import { buildGateReason } from "../lib/build-gate.js";
+import { backgroundReason } from "../lib/background-gate.js";
 import { raiseWaitTimeout } from "../lib/wait-timeout.js";
 
 function allow(): void {
@@ -64,6 +65,11 @@ async function main(): Promise<void> {
   // sessions and workers alike: the operator starts model servers, PAI answers which one runs
   if (typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
     const why = modelServerReason(command, process.env, cachedLocalAnswer());
+    if (why) return deny(why);
+  }
+  // interactive sessions: a background command runs in a visible pane
+  if ((input.tool_name ?? "Bash") === "Bash") {
+    const why = backgroundReason(input.tool_input, process.env);
     if (why) return deny(why);
   }
   const decision = decideSleepPollGate(input, process.env);

@@ -8,6 +8,7 @@ import { renderBuildQueue, buildNext, buildsDir, listBuilds } from "../../builds
 import { slotsFor, poolSlots } from "../../builds/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor } from "../../builds/doctor.js";
+import { inVisiblePane, runCommandInPane } from "./pane.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -21,6 +22,11 @@ function spawnWatcher(dir: string, id: string): void {
 
 async function gate(ctx: RunContext): Promise<number> {
   if (!ctx.rest.length) throw new CliError("no command given", "pai build run -- <command...>");
+  // from a session, the whole queue wait + build shows in a pane; a worker or an enclosing pane run already has one
+  if (!inVisiblePane() && !process.env.PAI_BUILD_TICKET) {
+    const label = typeof ctx.opts.label === "string" ? ctx.opts.label : `build ${ctx.rest.slice(0, 2).join(" ")}`;
+    return runCommandInPane([process.execPath, ...process.execArgv, process.argv[1] ?? "pai", ...process.argv.slice(2)], label);
+  }
   const kind = ctx.opts.kind === undefined ? "build" : ctx.opts.kind;
   if (kind !== "build" && kind !== "test") throw new CliError(`unknown kind "${String(kind)}"`, "pai build run --kind build|test -- <command...>");
   return runBuild({
