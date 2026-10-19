@@ -48,3 +48,14 @@ process.env.XDG_CONFIG_HOME = join(sandbox, ".config");
 for (const key of RUNTIME_PATH_ENV_VARS) {
   process.env[key] = join(sandbox, "runtime", key.toLowerCase());
 }
+
+/**
+ * Inside a PAI worker these point at the worker's own workers.yaml copy and
+ * provider, so config-writer tests read and write that instead of their temp
+ * fixtures (16 failures, 2026-10-19). A test run must see none of them.
+ */
+for (const key of Object.keys(process.env)) {
+  if (key === "PAI_WORKERS_YAML" || key === "PAI_SESSION_PROVIDER" || key.startsWith("PAI_WORKER")) {
+    delete process.env[key];
+  }
+}
