@@ -107,6 +107,8 @@ import { workerModel } from "./tools/worker-model.js";
 import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet } from "./tools/session-profile.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
+import { currentLocalStatus } from "../workers/local-provider.js";
+import { localStatusReport } from "../workers/local-status.js";
 import {
   planAmend, planRun, planSave, planStatusText, planStop, queueAccept, queueAdd, queueAgain, queueReject, queueReview, queueRun,
   realDelegationDeps,
@@ -1275,6 +1277,16 @@ async function startShim(): Promise<void> {
       providers: z.array(z.string()).optional().describe("Preference list, first usable one wins (required for set)."),
     },
     async (args) => workerCapability(args)
+  );
+
+  server.tool(
+    "local_status",
+    "Which local model is running now, its model, and which local providers are down or disabled (the daemon's answer, refreshed every 30 s). Never probe ports or start model servers; worker_run with local: true runs on the running one.",
+    {},
+    async () => {
+      const r = localStatusReport(await currentLocalStatus());
+      return { content: [{ type: "text" as const, text: `${r.text}\n${JSON.stringify(r.json)}` }] };
+    }
   );
 
   server.tool(

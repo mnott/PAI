@@ -31,6 +31,7 @@ import { registerQuietRunner, startQuietWatcher } from "../quiet.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor } from "./scheduler.js";
+import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -173,6 +174,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // Worker supervision reads the workers ledger off disk and pushes events to
   // owning sessions — no backend dependency, so it starts with the IPC server.
   startWorkerSupervisor();
+  // The one answer to "which local model is running" (sessions read it, never probe).
+  startLocalStatusRefresh();
 
   // Cache keepalive spawns trivial workers on the workers config — also no
   // backend dependency (observations store opportunistically when Postgres

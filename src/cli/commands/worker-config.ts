@@ -24,7 +24,8 @@ import {
   workersYamlPath,
 } from "../../workers/workers-config.js";
 import { testProvider } from "../../workers/run.js";
-import { probeLoopback } from "../../workers/local-provider.js";
+import { currentLocalStatus, probeLoopback } from "../../workers/local-provider.js";
+import { localStatusLine } from "../../workers/local-status.js";
 import {
   addProvider,
   classTargetText,
@@ -665,17 +666,19 @@ function printLocalStatus(cfg: LocalConfig): void {
 
 export const workerLocalCommand: CommandDef = {
   name: "local",
-  summary: "Switch which local model server runs",
+  summary: "Which local model runs; the operator switches tiers",
   description:
+    "Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.\n" +
     "TARGET is a tier name (stops every local server, starts that tier), `off` (stops all) or `status` (what is up).\n" +
     "Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).",
-  args: [{ name: "TARGET", required: true, summary: "A tier name, off, or status" }],
+  args: [{ name: "TARGET", required: false, summary: "A tier name, off, or status; omit for the running local model" }],
   options: [{ name: "dry-run", type: "boolean", summary: "Print the exact commands without starting or stopping anything" }],
-  examples: ["pai worker local status", "pai worker local big --dry-run"],
+  examples: ["pai worker local", "pai worker local status", "pai worker local big --dry-run"],
   seeAlso: ["pai worker policy", "pai worker config path"],
   async run(ctx) {
     try {
-      const target = ctx.args.TARGET as string;
+      const target = ctx.args.TARGET as string | undefined;
+      if (!target) return void out(localStatusLine(await currentLocalStatus()));
       const cfg = readLocalConfig(workersYamlPath());
       if (target === "status") return void printLocalStatus(cfg);
       if (target === "off") {
