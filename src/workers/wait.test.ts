@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWait, waitWorkers } from "./wait.js";
@@ -15,6 +15,8 @@ const logDir = mkdtempSync(join(tmpdir(), "pai-wait-test-"));
 
 mkdirSync(join(logDir, "src"));
 writeFileSync(join(logDir, "src", "a.ts"), "x", "utf8"); // the file reportText claims
+const past = new Date(Date.now() - 5000);
+utimesSync(join(logDir, "src", "a.ts"), past, past); // pins the mtime well before any clock-derived stamp
 
 function status(id: string, over: Partial<WorkerStatus> = {}): void {
   const s: WorkerStatus = {
@@ -26,7 +28,7 @@ function status(id: string, over: Partial<WorkerStatus> = {}): void {
     provider: "testprov",
     model: "test-1",
     state: "done",
-    started: nowStamp(),
+    started: over.state === "running" ? nowStamp() : "2000-01-01 00:00:00", // done: older than the claimed file, clock-independent; running: fresh so reconcile keeps it
     updated: "2026-09-17 10:00:00",
     turns: 1,
     tools: 0,
