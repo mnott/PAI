@@ -91,6 +91,8 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
       input.tool_name,
       input.tool_name === "Bash" ? bashCmd : ((input.tool_input ?? {}) as Record<string, unknown>),
       bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(input.cwd || process.cwd()) : null,
+      Date.now(),
+      input.cwd || process.cwd(),
     );
     if (r.state !== state) saveLoopState(file, r.state);
     if (r.deny) {

@@ -17,7 +17,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { loadBuildsConfig, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 export const LOOP_MAX_REPEATS = 4;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
@@ -49,6 +50,8 @@ export interface LoopState {
   prints?: Record<string, string>;
   /** Window key -> ms timestamp of the first "still running" result of a polling call (see isWaitResult). */
   waits?: Record<string, number>;
+  /** Window key -> ms timestamp of the first call of a build-door poll (see isPollCommand); bounded by WAIT_CAP_MS. */
+  polls?: Record<string, number>;
 }
 
 /** Total polling time per command key after which a "still running" helper is treated as an ordinary repeat again. */
@@ -74,6 +77,39 @@ function exitCodeOf(response: unknown): number | null {
 export function isWaitResult(response: unknown): boolean {
   const code = exitCodeOf(response);
   return (code === 3 || code === null) && WAIT_TEXT.test(resultSig(response));
+}
+
+const doorCache = new Map<string, BuildsConfig | null>();
+function doorsAt(dir: string): BuildsConfig | null {
+  const d = resolve(dir);
+  if (!doorCache.has(d)) doorCache.set(d, loadBuildsConfig(d));
+  return doorCache.get(d) ?? null;
+}
+
+const POLL_VERB = /^(?:pai\s+build\s+(?:run|lock)|pai\s+worker\s+wait[\w-]*)\b/;
+
+/**
+ * A poll waits for something else: anywhere in the command line (cd prefixes, pipes, && chains) it invokes a build
+ * door registered in the repo's `.pai/builds.yaml` with `--wait`, or `pai build run|lock`, or `pai worker wait*`.
+ */
+export function isPollCommand(command: string, cwd: string = process.cwd()): boolean {
+  let dir = cwd;
+  for (const seg of splitSegments(command)) {
+    const ws = seg.split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")).filter(Boolean);
+    if (ws[0] === "cd" && ws[1]) {
+      dir = isAbsolute(ws[1]) ? ws[1] : resolve(dir, ws[1]);
+      continue;
+    }
+    if (POLL_VERB.test(ws.join(" ").replace(/^(?:[A-Za-z_]\w*=\S*\s+|nohup\s+)+/, ""))) return true;
+    if (!ws.includes("--wait")) continue;
+    const cfg = doorsAt(dir);
+    if (!cfg) continue;
+    for (const door of cfg.doors) {
+      const d = door.replace(/^\.\//, "");
+      if (ws.some((w) => w.replace(/^\.\//, "") === d || w.endsWith(`/${d}`) || resolve(dir, w) === resolve(cfg.root, d))) return true;
+    }
+  }
+  return false;
 }
 
 /** Runs of one action key without an edit at which the call is denied / the session stopped. */
@@ -313,8 +349,23 @@ export interface LoopStep {
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now()): LoopStep {
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (tool === "Bash") {
+    const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    const pk = typeof c === "string" ? callKey(tool, c) : null;
+    if (pk !== null && isPollCommand(c as string, cwd)) {
+      const since = state.polls?.[pk] ?? now;
+      const next = { ...state, polls: { ...(state.polls ?? {}), [pk]: since } };
+      if (now - since < WAIT_CAP_MS) return { state: next, deny: false };
+      return {
+        state: next,
+        deny: true,
+        key: pk.split("\t")[1],
+        reason: `loop guard: this command has been polled for over ${WAIT_CAP_MS / 60_000} minutes (wait cap per command). It is not finishing; check what it is waiting on or report the blocker. ${SELF}`,
+      };
+    }
+  }
   if (tool === "Bash") {
     // the previous result of this command said "still running": polling is waiting, bounded by WAIT_CAP_MS
     const wk = callKey(tool, input);
