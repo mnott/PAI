@@ -29,6 +29,7 @@ import { loopDenyReason, actionKey, stepLoopGuard, worktreeFingerprint } from ".
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
+import { isTestCommand, wrapTestCommand } from "../../../workers/hang-probe.js";
 import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -160,7 +161,15 @@ async function main(): Promise<void> {
   }
 
   const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));
-  if (decision.decision === "deny" || decision.updatedInput) process.stdout.write(renderDecision(decision) + "\n");
+  if (decision.decision === "deny" || decision.updatedInput) {
+    process.stdout.write(renderDecision(decision) + "\n");
+    return;
+  }
+  // worker test runs go through the hang probe, which says where a silent run is stuck
+  const command = (input.tool_input as { command?: unknown } | undefined)?.command;
+  if (process.env.PAI_WORKER === "1" && input.tool_name === "Bash" && typeof command === "string" && isTestCommand(command)) {
+    process.stdout.write(renderDecision({ decision: "allow", updatedInput: { ...(input.tool_input as object), command: wrapTestCommand(command) } }) + "\n");
+  }
 }
 
 main().catch(() => process.exit(0));

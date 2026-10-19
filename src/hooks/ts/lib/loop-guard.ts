@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { loadBuildsConfig, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 export const LOOP_MAX_REPEATS = 4;
@@ -30,6 +31,13 @@ const WINDOW_CAP = 64;
 
 const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
 export const LOOP_DENY_REASON = `loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
+
+const HANG_SUFFIX = " This command hung before (see the hang probe line in its output for where); running it unchanged will hang again. Fix the code at that location first.";
+
+/** True when an earlier result of the cluster (window indexes) carried a hang-probe diagnosis. */
+function hungBefore(state: LoopState, idx: number[]): boolean {
+  return idx.some((i) => state.outs?.[i]?.includes(HANG_MARKER));
+}
 
 export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string {
   return tool === "Bash"
@@ -348,6 +356,11 @@ export interface LoopStep {
   reason?: string;
 }
 
+function hangNote(state: LoopState, command: string): string {
+  const key = callKey("Bash", command);
+  return key !== null && hungBefore(state, clusterOf(state.window, key)) ? HANG_SUFFIX : "";
+}
+
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
@@ -395,7 +408,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
           stop: n >= RUN_STOP_AT,
           key: ak,
           count: n,
-          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker. ${SELF}`,
+          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker.${hangNote(state, cmd as string)} ${SELF}`,
         };
     }
   }
@@ -413,6 +426,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
       state: { ...state, denials },
       deny: true,
       stop: denials[head] >= LOOP_STOP_DENIALS,
+      reason: hungBefore(state, idx) ? `${loopDenyReason(tool)}${HANG_SUFFIX}` : undefined,
       key: head.split("\t")[1],
       count: LOOP_MAX_REPEATS + denials[head],
     };
