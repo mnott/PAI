@@ -15,6 +15,7 @@ import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
 import { appendRunLog, tail, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
+import { resolveRunnerProvider } from "./local-provider.js";
 
 export interface Captured {
   code: number | null;
@@ -163,6 +164,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string): Run
       return launchWorker(req, specFile, plan.repo, logDir);
     },
     merge: (id: string, gate: string) => mergeBranch(plan.repo, id, gate),
+    resolveLocal: resolveRunnerProvider,
     stopActive: async () => void (await stopLaunchedWorkers(logDir)),
     async unitCheck(cmd: string) {
       const r = await capture(cmd, [], plan.repo, true);

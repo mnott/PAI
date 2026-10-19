@@ -9,9 +9,6 @@ import { withRunLock, queueLockPath, type LockDeps } from "./run-lock.js";
 import { filesOverlap } from "./plan.js";
 import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
-import { resolvePlanProvider } from "./local-provider.js";
-import { readWorkersSection } from "./config.js";
-import { workersLogDir } from "./paths.js";
 
 export interface QueueDeps {
   startWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "spec"> & { attempt: number; itemId: string }): Promise<WorkerOutcome>;
@@ -20,6 +17,8 @@ export interface QueueDeps {
   /** Run a shell command (gate, proof, install) in `cwd`. */
   sh(cmd: string, cwd: string): Promise<{ ok: boolean; output: string }>;
   merge(repo: string, workerId: string, gate: string): Promise<MergeOutcome>;
+  /** The provider a queue value names: `local` becomes the running local server, any other name is returned unchanged. */
+  resolveLocal(provider: string): Promise<string>;
   /** Stop the workers this runner has started (SIGTERM/SIGINT path). */
   stopActive?(): Promise<void>;
 }
@@ -76,8 +75,7 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
     active.add(item.id);
     // `local` as the queue's provider means resolveLocalProvider() at run
     // start — the loopback server that answers, never a provider picked by name.
-    const { workers } = readWorkersSection();
-    const localName = await resolvePlanProvider(workers, workersLogDir(workers), opts.provider);
+    const localName = await deps.resolveLocal(opts.provider);
     const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> = opts.escalate
       ? [{ tier: "sonnet", provider: "anthropic" }]
       : Array.from({ length: LOCAL_ATTEMPTS }, () => ({ tier: "local" as const, provider: localName }));

@@ -3,8 +3,6 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// fake deps, no local server here: `provider: local` reaches the spawn unchanged
-process.env.PAI_LOCAL_PROVIDER_RESOLVE = "off";
 import { parsePlan, type Plan } from "./plan.js";
 import { realCommitsAhead, checkoutProblem, workerArgs } from "./plan-deps.js";
 import {
@@ -63,6 +61,7 @@ function harness(p: Plan, outcome: (r: StartRequest) => boolean = () => true, me
   const mergeCount = new Map<string, number>();
   const deps: RunnerDeps = {
     now: () => 0,
+    resolveLocal: async (p) => p,
     log: (e) => log.push(e),
     async startWorker(r): Promise<WorkerOutcome> {
       for (const o of live) if (o.part.files.some((f) => r.part.files.includes(f))) overlaps.push(`${o.part.id}/${r.part.id}`);

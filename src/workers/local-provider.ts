@@ -39,16 +39,6 @@ import { PORT_TIMEOUT_MS, tcpPortCheck, type PortCheck } from "../cli/lib/setups
 
 export { PORT_TIMEOUT_MS, tcpPortCheck, type PortCheck };
 
-/**
- * The value `local` in a plan/queue run means resolveLocalProvider() at run
- * start. A test harness with fake deps and no real server sets
- * PAI_LOCAL_PROVIDER_RESOLVE=off: the value then reaches the worker spawn
- * unchanged, exactly as before this feature.
- */
-function resolutionDisabled(): boolean {
-  return process.env.PAI_LOCAL_PROVIDER_RESOLVE === "off";
-}
-
 /** The host and port a provider's server answers on. */
 export function providerHostPort(p: WorkerProvider): { host: string; port: number } | null {
   try {
@@ -159,7 +149,7 @@ export async function resolvePlanProvider(
   provider: string,
   opts: ResolveLocalOpts = {}
 ): Promise<string> {
-  if (provider !== "local" || resolutionDisabled()) return provider;
+  if (provider !== "local") return provider;
   return (await resolveLocalProvider(workers, logDir, opts)).name;
 }
 
@@ -175,4 +165,10 @@ export async function localProviderForDelegation(
   const res = await resolveLocalProvider(workers, workersLogDir(workers), opts);
   const p = getProviderOrNative(workers, res.name);
   return { name: res.name, cap: resolveCap(p?.maxConcurrent, true) ?? 3 };
+}
+
+/** The real `resolveLocal` of the plan and queue runners: reads the workers config. */
+export function resolveRunnerProvider(provider: string): Promise<string> {
+  const { workers } = readWorkersSection();
+  return resolvePlanProvider(workers, workersLogDir(workers), provider);
 }
