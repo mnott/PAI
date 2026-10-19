@@ -3,13 +3,13 @@
 import {
   existsSync,
   unlinkSync,
-  writeFileSync,
   readFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import { collectSessionFiles, walkNotesDir } from "./walk.js";
 import { worktreeReason } from "../../registry/registrable.js";
+import { writeIfChanged } from "./write-if-changed.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,27 +20,11 @@ export function masterFilename(slug: string): string {
   return `_${slug}-master.md`;
 }
 
-/**
- * Remove any old/broken backlink footer from a session file.
- * Returns true if the file was modified.
- */
-function removeOldBacklink(filePath: string): boolean {
-  let content: string;
-  try {
-    content = readFileSync(filePath, "utf-8");
-  } catch {
-    return false;
-  }
+/** Strip any old/broken backlink footer from note content. */
+function stripOldBacklink(content: string): string {
   const oldPattern = /\n---\n\[\[\.\.\/[^\]]+\]\]\n?$/;
   const newPattern = /\n---\n\[\[_[^\]]*-master\|[^\]]*\]\]\n?$/;
-  const cleaned = content.replace(oldPattern, "").replace(newPattern, "");
-  if (cleaned === content) return false;
-  try {
-    writeFileSync(filePath, cleaned, "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
+  return content.replace(oldPattern, "").replace(newPattern, "");
 }
 
 /**
@@ -64,33 +48,27 @@ function hasMeaningfulBody(content: string): boolean {
 }
 
 /**
- * Append the master note backlink footer to a session file, idempotently.
- * Only writes if the sentinel string is not already present AND the note has
- * a meaningful body (never stamp a footer onto an empty note).
+ * Bring a session file's master backlink footer to its canonical form: old or
+ * broken footers stripped, the current one present (never on an empty note —
+ * that is the dangling-stub signature). Computed in memory and written once,
+ * and not at all when the file already matches, so a no-op sync leaves the
+ * file untouched. Returns true if the file was modified.
  */
-function appendBacklinkIfMissing(
-  filePath: string,
-  slug: string,
-  displayName: string
-): boolean {
+function syncBacklink(filePath: string, slug: string, displayName: string): boolean {
   let content: string;
   try {
     content = readFileSync(filePath, "utf-8");
   } catch {
     return false;
   }
-  // Never stamp a footer onto an empty note — that is exactly the dangling-stub
-  // signature (empty body + master backlink) we are trying to prevent.
-  if (!hasMeaningfulBody(content)) return false;
-
   const masterName = masterFilename(slug).replace(/\.md$/, "");
   const sentinel = `[[${masterName}|`;
-  if (content.includes(sentinel)) return false;
-
-  const footer = `\n---\n[[${masterName}|← ${displayName} Master]]\n`;
+  let next = stripOldBacklink(content);
+  if (hasMeaningfulBody(next) && !next.includes(sentinel)) {
+    next += `\n---\n[[${masterName}|← ${displayName} Master]]\n`;
+  }
   try {
-    writeFileSync(filePath, content + footer, "utf-8");
-    return true;
+    return writeIfChanged(filePath, next);
   } catch {
     return false;
   }
@@ -183,15 +161,13 @@ export async function generateMasterNotes(
 
     const masterPath = join(slugPath, masterFilename(project.slug));
     try {
-      writeFileSync(masterPath, lines.join("\n"), "utf-8");
-      written++;
+      if (writeIfChanged(masterPath, lines.join("\n"))) written++;
     } catch {
       continue;
     }
 
     for (const sf of sessionFiles) {
-      removeOldBacklink(sf.absPath);
-      appendBacklinkIfMissing(sf.absPath, project.slug, project.display_name);
+      syncBacklink(sf.absPath, project.slug, project.display_name);
     }
   }
 
@@ -260,7 +236,7 @@ export async function fixSessionTags(
         const cleaned = updated.replace(/(\*\*Tags:\*\*) *\n/g, "$1\n");
 
         try {
-          writeFileSync(filePath, cleaned, "utf-8");
+          writeIfChanged(filePath, cleaned);
           results.filesModified++;
         } catch (e) {
           results.errors.push(`${filePath}: write error — ${e}`);

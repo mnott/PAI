@@ -84,6 +84,33 @@ describe("session-stop.sh / pre-compact.sh call pai hooks-db", () => {
     expect(calls).toEqual(["hooks-db pre-compact testproj"]);
   });
 
+  it("hooks signal obsidian changes with a marker and never run obsidian sync", () => {
+    const marker = join(homeDir, ".claude", "pai", ".obsidian-dirty");
+    for (const [script, verb] of [["src/hooks/session-stop.sh", "hooks-db session-stop"], ["src/hooks/pre-compact.sh", "hooks-db pre-compact"]] as const) {
+      rmSync(marker, { force: true });
+      writeFileSync(logFile, "");
+      runHookDetached(script);
+      const content = waitForLogLine(verb);
+      expect(content).not.toMatch(/obsidian/);
+      const deadline = Date.now() + 5000;
+      while (!existsSync(marker) && Date.now() < deadline) { /* hook finishes after its last logged call */ }
+      expect(existsSync(marker)).toBe(true);
+    }
+  });
+
+  it("workers touch nothing and call nothing", () => {
+    const marker = join(homeDir, ".claude", "pai", ".obsidian-dirty");
+    for (const script of ["src/hooks/session-stop.sh", "src/hooks/pre-compact.sh"]) {
+      execFileSync("bash", [script], {
+        input: "",
+        timeout: 15_000,
+        env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, HOME: homeDir, PAI_HOME: join(homeDir, ".claude", "pai"), PAI_WORKER: "1" },
+      });
+    }
+    expect(readFileSync(logFile, "utf8")).toBe("");
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("neither script contains a raw sqlite3 call", () => {
     const stopScript = readFileSync("src/hooks/session-stop.sh", "utf8");
     const compactScript = readFileSync("src/hooks/pre-compact.sh", "utf8");

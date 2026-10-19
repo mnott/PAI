@@ -30,6 +30,7 @@ import {
 import { registerQuietRunner, startQuietWatcher } from "../quiet.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
+import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sync.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -166,6 +167,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   for (const [kind, run] of Object.entries(quietRunners())) registerQuietRunner(kind as keyof ReturnType<typeof quietRunners>, run);
   registerQuietRunner("registry-scan", () => void triggerRegistryScan());
   registerQuietRunner("triple-extraction", async () => void (await backfillKgFromNotes()));
+  registerQuietRunner("obsidian-sync", async () => void (await runObsidianSyncIfDue()));
+  startObsidianSyncScheduler(config.obsidianSyncIntervalSecs);
   startQuietWatcher();
 
   // Registry scan scheduler only needs the registry DB — safe to start now.

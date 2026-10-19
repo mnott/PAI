@@ -23,6 +23,7 @@ import { runWorktreeGcDaily } from "../worktree-gc.js";
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
+import { obsidianEnabled } from "../../obsidian/enabled.js";
 import { deferIfQuiet, type DeferredKind } from "../quiet.js";
 import { enqueueRegistryScan } from "../work-queue-worker.js";
 import { PassSpawnError, runPassChild, type PassName } from "../pass-priority.js";
@@ -103,7 +104,7 @@ async function runPassPrioritised<T>(name: PassName, inProcess: () => Promise<T>
 const VAULT_INDEX_MIN_INTERVAL_MS = 30 * 60 * 1000;
 
 /** What quiet mode runs (once) per deferred kind when it ends. */
-export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "triple-extraction">, () => Promise<void>> {
+export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "triple-extraction" | "obsidian-sync">, () => Promise<void>> {
   return {
     index: () => runIndex().then(() => runVaultIndex()),
     embed: () => runEmbed(),
@@ -163,7 +164,7 @@ export async function runIndex(): Promise<void> {
  * Skips if no vaultPath is configured, or if project index/embed is in progress.
  */
 export async function runVaultIndex(): Promise<void> {
-  if (!daemonConfig.vaultPath) return;
+  if (!daemonConfig.vaultPath || !obsidianEnabled()) return;
 
   if (vaultIndexInProgress) {
     process.stderr.write("[pai-daemon] Vault index already in progress, skipping.\n");

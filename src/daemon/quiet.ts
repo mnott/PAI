@@ -13,7 +13,7 @@
 
 import { readMainConfigRaw, writeMainConfigRaw } from "./config.js";
 
-export type DeferredKind = "registry-scan" | "index" | "embed" | "triple-extraction" | "maintenance";
+export type DeferredKind = "registry-scan" | "index" | "embed" | "triple-extraction" | "maintenance" | "obsidian-sync";
 
 export interface QuietState {
   on: boolean;
@@ -107,7 +107,7 @@ export function deferredKinds(): DeferredKind[] {
  */
 export async function flushDeferredIfEnded(now = Date.now()): Promise<DeferredKind[]> {
   if (readQuiet(now).on || deferred.size === 0) return [];
-  const order: DeferredKind[] = ["registry-scan", "index", "maintenance", "embed", "triple-extraction"];
+  const order: DeferredKind[] = ["registry-scan", "index", "maintenance", "embed", "triple-extraction", "obsidian-sync"];
   const kinds = order.filter((k) => deferred.has(k));
   deferred.clear();
   for (const kind of kinds) {

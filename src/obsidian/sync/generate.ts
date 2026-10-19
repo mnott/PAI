@@ -1,6 +1,7 @@
 /** Index and topic page generation — writes _index.md and _topics/{tag}.md. */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeIfChanged } from "./write-if-changed.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
@@ -69,7 +70,7 @@ export async function generateIndex(vaultPath: string, registry: RegistryBackend
     `*${rows.length} projects total — ${active.length} active, ${archived.length} archived*`
   );
 
-  writeFileSync(join(vaultPath, "_index.md"), lines.join("\n") + "\n", "utf-8");
+  writeIfChanged(join(vaultPath, "_index.md"), lines.join("\n") + "\n");
 }
 
 /**
@@ -108,7 +109,7 @@ export async function generateTopicPages(vaultPath: string, registry: RegistryBa
 
     lines.push("", "---", `*${projects.length} project(s) tagged \`${tag.name}\`*`);
 
-    writeFileSync(join(topicsDir, `${tag.name}.md`), lines.join("\n") + "\n", "utf-8");
+    writeIfChanged(join(topicsDir, `${tag.name}.md`), lines.join("\n") + "\n");
     written++;
   }
 

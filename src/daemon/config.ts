@@ -118,6 +118,11 @@ export interface DashboardConfig {
   bind: string;
 }
 
+export interface ObsidianConfig {
+  /** Master switch for all Obsidian work: vault sync (daemon, CLI) and the vault index pass. Default: false. */
+  enabled: boolean;
+}
+
 export interface RouterConfig {
   /** Keep `pai router` (127.0.0.1:8790) running under the daemon. Default: false. */
   enabled: boolean;
@@ -141,6 +146,8 @@ export interface PaiDaemonConfig {
 
   /** Embedding schedule interval in seconds (default: 600 = 10 minutes) */
   embedIntervalSecs: number;
+  /** Obsidian vault sync interval in seconds (default: 1800 = 30 minutes); syncs only if a hook flagged a change. */
+  obsidianSyncIntervalSecs: number;
   /** Run an embed pass 60s after daemon start. Off by default: with a large
    *  backlog it makes every restart a CPU storm, and it ignores the interval. */
   embedOnStartup: boolean;
@@ -196,6 +203,9 @@ export interface PaiDaemonConfig {
 
   /** Read-only memory status dashboard (src/daemon/dashboard.ts). */
   dashboard: DashboardConfig;
+
+  /** Obsidian integration switch (off by default). */
+  obsidian: ObsidianConfig;
 
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
@@ -285,6 +295,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   socketPath: paiSocketPath(),
   indexIntervalSecs: 300,
   embedIntervalSecs: 600,
+  obsidianSyncIntervalSecs: 1800,
   embedOnStartup: false,
   passPriority: "background",
   storageBackend: "sqlite",
@@ -303,6 +314,7 @@ export const DEFAULTS: PaiDaemonConfig = {
   identity: { selfEmails: [] },
   sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
   dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
+  obsidian: { enabled: false },
   router: { enabled: false, bind: "loopback" },
   search: {
     mode: "keyword",
