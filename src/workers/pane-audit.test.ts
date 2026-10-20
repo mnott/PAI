@@ -130,6 +130,7 @@ describe("auditTick", () => {
         { id: "plan-x", kind: "plan" },
       ],
       registry: () => [entry("w-bad", P2), entry("plan-x", "CCCCCCCC-0000-4000-8000-000000000003")],
+      reopen: async () => "no pane support here",
     });
 
   it("records, marks and reports each violation once", async () => {
@@ -156,5 +157,70 @@ describe("auditTick", () => {
   it("renders process -> pane -> tab", async () => {
     await run();
     expect(renderPaneAudit(await run())).toMatch(/WRONG TAB\s+worker w-bad\s+pane BBBBBBBB.*tab 9:1.*host tab 1:2/);
+  });
+
+  // the reopen path: a running worker whose pane is gone gets its pane reopened through the
+  // `pai worker pane <id>` code path; the session hears only when that fails.
+  const reopen = (ok: boolean) => vi.fn(async (_wid: string) => (ok ? "pane opened for w-1" : "no pane support here"));
+  const lost = (split = reopen(true)) =>
+    auditTick(dir, msg, {
+      tabs: async () => tabs({ [H]: "1:2" }),
+      procs: () => [{ id: "w-1", kind: "worker" }],
+      registry: () => [entry("w-1", P1)],
+      reopen: split,
+    });
+  const ledger = () => readFileSync(join(dir, "ledger.log"), "utf8");
+
+  it("running worker whose pane is gone: reopened once, no notification", async () => {
+    const split = reopen(true);
+    await lost(split); // first failed check only confirms
+    await lost(split); // confirmed: reopen
+    expect(split).toHaveBeenCalledTimes(1);
+    expect(sent.length).toBe(0);
+    await lost(); // the pane is back: nothing further
+    expect(split).toHaveBeenCalledTimes(1);
+    expect(ledger()).toMatch(/PANE-REOPENED.*w-1/);
+  });
+  it("reopen fails: the session is notified", async () => {
+    const split = reopen(false);
+    await lost(split);
+    await lost(split);
+    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(1);
+    expect(sent[0]).toContain("reopen failed");
+  });
+  it("closed twice within 10 min: stop reopening, notify instead", async () => {
+    let t = 0;
+    const split = reopen(true);
+    const at = () => new Date(1_700_000_000_000 + t);
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], now: at, reopen: split });
+    await tick();
+    t += 30_000;
+    await tick(); // confirmed: reopen 1
+    expect(split).toHaveBeenCalledTimes(1);
+    t += 5 * 60_000; // the operator closed the reopened pane
+    await tick();
+    await tick(); // confirmed: reopen 2, then stop
+    expect(split).toHaveBeenCalledTimes(2);
+    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
+    expect(sent[0]).toContain("stopped reopening");
+    t += 5 * 60_000; // still within the 10-min window
+    await tick();
+    await tick();
+    expect(split).toHaveBeenCalledTimes(2);
+  });
+  it("an ended worker is never reopened", async () => {
+    const split = reopen(true);
+    const ended = () =>
+      auditTick(dir, msg, {
+        tabs: async () => tabs({ [H]: "1:2" }),
+        procs: () => [{ id: "w-1", kind: "worker", live: false }],
+        registry: () => [entry("w-1", P1)],
+        reopen: split,
+      });
+    await ended(); // first failed check only confirms
+    await ended(); // confirmed: an ended worker is not reopened, and not reported either
+    expect(split).not.toHaveBeenCalled();
+    expect(sent.length).toBe(0);
   });
 });
