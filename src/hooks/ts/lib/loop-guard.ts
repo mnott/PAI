@@ -11,12 +11,15 @@
  * command over different files) is progress and never counts. Waiting verbs
  * and bounded sleeps are exempt. Unknown results count as similar. Runner runs
  * (see actionKey) reset when the worktree fingerprint changed since the previous
- * run of the key, so edits made through Bash count as progress too.
+ * run of the key, so edits made through Bash count as progress too. The
+ * fingerprint is content-based (tracked diff + non-empty non-dot untracked
+ * files): touching a file or a `.loop-nudge` does not count, and a nudge-prefixed
+ * repeat (`touch X && <blocked command>`) is the same command (LOOP-GUARD-EVASION).
  */
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
@@ -156,26 +159,36 @@ export function actionKey(command: string): string | null {
 }
 
 /**
- * Cheap fingerprint of the worktree state: `git status` (tracked changes and untracked files) plus size and mtime of
- * each listed path, so re-editing an already modified file changes it. Null outside a git worktree or on error.
+ * Cheap fingerprint of the worktree CONTENT: the diff of tracked files against HEAD plus the content of untracked
+ * files that are not ignored, not empty and not dot-files. A touch (mtime-only change), an empty file or a dot-file
+ * nudge does not change it, so creating `.loop-nudge` does not get a repeated command past the guard.
+ * Null outside a git worktree or on error.
  */
 export function worktreeFingerprint(cwd: string): string | null {
   try {
-    const out = execFileSync("git", ["-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
-    const root = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const h = createHash("sha1").update(out);
-    const parts = out.split("\0");
-    for (let i = 0; i < parts.length; i++) {
-      const e = parts[i];
-      if (e.length < 4) continue;
-      if (e[0] === "R" || e[0] === "C") i++; // rename: next field is the origin path
+    const git = (args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
+    const root = git(["rev-parse", "--show-toplevel"]).trim();
+    const h = createHash("sha1");
+    // no commits yet: HEAD does not exist, so every tracked file is untracked content
+    let hasHead = true;
+    try {
+      git(["rev-parse", "--verify", "HEAD"]);
+    } catch {
+      hasHead = false;
+    }
+    if (hasHead) h.update(git(["diff", "HEAD", "--no-color", "--no-ext-diff"]));
+    const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+    for (const p of untracked.split("\n")) {
+      if (!p || p.startsWith(".") || p.includes("/.")) continue; // dot-files and nudges do not count
       try {
-        const st = statSync(join(root, e.slice(3)));
-        h.update(`${e.slice(3)}\t${st.size}\t${st.mtimeMs}\n`);
+        const content = readFileSync(join(root, p));
+        if (content.length) h.update(`${p}\0`).update(content); // an empty file is no change
       } catch {
-        // deleted path: the status line already says so
+        // unreadable path: skip it
       }
     }
+    // staged-but-uncommitted content is invisible to `git diff HEAD`
+    if (hasHead) h.update(git(["diff", "--cached", "--no-color", "--no-ext-diff"]));
     return h.digest("hex");
   } catch {
     return null;
@@ -280,10 +293,27 @@ function readCoverage(prev: string, cur: string): number {
   return inter > 0 ? inter / (cap(c.end) - c.start + 1) : 0;
 }
 
+/** A leading nudge that only touches/creates a file: `touch X &&`, `: > X &&`, `echo > X &&`. */
+const NUDGE_PREFIX = /^\s*(?:touch\s+\S+|:\s*>?\s*\S+|echo\s*>\s*\S+)\s*&&\s*/;
+
+/**
+ * True when `command` is a repeat of `prev` hidden behind a file-touching nudge prefix: stripping the prefix
+ * leaves a command whose key equals the blocked one. Such a call counts as the same command (LOOP-GUARD-EVASION).
+ */
+export function loopGuardEvasion(command: string, prev: string): boolean {
+  const m = NUDGE_PREFIX.exec(command);
+  return !!m && loopKey(command.slice(m[0].length)) === loopKey(prev);
+}
+
 /** Window key of a call, or null when it is not trackable or is exempt. Display text is the part after the tab. */
 export function callKey(tool: string, input: string | Record<string, unknown> | undefined): string | null {
   if (tool === "Bash") {
-    const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    let c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    // a nudge prefix hides the command it repeats: compare the command behind it
+    if (typeof c === "string") {
+      const m = NUDGE_PREFIX.exec(c);
+      if (m) c = c.slice(m[0].length);
+    }
     return typeof c === "string" && c.trim() && !exempt(c) ? `Bash\t${loopKey(c)}` : null;
   }
   if (!tool || !input || typeof input !== "object") return null;
@@ -384,6 +414,8 @@ export interface LoopStep {
   count?: number;
   /** Deny message when it differs from loopDenyReason (the no-progress rule). */
   reason?: string;
+  /** True when this call is a nudge-prefixed repeat of a command the guard already blocked (LOOP-GUARD-EVASION). */
+  evasion?: boolean;
 }
 
 function hangNote(state: LoopState, command: string): string {
@@ -486,10 +518,12 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     const head = state.window[idx[0]];
     const denials = { ...(state.denials ?? {}) };
     denials[head] = (denials[head] ?? 0) + 1;
+    const cmd = tool === "Bash" ? (typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command) : undefined;
     return {
       state: { ...state, denials },
       deny: true,
       stop: denials[head] >= LOOP_STOP_DENIALS,
+      evasion: typeof cmd === "string" && loopGuardEvasion(cmd, head.split("\t")[1] ?? ""),
       reason: hungBefore(state, idx) ? `${loopDenyReason(tool)}${HANG_SUFFIX}` : undefined,
       key: head.split("\t")[1],
       count: LOOP_MAX_REPEATS + denials[head],
