@@ -1,19 +1,21 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  RUNTIME_HISTORY_LEN,
+  DEFAULT_RUNTIME_SAMPLES,
   buildRuntimePayload,
   createRuntimeSampler,
   engineNameOf,
   probeEngines,
   runtimeLive,
+  runtimeSampleSettings,
   sampleRuntimes,
   strataEngineMetrics,
   type RuntimeSample,
   type RuntimeSamplerInput,
 } from "./runtime-samples.js";
+import { loadConfig } from "../daemon/config.js";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { COCKPIT_HTML } from "./cockpit-page.js";
@@ -197,11 +199,11 @@ describe("sampleRuntimes + payload", () => {
   });
   it("the ring keeps the last 60 samples and the payload returns the columns oldest first", () => {
     const history: Record<string, RuntimeSample[]> = {};
-    for (let i = 0; i < RUNTIME_HISTORY_LEN + 10; i++) sampleRuntimes(input(), history, 1000 + i * 5000);
-    expect(history["port:8035"]!.length).toBe(RUNTIME_HISTORY_LEN);
+    for (let i = 0; i < DEFAULT_RUNTIME_SAMPLES.historyLen + 10; i++) sampleRuntimes(input(), history, 1000 + i * 5000);
+    expect(history["port:8035"]!.length).toBe(DEFAULT_RUNTIME_SAMPLES.historyLen);
     const p = buildRuntimePayload(input(), history) as { at: number; runtimes: Array<{ name: string; history: { decode: Array<number | null> } }> };
     const g = p.runtimes.find((r) => r.name === "gyro-m")!;
-    expect(g.history.decode.length).toBe(RUNTIME_HISTORY_LEN);
+    expect(g.history.decode.length).toBe(DEFAULT_RUNTIME_SAMPLES.historyLen);
     expect(g.history.decode[0]).toBe(73.4);
     const stopped = p.runtimes.find((r) => r.name === "coder")!;
     expect(stopped.history.decode).toEqual([]);
@@ -383,6 +385,86 @@ describe("createRuntimeSampler", () => {
     fail = true;
     await sampler.tick(); // a failed tick changes nothing
     expect(((await sampler.payload()) as { at: number }).at).toBe(2000);
+  });
+});
+
+/** A temp PAI_HOME/config.yaml (PAI_CONFIG_FILE, never the live files): the shipped
+ *  defaults merged under it, read through loadConfig → runtimeSampleSettings. */
+function tempConfig(yaml: string): () => void {
+  const savedHome = process.env.PAI_HOME;
+  const savedFile = process.env.PAI_CONFIG_FILE;
+  const dir = mkdtempSync(join(tmpdir(), "rt-samples-cfg-"));
+  process.env.PAI_HOME = dir;
+  process.env.PAI_CONFIG_FILE = join(dir, "config.yaml");
+  writeFileSync(process.env.PAI_CONFIG_FILE, yaml);
+  return () => {
+    if (savedHome === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = savedHome;
+    if (savedFile === undefined) delete process.env.PAI_CONFIG_FILE;
+    else process.env.PAI_CONFIG_FILE = savedFile;
+    rmSync(dir, { recursive: true, force: true });
+  };
+}
+
+const openaiInv: ModelInventory = {
+  ...inventory,
+  runtimes: [{ name: "gyro-m", kind: "openai-server", status: "running", port: 8035, models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 100, usedBy: [] }], users: [] }],
+};
+const openaiCfg = () => workersConfig({ "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035", maxConcurrent: 4, conversationSlots: 4 }) });
+
+describe("router.samples values from config", () => {
+  it("historyLen from a user config changes the ring length", () => {
+    const cleanup = tempConfig("router:\n  samples:\n    historyLen: 10\n");
+    try {
+      const settings = runtimeSampleSettings(loadConfig().router.samples);
+      expect(settings.historyLen).toBe(10);
+      const history: Record<string, RuntimeSample[]> = {};
+      for (let i = 0; i < 20; i++) sampleRuntimes(input({ settings }), history, 1000 + i * 5000);
+      expect(history["port:8035"]!.length).toBe(10); // not the default 60
+      const p = buildRuntimePayload(input({ settings }), history) as { runtimes: Array<{ name: string; history: { decode: Array<number | null> } }> };
+      expect(p.runtimes.find((r) => r.name === "gyro-m")!.history.decode.length).toBe(10);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("cardReadingMaxAgeMs from a user config changes how often a fresh reading is taken", async () => {
+    const cleanup = tempConfig("router:\n  samples:\n    cardReadingMaxAgeMs: 10000\n");
+    try {
+      const settings = runtimeSampleSettings(loadConfig().router.samples);
+      expect(settings.cardReadingMaxAgeMs).toBe(10_000);
+      const dir = mkdtempSync(join(tmpdir(), "pai-runtime-samples-"));
+      dirs.push(dir);
+      let t = 0;
+      let probes = 0;
+      const sampler = createRuntimeSampler(
+        {
+          inventory: async () => openaiInv,
+          sched: () => sched,
+          statuses: () => [],
+          poolState: () => null,
+          getJson: async () => {
+            probes++;
+            return { live: { state: "idle", tok_s: 1 }, conversation_cache: {} };
+          },
+          rssMb: async () => 0,
+          gpuTotalBytes: async () => null,
+          now: () => t,
+        },
+        openaiCfg,
+        () => dir,
+        () => null,
+        () => settings
+      );
+      await sampler.tick(); // the tick's probe
+      await sampler.payload(); // the fresh reading
+      const probesAfterFresh = probes;
+      t += 5000; // past the default 2 s cache, under the configured 10 s
+      await sampler.payload(); // still cached: no new probe
+      expect(probes).toBe(probesAfterFresh);
+    } finally {
+      cleanup();
+    }
   });
 });
 

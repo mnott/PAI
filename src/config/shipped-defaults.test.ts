@@ -99,7 +99,7 @@ describe("the shipped defaults files", () => {
     expect(w.gcOlderThanHours).toBe(6);
     expect(w.worktreesMaxGb).toBe(20);
     expect(w.stagger).toEqual({ enabled: true, localDefaultSec: 20, remoteDefaultSec: 8, minSec: 3, maxSec: 120 });
-    expect(w.capacity).toEqual({ enabled: true });
+    expect(w.capacity).toEqual({ enabled: true, localDefaultCap: 1, uncappedQueueCap: 3, maxTotalWaitMs: 7_200_000, heartbeatMs: 60_000, agingMs: 900_000 });
     expect(w.localIdle).toEqual({ enabled: true, gpuBelowPct: 10, minutes: 2, backoffMinutes: 10 });
     expect(w.costTier).toBe(3);
     expect(w.quotaSkipAt).toBe(95);

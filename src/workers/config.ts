@@ -20,7 +20,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { CONFIG_FILE, expandHome, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
@@ -304,9 +304,20 @@ export interface StaggerConfig {
   maxSec: number;
 }
 
-/** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
+/** Per-provider concurrency cap (workers.capacity); see capacity.ts. The policy
+ *  values live in the shipped defaults file (defaults/workers.yaml). */
 export interface CapacityConfig {
   enabled: boolean;
+  /** Loopback default cap (`workers.capacity.localDefaultCap`): one local engine serves one request at a time. */
+  localDefaultCap: number;
+  /** Cap for a provider with no cap at all (cloud, unset), used by queue/plan runners (`workers.capacity.uncappedQueueCap`). */
+  uncappedQueueCap: number;
+  /** Max total wait before the queue alarm fires (`workers.capacity.maxTotalWaitMs`). */
+  maxTotalWaitMs: number;
+  /** Longest silence of the log while queued (`workers.capacity.heartbeatMs`). */
+  heartbeatMs: number;
+  /** Aging bound: a ticket waiting longer jumps ahead of newer tickets of any session (`workers.capacity.agingMs`). */
+  agingMs: number;
 }
 
 /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
@@ -633,7 +644,14 @@ export function defaultWorkersConfig(): WorkersConfig {
       minSec: num(stagger.minSec, 3),
       maxSec: num(stagger.maxSec, 120),
     },
-    capacity: { enabled: bool(capacity.enabled, true) },
+    capacity: {
+      enabled: bool(capacity.enabled, true),
+      localDefaultCap: num(capacity.localDefaultCap, 1),
+      uncappedQueueCap: num(capacity.uncappedQueueCap, 3),
+      maxTotalWaitMs: num(capacity.maxTotalWaitMs, 2 * 3_600_000),
+      heartbeatMs: num(capacity.heartbeatMs, 60_000),
+      agingMs: num(capacity.agingMs, 15 * 60_000),
+    },
     localIdle: {
       enabled: bool(localIdle.enabled, true),
       gpuBelowPct: num(localIdle.gpuBelowPct, 10),
@@ -1278,7 +1296,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       stagger[k] = t[k] as number;
     }
   }
-  const capacity = { ...d.capacity };
+  const capacity: CapacityConfig = { ...d.capacity };
   if (w.capacity !== undefined) {
     if (typeof w.capacity !== "object" || w.capacity === null || Array.isArray(w.capacity)) {
       bad(".capacity", "must be an object");
@@ -1287,6 +1305,11 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     if (t.enabled !== undefined) {
       if (typeof t.enabled !== "boolean") bad(".capacity.enabled", "must be true or false");
       capacity.enabled = t.enabled as boolean;
+    }
+    for (const k of ["localDefaultCap", "uncappedQueueCap", "maxTotalWaitMs", "heartbeatMs", "agingMs"] as const) {
+      if (t[k] === undefined) continue;
+      if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) <= 0) bad(`.capacity.${k}`, "must be a positive number");
+      capacity[k] = t[k] as number;
     }
   }
   const localIdle = { ...d.localIdle };
@@ -1431,7 +1454,9 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
  * config (JSON or YAML).
  */
 export function readWorkersSection(
-  path: string = CONFIG_FILE,
+  // paiConfigFilePath() at call time, not the module-load CONFIG_FILE: tests
+  // re-point PAI_CONFIG_FILE after import (see paiConfigFilePath).
+  path: string = paiConfigFilePath(),
   onWarn: (msg: string) => void = (msg) => process.stderr.write(`pai worker: ${msg}\n`)
 ): {
   raw: Record<string, unknown>;

@@ -12,7 +12,7 @@
  *     the sessions already backlogged (no banked credit from idle time)
  *   - a request waiting longer than agingSec goes next regardless
  *   - inside a session: FIFO, except a request whose worker's conversation is
- *     warm (last turn under WARM_MS ago, prefix likely cached) goes first
+ *     warm (last turn under warmMs ago, prefix likely cached) goes first
  *
  * Accounting per request (queue wait, service time) is kept per worker
  * (x-pai-worker) and published through snapshot(): the router serves it at
@@ -29,13 +29,20 @@ export interface SchedConfig {
   wTokOut: number;
   agingSec: number;
   sessionWeights: Record<string, number>;
+  /** A worker whose last turn ended under this long ago still has its prefix cached (ms). */
+  warmMs: number;
+  /** Queued-stream ping interval (ms); PAI_ROUTER_PING_MS shortens it for tests. */
+  pingMs: number;
 }
 
-export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {} };
+/**
+ * The fallback used when the config cannot be read (fail-open paths). The
+ * policy values themselves live in the shipped defaults file
+ * (src/config/defaults/config.yaml, `router.scheduling`) and reach the
+ * scheduler through `loadConfig().router.scheduling` → `schedConfigFrom`.
+ */
+export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {}, warmMs: 300_000, pingMs: 15_000 };
 
-/** A worker whose last turn ended under this long ago still has its prefix cached. */
-export const WARM_MS = 5 * 60_000;
-export const PING_MS = 15_000;
 export const SCHED_FILE = "router-sched.json";
 
 /** Merge a raw `router.scheduling` config block over the defaults; bad values fall back. */
@@ -44,7 +51,7 @@ export function schedConfigFrom(raw: unknown): SchedConfig {
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (typeof r.enabled === "boolean") out.enabled = r.enabled;
-  for (const k of ["wTokIn", "wTokOut", "agingSec"] as const) {
+  for (const k of ["wTokIn", "wTokOut", "agingSec", "warmMs", "pingMs"] as const) {
     const v = r[k];
     if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
   }
@@ -160,9 +167,14 @@ export class RequestScheduler {
     return this.engines.get(engineName)?.lastWorker;
   }
 
+  /** Queued-stream ping interval of the current scheduling config (ms). */
+  pingMs(): number {
+    return this.cfg().pingMs;
+  }
+
   private isWarm(worker: string): boolean {
     const a = this.workers.get(worker);
-    return !!a && a.lastEnd > 0 && this.now() - a.lastEnd < WARM_MS;
+    return !!a && a.lastEnd > 0 && this.now() - a.lastEnd < this.cfg().warmMs;
   }
 
   /** Wait for the engine. Resolves with a ticket; rejects only when cancelled. */

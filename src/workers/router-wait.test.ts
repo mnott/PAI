@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { beginBuildWait, blockedMsOf, routerWaitMs } from "./active-time.js";
-import { effectiveCap, LOCAL_DEFAULT_CAP } from "./capacity.js";
+import { DEFAULT_CAPACITY, effectiveCap } from "./capacity.js";
 import { parseWorkersConfig } from "./config.js";
 import { armDeadline } from "./deadline.js";
 
@@ -66,7 +66,7 @@ describe("router queue wait", () => {
 
 describe("one admission path", () => {
   it("effectiveCap honours conversationSlots", () => {
-    expect(effectiveCap(undefined, true, undefined)).toBe(LOCAL_DEFAULT_CAP);
+    expect(effectiveCap(undefined, true, undefined)).toBe(DEFAULT_CAPACITY.localDefaultCap);
     expect(effectiveCap(4, true, 3)).toBe(2);
     expect(effectiveCap(undefined, false, 5)).toBe(4);
     expect(effectiveCap(2, true, 1)).toBe(1);
