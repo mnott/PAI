@@ -24,6 +24,10 @@ import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./
 export const LOOP_MAX_REPEATS = 4;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
 export const LOOP_STOP_DENIALS = 3;
+/** Consecutive same-template read-only Bash calls without a worktree change after which the next one is denied (env PAI_LOOP_READ_STREAK overrides). */
+export const LOOP_READ_STREAK = Number(process.env.PAI_LOOP_READ_STREAK) > 0 ? Number(process.env.PAI_LOOP_READ_STREAK) : 15;
+/** Piecewise-read denials in a row after which the session is stopped (the 2nd denial after the first). */
+export const LOOP_READ_STOP_DENIALS = 3;
 const SIMILARITY = 0.9;
 const READ_OVERLAP = 0.8;
 const RESULT_CHARS = 2000;
@@ -60,6 +64,8 @@ export interface LoopState {
   waits?: Record<string, number>;
   /** Window key -> ms timestamp of the first call of a build-door poll (see isPollCommand); bounded by WAIT_CAP_MS. */
   polls?: Record<string, number>;
+  /** Streak of read-only Bash calls sharing one template and file set while the worktree stayed unchanged. */
+  reads?: { key: string; files: string; print: string | null; n: number; denials: number };
 }
 
 /** Total polling time per command key after which a "still running" helper is treated as an ordinary repeat again. */
@@ -176,6 +182,25 @@ export function worktreeFingerprint(cwd: string): string | null {
 /** The command itself edits files before it runs the runner (the fingerprint is taken before the command runs). */
 function inlineEdit(command: string): boolean {
   return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit apply\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
+}
+
+const READ_VERB = /^(?:sed|head|tail|cat|grep|egrep|rg|awk|nl|wc|echo|printf|true)$/;
+
+/**
+ * Sorted file operands of a read-only command (sed -n / head / tail / cat / grep / awk print on files, joined by
+ * ; && | and echo separators), or null when the command is not read-only or names no file.
+ */
+export function readOnlyFiles(command: string): string | null {
+  if (/\bsed\s+(?:-\w+\s+)*-i|\bawk\b[^;|]*\b(?:system|getline)\b|(?:^|[^\d&])>>?\s*(?!\/dev\/null|&)/.test(command.replace(/\d?>&\d/g, ""))) return null;
+  const files = new Set<string>();
+  for (const seg of command.split(/&&|\|\||[;|\n]/)) {
+    const ws = seg.replace(/["']/g, " ").split(/\s+/).filter(Boolean);
+    if (!ws.length) continue;
+    if (!READ_VERB.test(ws[0].replace(/^.*\//, ""))) return null;
+    if (ws[0] === "echo" || ws[0] === "printf") continue;
+    for (const w of ws.slice(1)) if (!w.startsWith("-") && !/^[\d,;$]+[pP]?$/.test(w) && /[\w.]\.\w+$|\//.test(w) && !/^\/.*\/[pPd]?$/.test(w)) files.add(w);
+  }
+  return files.size ? [...files].sort().join(" ") : null;
 }
 
 export function emptyLoopState(): LoopState {
@@ -387,6 +412,29 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
         reason: `loop guard: this command has reported "still running" for over ${WAIT_CAP_MS / 60_000} minutes (wait cap per command). It is not finishing; check what it is waiting on or report the blocker. ${SELF}`,
       };
     }
+  }
+  if (tool === "Bash") {
+    const rc = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    const rk = typeof rc === "string" ? callKey(tool, rc) : null;
+    const files = rk !== null ? readOnlyFiles(rc as string) : null;
+    if (rk !== null && files !== null) {
+      const print = fingerprint ?? null;
+      const prev = state.reads;
+      const same = !!prev && prev.key === rk && prev.files === files && prev.print === print;
+      const n = same ? prev.n + 1 : 1;
+      if (same && prev.n >= LOOP_READ_STREAK) {
+        const denials = prev.denials + 1;
+        return {
+          state: { ...state, reads: { ...prev, denials } },
+          deny: true,
+          stop: denials >= LOOP_READ_STOP_DENIALS,
+          key: rk.split("\t")[1],
+          count: prev.n,
+          reason: `loop guard: You are reading ${files} piece by piece (${prev.n} calls, no edits). Read the whole file once with the Read tool (or cat), then act. ${SELF}`,
+        };
+      }
+      state = { ...state, reads: { key: rk, files, print, n, denials: same ? prev.denials : 0 } };
+    } else if (state.reads) state = { ...state, reads: undefined };
   }
   if (tool === "Bash") {
     const cmd = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
