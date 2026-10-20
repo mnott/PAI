@@ -12,8 +12,9 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
+import { paiHomePath } from "../config/pai-home.js";
 import { expandHome } from "./config.js";
 
 export class LocalTierError extends Error {}
@@ -31,14 +32,32 @@ export interface LocalLauncher {
   processMatch: string;
 }
 
+export type LocalEngine = "vllm-mlx" | "strata" | "script";
+
 export interface LocalTier {
   tier: string;
+  engine: LocalEngine;
   provider: string;
-  /** Model path; a `*` path segment is expanded against the directory. */
+  /** Button / status text; the tier name when the config gives none. */
+  label: string;
+  /** Memory the model needs, GB (cockpit button + confirm text). */
+  memoryGb?: number;
+  /** vllm-mlx: model path; a `*` path segment is expanded against the directory. "" for other engines. */
   model: string;
+  /** Model name the server answers with; "" when neither the tier nor its provider names one. */
   served: string;
   port: number;
   flags: string[];
+  /** strata: Strata server JSON. */
+  config?: string;
+  /** strata: python that runs serve/server.py. */
+  python?: string;
+  /** strata: directory holding serve/server.py (cwd of the start). */
+  strataDir?: string;
+  /** strata: the engine executable named by the config (a child of server.py). */
+  exe?: string;
+  /** script: the start script, run detached. */
+  start?: string;
 }
 
 export interface LocalConfig {
@@ -51,6 +70,11 @@ export const DEFAULT_COMMON_FLAGS =
   "--gpu-memory-utilization 0.30 --chunked-prefill-tokens 4096 --max-num-seqs 3 " +
   "--max-request-tokens 131072 --max-tokens 32768 --enable-auto-tool-choice " +
   "--tool-call-parser qwen3_coder --reasoning-parser qwen3";
+
+/** The python Strata's own venv carries (what the live server.py process runs). */
+export function defaultStrataPython(home = homedir()): string {
+  return join(home, "strata/.venv/bin/python");
+}
 
 export function defaultLauncher(): LocalLauncher {
   const home = homedir();
@@ -114,8 +138,12 @@ export function parseLocalConfig(
       const t = raw as Record<string, unknown>;
       const provider = str(t.provider, `${where}.provider`);
       if (!provider) throw new LocalTierError(`${where}.provider: required`);
+      const engine = (str(t.engine, `${where}.engine`) ?? "vllm-mlx") as LocalEngine;
+      if (engine !== "vllm-mlx" && engine !== "strata" && engine !== "script") {
+        throw new LocalTierError(`${where}.engine: must be vllm-mlx, strata or script, got "${engine}"`);
+      }
       const model = str(t.model, `${where}.model`);
-      if (!model) throw new LocalTierError(`${where}.model: required`);
+      if (engine === "vllm-mlx" && !model) throw new LocalTierError(`${where}.model: required`);
       const p = providers[provider];
       let port = t.port === undefined ? undefined : Number(t.port);
       if (port === undefined && p?.url) {
@@ -126,11 +154,64 @@ export function parseLocalConfig(
         throw new LocalTierError(`${where}.port: missing and not derivable from provider "${provider}"`);
       }
       const served = str(t.served, `${where}.served`) ?? p?.model;
-      if (!served) throw new LocalTierError(`${where}.served: missing and provider "${provider}" has no default model`);
-      tiers[name] = { tier: name, provider, model: expandHome(model), served, port, flags: flagList(t.flags, `${where}.flags`) };
+      if (engine === "vllm-mlx" && !served) {
+        throw new LocalTierError(`${where}.served: missing and provider "${provider}" has no default model`);
+      }
+      const mem = t.memoryGb === undefined ? undefined : Number(t.memoryGb);
+      if (mem !== undefined && !(mem > 0)) throw new LocalTierError(`${where}.memoryGb: must be a positive number`);
+      const tier: LocalTier = {
+        tier: name,
+        engine,
+        provider,
+        label: str(t.label, `${where}.label`) ?? name,
+        ...(mem !== undefined ? { memoryGb: mem } : {}),
+        model: model ? expandHome(model) : "",
+        served: served ?? "",
+        port,
+        flags: flagList(t.flags, `${where}.flags`),
+      };
+      if (engine === "strata") {
+        const config = str(t.config, `${where}.config`);
+        if (!config) throw new LocalTierError(`${where}.config: required for engine strata`);
+        tier.config = expandHome(config);
+        tier.python = expandHome(str(t.python, `${where}.python`) ?? defaultStrataPython());
+        const info = strataInfo(tier.config);
+        tier.strataDir = info.dir;
+        if (info.exe) tier.exe = info.exe;
+      } else if (engine === "script") {
+        const start = str(t.start, `${where}.start`);
+        if (!start) throw new LocalTierError(`${where}.start: required for engine script`);
+        tier.start = expandHome(start);
+      }
+      tiers[name] = tier;
     }
   }
   return { launcher, tiers };
+}
+
+/**
+ * Strata directory and engine exe of a Strata server config: the config's own
+ * `cwd`, else the nearest parent of its `exe` that holds serve/server.py, else
+ * ~/strata-020.
+ */
+export function strataInfo(configPath: string, home = homedir()): { dir: string; exe?: string } {
+  const fallback = join(home, "strata-020");
+  let exe: string | undefined;
+  let cwd: string | undefined;
+  try {
+    const j = JSON.parse(readFileSync(configPath, "utf8")) as { exe?: unknown; cwd?: unknown };
+    if (typeof j.exe === "string") exe = j.exe;
+    if (typeof j.cwd === "string") cwd = j.cwd;
+  } catch {
+    /* unreadable config: the start fails loudly on its own */
+  }
+  if (cwd && existsSync(join(cwd, "serve/server.py"))) return { dir: cwd, exe };
+  if (exe) {
+    for (let d = dirname(exe); d !== dirname(d); d = dirname(d)) {
+      if (existsSync(join(d, "serve/server.py"))) return { dir: d, exe };
+    }
+  }
+  return { dir: cwd ?? fallback, exe };
 }
 
 /** Read the local config from a workers.yaml file. */
@@ -184,7 +265,11 @@ function shq(s: string): string {
 export interface StartPlan {
   env: Record<string, string>;
   argv: string[];
+  /** Working directory of the start, when it is not the caller's. */
+  cwd?: string;
   logPath: string;
+  /** Give up waiting for the port after this long. */
+  readyMs: number;
   /** Shell rendering of the above, log redirect included. */
   line: string;
 }
@@ -193,7 +278,22 @@ export function logPathFor(provider: string): string {
   return join(homedir(), ".cache/pai/local-server", `${provider}.log`);
 }
 
+const VLLM_READY_MS = 10 * 60 * 1000;
+const STRATA_READY_MS = 5 * 60 * 1000;
+
 export function planStart(cfg: LocalConfig, tier: LocalTier): StartPlan {
+  if (tier.engine === "strata") {
+    const argv = [tier.python!, "serve/server.py", "--engine", "strata", "--config", tier.config!, "--port", String(tier.port)];
+    const logPath = paiHomePath("logs", "local", `${tier.tier}.log`);
+    const line = `cd ${shq(tier.strataDir!)} && nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
+    return { env: {}, argv, cwd: tier.strataDir, logPath, readyMs: STRATA_READY_MS, line };
+  }
+  if (tier.engine === "script") {
+    const argv = ["/bin/bash", tier.start!];
+    const logPath = paiHomePath("logs", "local", `${tier.tier}.log`);
+    const line = `nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
+    return { env: {}, argv, logPath, readyMs: STRATA_READY_MS, line };
+  }
   const l = cfg.launcher;
   const argv = [
     l.python, l.script, "serve", resolveModelPath(tier.model),
@@ -205,11 +305,28 @@ export function planStart(cfg: LocalConfig, tier: LocalTier): StartPlan {
   const logPath = logPathFor(tier.provider);
   const envPart = Object.entries(l.env).map(([k, v]) => `${k}=${shq(v)}`).join(" ");
   const line = `${envPart ? envPart + " " : ""}nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
-  return { env: l.env, argv, logPath, line };
+  return { env: l.env, argv, logPath, readyMs: VLLM_READY_MS, line };
 }
 
+/** The vllm-mlx stop line (kept as is for the existing recipe). */
 export function stopLine(cfg: LocalConfig): string {
   return `for p in $(pgrep -f ${shq(cfg.launcher.processMatch)}); do kill $p; done`;
+}
+
+/** Shell lines that stop every local server PAI knows: vllm-mlx, Strata, script ports. */
+export function stopLines(cfg: LocalConfig): string[] {
+  const lines = [stopLine(cfg)];
+  const tiers = Object.values(cfg.tiers);
+  if (tiers.some((t) => t.engine === "strata")) {
+    lines.push(`for p in $(pgrep -f ${shq(STRATA_SERVER_MATCH)}); do kill $p; done`);
+    for (const exe of new Set(tiers.map((t) => t.exe).filter((e): e is string => !!e))) {
+      lines.push(`for p in $(pgrep -f ${shq(exe + " --serve")}); do kill $p; done`);
+    }
+  }
+  for (const port of new Set(tiers.filter((t) => t.engine === "script").map((t) => t.port))) {
+    lines.push(`for p in $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t); do kill $p; done`);
+  }
+  return lines;
 }
 
 export interface RunningServer {
@@ -220,23 +337,95 @@ export interface RunningServer {
   provider: string | null;
 }
 
-/** Parse `ps -axo pid=,rss=,command=` output for servers matching processMatch. */
-export function parseServers(psOut: string, cfg: LocalConfig, selfPid = process.pid): RunningServer[] {
+const STRATA_SERVER_MATCH = "serve/server.py --engine strata";
+
+/**
+ * Parse `ps -axo pid=,rss=,command=` output for every local model server PAI
+ * knows: vllm-mlx (processMatch), Strata server.py and its engine child (the
+ * tier configs' exe), and — through `listeners` (port → pids, from lsof) —
+ * whatever listens on a script tier's port.
+ */
+export function parseServers(
+  psOut: string,
+  cfg: LocalConfig,
+  selfPid = process.pid,
+  listeners: Record<number, number[]> = {},
+): RunningServer[] {
   const out: RunningServer[] = [];
+  const rssOf = new Map<number, number>();
+  const tiers = Object.values(cfg.tiers);
+  const exeTier = new Map<string, LocalTier>();
+  for (const t of tiers) if (t.exe) exeTier.set(t.exe, t);
   for (const line of psOut.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
     if (!m) continue;
     const pid = Number(m[1]);
     const cmd = m[3];
-    if (pid === selfPid || !cmd.includes(cfg.launcher.processMatch)) continue;
-    // Skip the CLI / shells that merely mention the match string.
-    if (!/\bserve\b/.test(cmd) || !cmd.includes("--port")) continue;
+    rssOf.set(pid, Number(m[2]));
+    if (pid === selfPid) continue;
     const pm = /--port\s+(\d+)/.exec(cmd);
     const port = pm ? Number(pm[1]) : null;
-    const tier = Object.values(cfg.tiers).find((t) => t.port === port) ?? null;
-    out.push({ pid, rssKb: Number(m[2]), port, tier: tier?.tier ?? null, provider: tier?.provider ?? null });
+    const add = (t: LocalTier | undefined, p: number | null): void => {
+      out.push({ pid, rssKb: Number(m[2]), port: p, tier: t?.tier ?? null, provider: t?.provider ?? null });
+    };
+    // vllm-mlx; skip the CLI / shells that merely mention the match string
+    if (cmd.includes(cfg.launcher.processMatch) && /\bserve\b/.test(cmd) && cmd.includes("--port")) {
+      add(tiers.find((t) => t.port === port && t.engine === "vllm-mlx") ?? tiers.find((t) => t.port === port), port);
+      continue;
+    }
+    // Strata server.py (python <venv>/python serve/server.py --engine strata ...)
+    if (cmd.includes(STRATA_SERVER_MATCH) && pm) {
+      const cfgPath = /--config\s+(\S+)/.exec(cmd)?.[1];
+      add(tiers.find((t) => t.engine === "strata" && t.config === cfgPath) ?? tiers.find((t) => t.engine === "strata" && t.port === port), port);
+      continue;
+    }
+    // the Strata engine child: "<exe> --serve ..."
+    const exe = [...exeTier.keys()].find((e) => cmd.startsWith(e + " --serve"));
+    if (exe) add(exeTier.get(exe), port);
+  }
+  const seen = new Set(out.map((s) => s.pid));
+  for (const t of tiers) {
+    if (t.engine !== "script") continue;
+    for (const pid of listeners[t.port] ?? []) {
+      if (pid === selfPid || seen.has(pid)) continue;
+      seen.add(pid);
+      out.push({ pid, rssKb: rssOf.get(pid) ?? 0, port: t.port, tier: t.tier, provider: t.provider });
+    }
   }
   return out;
+}
+
+/**
+ * The tier that is active: the first whose port answers /v1/models with the
+ * tier's model name (any answer when the tier names none). `fetchModels`
+ * returns the served ids, or null when the port does not answer.
+ */
+export async function activeTier(
+  cfg: LocalConfig,
+  fetchModels: (port: number) => Promise<string[] | null>,
+): Promise<LocalTier | null> {
+  for (const t of Object.values(cfg.tiers)) {
+    const ids = await fetchModels(t.port);
+    if (ids && (!t.served || ids.includes(t.served))) return t;
+  }
+  return null;
+}
+
+/** GET /v1/models on a loopback port: the ids, or null when nothing answers. */
+export async function fetchServedModels(port: number): Promise<string[] | null> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { data?: { id?: unknown }[] };
+    return (j.data ?? []).map((d) => String(d.id ?? ""));
+  } catch {
+    return null;
+  }
+}
+
+/** The tiers as the cockpit buttons need them. */
+export function tierButtons(cfg: LocalConfig): { tier: string; label: string; memoryGb?: number }[] {
+  return Object.values(cfg.tiers).map((t) => ({ tier: t.tier, label: t.label, ...(t.memoryGb !== undefined ? { memoryGb: t.memoryGb } : {}) }));
 }
 
 export function fmtRss(kb: number): string {

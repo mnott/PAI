@@ -1359,7 +1359,7 @@ pai worker local [TARGET] [options]
 ```
 
 Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.
-TARGET is a tier name (stops every local server, starts that tier), `off` (stops all) or `status` (what is up).
+TARGET is a tier name (stops every local server — vllm-mlx, Strata, scripts — starts that tier, points workers.yaml local: at it), `off` (stops all) or `status` (what is up).
 Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).
 
 | Argument | Required | Description |

@@ -18,7 +18,7 @@ import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/que
 import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory } from "../workers/model-inventory.js";
-import { readLocalConfig } from "../workers/local-tiers.js";
+import { activeTier, fetchServedModels, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { readLocalStatus } from "../workers/local-status.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
@@ -429,7 +429,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     ...inv,
     runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
-    running: localRunningInfo(),
+    running: await localRunningInfo(),
   };
   if (!runtimeSampler) return withLabels;
   const live = await runtimeSampler.payload();
@@ -437,25 +437,27 @@ export async function cockpitModelsPayload(): Promise<unknown> {
   return { ...withLabels, live };
 }
 
-/** Tier names + the running local model, for the cards' Start/Stop row. */
-function localTierNames(): string[] {
+/** The tiers (name, label, memory need), for the cards' Start/Stop row. */
+function localTierNames(): { tier: string; label: string; memoryGb?: number }[] {
   try {
-    return Object.keys(readLocalConfig(workersYamlPath()).tiers);
+    return tierButtons(readLocalConfig(workersYamlPath()));
   } catch {
     return [];
   }
 }
 
-function localRunningInfo(): { tier: string; model: string; memGb: string } | null {
+/** The running local model; `tier` is the active tier (its port answers with its model name). */
+async function localRunningInfo(): Promise<{ tier: string; label: string; model: string; memGb: string } | null> {
   try {
     const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
     if (!st?.running) return null;
-    const tiers = readLocalConfig(workersYamlPath()).tiers;
-    const tier = Object.values(tiers).find((t) => t.provider === st.running!.provider)?.tier ?? "";
+    const cfg = readLocalConfig(workersYamlPath());
+    const tiers = cfg.tiers;
+    const active = (await activeTier(cfg, fetchServedModels)) ?? Object.values(tiers).find((t) => t.provider === st.running!.provider);
     const inv = readInventory(workersLogDir(readWorkersSection().workers));
     const rt = inv?.runtimes.find((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${st.running!.provider}`)));
     const mb = rt?.models.reduce((a, m) => a + (m.memoryMb ?? 0), 0) ?? 0;
-    return { tier, model: st.running.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
+    return { tier: active?.tier ?? "", label: active?.label ?? "", model: st.running.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
   } catch {
     return null;
   }

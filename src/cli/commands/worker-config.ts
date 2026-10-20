@@ -12,7 +12,8 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { appendLedger } from "../../workers/ledger.js";
 import {
   inlineWorkersYamlKeys,
   initWorkersYaml,
@@ -20,6 +21,7 @@ import {
   needsWorkersYamlRelocation,
   parseWorkersYamlDocument,
   relocateWorkersYaml,
+  setLocalPreference,
   workersYamlLegacyNotice,
   workersYamlPath,
 } from "../../workers/workers-config.js";
@@ -39,7 +41,7 @@ import {
   unsetClass,
   updateProvider,
 } from "../../workers/providers.js";
-import { fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, stopLine, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
+import { activeTier, fetchServedModels, fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
 import { PROMPTS, aggregate, planArms, readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
 import {
   POLICY_MODES,
@@ -657,55 +659,114 @@ export const workerConfigCommand: CommandDef = {
 // local
 // ---------------------------------------------------------------------------
 
-const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** pids listening on each script tier's port (lsof), for the tiers that start from a script. */
+function scriptListeners(cfg: LocalConfig): Record<number, number[]> {
+  const out: Record<number, number[]> = {};
+  for (const t of Object.values(cfg.tiers)) {
+    if (t.engine !== "script") continue;
+    try {
+      const o = execFileSync("lsof", ["-nP", `-iTCP:${t.port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      out[t.port] = o.split(/\s+/).filter(Boolean).map(Number);
+    } catch {
+      /* nothing listens (lsof exits 1) */
+    }
+  }
+  return out;
+}
 
 export function listServers(cfg: LocalConfig): RunningServer[] {
   const o = psTable("pid=,rss=,command=");
-  return parseServers(o, cfg);
+  return parseServers(o, cfg, process.pid, scriptListeners(cfg));
 }
 
+/** Stop every local server PAI knows, then wait until their ports are free. */
 export async function stopAll(cfg: LocalConfig): Promise<void> {
   for (const s of listServers(cfg)) process.kill(s.pid, "SIGTERM");
   const deadline = Date.now() + 60_000;
   while (listServers(cfg).length > 0 && Date.now() < deadline) await sleep(1000);
   for (const s of listServers(cfg)) process.kill(s.pid, "SIGKILL");
+  const ports = [...new Set(Object.values(cfg.tiers).map((t) => t.port))];
+  const freeBy = Date.now() + 30_000;
+  while (Date.now() < freeBy && (await Promise.all(ports.map(isUp))).some(Boolean)) await sleep(1000);
 }
 
 export async function isUp(port: number): Promise<boolean> {
-  try {
-    return (await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: AbortSignal.timeout(3000) })).ok;
-  } catch {
-    return false;
-  }
+  return (await fetchServedModels(port)) !== null;
 }
 
-/** Stop every local server, start `tier`'s and wait until it answers. */
-export async function startTier(cfg: LocalConfig, target: string, tier: LocalTier, plan: StartPlan = planStart(cfg, tier)): Promise<void> {
-  await stopAll(cfg);
+/** The active tier (its port answers with its model name), null when none. */
+export async function currentTier(cfg: LocalConfig): Promise<LocalTier | null> {
+  return activeTier(cfg, fetchServedModels);
+}
+
+export interface StartDeps {
+  /** workers.yaml whose `local:` follows the switch (default: the live one). */
+  yamlPath?: string;
+  /** Ledger file for the LOCAL-SWITCH line (default: the workers ledger). */
+  ledger?: string;
+  stop?: (cfg: LocalConfig) => Promise<void>;
+  up?: (port: number) => Promise<boolean>;
+  current?: (cfg: LocalConfig) => Promise<LocalTier | null>;
+  /** Start the server; returns its exit code while it has exited, null while it runs. */
+  launch?: (plan: StartPlan) => () => number | null;
+  pollMs?: number;
+}
+
+function launchDetached(plan: StartPlan): () => number | null {
   mkdirSync(dirname(plan.logPath), { recursive: true });
   const fd = openSync(plan.logPath, "w");
   const [cmd, ...args] = plan.argv;
-  const child = spawn(cmd, args, { env: { ...process.env, ...plan.env }, detached: true, stdio: ["ignore", fd, fd] });
+  const child = spawn(cmd, args, { cwd: plan.cwd, env: { ...process.env, ...plan.env }, detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
   closeSync(fd);
-  out(dim(`starting ${tier.provider} (${tier.served}) on :${tier.port}, log ${plan.logPath}`));
-  const deadline = Date.now() + READY_TIMEOUT_MS;
-  while (!(await isUp(tier.port))) {
-    if (child.exitCode !== null) throw new LocalTierError(`server exited (${child.exitCode}); see ${plan.logPath}`);
-    if (Date.now() > deadline) throw new LocalTierError(`not ready after 10 min; see ${plan.logPath}`);
-    await sleep(5000);
+  return () => child.exitCode;
+}
+
+/**
+ * Stop every local server, start `tier`'s and wait until it answers; then
+ * point workers.yaml `local:` at the tier's provider and write LOCAL-SWITCH.
+ */
+export async function startTier(
+  cfg: LocalConfig,
+  target: string,
+  tier: LocalTier,
+  plan: StartPlan = planStart(cfg, tier),
+  deps: StartDeps = {},
+): Promise<void> {
+  const from = await (deps.current ?? currentTier)(cfg).catch(() => null);
+  await (deps.stop ?? stopAll)(cfg);
+  const exited = (deps.launch ?? launchDetached)(plan);
+  out(dim(`starting ${tier.label} (${tier.provider}) on :${tier.port}, log ${plan.logPath}`));
+  const up = deps.up ?? isUp;
+  const deadline = Date.now() + plan.readyMs;
+  while (!(await up(tier.port))) {
+    const code = exited();
+    // a script may hand off to a background server and exit 0
+    if (code !== null && !(tier.engine === "script" && code === 0)) throw new LocalTierError(`server exited (${code}); see ${plan.logPath}`);
+    if (Date.now() > deadline) throw new LocalTierError(`not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
+    await sleep(deps.pollMs ?? 5000);
   }
+  const yamlPath = deps.yamlPath ?? workersYamlPath();
+  setLocalPreference(yamlPath, tier.provider);
+  appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-SWITCH", {
+    from: from?.tier ?? "none",
+    to: tier.tier,
+    provider: tier.provider,
+  });
   const s = listServers(cfg).find((x) => x.port === tier.port);
   out(ok(`${target} up: ${tier.provider} on port ${tier.port}${s ? `, rss ${fmtRss(s.rssKb)}` : ""}`));
 }
 
-function printLocalStatus(cfg: LocalConfig): void {
+async function printLocalStatus(cfg: LocalConfig): Promise<void> {
   const servers = listServers(cfg);
+  const active = await currentTier(cfg);
   if (servers.length === 0) out(dim("no local model server running"));
   for (const s of servers) {
     out(`${s.tier ?? "?"}  provider=${s.provider ?? "?"}  port=${s.port ?? "?"}  pid=${s.pid}  rss=${fmtRss(s.rssKb)}`);
   }
+  out(active ? `active: ${active.tier} (${active.label})` : dim("active: none"));
   out(dim(`tiers: ${Object.keys(cfg.tiers).join(", ") || "(none configured)"}`));
 }
 
@@ -714,7 +775,7 @@ export const workerLocalCommand: CommandDef = {
   summary: "Which local model runs; the operator switches tiers",
   description:
     "Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.\n" +
-    "TARGET is a tier name (stops every local server, starts that tier), `off` (stops all) or `status` (what is up).\n" +
+    "TARGET is a tier name (stops every local server — vllm-mlx, Strata, scripts — starts that tier, points workers.yaml local: at it), `off` (stops all) or `status` (what is up).\n" +
     "Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).",
   args: [{ name: "TARGET", required: false, summary: "A tier name, off, or status; omit for the running local model" }],
   options: [{ name: "dry-run", type: "boolean", summary: "Print the exact commands without starting or stopping anything" }],
@@ -729,9 +790,9 @@ export const workerLocalCommand: CommandDef = {
         return void out(localStatusLine(await currentLocalStatus()));
       }
       const cfg = readLocalConfig(workersYamlPath());
-      if (target === "status") return void printLocalStatus(cfg);
+      if (target === "status") return void (await printLocalStatus(cfg));
       if (target === "off") {
-        if (ctx.dryRun) return void out(stopLine(cfg));
+        if (ctx.dryRun) return void stopLines(cfg).forEach((l) => out(l));
         await stopAll(cfg);
         return void out(ok("local model servers stopped"));
       }
@@ -739,7 +800,7 @@ export const workerLocalCommand: CommandDef = {
       if (!tier) throw new LocalTierError(`no tier "${target}" (configured: ${Object.keys(cfg.tiers).join(", ") || "none"})`);
       const plan = planStart(cfg, tier);
       if (ctx.dryRun) {
-        out(stopLine(cfg));
+        for (const l of stopLines(cfg)) out(l);
         out("sleep 10");
         out(plan.line);
         out(`until curl -s -m 3 http://127.0.0.1:${tier.port}/v1/models > /dev/null; do sleep 5; done`);
