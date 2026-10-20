@@ -8,7 +8,7 @@ Every local model runtime, its models, memory and users; start/stop a runtime
 pai models [OP] [RUNTIME] [options]
 ```
 
-One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A duplicates hint appears when two runtimes serve the same kind of job. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here.
+One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A disabled provider (workers.yaml provider enabled:false) is not listed at all. A duplicates hint appears only when the same model id runs on two runtimes. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here.
 
 | Argument | Required | Description |
 |---|---|---|

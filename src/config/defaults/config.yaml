@@ -116,3 +116,8 @@ vaultIndex:
 router:
   enabled: false
   bind: loopback
+
+# Cockpit Models cards: the title of PAI's own embedding consumer (the purpose
+# of the model). Override in ~/.pai/config.yaml under models.embeddingLabel.
+models:
+  embeddingLabel: PAI memory embeddings

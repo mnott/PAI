@@ -33,6 +33,8 @@ export interface InventoryModel {
   model: string;
   kind: ModelKind;
   loaded: boolean;
+  /** the consumer label of the model's purpose (models.consumers[].label / models.labels), "" when none */
+  label?: string;
   /** the serving process tree's own footprint (not RSS: that counts the mmapped model file) */
   memoryMb?: number;
   /** model file pages mapped into the serving process (shown beside the footprint, not added to it) */
@@ -48,6 +50,8 @@ export interface InventoryRuntime {
   /** idle: runner up, models installed, none loaded — it loads on the first request, so it reads "available" */
   status: "running" | "idle" | "stopped";
   port?: number;
+  /** false when a worker provider on this endpoint is disabled in workers.yaml: not listed anywhere */
+  enabled?: boolean;
   models: InventoryModel[];
   /** every consumer pointing at this runtime (a consumer of a model the server does not serve is in notServed instead) */
   users: string[];
@@ -70,6 +74,8 @@ export interface DeclaredConsumer {
   name: string;
   runtime: string;
   model?: string;
+  /** the consumer's purpose, shown as the card title (models.consumers[].label) */
+  label?: string;
 }
 
 /** Everything a detector needs from the outside; tests inject fakes. */
@@ -263,15 +269,17 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
   const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
+  // every loopback provider keeps its port slot; a DISABLED one (workers.yaml
+  // provider enabled:false) contributes no user, no model and enabled:false —
+  // the runtime is then not listed at all, not as a red "down, N consumers waiting" card
   for (const [name, p] of Object.entries(input.providers)) {
-    // a DISABLED provider is no user of anything: it must not surface as a
-    // stopped runtime "used by worker:<name>" (~17 such rows seen live)
-    if (!p.enabled || !isLoopbackProvider(p)) continue;
+    if (!isLoopbackProvider(p)) continue;
     const hp = providerHostPort(p);
     if (!hp) continue;
     const key = String(hp.port);
     const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [], wanted: [] }).get(key)!;
     e.names.push(name);
+    if (!p.enabled) continue;
     e.enabled.push(name);
     e.wanted.push({ name: `worker:${name}`, model: p.models.default });
     if (p.models.default && !e.defaults.includes(p.models.default)) e.defaults.push(p.models.default);
@@ -295,6 +303,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           kind: decl?.kind ?? "openai-server",
           status: running ? "running" : "stopped",
           port: e.port,
+          enabled: e.enabled.length > 0,
           models: (running && ids.length ? ids : e.defaults).map((m) => ({ model: m, kind: "coding" as const, loaded: running, usedBy: [] })),
           users: [],
         };
@@ -313,33 +322,36 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
   return out;
 }
 
+/** Only the SAME model id served by two running runtimes is a duplicate; a big coding
+ *  model and a small chat model for another app are not. */
 function duplicates(runtimes: InventoryRuntime[]): string[] {
-  const jobs: Array<[string, (k: ModelKind) => boolean]> = [
-    ["embedding", (k) => k === "embedding"],
-    ["chat/coding", (k) => k !== "embedding"],
-  ];
-  const hints: string[] = [];
-  for (const [job, pick] of jobs) {
-    const rts = runtimes.filter((r) => r.status === "running" && r.models.some((m) => pick(m.kind) && (m.loaded || m.usedBy.length)));
-    if (rts.length < 2) continue;
-    const parts = rts.map((r) => {
-      const ms = r.models.filter((m) => pick(m.kind) && (m.loaded || m.usedBy.length)).map((m) => m.model);
-      return `${r.name} (${ms.join(", ")})`;
-    });
-    hints.push(`${job} runs on ${rts.length} runtimes: ${parts.join(" + ")} — consider consolidating`);
+  const byModel = new Map<string, string[]>();
+  for (const r of runtimes) {
+    if (r.enabled === false || r.status === "stopped") continue;
+    for (const m of r.models) {
+      if (!m.loaded && !m.usedBy.length) continue;
+      const key = m.model.toLowerCase();
+      byModel.set(key, [...(byModel.get(key) ?? []), r.name]);
+    }
   }
-  return hints;
+  return [...byModel.entries()]
+    .filter(([, names]) => names.length >= 2)
+    .map(([model, names]) => `${model} runs on ${names.length} runtimes: ${names.join(" + ")} — consider consolidating`);
 }
 
 /** Pure part: detectors + consumers → inventory. */
 export async function computeInventory(input: InventoryInput, deps: InventoryDeps = liveDeps, now = new Date()): Promise<ModelInventory> {
   const [ollama, docker, provs] = await Promise.all([detectOllama(input, deps), detectDocker(deps), detectProviders(input, deps)]);
-  const runtimes: InventoryRuntime[] = [...provs, ollama, ...(docker ? [docker] : [])];
+  // a runtime whose every provider is disabled in workers.yaml is not listed at all
+  const listed = provs.filter((r) => r.enabled !== false);
+  const disabledPorts = new Set(provs.filter((r) => r.enabled === false).map((r) => r.port));
+  const runtimes: InventoryRuntime[] = [...listed, ollama, ...(docker ? [docker] : [])];
   for (const d of input.runtimes) {
     if (!d.url || ["ollama", "docker-model-runner"].includes(d.kind)) continue;
-    // declared endpoints with no loopback provider behind them
+    // declared endpoints with no listed loopback provider behind them; a disabled
+    // provider behind them keeps the endpoint unlisted too
     const port = Number(new URL(d.url).port);
-    if (runtimes.some((r) => r.port === port)) continue;
+    if (runtimes.some((r) => r.port === port) || disabledPorts.has(port)) continue;
     const body = (await deps.getJson(`${d.url.replace(/\/+$/, "")}/v1/models`)) as { data?: Array<{ id?: string }> } | null;
     runtimes.push({
       name: d.name,
@@ -364,7 +376,13 @@ export async function computeInventory(input: InventoryInput, deps: InventoryDep
   }
   for (const c of input.consumers) {
     const rt = runtimes.find((r) => r.name === c.runtime || r.kind === c.runtime);
-    if (rt) attach(rt, [{ name: c.name, model: c.model }]);
+    if (!rt) continue;
+    attach(rt, [{ name: c.name, model: c.model }]);
+    // the consumer's label is the purpose of the model it names (the card title)
+    if (c.label) {
+      const ms = c.model ? rt.models.filter((m) => matches(c.model!, m.model)) : rt.models;
+      for (const m of ms) m.label = c.label;
+    }
   }
   return { at: now.toISOString(), runtimes, duplicates: duplicates(runtimes) };
 }
@@ -386,6 +404,7 @@ export function readInventoryInput(): InventoryInput {
     embedding: { backend: cfg.embedding.backend, model: cfg.embedding.model, ollamaUrl: cfg.embedding.ollama.baseUrl, inProcessModel: cfg.embeddingModel },
     runtimes: list<DeclaredRuntime>(m.runtimes, (x) => typeof x.name === "string" && typeof x.kind === "string"),
     consumers: list<DeclaredConsumer>(m.consumers, (x) => typeof x.name === "string" && typeof x.runtime === "string"),
+    // DeclaredConsumer.label comes from consumers[].label; list() keeps the whole object
   };
 }
 
@@ -478,7 +497,8 @@ export function inventoryRows(inv: ModelInventory, labels: Record<string, unknow
         r.name,
         status,
         m.loaded ? m.model : `${m.model} (installed)`,
-        modelLabel(labels, r.name, m.model) || modelLabel(labels, r.name) || "-",
+        // purpose first: the consumer's label wins, then models.labels
+        m.label || modelLabel(labels, r.name, m.model) || modelLabel(labels, r.name) || "-",
         m.kind,
         // loaded: footprint (+ mapped model file); installed only: size on disk
         m.loaded ? fmtMemMapped(m) : fmtMem(m.sizeMb),

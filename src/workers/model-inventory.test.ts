@@ -60,8 +60,8 @@ const input = (over: Partial<InventoryInput> = {}): InventoryInput => ({
   embedding: { backend: "ollama-f16", ollamaUrl: "http://127.0.0.1:11434", inProcessModel: "snowflake" },
   runtimes: [{ name: "strata", kind: "strata", url: "http://127.0.0.1:8035" }],
   consumers: [
-    { name: "paperfull-llm", runtime: "ollama", model: "qwen3:8b" },
-    { name: "paperfull-embed", runtime: "docker-model-runner", model: "multilingual-e5-base-gguf-f16" },
+    { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat" },
+    { name: "paperfull-embed", runtime: "docker-model-runner", model: "multilingual-e5-base-gguf-f16", label: "Paperfull search" },
   ],
   ...over,
 });
@@ -116,7 +116,7 @@ describe("computeInventory", () => {
     expect(by["coder"]).toBeUndefined();
     expect(inv.runtimes.some((r) => r.users.some((u) => u === "worker:coder"))).toBe(false);
     expect(by["ollama"]!.models.find((m) => m.model === "arctic-embed-m-v1.5-f16")).toMatchObject({ loaded: true, memoryMb: 600, usedBy: ["pai-embedding"] });
-    expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, usedBy: ["paperfull-llm"] });
+    expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, usedBy: ["paperfull-chat"], label: "Paperfull chat" });
     const dmr = by["docker-model-runner"]!;
     expect(dmr.status).toBe("running");
     expect(dmr.models.find((m) => m.loaded)!.usedBy).toEqual(["paperfull-embed"]);
@@ -130,9 +130,31 @@ describe("computeInventory", () => {
     expect(by["docker-model-runner"]!.models.find((m) => m.model === "qwen3:8B-Q4_K_M")!.sizeMb).toBe(4792);
   });
 
-  it("hints at duplicate embedding runtimes", async () => {
+  it("no duplicates hint for different models on two runtimes — only the same model id counts", async () => {
     const inv = await computeInventory(input(), deps());
-    expect(inv.duplicates.some((d) => d.startsWith("embedding runs on 2 runtimes: ollama") && d.includes("docker-model-runner"))).toBe(true);
+    // ollama (arctic-embed, qwen3:8b) + docker (e5, qwen3) serve different ids: no hint
+    expect(inv.duplicates).toEqual([]);
+    // the same model id loaded on two running runtimes: one hint naming the id
+    const dup = await computeInventory(input({ consumers: [] }), {
+      ...deps(),
+      getJson: async (url) =>
+        url === "http://127.0.0.1:8035/v1/models"
+          ? { data: [{ id: "arctic-embed-m-v1.5-f16" }] }
+          : url === "http://127.0.0.1:11434/api/ps"
+            ? { models: [{ name: "arctic-embed-m-v1.5-f16", size: 600 * 1048576 }] }
+            : url === "http://127.0.0.1:11434/api/tags"
+              ? { models: [{ name: "arctic-embed-m-v1.5-f16", size: 600 * 1048576 }] }
+              : null,
+      run: async () => null,
+    });
+    expect(dup.duplicates).toEqual(["arctic-embed-m-v1.5-f16 runs on 2 runtimes: strata + ollama — consider consolidating"]);
+  });
+
+  it("a disabled provider behind a declared endpoint keeps that endpoint unlisted", async () => {
+    const off = { "flashnext-iq3": prov("http://127.0.0.1:8035", "flash-next", false) } as unknown as WorkersConfig["providers"];
+    const inv = await computeInventory(input({ providers: off }), deps());
+    expect(inv.runtimes.some((r) => r.port === 8035)).toBe(false);
+    expect(inv.runtimes.some((r) => r.name === "strata")).toBe(false);
   });
 
   it("tolerates no docker and no ollama", async () => {
@@ -149,7 +171,7 @@ describe("computeInventory", () => {
 });
 
 describe("render and cache", () => {
-  it("one table, running first, with the duplicates line", async () => {
+  it("one table, running first, with no duplicates line for different models", async () => {
     const inv = await computeInventory(input(), deps());
     const rows = inventoryRows(inv);
     expect(rows[0]!.slice(0, 2)).toEqual(["strata", "running"]);
@@ -158,9 +180,9 @@ describe("render and cache", () => {
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
     expect(text).toContain("runtime | status | model | label | kind | memory / on disk | used by | port");
     expect(text).toContain("strata | running | flash-next | - | coding | 20.5 GB (+87.9 GB file mapped) | worker:flashnext-iq3 | 8035");
-    // an installed-only model shows its size on disk, not "-"
-    expect(text).toContain("qwen3:8b (installed) | - | chat | 4.7 GB | paperfull-llm | 11434");
-    expect(text).toContain("duplicates: embedding runs on 2 runtimes");
+    // an installed-only model shows its size on disk, not "-"; the consumer label is the purpose
+    expect(text).toContain("qwen3:8b (installed) | Paperfull chat | chat | 4.7 GB | paperfull-chat | 11434");
+    expect(text).not.toContain("duplicates:");
   });
 
   it("the label column shows models.labels (runtime label, model label wins)", () => {

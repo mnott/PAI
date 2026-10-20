@@ -9,7 +9,8 @@ import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { cockpitHtml } from "./cockpit-page.js";
-import { loadConfig } from "../daemon/config.js";
+import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
+import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
@@ -453,16 +454,34 @@ function runtimeCommandsFor(): Record<string, { start?: string; stop?: string; n
   }
 }
 
-/** What PAI itself uses: the embedding consumer (name, runtime, what it needs it for). */
-function consumersFor(): Array<{ name: string; runtime: string; purpose: string }> {
-  const out: Array<{ name: string; runtime: string; purpose: string }> = [];
+/** Title of PAI's own embedding consumer: models.embeddingLabel, user config over the shipped default. */
+function embeddingLabel(): string | undefined {
   try {
-    const emb = readInventoryInput().embedding;
+    const m = deepMergeConfig(shippedMainDefaults(), readMainConfigRaw()).models as { embeddingLabel?: unknown } | undefined;
+    return typeof m?.embeddingLabel === "string" && m.embeddingLabel ? m.embeddingLabel : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What PAI itself uses: the embedding consumer (name, runtime, what it needs it for). */
+function consumersFor(): Array<{ name: string; runtime: string; purpose: string; label?: string; model?: string }> {
+  const out: Array<{ name: string; runtime: string; purpose: string; label?: string; model?: string }> = [];
+  try {
+    const input = readInventoryInput();
+    // PAI's own embedding consumer: purpose as the card label
+    const emb = input.embedding;
     out.push({
       name: "pai-embedding",
       runtime: embeddingRuntimeName(),
       purpose: emb.backend === "ollama-f16" ? "memory search embeds new content here" : "memory search embeds in-process",
+      label: embeddingLabel(),
+      model: emb.backend === "ollama-f16" ? emb.model : emb.inProcessModel,
     });
+    // the consumers declared in config.yaml (models.consumers), label included
+    for (const c of input.consumers) {
+      out.push({ name: c.name, runtime: c.runtime, purpose: c.label ?? c.name, label: c.label, model: c.model });
+    }
   } catch {
     /* no config: the page shows only the inventory's users */
   }
