@@ -18,6 +18,7 @@
  */
 
 import { DEFAULT_CAPACITY, type CapacityConfig } from "./capacity.js";
+import { DEFAULT_LOCAL_IDLE, type LocalIdleConfig } from "./local-idle.js";
 import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -462,6 +463,8 @@ export interface WorkersConfig {
   stagger: StaggerConfig;
   /** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
   capacity: CapacityConfig;
+  /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
+  localIdle: LocalIdleConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
@@ -593,6 +596,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
     stagger: { ...DEFAULT_STAGGER },
     capacity: { ...DEFAULT_CAPACITY },
+    localIdle: { ...DEFAULT_LOCAL_IDLE },
     noBrowserByDefault: false,
     gcOlderThanHours: DEFAULT_GC_OLDER_THAN_HOURS,
     worktreesMaxGb: DEFAULT_WORKTREES_MAX_GB,
@@ -1188,6 +1192,22 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
       capacity.enabled = t.enabled as boolean;
     }
   }
+  const localIdle = { ...DEFAULT_LOCAL_IDLE };
+  if (w.localIdle !== undefined) {
+    if (typeof w.localIdle !== "object" || w.localIdle === null || Array.isArray(w.localIdle)) {
+      bad(".localIdle", "must be an object");
+    }
+    const t = w.localIdle as Record<string, unknown>;
+    if (t.enabled !== undefined) {
+      if (typeof t.enabled !== "boolean") bad(".localIdle.enabled", "must be true or false");
+      localIdle.enabled = t.enabled as boolean;
+    }
+    for (const k of ["gpuBelowPct", "minutes", "backoffMinutes"] as const) {
+      if (t[k] === undefined) continue;
+      if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) <= 0) bad(`.localIdle.${k}`, "must be a positive number");
+      localIdle[k] = t[k] as number;
+    }
+  }
   if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
     bad(".noBrowserByDefault", "must be true or false");
   }
@@ -1266,6 +1286,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     defaultMaxMinutes,
     stagger,
     capacity,
+    localIdle,
     noBrowserByDefault,
     gcOlderThanHours,
     worktreesMaxGb,
@@ -1354,6 +1375,7 @@ export function writeWorkersSection(
         defaultMaxMinutes: workers.defaultMaxMinutes,
         stagger: workers.stagger,
         capacity: workers.capacity,
+        localIdle: workers.localIdle,
         noBrowserByDefault: workers.noBrowserByDefault,
         gcOlderThanHours: workers.gcOlderThanHours,
         worktreesMaxGb: workers.worktreesMaxGb,

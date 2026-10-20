@@ -485,6 +485,7 @@ function renderQueue(q){
  if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return'<tr style="color:#d33"><td style="text-align:left">'+esc(p.id)+'</td><td style="text-align:left">'+esc(p.mark)+'</td><td style="text-align:left">'+esc(p.why||"")+'</td></tr>'})));
  var pn=q.panes||[];
  if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
+ if(q.localModel)out.unshift('<div style="margin:4px 0;color:#888">'+esc(q.localModel)+"</div>");
  el.innerHTML=out.join("")+wt;
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
