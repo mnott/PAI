@@ -94,6 +94,7 @@ import {
   slotShouldReap,
   warmOrCold,
   writePoolState,
+  poolHostStale,
   type PoolSlotRecord,
   type PoolSpareRecord,
   type PoolState,
@@ -321,6 +322,12 @@ export interface PoolHostOptions {
    * needed. Defaults to the active local provider and the policy's default route; tests inject.
    */
   seedProviders?: () => Promise<string[]>;
+  /** The host's own bundle file; when it gets newer on disk the host reloads itself once idle. Unset = never. */
+  bundlePath?: string;
+  /** mtime (ms) of a file, null when unreadable; tests inject. */
+  fileMtime?: (path: string) => number | null;
+  /** Start the replacement host after shutdown (production: spawn the same argv detached, then exit). */
+  reexec?: () => void;
 }
 
 export interface PoolHost {
@@ -337,6 +344,8 @@ export interface PoolHost {
   reapSpares(): number;
   /** Move idle spares whose repo HEAD moved onto the new HEAD (git reset in their worktree, no new process). */
   refreshSpares(): number;
+  /** Reload onto a newer bundle when one is on disk and no slot is busy; true when it did. */
+  checkReload(): Promise<boolean>;
   /** Resolves when every spare start in flight has finished (tests). */
   settle(): Promise<void>;
 }
@@ -420,6 +429,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     spareClaims: 0,
     spareMisses: {},
   };
+  const fileMtime = opts.fileMtime ?? ((p: string): number | null => {
+    try {
+      return statSync(p).mtimeMs;
+    } catch {
+      return null;
+    }
+  });
+  const startMtime = opts.bundlePath ? fileMtime(opts.bundlePath) : null;
+  if (startMtime !== null) state.bundleMtimeMs = startMtime;
 
   const persist = (): void => {
     state.updatedAt = nowStamp(now());
@@ -1293,6 +1311,23 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return n;
   };
 
+  let reloading = false;
+  const checkReload = async (): Promise<boolean> => {
+    if (reloading || !opts.bundlePath || startMtime === null) return false;
+    if (!poolHostStale(startMtime, fileMtime(opts.bundlePath))) return false;
+    // a busy or claimed slot defers the reload until it is idle
+    if (claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) return false;
+    reloading = true;
+    appendLedger(ledger, "POOL-HOST-RELOAD", { pid: process.pid, bundle: opts.bundlePath, note: "newer build on disk" });
+    await shutdown();
+    opts.reexec?.();
+    return true;
+  };
+
+  if (!opts.noReaper && opts.bundlePath) {
+    const timer = setInterval(() => void checkReload(), 30_000);
+    timer.unref?.();
+  }
   if (!opts.noReaper && settings.idleSecs > 0) {
     const timer = setInterval(reapSlots, 30_000);
     timer.unref?.();
@@ -1362,6 +1397,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     reapSlots,
     reapSpares,
     refreshSpares,
+    checkReload,
     settle: async () => {
       while (pendingStarts.size) await Promise.all([...pendingStarts]);
     },

@@ -47,6 +47,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai providers`](providers.md) | List providers (● = active); `providers use NAME` switches |
 | [`pai queue`](queue.md) | Queue small changes, run them on a local worker, review in a batch |
 | [`pai registry`](registry.md) | Maintain the project registry: scan, stats, rebuild |
+| [`pai reload`](reload.md) | Restart daemon, router and worker pool host onto the code on disk |
 | [`pai rename`](rename.md) | Give a session a new name |
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
 | [`pai resume`](resume.md) | Open a session by name or id (same as `pai open`) |
@@ -271,6 +272,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai registry reconnect` | Reconnect projects to transcripts they lost |
 | `pai registry scan` | Find projects on disk and register them |
 | `pai registry stats` | Count what the registry holds |
+| `pai reload` | Restart daemon, router and worker pool host onto the code on disk |
 | `pai rename` | Give a session a new name |
 | `pai restore` | Restore PAI data from a backup |
 | `pai resume` | Open a session by name or id (same as `pai open`) |

@@ -156,6 +156,20 @@ export interface PoolState {
   spareClaims?: number;
   /** Claims that found no usable spare, by reason. */
   spareMisses?: Record<string, number>;
+  /** mtime (ms) of the host's own bundle when it started: the code version it runs. */
+  bundleMtimeMs?: number;
+}
+
+/** True when the bundle on disk is newer than the one the host started from (a build landed since). */
+export function poolHostStale(startedMtimeMs: number | undefined, diskMtimeMs: number | null): boolean {
+  return startedMtimeMs !== undefined && diskMtimeMs !== null && diskMtimeMs > startedMtimeMs;
+}
+
+/** Local `YYYY-MM-DD HH:MM:SS` of a bundle mtime (ledger style). */
+export function bundleBuildStamp(mtimeMs: number): string {
+  const d = new Date(mtimeMs);
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 export function poolDir(logDir: string): string {
