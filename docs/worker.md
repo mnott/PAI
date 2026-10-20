@@ -1,5 +1,7 @@
 # Worker Providers
 
+> Overview: [concepts/workers.md](concepts/workers.md). Routing: [concepts/delegation-tiers.md](concepts/delegation-tiers.md). This page is the long reference.
+
 PAI can run every subagent on a provider you configure — any endpoint that
 speaks the Anthropic API, any endpoint that speaks the OpenAI Chat
 Completions API (through the built-in proxy), or the Codex CLI — instead of
