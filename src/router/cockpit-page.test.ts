@@ -43,6 +43,7 @@ describe("cockpit page compression", () => {
       `${body}\nrenderLimits();`
     );
     const lim = {
+      activeLocal: "dead17",
       limits: [
         { provider: "up1", kind: "local", up: true, served: ["m"] },
         ...Array.from({ length: 18 }, (_, i) => ({ provider: `dead${i}`, kind: "local", up: false })),
@@ -53,12 +54,30 @@ describe("cockpit page compression", () => {
     expect(html).toContain("up1");
     expect(html).toContain("<details");
     expect(html).not.toMatch(/<details[^>]*\bopen\b/);
-    expect(html).toContain("18 local models down");
-    const outside = html.replace(/<details[\s\S]*?<\/details>/, "");
+    expect(html).toContain("1 local model down");
+    expect(html).toContain("17 local models not loaded (switch in Models)");
+    const outside = html.replace(/<details[\s\S]*?<\/details>/g, "");
     expect(outside).toContain("up1");
     expect(outside).not.toContain("dead0");
-    expect(html.match(/<details[\s\S]*?<\/details>/)![0]).toContain("dead17");
+    expect(html.match(/<details[\s\S]*?<\/details>/g)!.join("")).toContain("dead17");
     expect(outside).not.toContain(">down<");
+  });
+});
+
+describe("live-shaped payloads", () => {
+  it("Local block: an unloaded tier is not loaded, never down; only the configured local model can be down", () => {
+    const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
+    const run = (activeLocal: string | null) => {
+      const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
+      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `${body}\nrenderLimits();`);
+      const lim = { activeLocal, limits: [{ provider: "gyro-m", kind: "local", up: true, served: ["m"] }, { provider: "flashnext-iq3", kind: "local", up: false }] };
+      fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
+      return els.local!.innerHTML;
+    };
+    const h = run("gyro-m");
+    expect(h).toContain("1 local model not loaded");
+    expect(h.replace(/downs/g, "")).not.toContain("down");
+    expect(run("flashnext-iq3")).toContain("1 local model down");
   });
 });
 
@@ -367,6 +386,26 @@ describe("cockpit Models cards", () => {
     (s: unknown) => String(s ?? ""),
     (x: number) => (x * 100).toFixed(1) + "%"
   ) as (inv: unknown) => string;
+  it("models: an on-demand model with a consumer on a running runtime gets its card, available (loads on first request)", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [
+        { name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [
+          { model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["paperfull-chat"] },
+          { model: "arctic-embed-m-v1.5-f16:latest", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
+        ] },
+        { name: "docker-model-runner", kind: "docker-model-runner", status: "idle", port: 12434, users: ["paperfull-search"], models: [{ model: "e5", kind: "embedding", loaded: false, usedBy: ["paperfull-search"] }] },
+      ],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(h).toContain('data-rt="ollama" data-model="arctic-embed-m-v1.5-f16:latest"');
+    const card = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed'))!;
+    expect(card).toContain("available (loads on first request)");
+    expect(card).toContain("pai-embedding");
+    expect(card).not.toContain("badge bad");
+    expect(h).toContain('data-rt="docker-model-runner"');
+  });
   const inv = {
     at: "2026-10-19T18:00:00.000Z",
     runtimes: [
