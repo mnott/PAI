@@ -292,6 +292,7 @@ describe("cockpit Models cards", () => {
   const src = [
     COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
   ].join("\n");
   const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
@@ -303,7 +304,7 @@ describe("cockpit Models cards", () => {
     runtimes: [
       { name: "strata", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40000, usedBy: ["worker:flashnext-iq3"] }] },
       { name: "ollama", kind: "ollama", status: "idle", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
-        { model: "arctic", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
+        { model: "huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
         { model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["paperfull-llm"] },
       ] },
       { name: "gyro-m", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
@@ -322,9 +323,10 @@ describe("cockpit Models cards", () => {
   it("one card per running runtime: header, kind badge, status dot, four metric tiles", () => {
     const h = modelsHtml(inv);
     expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
-    expect(h).toContain("<b>flash-next</b>");
+    expect(h).toContain('<b title="flash-next">flash-next</b>');
     expect(h).toContain('<span class="badge">strata</span>');
     expect(h).toContain("strata :8035");
+    expect(h).toContain("used by worker:flashnext-iq3");
     expect(h).toContain('<span class="rt-dot"></span>');
     expect(h).toContain('<span class="rt-dot idle"></span>');
     for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(h).toContain(t);
@@ -339,33 +341,66 @@ describe("cockpit Models cards", () => {
     expect(h).toContain("1 spare(s) ready");
     expect(h).toContain("machine pressure 62%");
   });
-  it("sparklines carry the history; a runtime without engine readings shows – everywhere live", () => {
+  it("sparklines carry the history; a runtime with a loaded model keeps all four tiles and – only where the engine does not report", () => {
     const h = modelsHtml(inv);
-    const strata = h.slice(h.indexOf("<b>flash-next</b>"), h.indexOf("<b>arctic</b>"));
+    const strata = h.slice(h.indexOf('<b title="flash-next">flash-next</b>'), h.indexOf("<b title=\"huggingface.co/"));
     expect(strata.match(/<path class="line/g)!.length).toBeGreaterThanOrEqual(4);
-    const ollama = h.slice(h.indexOf("<b>arctic</b>"));
+    const ollama = h.slice(h.indexOf('<b title="huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16">multilingual-e5-base-gguf-f16</b>'));
+    for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(ollama).toContain(t);
     expect(ollama).toContain("–");
     expect(ollama).toContain("prompt reuse not reported");
     expect(ollama).toContain("spares: none ready");
+  });
+  it("a long model id renders its short name (last path segment) with the full id in title", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain('<b title="huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16">multilingual-e5-base-gguf-f16</b>');
+    expect(h).not.toContain("<b>huggingface.co/");
+  });
+  it("an idle runtime with nothing loaded is a compact card: header + Memory/size + users, no empty Speed/cache tiles", () => {
+    const h = modelsHtml({
+      at: "2026-10-19T18:00:00.000Z",
+      runtimes: [{ name: "docker-model-runner", kind: "docker", status: "idle", port: 8090, users: ["worker:x"], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
+      live: { at: 1, runtimes: [] },
+    });
+    expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(1);
+    expect(h).toContain("Memory / size");
+    expect(h).toContain("4.7 GB");
+    expect(h).toContain("Users");
+    expect(h).toContain("used by worker:x");
+    expect(h).not.toContain("Conversation cache");
+    expect(h).not.toContain("Speed");
+    expect(h).not.toContain("–");
   });
   it("worker chips name the sessions with workers on the runtime", () => {
     const h = modelsHtml(inv);
     expect(h).toContain("fix-x");
     expect(h).toContain("<b>PAI</b>");
   });
-  it("stopped runtimes and not-loaded models are one chip row, no tables, no horizontal scroll", () => {
+  it("stopped runtimes are one chip each, no tables, no horizontal scroll; a runtime with a card is never repeated as a chip", () => {
     const h = modelsHtml(inv);
     expect(h).not.toContain("<table");
     expect(h).not.toContain('class="tw"');
     expect(h).not.toContain("<details");
-    expect(h).toContain("stopped: gyro-m :8036");
-    expect(h).toContain("not loaded: qwen3:8b chat (ollama)");
+    expect(h).toContain('<span class="chip" title="gyro-m :8036 · used by worker:gyro">gyro-m :8036 · used by worker:gyro</span>');
+    expect(h).not.toContain("not loaded:");
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
+    // the chips live after the grid closes: they name only runtimes without a card
+    const chips = h.slice(h.indexOf('class="rt-chips dim"'));
+    expect(chips).not.toContain("strata");
+    expect(chips).not.toContain("ollama");
+    expect(chips).toContain("gyro-m");
   });
-  it("the grid follows the container at any width", () => {
-    expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}");
-    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}");
+  it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
+    expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
+    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}");
     expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*min-width:0[^}]*max-width:100%/);
+    // header on one line: the name ellipsises, chips stay inline; the used-by line ellipsises too
+    expect(COCKPIT_HTML).toMatch(/\.rt-head\{[^}]*flex-wrap:nowrap\}/);
+    expect(COCKPIT_HTML).toMatch(/\.rt-head b\{[^}]*overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/);
+    expect(COCKPIT_HTML).toMatch(/\.rt-sub\{[^}]*overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/);
+    // each chip is its own item, ellipsised, never wider than the card
+    expect(COCKPIT_HTML).toMatch(/\.rt-chips\{[^}]*flex-wrap:wrap[^}]*min-width:0\}/);
+    expect(COCKPIT_HTML).toMatch(/\.rt-chips \.chip\{[^}]*max-width:100%[^}]*overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/);
   });
   it("the models section polls live every 5 s on its own; the tile sits after the worker panel, before System", () => {
     expect(COCKPIT_HTML).toContain('needModels=has("models")');
