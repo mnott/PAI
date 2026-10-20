@@ -50,6 +50,7 @@ import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
 import { psTable, psTableOrNull } from "./ps-table.js";
+import { escapePaneTitle, paneTitle } from "./pane-title.js";
 
 export const PROFILE_NAME = "pai-worker";
 
@@ -179,11 +180,15 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
 }
 
 // One pane per worker: split the pane pickSplit chose (argv[4]) side by side
-// ("v") or stacked ("h", argv[5]). Returns "<live ids>,|<new session id>".
+// ("v") or stacked ("h", argv[5]), and name the new session with the worker's
+// purpose (argv[6]) — iTerm renames a session after its command ("node"), so
+// without this every worker pane shows the same title. Returns
+// "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
 export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
 function run(argv) {
     var targetID = argv[0], candList = argv[1], followCmd = argv[2], profileName = argv[3];
+    var paneTitle = argv[6] || "";
     var app = Application("iTerm2");
     if (!app.running()) return "notrunning";
     var f = findSession(app, targetID);
@@ -220,6 +225,9 @@ function run(argv) {
             : splitS.splitHorizontally({ withProfile: profileName, command: followCmd });
     }
     live.push(newS);
+    // the pane's purpose in the title bar; a session that vanished right after
+    // the split must not fail the script
+    if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
     ${REBALANCE}
     ${RESTORE_ACTIVE}
     try { f.w.bounds = winBounds; } catch (e) {}
@@ -250,11 +258,13 @@ function run(argv) {
     return [b.x, b.y, b.x + b.width, b.y + b.height].join(", ");
 }`;
 
-// Split the launching session vertically and run followCmd in the new pane.
-// Exported for the script-content tests (focus stays on the launching session).
+// Split the launching session vertically and run followCmd in the new pane,
+// naming it with the pane's purpose (argv[2]). Exported for the script-content
+// tests (focus stays on the launching session).
 export const SPLIT_SCRIPT = `${FIND_SESSION}
 function run(argv) {
     var followCmd = argv[1];
+    var paneTitle = argv[2] || "";
     var app = Application("iTerm2");
     if (!app.running()) return "notrunning";
     var f = findSession(app, argv[0]);
@@ -262,7 +272,8 @@ function run(argv) {
     ${CAPTURE_ACTIVE}
     // the follow command is part of the split itself (see WORKER_SPLIT_SCRIPT):
     // nothing is ever typed into a session afterwards
-    f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
+    var newS = f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
+    if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
     ${RESTORE_ACTIVE}
     return "opened";
 }`;
@@ -798,6 +809,21 @@ export async function closeEndedPanes(
 // ---------------------------------------------------------------------------
 
 /**
+ * The pane title of a worker: its status label plus the provider or model it
+ * runs on ("<label> · gyro-m"). "" when the status cannot be read — the split
+ * then names nothing and the follow view's own title (which reads the status
+ * again) is the fallback.
+ */
+export function workerPaneTitle(logDir: string, wid: string): string {
+  try {
+    const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { label?: string; provider?: string; model?: string };
+    return paneTitle(st.label ?? "", st.provider || st.model || "");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * The command a worker pane runs: one exec-able line with no shell syntax —
  * iTerm's split command parameter execs without a shell (proven live: panes
  * survive `sleep 30` and a single-quoted `/bin/sh -c`, die instantly on
@@ -1170,7 +1196,21 @@ function tmuxSplit(cmd: string): void {
     const err = e as { stderr?: Buffer; message?: string };
     throw new Error(`pai worker pane: tmux split-window failed: ${(err.stderr?.toString() || err.message || "").trim().slice(0, 200)}`);
   }
+  // the new pane's purpose in tmux's pane title (the follow view repeats it as
+  // OSC at its start); best effort — a title never fails a split
+  const t = tmuxPaneTitle;
+  tmuxPaneTitle = "";
+  if (t) {
+    try {
+      execFileSync("tmux", ["select-pane", ...target, "-T", t], { stdio: "ignore" });
+    } catch {
+      /* title is decoration */
+    }
+  }
 }
+
+/** Title `tmuxSplit` gives the pane it opens next (set by openPaneForWorker / openFollowPane). */
+let tmuxPaneTitle = "";
 
 /**
  * Worker state straight from its status file (pane.ts cannot import status.ts: it imports us).
@@ -1240,6 +1280,7 @@ export async function openPaneForWorker(
   const backend = paneBackend(process.env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
+    tmuxPaneTitle = workerPaneTitle(logDir, wid);
     tmuxSplit(followCommand(wid));
     return { message: `pane opened for ${wid}`, session: null };
   }
@@ -1263,7 +1304,7 @@ export async function openPaneForWorker(
   if (choice?.small) {
     process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${MIN_COLS}x${MIN_ROWS}; opening a small ${choice.cols}x${choice.rows} pane\n`);
   }
-  const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v"]);
+  const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v", workerPaneTitle(logDir, wid)]);
   const out = p.stdout.trim();
   if (out === "notfound" || out === "notrunning") {
     throw new Error(
@@ -1380,7 +1421,7 @@ export async function openFollowPane(
   if (checkOnly) return "no follow pane";
   // one exec-able line, no shell syntax — see followCommand()
   const cmd = `${process.execPath} ${absoluteCliPath()} worker follow`;
-  const s = await osascript(SPLIT_SCRIPT, [uid, cmd]);
+  const s = await osascript(SPLIT_SCRIPT, [uid, cmd, "worker follow"]);
   const sout = s.stdout.trim();
   if (sout === "opened") return "follow pane opened";
   if (sout === "notfound") throw new Error("pai worker pane: resolved iTerm2 session vanished");

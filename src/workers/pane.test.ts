@@ -25,6 +25,7 @@ import {
   checkPaneForWorker,
   dynamicProfilePath,
   followCommand,
+  workerPaneTitle,
   headlessAllowed,
   verifyPane,
   followProfile,
@@ -344,6 +345,33 @@ describe("split scripts never leak keystrokes", () => {
   it("never types text into any session (no write)", () => {
     for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
       expect(script).not.toMatch(/\.write\(/);
+    }
+  });
+});
+
+describe("split scripts name the new pane with its purpose", () => {
+  it("both assign the escaped title to the new session's name after the split", () => {
+    for (const script of [WORKER_SPLIT_SCRIPT, SPLIT_SCRIPT]) {
+      // argv-only: the escaped label arrives as an argument, never interpolated
+      expect(script).toMatch(/var paneTitle = argv\[\d\] \|\| "";/);
+      expect(script).toMatch(/newS\.name = paneTitle/);
+      expect(script.indexOf("newS.name = paneTitle")).toBeGreaterThan(script.lastIndexOf("command: followCmd"));
+    }
+  });
+
+  it("the worker split passes the escaped label as argv[6]", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-pane-title-"));
+    try {
+      const wid = "20261020-120000-12345";
+      writeFileSync(join(dir, `${wid}.status`), JSON.stringify({ label: "cockpit: fit viewport", provider: "gyro-m" }), "utf8");
+      expect(workerPaneTitle(dir, wid)).toBe("cockpit: fit viewport · gyro-m");
+      // a control char or quote in the label cannot reach the script's name assignment
+      writeFileSync(join(dir, `${wid}.status`), JSON.stringify({ label: 'evil\x1b]2;x" label', model: "m1" }), "utf8");
+      expect(workerPaneTitle(dir, wid)).toBe("evil ]2;x label · m1");
+      rmSync(join(dir, `${wid}.status`), { force: true });
+      expect(workerPaneTitle(dir, wid)).toBe(""); // no status: the script names nothing
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

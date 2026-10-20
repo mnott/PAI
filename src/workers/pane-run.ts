@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { nowStamp, pidAlive } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
+import { paneTitle, writePaneTitle } from "./pane-title.js";
 
 export interface PaneRunStatus {
   kind: "pane";
@@ -87,6 +88,9 @@ export async function followPaneRun(
   lingerSecs = PANE_LINGER_SECS,
   pollMs = 250
 ): Promise<void> {
+  // the pane's purpose in the title bar before anything scrolls: a `pai pane
+  // run` pane shows its label alone (no provider)
+  writePaneTitle(paneTitle(loadPaneRunStatus(logDir, id)?.label ?? id), process.env);
   let at = 0;
   let endedAt = 0;
   for (;;) {

@@ -41,6 +41,7 @@ import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
 import { appendLedger } from "./ledger.js";
 import { closeOwnPane } from "./pane.js";
+import { paneTitle, writePaneTitle } from "./pane-title.js";
 import {
   CHAT_HELP,
   chatBlankRow,
@@ -585,6 +586,10 @@ export async function followWorkers(
   // FORCE_TTY=1: the TTY layout over a pipe (tests, recorded panes)
   const tty = out_.isTTY === true || env.FORCE_TTY === "1";
   const term = env.ITERM_SESSION_ID ?? "";
+  // the pane's purpose in the title bar (worker panes show "node" otherwise):
+  // the target's label plus the provider or model it runs on
+  const targetStatus = target ? loadStatus(logDir, target) : null;
+  writePaneTitle(paneTitle(targetStatus?.label ?? target ?? "workers", targetStatus?.provider || targetStatus?.model || ""), env);
   // iTerm user variable: lets AIBroker leave worker panes out of its Claude
   // session list. Real TTY only (not FORCE_TTY); no tmux passthrough helper exists.
   if (out_.isTTY === true && target) {
