@@ -35,7 +35,7 @@ import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-sta
 import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
-import { DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
+import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
 import { BATCH_ENV } from "../../workers/session-profile.js";
@@ -922,15 +922,19 @@ const testRunCommand: CommandDef = {
   description:
     "Runs the command (after --) with Node diagnostic reports enabled and passes its output through. When it prints nothing for --idle seconds (default 60, or 8 s before a `timeout N` in the command), every node process under it gets SIGUSR2 and the reports' javascriptStack is printed as the file:line the main thread is stuck in; an empty stack means an async wait. A synchronous infinite loop blocks the runner's own timeout, so without this a hung run shows nothing. Worker test commands (vitest, jest, node --test, npm test) are routed through it by the PAI guard. Exit code is the command's.",
   allowUnknown: true,
-  options: [{ name: "idle", type: "number", value: "SECS", summary: `Silence after which the probe fires (default ${DEFAULT_IDLE_SECS})` }],
+  options: [
+    { name: "idle", type: "number", value: "SECS", summary: `Silence after which the probe fires (default ${DEFAULT_IDLE_SECS})` },
+    { name: "cmd-b64", type: "string", value: "BASE64", summary: "The command line, base64-encoded, run exactly as given (what the PAI guard emits)" },
+  ],
   examples: ["pai worker test-run -- npx vitest run src/parse.test.ts", "pai worker test-run --idle 20 -- timeout 120 npm test"],
   seeAlso: ["pai worker wait-on"],
   run: (ctx) =>
     guard("pai worker test-run -- <command>", async () => {
       const words = ctx.rest[0] === "--" ? ctx.rest.slice(1) : ctx.rest;
-      if (!words.length) throw new CliError("no command given", "pai worker test-run -- npx vitest run <file>");
+      const cmdB64 = ctx.opts["cmd-b64"] as string | undefined;
+      if (!words.length && !cmdB64) throw new CliError("no command given", "pai worker test-run -- npx vitest run <file>");
       const code = await runProbed({
-        command: words.join(" "),
+        command: commandToRun(cmdB64, words),
         cwd: process.cwd(),
         reportDir: join(logDir(), "reports"),
         idleSecs: num(ctx.opts.idle),

@@ -687,6 +687,7 @@ Runs the command (after --) with Node diagnostic reports enabled and passes its 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--idle SECS` | number | — | Silence after which the probe fires (default 60) |
+| `--cmd-b64 BASE64` | string | — | The command line, base64-encoded, run exactly as given (what the PAI guard emits) |
 
 ```sh
 pai worker test-run -- npx vitest run src/parse.test.ts
