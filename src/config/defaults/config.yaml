@@ -226,6 +226,9 @@ router:
       workerRows: 15
       # models under this many requests render as chips, not rings.
       lowRequestMin: 5
+      # saved model colours (browser storage) older than this many days are
+      # pruned; a model that is merely not visible right now keeps its colour.
+      colorPruneDays: 90
       # refresh intervals of the page's polls.
       pollMs: 5000
       limitsPollMs: 30000

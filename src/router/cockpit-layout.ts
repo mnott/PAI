@@ -110,6 +110,8 @@ const SHIPPED = {
   sessionsRows: 20,
   workerRows: 15,
   lowRequestMin: 5,
+  // saved model colours older than this (days, by their "@ts" stamp) are pruned
+  colorPruneDays: 90,
   pollMs: 5000,
   limitsPollMs: 30000,
   poolPollMs: 15000,
@@ -180,6 +182,8 @@ export interface CockpitLayout {
   workerRows: number;
   /** models under this many requests are chips, not rings. */
   lowRequestMin: number;
+  /** saved model colours (localStorage) older than this many days are pruned. */
+  colorPruneDays: number;
   /** refresh intervals. */
   pollMs: number;
   limitsPollMs: number;
@@ -242,6 +246,7 @@ export function cockpitLayout(): CockpitLayout {
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),
     lowRequestMin: num(s, "lowRequestMin", SHIPPED.lowRequestMin),
+    colorPruneDays: num(s, "colorPruneDays", SHIPPED.colorPruneDays),
     pollMs: num(s, "pollMs", SHIPPED.pollMs),
     limitsPollMs: num(s, "limitsPollMs", SHIPPED.limitsPollMs),
     poolPollMs: num(s, "poolPollMs", SHIPPED.poolPollMs),

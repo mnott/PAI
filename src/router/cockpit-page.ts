@@ -195,26 +195,75 @@ ${POOL_PANEL_HTML}
 </main>
 <script>
 (function(){
-var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},data=null,lim=null,lastOk=0,PAL=[${L.palette.map(hex).join(",")}];
+var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},COLOR_PRUNE_DAYS=${n(L.colorPruneDays)},data=null,lim=null,lastOk=0,PAL=[${L.palette.map(hex).join(",")}];
 var colors={},CKEY="pai.cockpit.modelColors.v1";
 try{colors=JSON.parse(localStorage.getItem(CKEY)||"{}")||{}}catch(e){colors={}}
 function saveColors(){try{localStorage.setItem(CKEY,JSON.stringify(colors))}catch(e){}}
-/** Model colours: every visible model gets its own colour. A model keeps the colour saved under its name (localStorage); a new one takes the first palette entry no visible model uses, in sorted-name order — so the assignment does not depend on the data's order. */
+/** Model colours: one colour per model across the whole page. assignColors is called once per render
+ *  with the UNION of every model shown anywhere (window models, daily models, rings, speed table), so
+ *  a chart that shows fewer models never wipes another chart's colours. A model keeps the colour saved
+ *  under its name (localStorage); a new one takes the first palette entry no model uses, in sorted-name
+ *  order — so the assignment does not depend on the data's order. Past the palette, extra models get
+ *  generated colours (HSL hues rotated away from the hues in use). Saved entries older than
+ *  COLOR_PRUNE_DAYS (router.cockpit.layout.colorPruneDays) are pruned by their "@ts" stamp; a model
+ *  that is merely not visible right now keeps its colour. */
 function assignColors(ms){
  var want={},i,k;for(i=0;i<ms.length;i++)want[ms[i]]=1;
  var names=Object.keys(want).sort(),taken={},n=new Date().getTime();
- for(i=0;i<names.length;i++){k=colors[names[i]];if(k&&PAL.indexOf(k)>=0&&!(k in taken))taken[k]=names[i]}
+ // a saved colour counts as taken even when its model is not in this list — that is what keeps
+ // a chart with a smaller model set from reusing another chart's colour
+ for(k in colors)if(String(k).indexOf("@ts")<0&&/^#[0-9a-f]{6}$/i.test(String(colors[k]))&&!(colors[k] in taken))taken[colors[k]]=k;
  var changed=false;
  for(i=0;i<names.length;i++){
   var nm=names[i],c=colors[nm],p=0;
-  if(c&&PAL.indexOf(c)>=0&&taken[c]===nm)continue;
-  while(p<PAL.length&&taken[PAL[p]]!==undefined)p++;c=PAL[Math.min(p,PAL.length-1)];
+  if(c&&/^#[0-9a-f]{6}$/i.test(String(c))&&taken[c]===nm)continue;
+  while(p<PAL.length&&taken[PAL[p]]!==undefined)p++;
+  if(p<PAL.length)c=PAL[p];else c=genColor(taken);
   taken[c]=nm;colors[nm]=c;colors[nm+"@ts"]=n;changed=true;
  }
- for(k in colors)if(!want[k]&&String(k).indexOf("@ts")<0)delete colors[k];
+ // prune only entries older than COLOR_PRUNE_DAYS (the "@ts" stamp), never a model that is merely not visible now
+ var cut=n-COLOR_PRUNE_DAYS*864e5;
+ for(k in colors)if(String(k).indexOf("@ts")>=0&&+colors[k]<cut)delete colors[String(k).slice(0,String(k).indexOf("@ts"))];
  if(changed)saveColors();
 }
-function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[0];return colors[k]}
+/** "#rrggbb" of an HSL colour, lightness/saturation kept in the readable band of the palette. */
+function hslHex(h,s,l){
+ h=((h%360)+360)%360;s=Math.max(0,Math.min(1,s));l=Math.max(0,Math.min(1,l));
+ var c=(1-Math.abs(2*l-1))*s,x=c*(1-Math.abs((h/60)%2-1)),m=l-c/2,r=0,g=0,b=0;
+ if(h<60){r=c;g=x}else if(h<120){r=x;g=c}else if(h<180){g=c;b=x}else if(h<240){g=x;b=c}else if(h<300){r=x;b=c}else{r=c;b=x}
+ function hx(v){var s2=Math.round((v+m)*255).toString(16);return s2.length<2?"0"+s2:s2}
+ return"#"+hx(r)+hx(g)+hx(b);
+}
+/** A colour for a model past the palette: rotate the hue from a golden-angle start, skipping hues
+ *  within 12° of one already taken; lightness alternates so repeats stay distinguishable. */
+function genColor(taken){
+ var used=[],k;for(k in taken)if(/^#[0-9a-f]{6}$/i.test(String(taken[k])))used.push(hueOf(String(taken[k])));
+ for(var j=0;j<720;j++){
+  var h=(j*137.508+24)%360,l=j%2?0.42:0.62,ok=true;
+  for(var i=0;i<used.length;i++){var d=Math.abs(h-used[i]);if(Math.min(d,360-d)<12){ok=false;break}}
+  if(ok)return hslHex(h,0.55,l);
+ }
+ return hslHex(0,0.55,0.5);
+}
+/** Hue (degrees) of a #rrggbb colour. */
+function hueOf(hex){
+ var r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
+ var mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn,h=0;
+ if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4}
+ return h*60;
+}
+/** The colour of a model: never a silent PAL[0] fallback — an unassigned model is assigned on the spot
+ *  (the next free palette entry, else a generated colour) and saved. */
+function colorOf(k){
+ for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];
+ var c=colors[k];
+ if(c&&/^#[0-9a-f]{6}$/i.test(String(c)))return c;
+ var taken={},nm;for(nm in colors)if(String(nm).indexOf("@ts")<0&&colors[nm])taken[colors[nm]]=nm;
+ var p=0;while(p<PAL.length&&taken[PAL[p]]!==undefined)p++;
+ c=p<PAL.length?PAL[p]:genColor(taken);
+ colors[k]=c;colors[k+"@ts"]=new Date().getTime();saveColors();
+ return c;
+}
 function $(id){return document.getElementById(id)||document.createElement("div")}
 /** Every panel rebuild goes through here. Identical html: no DOM write. Otherwise the viewport stays put (Safari has no scroll anchoring):
  *  the first main child below the viewport top is the anchor, scrollBy corrects its drift; the old height is held until the next frame so
@@ -1234,6 +1283,11 @@ function render(){
  setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
  setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
+ // one assignment over the union of every model shown anywhere on the page (window, daily, rings, speed):
+ // a chart with a smaller model set must not wipe the colours of the models another chart shows
+ var um={},ui;models.forEach(function(m){um[m]=1});dm.forEach(function(m){um[m]=1});
+ d.byModel.forEach(function(m){um[m.model]=1});(d.speed||[]).forEach(function(r){um[r.model]=1});
+ assignColors(Object.keys(um));
  var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
  chartCap($("dailycap"),dgap);
  legend($("dlegend"),dm);

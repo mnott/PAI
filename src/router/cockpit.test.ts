@@ -394,17 +394,30 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
-  const baked = COCKPIT_HTML.match(/var JOB_TRIES=\d+,[\s\S]*?SRV_STALE_SEC=\d+;/)![0] + COCKPIT_HTML.match(/LOW_REQ=\d+/)![0];
+  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail", "shortModel", "ringName"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  // ringTiles assigns colours: the colour helpers come along, with a stub localStorage
+  const colorBody = [
+    COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
+    COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function hslHex\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function genColor\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function hueOf\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function colorOf\([\s\S]*?\n\}\n/)![0],
+  ].join("\n");
+  const baked = COCKPIT_HTML.match(/var JOB_TRIES=\d+,[\s\S]*?SRV_STALE_SEC=\d+;/)![0] + COCKPIT_HTML.match(/LOW_REQ=\d+,STALE_SEC=\d+,COLOR_PRUNE_DAYS=\d+/)![0] + ";" + COCKPIT_HTML.match(/var KINDS=[\s\S]*?PAL=\[[^\]]+\]/)![0] + ";";
+  // `lim=null` sits inside the baked var line (null = first limits poll pending, loadLimits() sets it);
+  // drop it so the helpers resolve `lim` on the global object, where tests can flip the poll state
+  const baked2 = baked.replace(/,lim=null/, "").replace(/;LOW_REQ=/, ";var LOW_REQ=");
   const fns = new Function(
-    "donut", "pct", "esc", "fmt", "lim",
-    `${baked}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
+    "donut", "pct", "esc", "fmt", "localStorage", "mdl",
+    `${baked2}\n${colorBody}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
   )(
     (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
     (r: number) => `${(r * 100).toFixed(1)}%`,
     (s: string) => s,
     (n: number) => String(n),
-    {}
+    { getItem: () => null, setItem: () => {} },
+    { runtimes: [], consumers: [] },
   ) as {
     lowChips: (ms: Record<string, unknown>) => string;
     ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
@@ -420,7 +433,8 @@ describe("cockpit cache rings and providers table", () => {
     expect(html).toContain("99.3");
     expect(html).toContain("server prefix cache");
     expect(html).toContain("local30x8");
-    expect(html).toContain("qwen · 164 req");
+    // the tile's small line is provider · req (the title is the model, shortened)
+    expect(html).toContain("local30x8 · 164 req");
     expect(html).not.toContain("bignum");
   });
   it("the local prefix cache panel is a ring-free detail line; the ring appears once per provider", () => {
@@ -432,13 +446,15 @@ describe("cockpit cache rings and providers table", () => {
     expect(COCKPIT_HTML).toMatch(/setHtml\(\$\("donutlocal"\),lh\);/);
   });
   it("without server stats the tile is an empty grey ring with a small caption", () => {
+    (globalThis as unknown as { lim: unknown }).lim = { ok: true }; // limits polled: caption "not reported", not loading dots
     const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, []);
     expect(html).toContain("not reported");
     expect(html).toContain('<div class="s">not reported</div>');
     expect(html).not.toContain("donut");
-    expect(html).toContain("qwen · 164 req");
+    expect(html).toContain("local30x8 · 164 req");
   });
   it("models under 5 requests are not tiles, sorted order unchanged for the rest", () => {
+    (globalThis as unknown as { lim: unknown }).lim = null; // before the first poll the caption is the loading dots — irrelevant here
     const html = fns.ringTiles({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) }, []);
     expect(html).toContain("sonnet");
     expect(html).not.toContain("haiku");
