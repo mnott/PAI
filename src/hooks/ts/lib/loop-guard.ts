@@ -64,12 +64,15 @@ export interface LoopState {
   waits?: Record<string, number>;
   /** Window key -> ms timestamp of the first call of a build-door poll (see isPollCommand); bounded by WAIT_CAP_MS. */
   polls?: Record<string, number>;
+  /** Poll key -> consecutive finished (non-waiting) results of a build-door poll; an instant door failure is not a wait. */
+  pollDone?: Record<string, number>;
   /** Streak of read-only Bash calls sharing one template and file set while the worktree stayed unchanged. */
   reads?: { key: string; files: string; print: string | null; n: number; denials: number };
 }
 
 /** Total polling time per command key after which a "still running" helper is treated as an ordinary repeat again. */
 export const WAIT_CAP_MS = 45 * 60_000;
+const POLL_PROGRESS = /queue|progress|waiting|running|building|attached|position/i;
 const WAIT_TEXT = /still running|call again|in progress|not (?:yet )?(?:done|finished|ready)/i;
 
 function exitCodeOf(response: unknown): number | null {
@@ -213,7 +216,8 @@ const WAIT_VERB = /\bpai worker (?:wait|wait-on|wait-url|wait-file)\b/;
 
 function exempt(command: string): boolean {
   if (WAIT_VERB.test(command)) return true;
-  const m = /\bsleep (\d+(?:\.\d+)?)\b/.exec(command);
+  // only a command that starts by sleeping is a wait; a sleep buried in a longer command is a pause inside a retry
+  const m = /^\s*sleep (\d+(?:\.\d+)?)\b/.exec(command);
   return !!m && Number(m[1]) <= 60;
 }
 
@@ -349,6 +353,12 @@ export function recordLoopResult(state: LoopState, tool: string, input: string |
   const key = callKey(tool, input);
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };
+    const pd = { ...(state.pollDone ?? {}) };
+    if (key in (state.polls ?? {})) {
+      if (isWaitResult(response) || POLL_PROGRESS.test(resultSig(response))) delete pd[key];
+      else pd[key] = (pd[key] ?? 0) + 1;
+      state = { ...state, pollDone: pd };
+    }
     if (isWaitResult(response)) return { ...state, waits: { ...waits, [key]: waits[key] ?? now } };
     if (key in waits) {
       delete waits[key];
@@ -390,6 +400,17 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     if (pk !== null && isPollCommand(c as string, cwd)) {
       const since = state.polls?.[pk] ?? now;
       const next = { ...state, polls: { ...(state.polls ?? {}), [pk]: since } };
+      const done = state.pollDone?.[pk] ?? 0;
+      if (done >= RUN_DENY_AT) {
+        return {
+          state: next,
+          deny: true,
+          stop: done >= RUN_STOP_AT,
+          key: pk.split("\t")[1],
+          count: done + 1,
+          reason: `loop guard: this build-door call returned ${done} times in a row with a finished result and no queue/progress output; it is not waiting for anything, the result will not change. Read the failure, change code, or report the blocker. ${SELF}`,
+        };
+      }
       if (now - since < WAIT_CAP_MS) return { state: next, deny: false };
       return {
         state: next,

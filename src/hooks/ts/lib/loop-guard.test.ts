@@ -105,6 +105,13 @@ describe("similarity of commands", () => {
     expect(feed(Array.from({ length: 10 }, () => bash("sleep 30; cat out.log")))).toEqual([]);
     expect(feed(Array.from({ length: 6 }, () => bash("sleep 300")))).toEqual([4, 5]);
   });
+  it("a sleep inside a longer command is not a wait (live miss: rm; door x2; sleep 5; cat)", () => {
+    const c = "rm -f /tmp/cl-build/mac-1.seen; CASELEAF_TREES=/tmp/t2 CASELEAF_BUILD_STUB=8 sh /tmp/cl-stub3/tools/build.sh mac 2>/dev/null; echo A-rc=$?; sleep 5; echo ---A---; cat /tmp/cl-build/mac-1.log";
+    const out = "A-rc=0\n---A---\nBUILD FAILED 0s (the job ended without a result; see /tmp/cl-build/mac-1.full.log)";
+    const denied = feed(Array.from({ length: 12 }, () => bash(c)), () => out);
+    expect(denied[0]).toBeLessThanOrEqual(4);
+    expect(denied.length).toBe(12 - denied[0]);
+  });
   it("normalises numbers, quotes and spacing", () => {
     expect(loopKey("echo   hi  ")).toBe(loopKey('echo "hi"'));
     expect(loopKey("sed -n 1,40p a.ts")).toBe(loopKey("sed -n 41,80p a.ts"));
@@ -404,7 +411,7 @@ describe("build-door polls are waits", () => {
   const repo = mkdtempSync(join(tmpdir(), "lg-door-"));
   mkdirSync(join(repo, ".pai"), { recursive: true });
   writeFileSync(join(repo, ".pai", "builds.yaml"), "doors: [tools/build.sh]\n");
-  const run = (cmd: string, n: number, t0 = 0, step = 0) => {
+  const run = (cmd: string, n: number, t0 = 0, step = 0, out = "queue position 2, building") => {
     let s: LoopState = emptyLoopState();
     const denied: number[] = [];
     for (let i = 0; i < n; i++) {
@@ -412,7 +419,7 @@ describe("build-door polls are waits", () => {
       const r = stepLoopGuard(s, "Bash", cmd, null, now, repo);
       s = r.state;
       if (r.deny) denied.push(i);
-      else s = recordLoopResult(s, "Bash", cmd, "same output", now);
+      else s = recordLoopResult(s, "Bash", cmd, out, now);
     }
     return denied;
   };
@@ -423,6 +430,8 @@ describe("build-door polls are waits", () => {
     "pai build lock -- true",
   ];
   for (const c of shapes) it(`never denies: ${c}`, () => expect(run(c, 9)).toEqual([]));
+  it("a door that returns at once with the same failure is no wait", () =>
+    expect(run("sh tools/build.sh mac --wait", 9, 0, 0, "BUILD FAILED 0s (the job ended without a result)")).toEqual([3, 4, 5, 6, 7, 8]));
   it("without --wait it is an ordinary repeat", () => expect(run("sh tools/build.sh mac", 9)).toEqual([4, 5, 6, 7, 8]));
   it("--wait on a non-door is an ordinary repeat", () => expect(run("sh tools/other.sh mac --wait", 9)).toEqual([4, 5, 6, 7, 8]));
   it("the cap still applies after 45 minutes", () => expect(run("sh tools/build.sh mac --wait", 4, 0, WAIT_CAP_MS / 2)).toEqual([2, 3]));
