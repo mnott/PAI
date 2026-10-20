@@ -403,7 +403,7 @@ describe("cockpit cache rings and providers table", () => {
     for (const w of ["1205 hit / 9 miss", "tokens saved", "12 entries", "512 MB", "since start", "since restart"]) expect(line).toContain(w);
     const tile = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, [{ provider: "local30x8", prefixCache: pc }]);
     expect((tile + line).match(/class="donut"/g)).toHaveLength(1);
-    expect(COCKPIT_HTML).toMatch(/\$\("donutlocal"\)\.innerHTML=lh;/);
+    expect(COCKPIT_HTML).toMatch(/setHtml\(\$\("donutlocal"\),lh\);/);
   });
   it("without server stats the tile is an empty grey ring with a small caption", () => {
     const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, []);
