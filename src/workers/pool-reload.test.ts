@@ -55,7 +55,7 @@ const req: PoolTaskRequest = {
   reportFormat: "ag2", outputFormat: "text", maxMinutes: null, trailer: "",
 };
 
-function host(mtime: { v: number }, reexec: () => void) {
+function host(mtime: { v: number }, reexec: () => Promise<boolean>, extra: { stableMs?: number; clock?: { t: number } } = {}) {
   const logDir = mkdtempSync(join(tmpdir(), "pai-pool-reload-"));
   const slot = new HungSlot();
   const h = createPoolHost({
@@ -68,6 +68,8 @@ function host(mtime: { v: number }, reexec: () => void) {
     bundlePath: "/bundle/worker-pool-host.mjs",
     fileMtime: () => mtime.v,
     reexec,
+    bundleStableMs: extra.stableMs ?? 0,
+    ...(extra.clock ? { now: () => new Date(extra.clock!.t) } : {}),
     noReaper: true,
   });
   live.push(h);
@@ -76,7 +78,7 @@ function host(mtime: { v: number }, reexec: () => void) {
 
 describe("pool host self-update", () => {
   it("records its bundle mtime at start and stays put while the bundle is unchanged", async () => {
-    const reexec = vi.fn();
+    const reexec = vi.fn(async () => true);
     const { h } = host({ v: 1000 }, reexec);
     expect(h.state().bundleMtimeMs).toBe(1000);
     expect(await h.checkReload()).toBe(false);
@@ -85,7 +87,7 @@ describe("pool host self-update", () => {
 
   it("re-execs when the bundle on disk is newer and no slot is busy, with a POOL-HOST-RELOAD ledger line", async () => {
     const mtime = { v: 1000 };
-    const reexec = vi.fn();
+    const reexec = vi.fn(async () => true);
     const { h, logDir } = host(mtime, reexec);
     mtime.v = 2000;
     expect(await h.checkReload()).toBe(true);
@@ -95,9 +97,54 @@ describe("pool host self-update", () => {
     expect(reexec).toHaveBeenCalledTimes(1);
   });
 
+  it("the old listener is closed before the replacement starts and the replacement answers before onReloaded", async () => {
+    const mtime = { v: 1000 };
+    let listeningAtReexec: boolean | null = null;
+    const reexec = vi.fn(async () => {
+      listeningAtReexec = ref.h.server.listening;
+      return true;
+    });
+    const ref = host(mtime, reexec);
+    await new Promise<void>((r) => ref.h.server.listen(0, "127.0.0.1", () => r()));
+    mtime.v = 2000;
+    expect(await ref.h.checkReload()).toBe(true);
+    expect(listeningAtReexec).toBe(false);
+    expect(reexec).toHaveBeenCalledTimes(1);
+  });
+
+  it("a replacement that does not come up: the old host keeps serving and logs POOL-HOST-RELOAD-FAILED", async () => {
+    const mtime = { v: 1000 };
+    const reexec = vi.fn(async () => false);
+    const { h, logDir } = host(mtime, reexec);
+    await new Promise<void>((r) => h.server.listen(0, "127.0.0.1", () => r()));
+    mtime.v = 2000;
+    expect(await h.checkReload()).toBe(false);
+    expect(h.server.listening).toBe(true);
+    expect(readFileSync(ledgerPath(logDir), "utf8")).toContain("POOL-HOST-RELOAD-FAILED");
+    expect(await h.checkReload()).toBe(false); // retries on the next tick
+    expect(reexec).toHaveBeenCalledTimes(2);
+  });
+
+  it("defers while the bundle is still changing, reloads once its mtime has been stable", async () => {
+    const mtime = { v: 1000 };
+    const clock = { t: 1_000_000 };
+    const reexec = vi.fn(async () => true);
+    const { h } = host(mtime, reexec, { stableMs: 5000, clock });
+    mtime.v = 2000;
+    expect(await h.checkReload()).toBe(false);
+    clock.t += 3000;
+    mtime.v = 2500; // build wrote again
+    expect(await h.checkReload()).toBe(false);
+    clock.t += 3000;
+    expect(await h.checkReload()).toBe(false);
+    clock.t += 3000;
+    expect(await h.checkReload()).toBe(true);
+    expect(reexec).toHaveBeenCalledTimes(1);
+  });
+
   it("defers while a slot is busy and reloads once it is idle", async () => {
     const mtime = { v: 1000 };
-    const reexec = vi.fn();
+    const reexec = vi.fn(async () => true);
     const { h, slot } = host(mtime, reexec);
     const run = h.runTask(req);
     for (let i = 0; i < 50 && !h.state().slots.some((s) => s.busyWith); i++) await new Promise((r) => setTimeout(r, 10));
@@ -135,9 +182,22 @@ describe("stale host in status and the cockpit panel", () => {
 });
 
 describe("reloadPoolHost", () => {
+  it("reports still starting instead of failing when the host is slow to answer", async () => {
+    let up = true;
+    const r = await reloadPoolHost({
+      alive: async () => up,
+      busy: () => false,
+      stop: () => (up = false),
+      start: async () => ({ pid: 7, up: false }),
+      sleep: async () => {},
+    });
+    expect(r).toEqual({ waitedMs: 0, newPid: 7, starting: true });
+  });
+
   it("waits for busy slots, stops, waits for the port to free, then starts; null when no host runs", async () => {
     const calls: string[] = [];
     let busy = 2;
+    let waiting = 0;
     let up = true;
     const sleep = async () => {};
     const r = await reloadPoolHost({
@@ -149,13 +209,15 @@ describe("reloadPoolHost", () => {
       },
       start: async () => {
         calls.push("start");
-        return 42;
+        return { pid: 42, up: true };
       },
+      onWaiting: () => waiting++,
       sleep,
     });
     expect(calls).toEqual(["stop", "start"]);
-    expect(r).toEqual({ waitedMs: 2000, newPid: 42 });
-    expect(await reloadPoolHost({ alive: async () => false, busy: () => false, stop: () => calls.push("x"), start: async () => 1, sleep })).toBeNull();
+    expect(r).toEqual({ waitedMs: 2000, newPid: 42, starting: false });
+    expect(waiting).toBe(1);
+    expect(await reloadPoolHost({ alive: async () => false, busy: () => false, stop: () => calls.push("x"), start: async () => ({ pid: 1, up: true }), sleep })).toBeNull();
     expect(calls).toEqual(["stop", "start"]);
   });
 });

@@ -326,8 +326,15 @@ export interface PoolHostOptions {
   bundlePath?: string;
   /** mtime (ms) of a file, null when unreadable; tests inject. */
   fileMtime?: (path: string) => number | null;
-  /** Start the replacement host after shutdown (production: spawn the same argv detached, then exit). */
-  reexec?: () => void;
+  /**
+   * Start the replacement host (production: spawn the same argv detached) and resolve true once it answers
+   * /healthz. Called with this host's listener already closed; false/reject = the replacement did not come up.
+   */
+  reexec?: () => Promise<boolean>;
+  /** The bundle must have kept the same mtime this long before a reload starts (a build still rewriting it defers). Default 5000. */
+  bundleStableMs?: number;
+  /** Called after the replacement answered; production exits the process. */
+  onReloaded?: () => void;
 }
 
 export interface PoolHost {
@@ -1312,16 +1319,54 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   let reloading = false;
+  let seenMtime: number | null = null;
+  let seenSince = 0;
   const checkReload = async (): Promise<boolean> => {
     if (reloading || !opts.bundlePath || startMtime === null) return false;
-    if (!poolHostStale(startMtime, fileMtime(opts.bundlePath))) return false;
+    const disk = fileMtime(opts.bundlePath);
+    if (!poolHostStale(startMtime, disk)) return false;
+    // a build still rewriting the bundle: wait until its mtime has been stable
+    if (disk !== seenMtime) {
+      seenMtime = disk;
+      seenSince = now().getTime();
+    }
+    if (now().getTime() - seenSince < (opts.bundleStableMs ?? 5000)) return false;
     // a busy or claimed slot defers the reload until it is idle
     if (claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) return false;
     reloading = true;
     appendLedger(ledger, "POOL-HOST-RELOAD", { pid: process.pid, bundle: opts.bundlePath, note: "newer build on disk" });
-    await shutdown();
-    opts.reexec?.();
-    return true;
+    // slots go first (the replacement owns the state file), then the listener is released for it
+    for (const [k, s] of slots) {
+      s.kill();
+      slots.delete(k);
+    }
+    for (const list of [...spares.values()]) for (const e of [...list]) discardSpare(e, "host reload");
+    persist();
+    server.close();
+    server.closeAllConnections?.();
+    let up = false;
+    let why = "no reexec configured";
+    if (opts.reexec) {
+      try {
+        up = await opts.reexec();
+        why = "replacement did not answer /healthz in time";
+      } catch (e) {
+        why = (e as Error).message;
+      }
+    }
+    if (up) {
+      opts.onReloaded?.();
+      return true;
+    }
+    // the replacement is not up: take the port back and keep serving
+    await new Promise<void>((resolve) => {
+      server.once("error", () => resolve());
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+    appendLedger(ledger, "POOL-HOST-RELOAD-FAILED", { pid: process.pid, bundle: opts.bundlePath, note: why });
+    reloading = false;
+    seenMtime = null;
+    return false;
   };
 
   if (!opts.noReaper && opts.bundlePath) {
