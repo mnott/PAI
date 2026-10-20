@@ -95,3 +95,30 @@ describe("reconcileStatuses with a queued-then-started worker (real ownsPid)", (
     expect(loadStatus(dir, id)?.state).toBe("running");
   });
 });
+
+describe("a worker served by a pool spare", () => {
+  // the spare's claude started long before the claim stamped `started`
+  const pooled = (id: string, pid: number, hostPid: number): WorkerStatus =>
+    ({ ...mk(id, pid), started: "2020-01-01 00:00:00", pool: { spare: true, task: 1, slotSession: null, hostPid } }) as WorkerStatus;
+
+  it("is running, not lost, while its pids are alive (reconcile and ps)", async () => {
+    saveStatus(dir, pooled("p1", process.pid, process.pid), T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual([]);
+    expect(loadStatus(dir, "p1")?.state).toBe("running");
+    const { psOutput } = await import("./viewer.js");
+    const row = psOutput(dir, true, {}, false).split("\n").find((l) => l.includes("p1")) ?? "";
+    expect(row).not.toContain("lost");
+    expect(loadStatus(dir, "p1")?.state).toBe("running");
+  });
+
+  it("is alive on the pool host alone", () => {
+    saveStatus(dir, pooled("p2", 999999, process.pid), T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual([]);
+  });
+
+  it("is lost when every pid is dead", () => {
+    saveStatus(dir, pooled("p3", 999999, 999998), T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual(["p3"]);
+    expect(loadStatus(dir, "p3")?.state).toBe("lost");
+  });
+});
