@@ -1485,7 +1485,7 @@ export async function requireVisiblePane(
   dryRun: boolean,
   ledger: string
 ): Promise<boolean> {
-  if (dryRun || noPane || !config.pane.enabled || process.env.PAI_WORKER_AUTOPANE === "0") return false;
+  if (dryRun || noPane) return false; // config and PAI_WORKER_AUTOPANE no longer skip a pane: the pane rule has no switch
   const allow = headlessAllowed();
   if (allow) {
     process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
@@ -1552,7 +1552,7 @@ export async function announcePane(
     setPane({ opened: true, exec: true });
     return;
   }
-  const why = noTerminalReasons.get(wid) ?? (noPane ? "--no-pane" : !config.pane.enabled ? "workers.pane.enabled is false" : process.env.PAI_WORKER_AUTOPANE === "0" ? "PAI_WORKER_AUTOPANE=0" : headlessAllowed() ?? "no pane owns this run");
+  const why = noTerminalReasons.get(wid) ?? (noPane ? "--no-pane" : headlessAllowed() ?? "no pane owns this run");
   process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
   setPane({ opened: false, reason: why });
   void ledger;
