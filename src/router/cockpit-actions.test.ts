@@ -107,6 +107,19 @@ describe("cockpit actions", () => {
     ).toBe(true);
   });
 
+  it("rank writes the chain to the (temp) config, ledgers it, and refuses bad input", async () => {
+    const tmp = newDir();
+    const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;
+    const r = await runCockpitAction({ action: "rank", role: "orchestrator", model: "anthropic", rank: "t0" }, deps);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(process.env.PAI_CONFIG_FILE!, "utf8")).toContain("chains");
+    const lines = parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8"));
+    expect(lines.some((l) => l.fields.action === "rank" && l.fields.target === "orchestrator/anthropic")).toBe(true);
+    expect((await runCockpitAction({ action: "rank", role: "boss", model: "anthropic", rank: "t0" }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "rank", role: "workers", model: "anthropic", rank: "t9" }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "rank", role: "workers", model: "nobody", rank: "t0" }, deps)).ok).toBe(false);
+  });
+
   it("local.switch on an unknown tier refuses and still writes the ledger", async () => {
     const tmp = newDir();
     const calls = emptyCalls();
@@ -289,15 +302,14 @@ describe("cockpit action endpoint", () => {
       expect(page.status).toBe(200);
       expect(page.body).toContain('data-a="local.switch"');
       expect(page.body).toContain('data-a="local.off"');
-      expect(page.body).toContain('data-a="cloud.role"');
+      expect(page.body).toContain('data-rank="');
       expect(page.body).toContain("model.label");
       expect(page.body).toContain("first, needs ~");
       expect(page.body).toContain("Local model:");
-      expect(page.body).toContain('class="pgroup" data-prov=');
+      expect(page.body).toContain('class="pgroup rkcard" data-prov=');
       expect(page.body).toContain('<div class="phead">');
       expect(page.body).toContain("tier'+(cur?' cur':'')");
       expect(page.body).toContain("running.label||running.model");
-      expect(page.body).toContain('class="tog');
       expect(page.body).not.toMatch(/\balert\(/);
       expect(page.body).not.toMatch(/\bconfirm\(/);
       expect(page.body).not.toMatch(/\bprompt\(/);
