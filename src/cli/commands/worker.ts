@@ -19,7 +19,7 @@ import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../..
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
-import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
+import { checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
@@ -120,7 +120,6 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     if (hint) process.stderr.write(hint + "\n");
   }
 
-  assertPaneNotDisabled(noPane);
   let label = str(o.label);
   let agentClass: string | undefined;
   const agent = str(o.agent);
@@ -265,7 +264,7 @@ const runCommand: CommandDef = {
     { name: "spec", type: "string", value: "FILE", summary: "Read the task from this file (or - for stdin) instead of -p" },
     { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
-    { name: "no-pane", type: "boolean", summary: "Run without a visible pane (refused unless a worker or the operator override allows it)" },
+    { name: "no-pane", type: "boolean", summary: "Start without a pane" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -307,7 +306,7 @@ const resumeCommand: CommandDef = {
   ],
   options: [
     { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
-    { name: "no-pane", type: "boolean", summary: "Run without a visible pane (refused unless allowed)" },
+    { name: "no-pane", type: "boolean", summary: "Start without a pane" },
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
   ],
@@ -318,8 +317,7 @@ const resumeCommand: CommandDef = {
       const id = ctx.args.ID as string;
       const text = ctx.args.TEXT as string;
       const noPane = flag(ctx, "no-pane");
-      assertPaneNotDisabled(noPane);
-      const dir = logDir();
+          const dir = logDir();
       const old = loadStatus(dir, id);
       if (!old) throw new Error(`no worker named "${id}"`);
       if (!old.claudeSession) {

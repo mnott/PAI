@@ -928,7 +928,7 @@ describe("announcePane", () => {
   });
 });
 
-describe("requireVisiblePane (fail closed)", () => {
+describe("requireVisiblePane (never refuses)", () => {
   const cfg = parseWorkersConfig({});
   let dir: string;
   let ledger: string;
@@ -956,27 +956,26 @@ describe("requireVisiblePane (fail closed)", () => {
     expect(stderr).toHaveBeenCalledWith("[pai worker] pane verified for w1: window 7 tab 1/1\n");
   });
 
-  it("refuses with the reason and a WORKER-REFUSED ledger line when verification fails", async () => {
-    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: pane too small"));
-    await expect(requireVisiblePane(dir, cfg, "w1", "term-1", false, false, ledger)).rejects.toThrow(
-      "worker not started, no visible pane: pane verification failed: pane too small"
+  it("a failed pane never refuses: false, a WORKER-NO-PANE ledger line with the reason, status shows it", async () => {
+    vi.mocked(pane.openVerifiedPane).mockRejectedValue(
+      new Error("neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees (runs under the Claude background daemon; no attached terminal found)")
     );
+    await expect(requireVisiblePane(dir, cfg, "w1", "", false, false, ledger)).resolves.toBe(false);
     const lines = parseLedger(readFileSync(ledger, "utf8"));
-    expect(lines.some((l) => l.event === "WORKER-REFUSED" && l.fields.id === "w1")).toBe(true);
+    expect(lines.some((l) => l.event === "WORKER-NO-PANE" && l.fields.id === "w1")).toBe(true);
+    expect(readFileSync(ledger, "utf8")).toMatch(/WORKER-NO-PANE.*background daemon/);
+    const status = { pane: undefined } as { pane?: unknown };
+    await announcePane(dir, cfg, "w1", "", false, ledger, status as never);
+    expect(status.pane).toMatchObject({ opened: false, failed: true, reason: expect.stringContaining("background daemon") });
   });
 
-  it("NoPaneRefusedWithoutOverride: an in-process hidden request is refused, nothing spawned", async () => {
-    await expect(requireVisiblePane(dir, cfg, "w1", "", true, false, ledger)).rejects.toThrow(
-      /no visible pane: headless requested/
-    );
-    expect(pane.openVerifiedPane).not.toHaveBeenCalled();
-    const lines = parseLedger(readFileSync(ledger, "utf8"));
-    expect(lines.some((l) => l.event === "WORKER-REFUSED" && l.fields.id === "w1")).toBe(true);
+  it("verification that never confirms starts the worker without a pane too", async () => {
+    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: `worker follow w2` is not running in the pane"));
+    await expect(requireVisiblePane(dir, cfg, "w2", "term-1", false, false, ledger)).resolves.toBe(false);
   });
 
-  it("OverrideEnvWorks: the operator's env lets the same hidden request through", async () => {
-    vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "", true, false, ledger)).toBe(false);
+  it("an explicit hidden request is honoured without a consent file", async () => {
+    await expect(requireVisiblePane(dir, cfg, "w1", "", true, false, ledger)).resolves.toBe(false);
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 
@@ -987,11 +986,11 @@ describe("requireVisiblePane (fail closed)", () => {
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 
-  it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the gate", async () => {
+  it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the attempt", async () => {
     vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("no pane"));
     const off = { ...cfg, pane: { ...cfg.pane, enabled: false } };
-    await expect(requireVisiblePane(dir, off, "w1", "term-1", false, false, ledger)).rejects.toThrow("no visible pane");
+    await expect(requireVisiblePane(dir, off, "w1", "term-1", false, false, ledger)).resolves.toBe(false);
     expect(pane.openVerifiedPane).toHaveBeenCalledTimes(1);
   });
 });

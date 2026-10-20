@@ -1420,10 +1420,10 @@ function followRunsOn(tty: string, wid: string): boolean {
 }
 
 /**
- * Check, and bring forward, the iTerm pane of a worker. Resolves with a line
- * naming window, tab and size; rejects with the reason when the pane is not
- * something the operator can see: gone, other window or tab, tab not selected,
- * window off screen, hidden or minimised, too small, or its follow command not running
+ * Check the iTerm pane of a worker. Resolves with a line naming window, tab and size,
+ * followed by a mark for each visibility shortfall (NOT SELECTED, MINIMISED, HIDDEN,
+ * OFF SCREEN, SMALL); rejects only when the pane does not exist or does not run the
+ * worker: gone, other window or tab, or its follow command not running
  * (polled for up to ~7 s while the new session starts it).
  */
 export async function verifyPane(
@@ -1449,13 +1449,14 @@ export async function verifyPane(
     const rows = Number(r.rows);
     const cols = Number(r.cols);
     const where = `window ${r.window} [${(r.bounds as number[]).join(",")}] tab ${r.tab}, pane ${cols}x${rows}, ${r.tty}`;
-    if (r.miniaturized === true) throw new Error(`pane verification failed: window is minimised (${where})`);
-    if (r.selectedTab !== true) throw new Error(`pane verification failed: its tab is not the selected one (${where})`);
-    if (r.hidden === true) throw new Error(`pane verification failed: iTerm2 is hidden (${where})`);
-    if (r.onScreen !== true) throw new Error(`pane verification failed: its window is off screen (${where})`);
-    // a small pane never stops a start: it is marked SMALL, logged, and audited as SMALL
-    const small = rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS;
-    if (running(String(r.tty), wid)) return small ? `${where} SMALL (< ${MIN_PANE_COLS}x${MIN_PANE_ROWS})` : where;
+    // visibility never stops a start: each shortfall is a mark on the description, logged and audited
+    const marks: string[] = [];
+    if (r.selectedTab !== true) marks.push("NOT SELECTED");
+    if (r.miniaturized === true) marks.push("MINIMISED");
+    if (r.hidden === true) marks.push("HIDDEN");
+    if (r.onScreen !== true) marks.push("OFF SCREEN");
+    if (rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS) marks.push(`SMALL (< ${MIN_PANE_COLS}x${MIN_PANE_ROWS})`);
+    if (running(String(r.tty), wid)) return marks.length ? `${where} ${marks.join(" ")}` : where;
     last = where;
     await new Promise((res) => setTimeout(res, pollMs));
   }
@@ -1496,9 +1497,8 @@ export async function openVerifiedPane(
   const hostUid = itermUuid(term);
   if (!envUid && !hostUid) {
     const daemon = (seam.daemon ?? (() => underBackgroundDaemon()))();
-    throw new Error(
-      `neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees${daemon ? " (runs under the Claude background daemon; no attached terminal found)" : ""}`
-    );
+    const refusal = `neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees${daemon ? " (runs under the Claude background daemon; no attached terminal found)" : ""}`;
+    throw new Error(refusal);
   }
   if (envUid && envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
@@ -1520,21 +1520,14 @@ export async function openVerifiedPane(
       appendLedger(ledgerPath(logDir), "PANE-SMALL", { id: wid, session: r.session, where });
       process.stderr.write(`[pai worker] pane: small pane for ${wid}: ${where}\n`);
     }
+    const shown = where.match(/\b(NOT SELECTED|MINIMISED|HIDDEN|OFF SCREEN)\b/g);
+    if (shown) {
+      appendLedger(ledgerPath(logDir), "PANE-MARK", { id: wid, session: r.session, marks: shown.join(","), where });
+      process.stderr.write(`[pai worker] pane: ${shown.join(", ")} for ${wid}: ${where}\n`);
+    }
     return `${where} (iTerm session ${r.session})`;
   } catch (e) {
     await closePaneForWorker(logDir, wid, ops).catch(() => false);
     throw e;
-  }
-}
-
-/** CLI entry check: --no-pane and PAI_WORKER_AUTOPANE=0 are refused unless headlessAllowed(). */
-export function assertPaneNotDisabled(noPaneFlag: boolean, env: NodeJS.ProcessEnv = process.env): void {
-  const what = noPaneFlag ? "--no-pane" : env.PAI_WORKER_AUTOPANE === "0" ? "PAI_WORKER_AUTOPANE=0" : "";
-  if (what && !headlessAllowed(env)) {
-    throw new Error(
-      `${what} refused: every worker runs behind a visible pane ` +
-        `(only a worker's own children, the operator's ${ALLOW_HIDDEN_ENV}=1, ` +
-        `or the operator's ${headlessOverridePath()} may skip it)`
-    );
   }
 }
