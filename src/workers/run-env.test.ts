@@ -357,3 +357,19 @@ describe("buildRunEnv worker shell", () => {
     }
   });
 });
+
+describe("addSchedulingHeaders", () => {
+  it("adds the owning session and worker next to the provider header", async () => {
+    const { addSchedulingHeaders } = await import("./run-env.js");
+    const env: NodeJS.ProcessEnv = { ANTHROPIC_CUSTOM_HEADERS: "x-pai-provider: gyro" };
+    addSchedulingHeaders(env, { session: "my session\nx-evil: 1", worker: "20261020-1" });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: gyro\nx-pai-session: my session x-evil  1\nx-pai-worker: 20261020-1");
+  });
+
+  it("leaves a run that does not go through the router alone", async () => {
+    const { addSchedulingHeaders } = await import("./run-env.js");
+    const env: NodeJS.ProcessEnv = {};
+    addSchedulingHeaders(env, { session: "s", worker: "w" });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+  });
+});

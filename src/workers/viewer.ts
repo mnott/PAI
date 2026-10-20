@@ -32,6 +32,7 @@ import { loadPaneRunStatuses, renderPaneRunLines } from "./pane-run.js";
 import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
 import { localIdleLine, readLocalIdle } from "./local-idle.js";
+import { readSchedFile, schedLine } from "../router/scheduler.js";
 import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
@@ -170,7 +171,7 @@ export function psOutput(
     /* an extra line: never fail ps over it */
   }
   try {
-    const lm = localIdleLine(readLocalIdle(logDir));
+    const lm = [localIdleLine(readLocalIdle(logDir)), schedLine(readSchedFile(logDir))].filter(Boolean).join(" · ");
     if (lm) parts.unshift(lm);
   } catch {
     /* an extra line: never fail ps over it */

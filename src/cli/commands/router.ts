@@ -17,6 +17,8 @@ import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
 import { routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
+import { workersLogDir } from "../../workers/paths.js";
 import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
@@ -97,6 +99,20 @@ const runCommand: CommandDef = {
     const remote = addr !== LOOPBACK;
     const token = undefined as string | undefined; // no auth ceremony on the tailnet
     const rows = cachedRows(usageFile);
+    let schedCache: { at: number; cfg: SchedConfig } | undefined;
+    setSchedConfigSource(() => {
+      if (!schedCache || Date.now() - schedCache.at > 10_000) {
+        let cfg: SchedConfig;
+        try {
+          cfg = schedConfigFrom(loadConfig().router.scheduling);
+        } catch {
+          cfg = schedConfigFrom(undefined);
+        }
+        schedCache = { at: Date.now(), cfg };
+      }
+      return schedCache.cfg;
+    });
+    if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
     const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
     const system = new SystemMonitor();
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());

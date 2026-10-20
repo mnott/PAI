@@ -1,0 +1,293 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import { createRouter } from "./router.js";
+import {
+  DEFAULT_SCHED,
+  RequestScheduler,
+  schedConfigFrom,
+  schedLine,
+  setSchedConfigSource,
+  sharedScheduler,
+  type SchedConfig,
+  type Ticket,
+} from "./scheduler.js";
+import type { WorkerProvider } from "../workers/config.js";
+
+function rig(cfg: Partial<SchedConfig> = {}) {
+  let t = 1_000_000;
+  const s = new RequestScheduler(() => ({ ...DEFAULT_SCHED, ...cfg }), () => t);
+  const order: string[] = [];
+  const tickets = new Map<string, Ticket>();
+  const ask = (label: string, session: string, worker = label) => {
+    void s.acquire("eng", session, worker).then((tk) => {
+      order.push(label);
+      tickets.set(label, tk);
+    });
+  };
+  const done = async (label: string, served = { prefill: 0, decode: 0 }) => {
+    await Promise.resolve();
+    tickets.get(label)!.release(served);
+    await Promise.resolve();
+  };
+  return { s, order, ask, done, advance: (ms: number) => (t += ms) };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe("RequestScheduler", () => {
+  it("serves one request at a time", async () => {
+    const r = rig();
+    r.ask("a1", "A");
+    r.ask("a2", "A");
+    await flush();
+    expect(r.order).toEqual(["a1"]);
+    await r.done("a1");
+    await flush();
+    expect(r.order).toEqual(["a1", "a2"]);
+  });
+
+  it("is fair across sessions: long prefills push a session behind", async () => {
+    const r = rig();
+    r.ask("a1", "A");
+    await flush();
+    r.ask("a2", "A");
+    r.ask("b1", "B");
+    r.ask("a3", "A");
+    r.ask("b2", "B");
+    await r.done("a1", { prefill: 40_000, decode: 100 });
+    await flush();
+    expect(r.order).toEqual(["a1", "b1"]);
+    await r.done("b1", { prefill: 500, decode: 100 });
+    await flush();
+    expect(r.order[2]).toBe("b2"); // B still far below A
+    await r.done("b2", { prefill: 500, decode: 100 });
+    await flush();
+    expect(r.order.slice(0, 4)).toEqual(["a1", "b1", "b2", "a2"]);
+    expect(r.s.snapshot().engines.eng!.counters.A).toBeGreaterThan(r.s.snapshot().engines.eng!.counters.B!);
+  });
+
+  it("divides cost by the session weight", async () => {
+    const r = rig({ sessionWeights: { A: 4 } });
+    r.ask("a1", "A");
+    await flush();
+    r.ask("b1", "B");
+    r.ask("a2", "A");
+    await r.done("a1", { prefill: 1000, decode: 0 });
+    await flush();
+    expect(r.s.snapshot().engines.eng!.counters.A).toBe(250);
+    // A (250) < B (0)? no: B is lifted nowhere, B=0 goes first
+    expect(r.order).toEqual(["a1", "b1"]);
+  });
+
+  it("weights prefill and decode tokens", async () => {
+    const r = rig({ wTokIn: 1, wTokOut: 2 });
+    r.ask("a1", "A");
+    await flush();
+    await r.done("a1", { prefill: 100, decode: 50 });
+    expect(r.s.snapshot().engines.eng!.counters.A).toBe(200);
+  });
+
+  it("ages a long-waiting request ahead of fairer ones", async () => {
+    const r = rig({ agingSec: 120 });
+    r.ask("a1", "A");
+    await flush();
+    r.ask("a2", "A"); // waits
+    await r.done("a1", { prefill: 100_000, decode: 0 }); // A is expensive
+    await flush();
+    expect(r.order).toEqual(["a1", "a2"]); // a2 runs: nobody else waiting
+    r.ask("a3", "A");
+    r.advance(130_000);
+    r.ask("b1", "B");
+    await r.done("a2");
+    await flush();
+    expect(r.order[2]).toBe("a3"); // aged beats B's lower counter
+  });
+
+  it("lifts a re-backlogged session to the lowest backlogged counter", async () => {
+    const r = rig();
+    r.ask("a1", "A");
+    await flush();
+    r.ask("b1", "B");
+    r.ask("a2", "A");
+    await r.done("a1", { prefill: 1000, decode: 0 });
+    await flush(); // b1 runs; A waits with 1000
+    await r.done("b1", { prefill: 400, decode: 0 });
+    await flush(); // a2 runs, B idle with 400
+    r.ask("c1", "C"); // C idle all along with 0 → lifted to min(backlogged) = A's 1000
+    const c = r.s.snapshot().engines.eng!.counters;
+    expect(c.C).toBe(1000);
+  });
+
+  it("prefers a warm conversation within a session", async () => {
+    const r = rig();
+    r.ask("w2", "A", "w2");
+    await flush();
+    await r.done("w2"); // w2 finished just now: warm
+    r.ask("hold", "A", "hold");
+    await flush();
+    r.ask("w1", "A", "w1"); // older, cold
+    r.advance(10);
+    r.ask("w2b", "A", "w2");
+    await r.done("hold");
+    await flush();
+    expect(r.order.slice(-1)).toEqual(["w2b"]);
+  });
+
+  it("stops being warm after five minutes", async () => {
+    const r = rig();
+    r.ask("w2", "A", "w2");
+    await flush();
+    await r.done("w2");
+    r.ask("hold", "A", "hold");
+    await flush();
+    r.ask("w1", "A", "w1");
+    r.advance(6 * 60_000);
+    r.ask("w2b", "A", "w2");
+    await r.done("hold");
+    await flush();
+    expect(r.order.slice(-1)).toEqual(["w1"]);
+  });
+
+  it("drops a cancelled waiter without serving it", async () => {
+    const r = rig();
+    r.ask("a1", "A");
+    await flush();
+    let abort = () => {};
+    const p = r.s.acquire("eng", "B", "b1", { onAbort: (cb) => (abort = cb) });
+    abort();
+    await expect(p).rejects.toThrow(/cancelled/);
+    expect(r.s.snapshot().engines.eng!.queued).toEqual({});
+  });
+
+  it("accounts queue wait and service time per worker", async () => {
+    const r = rig();
+    r.ask("a1", "A");
+    await flush();
+    r.ask("b1", "B");
+    r.advance(5000);
+    await r.done("a1");
+    await flush();
+    r.advance(2000);
+    await r.done("b1");
+    const w = r.s.snapshot().workers;
+    expect(w.b1).toMatchObject({ lastWaitMs: 5000, lastServiceMs: 2000, requests: 1 });
+    expect(w.a1).toMatchObject({ lastWaitMs: 0, lastServiceMs: 5000 });
+  });
+
+  it("renders the ps line", () => {
+    expect(schedLine({ at: 1, workers: {}, engines: { gyro: { inflight: { session: "s1", worker: "w", sinceMs: 1 }, queued: { s2: 2 }, counters: { s1: 10, s2: 3 } } } })).toBe(
+      "local scheduler: gyro in flight (s1), queued s2 2, counters s1 10 s2 3"
+    );
+    expect(schedLine(null)).toBe("");
+  });
+
+  it("parses config over the defaults", () => {
+    expect(schedConfigFrom({ wTokOut: 3, enabled: false, sessionWeights: { a: 2, b: -1 }, agingSec: "x" })).toEqual({
+      enabled: false, wTokIn: 1, wTokOut: 3, agingSec: 120, sessionWeights: { a: 2 },
+    });
+  });
+});
+
+describe("router scheduling", () => {
+  const closers: Array<() => void> = [];
+  afterEach(() => {
+    closers.splice(0).forEach((c) => c());
+    setSchedConfigSource(() => DEFAULT_SCHED);
+    delete process.env.PAI_ROUTER_PING_MS;
+  });
+
+  async function setup(holdMs: (n: number) => number, stream = false) {
+    let active = 0;
+    let maxActive = 0;
+    const served: string[] = [];
+    const up = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const tag = (JSON.parse(Buffer.concat(chunks).toString()).messages[0].content as string) ?? "?";
+        active++;
+        maxActive = Math.max(maxActive, active);
+        served.push(tag);
+        setTimeout(() => {
+          active--;
+          if (stream) {
+            res.writeHead(200, { "content-type": "text/event-stream" });
+            res.end('event: message_delta\ndata: {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 3}}\n\n');
+          } else {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ id: "m", usage: { input_tokens: tag.startsWith("long") ? 9000 : 10, output_tokens: 3 } }));
+          }
+        }, holdMs(served.length));
+      });
+    });
+    await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
+    const provider = {
+      enabled: true, protocol: "anthropic", baseUrl: `http://127.0.0.1:${(up.address() as AddressInfo).port}`,
+      keyFile: null, models: { default: "qwen-test" }, env: {},
+    } as unknown as WorkerProvider;
+    const router = createRouter(() => ({ eng: provider }), "http://127.0.0.1:1", () => {}, () => {});
+    await new Promise<void>((r) => router.listen(0, "127.0.0.1", r));
+    closers.push(() => { router.close(); up.close(); });
+    const port = (router.address() as AddressInfo).port;
+    const call = (tag: string, session: string, worker: string, bodyStream = stream) =>
+      new Promise<{ status: number; text: string }>((resolve, reject) => {
+        const rq = http.request(
+          { host: "127.0.0.1", port, path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "eng", "x-pai-session": session, "x-pai-worker": worker } },
+          (res) => {
+            let text = "";
+            res.on("data", (c) => (text += c));
+            res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+          }
+        );
+        rq.on("error", reject);
+        rq.end(JSON.stringify({ model: "qwen-test", stream: bodyStream, messages: [{ role: "user", content: tag }] }));
+      });
+    return { call, served, maxActive: () => maxActive, port };
+  }
+
+  it("demo: two sessions, one engine slot, service order", async () => {
+    const t = await setup(() => 30);
+    const reqs = [
+      t.call("long-A1", "sessA", "wa1"),
+      t.call("long-A2", "sessA", "wa2"),
+      t.call("long-A3", "sessA", "wa3"),
+    ];
+    await new Promise((r) => setTimeout(r, 10));
+    reqs.push(t.call("short-B1", "sessB", "wb1"), t.call("short-B2", "sessB", "wb2"));
+    await Promise.all(reqs);
+    console.log("service order:", t.served.join(" -> "));
+    expect(t.maxActive()).toBe(1);
+    // A1 runs first (arrived alone); its 9000-token prefill pushes A behind B
+    expect(t.served).toEqual(["long-A1", "short-B1", "short-B2", "long-A2", "long-A3"]);
+    const snap = sharedScheduler().snapshot();
+    expect(snap.workers.wb1!.lastWaitMs).toBeGreaterThan(0);
+  });
+
+  it("pings a queued stream every interval, then delivers the response", async () => {
+    process.env.PAI_ROUTER_PING_MS = "25";
+    const t = await setup(() => 150, true);
+    const first = t.call("one", "A", "w1");
+    await new Promise((r) => setTimeout(r, 10));
+    const second = await t.call("two", "B", "w2");
+    await first;
+    expect(second.status).toBe(200);
+    expect(second.text.match(/event: ping/g)!.length).toBeGreaterThanOrEqual(2);
+    expect(second.text).toContain("message_delta");
+  });
+
+  it("fails open when the scheduler config source throws", async () => {
+    setSchedConfigSource(() => { throw new Error("boom"); });
+    const t = await setup(() => 40);
+    const [a, b] = await Promise.all([t.call("x", "A", "w1"), t.call("y", "B", "w2")]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(t.maxActive()).toBe(2); // forwarded directly, no serialization
+  });
+
+  it("does not schedule when disabled", async () => {
+    setSchedConfigSource(() => ({ ...DEFAULT_SCHED, enabled: false }));
+    const t = await setup(() => 40);
+    await Promise.all([t.call("x", "A", "w1"), t.call("y", "B", "w2")]);
+    expect(t.maxActive()).toBe(2);
+  });
+});

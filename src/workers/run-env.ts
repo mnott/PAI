@@ -227,6 +227,22 @@ export function buildRunEnv(
 /** First-party route a native run is pinned to when caveman is off. */
 export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
 
+/**
+ * Scheduling identity for a router run: x-pai-session names the worker's owning
+ * session (what the router's fair queue shares the engine between), x-pai-worker
+ * the worker (per-worker queue-wait accounting). Appended to the headers
+ * buildRunEnv set; a no-op when the run does not go through the router.
+ */
+export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: string | null; worker?: string | null }): void {
+  const base = env.ANTHROPIC_CUSTOM_HEADERS;
+  if (!base || !base.includes("x-pai-provider")) return;
+  const clean = (v: string) => v.replace(/[\r\n:]+/g, " ").trim().slice(0, 80);
+  const extra: string[] = [];
+  if (ids.session && clean(ids.session)) extra.push(`x-pai-session: ${clean(ids.session)}`);
+  if (ids.worker && clean(ids.worker)) extra.push(`x-pai-worker: ${clean(ids.worker)}`);
+  if (extra.length) env.ANTHROPIC_CUSTOM_HEADERS = [base, ...extra].join("\n");
+}
+
 /** Loopback URL of the local model router — the route every accounted run takes. */
 export function routerUrl(): string {
   return `http://127.0.0.1:${ROUTER_PORT}`;
