@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WorkersConfig } from "./config.js";
-import { DEFAULT_LOCAL_IDLE, evaluate, localIdleLine, parseGpuUtilization, takeSample, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
+import { DEFAULT_LOCAL_IDLE, evaluate, localIdleTick, ownerOf, localIdleLine, parseGpuUtilization, takeSample, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
 
 const cfg = DEFAULT_LOCAL_IDLE;
 const MIN = 60_000;
@@ -137,5 +137,58 @@ describe("local idle watcher", () => {
       writeFileSync(join(dir, "w1.status"), JSON.stringify({ id: "w1", provider: "down", state: "running", pid: process.pid, started: new Date().toISOString(), last: "" }));
       expect(await names(dir, status("gyro"))).toEqual(["gyro", "down"]);
     });
+  });
+});
+
+describe("owner resolution and delivery", () => {
+  const caseLeaf = {
+    id: "20261020-020000-111",
+    cwd: "/Users/someone/Daten/Cloud/Development/CaseLeaf",
+    term: "w8t0p0:0A1A0BFE-1111-4222-8333-444455556666",
+    provider: "gyro-m",
+    state: "running",
+    pid: process.pid,
+    started: new Date().toISOString(),
+    last: "",
+    session: { name: "CaseLeaf" },
+    spawnerSession: "c0ffee00-spawner",
+  };
+  const workers = { providers: { "gyro-m": { enabled: true, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 4 } }, localIdle: DEFAULT_LOCAL_IDLE } as unknown as WorkersConfig;
+
+  it("ownerOf strips the ITERM_SESSION_ID prefix and keeps name and spawner", () => {
+    expect(ownerOf(caseLeaf as never)).toEqual({ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "CaseLeaf", claudeSession: "c0ffee00-spawner" });
+    expect(ownerOf({ term: "" } as never)).toEqual({ iterm: undefined, name: undefined, claudeSession: undefined });
+  });
+
+  it("the tick sends to the bare uuid taken from a real status file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-li-"));
+    writeFileSync(join(dir, `${caseLeaf.id}.status`), JSON.stringify(caseLeaf));
+    const calls: Array<{ iterm?: string; name?: string }> = [];
+    const msg = { toSession: async (o: { iterm?: string; name?: string }) => (calls.push(o), true), toPailot: async () => true };
+    const sample = await takeSample(dir, workers, 0, async () => 0, null);
+    const st = { current: { idleSince: 0, lastNudge: {} } as LocalIdleState };
+    await localIdleTick(dir, workers, msg, { sample: async () => ({ ...sample, at: 3 * MIN, providers: sample.providers.map((p) => ({ ...p, workers: p.workers.map((w) => ({ ...w, activity: "build" as const })) })) }), now: () => 3 * MIN }, st);
+    expect(calls).toEqual([{ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "CaseLeaf", claudeSession: "c0ffee00-spawner" }]);
+  });
+
+  it("a failed delivery is logged as LOCAL-IDLE-UNDELIVERED with the reason", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-li-"));
+    const msg = { toSession: async () => false, lastError: "no such session", toPailot: async () => true };
+    const p = prov({ workers: [{ id: "w1", activity: "build", iterm: "U1", name: "CaseLeaf" }] });
+    await localIdleTick(dir, workers, msg, { sample: async () => at(3 * MIN, 0, [p]), now: () => 3 * MIN }, { current: { idleSince: 0, lastNudge: {} } });
+    const led = readFileSync(join(dir, "ledger.log"), "utf8");
+    expect(led).toContain("LOCAL-IDLE-UNDELIVERED");
+    expect(led).toContain("no such session");
+  });
+
+  it("max 6 nudges per hour per session", () => {
+    let st = fresh();
+    let n = 0;
+    for (let t = 0; t <= 60 * MIN; t += 30_000) {
+      const r = evaluate(st, at(t, 0, [prov()]), { ...cfg, backoffMinutes: 1 });
+      st = r.state;
+      n += r.nudges.reduce((a, x) => a + x.targets.length, 0);
+    }
+    expect(n).toBe(6);
   });
 });
