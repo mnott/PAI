@@ -104,9 +104,11 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
         tool: input.tool_name,
         text: r.stop
           ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; session stopped`
-          : input.tool_name === "Bash"
-            ? `loop guard: same command ${typeof command === "string" ? command : ""}`
-            : `loop guard: same ${input.tool_name} ${shortKey(r.key)} (${r.count}x)`,
+          : r.evasion
+            ? `LOOP-GUARD-EVASION: loop guard: same command ${typeof command === "string" ? command : ""} (touching a file does not change the worktree)`
+            : input.tool_name === "Bash"
+              ? `loop guard: same command ${typeof command === "string" ? command : ""}`
+              : `loop guard: same ${input.tool_name} ${shortKey(r.key)} (${r.count}x)`,
         input: input.tool_input,
       });
     }

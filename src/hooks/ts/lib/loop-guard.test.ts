@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -377,6 +377,64 @@ describe("no-progress rule (action key)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it("a touch-nudge does not change the fingerprint; a real edit does; an empty or dot-file nudge does not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fp-nudge-"));
+    try {
+      const g = (...a: string[]) => spawnSync("git", ["-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", ...a], { encoding: "utf8" });
+      g("init", "-q");
+      writeFileSync(join(dir, "a.ts"), "one");
+      g("add", "-A");
+      g("commit", "-q", "-m", "x");
+      const f0 = worktreeFingerprint(dir);
+      expect(f0).not.toBeNull();
+      // the live evasion: touch an untracked dot-file, then repeat the blocked command
+      spawnSync("sh", ["-c", "touch .loop-nudge"], { cwd: dir });
+      expect(worktreeFingerprint(dir)).toBe(f0);
+      // an empty untracked file is no change either
+      writeFileSync(join(dir, "empty.txt"), "");
+      expect(worktreeFingerprint(dir)).toBe(f0);
+      // mtime-only change of a tracked file is no change
+      spawnSync("sh", ["-c", "touch a.ts"], { cwd: dir });
+      expect(worktreeFingerprint(dir)).toBe(f0);
+      // a real edit to a tracked file is a change
+      writeFileSync(join(dir, "a.ts"), "two");
+      const f1 = worktreeFingerprint(dir);
+      expect(f1).not.toBe(f0);
+      // a non-empty untracked file that is not ignored and not a dot-file is a change
+      writeFileSync(join(dir, "new.ts"), "x");
+      expect(worktreeFingerprint(dir)).not.toBe(f1);
+      // an ignored file is no change
+      writeFileSync(join(dir, ".gitignore"), "*.gen\n");
+      const f2 = worktreeFingerprint(dir);
+      writeFileSync(join(dir, "x.gen"), "data");
+      expect(worktreeFingerprint(dir)).toBe(f2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("touch-nudge + same vitest: still blocked; a real tracked edit: allowed", () => {
+    const cmd = "npx vitest run src/a.test.ts";
+    const run = (prints: Array<string | null>) => {
+      let s: LoopState = emptyLoopState();
+      return prints.map((fp, i) => {
+        const r = stepLoopGuard(s, "Bash", cmd, fp);
+        s = recordLoopResult(r.state, "Bash", cmd, `result ${i}`);
+        return r.deny;
+      });
+    };
+    // the nudge produces the same fingerprint as before: the 3rd run is still denied
+    expect(run(["a", "a", "a"])).toEqual([false, false, true]);
+    // a real edit changes the fingerprint: allowed again
+    expect(run(["a", "a", "b", "b", "b"])).toEqual([false, false, false, false, true]);
+  });
+  it("a touch prefix hiding a repeat is flagged as an evasion", () => {
+    expect(loopGuardEvasion("touch .loop-nudge && npx vitest run src/a.test.ts", "npx vitest run src/a.test.ts")).toBe(true);
+    expect(loopGuardEvasion(": > .loop-nudge && npx vitest run src/a.test.ts", "npx vitest run src/a.test.ts")).toBe(true);
+    expect(loopGuardEvasion("echo > .loop-nudge && npx vitest run src/a.test.ts", "npx vitest run src/a.test.ts")).toBe(true);
+    expect(loopGuardEvasion("touch .loop-nudge && npx vitest run src/b.test.ts", "npx vitest run src/a.test.ts")).toBe(false);
+    expect(loopGuardEvasion("npx vitest run src/a.test.ts", "npx vitest run src/a.test.ts")).toBe(false);
+    expect(loopGuardEvasion("touch .loop-nudge && git status", "npx vitest run src/a.test.ts")).toBe(false);
   });
   it("waits stay exempt", () => {
     expect(feed(Array.from({ length: 8 }, () => bash("pai worker wait-on 123 --log /tmp/x.log")))).toEqual([]);
