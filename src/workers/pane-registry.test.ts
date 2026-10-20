@@ -33,6 +33,7 @@ vi.mock("node:child_process", () => ({
 
 import { closeEndedPanes, closeOwnPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
+import { writePaneRunStatus } from "./pane-run.js";
 import { scopeKey } from "./scope.js";
 import type { WorkersConfig } from "./config.js";
 
@@ -137,6 +138,30 @@ describe("closing panes", () => {
     expect(r.kept.join("\n")).toContain("20260929-100001-2");
     expect(readdirSync(join(dir, "panes", "SCOPE"))).toEqual(["20260929-100001-2.json"]);
   });
+
+  it("--close-ended sweeps leftover ended pane-run panes too, keeps a running one", async () => {
+    seed("pane-20261020-140300-1", "SP1", "2026-10-20 14:03:00"); // ended pane run, still open
+    seed("pane-20261020-140301-2", "SP2", "2026-10-20 14:03:01"); // running pane run
+    seed("20260929-100000-1", "S1", "2026-09-29 10:00:00"); // ended worker
+    const paneRun = (id: string, state: "running" | "done" | "failed") =>
+      writePaneRunStatus(dir, { kind: "pane", id, label: "x", cwd: dir, pid: process.pid, started: "2026-10-20 14:03:00", startedMs: Date.now(), state, log: join(dir, `${id}.log`) });
+    paneRun("pane-20261020-140300-1", "failed");
+    paneRun("pane-20261020-140301-2", "running");
+    saveStatus(dir, { id: "20260929-100000-1", label: "x", cwd: dir, provider: "p", state: "done" } as unknown as WorkerStatus);
+    const ended = (w: string) => workerEnded(dir, w);
+    const over: Partial<PaneOps> = {
+      listIterm: async () => [
+        { id: "SP1", name: "node pai worker follow pane-20261020-140300-1" },
+        { id: "SP2", name: "node pai worker follow pane-20261020-140301-2" }, // running pane run: kept
+        { id: "S1", name: "node pai worker follow 20260929-100000-1" },
+      ],
+    };
+    const live = fakeOps(over);
+    const r = await closeEndedPanes(dir, ended, false, live);
+    expect(live.closedIterm.sort()).toEqual(["S1", "SP1"]);
+    expect(r.kept.join("\n")).toContain("pane-20261020-140301-2");
+    expect(readdirSync(join(dir, "panes", "SCOPE"))).toEqual(["pane-20261020-140301-2.json"]);
+  });
 });
 
 describe("ended workers keep their pane until the next pane replaces it", () => {
@@ -175,6 +200,7 @@ describe("ended workers keep their pane until the next pane replaces it", () => 
 
   it("closeOwnPane closes this iTerm session by its uuid", async () => {
     const ops = fakeOps();
+    // ps is mocked to fail: the follow command of this session is unknown, never a reason to refuse
     expect(await closeOwnPane({ ITERM_SESSION_ID: TERM }, ops)).toBe(true);
     expect(ops.closedIterm).toEqual(["D38D3E5D-19E8-4FE5-A78A-26E8E571FE27"]);
     expect(await closeOwnPane({}, ops)).toBe(false);

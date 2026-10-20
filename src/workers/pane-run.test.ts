@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { followPaneRun, loadPaneRunStatus, loadPaneRunStatuses, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
+import { followPaneRun, loadPaneRunStatus, loadPaneRunStatuses, PANE_LINGER_SECS, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
+import type { PaneOps } from "./pane.js";
 
 let dir: string;
 beforeEach(() => {
@@ -37,6 +38,8 @@ describe("runInPane", () => {
     expect(st.exit).toBe(3);
     expect(readFileSync(st.log, "utf8")).toContain("line1\n");
     expect(st.log).toContain(join("logs", "panes"));
+    // the full output stays in the log after the pane closed
+    expect(readFileSync(st.log, "utf8")).toContain("line30\n");
   });
   it("a single word runs through sh -c; success is 0", async () => {
     const o = opts(["echo hi && echo there"]);
@@ -105,4 +108,37 @@ describe("followPaneRun", () => {
       await p;
     }
   }, 10_000);
+
+  const paneEnv = { ITERM_SESSION_ID: "w0t0p0:D38D3E5D-19E8-4FE5-A78A-26E8E571FE27" };
+  const closeOps = (): PaneOps & { closed: string[] } => {
+    const closed: string[] = [];
+    return { closed, listIterm: async () => [], closeIterm: async (id) => (closed.push(id), true), listTmux: () => [], closeTmux: () => true };
+  };
+
+  it.each([[0], [2]])("closes its own pane after the linger whatever the exit code (exit %s)", async (code) => {
+    const o = opts([`echo out; exit ${code}`]);
+    await runInPane(o);
+    const ops = closeOps();
+    await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, paneEnv, ops);
+    expect(ops.closed).toEqual(["D38D3E5D-19E8-4FE5-A78A-26E8E571FE27"]);
+  });
+
+  it("lingers a few seconds before closing, so the last line stays visible", async () => {
+    expect(PANE_LINGER_SECS).toBeLessThanOrEqual(5);
+    const o = opts(["echo hi"]);
+    await runInPane(o);
+    const ops = closeOps();
+    const t0 = Date.now();
+    await followPaneRun(dir, o.opened[0], () => undefined, 1, 10, paneEnv, ops);
+    expect(ops.closed).toHaveLength(1);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1000);
+  }, 10_000);
+
+  it("outside a terminal pane nothing is closed", async () => {
+    const o = opts(["echo hi"]);
+    await runInPane(o);
+    const ops = closeOps();
+    await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, {}, ops);
+    expect(ops.closed).toEqual([]);
+  });
 });

@@ -40,6 +40,20 @@ describe("auditPanes", () => {
   it("pane in another tab or window: WRONG TAB", () => {
     expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "9:1" }))[0].mark).toBe("WRONG TAB");
   });
+  it("ended pane run whose pane is still open: STILL OPEN", () => {
+    const now = Date.parse("2026-10-20T02:10:00Z");
+    const v = auditPanes([{ id: "pane-1", kind: "pane", startedMs: now - 60000, ended: true }], [entry("pane-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }), now)[0];
+    expect(v.mark).toBe("STILL OPEN");
+    expect(v.why).toContain("still open");
+  });
+  it("ended pane run past the grace but pane gone: NO PANE (the pane closed)", () => {
+    const now = Date.parse("2026-10-20T02:10:00Z");
+    expect(auditPanes([{ id: "pane-1", kind: "pane", startedMs: now - 60000, ended: true }], [entry("pane-1", P1)], tabs({ [H]: "1:2" }), now)[0].mark).toBe("NO PANE");
+  });
+  it("ended pane run within the grace (closing takes a few seconds): ok", () => {
+    const now = Date.parse("2026-10-20T02:00:40Z");
+    expect(auditPanes([{ id: "pane-1", kind: "pane", startedMs: now - 6000, ended: true }], [entry("pane-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }), now)[0].mark).toBe("ok");
+  });
   it("host from the process when the entry has none", () => {
     const e: PaneEntry = { session: P1, worker: "w-1", opened: "x" };
     expect(auditPanes([{ ...procs[0], host: `w0t0p0:${H}` }], [e], tabs({ [H]: "1:2", [P1]: "3:3" }))[0].mark).toBe("WRONG TAB");

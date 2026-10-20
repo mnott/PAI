@@ -7,7 +7,8 @@
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { closeEndedPanes, loadRegistry } from "../../workers/pane.js";
+import { closeEndedPanes, loadRegistry, workerEnded } from "../../workers/pane.js";
+import { isPaneRunId } from "../../workers/pane-run.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
 import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
@@ -531,12 +532,23 @@ export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean
 }
 
 /**
- * One fast reaper pass: closes follow panes of ended workers, touching iTerm only when the registry lists one.
+ * One fast reaper pass: closes follow panes of ended workers and leftover ended
+ * pane-run panes (a pane-run pane closes itself; this sweeps any that did not),
+ * touching iTerm only when the registry lists one.
  */
 export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Promise<string[]> {
-  const due = loadRegistry(logDir).some((e) => paneReapable(loadStatus(logDir, e.worker), now));
+  const due = loadRegistry(logDir).some((e) => isPaneRunId(e.worker) || paneReapable(loadStatus(logDir, e.worker), now));
   if (!due) return [];
-  const r = await closeEndedPanes(logDir, (wid) => paneReapable(loadStatus(logDir, wid), now), false);
+  const r = await closeEndedPanes(
+    logDir,
+    (wid) => {
+      const st = loadStatus(logDir, wid);
+      if (st !== null) return paneReapable(st, now);
+      // a pane-run pane: ended once its run wrote its end state (or its runner died)
+      return isPaneRunId(wid) && workerEnded(logDir, wid);
+    },
+    false
+  );
   return r.closed;
 }
 

@@ -19,7 +19,7 @@ import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../..
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
-import { checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession } from "../../workers/pane.js";
+import { checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
@@ -499,7 +499,7 @@ const paneCommand: CommandDef = {
   args: [{ name: "ID", summary: "Worker id (default: all running workers)" }],
   options: [
     { name: "check", type: "boolean", summary: "Only report whether the pane is open, with its profile file, font and window bounds" },
-    { name: "close-ended", type: "boolean", summary: "Close every open pane whose worker has ended" },
+    { name: "close-ended", type: "boolean", summary: "Close every open pane whose worker or pane run has ended" },
     { ...OPT.dryRun, summary: "With --close-ended: only list what would be closed" },
   ],
   examples: ["pai worker pane", "pai worker pane w-20260101-abc --check", "pai worker pane --close-ended --dry-run"],
@@ -513,13 +513,15 @@ const paneCommand: CommandDef = {
           dir,
           (wid) => {
             const st = loadStatus(dir, wid);
-            return st !== null && st.state !== "running" && st.state !== "queued";
+            if (st !== null) return st.state !== "running" && st.state !== "queued";
+            // a pane-run pane: ended once its run wrote its end state (or its runner died)
+            return isPaneRunId(wid) && workerEnded(dir, wid);
           },
           ctx.dryRun
         );
         for (const l of r.closed) out(`${ctx.dryRun ? "would close" : "closed"} ${l}`);
         for (const l of r.kept) out(`kept ${l}`);
-        if (!r.closed.length) out("no ended worker panes open");
+        if (!r.closed.length) out("no ended panes open");
         return;
       }
       const host = await resolveHostSession();

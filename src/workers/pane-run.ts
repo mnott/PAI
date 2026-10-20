@@ -4,8 +4,9 @@
  * The caller (the process Claude Code backgrounds) owns the command: it spawns it in its own
  * process group, tees the output to <PAI home>/logs/panes/<id>.log, and blocks until it ends, so
  * the harness's completion notification keeps working. The pane runs `pai worker follow <id>`,
- * which shows that log live and the exit code after, and leaves a short while later. Placement is
- * a worker pane's (split, else tab, never a window; an ended pane of the scope is reused).
+ * which shows that log live and the exit code after, and closes the pane a few seconds later
+ * (`PANE_LINGER_SECS`), whatever the exit code. Placement is a worker pane's (split, else tab,
+ * never a window).
  * Status lives in <logDir>/<id>.panestatus for `pai worker ps` and the cockpit.
  */
 
@@ -16,6 +17,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { nowStamp, pidAlive } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
+import { closeOwnPane, realPaneOps, type PaneOps } from "./pane.js";
 
 export interface PaneRunStatus {
   kind: "pane";
@@ -32,8 +34,8 @@ export interface PaneRunStatus {
 
 /** The env marker of a command running under `pai pane run`: nested pane/build runs then stay in it. */
 export const PANE_RUN_ENV = "PAI_PANE_RUN";
-/** Seconds the pane stays on screen after the command ended. */
-export const PANE_LINGER_SECS = 10;
+/** Seconds the pane stays on screen after the command ended, then closes itself. */
+export const PANE_LINGER_SECS = 5;
 const TAIL_LINES = 40;
 
 export const paneRunStatusFile = (logDir: string, id: string): string => join(logDir, `${id}.panestatus`);
@@ -80,13 +82,18 @@ export function paneRunRows(statuses: PaneRunStatus[], now = Date.now()): Array<
     .map((s) => ({ id: s.id, label: s.label, cwd: s.cwd, ageSec: Math.max(0, Math.round((now - s.startedMs) / 1000)), log: s.log }));
 }
 
-/** Show the log of a pane run live until it has ended, then `linger` more seconds. */
+/**
+ * Show the log of a pane run live until it has ended, linger `linger` seconds so the last
+ * line stays visible, then close the pane itself (in iTerm or tmux) and return.
+ */
 export async function followPaneRun(
   logDir: string,
   id: string,
   write: (s: string) => void,
   lingerSecs = PANE_LINGER_SECS,
-  pollMs = 250
+  pollMs = 250,
+  env: NodeJS.ProcessEnv = process.env,
+  ops: PaneOps = realPaneOps
 ): Promise<void> {
   // the pane's purpose in the title bar before anything scrolls: a `pai pane
   // run` pane shows its label alone (no provider)
@@ -106,7 +113,11 @@ export async function followPaneRun(
     }
     if (st && st.state !== "running") {
       endedAt ||= Date.now();
-      if (Date.now() - endedAt >= lingerSecs * 1000) return;
+      if (Date.now() - endedAt >= lingerSecs * 1000) {
+        // the pane closes itself whatever the exit code; the full output stays in the log
+        await closeOwnPane(env, ops).catch(() => false);
+        return;
+      }
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }

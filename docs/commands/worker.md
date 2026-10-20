@@ -253,7 +253,7 @@ Opens the follow pane for a worker: a tmux split when you are in tmux, else an i
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--check` | flag | — | Only report whether the pane is open, with its profile file, font and window bounds |
-| `--close-ended` | flag | — | Close every open pane whose worker has ended |
+| `--close-ended` | flag | — | Close every open pane whose worker or pane run has ended |
 | `--dry-run` | flag | — | With --close-ended: only list what would be closed |
 
 ```sh

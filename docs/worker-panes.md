@@ -30,7 +30,7 @@ resolution for you.
 ```
 pai worker pane <id>                 # open (or reopen) the pane of one worker
 pai worker pane <id> --check         # is it open? plus profile path, font, window bounds
-pai worker pane --close-ended        # close every pane whose worker has ended
+pai worker pane --close-ended        # close every pane whose worker or pane run has ended
 pai worker pane --close-ended --dry-run   # list what would close
 ```
 
@@ -43,7 +43,7 @@ pai worker pane --close-ended --dry-run   # list what would close
 |---------|---------------|
 | `host session: none (iTerm2 not running or unreachable)` | iTerm2 is not running, or its Python API is off. Start it, enable Scripting, retry `pai worker pane <id>`. |
 | `no live iTerm2 session matched` | The terminal is not iTerm2 or tmux. Use `pai worker follow <id>`. |
-| Panes of ended workers stay open | `pai worker pane --close-ended`. |
+| Panes of ended workers or pane runs stay open | `pai worker pane --close-ended`. |
 | No pane at all | Check `pai project health` in the project: the `iTerm host session` line says why. |
 
 See also: [worker-pane-footer.md](worker-pane-footer.md).
@@ -56,8 +56,8 @@ Everything a session starts that does not run in its own pane runs in a pane. A 
 pai pane run --label tests -- npx vitest run
 ```
 
-- **Placement** is a worker pane's: a split of the starting session's own tab, never a new window or tab, never a stolen focus; an ended PAI pane of the session is reused first.
-- **The pane** shows the command's live output, then its exit code, and leaves ten seconds later. The output is also written to `<PAI home>/logs/panes/<id>.log`.
+- **Placement** is a worker pane's: a split of the starting session's own tab, never a new window or tab, never a stolen focus.
+- **The pane** shows the command's live output, then its exit code, and closes itself five seconds later, whatever the exit code. The full output stays in `<PAI home>/logs/panes/<id>.log`; a leftover ended pane-run pane is swept by `pai worker pane --close-ended` and reported by the auditor as `STILL OPEN`.
 - **The caller blocks** until the command ends, prints the last 40 lines and exits with the command's exit code, so the harness's background-task notification still arrives. SIGTERM, SIGINT or SIGHUP to the caller (TaskStop) kill the command's whole process group.
 - **Listed** in `pai worker ps` and the cockpit worker panel under "panes" (label, cwd, running time, log path) while it runs.
 - A single word is run by `sh -c`; several words are exec'd as given. Without a usable pane the command still runs, with the reason on stderr.
@@ -70,7 +70,7 @@ The PreToolUse Bash hook (interactive sessions only; workers already have a pane
 
 ## Pane audit
 
-Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.
+Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it, and an ended `pai pane run` must have closed its pane. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window; `STILL OPEN`: an ended pane run's pane is still open past the linger) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.
 
 ## A pane never blocks a start
 

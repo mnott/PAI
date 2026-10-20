@@ -324,6 +324,40 @@ export function workerPaneOpen(wid: string): boolean {
   return psOutput("command=").split("\n").some((ln) => pat.test(ln));
 }
 
+/** True while a `follow <id>` process runs in this iTerm session (its pane shows that id). */
+function followRunsHere(uid: string): boolean {
+  if (!uid) return false;
+  const tty = itermTtyOf(uid);
+  if (!tty) return false;
+  return psOutput("tty=,command=")
+    .split("\n")
+    .some((ln) => ln.trim().startsWith(`${tty.replace(/^\/dev\//, "")} `) && /(^|\/)(worker[- ]follow|glm-ps follow)\b/.test(ln));
+}
+
+// The tty of the iTerm session with a given unique id (argv[0]), "" when not live.
+const SESSION_TTY_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "";
+    var f = findSession(app, argv[0]);
+    if (!f) return "";
+    try { return f.s.tty(); } catch (e) { return ""; }
+}`;
+
+/** The /dev/ttysNNN of the iTerm session with that unique id, "" when it is not live. */
+function itermTtyOf(uid: string): string {
+  try {
+    const out = execFileSync("osascript", ["-l", "JavaScript", "-", uid], {
+      encoding: "utf8",
+      timeout: 5_000,
+      input: SESSION_TTY_SCRIPT,
+    }).trim();
+    return out && out !== "?" && out !== "??" ? (out.startsWith("/dev/") ? out : `/dev/${out}`) : "";
+  } catch {
+    return "";
+  }
+}
+
 /** One entry of iTerm's New Bookmarks (the fields the pane cares about). */
 export interface Bookmark {
   Name?: string;
@@ -717,7 +751,8 @@ export const realPaneOps: PaneOps = {
   },
 };
 
-const FOLLOW_ID = /worker[- ]follow (\d{8}-\d{6}-\d+)/;
+// A follow command of any PAI id: a worker, a plan run or a `pai pane run` pane.
+const FOLLOW_ID = /worker[- ]follow ([A-Za-z0-9._-]+)/;
 
 /** End one worker's registered iTerm pane, found by worker id. True if a pane was closed. */
 export async function closePaneForWorker(logDir: string, wid: string, ops: PaneOps = realPaneOps): Promise<boolean> {
@@ -741,6 +776,9 @@ export async function closePaneForWorker(logDir: string, wid: string, ops: PaneO
 export async function closeOwnPane(env: NodeJS.ProcessEnv = process.env, ops: PaneOps = realPaneOps): Promise<boolean> {
   const uid = itermUuid(env.ITERM_SESSION_ID ?? "");
   if (!uid) return false;
+  // never close the session itself while its follow still runs: that follow is
+  // the pane's own view, and closing here would cut off the output it shows
+  if (followRunsHere(uid)) return false;
   return ops.closeIterm(uid).catch(() => false);
 }
 
@@ -750,10 +788,10 @@ export interface CloseEndedResult {
 }
 
 /**
- * Close every open follow pane whose worker has ended: registry entries first
- * (by worker id), then any iTerm session named after / tmux pane started with a
- * `worker follow <id>` command of an ended worker. `ended(id)` says whether
- * that worker is over; unknown ids are never closed. `dryRun` only reports.
+ * Close every open follow pane whose worker, plan run or pane run has ended:
+ * registry entries first (by id), then any iTerm session named after / tmux pane
+ * started with a `worker follow <id>` command of an ended id. `ended(id)` says
+ * whether that id is over; unknown ids are never closed. `dryRun` only reports.
  */
 export async function closeEndedPanes(
   logDir: string,

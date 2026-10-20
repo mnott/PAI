@@ -15,10 +15,10 @@ import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { loadStatusesCached, isLive, isChatPane, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
-import { loadPaneRunStatuses } from "./pane-run.js";
+import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
 
-export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
+export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
 /** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
 export const SHOWN_ONLY: readonly PaneMark[] = ["SMALL", "NOT SELECTED", "MINIMISED"];
 
@@ -31,6 +31,8 @@ export interface AuditProc {
   startedMs?: number;
   /** Why the start could not open a pane (status.pane.reason), shown with NO PANE. */
   noPaneReason?: string;
+  /** The run already ended (a pane-run run): its pane must have closed itself. */
+  ended?: boolean;
 }
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
@@ -72,6 +74,10 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
+    // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
+    if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {
+      return { ...v, mark: "STILL OPEN", tab, why: `pane ${e.session} of the ended run ${p.id} is still open` };
+    }
     const hostTab = tabOf(host);
     if (!hostTab) return { ...v, mark: "HOST UNKNOWN", tab, why: host ? `starting session ${host} is not in the iTerm listing` : `pane ${e.session} has no recorded starting session` };
     if (hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
@@ -92,7 +98,8 @@ export function runningProcs(logDir: string): AuditProc[] {
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
-  for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running") procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs });
+  // ended pane runs too: their pane must have closed itself, and one still open is a fault
+  for (const p of loadPaneRunStatuses(logDir)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
   return procs;
 }
 
@@ -198,7 +205,10 @@ export async function auditTick(
     next[v.id] = v.mark;
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-    const what = `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}).`;
+    const what =
+      v.mark === "STILL OPEN"
+        ? `${v.mark}: ${v.kind} ${v.id} ended but its pane is still open (${v.why}).`
+        : `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}).`;
     if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
     await msg.toPailot(what).catch(() => false);
   }
