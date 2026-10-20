@@ -245,45 +245,50 @@ function renderLimits(){
 }
 /** Routing section: one row per class, the ordered model chips with arrows, coloured by state; drag / Alt+arrows reorder, × removes, + adds. Every change posts the whole row and the row re-renders from the saved state. */
 var rtOpen=null,rtMsg={},rtFocus=null,rtDrag=null;
-function rtEntries(cls){var rows=(lim&&lim.routing&&lim.routing.rows)||[];for(var i=0;i<rows.length;i++)if(rows[i].cls===cls)return rows[i].chips.map(function(c){return c.entry});return[]}
-function postRoute(cls,models,cb){
- fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"route",class:cls,models:models}),cache:"no-store"})
+function rtEntries(cls,sess){var rows=(lim&&lim.routing&&lim.routing.rows)||[];for(var i=0;i<rows.length;i++)if(rows[i].cls===cls){if(!sess)return rows[i].chips.map(function(c){return c.entry});var ss=rows[i].sessions||[];for(var j=0;j<ss.length;j++)if(ss[j].session===sess)return ss[j].chips.map(function(c){return c.entry})}return[]}
+function postRoute(cls,models,cb,sess,clear){
+ var b={action:"route",class:cls,models:models};if(sess)b.session=sess;if(clear)b.clear=true;
+ fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b),cache:"no-store"})
   .then(function(r){return r.json()}).then(cb).catch(function(){cb({ok:false,message:"action failed"})});
 }
-function saveRoute(cls,models,focusAt){
- postRoute(cls,models,function(j){rtMsg[cls]={t:(j&&j.message)||"",ok:!!(j&&j.ok)};if(j&&j.ok)rtOpen=null;rtFocus=j&&j.ok&&focusAt!=null?{cls:cls,i:focusAt}:null;loadLimits()});
+function saveRoute(cls,models,focusAt,sess,clear){
+ postRoute(cls,models,function(j){rtMsg[cls]={t:(j&&j.message)||"",ok:!!(j&&j.ok)};if(j&&j.ok)rtOpen=null;rtFocus=j&&j.ok&&focusAt!=null?{cls:cls,i:focusAt,s:sess||""}:null;loadLimits()},sess,clear);
 }
-function moveEntry(cls,from,to){
- var e=rtEntries(cls);if(from===to||to<0||to>=e.length)return;
- var m=e.splice(from,1)[0];e.splice(to,0,m);saveRoute(cls,e,to);
+function moveEntry(cls,from,to,sess){
+ var e=rtEntries(cls,sess);if(from===to||to<0||to>=e.length)return;
+ var m=e.splice(from,1)[0];e.splice(to,0,m);saveRoute(cls,e,to,sess);
 }
 function renderRouting(){
  var r=lim&&lim.routing;if(!r||rtDrag||!document.querySelector('[data-section="routing"]'))return;
  var rows=r.rows||[],choices=r.choices||[];
  $("routing").innerHTML=rows.length?rows.map(function(row){
-  var chips=row.chips.map(function(c,i){
-   var at=' data-cls="'+esc(row.cls)+'" data-i="'+i+'"';
-   return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" draggable="true" tabindex="0"'+at+' title="'+esc(c.why||c.state)+'">'+esc(c.label)+'<button class="rtx"'+at+' aria-label="remove '+esc(c.label)+'">×</button></span>'}).join("");
+  var chipsOf=function(cs,sess){return cs.map(function(c,i){
+   var at=' data-cls="'+esc(row.cls)+'" data-i="'+i+'"'+(sess?' data-s="'+esc(sess)+'"':"");
+   return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" draggable="true" tabindex="0"'+at+' title="'+esc(c.why||c.state)+'">'+esc(c.label)+'<button class="rtx"'+at+' aria-label="remove '+esc(c.label)+'">×</button></span>'}).join("")};
+  var chips=chipsOf(row.chips);
+  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" data-cls="'+esc(row.cls)+'" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips,s.session)+'<button class="rtclear" data-cls="'+esc(row.cls)+'" data-s="'+esc(s.session)+'" aria-label="clear the override of '+esc(s.session)+'" title="clear this session override">×</button></span></div>'}).join("");
   var have=row.chips.map(function(c){return c.entry});
   var list=rtOpen===row.cls?'<div class="rtlist">'+choices.filter(function(c){return have.indexOf(c.entry)<0}).map(function(c){return'<button data-cls="'+esc(row.cls)+'" data-add="'+esc(c.entry)+'">'+esc(c.label)+'</button>'}).join("")+'</div>':"";
   var m=rtMsg[row.cls];
-  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel">'+esc(row.label)+'</span><span class="rtchips">'+chips+'<button class="rtadd" data-cls="'+esc(row.cls)+'" aria-label="add a model to '+esc(row.label)+'">+</button></span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span></div>'}).join(""):'<span class="dim">no routing table</span>';
+  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel"'+(row.note?' title="'+esc(row.note)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chips+'<button class="rtadd" data-cls="'+esc(row.cls)+'" aria-label="add a model to '+esc(row.label)+'">+</button></span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
  var xs=document.querySelectorAll("#routing .rtx"),i;
- for(i=0;i<xs.length;i++)xs[i].onclick=function(e){e.stopPropagation();var cls=this.getAttribute("data-cls"),n=Number(this.getAttribute("data-i")),en=rtEntries(cls);en.splice(n,1);saveRoute(cls,en,null)};
+ for(i=0;i<xs.length;i++)xs[i].onclick=function(e){e.stopPropagation();var cls=this.getAttribute("data-cls"),n=Number(this.getAttribute("data-i")),sess=this.getAttribute("data-s")||"",en=rtEntries(cls,sess);en.splice(n,1);if(sess&&!en.length)saveRoute(cls,[],null,sess,true);else saveRoute(cls,en,null,sess)};
+ var cl=document.querySelectorAll("#routing .rtclear");
+ for(i=0;i<cl.length;i++)cl[i].onclick=function(e){e.stopPropagation();saveRoute(this.getAttribute("data-cls"),[],null,this.getAttribute("data-s"),true)};
  var ad=document.querySelectorAll("#routing .rtadd");
  for(i=0;i<ad.length;i++)ad[i].onclick=function(){var cls=this.getAttribute("data-cls");rtOpen=rtOpen===cls?null:cls;renderRouting()};
  var ls=document.querySelectorAll("#routing .rtlist button");
  for(i=0;i<ls.length;i++)ls[i].onclick=function(){var cls=this.getAttribute("data-cls"),en=rtEntries(cls);en.push(this.getAttribute("data-add"));saveRoute(cls,en,en.length-1)};
  var cs=document.querySelectorAll("#routing .rtchip");
  for(i=0;i<cs.length;i++)(function(ch){
-  var cls=ch.getAttribute("data-cls"),n=Number(ch.getAttribute("data-i"));
-  ch.ondragstart=function(e){rtDrag={cls:cls,i:n};if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",cls+":"+n)}catch(x){}}};
-  ch.ondragover=function(e){if(rtDrag&&rtDrag.cls===cls){e.preventDefault();ch.style.outline="2px solid var(--acc)"}};
+  var cls=ch.getAttribute("data-cls"),n=Number(ch.getAttribute("data-i")),sess=ch.getAttribute("data-s")||"";
+  ch.ondragstart=function(e){rtDrag={cls:cls,i:n,s:sess};if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",cls+":"+n)}catch(x){}}};
+  ch.ondragover=function(e){if(rtDrag&&rtDrag.cls===cls&&rtDrag.s===sess){e.preventDefault();ch.style.outline="2px solid var(--acc)"}};
   ch.ondragleave=function(){ch.style.outline=""};
-  ch.ondrop=function(e){e.preventDefault();ch.style.outline="";if(rtDrag&&rtDrag.cls===cls)moveEntry(cls,rtDrag.i,n);rtDrag=null};
+  ch.ondrop=function(e){e.preventDefault();ch.style.outline="";if(rtDrag&&rtDrag.cls===cls&&rtDrag.s===sess)moveEntry(cls,rtDrag.i,n,sess);rtDrag=null};
   ch.ondragend=function(){rtDrag=null};
-  ch.onkeydown=function(e){if(e.altKey&&(e.key==="ArrowLeft"||e.key==="ArrowRight")){e.preventDefault();moveEntry(cls,n,n+(e.key==="ArrowLeft"?-1:1))}};
-  if(rtFocus&&rtFocus.cls===cls&&rtFocus.i===n){rtFocus=null;ch.focus()}
+  ch.onkeydown=function(e){if(e.altKey&&(e.key==="ArrowLeft"||e.key==="ArrowRight")){e.preventDefault();moveEntry(cls,n,n+(e.key==="ArrowLeft"?-1:1),sess)}};
+  if(rtFocus&&rtFocus.cls===cls&&rtFocus.i===n&&(rtFocus.s||"")===sess){rtFocus=null;ch.focus()}
  })(cs[i]);
 }
 var mdl=null;

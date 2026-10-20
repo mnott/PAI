@@ -11,8 +11,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readWorkersSection } from "./config.js";
-import { classRoute, listForPolicy, migrateLegacyChains } from "./route-lists.js";
-import { applyPolicyToRoutes, routeChoices, routeRows, routeText, setRoute, validateRoute } from "./route-table.js";
+import { applyRouteOverrides, classRoute, listForPolicy, migrateLegacyChains } from "./route-lists.js";
+import { readProfiles, type SessionProfile } from "./session-profile-store.js";
+import type { WorkersConfig } from "./config.js";
+import { applyPolicyToRoutes, clearSessionRoute, setSessionRoute, routeChoices, routeRows, routeText, setRoute, validateRoute } from "./route-table.js";
 import { routeRun, writePolicy, clearPolicy, POLICY_MODES } from "./policy.js";
 import { resolveTarget, setCooldown, NoProviderError } from "./routing.js";
 
@@ -27,6 +29,8 @@ afterAll(() => {
   else process.env.PAI_WORKERS_YAML = savedYaml;
   rmSync(dir, { recursive: true, force: true });
 });
+
+const effectiveWorkers = (w: WorkersConfig, p: SessionProfile | undefined): WorkersConfig => ({ ...w, classes: applyRouteOverrides(w.classes, p?.routes) });
 
 const PROVIDERS = {
   glm: { baseUrl: "https://api.example.com/anthropic", keyFile: "~/k", models: { default: "glm-5.3", fast: "glm-5.3-flash" }, env: {} },
@@ -254,5 +258,58 @@ describe("rows and text", () => {
 
   it("the old chains module is gone", () => {
     expect(existsSync(join(__dirname, "chains.ts"))).toBe(false);
+  });
+});
+
+describe("per-session overrides", () => {
+  const profiles = () => join(dir, `profiles-${Math.random().toString(36).slice(2)}.yaml`);
+
+  it("the session's row wins for that session only; clear restores the global row", async () => {
+    const path = liveShaped();
+    const pp = profiles();
+    setRoute("implement", ["glm/fast"], path, "context width, reasoning");
+    setSessionRoute("job-search", "implement", ["anthropic/sonnet", "kimi"], { path, profilesPath: pp, note: "needs the wide context" });
+    const { workers } = readWorkersSection(path);
+    const logDir = join(dir, "logs-s");
+    const mine = effectiveWorkers(workers, readProfiles(pp)["job-search"]);
+    const other = effectiveWorkers(workers, readProfiles(pp)["other"]);
+    expect(classRoute(mine.classes, "implement")).toEqual(["anthropic/sonnet", "kimi"]);
+    expect(classRoute(other.classes, "implement")).toEqual(["glm/fast"]);
+    expect(classRoute(workers.classes, "implement")).toEqual(["glm/fast"]);
+    const pick = async (w: typeof workers) => routeRun(w, logDir, { className: "implement" }, { ping: loaded(8010) });
+    expect(await pick(other)).toBeNull();
+    expect(resolveTarget(mine, logDir, { className: "implement" }).providerName).toBe("anthropic");
+    expect(resolveTarget(other, logDir, { className: "implement" }).providerName).toBe("glm");
+    setSessionRoute("local-sess", "implement", ["gyro-m"], { path, profilesPath: pp });
+    const loc = effectiveWorkers(workers, readProfiles(pp)["local-sess"]);
+    expect((await pick(loc))?.providerFlag).toBe("gyro-m");
+    expect(await pick(other)).toBeNull();
+    expect(clearSessionRoute("job-search", "implement", pp)).toMatch(/cleared/);
+    expect(readProfiles(pp)["job-search"]?.routes).toBeUndefined();
+    expect(classRoute(effectiveWorkers(workers, readProfiles(pp)["job-search"]).classes, "implement")).toEqual(["glm/fast"]);
+  });
+
+  it("the effective table marks overridden rows; the global view lists the sessions and notes", async () => {
+    const path = liveShaped();
+    const pp = profiles();
+    setRoute("implement", ["glm/fast"], path, "context width, reasoning");
+    setSessionRoute("job-search", "implement", ["anthropic/sonnet"], { path, profilesPath: pp, note: "wide" });
+    const { workers } = readWorkersSection(path);
+    const deps = { logDir: join(dir, "logs-t"), running: async () => true };
+    const eff = routeText(await routeRows(workers, { ...deps, session: readProfiles(pp)["job-search"] }));
+    expect(eff).toMatch(/implement\s+anthropic\/sonnet  \[session override\]  # wide/);
+    expect(eff).toMatch(/simple\s+local gyro-m/);
+    const rows = await routeRows(workers, { ...deps, profiles: readProfiles(pp) });
+    const impl = rows.find((r) => r.cls === "implement")!;
+    expect(impl.note).toBe("context width, reasoning");
+    expect(impl.sessions).toMatchObject([{ session: "job-search", note: "wide", chips: [{ entry: "anthropic/sonnet" }] }]);
+    expect(routeText(rows)).toContain("    job-search: anthropic/sonnet  # wide");
+    expect(readWorkersSection(path).workers.classes.implement).toMatchObject({ models: ["glm/fast"], note: "context width, reasoning" });
+  });
+
+  it("refuses an unknown class or model for a session override", () => {
+    const path = liveShaped();
+    expect(() => setSessionRoute("s", "boss", ["glm"], { path, profilesPath: profiles() })).toThrow(/no class/);
+    expect(() => setSessionRoute("s", "implement", ["nobody/x"], { path, profilesPath: profiles() })).toThrow(/no provider/);
   });
 });

@@ -18,18 +18,22 @@ import {
   readWorkersSection,
   resolveModelCapability,
   writeWorkersSection,
+  type ClassTarget,
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
 import { budgetFull, type BudgetMap } from "./budget.js";
 import { readLocalPreference } from "./local-provider.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
+import { detectSessionName } from "./session-name.js";
+import { readProfiles, updateProfile, type Profiles, type SessionProfile } from "./session-profile-store.js";
 import { pingLocal, type PolicyMode } from "./policy.js";
 import {
   MAX_ROUTE_MODELS,
   POLICY_CLASSES,
   ROUTE_CLASSES,
   ROUTE_LABELS,
+  classNote,
   classRoute,
   entryProvider,
   listForPolicy,
@@ -55,10 +59,23 @@ export interface RouteChip {
   why: string;
 }
 
+/** One session's override of a row. */
+export interface SessionRouteRow {
+  session: string;
+  chips: RouteChip[];
+  note?: string;
+}
+
 export interface RouteRow {
   cls: RouteClass;
   label: string;
   chips: RouteChip[];
+  /** Reason note (tooltip). */
+  note?: string;
+  /** This row is the session's own override (a per-session view). */
+  overridden?: boolean;
+  /** The sessions that override this row (the global view). */
+  sessions?: SessionRouteRow[];
 }
 
 export interface RouteChoice {
@@ -121,11 +138,17 @@ export interface RouteChange {
 }
 
 /** Set one row and persist it through the config writers (`path` overrides the main config, tests). */
-export function setRoute(cls: string, models: unknown, path?: string): RouteChange {
+export function setRoute(cls: string, models: unknown, path?: string, note?: string): RouteChange {
   const { raw, workers } = readWorkersSection(path);
   const entries = validateRoute(workers, cls, models);
   const target = targetForRoute(workers.classes[cls], entries);
   if (target !== undefined) workers.classes[cls] = target;
+  if (note !== undefined) {
+    const { note: _old, ...rest } = typeof workers.classes[cls] === "object" ? (workers.classes[cls] as Exclude<ClassTarget, string>) : {};
+    workers.classes[cls] = note.trim()
+      ? { ...rest, provider: entryProvider(entries[0]), models: [...entries], note: note.trim() }
+      : (targetForRoute(rest, entries) ?? rest);
+  }
   if (cls === "orchestrate") {
     // the chat side runs on the first model's provider (session profile), as the active provider always did
     const session = (raw.session ?? {}) as Record<string, unknown>;
@@ -136,6 +159,42 @@ export function setRoute(cls: string, models: unknown, path?: string): RouteChan
   }
   writeWorkersSection(raw, workers, path);
   return { cls: cls as RouteClass, entries, text: `${cls}=${entries.join(">")}` };
+}
+
+/** Resolve a session argument: a name, or "self" / empty for this session. */
+export async function resolveSessionArg(session: string | undefined, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const s = session?.trim();
+  const name = !s || s === "self" ? await detectSessionName(env) : s;
+  if (!name) throw new Error("this session has no name; pass its persistent name");
+  return name;
+}
+
+/** Override one routing row for a session (stored in its profile, the global table is untouched). */
+export function setSessionRoute(session: string, cls: string, models: unknown, opts: { note?: string; path?: string; profilesPath?: string } = {}): RouteChange {
+  const { workers } = readWorkersSection(opts.path);
+  const entries = validateRoute(workers, cls, models);
+  const cur = readProfiles(opts.profilesPath)[session] ?? {};
+  const notes = { ...(cur.route_notes ?? {}) };
+  if (opts.note !== undefined) {
+    if (opts.note.trim()) notes[cls] = opts.note.trim();
+    else delete notes[cls];
+  }
+  updateProfile(session, { routes: { ...(cur.routes ?? {}), [cls]: entries }, route_notes: Object.keys(notes).length ? notes : null }, opts.profilesPath);
+  return { cls: cls as RouteClass, entries, text: `${session}: ${cls}=${entries.join(">")}` };
+}
+
+/** Drop one override (or all of a session's); the global row applies again. */
+export function clearSessionRoute(session: string, cls?: string, profilesPath?: string): string {
+  const cur = readProfiles(profilesPath)[session];
+  if (!cur?.routes || (cls && !cur.routes[cls])) return cls ? `${session}: no override for ${cls}` : `${session}: no overrides`;
+  const routes = { ...cur.routes };
+  const notes = { ...(cur.route_notes ?? {}) };
+  for (const c of cls ? [cls] : Object.keys(routes)) {
+    delete routes[c];
+    delete notes[c];
+  }
+  updateProfile(session, { routes: Object.keys(routes).length ? routes : null, route_notes: Object.keys(notes).length ? notes : null }, profilesPath);
+  return `${session}: ${cls ? `${cls} override cleared` : "overrides cleared"}`;
 }
 
 /** The enabled local provider `local:` names, else the first enabled one. */
@@ -178,6 +237,10 @@ export interface ViewDeps {
   budgets?: BudgetMap;
   logDir: string;
   now?: Date;
+  /** The effective table of this session: its overridden rows replace the global ones (marked `overridden`). */
+  session?: SessionProfile | null;
+  /** All profiles: the global view lists under each row the sessions overriding it. */
+  profiles?: Profiles;
 }
 
 async function chipOf(workers: WorkersConfig, cls: string, entry: string, deps: ViewDeps, state: ReturnType<typeof readRoutingState>): Promise<RouteChip> {
@@ -208,17 +271,34 @@ export async function routeRows(workers: WorkersConfig, deps: ViewDeps): Promise
   const state = readRoutingState(deps.logDir);
   const rows: RouteRow[] = [];
   for (const cls of ROUTE_CLASSES) {
-    let entries = classRoute(workers.classes, cls);
+    const own = deps.session?.routes?.[cls];
+    let entries = own ?? classRoute(workers.classes, cls);
     if (cls === "orchestrate" && !entries.length) entries = [ANTHROPIC_NATIVE];
     if (!entries.length) continue;
-    rows.push({ cls, label: ROUTE_LABELS[cls], chips: await Promise.all(entries.map((e) => chipOf(workers, cls, e, deps, state))) });
+    const note = (own ? deps.session?.route_notes?.[cls] : undefined) ?? classNote(workers.classes, cls);
+    const row: RouteRow = { cls, label: ROUTE_LABELS[cls], chips: await Promise.all(entries.map((e) => chipOf(workers, cls, e, deps, state))), ...(note ? { note } : {}), ...(own ? { overridden: true } : {}) };
+    const sessions = Object.entries(deps.profiles ?? {}).filter(([, p]) => p.routes?.[cls]);
+    if (sessions.length) {
+      row.sessions = await Promise.all(
+        sessions.map(async ([session, p]) => ({
+          session,
+          chips: await Promise.all(p.routes![cls].map((e) => chipOf(workers, cls, e, deps, state))),
+          ...(p.route_notes?.[cls] ? { note: p.route_notes[cls] } : {}),
+        }))
+      );
+    }
+    rows.push(row);
   }
   return rows;
 }
 
 /** `pai worker route`: one line per class, "label  a → b → c", with the reason after a chip that is not available. */
 export function routeText(rows: RouteRow[]): string {
+  const chips = (cs: RouteChip[]) => cs.map((c) => `${c.label}${c.state === "available" ? "" : ` (${c.why || c.state})`}`).join(" → ");
   return rows
-    .map((r) => `  ${r.cls.padEnd(12)} ${r.chips.map((c) => `${c.label}${c.state === "available" ? "" : ` (${c.why || c.state})`}`).join(" → ")}`)
+    .flatMap((r) => [
+      `  ${r.cls.padEnd(12)} ${chips(r.chips)}${r.overridden ? "  [session override]" : ""}${r.note ? `  # ${r.note}` : ""}`,
+      ...(r.sessions ?? []).map((s) => `    ${s.session}: ${chips(s.chips)}${s.note ? `  # ${s.note}` : ""}`),
+    ])
     .join("\n");
 }

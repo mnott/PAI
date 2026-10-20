@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { applyPolicyToRoutes, routeRows, routeText, setRoute } from "../../workers/route-table.js";
+import { applyPolicyToRoutes, clearSessionRoute, resolveSessionArg, routeRows, routeText, setRoute, setSessionRoute } from "../../workers/route-table.js";
 import { ROUTE_CLASSES } from "../../workers/route-lists.js";
 import { budgetCache } from "../../workers/budget.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
@@ -30,7 +30,7 @@ import {
 } from "../../workers/workers-config.js";
 import { testProvider } from "../../workers/run.js";
 import { currentLocalStatus, probeLoopback } from "../../workers/local-provider.js";
-import { sessionWorkersLine } from "../../workers/session-profile.js";
+import { getProfile, readProfiles, sessionWorkersLine } from "../../workers/session-profile.js";
 import { localStatusLine } from "../../workers/local-status.js";
 import {
   addProvider,
@@ -934,26 +934,45 @@ export const workerRouteCommand: CommandDef = {
   summary: "Print the routing table: per class the ordered models",
   description:
     "One row per class (orchestrate, implement, simple, spotcheck, ...), each an ordered list of models: the first serves, the rest is the fallback order. Local models (\"local gyro-m\") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.\n" +
-    "`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m).",
+    "`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip).\n" +
+    "--session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <class> <models>`, `route clear --session s [<class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.",
   args: [
-    { name: "ACTION", summary: "set (omit to print)" },
+    { name: "ACTION", summary: "set or clear (omit to print)" },
     { name: "CLASS", summary: ROUTE_CLASSES.join(", ") },
     { name: "MODELS", summary: "Comma-separated provider/model entries, first serves" },
   ],
-  examples: ["pai worker route", "pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash"],
+  options: [
+    { name: "session", type: "string", value: "NAME", summary: "Per-session override: a session name or self" },
+    { name: "note", type: "string", value: "TEXT", summary: "Reason for the row (tooltip), e.g. \"context width, reasoning\"" },
+  ],
+  examples: ["pai worker route", "pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note \"context width, reasoning\"", "pai worker route set --session self implement anthropic/sonnet", "pai worker route clear --session self implement", "pai worker route --session self"],
   seeAlso: ["pai worker policy", "pai worker classes"],
   async run(ctx) {
     try {
-      if (ctx.args.ACTION === "set") {
+      const sessionOpt = ctx.opts.session as string | undefined;
+      const note = ctx.opts.note as string | undefined;
+      const action = ctx.args.ACTION as string | undefined;
+      if (action === "set") {
         const cls = String(ctx.args.CLASS ?? "");
         const models = String(ctx.args.MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
-        return void out(`route: ${setRoute(cls, models).text}`);
+        if (sessionOpt !== undefined) return void out(`route: ${setSessionRoute(await resolveSessionArg(sessionOpt), cls, models, { note }).text}`);
+        return void out(`route: ${setRoute(cls, models, undefined, note).text}`);
       }
+      if (action === "clear") {
+        if (sessionOpt === undefined) throw new Error("route clear needs --session <name|self> (the global row is changed with route set)");
+        return void out(`route: ${clearSessionRoute(await resolveSessionArg(sessionOpt), ctx.args.CLASS ? String(ctx.args.CLASS) : undefined)}`);
+      }
+      if (action) throw new Error(`unknown action "${action}" (set, clear)`);
       const { workers } = readWorkersSection();
       const logDir = workersLogDir(workers);
       const p = readPolicy(logDir);
       out(`policy: ${p ? p.mode : "none"}`);
-      out(routeText(await routeRows(workers, { logDir, budgets: budgetCache.snapshot() })));
+      if (sessionOpt !== undefined) {
+        const name = await resolveSessionArg(sessionOpt);
+        out(`session: ${name}`);
+        return void out(routeText(await routeRows(workers, { logDir, budgets: budgetCache.snapshot(), session: getProfile(name) })));
+      }
+      out(routeText(await routeRows(workers, { logDir, budgets: budgetCache.snapshot(), profiles: readProfiles() })));
     } catch (e) {
       fail(e, "pai worker route");
     }

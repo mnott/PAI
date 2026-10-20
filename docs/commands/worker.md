@@ -1354,21 +1354,30 @@ See also: `pai worker local`, `pai worker providers`
 Print the routing table: per class the ordered models
 
 ```
-pai worker route [ACTION] [CLASS] [MODELS]
+pai worker route [ACTION] [CLASS] [MODELS] [options]
 ```
 
 One row per class (orchestrate, implement, simple, spotcheck, ...), each an ordered list of models: the first serves, the rest is the fallback order. Local models ("local gyro-m") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.
-`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m).
+`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip).
+--session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <class> <models>`, `route clear --session s [<class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.
 
 | Argument | Required | Description |
 |---|---|---|
-| `ACTION` | no | set (omit to print) |
+| `ACTION` | no | set or clear (omit to print) |
 | `CLASS` | no | orchestrate, implement, simple, spotcheck, research, draft, review, complex, plan |
 | `MODELS` | no | Comma-separated provider/model entries, first serves |
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--session NAME` | string | — | Per-session override: a session name or self |
+| `--note TEXT` | string | — | Reason for the row (tooltip), e.g. "context width, reasoning" |
+
 ```sh
 pai worker route
-pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash
+pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note "context width, reasoning"
+pai worker route set --session self implement anthropic/sonnet
+pai worker route clear --session self implement
+pai worker route --session self
 ```
 
 See also: `pai worker policy`, `pai worker classes`

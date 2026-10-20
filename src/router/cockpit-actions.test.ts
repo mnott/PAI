@@ -107,6 +107,20 @@ describe("cockpit actions", () => {
     ).toBe(true);
   });
 
+  it("route with a session writes and clears that session's override only", async () => {
+    const tmp = newDir();
+    const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;
+    const { readProfiles } = await import("../workers/session-profile-store.js");
+    const r = await runCockpitAction({ action: "route", class: "implement", session: "sess-x", models: ["anthropic/sonnet"] }, deps);
+    expect(r.ok).toBe(true);
+    expect(readProfiles()["sess-x"]?.routes).toEqual({ implement: ["anthropic/sonnet"] });
+    const { readWorkersSection } = await import("../workers/config.js");
+    const { classRoute } = await import("../workers/route-lists.js");
+    expect(classRoute(readWorkersSection(process.env.PAI_CONFIG_FILE).workers.classes, "implement")).not.toEqual(["anthropic/sonnet"]);
+    expect((await runCockpitAction({ action: "route", class: "implement", session: "sess-x", clear: true }, deps)).ok).toBe(true);
+    expect(readProfiles()["sess-x"]?.routes).toBeUndefined();
+  });
+
   it("route validates class and models, writes the list to the (temp) config, ledgers ROUTE-SET", async () => {
     const tmp = newDir();
     const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;

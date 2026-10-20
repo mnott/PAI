@@ -33,6 +33,7 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
+import { readProfiles } from "../workers/session-profile-store.js";
 import { routeChoices, routeRows, type RouteChoice, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
@@ -476,7 +477,7 @@ async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[];
       budgets[l.provider] = { percent: Math.max(...windows.map((w) => w.percent)), resetAt: null, fetchedAt: l.fetchedAt, windows };
     }
     const running = async (name: string) => ls.some((l) => l.kind === "local" && l.provider === name && l.up === true);
-    return { rows: await routeRows(workers, { logDir: workersLogDir(workers), budgets, running }), choices: routeChoices(workers) };
+    return { rows: await routeRows(workers, { logDir: workersLogDir(workers), budgets, running, profiles: readProfiles() }), choices: routeChoices(workers) };
   } catch {
     return { rows: [], choices: [] };
   }
