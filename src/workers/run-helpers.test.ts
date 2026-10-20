@@ -23,6 +23,7 @@ import {
   chromeGrantArgs,
   ensureToolSearch,
   headlessPromptText,
+  placeVolatile,
   headlessToolGrants,
   headlessToolsFlag,
   initContextWindow,
@@ -1145,5 +1146,20 @@ describe("preEventFailure", () => {
     expect(preEventFailure(0, 0, "x")).toBeNull();
     expect(preEventFailure(1, 2, "x")).toBeNull();
     expect(preEventFailure(1, 0, " \n")).toBeNull();
+  });
+});
+
+describe("placeVolatile", () => {
+  const task = "pre\n--- shared ---\nS1\nS2\n--- unit ---\nU1";
+  it("puts the per-worker lines between the shared and the unit part", () => {
+    expect(placeVolatile(task, "V")).toBe("pre\n--- shared ---\nS1\nS2\nV\n\n--- unit ---\nU1");
+  });
+  it("a task without both markers gets them at its head", () => {
+    expect(placeVolatile("plain", "V")).toBe("V\n\nplain");
+    expect(placeVolatile("--- shared ---\nonly", "V")).toBe("V\n\n--- shared ---\nonly");
+  });
+  it("two workers differ only inside the volatile block", () => {
+    const strip = (t: string) => t.replace(/<v>[\s\S]*?<\/v>/, "");
+    expect(strip(placeVolatile(task, "<v>id-1 /w/1 03:21 tok-a</v>"))).toBe(strip(placeVolatile(task, "<v>id-2 /w/2 03:24 tok-b</v>")));
   });
 });
