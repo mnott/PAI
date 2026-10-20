@@ -730,7 +730,7 @@ describe("cockpit model-card fold state", () => {
         querySelector: () => chev,
       };
       const card = {
-        attrs: { "data-rt": c.rt, "data-def": c.def },
+        attrs: { "data-rt": c.rt, "data-def": c.def } as Record<string, string>,
         classes: new Set<string>(c.open ? ["open"] : []),
         getAttribute: (k: string) => card.attrs[k] ?? null,
         classList: {

@@ -48,7 +48,7 @@ const fakeDeps = (runs: string[], opts: { code?: number; readyOk?: boolean } = {
   },
   getUrl: async () => opts.readyOk ?? true,
   runCmd: async () => (opts.readyOk ?? true ? 0 : 1),
-  now: (() => { let t = 0; return () => (t += 1000); }) as () => number,
+  now: (() => { let t = 0; return () => (t += 1000); })(),
   sleep: async () => undefined,
 });
 

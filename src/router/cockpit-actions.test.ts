@@ -210,7 +210,7 @@ describe("cockpit actions", () => {
     const tmp = newDir();
     const calls = emptyCalls();
     const real = {
-      ...testDeps(tmp, calls),
+      ...(testDeps(tmp, calls) as Record<string, unknown>),
       runtimeOps: { runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; }, getUrl: async () => true, runCmd: async () => 0, now: () => 0, sleep: async () => undefined },
     } as never;
     const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real);
@@ -219,12 +219,12 @@ describe("cockpit actions", () => {
     expect(calls.runtime).toEqual(["kill"]);
     expect(parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8")).some((l) => l.event === "RUNTIME-STOP")).toBe(true);
     // no commands configured at all: refuse, nothing runs
-    const none = await runCockpitAction({ action: "runtime", target: "strata-box", value: "start" }, { ...testDeps(tmp, calls), runtimeCommands: {} } as never);
+    const none = await runCockpitAction({ action: "runtime", target: "strata-box", value: "start" }, { ...(testDeps(tmp, calls) as Record<string, unknown>), runtimeCommands: {} } as never);
     expect(none.ok).toBe(false);
     expect(none.message).toContain("no start command configured for strata-box");
     expect(calls.runtime).toEqual(["kill"]);
     // a runtime configured for start only: stop refuses
-    const stopOnly = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, { ...testDeps(tmp, calls), runtimeCommands: { ollama: { start: "ollama serve" } } } as never);
+    const stopOnly = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, { ...(testDeps(tmp, calls) as Record<string, unknown>), runtimeCommands: { ollama: { start: "ollama serve" } } } as never);
     expect(stopOnly.ok).toBe(false);
     const badOp = await runCockpitAction({ action: "runtime", target: "ollama", value: "restart" }, real);
     expect(badOp.ok).toBe(false);
