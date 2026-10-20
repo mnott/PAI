@@ -109,14 +109,3 @@ describe("openVerifiedPane without any host", () => {
     await expect(openVerifiedPane(dir, config, "w-res", TERM, {}, ops, seam({ split: "ok" }))).resolves.toContain("S1");
   });
 });
-
-describe("openVerifiedPane for a session without a terminal", () => {
-  it("the frontmost-tab host (no ITERM_SESSION_ID) gets a split, a second worker the same host", async () => {
-    const hosts: string[] = [];
-    const s = { ...seam({ split: "ok" }), split: async (_d: string, _c: WorkersConfig, _w: string, term: string) => (hosts.push(term), { message: "pane opened", session: `S${hosts.length}` }) };
-    await openVerifiedPane(dir, config, "w-a", UID, {}, ops, s);
-    await openVerifiedPane(dir, config, "w-b", UID, {}, ops, s);
-    expect(hosts).toEqual([UID, UID]);
-    expect(panePlacement("w-b")).toBe("split");
-  });
-});

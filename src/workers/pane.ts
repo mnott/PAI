@@ -838,23 +838,6 @@ export interface HostDeps {
   registryHost?(cid: string): string;
   /** iTerm session uid the statusline recorded for a Claude session id (short or full) in session-claude-map.json, "" when none. */
   mapHost?(cid: string): string;
-  /** iTerm uid of the current session of the current tab of the frontmost iTerm2 window, "" when iTerm has no window. */
-  frontmostHost?(): Promise<string>;
-  /** The tab host a terminal-less Claude session was given earlier (its first pane's host), "" when none. */
-  stickyHost?(cid: string): string;
-  /** Remember the host a terminal-less Claude session was given, so its later workers split the same tab. */
-  rememberHost?(cid: string, uid: string): void;
-}
-
-// Current session of the current tab of the frontmost iTerm2 window (iTerm lists windows front to back).
-const FRONTMOST_SCRIPT = `function run(argv) {
-    var app = Application("iTerm2");
-    if (!app.running()) return "";
-    try { return String(app.windows()[0].currentTab().currentSession().id()); } catch (e) { return ""; }
-}`;
-
-function stickyPath(): string {
-  return paiHomePath("frontmost-host.json");
 }
 
 /** Entries older than this are dropped by the statusline writer and ignored here. */
@@ -933,27 +916,6 @@ export const realHostDeps: HostDeps = {
   mapHost(cid) {
     return lookupSessionMap(paiHomePath("session-claude-map.json"), cid);
   },
-  async frontmostHost() {
-    if (process.platform !== "darwin") return "";
-    return (await osascript(FRONTMOST_SCRIPT, [])).stdout.trim();
-  },
-  stickyHost(cid) {
-    try {
-      return (JSON.parse(readFileSync(stickyPath(), "utf8")) as Record<string, string>)[cid] ?? "";
-    } catch {
-      return "";
-    }
-  },
-  rememberHost(cid, uid) {
-    try {
-      let m: Record<string, string> = {};
-      try {
-        m = JSON.parse(readFileSync(stickyPath(), "utf8")) as Record<string, string>;
-      } catch {}
-      const keep = Object.entries(m).slice(-49);
-      writeFileSync(stickyPath(), JSON.stringify({ ...Object.fromEntries(keep), [cid]: uid }), "utf8");
-    } catch {}
-  },
   registryHost(cid) {
     try {
       const dir = join(homedir(), ".aibroker");
@@ -1027,11 +989,6 @@ function claudeIdOf(cmd: string): string | undefined {
  *  3. the tty of the nearest ancestor that has one
  *  4. ITERM_SESSION_ID, only when it names a live session — a reattached session
  *     keeps its old id in the process env for good
- *  5. no terminal of its own (ITERM_SESSION_ID unset, e.g. a Claude background session the operator
- *     reaches through another client) but iTerm2 is running: the current session of the frontmost
- *     window's current tab, so the worker's pane is a split of that tab — never a new window or tab.
- *     The first such host is remembered per Claude session id, so later workers split the same tab
- *     while it lives. iTerm2 with no window: none, the worker starts without a pane.
  */
 export async function resolveHostSession(
   env: NodeJS.ProcessEnv = process.env,
@@ -1097,24 +1054,6 @@ export async function resolveHostSession(
 
   if (envUid && sessions.some((s) => s.id === envUid)) return { uid: envUid, term: envTerm, via: "env" };
   notes.push(`env: ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}`);
-
-  if (!envTerm && sessions.length > 0 && deps.frontmostHost) {
-    const kept = cid ? deps.stickyHost?.(cid) ?? "" : "";
-    const keptLive = kept && sessions.find((x) => x.id === kept);
-    if (keptLive) return found(keptLive, "frontmost tab (kept)");
-    let front = "";
-    try {
-      front = await deps.frontmostHost();
-    } catch (e) {
-      notes.push(`frontmost: ${(e as Error).message?.trim().split("\n")[0] ?? e}`);
-    }
-    const frontLive = front && sessions.find((x) => x.id === front);
-    if (frontLive) {
-      if (cid) deps.rememberHost?.(cid, frontLive.id);
-      return found(frontLive, "frontmost tab");
-    }
-    notes.push("frontmost: iTerm2 has no window");
-  }
 
   const why = sessions.length === 0 ? "iTerm2 not running or unreachable" : "no live iTerm2 session matched";
   return { uid: "", term: "", via: "none", reason: `${why}; ${notes.join("; ")}` };
