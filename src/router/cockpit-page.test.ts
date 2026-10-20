@@ -288,56 +288,92 @@ describe("cockpit workers panel", () => {
   });
 });
 
-describe("cockpit Models tile", () => {
-  const modelsHtml = new Function("esc", "table", `${COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0]}; return modelsHtml;`)(
+describe("cockpit Models cards", () => {
+  const src = [
+    COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
+  ].join("\n");
+  const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
     (s: unknown) => String(s ?? ""),
-    (h: string[], rows: unknown[][]) => `T[${h.join(",")}]${rows.map((r) => r.join("|")).join(";")}`
+    (x: number) => (x * 100).toFixed(1) + "%"
   ) as (inv: unknown) => string;
   const inv = {
     at: "2026-10-19T18:00:00.000Z",
     runtimes: [
-      { name: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:flashnext-iq3"] }] },
-      { name: "ollama", status: "running", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
+      { name: "strata", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40000, usedBy: ["worker:flashnext-iq3"] }] },
+      { name: "ollama", kind: "ollama", status: "idle", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
         { model: "arctic", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
         { model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["paperfull-llm"] },
-        { model: "llama2:7b", kind: "chat", loaded: false, sizeMb: 3800, usedBy: [] },
-        { model: "mistral:7b", kind: "chat", loaded: false, sizeMb: 4100, usedBy: [] },
       ] },
-      { name: "coder", status: "stopped", port: 8034, users: ["worker:coder"], models: [] },
+      { name: "gyro-m", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
     ],
     duplicates: ["embedding runs on 2 runtimes: a + b"],
-  };
-  it("one loaded + one idle + one stopped: one row plus the collapsed line", () => {
-    const h = modelsHtml({
+    live: {
+      at: 1,
       runtimes: [
-        { name: "strata", status: "running", port: 8035, users: ["worker:x"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:x"] }] },
-        { name: "docker-model-runner", status: "idle", users: ["pai-embedding"], models: [{ model: "e5-base", kind: "embedding", loaded: false, sizeMb: 300, usedBy: [] }] },
-        { name: "ollama", status: "stopped", port: 11434, users: [], models: [] },
+        { name: "strata", status: "running", engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reused: 900, prompt: 1000 }, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
+        { name: "ollama", status: "idle", engine: null, workers: [], queued: 0, cap: 1, conversationSlots: null, sparesReady: 0, sparesConfig: 1, history: { decode: [], prefill: [], memoryMb: [], queued: [], pressurePct: [] } },
       ],
-      duplicates: [],
-    });
-    const def = h.replace(/<details[\s\S]*?<\/details>/g, "");
-    expect(def).toBe("T[model,runtime,kind,used by,memory]flash-next|strata|coding|worker:x|48.8 GB");
-    const sum = h.match(/<summary>([\s\S]*?)<\/summary>/)![1];
-    expect(sum).toBe("not loaded: e5-base embedding (docker-model-runner) · stopped: ollama");
-    const det = h.match(/<details[\s\S]*?<\/details>/)![0];
-    expect(det).toContain("docker-model-runner|e5-base|embedding|pai-embedding|300 MB");
-    expect(det).toContain("ollama:11434");
-    expect(det).not.toMatch(/<details[^>]*\bopen\b/);
-  });
-  it("a declared consumer that is not loaded is folded, not a row; duplicates hint stays", () => {
+    },
+  };
+  const cards = (h: string) => h.match(/<div class="rt-card">[\s\S]*?<\/div>\s*(?=<div class="rt-card">|<\/div>|$)/g) ?? [];
+
+  it("one card per running runtime: header, kind badge, status dot, four metric tiles", () => {
     const h = modelsHtml(inv);
-    const def = h.replace(/<details[\s\S]*?<\/details>/g, "");
-    expect(def).toContain("flash-next|strata|coding|worker:flashnext-iq3|48.8 GB");
-    expect(def).toContain("arctic|ollama|embedding|pai-embedding|600 MB");
-    expect(def).not.toContain("qwen3:8b");
-    expect(h).toContain("not loaded: qwen3:8b chat (ollama), llama2:7b chat (ollama), mistral:7b chat (ollama) · stopped: coder");
+    expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
+    expect(h).toContain("<b>flash-next</b>");
+    expect(h).toContain('<span class="badge">strata</span>');
+    expect(h).toContain("strata :8035");
+    expect(h).toContain('<span class="rt-dot"></span>');
+    expect(h).toContain('<span class="rt-dot idle"></span>');
+    for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(h).toContain(t);
+    expect(h).toContain("73.4");
+    expect(h).toContain("715");
+    expect(h).toContain("48.8<small>GB</small>");
+    expect(h).toContain("39.1 GB file mapped");
+    expect(h).toContain("reused 90.0% of prompt tokens");
+    expect(h).toContain("2<small>/ 4</small>");
+    expect(h).toContain("queued 2");
+    expect(h).toContain("cap 1");
+    expect(h).toContain("1 spare(s) ready");
+    expect(h).toContain("machine pressure 62%");
+  });
+  it("sparklines carry the history; a runtime without engine readings shows – everywhere live", () => {
+    const h = modelsHtml(inv);
+    const strata = h.slice(h.indexOf("<b>flash-next</b>"), h.indexOf("<b>arctic</b>"));
+    expect(strata.match(/<path class="line/g)!.length).toBeGreaterThanOrEqual(4);
+    const ollama = h.slice(h.indexOf("<b>arctic</b>"));
+    expect(ollama).toContain("–");
+    expect(ollama).toContain("prompt reuse not reported");
+    expect(ollama).toContain("spares: none ready");
+  });
+  it("worker chips name the sessions with workers on the runtime", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain("fix-x");
+    expect(h).toContain("<b>PAI</b>");
+  });
+  it("stopped runtimes and not-loaded models are one chip row, no tables, no horizontal scroll", () => {
+    const h = modelsHtml(inv);
+    expect(h).not.toContain("<table");
+    expect(h).not.toContain('class="tw"');
+    expect(h).not.toContain("<details");
+    expect(h).toContain("stopped: gyro-m :8036");
+    expect(h).toContain("not loaded: qwen3:8b chat (ollama)");
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
   });
-  it("the tile sits after the worker panel, before System; the LOCAL tile keeps only the server summary", () => {
+  it("the grid follows the container at any width", () => {
+    expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}");
+    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}");
+    expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*min-width:0[^}]*max-width:100%/);
+  });
+  it("the models section polls live every 5 s on its own; the tile sits after the worker panel, before System", () => {
+    expect(COCKPIT_HTML).toContain('needModels=has("models")');
+    expect(COCKPIT_HTML).toContain("if(needModels)loadModels()");
+    expect(COCKPIT_HTML).toContain("if(needModels)setInterval(loadModels,5000)");
     const i = (s: string) => COCKPIT_HTML.indexOf(s);
-    expect(i("Models — loaded")).toBeGreaterThan(i("Workers — running and waiting"));
-    expect(i("Models — loaded")).toBeLessThan(i("<h2>System"));
+    expect(i("Models — runtimes")).toBeGreaterThan(i("Workers — running and waiting"));
+    expect(i("Models — runtimes")).toBeLessThan(i("<h2>System"));
     const rl = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}\n/)![0];
     expect(rl).toContain('$("local").innerHTML=lo');
     expect(rl).not.toContain("modelsHtml");

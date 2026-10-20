@@ -29,6 +29,7 @@ import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
+import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -378,6 +379,26 @@ export function parseWindow(q: string | null): CockpitWindow {
 /** Anything with a cached provider poll; LimitsCache in production, stubs in tests. */
 export type LimitsSource = Pick<LimitsCache, "get">;
 
+/** The process-wide runtime sampler the router command installs; tests install their own. */
+let runtimeSampler: RuntimeSampler | null = null;
+
+export function setRuntimeSampler(s: RuntimeSampler | null): void {
+  runtimeSampler = s;
+}
+
+/**
+ * The /cockpit/models payload: the inventory plus each running runtime's live
+ * view and ring history (runtime-samples.ts). Without an installed sampler the
+ * payload is the bare inventory — the page then shows "–" everywhere live.
+ */
+export async function cockpitModelsPayload(): Promise<unknown> {
+  const inv = await currentInventory();
+  if (!runtimeSampler) return inv;
+  const live = await runtimeSampler.payload();
+  if (!live) return inv;
+  return { ...inv, live };
+}
+
 /** Local model servers as the SYSTEM panel shows them (from the limits poll). */
 export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "rssMb" | "tokensPerSec" | "decodeTokPerSec" | "served" | "prefixCache" | "prefixCacheAgeSec">> {
   return limits
@@ -610,7 +631,7 @@ export function handleCockpit(
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/models") {
-    currentInventory().then(
+    cockpitModelsPayload().then(
       (inv) => send(200, "application/json", JSON.stringify(inv)),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
