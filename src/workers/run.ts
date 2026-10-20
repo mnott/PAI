@@ -86,7 +86,7 @@ import { appendLedger } from "./ledger.js";
 import { decideEndReason, endFields, parentInfo, type EndInfo } from "./endreason.js";
 import { peekLoopStop, takeLoopStop } from "./loop-stop.js";
 import { TroubleWatcher } from "./worker-trouble.js";
-import { reportOrigin, runMessenger } from "./run-report-wiring.js";
+import { reportOriginWithHost, runMessenger } from "./run-report-wiring.js";
 import {
   ensureNoMcpConfig,
   eventsPath,
@@ -2214,7 +2214,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         /* child died instantly; the close handler reports it */
       }
     }
-    const origin = reportOrigin();
+    const origin = await reportOriginWithHost();
     if (origin) {
       trouble = new TroubleWatcher(wid, label, runMessenger(logDir), origin);
       troubleTimer = setInterval(() => trouble?.tick(), 60_000);

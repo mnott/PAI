@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pai } from "../../workers/plan-deps.js";
 import { QueueReporter } from "../../workers/run-events.js";
-import { finishDetached, reportOrigin, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
+import { finishDetached, reportOriginWithHost, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -126,7 +126,7 @@ const runCmd: CommandDef = {
           : providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
     const logDir = workersLogDir(readWorkersSection().workers);
-    const origin = reportOrigin();
+    const origin = await reportOriginWithHost();
     if (ctx.opts.detach === true) {
       const rec = startDetached(logDir, { kind: "queue", label: basename(repo), positional: [], opts: ctx.opts, cwd: repo, origin });
       out(`detached: ${rec.id} (pid ${rec.pid}); output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);
