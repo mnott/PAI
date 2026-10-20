@@ -32,6 +32,26 @@ cold compiles). What works is a small set of persistent build trees at fixed pat
 slot (`<target>-1` … `<target>-N`), each with its own lock: the door script syncs the worktree's
 sources into a free tree and builds there. Each tree is cold once, then only changed files compile.
 
+## Build keys: one target, one at a time
+
+```
+pai build run|lock --key <name> -- <cmd...>      # or env PAI_BUILD_KEY (for doors)
+```
+
+Jobs with the same key run one at a time, FIFO within the key, still inside the machine-wide slot limit; different keys overlap up to `builds.slots`. A key-blocked job does not hold a free slot from a later job with another key. A door builds one target per key (`caseleaf-mac`, `caseleaf-ios`), so same-target jobs queue onto one warm build tree and stay deltas instead of each cold-building its own. `pai build queue`, `pai worker ps` and the cockpit show `[key]` next to each job and, for a waiting one, `same key as <job>`.
+
+Without a key the gate derives one: for a script (`tools/build.sh test mac`) `<project dir>:<script>:<last non-flag argument>`, so `tools/build.sh test mac` and `tools/build.sh install mac` share `CaseLeaf:tools/build.sh:mac`; for an Xcode build with `-scheme X`, `<project dir>:xcodebuild:X`; any other command has no key. `--key` wins over `PAI_BUILD_KEY`, which wins over the derived key.
+
+## Compiler parallelism: PAI_BUILD_JOBS
+
+The gate exports `PAI_BUILD_JOBS = max(2, floor(cores / builds.slots))` to the child (cores = `hw.perflevel0.physicalcpu + hw.perflevel1.physicalcpu` on macOS, else `os.cpus().length`; an already set `PAI_BUILD_JOBS` is kept), so all running builds together do not oversubscribe the machine (18 cores, 3 slots: 6 each). Doors pass it on:
+
+```sh
+#!/bin/sh
+exec pai build lock --key caseleaf-mac -- xcodebuild -scheme App -jobs "${PAI_BUILD_JOBS:-2}" "$@"
+# swift build -j "$PAI_BUILD_JOBS"; cargo build -j "$PAI_BUILD_JOBS"; gradle --max-workers="$PAI_BUILD_JOBS"
+```
+
 ## Seeing the queue
 
 - `pai build queue`, the blocks `builds (3 slots)` and `tests (2 slots)` in `pai worker ps` and in the cockpit worker panel.

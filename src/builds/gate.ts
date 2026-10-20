@@ -11,8 +11,9 @@
  * shuts down the simulators it booted when it ends.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
+import { cpus } from "node:os";
 import { basename } from "node:path";
 import {
   buildLogPath,
@@ -33,6 +34,8 @@ export interface RunBuildOptions {
   command: string[];
   full?: boolean;
   label?: string;
+  /** Build key (explicit, PAI_BUILD_KEY, or derived from the command); same key = one at a time. */
+  key?: string;
   /** Pool the job draws from (default "build"). */
   kind?: BuildKind;
   /** Slots of that pool. */
@@ -53,6 +56,8 @@ export interface RunBuildOptions {
   deps?: Partial<QueueDeps>;
   /** Wrapper that lowers the child's CPU priority; default: taskpolicy -b / nice -n 10. */
   lowPriority?: (cmd: string[]) => string[];
+  /** Core count for PAI_BUILD_JOBS (default: perf cores on macOS, else os.cpus().length). */
+  cores?: number;
   /** The caller is gone when this returns true (default: reparented away from the original parent). */
   callerGone?: () => boolean;
 }
@@ -67,6 +72,42 @@ export function lowPriorityWrap(cmd: string[], platform = process.platform): str
   return ["nice", "-n", "10", ...cmd];
 }
 
+/** Physical cores: hw.perflevel0 + hw.perflevel1 on macOS, else os.cpus().length. */
+export function coreCount(platform = process.platform): number {
+  if (platform === "darwin") {
+    try {
+      const n = ["hw.perflevel0.physicalcpu", "hw.perflevel1.physicalcpu"].reduce((sum, k) => sum + (Number(execFileSync("sysctl", ["-n", k], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()) || 0), 0);
+      if (n > 0) return n;
+    } catch {
+      /* fall through */
+    }
+  }
+  return cpus().length || 1;
+}
+
+/** Compiler parallelism one job may use: its share of the cores across all slots, at least 2. */
+export const buildJobs = (cores: number, slots: number): number => Math.max(2, Math.floor(cores / Math.max(1, slots)));
+
+/**
+ * Key for a raw command when none is given: "<cwd name>:<door>:<last argument>" for a script
+ * (so `tools/build.sh test mac` and `tools/build.sh install mac` share one), "<cwd name>:xcodebuild:<scheme>"
+ * for xcodebuild -scheme; anything else has no key.
+ */
+export function deriveKey(command: string[], cwd: string): string | undefined {
+  const [c0, ...args] = command;
+  if (!c0) return undefined;
+  const proj = basename(cwd);
+  if (basename(c0) === "xcodebuild") {
+    const i = args.indexOf("-scheme");
+    return i >= 0 && args[i + 1] ? `${proj}:xcodebuild:${args[i + 1]}` : undefined;
+  }
+  if (c0.includes("/") || c0.endsWith(".sh")) {
+    const last = args.filter((a) => !a.startsWith("-")).pop();
+    return `${proj}:${c0.replace(/^\.\//, "")}${last ? `:${last}` : ""}`;
+  }
+  return undefined;
+}
+
 const fmtWait = (ms: number): string => (ms < 90_000 ? `${Math.floor(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m`);
 
 /** Run `command` through the queue; resolves to the exit code. */
@@ -75,7 +116,8 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   const cwd = o.cwd ?? process.cwd();
   const out = o.out ?? ((l: string) => process.stderr.write(l + "\n"));
   const mode = o.full ? "full" : "delta";
-  const childEnv = { ...env, PAI_BUILD_MODE: mode };
+  const key = o.key || env.PAI_BUILD_KEY || deriveKey(o.command, cwd);
+  const childEnv = { ...env, PAI_BUILD_MODE: mode, PAI_BUILD_JOBS: env.PAI_BUILD_JOBS || String(buildJobs(o.cores ?? coreCount(), o.slots)) };
   const wrap = o.lowPriority ?? lowPriorityWrap;
 
   // A door that calls `pai build lock` from inside `pai build run` already holds the slot.
@@ -85,7 +127,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   const label = o.label || o.command.slice(0, 2).join(" ");
   const ticket = await enqueue(
     o.dir,
-    { pid: process.pid, label, session: sessionName(env, cwd), worker: env.PAI_WORKER_ID, cmd: o.command.join(" "), mode, kind },
+    { pid: process.pid, label, session: sessionName(env, cwd), worker: env.PAI_WORKER_ID, key, cmd: o.command.join(" "), mode, kind },
     o.deps
   );
   o.spawnWatcher?.(o.dir, ticket.id);

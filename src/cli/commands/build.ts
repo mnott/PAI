@@ -35,6 +35,7 @@ async function gate(ctx: RunContext): Promise<number> {
     command: ctx.rest,
     full: ctx.opts.full === true,
     label: typeof ctx.opts.label === "string" ? ctx.opts.label : undefined,
+    key: typeof ctx.opts.key === "string" ? ctx.opts.key : undefined,
     slots: slotsFor(kind),
     spawnWatcher,
     handleSignals: true,
@@ -47,10 +48,12 @@ const runCmd: CommandDef = {
   description:
     "Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. " +
     "The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. " +
+    "Jobs with the same --key (default: derived from a door script + its last argument, or xcodebuild -scheme) run one at a time so one target keeps one warm build tree; different keys overlap up to the slot limit. The command gets PAI_BUILD_JOBS (max(2, cores / slots)) to pass as -jobs. " +
     "Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends.",
   options: [
     { name: "full", type: "boolean", summary: "Full build (PAI_BUILD_MODE=full): releases only, or when asked" },
     { name: "label", type: "string", value: "TEXT", summary: "Name shown in the queue (default: the command)" },
+    { name: "key", type: "string", value: "NAME", summary: "Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. caseleaf-mac" },
     { name: "kind", type: "string", value: "build|test", summary: "Slot pool: build (default) or test for simulator/device test runs" },
   ],
   passthrough: true,

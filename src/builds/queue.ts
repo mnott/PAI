@@ -29,6 +29,8 @@ export interface BuildTicket {
   /** The gate process (`pai build run|lock`) that owns this ticket. */
   pid: number;
   label: string;
+  /** Build key: jobs with the same key run one at a time (one warm tree per target). */
+  key?: string;
   /** Who asked: "worker <id>" or the session/project name. */
   session: string;
   /** Worker id when started by a worker (so killing the worker frees the lock). */
@@ -165,7 +167,7 @@ export async function listBuilds(dir: string, d: Partial<QueueDeps> = {}): Promi
 
 export async function enqueue(
   dir: string,
-  info: Pick<BuildTicket, "pid" | "label" | "session" | "cmd" | "mode"> & { worker?: string; kind?: BuildKind },
+  info: Pick<BuildTicket, "pid" | "label" | "session" | "cmd" | "mode"> & { worker?: string; kind?: BuildKind; key?: string },
   d: Partial<QueueDeps> = {}
 ): Promise<BuildTicket> {
   const deps = { ...defaultDeps(), ...d };
@@ -194,7 +196,17 @@ export async function tryStart(dir: string, id: string, slots: number, d: Partia
     const pool = all.filter((t) => ticketKind(t) === kind);
     const free = slots - pool.filter((t) => t.state === "running").length;
     if (free <= 0) return false;
-    const first = pool.filter((t) => t.state === "waiting").sort((a, b) => a.seq - b.seq).slice(0, free);
+    // a waiter whose key is running (any pool) or already claimed by an earlier waiter does not take a slot
+    const taken = new Set(all.filter((t) => t.state === "running" && t.key).map((t) => t.key as string));
+    const first: BuildTicket[] = [];
+    for (const t of pool.filter((x) => x.state === "waiting").sort((a, b) => a.seq - b.seq)) {
+      if (first.length >= free) break;
+      if (t.key) {
+        if (taken.has(t.key)) continue;
+        taken.add(t.key);
+      }
+      first.push(t);
+    }
     if (!first.some((t) => t.id === id)) return false;
     writeTicket(dir, { ...me, state: "running", startedAt: deps.now() });
     return true;
@@ -251,6 +263,15 @@ const mins = (ms: number): string => {
   return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m`;
 };
 
+/** Why a waiting job is held back by its key: "same key as <job>" (the running or earlier-queued holder), else null. */
+export function waitReason(t: BuildTicket, tickets: BuildTicket[]): string | null {
+  if (!t.key) return null;
+  const holder =
+    tickets.find((x) => x.id !== t.id && x.key === t.key && x.state === "running") ??
+    tickets.filter((x) => x.id !== t.id && x.key === t.key && x.state === "waiting" && x.seq < t.seq).sort((a, b) => a.seq - b.seq)[0];
+  return holder ? `same key as ${holder.label}` : null;
+}
+
 /** Slot counts of both pools. */
 export interface PoolSlots {
   build: number;
@@ -269,8 +290,12 @@ export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlo
     let pos = 0;
     for (const t of mine) {
       const mode = t.mode === "full" ? " [full]" : "";
-      if (t.state === "running") lines.push(`  running  ${t.label}${mode} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}  ${t.id}`);
-      else lines.push(`  ${++pos}. waiting ${t.label}${mode} — ${t.session}, ${mins(now - t.enqueuedAt)}  ${t.id}`);
+      const key = t.key ? ` [${t.key}]` : "";
+      if (t.state === "running") lines.push(`  running  ${t.label}${mode}${key} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}  ${t.id}`);
+      else {
+        const why = waitReason(t, tickets);
+        lines.push(`  ${++pos}. waiting ${t.label}${mode}${key} — ${t.session}, ${mins(now - t.enqueuedAt)}${why ? `, ${why}` : ""}  ${t.id}`);
+      }
     }
     return lines.join("\n");
   };
