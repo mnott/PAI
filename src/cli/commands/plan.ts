@@ -38,7 +38,7 @@ function parallelOf(plan: Plan, flag: unknown): number {
     // `provider: local` names no configured provider; its cap is the local default
     if (plan.provider === "local") return 3;
     const p = getProviderOrNative(readWorkersSection().workers, plan.provider);
-    return effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true);
+    return effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true, p?.conversationSlots);
   } catch {
     return 3;
   }

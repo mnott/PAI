@@ -255,7 +255,7 @@ export async function localProviderForDelegation(
   const { workers } = readWorkersSection();
   const res = await resolveLocalProvider(workers, workersLogDir(workers), opts);
   const p = getProviderOrNative(workers, res.name);
-  return { name: res.name, cap: effectiveCap(p?.maxConcurrent, true) };
+  return { name: res.name, cap: effectiveCap(p?.maxConcurrent, true, p?.conversationSlots) };
 }
 
 /** The real `resolveLocal` of the plan and queue runners: reads the workers config. */
