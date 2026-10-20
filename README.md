@@ -7,7 +7,7 @@ Install PAI and Claude remembers. Ask it what you were working on, find that con
 - Automatic session notes, split by topic, written by a background daemon
 - Federated keyword and semantic search across sessions, notes and vaults
 - Workers on any provider, orchestrated from one Claude Code session
-- Three-tier coding: the cloud plans and reviews, a local model writes the code ([guide](docs/three-tier-coding.md))
+- Delegation tiers: session, orchestrator, workers with a local model first ([guide](docs/concepts/delegation-tiers.md))
 - Everything runs locally
 
 ![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit.png)
@@ -60,11 +60,11 @@ Every `pai` command has a page generated from the live CLI: `pai help`, `pai mor
 
 ## Worker Providers
 
-Only the orchestrator session runs on Anthropic; every worker runs on a provider you choose, routed by class. Providers and classes live in one `workers.yaml`.
+Work is delegated over three tiers: the session you talk to (t0), an orchestrator that splits and plans (t1), and workers that implement (t2, local model first). Each tier has an ordered model list in `workers.yaml`; `pai worker route` prints it. See [docs/concepts/delegation-tiers.md](docs/concepts/delegation-tiers.md).
 
-Large coding jobs can run in three tiers (cloud plans and reviews, a local model writes the code), with loop guards, time limits and a cockpit: [docs/three-tier-coding.md](docs/three-tier-coding.md).
+Large coding jobs, with loop guards, time limits and a cockpit: [docs/three-tier-coding.md](docs/three-tier-coding.md). Concepts: [workers](docs/concepts/workers.md) · [providers](docs/concepts/providers.md) · [routing policy](docs/concepts/routing-policy.md) · [escalation](docs/concepts/escalation.md) · [session profiles](docs/concepts/session-profiles.md).
 
-→ [docs/worker-providers.md](docs/worker-providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
+→ [docs/concepts/providers.md](docs/concepts/providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
 
 Per-project worker setup (`pai project init`, checks in `pai project health`):
 [docs/worker-project-setup.md](docs/worker-project-setup.md) · [panes](docs/worker-panes.md) · [pane footer and long jobs](docs/worker-pane-footer.md) · [snapshots](docs/worker-snapshots.md) · [`.pai/worker.md`](docs/worker-rules.md) · [status sink](docs/project-status-sink.md) · [issue claims](docs/issue-claims.md) · [hook denials](docs/worker-denials.md)

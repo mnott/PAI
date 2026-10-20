@@ -1,44 +1,34 @@
 # Three-tier coding: cloud plans, local models write the code
 
-PAI can run a large coding job as three layers of agents, so that most of the tokens are spent on a model running on your
-own machine and the cloud is used for what only it does well. This page describes the approach, the mechanisms PAI puts
-around it, and the cockpit that shows what is going on.
+PAI runs a large coding job over three delegation tiers, so most tokens are spent
+on a model on your own machine and the cloud is used for what only it does well.
+The tiers, their model lists and the class-to-tier mapping are described in
+[concepts/delegation-tiers.md](concepts/delegation-tiers.md):
 
-## The tiers
+| Tier | Name | Job | Models, first available serves |
+|---|---|---|---|
+| `t0` | Session | You talk to it | `anthropic/opus`, then `glm/glm-5.3` |
+| `t1` | Orchestrator | Splits, plans, reviews | `anthropic/sonnet`, then `glm/glm-5.3-flash` |
+| `t2` | Worker | Implements the parts | `local`, then `anthropic/sonnet`, then `glm/glm-5.3-flash` |
 
-| Tier | Runs on | Job |
-|---|---|---|
-| 0 — operator session | Interactive Claude Code session (cloud) | Holds the job file, starts one orchestrator per unit, merges, runs the acceptance checks, decides on failures |
-| 1 — unit orchestrator | `pai worker run --orchestrate` (cloud, typically Sonnet) | Splits a unit into parts, writes a spec per part, reviews and merges each part; code edits are denied to it |
-| 2 — implementer | `pai worker run --provider <local> --class implement` | Writes the code and the tests for one part in its own worktree and commits on its branch |
-
-Tier 2 can also run bottom-up: a local implementer that is stuck asks a stronger model for one bounded sub-task with
-`pai worker help` instead of handing the whole part upward (see [Asking for help](#asking-for-help)).
-
-### Why keep a cloud tier at all
-
-A cloud model earns its tokens for four reasons:
-
-- **reasoning** — planning a unit, reviewing a diff, deciding what a failing test means;
-- **context size** — reading more than a local model can hold;
-- **elasticity** — running many parts at once when the local slots are busy;
-- **tool availability** — capabilities a local worker does not have.
-
-Capabilities come in three kinds: model features (vision, image generation), tools (a browser, a mail account) and
-knowledge (a local vector database the cloud cannot see). Everything else goes to the local tier.
+`pai worker route` prints the live table. When work does not fit a tier, see
+[concepts/escalation.md](concepts/escalation.md). This page keeps the mechanisms
+around a unit run and the cockpit.
 
 ## How a unit runs
 
-1. Tier 0 writes a brief for the unit and starts `pai worker run --orchestrate`.
-2. The orchestrator splits the unit into parts of a fixed size (a few files each) and writes one spec per part: root cause or
+1. The session writes a brief for the unit and starts `pai worker run --orchestrate`.
+2. The orchestrator splits the unit into parts of a few files each and writes one spec per part: root cause or
    requirement, exact files, the proof it expects, "commit on your branch".
-3. Each part runs as a local worker in its own worktree. Parts are **pipelined**: the next part's spec is written and
-   started while the previous one is still in review, so the local slot never idles between parts.
+3. Each part runs as a `--class implement` worker in its own worktree. Parts are **pipelined**: the next part's spec is
+   written and started while the previous one is in review.
 4. The orchestrator reviews the diff and merges with the gate:
-   `pai worker merge <id> --verify "npx tsc --noEmit && npx vitest run --retry=2"`. A failing gate reverts the merge and keeps
-   the branch; a merge that removes test cases is rejected.
-5. At the unit end tier 0 runs its own checks (type check, full test suite, behaviour parity against the baseline) and starts
-   the next unit.
+   `pai worker merge <id> --verify "npx tsc --noEmit && npx vitest run --retry=2"`. A failing gate reverts the merge and
+   keeps the branch; a merge that removes test cases is rejected.
+5. At the unit end the session runs its own checks and starts the next unit.
+
+A stuck implementer asks a stronger model for one bounded sub-task with `pai worker help`
+(see [Asking for help](#asking-for-help)).
 
 ## Mechanisms, not instructions
 
