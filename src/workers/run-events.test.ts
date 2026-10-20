@@ -65,7 +65,7 @@ describe("PlanReporter", () => {
     expect(m.session[1].text).toContain("units=u2,u3");
   });
 
-  it("run end: finished goes to session and PAILot with stats", async () => {
+  it("run end: finished goes to the session with stats, never PAILot", async () => {
     const m = fake();
     let t = 0;
     const r = new PlanReporter("job", 2, m, origin, () => t);
@@ -81,17 +81,18 @@ describe("PlanReporter", () => {
     expect(m.session[0].text).toContain("escalations=1");
     expect(m.session[0].text).toContain("cloud_tokens=2500");
     expect(m.session[0].text).toContain("local_tokens=900");
-    expect(m.pailot).toEqual(["job is done: all 2 parts merged in 5 min."]);
+    expect(m.pailot).toEqual([]);
   });
 
-  it("run end blocked reaches PAILot with the blockers", async () => {
+  it("run end blocked reaches the session with the blockers, never PAILot", async () => {
     const m = fake();
     const r = new PlanReporter("job", 3, m, origin, () => 0);
     r.onLog({ event: "needs-decision", part: "p1", note: "x" });
     r.onLog({ event: "run-end", ok: false, status: "blocked" });
     await r.flush();
     expect(m.session.at(-1)!.text).toContain("z=run-blocked");
-    expect(m.pailot[0]).toMatch(/blocked.*p1/);
+    expect(m.session.at(-1)!.text).toMatch(/blocked.*p1/);
+    expect(m.pailot).toEqual([]);
   });
 
   it("gets events from a real runPlan with fake deps", async () => {
@@ -221,7 +222,7 @@ describe("origin and detach", () => {
     const told = await sweepRuns(dir, m, (pid) => pid === 3);
     expect(told).toEqual([dead.id]);
     expect(m.session[0].text).toContain("z=run-died");
-    expect(m.pailot).toHaveLength(1);
+    expect(m.pailot).toEqual([]);
     expect(await sweepRuns(dir, m, (pid) => pid === 3)).toEqual([]);
     expect(existsSync(live.output)).toBe(false);
     void readFileSync;

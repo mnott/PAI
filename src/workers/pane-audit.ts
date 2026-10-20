@@ -195,7 +195,7 @@ interface ReopenStamp {
 
 /**
  * One audit round: judge, persist, and report each new violation once (ledger PANE-VIOLATION, the
- * starting session, PAILot). A violation that clears may be reported again if it returns. A confirmed
+ * starting session; never PAILot). A violation that clears may be reported again if it returns. A confirmed
  * NO PANE whose pane is gone while the process runs (worker started in a session with a resolvable
  * host tab) is reopened through the `pai worker pane <id>` code path, at most once per
  * REOPEN_WINDOW_MS; after a second reopen within REOPEN_STOP_MS the reopening stops and the session
@@ -314,7 +314,6 @@ export async function auditTick(
   writeFileSync(reopenedFile(logDir), JSON.stringify(stamps), "utf8");
   for (const { v, what } of notices) {
     if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
-    await msg.toPailot(what).catch(() => false);
   }
   for (const v of fresh) {
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
@@ -323,7 +322,6 @@ export async function auditTick(
         ? `${v.mark}: ${v.kind} ${v.id} ended but its pane is still open (${v.why}).`
         : `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}).`;
     if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
-    await msg.toPailot(what).catch(() => false);
   }
   return verdicts;
 }

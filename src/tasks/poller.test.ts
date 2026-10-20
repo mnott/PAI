@@ -883,7 +883,7 @@ describe("parking a task that cannot be dispatched", () => {
 });
 
 /**
- * Parking tells the operator the moment it happens, on PAILot.
+ * Parking is logged the moment it happens, never sent to PAILot (operator rule 2026-10-20).
  *
  * The PARKED note reaches the tracker and /tmp/pai-scheduler.log — places the
  * operator reads only once they already suspect something. On 2026-09-27 both
@@ -892,7 +892,7 @@ describe("parking a task that cannot be dispatched", () => {
  * The alert rides the same hub the dispatches do, once per parking event, and
  * may never take the tick down with it.
  */
-describe("a parked task alerts PAILot on the transition", () => {
+describe("a parked task never alerts PAILot (log line only, once per transition)", () => {
   const notify = vi.fn().mockResolvedValue(undefined);
   const pailot = vi.fn().mockResolvedValue({ sent: true });
 
@@ -937,54 +937,41 @@ describe("a parked task alerts PAILot on the transition", () => {
     }
   }
 
-  it("sends exactly one alert when a task transitions into parked", async () => {
-    const { state } = await tickParked();
-    expect(state.parked.sweep).toBeDefined();
-    expect(pailot).toHaveBeenCalledTimes(1);
-    const [method, params] = pailot.mock.calls[0]!;
-    expect(method).toBe("pailot_send");
-    // The alert has to stand alone on a phone screen: which task, why, and the
-    // one gesture that releases it — a natural-language due_string only.
-    expect(params.text).toContain("Jobs Alpha sweep");
-    expect(params.text).toContain("sweep");
-    expect(params.text).toContain(MISSING_ROOT);
-    expect(params.text).toContain("due_string");
+  it("logs one line and makes zero PAILot calls when a task transitions into parked", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { state } = await tickParked();
+      expect(state.parked.sweep).toBeDefined();
+      expect(pailot).not.toHaveBeenCalled();
+      const lines = err.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("PARKED"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("Jobs Alpha sweep");
+      expect(lines[0]).toContain(MISSING_ROOT);
+    } finally {
+      err.mockRestore();
+    }
   });
 
-  it("does not re-alert on later polls while the task stays parked", async () => {
-    // launchd polls every 15 minutes; one alert per parking event is the whole
-    // rate limit. The daily escalate() reminder is separate and untouched.
-    await tickParked({
-      parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
-      alarmedAt: { sweep: NOW },
-    });
-    expect(pailot).not.toHaveBeenCalled();
+  it("does not log again on later polls while the task stays parked", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await tickParked({
+        parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: dueTask().due } },
+        alarmedAt: { sweep: NOW },
+      });
+      expect(pailot).not.toHaveBeenCalled();
+      expect(err.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("[pai-poller] PARKED"))).toHaveLength(0);
+    } finally {
+      err.mockRestore();
+    }
   });
 
-  it("alerts again when a released task is re-parked, because that is a new event", async () => {
-    // Seeded with a moved due date: the user acted, the task unparked, and the
-    // dispatch failed permanently again — a fresh parking, not a continuation.
+  it("a re-park after a release makes zero PAILot calls", async () => {
     const { state } = await tickParked({
       parked: { sweep: { reason: MISSING_ROOT, at: NOW - 3_600_000, due: "2026-07-01T09:00:00Z" } },
     });
     expect(state.parked.sweep).toBeDefined();
-    expect(pailot).toHaveBeenCalledTimes(1);
-  });
-
-  it("logs the would-be alert and keeps ticking when the hub is unreachable", async () => {
-    pailot.mockRejectedValue(new Error("AIBroker not running (socket not found)."));
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const { report } = await tickParked();
-      // The park still happened and was still reported — the alert is a side
-      // channel, never a dependency.
-      expect(report.decisions[0]!.note).toContain("PARKED");
-      expect(report.stuck).toBe(1);
-      expect(err).toHaveBeenCalledWith(expect.stringContaining("not delivered to PAILot"));
-      expect(err).toHaveBeenCalledWith(expect.stringContaining("Jobs Alpha sweep"));
-    } finally {
-      err.mockRestore();
-    }
+    expect(pailot).not.toHaveBeenCalled();
   });
 });
 

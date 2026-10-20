@@ -143,9 +143,9 @@ describe("auditTick", () => {
     expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-VIOLATION.*w-bad/);
     expect(markOf(readAudit(dir), "w-bad")).toBe("WRONG TAB");
     expect(sent.filter((s) => s.startsWith("S:")).length).toBe(2);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(2);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
     await run();
-    expect(sent.length).toBe(4); // not repeated
+    expect(sent.length).toBe(2); // not repeated
   });
   it("overlapping ticks (a slow messenger) report each violation once", async () => {
     let release!: () => void;
@@ -164,7 +164,7 @@ describe("auditTick", () => {
     const c = tick();
     release();
     await Promise.all([a, b, c]);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(1);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
     expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
   });
   it("a failure that clears after one check is never reported", async () => {
@@ -208,7 +208,7 @@ describe("auditTick", () => {
     await lost(split);
     await lost(split);
     expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(1);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
     expect(sent[0]).toContain("reopen failed");
   });
   it("closed twice within 10 min: stop reopening, notify instead", async () => {
