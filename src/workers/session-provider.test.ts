@@ -50,14 +50,14 @@ function transcript(sessionId: string, model: string | null): void {
 const base = () => ({ sessionEnv: {} as NodeJS.ProcessEnv, home: tmp, cwd: tmp });
 
 describe("session provider routing", () => {
-  it("env provider: default model for implement, fast for spotcheck/simple", () => {
+  it("env provider: the session's provider for every class, no class-implied fast tier", () => {
     const env = { PAI_SESSION_PROVIDER: "anthropic" };
     const impl = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: env, className: "implement" });
     expect([impl.providerName, impl.modelAlias, impl.via]).toEqual(["anthropic", "default", "session"]);
     expect(impl.routeWhy).toBe("session: launched on anthropic");
     for (const cls of ["spotcheck", "simple"]) {
       const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: env, className: cls });
-      expect([t.providerName, t.modelAlias]).toEqual(["anthropic", "fast"]);
+      expect([t.providerName, t.modelAlias]).toEqual(["anthropic", "default"]);
     }
   });
 
@@ -66,7 +66,7 @@ describe("session provider routing", () => {
     for (const className of ["implement", "spotcheck", undefined]) {
       const t = resolveTarget(openConfig(), tmp, { ...base(), sessionEnv: env, className });
       expect([t.providerName, t.via]).toEqual(["glm", "session"]);
-      expect(t.modelAlias).toBe(className === "spotcheck" ? "fast" : "default");
+      expect(t.modelAlias).toBe("default");
     }
   });
 
@@ -115,7 +115,7 @@ describe("session provider routing", () => {
       sessionEnv: { CLAUDE_CODE_SESSION_ID: "sess-b" },
       className: "spotcheck",
     });
-    expect([t.providerName, t.modelAlias, t.via]).toEqual(["glm", "fast", "session"]);
+    expect([t.providerName, t.modelAlias, t.via]).toEqual(["glm", "default", "session"]);
   });
 
   it("unset env and no transcript -> config active", () => {

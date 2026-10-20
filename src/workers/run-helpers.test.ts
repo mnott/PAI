@@ -473,13 +473,12 @@ describe("resolveRunModel / modelArgs — the built-in provider names its model"
     expect(resolveRunModel({ provider: p, modelAlias: null }, "implement", "opus")).toBe("opus");
   });
 
-  it("--class spotcheck and --class simple resolve the fast model (haiku)", () => {
-    expect(resolveRunModel(native(), "spotcheck")).toBe("haiku");
-    expect(resolveRunModel(native(), "simple")).toBe("haiku");
-    expect(modelArgs(resolveRunModel(native(), "spotcheck"), false)).toEqual([
-      "--model",
-      "haiku",
-    ]);
+  it("the cheap classes have no fast-model rule: the model comes from the entry's alias or worker_model", () => {
+    expect(resolveRunModel(native(), "spotcheck")).toBe("sonnet");
+    expect(resolveRunModel(native(), "simple")).toBe("sonnet");
+    expect(resolveRunModel({ provider: nativeAnthropicProvider(), modelAlias: "fast" }, "spotcheck")).toBe("haiku");
+    const fastProvider = { ...nativeAnthropicProvider(), workerModel: "fast" as const };
+    expect(resolveRunModel({ provider: fastProvider, modelAlias: null }, "spotcheck")).toBe("haiku");
   });
 
   it("an explicit --model wins over both the class and the provider table", () => {
