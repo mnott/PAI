@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { COCKPIT_FAVICON_SVG, COCKPIT_HTML } from "./cockpit-page.js";
+import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
 
 const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
 
@@ -439,5 +439,23 @@ describe("cockpit metric tile", () => {
     for (const w of ["Speed", "73.4", "Decode now", "715", "Prefill this request", "viewBox=\"0 0 100 32\""]) expect(html).toContain(w);
     expect(html.match(/<path class="line[^>]* d="M/g)!.length).toBe(2);
     expect(html).toMatch(/d="M[^"]*M/);
+  });
+});
+
+describe("router.cockpit.sections", () => {
+  it("a section not in the list is absent from the rendered page", () => {
+    const html = cockpitHtml(["cloud", "workers"]);
+    expect(html).toContain('data-section="cloud"');
+    expect(html).toContain('data-section="workers"');
+    expect(html).not.toContain('data-section="sessions"');
+    expect(html).not.toContain('id="sessions"');
+    expect(html).not.toContain("Cache hit ratio</h2>");
+    expect(html.indexOf('data-section="cloud"')).toBeLessThan(html.indexOf('data-section="workers"'));
+  });
+
+  it("missing, empty or all-unknown list renders the full page", () => {
+    expect(cockpitHtml()).toBe(COCKPIT_HTML);
+    expect(cockpitHtml([])).toBe(COCKPIT_HTML);
+    expect(cockpitHtml(["nope"])).toBe(COCKPIT_HTML);
   });
 });

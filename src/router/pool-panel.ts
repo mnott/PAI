@@ -197,7 +197,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
 export const sharedPoolPanel = cachedPoolPanel();
 
 /** The card, placed in the page body. */
-export const POOL_PANEL_HTML = `<section class="card c12"><h2>Worker pool<span class="tip" id="pooltip" tabindex="0" aria-label="Worker pool status" data-tip="Worker pool status">ⓘ</span></h2><div id="poolpanel"></div></section>`;
+export const POOL_PANEL_HTML = `<section data-section="pool" class="card c12"><h2>Worker pool<span class="tip" id="pooltip" tabindex="0" aria-label="Worker pool status" data-tip="Worker pool status">ⓘ</span></h2><div id="poolpanel"></div></section>`;
 
 /** Page script (no template literals, ES5): defines loadPool(); uses the page's esc, fmt, pct, table helpers. */
 export const POOL_PANEL_JS = String.raw`
