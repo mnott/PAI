@@ -14,9 +14,22 @@ see what the worker does without asking. When the worker ends, the pane closes.
   it against the live iTerm2 sessions; `ITERM_SESSION_ID` is only a fallback and
   only when that session is live. A reattached iTerm2 session keeps a stale id in
   the environment, which is why the tty wins.
-- **Close on end.** Panes run `pai worker follow <id> --auto-exit <secs>` under
-  the `pai-worker` iTerm2 profile (Close Sessions On End), so they disappear
-  shortly after the worker ends (`workers.pane.autoExitSecs`).
+- **The pane owns the process.** The pane is opened first and runs
+  `pai pane exec <id>`; the worker's claude (a plan runner, a `pai pane run`
+  command) is that wrapper's child. The wrapper renders the child's output in
+  the pane (a worker: the `worker follow` rendering, fed by the child's
+  stream-json directly), writes `<PAI home>/state/pane-exec/<id>.exit` (exit code,
+  end time) and exits when the child exits, so the pane closes with it (profile
+  `pai-worker`, Close Sessions On End). The caller (`pai worker run`, `pai pane
+  run`) waits for the child's exit and returns its exit code. Either side going
+  away takes the other with it: the caller killed kills the child, the pane
+  closed kills the child. With no terminal at all (no iTerm2, no tmux) the
+  command runs directly, recorded as `PANE-NOTERMINAL`. A pane that cannot be
+  opened for any other reason fails the start; `--no-pane` and the operator's
+  hidden-run override run directly.
+- **Pool spares** are infrastructure of the pool host and get no pane while idle.
+  The pane rule wins over the pool: with a terminal a run spawns fresh through
+  its pane instead of claiming a spare.
 
 ## Set up for a project
 
@@ -70,12 +83,12 @@ The PreToolUse Bash hook (interactive sessions only; workers already have a pane
 
 ## Pane audit
 
-Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it, and an ended `pai pane run` must have closed its pane. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window; `STILL OPEN`: an ended pane run's pane is still open past the linger) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.
+By construction a process PAI starts in a session has a pane and a pane has a process, so the daemon audit (every 30 s) is a bug detector, and writes to the ledger only (never a session, never PAILot): a pane-exec whose child is gone while its pane lives has its wrapper killed and the pane closed (`PANE-ORPHAN side=wrapper`); one whose pane is gone while the child runs has the child killed (`side=child`); a running worker that never went through the launcher is noted (`PANE-UNLAUNCHED`). The pane marks (`WRONG TAB`, `STILL OPEN`, `SMALL`, `NOT SELECTED`, `MINIMISED`) stay in `pai worker ps` and the cockpit, with `PANE-VIOLATION` ledger lines. Nothing is reopened. `pai worker ps --panes` lists process -> pane -> tab live.
 
 ## A pane never blocks a start
 
-Only "the pane exists and runs the worker" matters, and a start is never refused for a pane reason.
+Only "the pane exists and runs the worker" matters, and a missing terminal never refuses a start.
 
 - **Visibility is a mark.** A pane that runs the worker but is not seen right now is accepted and marked on the returned description (`NOT SELECTED` tab, `MINIMISED` window, `HIDDEN` iTerm2, `OFF SCREEN` window, `SMALL` pane). Each mark is logged (`PANE-MARK`, `PANE-SMALL`) and the pane auditor shows `NOT SELECTED`, `MINIMISED` and `SMALL` without alarming.
-- **No pane at all** (no tmux or `ITERM_SESSION_ID`, a Claude background session with no attached terminal, a failed split, a follow command that never starts) starts the worker without one. The ledger gets `WORKER-NO-PANE` with the reason, `status.pane` records it, the auditor shows `NO PANE` with that reason, and `pai worker pane <id>` opens one later. PAI never opens a `claude attach` tab or any new tab or window to make a pane possible.
+- **No terminal at all** (no tmux or `ITERM_SESSION_ID`, a Claude background session with no attached terminal) runs the command directly: the ledger gets `PANE-NOTERMINAL` and `status.pane` records it (not a violation). A failed split or a wrapper that never connects fails the start (`WORKER-NO-PANE`). PAI never opens a `claude attach` tab or any new tab or window to make a pane possible.
 - `--no-pane`, `PAI_WORKER_AUTOPANE=0` and the keepalive beat need no override any more.

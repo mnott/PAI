@@ -1,12 +1,11 @@
 /**
  * pane-run.ts — `pai pane run`: a session's background command runs in a visible pane.
  *
- * The caller (the process Claude Code backgrounds) owns the command: it spawns it in its own
- * process group, tees the output to <PAI home>/logs/panes/<id>.log, and blocks until it ends, so
- * the harness's completion notification keeps working. The pane runs `pai worker follow <id>`,
- * which shows that log live and the exit code after, and closes the pane a few seconds later
- * (`PANE_LINGER_SECS`), whatever the exit code. Placement is a worker pane's (split, else tab,
- * never a window).
+ * The pane is opened first and owns the command (pane-exec.ts: the pane runs `pai pane exec <id>`, the
+ * command is its child, the pane closes when it ends). The caller (the process Claude Code backgrounds)
+ * tees the output to <PAI home>/logs/panes/<id>.log and blocks until the command ends, so the harness's
+ * completion notification keeps working. With no terminal the command runs directly as the caller's child,
+ * in its own process group.
  * Status lives in <logDir>/<id>.panestatus for `pai worker ps` and the cockpit.
  */
 

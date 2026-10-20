@@ -1510,7 +1510,7 @@ export async function requireVisiblePane(
  * Start a run's command: inside the pane opened for it (the wrapper's child, output rendered there), or
  * directly when no pane owns this run (no terminal, interactive, override).
  */
-async function spawnOwned(
+export async function spawnOwned(
   wid: string,
   cmd: string[],
   o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string }
