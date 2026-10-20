@@ -10,7 +10,7 @@
  * Status lives in <logDir>/<id>.panestatus for `pai worker ps` and the cockpit.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
@@ -18,6 +18,7 @@ import { nowStamp, ownsPidCached } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import { closeOwnPane, realPaneOps, type PaneOps } from "./pane.js";
+import type { OwnedPane } from "./pane-exec.js";
 
 export interface PaneRunStatus {
   kind: "pane";
@@ -148,8 +149,11 @@ export interface PaneRunOptions {
   label?: string;
   cwd?: string;
   logDir: string;
-  /** Opens the pane following `id`; a rejection is reported and the command runs anyway. */
-  openPane: (id: string) => Promise<string>;
+  /**
+   * Opens the pane that owns the run `id` (the launcher). null: no pane (no terminal, or already inside one),
+   * the command runs directly. A rejection fails the run: the command does not run unseen.
+   */
+  launch: (id: string) => Promise<OwnedPane | null>;
   env?: NodeJS.ProcessEnv;
   out?: (s: string) => void;
   err?: (s: string) => void;
@@ -160,7 +164,7 @@ export interface PaneRunOptions {
 
 const newId = (): string => `pane-${nowStamp().replace(/\D/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
 
-/** Run the command in the pane; resolves to its exit code (128+n for a signal). */
+/** Run the command in the pane that owns it; resolves to its exit code (128+n for a signal). */
 export async function runInPane(o: PaneRunOptions): Promise<number> {
   const env = o.env ?? process.env;
   const out = o.out ?? ((s: string) => process.stdout.write(s));
@@ -170,10 +174,11 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
   const id = newId();
   const logFile = join(paneRunLogDir(), `${id}.log`);
   mkdirSync(paneRunLogDir(), { recursive: true });
+  const label = o.label || o.command.slice(0, 2).join(" ");
   const status: PaneRunStatus = {
     kind: "pane",
     id,
-    label: o.label || o.command.slice(0, 2).join(" "),
+    label,
     cwd,
     pid: process.pid,
     started: nowStamp(),
@@ -183,14 +188,30 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
   };
   writeFileSync(logFile, `$ ${o.command.join(" ")}\n`, "utf8");
   writePaneRunStatus(o.logDir, status);
+  let pane: OwnedPane | null;
   try {
-    err(`[pai pane] ${id}: ${await o.openPane(id)}`);
+    pane = await o.launch(id);
   } catch (e) {
-    err(`[pai pane] no visible pane (${e instanceof Error ? e.message : String(e)}); running without one, log ${logFile}`);
+    const why = e instanceof Error ? e.message : String(e);
+    err(`[pai pane] ${id}: pane could not be opened (${why}); the command did not run`);
+    appendFileSync(logFile, `[not run: ${why}]\n`, "utf8");
+    writePaneRunStatus(o.logDir, { ...status, state: "failed", exit: 1 });
+    return 1;
   }
+  err(`[pai pane] ${id}: ${pane ? pane.where : "no pane (no terminal or already in one); running directly"}`);
 
   const argv = o.command.length === 1 ? ["/bin/sh", "-c", o.command[0]] : o.command;
-  const child = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, [PANE_RUN_ENV]: "1" }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  const childEnv = { ...env, [PANE_RUN_ENV]: "1" };
+  let child: ChildProcess;
+  try {
+    child = pane
+      ? (await pane.start({ argv, cwd, env: childEnv, stdin: "ignore", render: "plain", title: paneTitle(label) })).asChild()
+      : spawn(argv[0], argv.slice(1), { cwd, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    err(`[pai pane] ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    writePaneRunStatus(o.logDir, { ...status, state: "failed", exit: 127 });
+    return 127;
+  }
   let tail = "";
   const feed = (c: Buffer): void => {
     const s = c.toString("utf8");
@@ -206,6 +227,10 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
 
   let signalled: NodeJS.Signals | null = null;
   const killGroup = (sig: NodeJS.Signals): void => {
+    if (pane) {
+      child.kill(sig);
+      return;
+    }
     if (!child.pid) return;
     try {
       process.kill(-child.pid, sig);
@@ -234,7 +259,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     child.on("close", (c, sig) => resolve(c ?? (sig ? 128 + (({ SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 } as Record<string, number>)[sig] ?? 0) : 1)));
   });
   sigs.forEach((s, i) => proc.off(s, handlers[i]));
-  killGroup("SIGKILL"); // stragglers of the group
+  if (!pane) killGroup("SIGKILL"); // stragglers of the group (the wrapper does the same for a pane)
 
   const took = fmtElapsed(Date.now() - status.startedMs);
   const footer = `[exit ${code}${signalled ? ` (${signalled})` : ""} after ${took}]`;

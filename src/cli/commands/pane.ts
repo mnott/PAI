@@ -5,12 +5,15 @@
 
 import { readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { openVerifiedPane, realPaneOps, resolveHostSession } from "../../workers/pane.js";
+import { closeSelfPane, resolveHostSession } from "../../workers/pane.js";
+import { launchPane } from "../../workers/pane-launch.js";
+import { PANE_EXEC_ENV, runPaneExec } from "../../workers/pane-exec.js";
+import { writePaneTitle } from "../../workers/pane-title.js";
 import { PANE_RUN_ENV, runInPane } from "../../workers/pane-run.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 
 /** Inside a worker or another pane run there is already a pane: nothing to open. */
-export const inVisiblePane = (env: NodeJS.ProcessEnv = process.env): boolean => env.PAI_WORKER === "1" || env[PANE_RUN_ENV] === "1";
+export const inVisiblePane = (env: NodeJS.ProcessEnv = process.env): boolean => env.PAI_WORKER === "1" || env[PANE_RUN_ENV] === "1" || Boolean(env[PANE_EXEC_ENV]);
 
 /** Run `command` in a pane placed like a worker's (split, else tab, never a window); resolves to its exit code. */
 export function runCommandInPane(command: string[], label?: string, cwd?: string): Promise<number> {
@@ -21,10 +24,10 @@ export function runCommandInPane(command: string[], label?: string, cwd?: string
     label,
     cwd,
     logDir,
-    openPane: async (id) => {
-      if (inVisiblePane()) return "already in a pane; none opened";
+    launch: async (id) => {
+      if (inVisiblePane()) return null;
       const term = (await resolveHostSession()).term;
-      return openVerifiedPane(logDir, workers, id, term, process.env, realPaneOps);
+      return launchPane({ logDir, config: workers, id, kind: "pane", term });
     },
   });
 }
@@ -48,11 +51,28 @@ const runCmd: CommandDef = {
   },
 };
 
+const execCmd: CommandDef = {
+  name: "exec",
+  summary: "Internal: the wrapper a pane runs; owns the process started in it",
+  description:
+    "The command of every pane PAI opens for a process it starts (a worker, a plan runner, `pai pane run`). It connects to the starting `pai` process, which sends the real command; the wrapper runs it as its child, shows its output in the pane, writes <PAI home>/state/pane-exec/<id>.exit (exit code + end time) and exits when the child exits, so the pane closes with the process. If the starting process goes away, the child is killed. Not for direct use.",
+  args: [{ name: "ID", required: true, summary: "Run id the starting process listens for" }],
+  examples: ["pai pane exec pane-20260101-0000-ab12"],
+  seeAlso: ["pai pane run"],
+  run: async (ctx: RunContext) =>
+    runPaneExec(String(ctx.args.ID), {
+      setTitle: (t) => writePaneTitle(t, process.env),
+      closePane: async () => {
+        await closeSelfPane();
+      },
+    }),
+};
+
 export const paneCommand: CommandDef = {
   name: "pane",
   summary: "Run a command in a visible pane: run",
   description: "Everything a session starts that does not run in its own pane runs in one: `pai pane run` is the way for background commands. See docs/worker-panes.md.",
   examples: ["pai pane run --label tests -- npx vitest run", "pai pane run -- sleep 30"],
   seeAlso: ["pai worker run", "pai build run"],
-  subcommands: [runCmd],
+  subcommands: [runCmd, execCmd],
 };
