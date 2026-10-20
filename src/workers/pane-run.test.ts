@@ -80,4 +80,21 @@ describe("followPaneRun", () => {
     expect(shown).toContain("hello");
     expect(shown).toContain("[exit 2");
   });
+
+  it("writes the pane's purpose as the terminal title (OSC 1/2) at its start", async () => {
+    const o = opts(["sleep", "1"], { label: "tests" });
+    const p = runInPane(o);
+    await new Promise((r) => setTimeout(r, 200));
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await followPaneRun(dir, o.opened[0], () => undefined, 0, 10);
+      const written = err.mock.calls.map((c) => String(c[0])).join("");
+      // a pane-run pane shows its label alone, no provider
+      expect(written).toContain("\x1b]1;tests\x07");
+      expect(written).toContain("\x1b]2;tests\x07");
+    } finally {
+      err.mockRestore();
+      await p;
+    }
+  }, 10_000);
 });
