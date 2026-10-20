@@ -16,7 +16,7 @@ different direction: persistent memory, session continuity, and deep Claude Code
 
 | Feature | Fabric (Miessler) | PAI Knowledge OS (this) |
 |---|---|---|
-| **Language** | Python | TypeScript (Bun) |
+| **Language** | Python | TypeScript (Node 20 or newer) |
 | **Primary interface** | CLI pipe (`echo "..." \| fabric -p pattern`) | MCP server + CLI (`pai`) |
 | **Prompt templates** | Yes — 200+ community "patterns" | No (out of scope) |
 | **YouTube transcript extraction** | Yes (built-in) | Yes — via [Scribe MCP](https://github.com/mnott/Scribe) |
@@ -25,17 +25,18 @@ different direction: persistent memory, session continuity, and deep Claude Code
 | **DEVONthink integration** | No | Yes — via [devonthink-mcp](https://github.com/mnott/Devon) |
 | **Hookmark integration** | No | Yes — via [Hook MCP](https://github.com/mnott/Hook) |
 | **LLM pipe-through workflow** | Yes — core feature | No |
-| **Persistent session memory** | No | Yes — auto-indexed, 449K+ chunks |
-| **Session registry** | No | Yes — SQLite, tracks 77+ projects |
-| **Background daemon** | No | Yes — launchd, IPC via Unix socket |
-| **MCP server** | No | Yes — 9 tools, 19 prompts, 11 resources exposed to Claude Code |
+| **Persistent session memory** | No | Yes — auto-indexed chunks |
+| **Session registry** | No | Yes — SQLite, tracks your projects |
+| **Background daemon** | No | Yes — launchd (macOS) or systemd (Linux), IPC via Unix socket |
+| **MCP server** | No | Yes — tools, prompts and resources exposed to Claude Code |
 | **Keyword search (BM25)** | No | Yes — GIN full-text index, PostgreSQL |
 | **Semantic search (vector)** | No | Yes — pgvector HNSW, Snowflake Arctic 768-dim |
 | **Multi-backend storage** | No | Yes — SQLite (simple) or PostgreSQL (full) |
 | **Obsidian vault bridge** | No | Yes — symlinks + auto-generated topic pages |
 | **Project lifecycle** | No | Yes — promote, archive, move, detect from cwd |
 | **Auto project registration** | No | Yes — detects .git, package.json, pubspec.yaml, etc. on session start |
-| **Setup wizard** | No | Yes — idempotent 14-step interactive wizard |
+| **Setup wizard** | No | Yes — idempotent interactive wizard (storage, embeddings, hooks and settings, daemon, first index) |
+| **Delegation to workers** | No | Yes — [delegation tiers](docs/concepts/delegation-tiers.md) (session, orchestrator, workers; local model first), [routing policy](docs/concepts/routing-policy.md), [escalation](docs/concepts/escalation.md), [router and cockpit](docs/cockpit.md) |
 | **Hook system** | No | Yes — pre-compact, session-stop, auto-cleanup, whisper rules |
 | **Automatic session notes** | No | Yes — AI-generated via daemon worker (Opus/Sonnet), topic-based splitting |
 | **Topic-based note splitting** | No | Yes — Jaccard similarity detects topic shifts, creates separate notes |
@@ -95,7 +96,7 @@ from project metadata. The vault updates on demand via `pai obsidian sync`.
 
 ### Two Storage Modes
 
-Simple mode requires nothing beyond Bun — SQLite only, keyword search only. Full mode adds
+Simple mode requires nothing beyond Node 20 — SQLite only, keyword search only. Full mode adds
 Docker, PostgreSQL, pgvector, and Snowflake Arctic embeddings for semantic search. The setup
 wizard asks which you want and configures everything.
 

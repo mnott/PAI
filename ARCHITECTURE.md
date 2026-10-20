@@ -56,10 +56,13 @@ The storage backend is selected during `pai setup` and configured in `~/.pai/con
 
 ## Quick Start
 
+To use PAI, install the package and follow [docs/install/index.md](docs/install/index.md) (`npm i -g @tekmidian/pai`, then `pai setup`). The steps below build PAI from a git checkout for development. Delegation (tiers, router, workers, pool) is described in [docs/concepts/](docs/concepts/delegation-tiers.md); it is not covered in this file.
+
 ### Prerequisites
 
-- [Bun](https://bun.sh) (JavaScript runtime and package manager)
-- [Docker](https://docs.docker.com/get-docker/) (for the PostgreSQL + pgvector container)
+- [Node.js](https://nodejs.org) 20 or newer (the installed `pai` runs on Node)
+- [Bun](https://bun.sh) (build tool for a checkout only)
+- [Docker](https://docs.docker.com/get-docker/) (only for the PostgreSQL + pgvector container)
 - [Claude Code](https://claude.ai/code) (the CLI this integrates with)
 
 ### 1. Clone and Build
@@ -74,7 +77,7 @@ bun run build
 The build uses `tsdown` to compile TypeScript. Link the CLI globally:
 
 ```bash
-npm link   # or: ln -s $(pwd)/dist/cli/index.mjs /usr/local/bin/pai
+npm link
 ```
 
 ### 2. Start PostgreSQL with pgvector

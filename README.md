@@ -1,167 +1,67 @@
 # PAI Knowledge OS
 
-Claude Code has a memory problem. Every new session starts cold — no idea what you built yesterday, what decisions you made, or where you left off. PAI fixes this.
-
-Install PAI and Claude remembers. Ask it what you were working on, find that conversation about the database schema, or pick up exactly where the last session ended.
-
-- Automatic session notes, split by topic, written by a background daemon
-- Federated keyword and semantic search across sessions, notes and vaults
-- Workers on any provider, orchestrated from one Claude Code session
-- Delegation tiers: session, orchestrator, workers with a local model first ([guide](docs/concepts/delegation-tiers.md))
-- Everything runs locally
+PAI is an operating layer for Claude Code. It gives every session a memory: notes written in the background, searchable across sessions, projects and vaults, all stored locally. It also lets one Claude Code session delegate work to workers on any provider, a local model first, over three delegation tiers with routing policy, escalation and limits. A router and a cockpit page show what the models, the worker pool and your token budget are doing.
 
 ![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit.png)
 
-*The router cockpit (`http://127.0.0.1:8790/cockpit`): provider limits, local servers, memory and power, the worker pool, token and cache accounting, speed per model. See [the cockpit section](docs/three-tier-coding.md#the-cockpit).*
+*The router cockpit (`http://127.0.0.1:8790/cockpit`). See [the cockpit page](docs/cockpit.md).*
 
 ## Install
 
-> **The easy way, on macOS and Linux:** open Claude Code and say
->
-> **"Clone https://github.com/mnott/PAI and set it up for me"**
->
-> Claude installs PAI, runs the setup wizard and checks the daemon.
+Prerequisites: [Claude Code](https://claude.com/claude-code) and Node.js 20 or newer. Docker is only needed if you choose PostgreSQL.
 
-**Prerequisites:** [Claude Code](https://claude.com/claude-code), Node.js 20 or newer, and Docker if you choose PostgreSQL.
-
-By hand, the same on macOS and Linux:
+**With the install skill (recommended).** The npm package ships a Claude Code plugin named `pai` (manifest `.claude-plugin/plugin.json`) whose `setup` skill does the install:
 
 ```bash
 npm i -g @tekmidian/pai
-pai setup --yes --storage postgres   # keyword + semantic search (pgvector in Docker); or: --storage sqlite
-pai daemon status                    # should show "running"
+claude --plugin-dir "$(npm root -g)/@tekmidian/pai"
 ```
 
-`pai setup` without `--yes` asks every question interactively. It installs the daemon as a LaunchAgent on macOS and a systemd user service on Linux. From a source checkout: `git clone https://github.com/mnott/PAI && cd PAI && bun install && bun run build`.
+Then say **"set up PAI"**. The skill checks each phase first (package, `pai setup`, daemon, first workers) and does only what is missing.
 
-→ [docs/install/index.md](docs/install/index.md) (install skill, both storage paths, Docker, systemd) · [docs/install/first-workers.md](docs/install/first-workers.md)
+**Without the plugin.** Install the package and run the wizard yourself; copy the skill into your skills folder if you want Claude to drive it later:
 
-## Daily Use: the `pai` command
+```bash
+npm i -g @tekmidian/pai
+pai setup                     # interactive; or: pai setup --yes --storage sqlite
+pai daemon status             # should show "running"
+mkdir -p ~/.claude/skills
+cp -R "$(npm root -g)/@tekmidian/pai/plugins/core/skills/setup" ~/.claude/skills/pai-setup
+```
 
-The everyday job is: find a session, start it, make sure it runs where you want.
+Details, storage choices, the daemon and updates: [docs/install/index.md](docs/install/index.md).
+
+## Where to go next
+
+### Install
+
+[Install](docs/install/index.md) · [First workers](docs/install/first-workers.md)
+
+### Concepts
+
+Orchestration first: [delegation tiers](docs/concepts/delegation-tiers.md) · [routing policy](docs/concepts/routing-policy.md) · [escalation](docs/concepts/escalation.md) · [workers](docs/concepts/workers.md) · [panes](docs/concepts/panes.md) · [pool](docs/concepts/pool.md) · [local models](docs/concepts/local-models.md) · [router](docs/concepts/router.md) · [loop guard and limits](docs/concepts/loop-guard-and-limits.md) · [notifications](docs/concepts/notifications.md) · [session profiles](docs/concepts/session-profiles.md) · [providers](docs/concepts/providers.md)
+
+### Cockpit
+
+[The cockpit page](docs/cockpit.md): sections, aliases, layout.
+
+### Reference
+
+[Configuration](docs/config.md) · [Config defaults](docs/config-defaults.md) · [Commands](docs/commands/README.md) (generated from the CLI: `pai help`, `pai more`, `pai help <command>`)
+
+The full index, including memory, search and developer docs, is [docs/README.md](docs/README.md).
+
+## Daily use
 
 ```bash
 pai                 # picker: newest sessions first, type to filter, Enter opens
-pai NAME            # open a session by name; shows how it will start (Enter = exactly like last time)
+pai NAME            # open a session by name
 pai ls              # the same list as a plain table
-pai setups          # orchestrator + worker combinations you can start a session with (local models included)
-pai new ~/code/app --with "anthropic + flashnext-iq3 workers"   # new folder: Anthropic plans, the local model codes
-pai more            # every other command, grouped (memory, workers, daemon, ...)
-pai help <command>  # full help for one command, e.g. pai help worker
+pai more            # every other command, grouped
+pai help <command>  # full help for one command
 ```
 
-`pai pause` saves your place before you leave a session and `pai end` finishes it. Everything else (`pai memory`, `pai worker`, `pai project`, `pai daemon`, ...) is listed by `pai more`; the names that hooks, skills and MCP tools call did not change.
-
-## Command Reference
-
-Every `pai` command has a page generated from the live CLI: `pai help`, `pai more`, `pai help memory`, `pai memory --help`.
-
-→ [docs/command-reference.md](docs/command-reference.md) · [docs/commands/](docs/commands/README.md)
-
-## Worker Providers
-
-Work is delegated over three tiers: the session you talk to (t0), an orchestrator that splits and plans (t1), and workers that implement (t2, local model first). Each tier has an ordered model list in `workers.yaml`; `pai worker route` prints it. See [docs/concepts/delegation-tiers.md](docs/concepts/delegation-tiers.md).
-
-Large coding jobs, with loop guards, time limits and a cockpit: [docs/three-tier-coding.md](docs/three-tier-coding.md). Concepts: [workers](docs/concepts/workers.md) · [providers](docs/concepts/providers.md) · [routing policy](docs/concepts/routing-policy.md) · [escalation](docs/concepts/escalation.md) · [session profiles](docs/concepts/session-profiles.md).
-
-→ [docs/concepts/providers.md](docs/concepts/providers.md) · [docs/worker.md](docs/worker.md) · [docs/workers-config.md](docs/workers-config.md) · [docs/provider-independence.md](docs/provider-independence.md)
-
-Per-project worker setup (`pai project init`, checks in `pai project health`):
-[docs/worker-project-setup.md](docs/worker-project-setup.md) · [panes](docs/worker-panes.md) · [pane footer and long jobs](docs/worker-pane-footer.md) · [snapshots](docs/worker-snapshots.md) · [`.pai/worker.md`](docs/worker-rules.md) · [status sink](docs/project-status-sink.md) · [issue claims](docs/issue-claims.md) · [hook denials](docs/worker-denials.md)
-
-## Automatic Session Notes
-
-A background daemon documents every session as it happens, from the transcript and git history, and starts a new note when the topic changes.
-
-→ [docs/session-notes.md](docs/session-notes.md)
-
-## What You Can Ask Claude
-
-Search your memory, manage projects, navigate sessions, review your week, keep things safe, work with Obsidian and manage your budget, all in plain language.
-
-→ [docs/what-you-can-ask.md](docs/what-you-can-ask.md)
-
-## Skills
-
-On-demand skills for productivity, session management, Obsidian vaults and system tools.
-
-→ [docs/skills.md](docs/skills.md)
-
-## Budget-Aware Advisor Mode
-
-Adapts how much work Claude delegates to cheaper models as your usage limits fill up, with thresholds and a statusline label.
-
-→ [docs/budget-advisor.md](docs/budget-advisor.md)
-
-## Context Preservation
-
-State is saved before compaction and injected afterwards, so a compaction, a restart or a crash does not cost you the thread.
-
-→ [docs/context-preservation.md](docs/context-preservation.md)
-
-## Session Management
-
-One entry point, `pai <topic>`: an interactive picker over projects and sessions, topic search, pausing all sessions at once.
-
-→ [docs/session-management.md](docs/session-management.md)
-
-## Memory
-
-Progressive memory loading in four layers, a temporal knowledge graph, and a three-tier hybrid store with graph-completion search and a relevance feedback loop.
-
-→ [docs/memory.md](docs/memory.md)
-
-## Automatic Observation Capture
-
-Tool calls are classified into structured observations and injected back as progressive context.
-
-→ [docs/observations.md](docs/observations.md)
-
-## Whisper Rules and Privacy Tags
-
-Rules injected into every prompt so they survive compaction, and `<private>` tags that keep content out of the index.
-
-→ [docs/rules-and-privacy.md](docs/rules-and-privacy.md)
-
-## Search
-
-Keyword, semantic and hybrid search with cross-encoder reranking, recency boost, a compact token-efficient format and section-aware retrieval.
-
-→ [docs/search.md](docs/search.md)
-
-## Auto-Compact Context Window
-
-The durable way to make Claude Code compact automatically, via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
-
-→ [docs/auto-compact.md](docs/auto-compact.md)
-
-## Zettelkasten Intelligence
-
-Graph operations over your Obsidian vault: connections, themes, god notes, communities, latent ideas.
-
-→ [docs/zettelkasten.md](docs/zettelkasten.md)
-
-## How It Works
-
-Storage options (SQLite or PostgreSQL + pgvector), prerequisites and the indexing loop. Deep dive: [ARCHITECTURE.md](ARCHITECTURE.md).
-
-→ [docs/how-it-works.md](docs/how-it-works.md)
-
-## Use Cases
-
-Solo developer, team lead, researcher: what changes with persistent memory.
-
-→ [docs/use-cases.md](docs/use-cases.md)
-
-## Release History
-
-→ [docs/release-history.md](docs/release-history.md) · [CHANGELOG.md](CHANGELOG.md)
-
-## Companion Projects
-
-AIBroker, Whazaa, Telex, Coogle and DEVONthink MCP.
-
-→ [docs/companion-projects.md](docs/companion-projects.md)
+`pai pause` saves your place before you leave a session and `pai end` finishes it.
 
 ## Acknowledgments
 
