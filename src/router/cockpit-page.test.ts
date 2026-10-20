@@ -1073,7 +1073,7 @@ describe("cockpit folds and open lists survive a redraw", () => {
   });
 
   it("every section gets a stable id from data-section, not its position", () => {
-    expect(COCKPIT_HTML).toContain('c.id=c.getAttribute("data-section")||"tile-"+i');
+    expect(COCKPIT_HTML).toContain('c.id=c.getAttribute("data-section")?"sec-"+c.getAttribute("data-section"):"tile-"+i');
   });
 });
 
@@ -1277,5 +1277,36 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
     // the shipped default still opens a running coding card and folds the rest
     expect(COCKPIT_HTML).toContain('coding?"coding":"other"');
     expect(COCKPIT_HTML).toContain('open=d==="coding"');
+  });
+});
+
+describe("cockpit section ids", () => {
+  it("applyCollapse gives sections a prefixed id: every id is unique, $(\"cloud\")/$(\"routing\") stay the inner panels, renders keep the h2 and fold button", () => {
+    const src = COCKPIT_HTML.match(/var COLLAPSE_KEY[\s\S]*?\n\}\n/)![0];
+    const html = COCKPIT_HTML.match(/<main[\s\S]*<\/main>/)![0];
+    const secs = [...html.matchAll(/<section data-section="([a-z]+)"[\s\S]*?<\/section>/g)].map((m) => m[1]!);
+    expect(secs).toContain("cloud");
+    expect(secs).toContain("routing");
+    const inner = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]!));
+    const byId: Record<string, any> = {};
+    const mk = (sec: string) => {
+      const h2: any = { textContent: sec, innerHTML: '<button class="fold"></button>' + sec, querySelector: (s: string) => (s === "button.fold" ? { setAttribute() {}, classList: {} } : null), insertBefore() {} };
+      const card: any = { id: "", h2, classList: { toggle() {} }, getAttribute: (k: string) => (k === "data-section" ? sec : null), querySelector: (s: string) => (s === "h2" ? h2 : null) };
+      return card;
+    };
+    const cards = secs.map(mk);
+    const doc = { querySelectorAll: () => cards };
+    const fn = new Function("localStorage", "document", `${src}\napplyCollapse();`);
+    fn({ getItem: () => null, setItem() {} }, doc);
+    for (const c of cards) { byId[c.id] = c; expect(inner.has(c.id) && !c.id.startsWith("sec-")).toBe(false); }
+    expect(new Set(cards.map((c: any) => c.id)).size).toBe(cards.length);
+    expect(cards.every((c: any) => c.id.startsWith("sec-"))).toBe(true);
+    for (const c of cards) expect(inner.has(c.id)).toBe(false);
+    expect(inner.has("cloud")).toBe(true);
+    expect(inner.has("routing")).toBe(true);
+    // the inner panel for $("cloud") is not a section: a poll's innerHTML write leaves the h2 untouched
+    expect(byId["cloud"]).toBeUndefined();
+    expect(byId["routing"]).toBeUndefined();
+    expect(cards.find((c: any) => c.id === "sec-cloud").h2.innerHTML).toContain("fold");
   });
 });
