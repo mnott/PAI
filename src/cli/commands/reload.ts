@@ -22,7 +22,7 @@ export interface ReloadDeps {
   codeInfo: () => string;
   daemon: { pid: () => number | undefined; restart: () => number | undefined };
   router: { pid: () => number | undefined; restart: () => Promise<number | undefined> };
-  pool: { reload: () => Promise<{ oldPid: number | undefined; newPid: number | undefined; builtAt: string | null } | null> };
+  pool: { reload: () => Promise<{ oldPid: number | undefined; newPid: number | undefined; builtAt: string | null; starting?: boolean } | null> };
 }
 
 const pidText = (p: number | undefined): string => (p === undefined ? "none" : String(p));
@@ -41,7 +41,7 @@ export async function reloadAll(d: ReloadDeps): Promise<string[]> {
 
   const pool = await d.pool.reload();
   if (!pool) lines.push("pool host: not running, skipped");
-  else lines.push(`pool host: pid ${pidText(pool.oldPid)} -> ${pidText(pool.newPid)}, ${code}${pool.builtAt ? ` (bundle built ${pool.builtAt})` : ""}`);
+  else lines.push(`pool host: pid ${pidText(pool.oldPid)} -> ${pidText(pool.newPid)}, ${code}${pool.starting ? ", still starting (see pai worker pool status)" : ""}${pool.builtAt ? ` (bundle built ${pool.builtAt})` : ""}`);
   return lines;
 }
 

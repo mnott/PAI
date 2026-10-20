@@ -74,7 +74,9 @@ export async function poolOn(logDir: string): Promise<string[]> {
     setPoolEnabled(true);
     return [`pool host already running on port ${port} — routing enabled`];
   }
-  const pid = await startPoolHost(logDir, port);
+  const started = await startPoolHost(logDir, port, 10_000);
+  if (!started.up) throw new Error(`the pool host did not come up on port ${port} (see ${poolPidPath(logDir)})`);
+  const pid = started.pid;
   setPoolEnabled(true);
   return [
     `pool host started (pid ${pid}, port ${port}, cwd ${logDir})`,
@@ -83,8 +85,8 @@ export async function poolOn(logDir: string): Promise<string[]> {
   ];
 }
 
-/** Spawn the detached host and wait until it answers; returns its pid. Does not touch the config. */
-async function startPoolHost(logDir: string, port: number): Promise<number | undefined> {
+/** Spawn the detached host and wait up to waitMs for it to answer; `up` false = still starting. Does not touch the config. */
+async function startPoolHost(logDir: string, port: number, waitMs: number): Promise<{ pid: number | undefined; up: boolean }> {
   const script = standalonePoolHostPath();
   if (!script) {
     throw new Error(
@@ -101,11 +103,11 @@ async function startPoolHost(logDir: string, port: number): Promise<number | und
   });
   child.unref();
   writeFileSync(poolPidPath(logDir), `${child.pid}\n`, "utf8");
-  for (let i = 0; i < 40; i++) {
-    if (await poolHostAlive(port)) return child.pid;
+  for (let i = 0; i < waitMs / 250; i++) {
+    if (await poolHostAlive(port)) return { pid: child.pid, up: true };
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`the pool host did not come up on port ${port} (see ${poolPidPath(logDir)})`);
+  return { pid: child.pid, up: false };
 }
 
 export interface PoolReloadDeps {
@@ -113,30 +115,34 @@ export interface PoolReloadDeps {
   /** True while any claimed slot is working. */
   busy: () => boolean;
   stop: () => void;
-  start: () => Promise<number | undefined>;
+  start: () => Promise<{ pid: number | undefined; up: boolean }>;
+  /** Called once when the reload starts waiting for busy slots. */
+  onWaiting?: () => void;
   sleep?: (ms: number) => Promise<void>;
   /** Give up waiting for busy slots after this long (default 15 min). */
   maxWaitMs?: number;
 }
 
 /** Restart the pool host gracefully: claimed slots finish first, then idle spares are retired with the host and recreated by the new one. Null when no host runs. */
-export async function reloadPoolHost(d: PoolReloadDeps): Promise<{ waitedMs: number; newPid: number | undefined } | null> {
+export async function reloadPoolHost(d: PoolReloadDeps): Promise<{ waitedMs: number; newPid: number | undefined; starting: boolean } | null> {
   if (!(await d.alive())) return null;
   const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const limit = d.maxWaitMs ?? 15 * 60_000;
   let waited = 0;
   while (d.busy()) {
+    if (waited === 0) d.onWaiting?.();
     if (waited >= limit) throw new Error(`pool slots still busy after ${Math.round(limit / 1000)}s; host not restarted`);
     await sleep(1000);
     waited += 1000;
   }
   d.stop();
   for (let i = 0; i < 40 && (await d.alive()); i++) await sleep(250);
-  return { waitedMs: waited, newPid: await d.start() };
+  const started = await d.start();
+  return { waitedMs: waited, newPid: started.pid, starting: !started.up };
 }
 
 /** Live wiring of reloadPoolHost for `pai reload`. */
-export async function poolReloadLive(logDir: string): Promise<{ oldPid: number | undefined; newPid: number | undefined; builtAt: string | null } | null> {
+export async function poolReloadLive(logDir: string): Promise<{ oldPid: number | undefined; newPid: number | undefined; builtAt: string | null; starting: boolean } | null> {
   const port = poolPort(readWorkersSection().workers);
   const pidPath = poolPidPath(logDir);
   const pidOf = (): number | undefined => {
@@ -160,11 +166,12 @@ export async function poolReloadLive(logDir: string): Promise<{ oldPid: number |
         }
       }
     },
-    start: () => startPoolHost(logDir, port),
+    onWaiting: () => process.stdout.write("pool host: waiting for busy slots\n"),
+    start: () => startPoolHost(logDir, port, 60_000),
   });
   if (!r) return null;
   const m = readPoolState(logDir)?.bundleMtimeMs;
-  return { oldPid, newPid: r.newPid, builtAt: m === undefined ? null : bundleBuildStamp(m) };
+  return { oldPid, newPid: r.newPid, starting: r.starting, builtAt: m === undefined ? null : bundleBuildStamp(m) };
 }
 
 export async function poolOff(logDir: string): Promise<string[]> {
