@@ -505,7 +505,7 @@ export function alive(pid: number | null | undefined): boolean {
  * status file's own `started` stamp; a reused pid almost never starts within
  * 120s of the original, so a wider drift means "different process".
  */
-export type OwnerFields = Pick<WorkerStatus, "pid" | "started"> & { id?: string };
+export type OwnerFields = Pick<WorkerStatus, "pid" | "started"> & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
 
 /**
  * Process creation time encoded in a worker id (`YYYYMMDD-HHMMSS-<pid>`), only
@@ -520,6 +520,10 @@ export function spawnTimeOf(status: OwnerFields): number | undefined {
 }
 
 export function ownsPid(status: OwnerFields): boolean {
+  // A worker served by a pool spare: its claude was started before the worker had an id or a
+  // `started` stamp, so the start-time check cannot apply. It lives while the slot's claude or
+  // the pool host serving it does.
+  if (status.pool) return alive(status.pid) || alive(status.pool.hostPid);
   if (status.pid <= 0 || !alive(status.pid)) return false;
   try {
     const out = execFileSync("ps", ["-o", "lstart=", "-p", String(status.pid)], {
