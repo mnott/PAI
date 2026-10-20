@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ancestorTty, daemonPeerPids, isDaemonHelper, lookupSessionMap, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
+import { ancestorTty, daemonPeerPids, findDaemonPid, isDaemonHelper, lookupSessionMap, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
 
 const LIVE = "88D76B26-0000-0000-0000-000000000001";
 const DEAD = "78C67D79-0000-0000-0000-000000000002";
@@ -213,5 +213,23 @@ describe("daemon control.sock peers", () => {
     expect(isDaemonHelper("claude.exe --bg-pty-host /d/pty/224db3e0.sock")).toBe(true);
     expect(isDaemonHelper("claude.exe --bg-spare")).toBe(true);
     expect(isDaemonHelper("claude")).toBe(false);
+  });
+});
+
+describe("findDaemonPid", () => {
+  const host = (ppid: number) => ({ pid: 6488, ppid, cmd: bgCmds[6488] });
+  const sock = "/tmp/cc-daemon-501/d/control.sock";
+  it("parent fast path: ppid is the control.sock listener", () => {
+    expect(findDaemonPid(SHORT, [host(6445)], (s) => (s === sock ? [6445] : []))).toBe(6445);
+  });
+  it("orphaned host (ppid 1) resolves through the control.sock listener", () => {
+    expect(findDaemonPid(SHORT, [host(1)], (s) => (s === sock ? [97647] : []))).toBe(97647);
+  });
+  it("parent that is not the listener falls back to the listener", () => {
+    expect(findDaemonPid(SHORT, [host(555)], (s) => (s === sock ? [97647] : []))).toBe(97647);
+  });
+  it("no host or no listener -> 0", () => {
+    expect(findDaemonPid(SHORT, [], () => [1])).toBe(0);
+    expect(findDaemonPid(SHORT, [host(1)], () => [])).toBe(0);
   });
 });
