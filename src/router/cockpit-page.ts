@@ -51,6 +51,7 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
+@media(max-width:480px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{display:none}#theme{flex:0 0 auto;margin-left:auto}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gridCols},minmax(0,1fr))}
@@ -116,6 +117,7 @@ svg text{fill:var(--dim);font-size:10px}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}
 .mhead .num{margin-left:8px}
+@container (max-width:480px){.mhead{flex-wrap:wrap;row-gap:3px}.mhead b{flex:1 1 calc(100% - 44px)}}
 .mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
 .mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
 .mhead .act button[disabled]{opacity:.5;cursor:default}
@@ -242,7 +244,7 @@ function applyCollapse(){
  var cs=collapsedSet(),cards=document.querySelectorAll("main section.card");
  for(var i=0;i<cards.length;i++)(function(c){
   var h=c.querySelector("h2");if(!h)return;
-  if(!c.id)c.id=c.getAttribute("data-section")||"tile-"+i;
+  if(!c.id)c.id=c.getAttribute("data-section")?"sec-"+c.getAttribute("data-section"):"tile-"+i;
   var b=h.querySelector("button.fold");
   if(!b){b=document.createElement("button");b.type="button";b.className="fold";b.setAttribute("aria-expanded","true");h.insertBefore(b,h.firstChild)}
   var col=!!cs[c.id];
@@ -701,7 +703,7 @@ function tick(){
  for(var i=0;i<els.length;i++){var r=+els[i].getAttribute("data-reset");if(r)els[i].textContent="resets in "+dur(r-Date.now())}
  var st=$("stamp"),age=(Date.now()-lastOk)/1000;
  st.textContent=lastOk?(age<STALE_SEC?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"loading...";
- st.className=lastOk&&age>=STALE_SEC?"stale":"";
+ st.title=st.textContent;st.className=lastOk&&age>=STALE_SEC?"stale":"";
 }
 /** Columns for the bar charts: runs of zero-total buckets collapse into one 0.4-width spacer. */
 function gapCols(totals){var cols=[],i=0;while(i<totals.length){if(totals[i]>0){cols.push({b:i,g:0});i++}else{var j=i;while(j<totals.length&&!totals[j])j++;cols.push({b:i,g:j-i});i=j}}return cols}
