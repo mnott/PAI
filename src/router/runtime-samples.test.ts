@@ -428,10 +428,9 @@ describe("/cockpit/models with the sampler", () => {
     expect(g.history.decode).toEqual([73.4]);
   });
 
-  it("the page renders a card per running runtime and chips for stopped ones", () => {
+  it("the page renders one foldable card per runtime in the grid", () => {
     expect(COCKPIT_HTML).toContain('class="rt-grid"');
-    expect(COCKPIT_HTML).toContain('<div class="rt-card">');
-    expect(COCKPIT_HTML).toContain("rt-chips dim");
-    expect(COCKPIT_HTML).toContain("not loaded");
+    expect(COCKPIT_HTML).toContain('<div class="mcard');
+    expect(COCKPIT_HTML).toContain("installed, none loaded");
   });
 });

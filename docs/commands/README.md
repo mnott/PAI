@@ -31,7 +31,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai ls`](ls.md) | List sessions, newest first |
 | [`pai mcp`](mcp.md) | Install the PAI tools for Claude Code |
 | [`pai memory`](memory.md) | Search and index your notes and memory files |
-| [`pai models`](models.md) | Every local model runtime, its models, memory and users |
+| [`pai models`](models.md) | Every local model runtime, its models, memory and users; start/stop a runtime |
 | [`pai more`](more.md) | Every other command, by group |
 | [`pai new`](new.md) | Start a new session in a new or existing folder |
 | [`pai notes`](notes.md) | List the markdown session notes |
@@ -161,7 +161,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai memory settings` | Show or change the search settings |
 | `pai memory sources` | Where the indexed content comes from |
 | `pai memory status` | How much the memory index holds |
-| `pai models` | Every local model runtime, its models, memory and users |
+| `pai models` | Every local model runtime, its models, memory and users; start/stop a runtime |
 | `pai more` | Every other command, by group |
 | `pai new` | Start a new session in a new or existing folder |
 | `pai notes` | List the markdown session notes |
