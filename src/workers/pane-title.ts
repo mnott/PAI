@@ -45,19 +45,23 @@ export function paneTitle(label: string, providerOrModel?: string): string {
  * with `select-pane -T`, because tmux shows its own pane title in the border
  * and does not forward OSC to the outer terminal. Never throws: a title is
  * decoration, not a reason a pane fails. `tmux` is injectable so tests never
- * touch a real tmux.
+ * touch a real tmux. The OSC sequences go out only to a terminal (`tty`, default:
+ * stdout is a TTY): captured output must not start with title garbage.
  */
 export function writePaneTitle(
   title: string,
   env: NodeJS.ProcessEnv = process.env,
-  tmux: (args: string[]) => void = (args) => execFileSync("tmux", args, { stdio: "ignore" })
+  tmux: (args: string[]) => void = (args) => execFileSync("tmux", args, { stdio: "ignore" }),
+  tty: boolean = process.stdout.isTTY === true
 ): void {
   const t = escapePaneTitle(title);
   if (!t) return;
-  try {
-    process.stderr.write(`\x1b]1;${t}\x07\x1b]2;${t}\x07`);
-  } catch {
-    /* unwritable stderr: the title just stays as it is */
+  if (tty) {
+    try {
+      process.stderr.write(`\x1b]1;${t}\x07\x1b]2;${t}\x07`);
+    } catch {
+      /* unwritable stderr: the title just stays as it is */
+    }
   }
   if (env.TMUX) {
     try {

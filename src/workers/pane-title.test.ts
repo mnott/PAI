@@ -39,9 +39,21 @@ describe("writePaneTitle", () => {
   it("emits OSC 1 and OSC 2 with the escaped title", () => {
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      writePaneTitle('cockpit: fit\x1b viewport · gyro-m', {});
+      writePaneTitle('cockpit: fit\x1b viewport · gyro-m', {}, undefined, true);
       const written = err.mock.calls.map((c) => String(c[0])).join("");
       expect(written).toBe("\x1b]1;cockpit: fit viewport · gyro-m\x07\x1b]2;cockpit: fit viewport · gyro-m\x07");
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("writes no OSC sequences when not a terminal, but still sets the tmux title", () => {
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tmux = vi.fn();
+    try {
+      writePaneTitle("tests", { TMUX: "x" }, tmux, false);
+      expect(err.mock.calls.length).toBe(0);
+      expect(tmux).toHaveBeenCalledWith(["select-pane", "-T", "tests"]);
     } finally {
       err.mockRestore();
     }
@@ -50,7 +62,7 @@ describe("writePaneTitle", () => {
   it("writes nothing for an empty title", () => {
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      writePaneTitle("", {});
+      writePaneTitle("", {}, undefined, true);
       expect(err.mock.calls.length).toBe(0);
     } finally {
       err.mockRestore();
@@ -61,7 +73,7 @@ describe("writePaneTitle", () => {
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const tmux = vi.fn();
     try {
-      writePaneTitle("tests", { TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%3" }, tmux);
+      writePaneTitle("tests", { TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%3" }, tmux, true);
       expect(tmux).toHaveBeenCalledWith(["select-pane", "-t", "%3", "-T", "tests"]);
       // the OSC sequences go out too, so the title holds outside tmux as well
       expect(err.mock.calls.map((c) => String(c[0])).join("")).toContain("\x1b]2;tests\x07");
@@ -76,7 +88,7 @@ describe("writePaneTitle", () => {
       const tmux = vi.fn(() => {
         throw new Error("no server");
       });
-      writePaneTitle("tests", { TMUX: "x" }, tmux);
+      writePaneTitle("tests", { TMUX: "x" }, tmux, true);
       expect(tmux).toHaveBeenCalledWith(["select-pane", "-T", "tests"]);
     } finally {
       err.mockRestore();

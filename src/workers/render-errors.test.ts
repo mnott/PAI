@@ -41,3 +41,25 @@ describe("renderEvent wait poll exit 3", () => {
     expect(run("Bash", "Exit code 3\nboom")).toContain("\x1b[31m!");
   });
 });
+
+describe("renderEvent terminal text is plain, never HTML-escaped", () => {
+  const c = makeColor(false);
+  const tool = (name: string, input: unknown) =>
+    renderEvent(
+      c,
+      "",
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name, input }] } } as never,
+      "/w",
+      {}
+    ).join("\n");
+
+  it("a Bash command keeps && > < and 2>/dev/null", () => {
+    expect(tool("Bash", { command: "ls && git log 2>/dev/null | wc -l < in" })).toBe(
+      "$ ls && git log 2>/dev/null | wc -l < in"
+    );
+  });
+
+  it("the '> Reading' line keeps its >", () => {
+    expect(tool("Read", { file_path: "/w/src/a.ts" })).toBe("> Reading src/a.ts");
+  });
+});
