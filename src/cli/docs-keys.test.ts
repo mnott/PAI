@@ -26,7 +26,6 @@ const FILES = [
 /** Keys documented as user-only: absent from the shipped defaults on purpose. Each needs a reason. */
 const ALLOWED_KEYS: Record<string, string> = {
   "models.consumers": "user-supplied list of local-model consumers; no shipped entries",
-  "models.runtimes": "user-supplied local-model runtimes with start/stop commands; no shipped entries",
   "models.labels": "user-supplied display names for runtimes and models",
   "models.fast": "per-provider model slot (providers.<name>.models), named in prose",
   "models.default": "per-provider model slot (providers.<name>.models), named in prose",

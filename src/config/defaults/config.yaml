@@ -299,6 +299,20 @@ router:
 # of the model). Override in ~/.pai/config.yaml under models.embeddingLabel.
 models:
   embeddingLabel: PAI memory embeddings
+  # The start/stop/ready commands `pai models start|stop` and the cockpit's
+  # runtime buttons run (src/workers/model-runtimes.ts). A runtime with no
+  # command shows no button. Your entries in ~/.pai/config.yaml win per key.
+  runtimes:
+    ollama:
+      start: ollama serve
+      stop: kill $(lsof -nP -iTCP:11434 -sTCP:LISTEN -t)
+      ready: http://127.0.0.1:11434/api/tags
+      note: PAI's embedding backend runs here
+    docker-model-runner:
+      start: docker model run
+      stop: docker model unload
+      ready: docker model status
+      note: idle loads a model on the first request
 # Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
 panes:
   # Smallest pane a worker may be placed in; smaller is flagged SMALL.

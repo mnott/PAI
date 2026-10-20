@@ -137,7 +137,6 @@ svg text{fill:var(--dim);font-size:10px}
 .mcard.open .mbody{display:flex}
 .mcard.down{border-color:var(--bad)}
 .mdown{color:var(--bad);font-size:12px}
-.mnote{color:var(--dim);font-size:11px}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}
 .mhead .num{margin-left:8px}
@@ -855,21 +854,21 @@ function modelsHtml(inv){
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
    (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
-   '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
+   // the runtime chip carries the runtime's note (models.runtimes.<name>.note) as its title,
+   // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
+   '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
    (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'</span>':"")+
    '<span class="num">'+esc(key)+'</span></div>';
   var body="";
   if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
-   if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
    body+='<div class="rt-tiles two" data-tkey="'+esc(tkey)+'">'+
     metricTile({title:"Memory / size",value:mem(size),unit:"",sub:hasModel?r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded":"no model installed",series:[]})+
     metricTile({title:"Users",value:users.length,unit:"",sub:users.length?esc(purposeOf(users)):"no declared consumer",series:[]})+
     '</div>';
-   if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
   }else{
    var ctx=ctxOf(eng);
    body+='<div class="rt-tiles" data-tkey="'+esc(tkey)+'">'+
