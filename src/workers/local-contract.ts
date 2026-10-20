@@ -44,6 +44,7 @@ export function localContract(checks: Checks): string {
     "3. Read each file whole with the Read tool, not in pieces.",
     "4. Stop after the first red test and report it; do not keep fixing.",
     "5. Never repeat a failing command unchanged; change something or report.",
+    "6. A command that succeeded is done: never run it again unchanged. After the commit, write the report.",
   ].join("\n");
 }
 
