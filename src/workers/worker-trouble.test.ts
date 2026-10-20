@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Messenger } from "./run-events.js";
-import { STALL_MS, TROUBLE_THROTTLE_MS, TroubleWatcher } from "./worker-trouble.js";
+import { TroubleWatcher } from "./worker-trouble.js";
+import { troublePolicy } from "./notice-policy.js";
 
 function setup() {
   const sent: string[] = [];
@@ -50,7 +51,7 @@ describe("TroubleWatcher", () => {
     for (let i = 0; i < 6; i++) w.onDenial("h", "r");
     await w.flush();
     expect(sent).toHaveLength(1);
-    advance(TROUBLE_THROTTLE_MS + 1);
+    advance(troublePolicy().throttleMs + 1);
     w.onDenial("h", "r");
     await w.flush();
     expect(sent).toHaveLength(2);
@@ -67,7 +68,7 @@ describe("TroubleWatcher", () => {
 
   it("stall: quiet for 10 min while running tells once; activity re-arms", async () => {
     const { w, sent, advance } = setup();
-    advance(STALL_MS - 1000);
+    advance(troublePolicy().stallMs - 1000);
     w.tick();
     expect(sent).toHaveLength(0);
     advance(2000);
@@ -77,7 +78,7 @@ describe("TroubleWatcher", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("z=stalled");
     w.activity();
-    advance(STALL_MS + TROUBLE_THROTTLE_MS);
+    advance(troublePolicy().stallMs + troublePolicy().throttleMs);
     w.tick();
     await w.flush();
     expect(sent).toHaveLength(2);

@@ -10,6 +10,22 @@ Policy values (thresholds, limits, intervals, lists, labels, mappings) live in c
 - `pai config get <key> --source` prints the effective value and whether it came from the user file or the shipped defaults.
 - `PAI_DEFAULTS_DIR` names the defaults directory explicitly (esbuild test bundles outside dist).
 
+## Moved: PAILot and session notices (2026-10-20)
+
+The notice-path policy values live in `defaults/config.yaml` under `notices`, read at call time through the main-config loader (`src/workers/notice-policy.ts` → `effectiveMainConfig(paiConfigFilePath())`, so a user `config.yaml`/`config.json` wins):
+
+| key | was | value |
+|---|---|---|
+| `notices.pailot.maxPerMinute` | `PAILOT_MAX_PER_MIN` (src/workers/pailot-guard.ts) | `5` |
+| `notices.pailot.dedupHours` | `PAILOT_DEDUP_MS` (src/workers/pailot-guard.ts) | `24 h` |
+| `notices.pailot.windowSecs` | the 60 s rate window (src/workers/pailot-guard.ts) | `60 s` |
+| `notices.runReports.planGroupThrottleMinutes` | `PLAN_GROUP_THROTTLE_MS` (src/workers/run-events.ts) | `15 min` |
+| `notices.runReports.queueReadyBatchMinutes` | `QUEUE_READY_BATCH_MS` (src/workers/run-events.ts) | `10 min` |
+| `notices.trouble.throttleMinutes` | `TROUBLE_THROTTLE_MS` (src/workers/worker-trouble.ts) | `5 min` |
+| `notices.trouble.denialWindowMinutes` | `DENIAL_WINDOW_MS` (src/workers/worker-trouble.ts) | `10 min` |
+| `notices.trouble.denialThreshold` | `DENIAL_THRESHOLD` (src/workers/worker-trouble.ts) | `3` |
+| `notices.trouble.stallMinutes` | `STALL_MS` (src/workers/worker-trouble.ts) | `10 min` |
+
 ## Backlog: policy constants still in code
 
 Each later topic commit moves one area into the defaults files. Generated from `NAME = number/list` constants in non-test sources.
@@ -106,8 +122,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/scope.ts:165 | `SESSION_MAP_PRUNE_MS` | `60 * 60_000` |
 | src/workers/hang-probe.ts:23 | `DEFAULT_IDLE_SECS` | `60` |
 | src/workers/help.ts:21 | `HELP_MAX_MINUTES` | `20` |
-| src/workers/pailot-guard.ts:20 | `PAILOT_MAX_PER_MIN` | `5` |
-| src/workers/pailot-guard.ts:21 | `PAILOT_DEDUP_MS` | `24 * 3600_000` |
 | src/workers/pool.ts:703 | `SPARE_WARM_WINDOW_MS` | `60 * 60_000` |
 | src/workers/deadline.ts:87 | `DEADLINE_GRACE_MS` | `10_000` |
 | src/workers/standalone/session-name-cache.ts:16 | `SESSION_NAME_CACHE_TTL_MS` | `5 * 60_000` |
@@ -128,8 +142,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/supervision.ts:227 | `BACKLOG_AGE_MS` | `3_600_000` |
 | src/workers/supervision.ts:229 | `BACKLOG_MIN` | `10` |
 | src/workers/supervision.ts:692 | `POINTER_AFTER_MS` | `60_000` |
-| src/workers/run-events.ts:41 | `PLAN_GROUP_THROTTLE_MS` | `15 * 60_000` |
-| src/workers/run-events.ts:42 | `QUEUE_READY_BATCH_MS` | `10 * 60_000` |
 | src/workers/pending.ts:29 | `STALE_HOURS` | `24` |
 | src/workers/wait-on.ts:17 | `WAIT_DEFAULT_SECS` | `110` |
 | src/workers/wait-on.ts:18 | `WAIT_CAP_SECS` | `590` |
@@ -151,10 +163,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/tool-errors.ts:41 | `SIGNATURE_MAX` | `160` |
 | src/workers/tool-errors.ts:42 | `RAW_MAX` | `300` |
 | src/workers/tool-errors.ts:43 | `INPUT_MAX` | `1000` |
-| src/workers/worker-trouble.ts:11 | `TROUBLE_THROTTLE_MS` | `5 * 60_000` |
-| src/workers/worker-trouble.ts:12 | `DENIAL_WINDOW_MS` | `10 * 60_000` |
-| src/workers/worker-trouble.ts:13 | `DENIAL_THRESHOLD` | `3` |
-| src/workers/worker-trouble.ts:14 | `STALL_MS` | `10 * 60_000` |
 | src/workers/pane-run.ts:38 | `PANE_LINGER_SECS` | `5` |
 | src/workers/pane-run.ts:64 | `PANE_RUN_KEEP_MS` | `24 * 3600_000` |
 | src/workers/budget.ts:45 | `BUDGET_TTL_MS` | `5 * 60_000` |
