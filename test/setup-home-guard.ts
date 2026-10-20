@@ -60,9 +60,13 @@ for (const key of RUNTIME_PATH_ENV_VARS) {
  * PAI_SESSION_WORKER_PROVIDER into run-env.test.ts's "remote provider is
  * untouched"). Prefix, not name: a new routing var cannot be added without
  * also being protected.
+ *
+ * PAI_PANE_* is the pane launcher's own environment (PAI_PANE_EXEC marks a
+ * pane-exec child, PAI_PANE_RUN a pane run): a suite run inside a pane made
+ * build-pane.test.ts see "already in a pane" and skip the pane path.
  */
 for (const key of Object.keys(process.env)) {
-  if (key === "PAI_WORKERS_YAML" || key.startsWith("PAI_WORKER") || key.startsWith("PAI_SESSION")) {
+  if (key === "PAI_WORKERS_YAML" || key.startsWith("PAI_WORKER") || key.startsWith("PAI_SESSION") || key.startsWith("PAI_PANE")) {
     delete process.env[key];
   }
 }
