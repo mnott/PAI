@@ -295,6 +295,8 @@ describe("cockpit Models cards", () => {
     COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function gb\(b,d\)\{[^\n]*\}/)![0],
+    COCKPIT_HTML.match(/function gbm\(m\)\{[^\n]*\}/)![0],
     COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
   ].join("\n");
   const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
@@ -304,7 +306,7 @@ describe("cockpit Models cards", () => {
   const inv = {
     at: "2026-10-19T18:00:00.000Z",
     runtimes: [
-      { name: "gyro-m", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40000, usedBy: ["worker:flashnext-iq3"] }] },
+      { name: "gyro-m", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40030, usedBy: ["worker:flashnext-iq3"] }] },
       { name: "ollama", kind: "ollama", status: "idle", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
         { model: "huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
         { model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["paperfull-llm"] },
@@ -315,7 +317,7 @@ describe("cockpit Models cards", () => {
     live: {
       at: 1,
       runtimes: [
-        { name: "gyro-m", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: 155000, lastReused: 150000, lastPromptMs: 5000, lastUsed: 155500, gpuMemUsed: 45576978432, gpuMemTotal: 115448725504, maxContext: 262144, liveUsed: null }, rssMb: 36148, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
+        { name: "gyro-m", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: 155000, lastReused: 150000, lastPromptMs: 5000, lastUsed: 155500, gpuMemUsed: 1530000000, gpuMemTotal: 115964116992, maxContext: 262144, liveUsed: null }, rssMb: 36148, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
         { name: "ollama", status: "idle", live: { engine: null, workers: [], queued: 0, cap: 1, conversationSlots: null, sparesReady: 0, sparesConfig: 1 }, history: { decode: [], prefill: [], memoryMb: [], queued: [], pressurePct: [] } },
       ],
     },
@@ -338,14 +340,15 @@ describe("cockpit Models cards", () => {
     expect(h).toContain("Decode last request");
     expect(h).toContain("Prefill last request");
     expect(h).toContain("35.3<small>GB</small>");
-    expect(h).toContain("RAM 35.3 GB · GPU 42.4 / 108 GB");
+    // every GB on the card is binary (1024^3), the same rounding as Strata's monitor:
+    // 115964116992 bytes = 108 GB (not 115), 1.53e9 bytes = 1.4 GB (not 1.5)
+    expect(h).toContain("RAM 35.3 GB · GPU 1.4 / 108 GB");
     expect(h).toContain("39.1 GB file mapped");
     expect(h).toContain("reused 90.0% of prompt tokens");
     expect(h).toContain("2<small>/ 4</small>");
     expect(h).toContain("59% · 156k / 256K");
     expect(h).toContain("queued 2");
-    expect(h).toContain("cap 1");
-    expect(h).toContain("1 spare(s) ready");
+    expect(h).toContain("cap 1 · queued 2 · slots 4 · spares 1");
     expect(h).toContain("machine pressure 62%");
   });
   it("a generating engine reads like Strata's monitor: Decode now / Prefill this request, context from the running request", () => {
@@ -362,6 +365,16 @@ describe("cockpit Models cards", () => {
     expect(h).toContain('class="mt-bar"');
     expect(h).toMatch(/mt-bar[^>]*><i style="width:59\.1%"/);
   });
+  it("GB on the Memory tile is binary (1024^3) like the engine: 115964116992 bytes render as 108, 1.53e9 as 1.4", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "strata", kind: "strata", status: "running", port: 8035, users: [], models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 1, usedBy: [] }] }],
+      live: { at: 1, runtimes: [{ name: "strata", status: "running", live: { engine: { decode: null, prefill: null, phase: "idle", parked: null, slots: null, reusedPct: null, lastDecode: null, lastPrompt: null, lastReused: null, lastPromptMs: null, lastUsed: null, gpuMemUsed: 1530000000, gpuMemTotal: 115964116992, maxContext: null, liveUsed: null }, rssMb: null, workers: [], queued: 0, cap: null, conversationSlots: null, sparesReady: 0, sparesConfig: 0 }, history: {} }] },
+    });
+    expect(h).toContain("GPU 1.4 / 108 GB");
+    expect(h).not.toContain("115");
+    expect(h).not.toContain("1.5");
+  });
   it("the context fill is the secondary value with a small bar on the Conversation cache tile", () => {
     const h = modelsHtml(inv);
     const cache = h.slice(h.indexOf("Conversation cache"));
@@ -377,7 +390,25 @@ describe("cockpit Models cards", () => {
     for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(ollama).toContain(t);
     expect(ollama).toContain("–");
     expect(ollama).toContain("prompt reuse not reported");
-    expect(ollama).toContain("spares: none ready");
+    expect(ollama).toContain("spares 0");
+  });
+  it("sparklines never break: a null point is interpolated between neighbours into one continuous line; leading/trailing nulls drop", () => {
+    const spark = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}; return metricSpark;`)((s: unknown) => String(s ?? "")) as (s: Array<{ data: Array<number | null> }>) => string;
+    const svg = spark([{ data: [10, null, 20] }]);
+    // one continuous line: a single path, three points, the middle one interpolated at 15
+    expect(svg.match(/<path class="line/g)!.length).toBe(1);
+    const pts = svg.match(/class="line[^"]*"[^>]*d="M([\d.,L-]+)"/)![1].split("L");
+    expect(pts.length).toBe(3);
+    expect(pts[1]).toBe("50.0,9.0"); // x mid, y = 30 - 15/20*28 (interpolated 15 between 10 and 20)
+    // leading/trailing nulls drop; the line spans the two real points
+    const trimmed = spark([{ data: [null, 10, 20, null] }]);
+    const tpts = trimmed.match(/class="line[^"]*"[^>]*d="M([\d.,L-]+)"/)![1].split("L");
+    expect(tpts.length).toBe(2);
+    // x keeps the full-array scale (n=4): points 1 and 2 sit at 33.3 and 66.7
+    expect(tpts[0].startsWith("33.3")).toBe(true);
+    expect(tpts[1].startsWith("66.7")).toBe(true);
+    // all-null series draws nothing
+    expect(spark([{ data: [null, null] }])).toBe("");
   });
   it("a long model id renders its short name (last path segment) with the full id in title", () => {
     const h = modelsHtml(inv);
@@ -575,7 +606,8 @@ describe("cockpit metric tile", () => {
     });
     for (const w of ["Speed", "73.4", "Decode now", "715", "Prefill this request", "viewBox=\"0 0 100 32\""]) expect(html).toContain(w);
     expect(html.match(/<path class="line[^>]* d="M/g)!.length).toBe(2);
-    expect(html).toMatch(/d="M[^"]*M/);
+    // a null point is interpolated: each series is one continuous path (no second M)
+    expect(html).not.toMatch(/d="M[^"]*M/);
   });
   it("a fill renders a small bar and its text line between the values and the sparkline", () => {
     const src = [COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0], COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]].join("\n");
