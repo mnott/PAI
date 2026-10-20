@@ -129,7 +129,7 @@ import { detectSessionName } from "./session-name.js";
 import { getProfile, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
-import { ALLOW_HIDDEN_ENV, headlessAllowed, headlessOverridePath, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
+import { headlessAllowed, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -1387,18 +1387,16 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
   }
 }
 
+/** Why a worker's pane could not be opened this process, per worker id: announcePane records it in status.pane. */
+const noPaneReasons = new Map<string, string>();
+
 /**
- * The fail-closed pane gate: a headless run proceeds only behind a pane that
- * was opened and verified visible (see openVerifiedPane). Runs BEFORE the
- * worker has an id on disk, so a refusal leaves nothing in `pai worker ps`.
- *
- * Deterministic (no hidden workers): the ONLY skips are headlessAllowed() —
- * a worker's own child (PAI_WORKER=1), the operator's PAI_WORKER_ALLOW_HIDDEN=1
- * or their override file. `dryRun` (--print-cmd audits) skips too: it spawns
- * nothing. An explicit hidden request (noPane from a daemon, keepalive or an
- * in-process caller) without that consent is refused, not silently honoured —
- * a spawning session with no window (daemon) has no pane to attach to and
- * cannot run workers.
+ * Open and verify the worker's pane before it starts. Never refuses: a pane that cannot be opened (no tmux or
+ * iTerm2, a background session with no terminal, a failed split, verification that never confirms) is logged
+ * (WORKER-NO-PANE ledger line, stderr) and the worker starts without one; its status carries the reason, the
+ * pane auditor shows NO PANE, and `pai worker pane <id>` opens one later. Skipped (false, no failure) for
+ * headlessAllowed() (a worker's own child, the operator's override), `dryRun` (--print-cmd) and an explicit
+ * noPane. Resolves true when the pane exists and runs the worker.
  */
 export async function requireVisiblePane(
   logDir: string,
@@ -1415,19 +1413,17 @@ export async function requireVisiblePane(
     process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
     return false;
   }
-  const how = `hidden runs need the operator's ${ALLOW_HIDDEN_ENV}=1 or ${headlessOverridePath()}`;
-  if (noPane) {
-    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: `headless requested, no override (${how})`.slice(0, 300) });
-    throw new Error(`worker not started, no visible pane: headless requested but nothing may run hidden (${how})`);
-  }
+  if (noPane) return false;
   try {
     const where = await openVerifiedPane(logDir, config, wid, term);
     process.stderr.write(`[pai worker] pane verified for ${wid}: ${where}\n`);
     return true;
   } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    appendLedger(ledger, "WORKER-REFUSED", { id: wid, reason: `${reason} (${how})`.slice(0, 300) });
-    throw new Error(`worker not started, no visible pane: ${reason} (${how})`);
+    const reason = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+    noPaneReasons.set(wid, reason);
+    appendLedger(ledger, "WORKER-NO-PANE", { id: wid, reason });
+    process.stderr.write(`[pai worker] ${wid} starts without a pane: ${reason}\n`);
+    return false;
   }
 }
 
@@ -1464,9 +1460,11 @@ export async function announcePane(
           ? "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"
           : null
     : "--no-pane";
-  if (skip) {
-    process.stderr.write(`[pai worker] no pane for ${wid}: ${skip}\n`);
-    setPane({ opened: false, reason: skip });
+  const failed = noPaneReasons.get(wid);
+  if (skip || failed) {
+    const why = failed ?? skip ?? "";
+    process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
+    setPane({ opened: false, reason: why, ...(failed ? { failed: true } : {}) });
     return;
   }
   try {
@@ -1763,14 +1761,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     saveStatus(a.logDir, status);
   }
   const ledger = ledgerPath(a.logDir);
-  let verified: boolean;
-  try {
-    verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
-  } catch (e) {
-    // a refusal leaves nothing in `pai worker ps`, as before the pane moved up
-    rmSync(statusPath(a.logDir, wid), { force: true });
-    throw e;
-  }
+  const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
   a.panePrepared = { verified };
   if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
   else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);

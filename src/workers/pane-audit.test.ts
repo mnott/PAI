@@ -22,6 +22,15 @@ describe("auditPanes", () => {
     const sizes = new Map([[P1, { cols: 26, rows: 5 }]]);
     expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }), undefined, sizes)[0].mark).toBe("SMALL");
   });
+  it.each(["NOT SELECTED", "MINIMISED"] as const)("pane running but %s: marked, host tab matches", (mark) => {
+    const sizes = new Map([[P1, { cols: 80, rows: 20, mark }]]);
+    expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }), undefined, sizes)[0].mark).toBe(mark);
+  });
+  it("a worker started without a pane shows NO PANE with the reason", () => {
+    const v = auditPanes([{ ...procs[0], noPaneReason: "no attached terminal found" }], [], tabs({ [H]: "1:2" }))[0];
+    expect(v).toMatchObject({ mark: "NO PANE" });
+    expect(v.why).toContain("no attached terminal found");
+  });
   it("no registry entry: NO PANE", () => {
     expect(auditPanes(procs, [], tabs({ [H]: "1:2" }))[0].mark).toBe("NO PANE");
   });

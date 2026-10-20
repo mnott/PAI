@@ -78,19 +78,28 @@ describe("openVerifiedPane placement", () => {
     expect(panePlacement("w-bg")).toBe("split");
   });
 
-  it("a non-size failure does not fall back", async () => {
+  it("a real verification failure still refuses and does not fall back", async () => {
     const s = seam({ split: "ok" });
     s.verify = async () => {
-      throw new Error("pane verification failed: iTerm2 is hidden");
+      throw new Error("pane verification failed: `worker follow w-gone` is not running in the pane");
     };
-    await expect(open("w-hidden", s)).rejects.toThrow("hidden");
+    await expect(open("w-gone", s)).rejects.toThrow("not running");
     expect(s.splits).toBe(1);
+  });
+
+  it.each(["NOT SELECTED", "MINIMISED", "HIDDEN", "OFF SCREEN"])("%s: the start proceeds with the mark, logged", async (mark) => {
+    const s = seam({ split: "ok" });
+    s.verify = async () => `window 7 tab 2/2, pane 76x5 ${mark}`;
+    const wid = `w-${mark.replace(" ", "")}`;
+    await expect(open(wid, s)).resolves.toContain(mark);
+    expect(panePlacement(wid)).toBe("split");
+    expect(readFileSync(ledgerPath(dir), "utf8")).toMatch(new RegExp(`PANE-MARK.*${wid}.*${mark}`));
   });
 });
 
 describe("openVerifiedPane without any host", () => {
   const bare = (daemon: boolean) => openVerifiedPane(dir, config, "w-none", "", {}, ops, { ...seam({ split: "ok" }), daemon: () => daemon });
-  it("refuses with the daemon reason under the Claude background daemon", async () => {
+  it("reports the daemon reason under the Claude background daemon (the caller starts the worker without a pane)", async () => {
     await expect(bare(true)).rejects.toThrow(/neither TMUX nor ITERM_SESSION_ID is set.*runs under the Claude background daemon; no attached terminal found/);
   });
   it("keeps the plain refusal elsewhere", async () => {

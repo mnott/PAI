@@ -26,7 +26,6 @@ import {
   dynamicProfilePath,
   followCommand,
   headlessAllowed,
-  assertPaneNotDisabled,
   verifyPane,
   followProfile,
   noPaneMessage,
@@ -401,14 +400,17 @@ describe("fail-closed visibility", () => {
     await expect(verify({})).resolves.toContain("window 7");
   });
 
-  it.each([
-    ["script reports the pane gone", { fail: "pane session P is gone (closed right after opening)" }, "is gone"],
-    ["tab not selected", { selectedTab: false }, "not the selected one"],
-    ["window off screen", { onScreen: false }, "off screen"],
-    ["iTerm2 hidden", { hidden: true }, "hidden"],
-    ["window minimised", { miniaturized: true }, "minimised"],
-  ])("refuses: %s", async (_n, over, why) => {
+  it.each([["script reports the pane gone", { fail: "pane session P is gone (closed right after opening)" }, "is gone"]])("refuses: %s", async (_n, over, why) => {
     await expect(verify(over)).rejects.toThrow(why);
+  });
+
+  it.each([
+    ["tab not selected", { selectedTab: false }, "NOT SELECTED"],
+    ["window off screen", { onScreen: false }, "OFF SCREEN"],
+    ["iTerm2 hidden", { hidden: true }, "HIDDEN"],
+    ["window minimised", { miniaturized: true }, "MINIMISED"],
+  ])("%s: the pane runs the worker, so it is accepted and marked", async (_n, over, mark) => {
+    await expect(verify(over)).resolves.toMatch(new RegExp(`window 7.* ${mark}$`));
   });
 
   it.each([
@@ -443,16 +445,6 @@ describe("fail-closed visibility", () => {
     const none = join(tmpdir(), "pai-no-such-override");
     expect(headlessAllowed({ PAI_WORKER_ALLOW_HIDDEN: "1" }, none)).toContain("PAI_WORKER_ALLOW_HIDDEN=1");
     expect(headlessAllowed({ PAI_WORKER_ALLOW_HIDDEN: "0" }, none)).toBeNull();
-    expect(() => assertPaneNotDisabled(true, { PAI_WORKER_ALLOW_HIDDEN: "1" })).not.toThrow();
-  });
-
-  it("--no-pane and PAI_WORKER_AUTOPANE=0 are refused for a Claude session, allowed for a worker", () => {
-    vi.stubEnv("PAI_HEADLESS_OK_FILE", join(tmpdir(), "pai-no-such-override"));
-    expect(() => assertPaneNotDisabled(true, {})).toThrow("--no-pane refused");
-    expect(() => assertPaneNotDisabled(false, { PAI_WORKER_AUTOPANE: "0" })).toThrow("PAI_WORKER_AUTOPANE=0 refused");
-    expect(() => assertPaneNotDisabled(false, {})).not.toThrow();
-    expect(() => assertPaneNotDisabled(true, { PAI_WORKER: "1" })).not.toThrow();
-    vi.unstubAllEnvs();
   });
 });
 

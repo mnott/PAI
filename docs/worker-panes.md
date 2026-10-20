@@ -71,3 +71,11 @@ The PreToolUse Bash hook (interactive sessions only; workers already have a pane
 ## Pane audit
 
 Every running worker, plan runner and `pai pane run` command must own a live pane in the tab of the session that started it. The daemon checks this every 30 s (iTerm session -> window:tab against the pane registry). A violation (`NO PANE`: none recorded or the pane is gone; `WRONG TAB`: the pane sits in another tab or window) is written once to the ledger as `PANE-VIOLATION`, shown in red in `pai worker ps` and the cockpit, and sent once to the starting session and PAILot. `pai worker ps --panes` lists process -> pane -> tab live.
+
+## A pane never blocks a start
+
+Only "the pane exists and runs the worker" matters, and a start is never refused for a pane reason.
+
+- **Visibility is a mark.** A pane that runs the worker but is not seen right now is accepted and marked on the returned description (`NOT SELECTED` tab, `MINIMISED` window, `HIDDEN` iTerm2, `OFF SCREEN` window, `SMALL` pane). Each mark is logged (`PANE-MARK`, `PANE-SMALL`) and the pane auditor shows `NOT SELECTED`, `MINIMISED` and `SMALL` without alarming.
+- **No pane at all** (no tmux or `ITERM_SESSION_ID`, a Claude background session with no attached terminal, a failed split, a follow command that never starts) starts the worker without one. The ledger gets `WORKER-NO-PANE` with the reason, `status.pane` records it, the auditor shows `NO PANE` with that reason, and `pai worker pane <id>` opens one later. PAI never opens a `claude attach` tab or any new tab or window to make a pane possible.
+- `--no-pane`, `PAI_WORKER_AUTOPANE=0` and the keepalive beat need no override any more.

@@ -18,7 +18,9 @@ import { loadPlanStatuses } from "./plan-status.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
 
-export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "SMALL";
+export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
+/** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
+export const SHOWN_ONLY: readonly PaneMark[] = ["SMALL", "NOT SELECTED", "MINIMISED"];
 
 export interface AuditProc {
   id: string;
@@ -27,6 +29,8 @@ export interface AuditProc {
   host?: string;
   /** When the process started (ms); a young process gets the start grace. */
   startedMs?: number;
+  /** Why the start could not open a pane (status.pane.reason), shown with NO PANE. */
+  noPaneReason?: string;
 }
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
@@ -46,7 +50,7 @@ export interface PaneVerdict {
 /** iTerm session id -> "window:tab" key. */
 export type TabMap = Map<string, string>;
 /** iTerm session id -> its size in cells. */
-export type SizeMap = Map<string, { cols: number; rows: number }>;
+export type SizeMap = Map<string, { cols: number; rows: number; mark?: "NOT SELECTED" | "MINIMISED" }>;
 const SMALL_COLS = 40;
 const SMALL_ROWS = 6;
 
@@ -65,7 +69,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
       const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
       if (young) return { ...v, why: "within the start grace" };
     }
-    if (!e) return { ...v, mark: "NO PANE", why: "no pane recorded for a running process" };
+    if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
     const hostTab = tabOf(host);
@@ -75,6 +79,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (size && (size.cols < SMALL_COLS || size.rows < SMALL_ROWS)) {
       return { ...v, mark: "SMALL", tab, hostTab, why: `pane ${e.session} is ${size.cols}x${size.rows}, under ${SMALL_COLS}x${SMALL_ROWS}` };
     }
+    if (size?.mark) return { ...v, mark: size.mark, tab, hostTab, why: `pane ${e.session} runs, but ${size.mark === "MINIMISED" ? "its window is minimised" : "its tab is not the selected one"}` };
     return { ...v, tab, hostTab };
   });
 }
@@ -83,8 +88,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
   for (const s of loadStatusesCached(logDir)) {
-    if (isChatPane(s) || !isLive(s, ownsPidCached) || s.state === "queued" || s.pane?.opened === false) continue;
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false) });
+    if (isChatPane(s) || !isLive(s, ownsPidCached) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running") procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs });
@@ -102,8 +107,10 @@ const TABS_SCRIPT = `function run(argv) {
         arr(function () { return w.tabs(); }).forEach(function (t, ti) {
             if (!t) return;
             var tid = ""; try { tid = String(t.id()); } catch (e) { tid = "i" + ti; }
+            var sel = ""; try { sel = String(w.currentTab().id()) === tid ? "1" : "0"; } catch (e) {}
+            var mini = ""; try { mini = w.miniaturized() ? "1" : "0"; } catch (e) {}
             arr(function () { return t.sessions(); }).forEach(function (s) {
-                try { out += s.id() + "\\t" + wid + ":" + tid + "\\t" + s.columns() + "\\t" + s.rows() + "\\n"; } catch (e) {}
+                try { out += s.id() + "\\t" + wid + ":" + tid + "\\t" + s.columns() + "\\t" + s.rows() + "\\t" + sel + "\\t" + mini + "\\n"; } catch (e) {}
             });
         });
     });
@@ -115,9 +122,9 @@ export async function listItermTabs(run: (script: string, args: string[]) => Pro
   const p = await run(TABS_SCRIPT, []);
   const m: TabMap = new Map();
   for (const l of p.stdout.split("\n")) {
-    const [id, tab, cols, rows] = l.split("\t");
+    const [id, tab, cols, rows, sel, mini] = l.split("\t");
     if (id && tab) m.set(norm(id), tab);
-    if (id && cols && rows) sizes?.set(norm(id), { cols: Number(cols), rows: Number(rows) });
+    if (id && cols && rows) sizes?.set(norm(id), { cols: Number(cols), rows: Number(rows), ...(mini === "1" ? { mark: "MINIMISED" as const } : sel === "0" ? { mark: "NOT SELECTED" as const } : {}) });
   }
   return m;
 }
@@ -178,7 +185,7 @@ export async function auditTick(
   const seen = readJson(pendingFile(logDir));
   const failing: Record<string, string> = {};
   for (const v of verdicts) {
-    if (v.mark === "ok" || v.mark === "SMALL") continue;
+    if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
     failing[v.id] = v.mark;
     if (seen[v.id] !== v.mark) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "first failed check, confirming" });
   }
@@ -187,7 +194,7 @@ export async function auditTick(
   const told = readTold(logDir);
   const next: Record<string, string> = {};
   for (const v of verdicts) {
-    if (v.mark === "ok" || v.mark === "SMALL") continue; // SMALL is shown, never alarmed
+    if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     next[v.id] = v.mark;
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
