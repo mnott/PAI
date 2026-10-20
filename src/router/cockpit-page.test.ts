@@ -498,6 +498,31 @@ describe("cockpit Models cards", () => {
     expect(emb).toContain("memory search embeds new content · used by pai-embedding (memory search embeds new content)");
     expect(emb).not.toContain("paperfull-chat");
   });
+  it("a runtime note is the runtime chip's title only: never a body line of any consumer card", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [
+        { model: "qwen3:8b", kind: "chat", loaded: false, usedBy: ["paperfull-chat"] },
+        { model: "arctic-embed", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
+      ] }],
+      runtimeCommands: { ollama: { start: "ollama serve", note: "PAI's embedding backend runs here" } },
+      consumers: [
+        { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat", purpose: "Paperfull chat" },
+        { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding", purpose: "memory search embeds new content" },
+      ],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
+    const emb = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed"'))!;
+    // the note is nowhere in either card's body (the header chip may carry it)
+    expect(chat.slice(chat.indexOf('class="mbody"'))).not.toContain("embedding backend runs here");
+    expect(emb.slice(emb.indexOf('class="mbody"'))).not.toContain("embedding backend runs here");
+    expect(h).not.toContain('class="mnote"');
+    // the runtime chip in each card header carries it as the title
+    expect(chat).toContain('<span class="badge" title="PAI\'s embedding backend runs here">ollama :11434</span>');
+    expect(emb).toContain('<span class="badge" title="PAI\'s embedding backend runs here">ollama :11434</span>');
+  });
   it("the tile grip sits in the tile's top-right corner, never inline with the value", () => {
     const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
     expect(tile).not.toMatch(/<span class="mt-value"><span class="tgrip"/);

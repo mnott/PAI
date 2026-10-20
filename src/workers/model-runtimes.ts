@@ -1,10 +1,12 @@
 /**
  * model-runtimes.ts — the configured start/stop commands of the local model
- * runtimes (config.yaml `models.runtimes.<name>: {start, stop, ready, note}`)
- * and the one-time migration that seeds them.
+ * runtimes (config.yaml `models.runtimes.<name>: {start, stop, ready, note}`).
  *
- * Code holds no defaults: a runtime without a configured command shows no
- * button and cannot be started. The commands run detached through a shell,
+ * Code holds no defaults: the shipped values live in the defaults file
+ * (src/config/defaults/config.yaml under models.runtimes) and reach the user
+ * through the defaults merge — the user's entries win per key, nothing is
+ * ever written into the user's config. A runtime without a configured command
+ * shows no button and cannot be started. The commands run detached through a shell,
  * stdout/stderr appended to <PAI home>/logs/local/<runtime>.log; readiness is
  * the configured `ready` URL (a 2xx answers) or command (exit 0 answers),
  * polled until the deadline. Coding tiers keep using local_tiers
@@ -12,10 +14,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadConfig, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
-import { paiHomePath } from "../config/pai-home.js";
+import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
+import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 
 export interface RuntimeCommands {
   /** shell command that starts the runtime (absent = no start button) */
@@ -28,11 +30,16 @@ export interface RuntimeCommands {
   note?: string;
 }
 
-/** The `models.runtimes` block of config.yaml; {} when unset or unreadable. */
+/** The `models.runtimes` block: the shipped defaults deep-merged UNDER the
+ *  user's config (the user's entries win per key); {} when unset or unreadable. */
 export function readRuntimeCommands(configPath: string = ""): Record<string, RuntimeCommands> {
   try {
     const raw = configPath ? readMainConfigRaw(configPath) : readMainConfigRaw();
-    const block = (raw.models as { runtimes?: unknown } | undefined)?.runtimes;
+    const merged = deepMergeConfig(
+      (shippedMainDefaults().models as { runtimes?: unknown } | undefined)?.runtimes as Record<string, unknown> ?? {},
+      (raw.models as { runtimes?: unknown } | undefined)?.runtimes as Record<string, unknown> ?? {}
+    );
+    const block = merged;
     if (!block || typeof block !== "object" || Array.isArray(block)) return {};
     const out: Record<string, RuntimeCommands> = {};
     for (const [name, v] of Object.entries(block as Record<string, unknown>)) {
@@ -159,71 +166,6 @@ export async function runRuntimeOp(
     return up ? { ok: true, message: `${runtime} up (${cmd.ready})` } : { ok: false, message: `${runtime} not ready after ${Math.round((opts.readyTimeoutMs ?? RUNTIME_READY_TIMEOUT_MS) / 1000)} s; see ${logPath}` };
   }
   return { ok: true, message: `${runtime} started — ${logPath}` };
-}
-
-// ---------------------------------------------------------------------------
-// One-time migration: seed models.runtimes for ollama and docker-model-runner
-// ---------------------------------------------------------------------------
-
-/** The values the migration writes when the key is absent (printed in the commit message). */
-export const RUNTIME_SEED: Record<string, RuntimeCommands> = {
-  ollama: {
-    start: "ollama serve",
-    stop: 'kill $(lsof -nP -iTCP:11434 -sTCP:LISTEN -t)',
-    ready: "http://127.0.0.1:11434/api/tags",
-    note: "PAI's embedding backend runs here",
-  },
-  "docker-model-runner": {
-    start: "docker model run",
-    stop: "docker model unload",
-    ready: "docker model status",
-    note: "idle loads a model on the first request",
-  },
-};
-
-export interface RuntimeSeedResult {
-  added: string[];
-  skipped: string[];
-  wrote: boolean;
-}
-
-/** Writes models.runtimes entries for the seed runtimes into the user config when absent.
- *  An existing models.runtimes block (even a partial one) is left untouched; `dryRun` only reports. */
-export function seedRuntimeCommands(opts: { dryRun?: boolean; configPath?: string } = {}): RuntimeSeedResult {
-  const raw = opts.configPath ? readMainConfigRaw(opts.configPath) : readMainConfigRaw();
-  const models = (raw.models ?? {}) as Record<string, unknown>;
-  const existing = (models.runtimes ?? {}) as Record<string, unknown>;
-  const added: string[] = [];
-  const skipped: string[] = [];
-  const next = { ...existing };
-  for (const [name, cmd] of Object.entries(RUNTIME_SEED)) {
-    if (existing[name] !== undefined) {
-      skipped.push(name);
-      continue;
-    }
-    next[name] = cmd;
-    added.push(name);
-  }
-  if (!added.length) return { added, skipped, wrote: false };
-  if (!opts.dryRun) {
-    models.runtimes = next;
-    raw.models = models;
-    if (opts.configPath) writeMainConfigRaw(raw, opts.configPath);
-    else writeMainConfigRaw(raw);
-  }
-  return { added, skipped, wrote: !opts.dryRun };
-}
-
-/** The daemon-side one-time hook: seed when the block is absent, never throw past the log line. */
-export function ensureRuntimeCommandsSeeded(): void {
-  try {
-    const home = process.env.PAI_HOME || paiHomePath();
-    if (existsSync(runtimeLogFile(home, ".seeded"))) return;
-    const r = seedRuntimeCommands();
-    if (r.wrote) appendFileSync(runtimeLogFile(home, ".seeded"), `models.runtimes seeded: ${r.added.join(", ")}\n`, "utf8");
-  } catch (e) {
-    process.stderr.write(`[pai] models.runtimes seed skipped: ${e instanceof Error ? e.message : String(e)}\n`);
-  }
 }
 
 /** The embedding consumer's runtime name: ollama for the ollama backend, else the in-process runtime. */

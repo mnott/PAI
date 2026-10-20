@@ -57,7 +57,7 @@ read-only and loads nothing. It reads the daemon's 30-second cache; `--fresh`
 probes now, `--json` prints JSON.
 
 Runtimes that are not coding tiers (an embedding model, say) are started and
-stopped with commands you configure in `config.yaml`:
+stopped with configured commands, under `models.runtimes` in `config.yaml`:
 
 ```yaml
 models:
@@ -66,8 +66,13 @@ models:
       start: ollama serve
       stop: pkill ollama
       ready: http://127.0.0.1:11434/api/tags   # 2xx, or a command exiting 0
-      note: free text shown on the card
+      note: free text shown on the runtime chip
 ```
+
+The shipped defaults already configure `ollama` and `docker-model-runner`
+(`src/config/defaults/config.yaml`); your entries win per key and nothing is
+written into your file. `note` shows as the cockpit's runtime-chip title
+(`ollama :11434`), never as a line on a consumer's card.
 
 ```
 pai models start ollama

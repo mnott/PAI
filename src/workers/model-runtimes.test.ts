@@ -6,9 +6,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
+import type { RuntimeCommands } from "./model-runtimes.js";
 
 const savedConfigFile = process.env.PAI_CONFIG_FILE;
 const dirs: string[] = [];
@@ -22,8 +24,6 @@ let readRuntimeCommands: typeof import("./model-runtimes.js")["readRuntimeComman
 let runRuntimeOp: typeof import("./model-runtimes.js")["runRuntimeOp"];
 let runtimeOpArgv: typeof import("./model-runtimes.js")["runtimeOpArgv"];
 let runtimeLogFile: typeof import("./model-runtimes.js")["runtimeLogFile"];
-let seedRuntimeCommands: typeof import("./model-runtimes.js")["seedRuntimeCommands"];
-let RUNTIME_SEED: typeof import("./model-runtimes.js")["RUNTIME_SEED"];
 let readyIsUrl: typeof import("./model-runtimes.js")["readyIsUrl"];
 
 beforeAll(async () => {
@@ -32,7 +32,7 @@ beforeAll(async () => {
   process.env.PAI_HOME = home;
   process.env.PAI_CONFIG_FILE = join(home, "config.yaml");
   writeFileSync(process.env.PAI_CONFIG_FILE, "{}\n");
-  ({ readRuntimeCommands, runRuntimeOp, runtimeOpArgv, runtimeLogFile, seedRuntimeCommands, RUNTIME_SEED, readyIsUrl } = await import("./model-runtimes.js"));
+  ({ readRuntimeCommands, runRuntimeOp, runtimeOpArgv, runtimeLogFile, readyIsUrl } = await import("./model-runtimes.js"));
 });
 
 afterAll(() => {
@@ -59,7 +59,10 @@ describe("models.runtimes config", () => {
     const cmds = readRuntimeCommands(cfg);
     expect(cmds.ollama).toEqual({ start: "ollama serve", stop: "kill", ready: "http://127.0.0.1:11434/api/tags", note: "PAI embedding" });
     expect(cmds["strata-box"]).toBeUndefined();
-    expect(readRuntimeCommands(join(newDir(), "missing.yaml"))).toEqual({});
+    // a missing user file still resolves the shipped defaults, never {}
+    const fromDefaults = readRuntimeCommands(join(newDir(), "missing.yaml"));
+    expect(fromDefaults.ollama?.start).toBe("ollama serve");
+    expect(fromDefaults["docker-model-runner"]?.start).toBe("docker model run");
   });
 
   it("the log file is <PAI home>/logs/local/<runtime>.log", () => {
@@ -124,38 +127,62 @@ describe("runRuntimeOp", () => {
   });
 });
 
-describe("seedRuntimeCommands (temp config copies only)", () => {
-  it("writes ollama and docker-model-runner when models.runtimes is absent", () => {
-    const cfg = join(newDir(), "config.yaml");
-    writeFileSync(cfg, "embedding:\n  backend: ollama-f16\n");
-    const r = seedRuntimeCommands({ configPath: cfg });
-    expect(r.added).toEqual(["ollama", "docker-model-runner"]);
-    expect(r.wrote).toBe(true);
-    const yaml = readFileSync(cfg, "utf8");
-    expect(yaml).toContain("ollama serve");
-    expect(yaml).toContain("docker model run");
-    expect(yaml).toContain("embedding");
-    expect(readRuntimeCommands(cfg).ollama?.start).toBe(RUNTIME_SEED.ollama.start);
+describe("models.runtimes shipped defaults (temp dirs only, never a user write)", () => {
+  const DEFAULTS = join(process.cwd(), "src", "config", "defaults", "config.yaml");
+
+  it("the seed lives in the shipped defaults, not in code", () => {
+    const block = (parse(readFileSync(DEFAULTS, "utf8")).models as { runtimes: Record<string, RuntimeCommands> }).runtimes;
+    expect(block.ollama).toEqual({
+      start: "ollama serve",
+      stop: "kill $(lsof -nP -iTCP:11434 -sTCP:LISTEN -t)",
+      ready: "http://127.0.0.1:11434/api/tags",
+      note: "PAI's embedding backend runs here",
+    });
+    expect(block["docker-model-runner"]).toEqual({
+      start: "docker model run",
+      stop: "docker model unload",
+      ready: "docker model status",
+      note: "idle loads a model on the first request",
+    });
   });
 
-  it("an existing entry is never overwritten; a second run adds nothing", () => {
-    const cfg = join(newDir(), "config.yaml");
+  it("a fresh config resolves models.runtimes.ollama.start from the defaults without writing the user file", async () => {
+    const home = newDir();
+    const cfg = join(home, "config.yaml");
+    const saved = { home: process.env.PAI_HOME, cfgFile: process.env.PAI_CONFIG_FILE };
+    process.env.PAI_HOME = home;
+    process.env.PAI_CONFIG_FILE = cfg;
+    try {
+      const { effectiveMainConfig } = await import("../config/shipped-defaults.js");
+      const merged = effectiveMainConfig(cfg) as { models?: { runtimes?: Record<string, RuntimeCommands> } };
+      expect(merged.models?.runtimes?.ollama?.start).toBe("ollama serve");
+      expect(merged.models?.runtimes?.ollama?.note).toBe("PAI's embedding backend runs here");
+      expect(existsSync(cfg)).toBe(false);
+    } finally {
+      process.env.PAI_HOME = saved.home;
+      if (saved.cfgFile === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = saved.cfgFile;
+    }
+  });
+
+  it("a user entry wins over the shipped defaults", async () => {
+    const home = newDir();
+    const cfg = join(home, "config.yaml");
     writeFileSync(cfg, "models:\n  runtimes:\n    ollama:\n      start: my-own-start\n");
-    const r = seedRuntimeCommands({ configPath: cfg });
-    expect(r.added).toEqual(["docker-model-runner"]);
-    expect(r.skipped).toEqual(["ollama"]);
-    expect(readRuntimeCommands(cfg).ollama).toEqual({ start: "my-own-start" });
-    const r2 = seedRuntimeCommands({ configPath: cfg });
-    expect(r2.added).toEqual([]);
-    expect(r2.wrote).toBe(false);
-  });
-
-  it("dryRun reports without writing", () => {
-    const cfg = join(newDir(), "config.yaml");
-    writeFileSync(cfg, "{}\n");
-    const r = seedRuntimeCommands({ configPath: cfg, dryRun: true });
-    expect(r.added).toEqual(["ollama", "docker-model-runner"]);
-    expect(r.wrote).toBe(false);
-    expect(readFileSync(cfg, "utf8").trim()).toBe("{}");
+    const saved = { home: process.env.PAI_HOME, cfgFile: process.env.PAI_CONFIG_FILE };
+    process.env.PAI_HOME = home;
+    process.env.PAI_CONFIG_FILE = cfg;
+    try {
+      const { effectiveMainConfig } = await import("../config/shipped-defaults.js");
+      const merged = effectiveMainConfig(cfg) as { models?: { runtimes?: Record<string, RuntimeCommands> } };
+      expect(merged.models?.runtimes?.ollama?.start).toBe("my-own-start");
+      // the defaults' other keys of the same entry stay unless the user replaces them
+      expect(merged.models?.runtimes?.ollama?.ready).toBe("http://127.0.0.1:11434/api/tags");
+      expect(merged.models?.runtimes?.["docker-model-runner"]?.start).toBe("docker model run");
+    } finally {
+      process.env.PAI_HOME = saved.home;
+      if (saved.cfgFile === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = saved.cfgFile;
+    }
   });
 });
