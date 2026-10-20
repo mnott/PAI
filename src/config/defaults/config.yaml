@@ -153,6 +153,9 @@ router:
     layout:
       # main grid: 12 columns; c8/c6/c4 cards go full width below this width.
       gridBreakpointPx: 1000
+      # a row of n sections stacks (one per line) only when the main width / n
+      # falls below this: a row of 2 at 822 px stays side by side, a row of 3 stacks.
+      minSectionPx: 380
       # cloud/local gauge tiles (flex row): base width, cap.
       gaugeMinWidthPx: 110
       gaugeMaxWidthPx: 120

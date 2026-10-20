@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
+import { POOL_PANEL_JS } from "./pool-panel.js";
 
 /** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
 const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
@@ -176,7 +177,7 @@ describe("cockpit layout follow-up", () => {
   it("shows a loading state until the first limits poll arrives", () => {
     expect(COCKPIT_HTML).toContain("lim?'<span class=\"dim\">not reported</span>':'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
     expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
-    expect(COCKPIT_HTML).toContain("lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
+    expect(COCKPIT_HTML).toContain("lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
   });
 
   it("low-request models render as a chip line, not tiles", () => {
@@ -1105,7 +1106,15 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("gridBreakpointPx moves the card-collapse media query", () => {
     write({ gridBreakpointPx: 1234 });
-    expect(cockpitHtml()).toContain("@media(max-width:1234px){.c8,.c6,.c4{grid-column:span 12}section[data-section]{grid-column:span 12!important}}");
+    expect(cockpitHtml()).toContain("@media(max-width:1234px){.c8,.c6,.c4{grid-column:span 12}}");
+  });
+
+  it("minSectionPx moves the row-stacking threshold", () => {
+    write({ minSectionPx: 420 });
+    const html = cockpitHtml();
+    expect(html).toContain("MINSEC=420");
+    expect(html).toContain("section[data-section].stacked{grid-column:span 12!important}");
+    expect(COCKPIT_HTML).toContain("MINSEC=380");
   });
 
   it("gaugeMinWidthPx and gaugeMaxWidthPx move the gauge tile widths", () => {
@@ -1602,22 +1611,29 @@ describe("cockpit drag-and-drop layout", () => {
   const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
   beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
 
-  const sec = (name: string, cls: string) => ({
-    className: cls,
-    style: {} as Record<string, string>,
-    getAttribute: (k: string) => (k === "data-section" ? name : null),
-  });
+  const sec = (name: string, cls: string) => {
+    const classes = new Set<string>();
+    return {
+      className: cls,
+      style: {} as Record<string, string>,
+      getAttribute: (k: string) => (k === "data-section" ? name : null),
+      classList: {
+        toggle(cl: string, on: boolean) { if (on) classes.add(cl); else classes.delete(cl); },
+        contains: (cl: string) => classes.has(cl),
+      },
+    };
+  };
   /** The shipped page's sections, in page order with their span classes. */
   const pageSecs = () => {
     const html = COCKPIT_HTML.match(/<main[\s\S]*?<\/main>/)![0];
     return [...html.matchAll(/<section data-section="([a-z]+)" class="card (c\d+)">/g)].map((m) => sec(m[1]!, m[2]!));
   };
-  const api = (secs: unknown[]) => {
-    const main: any = { children: secs.slice(), appendChild(n: any) { const i = main.children.indexOf(n); if (i >= 0) main.children.splice(i, 1); main.children.push(n); } };
+  const api = (secs: unknown[], mainWidth = 1200) => {
+    const main: any = { children: secs.slice(), clientWidth: mainWidth, appendChild(n: any) { const i = main.children.indexOf(n); if (i >= 0) main.children.splice(i, 1); main.children.push(n); } };
     main.querySelectorAll = (sel: string) => (sel === "section[data-section]" ? main.children : []);
     const document = { querySelector: (s: string) => (s === "main" ? main : null), querySelectorAll: (s: string) => main.querySelectorAll(s) };
-    const fn = new Function("localStorage", "document", `${src}\nreturn {spanOf:spanOf,deriveRows:deriveRows,PAGE_ROWS:PAGE_ROWS.slice(),savedRows:savedRows,defaultRows:defaultRows,cleanRows:cleanRows,layoutRows:layoutRows,saveRows:saveRows,applyLayout:applyLayout,moveSec:moveSec,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,resetLayout:resetLayout};`);
-    return { a: fn(ls, document) as Record<string, (...args: unknown[]) => unknown>, main };
+    const fn = new Function("localStorage", "document", "window", `${src}\nreturn {spanOf:spanOf,deriveRows:deriveRows,PAGE_ROWS:PAGE_ROWS.slice(),savedRows:savedRows,defaultRows:defaultRows,cleanRows:cleanRows,layoutRows:layoutRows,saveRows:saveRows,applyLayout:applyLayout,moveSec:moveSec,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,resetLayout:resetLayout,stackRows:stackRows};`);
+    return { a: fn(ls, document, { innerWidth: mainWidth, addEventListener() {} }) as Record<string, (...args: unknown[]) => unknown>, main };
   };
 
   it("the default rows derive from the section order and the span classes: c8+c4 one row, c6+c6 one row, c12 own rows", () => {
@@ -1707,6 +1723,29 @@ describe("cockpit drag-and-drop layout", () => {
     expect((secs[8] as any).style.gridColumn).toBe("span 6");
   });
 
+  it("a row of 2 at an 822 px main width stays side by side; a row of 3 stacks (minSectionPx 380)", () => {
+    const a = sec("tokens", "c8"), b = sec("cache", "c4"), c = sec("cloud", "c12"), d = sec("speed", "c12");
+    const { a: A } = api([a, b, c, d], 822);
+    A.applyLayout([["tokens", "cache"], ["cloud"], ["speed"]]);
+    expect((a as any).classList.contains("stacked")).toBe(false);
+    expect((b as any).classList.contains("stacked")).toBe(false);
+    // a row of 3 at 822 px: 274 each, under 380 — the row stacks
+    A.applyLayout([["tokens", "cache", "speed"], ["cloud"]]);
+    expect((a as any).classList.contains("stacked")).toBe(true);
+    expect((b as any).classList.contains("stacked")).toBe(true);
+    expect((c as any).classList.contains("stacked")).toBe(false);
+    // a wide main un-stacks the row of 3 (1200/3 = 400 >= 380)
+    const wide = api([a, b, c, d], 1200);
+    wide.a.applyLayout([["tokens", "cache", "speed"], ["cloud"]]);
+    expect((a as any).classList.contains("stacked")).toBe(false);
+    // the class rule is the stacking mechanism, not a fixed media query
+    expect(COCKPIT_HTML).toContain("section[data-section].stacked{grid-column:span 12!important}");
+    expect(COCKPIT_HTML).toContain("MINSEC=380");
+    // the live main width drives it: ResizeObserver on main, else a resize listener
+    expect(COCKPIT_HTML).toContain('new ResizeObserver(function(){stackRows()}).observe(document.querySelector("main"))');
+    expect(COCKPIT_HTML).toContain('window.addEventListener("resize",stackRows)');
+  });
+
   it("unknown names in the saved layout are dropped, new sections append as own rows", () => {
     const secs = [sec("a", "c12"), sec("b", "c12")];
     const { a: A } = api(secs);
@@ -1785,11 +1824,127 @@ describe("cockpit drag-and-drop layout", () => {
     expect(COCKPIT_HTML).toContain("if(y<EDGE_PX)window.scrollBy(0,-8)");
     expect(COCKPIT_HTML).toContain('if(e.key==="Escape")aDrag()');
     expect(COCKPIT_HTML).toContain('g.addEventListener("pointercancel",aDrag)');
-    // below the phone breakpoint every row stacks to full width, order kept
-    expect(COCKPIT_HTML).toContain("@media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}section[data-section]{grid-column:span 12!important}}");
+    // below the phone breakpoint the span classes go full width; the row stacking
+    // itself is the .stacked class from the live main width, not this media query
+    expect(COCKPIT_HTML).toContain("@media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}");
     // the tunables are baked from the config
     expect(COCKPIT_HTML).toContain("MAXROW=3");
     expect(COCKPIT_HTML).toContain("PRESS_MS=350");
     expect(COCKPIT_HTML).toContain("EDGE_PX=40");
+  });
+});
+
+describe("cockpit readability pass (issue APPS/PAI#8)", () => {
+  const table = COCKPIT_HTML.match(/function table\([\s\S]*?\n\}\n/)![0];
+  const vcls = new Function(`${COCKPIT_HTML.match(/function vcls\([\s\S]*?\n\}\n/)![0]}; return vcls;`)() as (v: unknown) => string;
+
+  it("table(): a scroll box with a thead, every cell carries its column label for the stacked-card view", () => {
+    const t = new Function("esc", `${table}; return table;`)((s: unknown) => String(s ?? "")) as (h: string[], r: string[][]) => string;
+    const html = t(["session", "req"], [["alpha", "3"]]);
+    expect(html).toContain('<div class="tw">');
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain('<td data-l="session">alpha</td>');
+    expect(html).toContain('<td data-l="req">3</td>');
+    // the box scrolls inside itself with a theme-coloured thin scrollbar; the first column sticks
+    expect(COCKPIT_HTML).toMatch(/\.tw\{[^}]*max-width:100%[^}]*scrollbar-color:var\(--dim\) var\(--card\);scrollbar-width:thin\}/);
+    expect(COCKPIT_HTML).toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky;left:0;background:var\(--card\)\}/);
+    // below the phone breakpoint a row is a stacked card: label: value pairs, no columns
+    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{\.tw\{overflow-x:visible\}\.tw table\{display:block\}\.tw tr\{display:block/);
+    expect(COCKPIT_HTML).toMatch(/\.tw td::before\{content:attr\(data-l\)/);
+  });
+
+  it("the verdict colour helper: ok prefixes green, failed red, report flagged amber, the rest dim, undefined dim (no crash)", () => {
+    expect(vcls("ok")).toBe("ok");
+    expect(vcls("ok · 2 commits")).toBe("ok");
+    expect(vcls("done · report flagged · 1 commit")).toBe("warn");
+    expect(vcls("failed")).toBe("bad");
+    expect(vcls("running")).toBe("dim");
+    expect(vcls("waiting (warm-up) 7s/12s")).toBe("dim");
+    expect(vcls(undefined)).toBe("dim");
+    expect(vcls(null)).toBe("dim");
+    // both verdict tables use the one helper
+    expect((COCKPIT_HTML.match(/vcls\(s\.verdict\)/g) ?? []).length).toBe(2);
+    expect(COCKPIT_HTML).not.toContain('s.verdict==="ok"');
+  });
+
+  it("the kpis section has an h2, so it gets the fold, id and grip like every section", () => {
+    expect(COCKPIT_HTML).toContain('<section data-section="kpis" class="card c12"><h2>Totals in this window');
+    const html = COCKPIT_HTML.match(/<main[\s\S]*?<\/main>/)![0];
+    const noH2 = [...html.matchAll(/<section data-section="([a-z]+)" class="card[^"]*">(?!<h2)/g)].map((m) => m[1]);
+    expect(noH2).toEqual([]);
+  });
+
+  it("the header stamp: live after any poll succeeds, offline when all polls fail", () => {
+    const tickSrc = COCKPIT_HTML.match(/function tick\(\)\{[\s\S]*?\n\}\n/)![0];
+    const run = (lastOk: number) => {
+      const els: Record<string, any> = { stamp: { textContent: "", title: "", className: "" } };
+      const fn = new Function("$", "lastOk", "STALE_SEC", "dur", "document", `var document={querySelectorAll:function(){return[]}};\n${tickSrc}\nvar st=$("stamp");tick();return st.textContent;`);
+      return fn((id: string) => els[id], lastOk, 15, () => "", { querySelectorAll: () => [] }) as string;
+    };
+    expect(run(0)).toBe("offline");
+    expect(run(Date.now() - 20_000)).toMatch(/^stale 20s · \d{1,2}:\d{2}:\d{2}/);
+    expect(run(Date.now() - 2_000)).toMatch(/^live · \d{1,2}:\d{2}:\d{2}/);
+    // every poll marks itself ok, so a limits/models success updates the stamp even with the usage sections hidden
+    expect(COCKPIT_HTML).toContain("lim=j;lastOk=Date.now();renderLimits()");
+    expect(COCKPIT_HTML).toContain("mdl=j;lastOk=Date.now();renderLimits()");
+    expect(COCKPIT_HTML).toContain("sys=j;lastOk=Date.now();renderSystem()");
+    expect(COCKPIT_HTML).toContain("lastOk=Date.now();renderQueue(j)");
+  });
+
+  it("the system tiles carry their units next to the value", () => {
+    const body = COCKPIT_HTML.match(/function renderSystem\(\)\{[\s\S]*?\n\}\n/)![0];
+    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
+    const sys = { current: { memUsed: 8 * 1073741824, memTotal: 36 * 1073741824, cpu: 42, cpuW: 12.3, totalW: 30.5, socTemp: 55.2 }, series: { series: [], wh: { "1h": 4 }, coveredMin: { "1h": 60 } }, servers: [] };
+    const fn = new Function(
+      "sys", "$", "esc", "gb", "LAST", "win", "data", "lim", "table", "renderDonuts",
+      `${SH}\n${body}\nrenderSystem();`
+    );
+    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b / 1073741824), {}, "1h", {}, null, () => "", () => {});
+    const html = els.sys!.innerHTML;
+    expect(html).toContain("<b>8 GB</b>");
+    expect(html).toContain("of 36 GB");
+    expect(html).toContain("<b>42%</b>");
+    expect(html).toContain("<b>12.3 W</b>");
+    expect(html).toContain("<b>30.5 W</b>");
+    expect(html).toContain("<b>55.2 °C</b>");
+    expect(html).toContain("<b>4 Wh</b>");
+  });
+
+  it("a disabled pool with a down host renders one compact line, not the dashboard of zeros", () => {
+    const js = POOL_PANEL_JS;
+    const els: Record<string, any> = { poolpanel: { innerHTML: "", __html: "" }, pooltip: { setAttribute() {} } };
+    const fn = new Function("$", "setHtml", "setTip", "esc", "fmt", "pct", `${SH}\n${js}\nreturn renderPool;`);
+    const renderPool = fn(
+      (id: string) => els[id],
+      (el: any, h: string) => { el.innerHTML = h; return true; },
+      () => {},
+      (s: unknown) => String(s ?? ""),
+      (n: number) => String(n),
+      (x: number) => (x * 100).toFixed(1) + "%"
+    ) as (p: unknown) => void;
+    renderPool({
+      enabled: false, hostUp: false, port: 8798, maxSlots: 3, idleKillSecs: 1800,
+      hostSince: null, hostLastSeen: "2026-10-19 22:41:03", hostBuiltAt: "2026-10-19 21:00:00", hostStale: false,
+      slots: [], totals: { tasksServed: 0, tokensCarried: 0, hitRatio: null, carriedTasks: 0 },
+      last24h: { runs: 0, pooled: 0, notPooled: 0, reasons: [], topReason: null, unattributed: 0 },
+      message: "Pool is OFF",
+    });
+    const h = els.poolpanel.innerHTML;
+    expect(h).toContain("Pool off · host not running");
+    expect(h).toContain("last seen 2026-10-19 22:41:03");
+    expect(h).toContain("last built 2026-10-19 21:00:00");
+    expect(h).not.toContain("<div class=\"kpis\">");
+    expect(h).not.toContain("tasks served");
+    // enabled or running: the full view still renders
+    renderPool({
+      enabled: true, hostUp: true, port: 8798, maxSlots: 3, idleKillSecs: 1800,
+      hostSince: "x", hostLastSeen: "y", hostBuiltAt: null, hostStale: false,
+      slots: [], totals: { tasksServed: 2, tokensCarried: 100, hitRatio: 0.5, carriedTasks: 2 },
+      last24h: { runs: 4, pooled: 2, notPooled: 2, reasons: [], topReason: null, unattributed: 0 },
+      message: "up",
+    });
+    expect(els.poolpanel.innerHTML).toContain("<div class=\"kpis\">");
+    expect(els.poolpanel.innerHTML).toContain("tasks served");
   });
 });

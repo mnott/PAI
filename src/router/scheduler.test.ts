@@ -181,9 +181,16 @@ describe("RequestScheduler", () => {
 
   it("renders the ps line", () => {
     expect(schedLine({ at: 1, workers: {}, engines: { gyro: { inflight: { session: "s1", worker: "w", sinceMs: 1 }, queued: { s2: 2 }, counters: { s1: 10, s2: 3 } } } })).toBe(
-      "local scheduler: gyro in flight (s1), queued s2 2, counters s1 10 s2 3"
+      "local scheduler: gyro in flight (s1), queued s2 2, s1 10 tokens served, s2 3 tokens served"
     );
     expect(schedLine(null)).toBe("");
+  });
+
+  it("names sessions when known, else the first 8 chars — never a raw uuid; counters read as tokens served", () => {
+    const uuid = "d875bcac-1111-2222-3333-444455556666";
+    const s = { at: 1, workers: {}, engines: { gyro: { inflight: { session: uuid, worker: "w", sinceMs: 1 }, queued: {}, counters: { [uuid]: 18120 } } } };
+    expect(schedLine(s)).toBe("local scheduler: gyro in flight (d875bcac), d875bcac 18120 tokens served");
+    expect(schedLine(s, { [uuid]: "PAI" })).toBe("local scheduler: gyro in flight (PAI), PAI 18120 tokens served");
   });
 
   it("parses config over the defaults", () => {

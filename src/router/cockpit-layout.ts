@@ -60,6 +60,7 @@ function strLists(section: Record<string, unknown>, key: string, fallback: strin
  *  missing a key; the file is the source of truth. */
 const SHIPPED = {
   gridBreakpointPx: 1000,
+  minSectionPx: 380,
   gaugeMinWidthPx: 110,
   gaugeMaxWidthPx: 120,
   providerTileMinPx: 260,
@@ -112,6 +113,9 @@ export interface CockpitLayout {
   /** main grid: 12 columns; cards wider than c8 collapse to full width below this width. */
   gridCols: number;
   gridBreakpointPx: number;
+  /** a row of n sections stacks (one per line) only when the main width / n falls
+   *  below this; a row of 2 at 822 px stays side by side, a row of 3 stacks. */
+  minSectionPx: number;
   /** gauge tiles in the cloud/local flex rows. */
   gaugeMinWidthPx: number;
   gaugeMaxWidthPx: number;
@@ -185,6 +189,7 @@ export function cockpitLayout(): CockpitLayout {
   return {
     gridCols: 12,
     gridBreakpointPx: num(s, "gridBreakpointPx", SHIPPED.gridBreakpointPx),
+    minSectionPx: num(s, "minSectionPx", SHIPPED.minSectionPx),
     gaugeMinWidthPx: num(s, "gaugeMinWidthPx", SHIPPED.gaugeMinWidthPx),
     gaugeMaxWidthPx: num(s, "gaugeMaxWidthPx", SHIPPED.gaugeMaxWidthPx),
     providerTileMinPx: num(s, "providerTileMinPx", SHIPPED.providerTileMinPx),

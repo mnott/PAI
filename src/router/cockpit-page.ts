@@ -59,13 +59,21 @@ main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gr
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
 .gauge .s{overflow-wrap:anywhere}
 .c12{grid-column:span ${L.gridCols}}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
-@media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}section[data-section]{grid-column:span ${L.gridCols}!important}}
+@media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}}
+/* narrow main: a row of n sections stacks only when main width / n is under minSectionPx
+ * (the JS toggles this class per section from the live main width via ResizeObserver, not a media query) */
+section[data-section].stacked{grid-column:span ${L.gridCols}!important}
 .gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 ${L.gaugeMinWidthPx}px;max-width:min(${L.gaugeMaxWidthPx}px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
+.tw{max-width:100%;scrollbar-color:var(--dim) var(--card);scrollbar-width:thin}
 table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:left}
+/* a wide table scrolls inside its own box, never past the page; the first column stays put */
+.tw table th:first-child,.tw table td:first-child{position:sticky;left:0;background:var(--card)}
+/* below the phone breakpoint a table row is a stacked card: label: value pairs, no columns */
+@media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw tr{display:block;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
@@ -165,7 +173,7 @@ svg text{fill:var(--dim);font-size:10px}
 ${POOL_PANEL_HTML}
 <section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
 <section data-section="system" class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
-<section data-section="kpis" class="card c12"><div class="kpis" id="kpis"></div></section>
+<section data-section="kpis" class="card c12"><h2>Totals in this window<span class="tip" tabindex="0" aria-label="Requests, tokens and errors over the selected window (1 hour / Today / Week)." data-tip="Requests, tokens and errors over the selected window (1 hour / Today / Week).">ⓘ</span></h2><div class="kpis" id="kpis"></div></section>
 <section data-section="tokens" class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:8px">Power and GPU/CPU load<span class="tip" tabindex="0" aria-label="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis." data-tip="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis.">ⓘ</span></h2><div id="power"></div><div class="legend" id="plegend"></div></section>
 <section data-section="cache" class="card c4"><h2>Cache hit ratio<span class="tip" tabindex="0" aria-label="cache_read / (read + write + fresh input), per provider / model." data-tip="cache_read / (read + write + fresh input), per provider / model.">ⓘ</span></h2><div id="donut" class="rings"></div><div id="donutlow" class="chips lowmodels"></div><div id="donutnote" class="chips"></div>
@@ -315,9 +323,23 @@ function applyLayout(rows){
  var order=[];
  for(var r=0;r<rows.length;r++){
   var row=rows[r],span=Math.floor(GRIDCOLS/Math.min(row.length,MAXROW));
-  for(var k=0;k<row.length;k++){var el=byName[row[k]];if(!el)continue;el.style.gridColumn="span "+span;order.push(el)}
+  for(var k=0;k<row.length;k++){var el=byName[row[k]];if(!el)continue;el.style.gridColumn="span "+span;el.__n=Math.min(row.length,MAXROW);order.push(el)}
  }
  for(var j=0;j<order.length;j++)main.appendChild(order[j]);
+ stackRows();
+}
+/** Row stacking: a row of n sections stacks (full width) only when the main width / n
+ *  is under MINSEC — an 822 px window keeps a row of 2 side by side (411 each) and stacks
+ *  a row of 3 (274 each). Driven by the live main width (ResizeObserver), not a media query. */
+var MINSEC=${n(L.minSectionPx)};
+function stackRows(){
+ var main=document.querySelector("main");if(!main)return;
+ var w=main.clientWidth||window.innerWidth||0;
+ var secs=main.querySelectorAll("section[data-section]");
+ for(var i=0;i<secs.length;i++){
+  var n=secs[i].__n||1;
+  secs[i].classList.toggle("stacked",w/n<MINSEC);
+ }
 }
 function moveSec(name,rows,target,mode){
  var ri=-1,si=-1,t=-1,kk=-1;
@@ -503,7 +525,7 @@ function secGrips(){
   if(b)h.insertBefore(g,b); // the grip sits left of the fold chevron
  })(secs[i]);
 }
-function resetLayout(){try{localStorage.removeItem(LKEY)}catch(e){}applyLayout(layoutRows(document.querySelectorAll("section[data-section]")))}
+function resetLayout(){try{localStorage.removeItem(LKEY)}catch(e){}applyLayout(layoutRows(document.querySelectorAll("section[data-section]")));stackRows()}
 function gauge(l,w,age){
  var p=Math.max(0,Math.min(100,w.percent)),r=44,cx=60,cy=56,a=Math.PI*p/100;
  var x=cx-r*Math.cos(a),y=cy-r*Math.sin(a);
@@ -923,19 +945,20 @@ function renderSystem(){
  var freq=c.gpuFreqMhz; // GPU clock for the load sublabel, remembered like the other probe values
  if(freq==null&&LAST.gpuFreqMhz)freq=LAST.gpuFreqMhz.v;else if(freq!=null)LAST.gpuFreqMhz={v:freq,at:Date.now()};
  var wh=(sys.series&&sys.series.wh&&sys.series.wh[win])||0,cov=(sys.series&&sys.series.coveredMin&&sys.series.coveredMin[win])||0;
+ // the unit sits next to the value, not only in the caption
  var kpis=[
-  ["memory",c.memUsed!=null?gb(c.memUsed):na(null),"of "+na(c.memTotal!=null?gb(c.memTotal):null)+" · pressure "+(c.pressureLevel!=null?(100-c.pressureLevel)+"%":na(null))],
-  ["swap",c.swapUsed!=null?gb(c.swapUsed):na(null),"of "+na(c.swapTotal!=null?gb(c.swapTotal):null)],
-  ["wired",c.wired!=null?gb(c.wired):na(null),"vm_stat"],
-  ["compressed",c.compressed!=null?gb(c.compressed):na(null),"vm_stat"],
+  ["memory",c.memUsed!=null?gb(c.memUsed)+" GB":na(null),"of "+na(c.memTotal!=null?gb(c.memTotal)+" GB":null)+" · pressure "+(c.pressureLevel!=null?(100-c.pressureLevel)+"%":na(null))],
+  ["swap",c.swapUsed!=null?gb(c.swapUsed)+" GB":na(null),"of "+na(c.swapTotal!=null?gb(c.swapTotal)+" GB":null)],
+  ["wired",c.wired!=null?gb(c.wired)+" GB":na(null),"vm_stat"],
+  ["compressed",c.compressed!=null?gb(c.compressed)+" GB":na(null),"vm_stat"],
   ["CPU load",val("cpu",pctf),"all clusters"],
   ["GPU load",val("gpu",pctf),(freq?(freq/1000).toFixed(1)+" GHz":"IOReport")+tag()],
   ["ANE load",val("ane",pctf),"neural engine"+tag(),"ane"],
   ["SoC temp",val("socTemp",function(v){return v.toFixed(1)+" °C"}),"IOReport"+tag()],
-  ["CPU W",val("cpuW",w1),"CPU rail"+tag(),"cpuW"],
-  ["GPU W",val("gpuW",w1),"GPU rail"+tag(),"gpuW"],
-  ["ANE W",val("aneW",w1),"neural engine"+tag(),"aneW"],
-  ["system W",val("systemW",w1),"system rail"+tag()],
+  ["CPU W",val("cpuW",function(v){return w1(v)+" W"}),"CPU rail"+tag(),"cpuW"],
+  ["GPU W",val("gpuW",function(v){return w1(v)+" W"}),"GPU rail"+tag(),"gpuW"],
+  ["ANE W",val("aneW",function(v){return w1(v)+" W"}),"neural engine"+tag(),"aneW"],
+  ["system W",val("systemW",function(v){return w1(v)+" W"}),"system rail"+tag()],
   ["power",val("totalW",function(v){return w1(v)+" W"}),"SoC total"+tag()],
   ["energy "+win,wh+" Wh",cov+" min of 1-min samples"]
  ];
@@ -990,8 +1013,10 @@ function renderPower(){
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
  for(var i=0;i<els.length;i++){var r=+els[i].getAttribute("data-reset");if(r)els[i].textContent="resets in "+dur(r-Date.now())}
- var st=$("stamp"),age=(Date.now()-lastOk)/1000;
- st.textContent=lastOk?(age<STALE_SEC?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"loading...";
+ var st=$("stamp");
+ // every poll marks itself ok; the stamp reads offline only when all polls fail
+ var age=(Date.now()-lastOk)/1000;
+ st.textContent=lastOk?(age<STALE_SEC?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"offline";
  st.title=st.textContent;st.className=lastOk&&age>=STALE_SEC?"stale":"";
 }
 /** Columns for the bar charts: runs of zero-total buckets collapse into one 0.4-width spacer. */
@@ -1098,7 +1123,13 @@ function localDetail(prov,pc,tot,age){
  var mem=(pc.entries!=null?pc.entries+" entries":"")+(pc.entries!=null&&pc.memoryMb!=null?" / ":"")+(pc.memoryMb!=null?Math.round(pc.memoryMb)+" MB":"");
  return'<div class="s"><b>'+esc(prov)+'</b> · '+pc.hits+' hit / '+pc.misses+' miss · '+fmt(pc.tokensSaved)+' tokens saved (server, since start)'+(mem?' · '+mem:'')+(tot?' · router log: '+fmt(tot)+' prompt tokens (since restart)':'')+(age||'')+'</div>';
 }
-function table(head,rows,tips){return'<div class="tw"><table><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr>'+rows.map(function(r){return'<tr>'+r.map(function(c){return'<td>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</table></div>'}
+/** One box for every table: a wide table scrolls inside .tw (theme-coloured thin
+ *  scrollbar, sticky first column); below the phone breakpoint CSS turns each row
+ *  into a stacked card — the column label rides on each cell as data-l. */
+function table(head,rows,tips){return'<div class="tw"><table><thead><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+rows.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'}
+/** Verdict colour by prefix: ok* green, failed red, "report flagged" amber, the rest dim.
+ *  A missing verdict is dim, never a crash. One helper for both verdict tables. */
+function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0?"warn":"dim"}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
 function renderSpeed(){
@@ -1152,8 +1183,8 @@ function render(){
  setHtml($("pause"),ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>');
  setHtml($("providers"),table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
   '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>');
- setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":s.verdict.indexOf("report flagged")>=0?"warn":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
- setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":s.verdict.indexOf("report flagged")>=0?"warn":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
+ setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
+ setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
  var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
  legend($("dlegend"),dm,dgap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
@@ -1161,7 +1192,7 @@ function render(){
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
 }
-function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;renderSystem();renderPower();renderDonuts()}).catch(function(){})}
+function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;lastOk=Date.now();renderSystem();renderPower();renderDonuts()}).catch(function(){})}
 ${POOL_PANEL_JS}
 var qdrag=false;
 function renderQueue(q){
@@ -1211,7 +1242,7 @@ function renderQueue(q){
  if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return'<tr style="color:#d33"><td style="text-align:left">'+esc(p.id)+'</td><td style="text-align:left">'+esc(p.mark)+'</td><td style="text-align:left">'+esc(p.why||"")+'</td></tr>'})));
  var pn=q.panes||[];
  if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
- if(q.localModel)out.unshift('<div style="margin:4px 0;color:#888">'+esc(q.localModel)+"</div>");
+ if(q.localModel)out.unshift('<div class="dim" style="margin:4px 0">'+esc(q.localModel)+"</div>");
  setHtml(el,out.join("")+wt);
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
@@ -1228,9 +1259,9 @@ function renderQueue(q){
   tr.ondragend=function(){from=null;qdrag=false;tr.style.opacity="";loadQueue()};
  })(rs[k])}
 }
-function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
-function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits();renderModels()}).catch(function(){})}
-function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lastOk=Date.now();renderQueue(j)}).catch(function(){})}
+function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;lastOk=Date.now();renderLimits();renderModels()}).catch(function(){})}
+function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
@@ -1240,6 +1271,9 @@ setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
 var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
 tabs();applyCollapse();applyLayout(layoutRows(document.querySelectorAll("section[data-section]")));secGrips();
+/** Row stacking follows the live main width (ResizeObserver, else a resize listener). */
+if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(function(){stackRows()}).observe(document.querySelector("main"))}catch(e){}}
+window.addEventListener("resize",stackRows);
 $("reset").onclick=resetLayout;
 if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
 if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});setInterval(tick,${L.clockTickMs});

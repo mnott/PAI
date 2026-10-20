@@ -44,6 +44,8 @@ export interface PoolPanelData {
   hostBuiltAt: string | null;
   /** A newer build is on disk than the one the host runs. */
   hostStale: boolean;
+  /** When the host last ran (its state file's update stamp), null when it never started. */
+  hostLastSeen: string | null;
   slots: PoolPanelSlot[];
   totals: { tasksServed: number; tokensCarried: number; hitRatio: number | null; carriedTasks: number };
   last24h: {
@@ -142,6 +144,7 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     maxSlots: i.maxSlots,
     idleKillSecs: i.idleSecs,
     hostSince: i.state?.startedAt ?? null,
+    hostLastSeen: i.state?.updatedAt ?? null,
     hostBuiltAt: i.state?.bundleMtimeMs !== undefined ? bundleBuildStamp(i.state.bundleMtimeMs) : null,
     hostStale: poolHostStale(i.state?.bundleMtimeMs, i.diskBundleMtimeMs ?? null),
     slots,
@@ -214,6 +217,11 @@ export const POOL_PANEL_JS = String.raw`
 function renderPool(p){
  var el=$("poolpanel");if(!p){if(!el.__html)setHtml(el,'<span class="dim">pool status unavailable</span>');return}
  function dur(s){return s<90?s+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"}
+ // off and its host not running: one compact line, not a dashboard of zeros
+ if(!p.enabled&&!p.hostUp){
+  setHtml(el,'<div class="dim">Pool off · host not running'+(p.hostLastSeen?' · last seen '+esc(p.hostLastSeen):"")+(p.hostBuiltAt?' · last built '+esc(p.hostBuiltAt):"")+' — every worker spawns a fresh claude. Turn on with <b>pai worker pool on</b>.</div>');
+  setTip($("pooltip"),p.message);
+  return}
  var head='<div class="kpis">'+
   [["pool",p.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>',"max "+p.maxSlots+" slots · idle kill "+(p.idleKillSecs?dur(p.idleKillSecs):"never")],
    ["host",p.hostUp?'<span class="ok">up</span>':'<span class="bad">down</span>',"port "+p.port+(p.hostSince?" · since "+esc(p.hostSince):"")+(p.hostBuiltAt?" · built "+esc(p.hostBuiltAt):"")+(p.hostStale?' · <span class="warn">stale (newer build on disk)</span>':"")],

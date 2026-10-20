@@ -387,18 +387,20 @@ export function readSchedFile(dir: string, now = Date.now()): SchedSnapshot | nu
   }
 }
 
-/** `ps` / cockpit line: "scheduler: gyro-m running (sess-a) · queued sess-b 2 · counters sess-a 1200, sess-b 300"; "" when idle. */
-export function schedLine(s: SchedSnapshot | null): string {
+/** `ps` / cockpit line: "scheduler: gyro-m running (sess-a) · queued sess-b 2 · counters sess-a 1200, sess-b 300"; "" when idle.
+ *  names: session id → display name — a known session reads by name, an unknown one by its first 8 chars, never a raw uuid. */
+export function schedLine(s: SchedSnapshot | null, names?: Record<string, string>): string {
   if (!s) return "";
+  const label = (sid: string): string => names?.[sid] ?? sid.slice(0, 8);
   const parts: string[] = [];
   for (const [name, e] of Object.entries(s.engines)) {
     const q = Object.entries(e.queued);
     if (!e.inflight && !q.length) continue;
-    const c = Object.entries(e.counters).map(([k, v]) => `${k} ${v}`);
+    const c = Object.entries(e.counters).map(([k, v]) => `${label(k)} ${v} tokens served`);
     parts.push(
-      `${name} ${e.inflight ? `in flight (${e.inflight.session})` : "idle"}` +
-        (q.length ? `, queued ${q.map(([k, n]) => `${k} ${n}`).join(" ")}` : "") +
-        (c.length ? `, counters ${c.join(" ")}` : "")
+      `${name} ${e.inflight ? `in flight (${label(e.inflight.session)})` : "idle"}` +
+        (q.length ? `, queued ${q.map(([k, n]) => `${label(k)} ${n}`).join(" ")}` : "") +
+        (c.length ? `, ${c.join(", ")}` : "")
     );
   }
   return parts.length ? `local scheduler: ${parts.join(" · ")}` : "";

@@ -4,12 +4,12 @@
  * gets numbers and display names, never keys, bodies or prompt content.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { cockpitHtml } from "./cockpit-page.js";
-import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
+import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
@@ -643,6 +643,28 @@ export interface QueueProvider {
 /** Session blocks with a `max_parallel` profile key: group name -> limit. */
 export type SessionLimits = Record<string, number>;
 
+/** Session id → display name for the scheduler line: the agent-sessions registry
+ *  (uuid → name) plus each worker's own session name. A name the registry does not
+ *  know falls back to the first 8 chars inside schedLine — never a raw uuid. */
+function schedNames(logDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const f = join(expandHome("~"), ".aibroker", "session-names.json");
+    if (existsSync(f)) {
+      const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown>;
+      for (const [id, name] of Object.entries(j)) if (typeof name === "string" && name) out[id] = name;
+    }
+  } catch {
+    /* a broken registry: the 8-char fallback stands */
+  }
+  try {
+    for (const s of loadStatuses(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
+  } catch {
+    /* no statuses: the 8-char fallback stands */
+  }
+  return out;
+}
+
 /**
  * The block a worker belongs to: the session that started it (AIBroker name),
  * else its project (cwd) name when a terminal is known, else "other" (a bare shell).
@@ -721,7 +743,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), schedLine(readSchedFile(logDir, now))].filter(Boolean).join(" · ") };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), schedLine(readSchedFile(logDir, now), schedNames(logDir))].filter(Boolean).join(" · ") };
 }
 
 /**

@@ -270,6 +270,32 @@ describe("cockpit http", () => {
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({}))).status).toBe(400);
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "nosuch" }))).status).toBe(404);
       expect((await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "w-holder" }))).status).toBe(409);
+      // the scheduler line names sessions, never a raw uuid: a known session by name,
+      // an unknown one by its first 8 chars; counters read as tokens served
+      const uuid = "d875bcac-1111-2222-3333-444455556666";
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, "router-sched.json"), JSON.stringify({
+        at: Date.now(), workers: {},
+        engines: { gyro: { inflight: { session: uuid, worker: "w1", sinceMs: 1 }, queued: {}, counters: { [uuid]: 18120 } } },
+      }));
+      writeFileSync(join(logDir, "w1.status"), JSON.stringify({
+        id: "w1", pid: process.pid, label: "l", cwd: "/p", term: "", provider: "p1", model: "m1",
+        state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null,
+        session: { id: uuid, name: "PAI" },
+      }));
+      const named = JSON.parse((await ask("/cockpit/queue")).body).localModel as string;
+      expect(named).toContain("in flight (PAI)");
+      expect(named).toContain("PAI 18120 tokens served");
+      expect(named).not.toContain(uuid);
+      // no session name anywhere: the first 8 chars, never the full uuid
+      writeFileSync(join(logDir, "w1.status"), JSON.stringify({
+        id: "w1", pid: process.pid, label: "l", cwd: "/p", term: "", provider: "p1", model: "m1",
+        state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null,
+      }));
+      const bare = JSON.parse((await ask("/cockpit/queue")).body).localModel as string;
+      expect(bare).toContain("in flight (d875bcac)");
+      expect(bare).not.toContain(uuid);
+
       // the page carries the panel and its buttons
       const page = await ask("/cockpit");
       expect(page.body).toContain('id="queuepanel"');
