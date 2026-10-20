@@ -107,17 +107,21 @@ describe("cockpit actions", () => {
     ).toBe(true);
   });
 
-  it("rank writes the chain to the (temp) config, ledgers it, and refuses bad input", async () => {
+  it("route validates class and models, writes the list to the (temp) config, ledgers ROUTE-SET", async () => {
     const tmp = newDir();
     const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;
-    const r = await runCockpitAction({ action: "rank", role: "orchestrator", model: "anthropic", rank: "t0" }, deps);
+    const r = await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/opus", "anthropic/haiku"] }, deps);
     expect(r.ok).toBe(true);
-    expect(readFileSync(process.env.PAI_CONFIG_FILE!, "utf8")).toContain("chains");
+    const { readWorkersSection } = await import("../workers/config.js");
+    const { classRoute } = await import("../workers/route-lists.js");
+    expect(classRoute(readWorkersSection(process.env.PAI_CONFIG_FILE).workers.classes, "implement")).toEqual(["anthropic/opus", "anthropic/haiku"]);
     const lines = parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8"));
-    expect(lines.some((l) => l.fields.action === "rank" && l.fields.target === "orchestrator/anthropic")).toBe(true);
-    expect((await runCockpitAction({ action: "rank", role: "boss", model: "anthropic", rank: "t0" }, deps)).ok).toBe(false);
-    expect((await runCockpitAction({ action: "rank", role: "workers", model: "anthropic", rank: "t9" }, deps)).ok).toBe(false);
-    expect((await runCockpitAction({ action: "rank", role: "workers", model: "nobody", rank: "t0" }, deps)).ok).toBe(false);
+    expect(lines.some((l) => l.event === "ROUTE-SET" && l.fields.class === "implement" && l.fields.models === "anthropic/opus>anthropic/haiku")).toBe(true);
+    expect((await runCockpitAction({ action: "route", class: "boss", models: ["anthropic"] }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "route", class: "implement", models: [] }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "route", class: "implement", models: "anthropic" }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "route", class: "implement", models: ["nobody/x"] }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/gpt9"] }, deps)).ok).toBe(false);
   });
 
   it("local.switch on an unknown tier refuses and still writes the ledger", async () => {
@@ -302,11 +306,11 @@ describe("cockpit action endpoint", () => {
       expect(page.status).toBe(200);
       expect(page.body).toContain('data-a="local.switch"');
       expect(page.body).toContain('data-a="local.off"');
-      expect(page.body).toContain('data-rank="');
+      expect(page.body).toContain('data-section="routing"');
       expect(page.body).toContain("model.label");
       expect(page.body).toContain("first, needs ~");
       expect(page.body).toContain("Local model:");
-      expect(page.body).toContain('class="pgroup rkcard" data-prov=');
+      expect(page.body).toContain('class="pgroup" data-prov=');
       expect(page.body).toContain('<div class="phead">');
       expect(page.body).toContain("tier'+(cur?' cur':'')");
       expect(page.body).toContain("running.label||running.model");
